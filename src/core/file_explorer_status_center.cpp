@@ -236,6 +236,11 @@ void FileExplorerStatusProgressReporter::report() {
     }
 }
 
+void FileExplorerStatusProgressReporter::flushReport() {
+    m_critical = true;
+    report();
+}
+
 const FileExplorerStatusProgress& FileExplorerStatusProgressReporter::current() const {
     return m_progress;
 }

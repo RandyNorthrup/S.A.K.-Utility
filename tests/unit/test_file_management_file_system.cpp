@@ -72,6 +72,72 @@ private Q_SLOTS:
         QCOMPARE(df.readAll(), payload);
     }
 
+    void transferObserverStreamsByteDeltasAndCancels() {
+        // The transfer observer sees every 1 MiB window land and its cancel
+        // poll aborts between windows with the canceled blocker and no
+        // partial destination left behind (status-center progress plumbing).
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QDir dir(temp.path());
+        const QString srcPath = dir.filePath(QStringLiteral("src.bin"));
+        const QByteArray payload(3'000'000, 'x');
+        {
+            QFile sf(srcPath);
+            QVERIFY(sf.open(QIODevice::WriteOnly));
+            QCOMPARE(sf.write(payload), static_cast<qint64>(payload.size()));
+        }
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+
+        qint64 seen = 0;
+        int windows = 0;
+        const sak::FileManagementTransferObserver counting{
+            .on_bytes =
+                [&seen, &windows](const qint64 delta) {
+                    seen += delta;
+                    ++windows;
+                },
+            .cancelled = {},
+        };
+        const QString destPath = dir.filePath(QStringLiteral("dest.bin"));
+        const auto written = sak::FileManagementFileSystemBridge::writeFileFromHostPath(
+            target, destPath, srcPath, counting);
+        QVERIFY2(written.ok, qPrintable(written.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(seen, static_cast<qint64>(payload.size()));
+        QVERIFY(windows >= 3);
+
+        // Cancel before the first window: blocked with the canceled marker,
+        // and the partial destination is removed.
+        const sak::FileManagementTransferObserver canceling{
+            .on_bytes = {},
+            .cancelled = []() { return true; },
+        };
+        const QString canceledPath = dir.filePath(QStringLiteral("canceled.bin"));
+        const auto canceled = sak::FileManagementFileSystemBridge::writeFileFromHostPath(
+            target, canceledPath, srcPath, canceling);
+        QVERIFY(!canceled.ok);
+        QVERIFY(canceled.blockers.contains(sak::kFileManagementTransferCancelledBlocker));
+        QVERIFY(!QFile::exists(canceledPath));
+
+        // copyFileToHost honors the same observer; QSaveFile discards the
+        // canceled temporary so no destination appears.
+        qint64 out_seen = 0;
+        const sak::FileManagementTransferObserver out_counting{
+            .on_bytes = [&out_seen](const qint64 delta) { out_seen += delta; },
+            .cancelled = {},
+        };
+        const QString outPath = dir.filePath(QStringLiteral("out.bin"));
+        const auto exported = sak::FileManagementFileSystemBridge::copyFileToHost(
+            target, srcPath, outPath, 0, out_counting);
+        QVERIFY2(exported.ok, qPrintable(exported.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(out_seen, static_cast<qint64>(payload.size()));
+        const QString outCanceled = dir.filePath(QStringLiteral("out-canceled.bin"));
+        const auto export_canceled = sak::FileManagementFileSystemBridge::copyFileToHost(
+            target, srcPath, outCanceled, 0, canceling);
+        QVERIFY(!export_canceled.ok);
+        QVERIFY(export_canceled.blockers.contains(sak::kFileManagementTransferCancelledBlocker));
+        QVERIFY(!QFile::exists(outCanceled));
+    }
+
     void manualApfsTargetIsReadOnlySearchableButNotOrganizable() {
         const auto target = sak::FileManagementFileSystemBridge::manualTarget(
             QStringLiteral("C:/fixtures/apfs.img"), QStringLiteral("APFS"));
@@ -437,6 +503,39 @@ private Q_SLOTS:
         return read.ok ? read.data : QByteArray();
     }
 
+    // Leg-1 observer proof on the certified APFS write: whole-file byte delta
+    // on success, cancel poll blocks before the engine runs. Takes parameters
+    // so QtTest does not run it as a test slot; also performs the /solo.txt
+    // write the rest of the matrix depends on.
+    void verifyRawWriteObserver(const sak::FileManagementTarget& target,
+                                const QDir& hostDir,
+                                const qint64 solo_size) {
+        using Bridge = sak::FileManagementFileSystemBridge;
+        qint64 raw_seen = 0;
+        const sak::FileManagementTransferObserver raw_counting{
+            .on_bytes = [&raw_seen](const qint64 delta) { raw_seen += delta; },
+            .cancelled = {},
+        };
+        const auto soloWrite =
+            Bridge::writeFileFromHostPath(target,
+                                          QStringLiteral("/solo.txt"),
+                                          hostDir.filePath(QStringLiteral("solo.txt")),
+                                          raw_counting);
+        QVERIFY2(soloWrite.ok, qPrintable(soloWrite.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(raw_seen, solo_size);
+        const sak::FileManagementTransferObserver raw_canceling{
+            .on_bytes = {},
+            .cancelled = []() { return true; },
+        };
+        const auto rawCanceled =
+            Bridge::writeFileFromHostPath(target,
+                                          QStringLiteral("/canceled.txt"),
+                                          hostDir.filePath(QStringLiteral("solo.txt")),
+                                          raw_canceling);
+        QVERIFY(!rawCanceled.ok);
+        QVERIFY(rawCanceled.blockers.contains(sak::kFileManagementTransferCancelledBlocker));
+    }
+
     void rawApfsTransferMatrixEndToEnd() {
         // C3e raw proof: every File Explorer transfer leg against a REAL (foreign,
         // mkapfs-created) APFS image through the same bridge calls the panel kernel
@@ -476,9 +575,12 @@ private Q_SLOTS:
         writeFile(hostDir.filePath(QStringLiteral("solo.txt")), soloBytes);
 
         // Leg 1 - local -> raw: streamed file import + recursive directory import.
-        const auto soloWrite = Bridge::writeFileFromHostPath(
-            target, QStringLiteral("/solo.txt"), hostDir.filePath(QStringLiteral("solo.txt")));
-        QVERIFY2(soloWrite.ok, qPrintable(soloWrite.blockers.join(QStringLiteral("; "))));
+        // The transfer observer reports the whole-file delta on the certified
+        // write, and its cancel poll blocks the write before it starts.
+        verifyRawWriteObserver(target, hostDir, static_cast<qint64>(soloBytes.size()));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         const auto imported = Bridge::importDirectoryFromHost(
             target, hostDir.filePath(QStringLiteral("bundle")), QStringLiteral("/bundle"));
         QVERIFY2(imported.ok, qPrintable(imported.blockers.join(QStringLiteral("; "))));

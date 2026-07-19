@@ -107,6 +107,9 @@ public:
     /// Delivers the current snapshot if 100ms elapsed since the last delivery
     /// or a critical field changed (Files Report()).
     void report();
+    /// Delivers the current snapshot unconditionally (terminal flush so the
+    /// final counts always reach the card).
+    void flushReport();
 
     [[nodiscard]] const FileExplorerStatusProgress& current() const;
 

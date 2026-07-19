@@ -16,11 +16,34 @@
 #include <QVector>
 
 #include <cstdint>
+#include <functional>
 
 namespace sak {
 
 /// Default upper bound on entries returned by a single directory listing.
 inline constexpr int kDefaultFileManagementListEntries = 1000;
+
+/// Cancel blocker appended by the transfer surfaces when an observer aborts a
+/// copy; callers that canceled on purpose can filter it out of their report.
+inline const QString kFileManagementTransferCancelledBlocker = QStringLiteral("Transfer canceled.");
+
+/// Streaming-transfer observer for the copy/import/export surfaces: byte
+/// deltas as windows land, plus a cancel poll checked between windows and
+/// between directory entries. Both callbacks optional; default is a no-op.
+/// Local streams and raw reads report per 1 MiB window; APFS/HFS+ writes
+/// report one whole-file delta because the certified writers stream
+/// internally and stay untouched.
+struct FileManagementTransferObserver {
+    std::function<void(qint64 delta_bytes)> on_bytes;
+    std::function<bool()> cancelled;
+
+    [[nodiscard]] bool isCancelled() const { return cancelled && cancelled(); }
+    void addBytes(const qint64 delta) const {
+        if (on_bytes && delta > 0) {
+            on_bytes(delta);
+        }
+    }
+};
 
 enum class FileManagementTargetKind {
     LocalPath,
@@ -200,7 +223,10 @@ public:
     /// backends read the file whole until they gain a streaming writer. Prefer this over
     /// writeFile for copies whose size is not known-small.
     [[nodiscard]] static FileManagementMutationResult writeFileFromHostPath(
-        const FileManagementTarget& target, const QString& path, const QString& host_file_path);
+        const FileManagementTarget& target,
+        const QString& path,
+        const QString& host_file_path,
+        const FileManagementTransferObserver& observer = {});
     /// Copy @p source_path from @p target out to a local host file @p destination_path.
     /// Local sources are copied in full (streamed, no cap) and hashed; raw/non-native
     /// sources are read through the file-system reader up to @p max_bytes and marked
@@ -209,7 +235,8 @@ public:
         const FileManagementTarget& target,
         const QString& source_path,
         const QString& destination_path,
-        uint64_t max_bytes);
+        uint64_t max_bytes,
+        const FileManagementTransferObserver& observer = {});
     /// Recursively export the directory tree at @p source_path into the local host
     /// directory @p destination_dir (created if missing). Regular files copy through
     /// @ref copyFileToHost (raw sources bounded per file by @p max_file_bytes and
@@ -219,7 +246,8 @@ public:
         const FileManagementTarget& target,
         const QString& source_path,
         const QString& destination_dir,
-        uint64_t max_file_bytes);
+        uint64_t max_file_bytes,
+        const FileManagementTransferObserver& observer = {});
     /// Recursively import the local host directory tree at @p host_source_dir into
     /// @p destination_path on @p target. The destination directory itself is created
     /// through @ref createDirectory (callers resolve a name collision first); regular
@@ -228,7 +256,8 @@ public:
     [[nodiscard]] static FileManagementDirectoryImportResult importDirectoryFromHost(
         const FileManagementTarget& target,
         const QString& host_source_dir,
-        const QString& destination_path);
+        const QString& destination_path,
+        const FileManagementTransferObserver& observer = {});
     /// Delete the whole directory tree at @p path. Local and HFS+ targets remove the
     /// tree in one native recursive operation; other raw targets (APFS) keep their
     /// fail-closed guard against deleting a non-empty directory, so the tree is

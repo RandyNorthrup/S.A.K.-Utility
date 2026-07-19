@@ -16,6 +16,7 @@
 #include "sak/file_explorer_sidebar.h"
 #include "sak/file_explorer_status_center.h"
 #include "sak/file_explorer_storage_history.h"
+#include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_file_system.h"
 
 #include <QAbstractItemView>
@@ -312,35 +313,52 @@ private:
         /// same raw target); only then can a folder contain its own destination.
         bool same_namespace{false};
     };
-    int pasteItemsToFolder(const PasteBatch& batch,
-                           const QList<PasteItem>& items,
-                           PasteCollisionPolicy* policy,
+    /// GUI-thread collision resolution before the worker starts (Files shows
+    /// its conflict dialog up front): subfolder guards, same-folder duplicate
+    /// naming, and the replace/skip/rename prompt.
+    QList<FileExplorerTransferItem> resolveTransferItems(const PasteBatch& batch,
+                                                         const QList<PasteItem>& items,
+                                                         PasteCollisionPolicy* policy,
+                                                         QStringList* blockers);
+    /// Completion actions bound to one transfer worker run.
+    struct TransferCompletion {
+        FileExplorerHistoryOperation history_op{FileExplorerHistoryOperation::Copy};
+        FileManagementTarget source_target;
+        FileManagementTarget destination_target;
+        QString destination_dir;
+        /// Pre-translated "%1 of %2" status template for the final message.
+        QString status_template;
+        int requested_count{0};
+        bool move{false};
+        bool consume_clipboard{false};
+        bool record_history{true};
+    };
+    /// Posts the in-progress status-center card, wires progress/cancel, and
+    /// starts the transfer worker (Files FilesystemHelpers + StatusCenter).
+    void startTransferWorker(const FileExplorerTransferRequest& request,
+                             const TransferCompletion& completion);
+    void finishTransferWorker(FileExplorerTransferWorker* worker,
+                              FileExplorerStatusCenterItem* card,
+                              const TransferCompletion& completion);
+    [[nodiscard]] FileExplorerStatusCardRequest terminalTransferCard(
+        const FileExplorerTransferWorker* worker,
+        const TransferCompletion& completion,
+        bool canceled) const;
+    void applyTransferSideEffects(FileExplorerTransferWorker* worker,
+                                  const TransferCompletion& completion,
+                                  int written);
+    /// Synchronous engine adapter for the short in-place legs (history,
+    /// cross-pane copy); the paste path runs the same engine on the worker.
+    bool transferEntrySync(const FileManagementTarget& source_target,
+                           const PasteItem& item,
+                           const FileManagementTarget& target,
+                           const QString& destination,
                            QStringList* blockers);
-    bool pasteOneItem(const PasteBatch& batch,
-                      const PasteItem& item,
-                      PasteCollisionPolicy* policy,
-                      QStringList* blockers);
-    bool transferEntry(const FileManagementTarget& source_target,
-                       const PasteItem& item,
-                       const FileManagementTarget& target,
-                       const QString& destination,
-                       QStringList* blockers);
-    bool transferEntryFromHost(const PasteItem& item,
-                               const FileManagementTarget& target,
-                               const QString& destination,
-                               QStringList* blockers);
-    bool transferRawEntryToLocal(const FileManagementTarget& source_target,
-                                 const PasteItem& item,
-                                 const QString& destination,
-                                 QStringList* blockers);
-    bool transferRawEntryStaged(const FileManagementTarget& source_target,
-                                const PasteItem& item,
-                                const FileManagementTarget& target,
-                                const QString& destination,
-                                QStringList* blockers);
-    bool deleteMoveSource(const FileManagementTarget& source_target,
-                          const PasteItem& item,
-                          QStringList* blockers);
+    /// Copy Out / Export Folder: one item to a picked host destination on the
+    /// worker, with explicit capped-read semantics for oversized raw files.
+    void startExportWorker(const FileManagementTarget& source_target,
+                           const FileExplorerTransferItem& item,
+                           const QString& destination_dir);
     /// Undo/redo journal (Files StorageHistoryWrapper + StorageHistoryOperations).
     void executePasteTo(const FileManagementTarget& target,
                         const PasteSources& sources,
@@ -414,10 +432,6 @@ private:
                               bool created_entries,
                               QStringList* blockers);
     bool confirmHistoryDelete(int item_count, bool undo_of_create);
-    void finishExecutedPaste(const PasteSources& sources,
-                             int written,
-                             int item_count,
-                             const QStringList& blockers);
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;

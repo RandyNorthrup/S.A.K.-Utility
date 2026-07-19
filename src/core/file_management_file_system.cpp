@@ -512,10 +512,31 @@ FileManagementMutationResult writeHfsFileStreamed(const FileManagementTarget& ta
         target.root_path, cleanPath, hostPath, size, options));
 }
 
+// APFS/HFS+ streamed write with observer reporting: the certified engines
+// stream internally (and stay untouched), so the observer sees one whole-file
+// delta on success.
+FileManagementMutationResult writeObservedRawStream(
+    const FileManagementTarget& target,
+    const QString& cleanPath,
+    const QString& hostPath,
+    const uint64_t size,
+    const FileManagementTransferObserver& observer) {
+    const QString fs = FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
+    const FileManagementMutationResult result =
+        fs == QStringLiteral("apfs") ? writeApfsFileStreamed(target, cleanPath, hostPath, size)
+                                     : writeHfsFileStreamed(target, cleanPath, hostPath, size);
+    if (result.ok) {
+        observer.addBytes(static_cast<qint64>(size));
+    }
+    return result;
+}
+
 // Streaming local-filesystem copy: host file -> destination through a fixed 1 MiB
-// window, so a multi-GB copy never holds the whole payload in RAM.
+// window, so a multi-GB copy never holds the whole payload in RAM. The observer
+// sees every window land and can cancel between windows.
 FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
-                                                   const QString& hostPath) {
+                                                   const QString& hostPath,
+                                                   const FileManagementTransferObserver& observer) {
     FileManagementMutationResult result;
     result.path = destPath;
     QFile src(hostPath);
@@ -532,6 +553,13 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
     QByteArray window(1 << 20, Qt::Uninitialized);
     uint64_t written = 0;
     for (;;) {
+        if (observer.isCancelled()) {
+            // Files removes the partial destination of a canceled copy.
+            dst.close();
+            dst.remove();
+            result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return result;
+        }
         const qint64 n = src.read(window.data(), window.size());
         if (n < 0) {
             result.blockers.append(
@@ -547,6 +575,7 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
             return result;
         }
         written += static_cast<uint64_t>(n);
+        observer.addBytes(n);
     }
     result.bytes_written = written;
     result.ok = true;
@@ -861,11 +890,12 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
 namespace {
 
 // Stream a local source file into an already-open destination, hashing as it goes.
-// Returns false and appends a blocker on any read/write error.
+// Returns false and appends a blocker on any read/write error or a cancel.
 bool streamLocalSourceOut(const QString& local,
                           QFileDevice& dest,
                           QCryptographicHash& hash,
-                          FileManagementExportResult& result) {
+                          FileManagementExportResult& result,
+                          const FileManagementTransferObserver& observer) {
     QFile src(local);
     if (!src.open(QIODevice::ReadOnly)) {
         result.blockers.append(QStringLiteral("Could not open source %1.").arg(local));
@@ -873,6 +903,10 @@ bool streamLocalSourceOut(const QString& local,
     }
     constexpr qint64 kWindowBytes = 1 << 20;
     while (!src.atEnd()) {
+        if (observer.isCancelled()) {
+            result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return false;
+        }
         const QByteArray chunk = src.read(kWindowBytes);
         if (chunk.isEmpty()) {
             if (src.error() != QFileDevice::NoError) {
@@ -888,6 +922,7 @@ bool streamLocalSourceOut(const QString& local,
         }
         hash.addData(chunk);
         result.bytes_written += static_cast<uint64_t>(chunk.size());
+        observer.addBytes(chunk.size());
     }
     return true;
 }
@@ -924,9 +959,14 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
     const FileManagementTarget& target,
     const QString& source_path,
     const QString& destination_path,
-    uint64_t max_bytes) {
+    uint64_t max_bytes,
+    const FileManagementTransferObserver& observer) {
     FileManagementExportResult result;
     result.destination = destination_path;
+    if (observer.isCancelled()) {
+        result.blockers.append(kFileManagementTransferCancelledBlocker);
+        return result;
+    }
 
     // QSaveFile writes to a temporary and renames on commit, so a failed copy never
     // truncates or destroys a pre-existing destination file, and commit() surfaces
@@ -942,12 +982,16 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
     const QString local = source_path.trimmed().isEmpty() ? target.root_path : source_path;
     const bool ok =
         target.local_file_system
-            ? streamLocalSourceOut(local, dest, hash, result)
+            ? streamLocalSourceOut(local, dest, hash, result, observer)
             : writeRawSourceOut(readFile(target, source_path, max_bytes == 0 ? 0 : max_bytes + 1),
                                 dest,
                                 hash,
                                 max_bytes,
                                 result);
+    if (ok && !target.local_file_system) {
+        // Raw sources land as one buffered read; report the whole delta.
+        observer.addBytes(static_cast<qint64>(result.bytes_written));
+    }
 
     if (!ok) {
         dest.cancelWriting();
@@ -975,6 +1019,7 @@ struct DirectoryExportContext {
     const FileManagementTarget& target;
     uint64_t max_file_bytes;
     FileManagementDirectoryExportResult& result;
+    const FileManagementTransferObserver& observer;
 };
 
 void exportEntryToHost(const DirectoryExportContext& ctx,
@@ -1001,6 +1046,10 @@ void exportDirectoryLevel(const DirectoryExportContext& ctx,
     }
     ctx.result.warnings.append(listing.warnings);
     for (const FileManagementEntry& entry : listing.entries) {
+        if (ctx.observer.isCancelled()) {
+            ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return;
+        }
         exportEntryToHost(ctx, entry, host_dir, depth);
     }
 }
@@ -1030,7 +1079,7 @@ void exportEntryToHost(const DirectoryExportContext& ctx,
         return;
     }
     const FileManagementExportResult exported = FileManagementFileSystemBridge::copyFileToHost(
-        ctx.target, entry.path, host_dir.filePath(entry.name), ctx.max_file_bytes);
+        ctx.target, entry.path, host_dir.filePath(entry.name), ctx.max_file_bytes, ctx.observer);
     if (!exported.ok) {
         ctx.result.blockers.append(exported.blockers.isEmpty()
                                        ? QStringLiteral("Could not export %1.").arg(entry.path)
@@ -1052,7 +1101,8 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
     const FileManagementTarget& target,
     const QString& source_path,
     const QString& destination_dir,
-    const uint64_t max_file_bytes) {
+    const uint64_t max_file_bytes,
+    const FileManagementTransferObserver& observer) {
     FileManagementDirectoryExportResult result;
     result.destination = destination_dir;
     if (!QDir().mkpath(destination_dir)) {
@@ -1060,7 +1110,7 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
             QStringLiteral("Could not create destination directory %1.").arg(destination_dir));
         return result;
     }
-    const DirectoryExportContext ctx{target, max_file_bytes, result};
+    const DirectoryExportContext ctx{target, max_file_bytes, result, observer};
     exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -1090,6 +1140,7 @@ QString targetChildPath(const FileManagementTarget& target,
 struct DirectoryImportContext {
     const FileManagementTarget& target;
     FileManagementDirectoryImportResult& result;
+    const FileManagementTransferObserver& observer;
 };
 
 void importEntryFromHost(const DirectoryImportContext& ctx,
@@ -1117,6 +1168,10 @@ void importDirectoryLevel(const DirectoryImportContext& ctx,
     const qsizetype count = std::min<qsizetype>(infos.size(),
                                                 kDirectoryExportMaxEntriesPerDirectory);
     for (qsizetype index = 0; index < count; ++index) {
+        if (ctx.observer.isCancelled()) {
+            ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return;
+        }
         importEntryFromHost(ctx, infos.at(index), destination_dir, depth);
     }
 }
@@ -1152,9 +1207,8 @@ void importEntryFromHost(const DirectoryImportContext& ctx,
         return;
     }
     const FileManagementMutationResult written =
-        FileManagementFileSystemBridge::writeFileFromHostPath(ctx.target,
-                                                              destination,
-                                                              info.absoluteFilePath());
+        FileManagementFileSystemBridge::writeFileFromHostPath(
+            ctx.target, destination, info.absoluteFilePath(), ctx.observer);
     if (!written.ok) {
         ctx.result.blockers.append(
             written.blockers.isEmpty()
@@ -1171,7 +1225,8 @@ void importEntryFromHost(const DirectoryImportContext& ctx,
 FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirectoryFromHost(
     const FileManagementTarget& target,
     const QString& host_source_dir,
-    const QString& destination_path) {
+    const QString& destination_path,
+    const FileManagementTransferObserver& observer) {
     FileManagementDirectoryImportResult result;
     result.destination = destination_path;
     const QFileInfo source(host_source_dir);
@@ -1188,7 +1243,7 @@ FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirect
                 : created.blockers.join(QStringLiteral("; ")));
         return result;
     }
-    const DirectoryImportContext ctx{target, result};
+    const DirectoryImportContext ctx{target, result, observer};
     importDirectoryLevel(ctx, source.absoluteFilePath(), destination_path, 0);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -1456,7 +1511,10 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPath(
-    const FileManagementTarget& target, const QString& path, const QString& host_file_path) {
+    const FileManagementTarget& target,
+    const QString& path,
+    const QString& host_file_path,
+    const FileManagementTransferObserver& observer) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     const QFileInfo srcInfo(host_file_path);
@@ -1468,15 +1526,16 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
     // APFS and the local filesystem stream from the host file (peak RAM one window), so
     // an arbitrarily large copy is bounded only by the destination's free space.
     if (target.local_file_system) {
-        FileManagementMutationResult result = copyLocalFileStreamed(path, host_file_path);
+        FileManagementMutationResult result = copyLocalFileStreamed(path, host_file_path, observer);
         result.file_system = target.file_system;
         return result;
     }
-    if (fs == QStringLiteral("apfs")) {
-        return writeApfsFileStreamed(target, cleanPath, host_file_path, size);
+    if (observer.isCancelled()) {
+        return mutationBlocked(fs, cleanPath, kFileManagementTransferCancelledBlocker);
     }
-    if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
-        return writeHfsFileStreamed(target, cleanPath, host_file_path, size);
+    if (fs == QStringLiteral("apfs") || fs == QStringLiteral("hfsplus") ||
+        fs == QStringLiteral("hfsx")) {
+        return writeObservedRawStream(target, cleanPath, host_file_path, size, observer);
     }
     // Any remaining backend has no streaming fork writer yet, so it reads the whole file;
     // guard RAM by size before the read. The limit is that backend's honest current bound
@@ -1493,7 +1552,11 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
         return mutationBlocked(
             fs, cleanPath, QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
     }
-    return writeFile(target, path, src.readAll());
+    const FileManagementMutationResult result = writeFile(target, path, src.readAll());
+    if (result.ok) {
+        observer.addBytes(static_cast<qint64>(size));
+    }
+    return result;
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(

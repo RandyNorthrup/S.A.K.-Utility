@@ -1116,6 +1116,9 @@ private Q_SLOTS:
         const QString moved = root.filePath(QStringLiteral("pocket/renamed.txt"));
         QTRY_VERIFY(QFile::exists(moved));
         QVERIFY(!QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+        // The move ran on the transfer worker; its completion records the
+        // undo history, so wait for the worker to settle before Ctrl+Z.
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
 
         panel.activateWindow();
         table->setFocus();
@@ -1164,6 +1167,9 @@ private Q_SLOTS:
         QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier);
         const QString copy_path = root.filePath(QStringLiteral("seed (2).txt"));
         QTRY_VERIFY(QFile::exists(copy_path));
+        // The copy ran on the transfer worker; wait for its completion (which
+        // records the undo history) before Ctrl+Z.
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
 
         panel.activateWindow();
         table->setFocus();
@@ -3428,6 +3434,117 @@ private Q_SLOTS:
         QTest::keyClick(pathEdit, Qt::Key_Return);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
+    }
+
+    void transferWorkerCopiesTreeReportsProgressAndCancels() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("bundle/deep")));
+        QVERIFY(root.mkdir(QStringLiteral("dest")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        const QByteArray big_payload(1'500'000, 'a');
+        const QByteArray leaf_payload(500'000, 'b');
+        writeFile(root.filePath(QStringLiteral("bundle/a.bin")), big_payload);
+        writeFile(root.filePath(QStringLiteral("bundle/deep/b.bin")), leaf_payload);
+
+        // Full run: discovery counts the tree, byte progress reaches the
+        // total, and the copy lands byte-exact.
+        sak::FileExplorerTransferRequest request;
+        request.source_target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        request.destination_target = request.source_target;
+        request.items = {{root.filePath(QStringLiteral("bundle")),
+                          root.filePath(QStringLiteral("dest/bundle")),
+                          0,
+                          true}};
+        request.raw_read_cap = 512ULL * 1024 * 1024;
+        sak::FileExplorerTransferWorker worker(request);
+        QSignalSpy progress_spy(&worker, &sak::FileExplorerTransferWorker::statusProgress);
+        QSignalSpy finished_spy(&worker, &QThread::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 10'000);
+        QVERIFY2(worker.blockers().isEmpty(),
+                 qPrintable(worker.blockers().join(QStringLiteral("; "))));
+        QCOMPARE(worker.completedItems().size(), 1);
+        QFile copied(root.filePath(QStringLiteral("dest/bundle/deep/b.bin")));
+        QVERIFY(copied.open(QIODevice::ReadOnly));
+        QCOMPARE(copied.readAll(), leaf_payload);
+        QVERIFY(progress_spy.count() > 0);
+        const auto last = progress_spy.last().first().value<sak::FileExplorerStatusProgress>();
+        QVERIFY(last.enumeration_completed);
+        QCOMPARE(last.processed_size,
+                 static_cast<qint64>(big_payload.size() + leaf_payload.size()));
+        QCOMPARE(last.total_size, last.processed_size);
+        QCOMPARE(last.processed_items_count, 1);
+
+        // Cancel at start (WorkerBase::run resets the stop flag on entry, so
+        // the request lands via started() on the worker thread): the worker
+        // reports cancelled and copies nothing.
+        sak::FileExplorerTransferRequest canceled_request = request;
+        canceled_request.items = {{root.filePath(QStringLiteral("bundle")),
+                                   root.filePath(QStringLiteral("dest/bundle2")),
+                                   0,
+                                   true}};
+        sak::FileExplorerTransferWorker canceled_worker(canceled_request);
+        QSignalSpy cancelled_spy(&canceled_worker, &WorkerBase::cancelled);
+        QSignalSpy canceled_finished(&canceled_worker, &QThread::finished);
+        connect(&canceled_worker,
+                &WorkerBase::started,
+                &canceled_worker,
+                &WorkerBase::requestStop,
+                Qt::DirectConnection);
+        canceled_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(canceled_finished.count(), 1, 10'000);
+        QCOMPARE(cancelled_spy.count(), 1);
+        QVERIFY(canceled_worker.completedItems().isEmpty());
+        QVERIFY(!QDir(root.filePath(QStringLiteral("dest/bundle2"))).exists());
+    }
+
+    void pasteCopyRunsOnWorkerWithStatusCards() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkdir(QStringLiteral("pocket")));
+        {
+            QFile file(root.filePath(QStringLiteral("payload.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("worker paste payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("payload")) >= 0);
+
+        // Copy + paste into the selected folder runs on the transfer worker:
+        // the file lands, and the Files two-card pattern leaves one terminal
+        // Success card ("Copied 1 item to ...") in the status center.
+        QVERIFY(selectRowStable(table, QStringLiteral("payload")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QVERIFY(selectRowStable(table, QStringLiteral("pocket")));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString pasted = root.filePath(QStringLiteral("pocket/payload.txt"));
+        QVERIFY2(QTest::qWaitFor([&pasted]() { return QFile::exists(pasted); }, 5000),
+                 "worker paste did not land");
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
+        QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
+        const auto* card = panel.statusCenterModel()->items().first();
+        QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
+        QCOMPARE(card->header(), QStringLiteral("Copied 1 item to \"pocket\""));
     }
 
     void statusCenterFlyoutOpensWithEmptyState() {
