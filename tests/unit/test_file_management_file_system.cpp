@@ -607,6 +607,92 @@ private Q_SLOTS:
         verifyRawMoveDeleteAndCrossImage(target, soloBytes, leafBytes, outBundle);
     }
 
+    void rawHfsTransferMatrixEndToEnd() {
+        // C8 raw proof: the explorer transfer legs against a REAL Apple
+        // (hdiutil-created, non-journaled) HFS+ image through the same bridge
+        // calls the panel kernel makes. Gated on SAK_HFS_RAW_IMAGE; the cert
+        // flow ships the mutated image back to a Mac for fsck_hfs afterwards.
+        const QString imagePath = qEnvironmentVariable("SAK_HFS_RAW_IMAGE");
+        if (imagePath.isEmpty()) {
+            QSKIP("SAK_HFS_RAW_IMAGE not set; the raw HFS transfer matrix runs in the C8 flow.");
+        }
+        using Bridge = sak::FileManagementFileSystemBridge;
+        const auto target = Bridge::manualTarget(imagePath, QStringLiteral("HFS+"));
+        QVERIFY2(target.can_write_files, qPrintable(target.blockers.join(QStringLiteral("; "))));
+
+        QTemporaryDir host;
+        QVERIFY(host.isValid());
+        const QDir hostDir(host.path());
+        QVERIFY(hostDir.mkpath(QStringLiteral("bundle/deep")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        const QByteArray innerBytes = QByteArrayLiteral("inner hfs payload");
+        const QByteArray leafBytes = QByteArrayLiteral("leaf hfs payload \x01\x7e bytes");
+        const QByteArray soloBytes = QByteArrayLiteral("solo hfs payload");
+        writeFile(hostDir.filePath(QStringLiteral("bundle/inner.txt")), innerBytes);
+        writeFile(hostDir.filePath(QStringLiteral("bundle/deep/leaf.txt")), leafBytes);
+        writeFile(hostDir.filePath(QStringLiteral("solo.txt")), soloBytes);
+
+        // Leg 1 - local -> raw: observer-reported streamed import + recursion.
+        verifyRawWriteObserver(target, hostDir, static_cast<qint64>(soloBytes.size()));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const auto imported = Bridge::importDirectoryFromHost(
+            target, hostDir.filePath(QStringLiteral("bundle")), QStringLiteral("/bundle"));
+        QVERIFY2(imported.ok, qPrintable(imported.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(imported.files_imported, 2);
+        QCOMPARE(rawReadAll(target, QStringLiteral("/bundle/deep/leaf.txt")), leafBytes);
+
+        // Leg 2 - raw -> local: file copy-out + recursive export, byte-exact.
+        QTemporaryDir out;
+        QVERIFY(out.isValid());
+        // HFS enforces the read cap strictly (0 is not "unlimited" as on the
+        // APFS path), so pass an explicit window.
+        constexpr quint64 kHfsReadCap = 1024ULL * 1024;
+        const QString outSolo = QDir(out.path()).filePath(QStringLiteral("solo.txt"));
+        QVERIFY(
+            Bridge::copyFileToHost(target, QStringLiteral("/solo.txt"), outSolo, kHfsReadCap).ok);
+        QFile outSoloFile(outSolo);
+        QVERIFY(outSoloFile.open(QIODevice::ReadOnly));
+        QCOMPARE(outSoloFile.readAll(), soloBytes);
+        const auto exported =
+            Bridge::exportDirectoryToHost(target,
+                                          QStringLiteral("/bundle"),
+                                          QDir(out.path()).filePath(QStringLiteral("bundle")),
+                                          kHfsReadCap);
+        QVERIFY2(exported.ok, qPrintable(exported.blockers.join(QStringLiteral("; "))));
+
+        verifyRawHfsMoveAndDelete(target, soloBytes, leafBytes);
+    }
+
+    // Same-target HFS moves through the certified catalog engine plus the
+    // depth-first tree delete. Takes parameters so QtTest does not run it as
+    // a test slot.
+    void verifyRawHfsMoveAndDelete(const sak::FileManagementTarget& target,
+                                   const QByteArray& soloBytes,
+                                   const QByteArray& leafBytes) {
+        using Bridge = sak::FileManagementFileSystemBridge;
+        QVERIFY(Bridge::createDirectory(target, QStringLiteral("/dest")).ok);
+        QVERIFY(Bridge::renameEntry(
+                    target, QStringLiteral("/solo.txt"), QStringLiteral("/dest/solo.txt"))
+                    .ok);
+        QCOMPARE(rawReadAll(target, QStringLiteral("/dest/solo.txt")), soloBytes);
+        const auto dirMove =
+            Bridge::renameEntry(target, QStringLiteral("/bundle"), QStringLiteral("/dest/bundle"));
+        QVERIFY2(dirMove.ok, qPrintable(dirMove.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(rawReadAll(target, QStringLiteral("/dest/bundle/deep/leaf.txt")), leafBytes);
+        const auto removed = Bridge::deleteDirectoryTree(target, QStringLiteral("/dest"));
+        QVERIFY2(removed.ok, qPrintable(removed.blockers.join(QStringLiteral("; "))));
+        const auto listing = Bridge::listDirectory(target, QStringLiteral("/"), 100);
+        for (const auto& entry : listing.entries) {
+            QVERIFY(entry.name != QStringLiteral("dest"));
+        }
+    }
+
     // Same-target raw moves, staged raw-to-raw, and the depth-first raw tree
     // delete. Takes parameters so QtTest does not run it as a test slot.
     void verifyRawMoveDeleteAndCrossImage(const sak::FileManagementTarget& target,
