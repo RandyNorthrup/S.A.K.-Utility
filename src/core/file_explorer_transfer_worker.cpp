@@ -3,6 +3,8 @@
 
 #include "sak/file_explorer_transfer_worker.h"
 
+#include "sak/recycle_bin.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QTemporaryDir>
@@ -176,8 +178,8 @@ auto FileExplorerTransferWorker::execute() -> std::expected<void, sak::error_cod
                                       m_request.allow_capped_raw_reads);
     transferItems(&reporter, &engine);
 
-    m_blockers = engine.blockers();
-    m_warnings = engine.warnings();
+    m_blockers.append(engine.blockers());
+    m_warnings.append(engine.warnings());
     m_last_file_sha256 = engine.lastFileSha256();
     m_last_file_hash_capped = engine.lastFileHashCapped();
     if (stopRequested()) {
@@ -199,8 +201,10 @@ void FileExplorerTransferWorker::discover(FileExplorerStatusProgressReporter* re
             return;
         }
         ++m_discovered_items;
-        if (m_request.rename_within_target) {
-            // Renames move no bytes; the card tracks item counts only.
+        if (m_request.rename_within_target ||
+            m_request.kind != FileExplorerTransferKind::Transfer) {
+            // Renames and the delete family move no bytes; the card tracks
+            // the selected item count (Files "{0}/{1} items processed").
             reporter->setItemsCount(m_discovered_items);
             reporter->report();
             continue;
@@ -282,6 +286,9 @@ void FileExplorerTransferWorker::transferItems(FileExplorerStatusProgressReporte
 bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& item,
                                              FileExplorerTransferEngine* engine,
                                              FileExplorerStatusProgressReporter* reporter) {
+    if (m_request.kind != FileExplorerTransferKind::Transfer) {
+        return deleteOne(item);
+    }
     if (m_request.rename_within_target) {
         return engine->renameWithinTarget(item);
     }
@@ -300,6 +307,30 @@ bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& ite
     if (m_request.move) {
         return engine->deleteMovedSource(item);
     }
+    return true;
+}
+
+// Files delete family: Recycle sends local paths to the bin, Delete removes
+// through the certified writers on raw targets (trees depth-first).
+bool FileExplorerTransferWorker::deleteOne(const FileExplorerTransferItem& item) {
+    if (m_request.kind == FileExplorerTransferKind::Recycle) {
+        if (sendPathToRecycleBin(item.source_path)) {
+            return true;
+        }
+        m_blockers.append(
+            QStringLiteral("Could not move %1 to the Recycle Bin.").arg(item.source_path));
+        return false;
+    }
+    const auto result =
+        item.directory
+            ? FileManagementFileSystemBridge::deleteDirectoryTree(m_request.source_target,
+                                                                  item.source_path)
+            : FileManagementFileSystemBridge::deleteFile(m_request.source_target, item.source_path);
+    if (!result.ok) {
+        m_blockers.append(result.blockers);
+        return false;
+    }
+    m_warnings.append(result.warnings);
     return true;
 }
 

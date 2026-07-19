@@ -323,11 +323,15 @@ private:
     /// Completion actions bound to one transfer worker run.
     struct TransferCompletion {
         FileExplorerHistoryOperation history_op{FileExplorerHistoryOperation::Copy};
+        /// Status-center card family (Files FileOperationType).
+        FileExplorerOperationType card_operation{FileExplorerOperationType::Copy};
         FileManagementTarget source_target;
         FileManagementTarget destination_target;
         QString destination_dir;
         /// Pre-translated "%1 of %2" status template for the final message.
         QString status_template;
+        /// Title for the blockers dialog (defaults to Paste).
+        QString failure_title;
         int requested_count{0};
         bool move{false};
         bool consume_clipboard{false};
@@ -388,7 +392,10 @@ private:
     void applyExplorerSettings(bool checkboxes,
                                bool double_click_up,
                                bool filter_header,
-                               bool flatten);
+                               bool flatten,
+                               int status_center_visibility);
+    /// Files StatusCenterVisibility == DuringOngoingFileOperations.
+    [[nodiscard]] bool statusCenterDuringOperationsOnly() const;
     int flattenFolderTree(const FileManagementTarget& target,
                           const QString& root,
                           const QString& current,
@@ -425,6 +432,12 @@ private:
                                   const QString& from_path,
                                   const QString& to_path,
                                   QStringList* blockers);
+    /// Files: a replayed history operation posts its own terminal card.
+    void postHistoryCard(FileExplorerOperationType operation,
+                         const QStringList& sources,
+                         const QString& destination_dir,
+                         bool ok);
+    [[nodiscard]] static QString historyParentPath(const QString& path);
     bool undoByDeletingCreatedEntries(const FileExplorerStorageHistory& history,
                                       bool undo_of_create);
     bool redoCreateEntries(const FileExplorerStorageHistory& history);
@@ -523,11 +536,6 @@ private:
     void installIconProvider(FileExplorerItemModel* model);
     void togglePreviewPane();
     void resetListingForUnavailableTarget(const QString& message, bool is_error);
-    int deleteSelectedEntries(const FileManagementTarget& target,
-                              const FileExplorerSelection& selection,
-                              QStringList* blockers,
-                              QStringList* warnings);
-    int recycleSelectedEntries(const FileExplorerSelection& selection, QStringList* blockers);
     [[nodiscard]] QString deleteConfirmationText(bool recycle,
                                                  const FileManagementTarget& target,
                                                  const FileExplorerSelection& selection) const;

@@ -3696,6 +3696,85 @@ private Q_SLOTS:
         QVERIFY(empty);
         QTRY_VERIFY(empty->isVisible());
     }
+
+    void permanentDeleteRunsOnWorkerWithDeleteCard() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString doomed = QDir(dir.path()).filePath(QStringLiteral("doomed.txt"));
+        {
+            QFile file(doomed);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("delete me") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("doomed")) >= 0);
+
+        // Shift+Delete: permanent delete runs on the worker and posts the
+        // Files Delete-family card ("Deleted N items from ...").
+        QVERIFY(selectRowStable(table, QStringLiteral("doomed")));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QString question_text;
+        armAutoAcceptQuestion(&question_text);
+        QTest::keyClick(table, Qt::Key_Delete, Qt::ShiftModifier);
+        QTRY_VERIFY(!QFile::exists(doomed));
+        QVERIFY2(question_text.contains(QStringLiteral("permanently")), qPrintable(question_text));
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
+        QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
+        const auto* card = panel.statusCenterModel()->items().first();
+        QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
+        QVERIFY2(card->header().startsWith(QStringLiteral("Deleted 1 item from")),
+                 qPrintable(card->header()));
+    }
+
+    void statusCenterVisibilitySettingTogglesButton() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* button = child<QPushButton>(&panel, "fileExplorerStatusCenterButton");
+        QVERIFY(button);
+        QVERIFY(button->isVisible());
+
+        // Files StatusCenterVisibility = DuringOngoingFileOperations: the
+        // settings dialog persists it and the idle button hides; any card
+        // brings it back.
+        QTimer::singleShot(0, [&panel]() {
+            auto* dialog = panel.findChild<QDialog*>(QStringLiteral("fileExplorerSettingsDialog"));
+            QVERIFY(dialog);
+            auto* combo =
+                dialog->findChild<QComboBox*>(QStringLiteral("fileExplorerSettingsStatusCenter"));
+            QVERIFY(combo);
+            QCOMPARE(combo->currentIndex(), 0);
+            combo->setCurrentIndex(1);
+            dialog->accept();
+        });
+        QTest::keyClick(&panel, Qt::Key_Comma, Qt::ControlModifier);
+        QApplication::processEvents();
+        QTRY_VERIFY(!button->isVisible());
+
+        sak::FileExplorerStatusCardRequest request;
+        request.result = sak::FileExplorerReturnResult::Success;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 1;
+        panel.statusCenterModel()->addItem(request);
+        QTRY_VERIFY(button->isVisible());
+    }
 };
 
 QTEST_MAIN(FileManagementExplorerPanelTests)

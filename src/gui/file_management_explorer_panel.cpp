@@ -152,6 +152,9 @@ constexpr const char* kShowFlattenKey = "ShowFlattenOptions";
 constexpr const char* kShowFilterHeaderKey = "ShowFilterHeader";
 // Files FoldersSettingsService.DoubleClickToGoUp (default true).
 constexpr const char* kDoubleClickToGoUpKey = "DoubleClickToGoUp";
+// Files AppearanceSettingsService.StatusCenterVisibility (default Always=0;
+// 1 = DuringOngoingFileOperations hides the button while idle).
+constexpr const char* kStatusCenterVisibilityKey = "StatusCenterVisibility";
 // Files search-mode suggestion debounce (200 ms) and cap (FolderSearch
 // MaxItemCount 10); FilterHeader debounce is 250 ms with a 180px box.
 constexpr int kSearchSuggestDebounceMs = 200;
@@ -1137,10 +1140,13 @@ void FileManagementExplorerPanel::toggleStatusCenterFlyout() {
 }
 
 void FileManagementExplorerPanel::syncStatusCenterButton() {
-    m_omnibar->statusCenterButton()->setBadge(m_status_center->infoBadgeState(),
-                                              m_status_center->infoBadgeValue(),
-                                              m_status_center->averageProgress(),
-                                              m_status_center->showProgressRing());
+    FileExplorerStatusCenterButton* button = m_omnibar->statusCenterButton();
+    button->setBadge(m_status_center->infoBadgeState(),
+                     m_status_center->infoBadgeValue(),
+                     m_status_center->averageProgress(),
+                     m_status_center->showProgressRing());
+    // Files ShowStatusCenterButton: Always, or only while operations exist.
+    button->setVisible(!statusCenterDuringOperationsOnly() || m_status_center->hasAnyItem());
 }
 
 // Inline omnibar modes (Files Omnibar): palette suggestions repopulate on
@@ -1523,6 +1529,16 @@ void FileManagementExplorerPanel::showExplorerSettings() {
     flatten->setObjectName(QStringLiteral("fileExplorerSettingsFlatten"));
     flatten->setChecked(showFlattenOptionsEnabled());
     layout->addWidget(flatten);
+    // Files Appearance > Show the status center (Always vs during operations).
+    auto* status_row = new QHBoxLayout();
+    status_row->addWidget(new QLabel(tr("Show the status center"), &dialog));
+    auto* status_visibility = new QComboBox(&dialog);
+    status_visibility->setObjectName(QStringLiteral("fileExplorerSettingsStatusCenter"));
+    status_visibility->addItem(tr("Always"));
+    status_visibility->addItem(tr("During ongoing file operations"));
+    status_visibility->setCurrentIndex(statusCenterDuringOperationsOnly() ? 1 : 0);
+    status_row->addWidget(status_visibility, 1);
+    layout->addLayout(status_row);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -1535,23 +1551,33 @@ void FileManagementExplorerPanel::showExplorerSettings() {
     applyExplorerSettings(checkboxes->isChecked(),
                           double_click_up->isChecked(),
                           filter_header->isChecked(),
-                          flatten->isChecked());
+                          flatten->isChecked(),
+                          status_visibility->currentIndex());
+}
+
+bool FileManagementExplorerPanel::statusCenterDuringOperationsOnly() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    return settings.value(QString::fromLatin1(kStatusCenterVisibilityKey), 0).toInt() == 1;
 }
 
 void FileManagementExplorerPanel::applyExplorerSettings(const bool checkboxes,
                                                         const bool double_click_up,
                                                         const bool filter_header,
-                                                        const bool flatten) {
+                                                        const bool flatten,
+                                                        const int status_center_visibility) {
     setShowCheckboxes(checkboxes);
     QSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kDoubleClickToGoUpKey), double_click_up);
     settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), filter_header);
     settings.setValue(QString::fromLatin1(kShowFlattenKey), flatten);
+    settings.setValue(QString::fromLatin1(kStatusCenterVisibilityKey), status_center_visibility);
     settings.endGroup();
     if (m_filter_header) {
         m_filter_header->setVisible(filter_header);
     }
+    syncStatusCenterButton();
     Q_EMIT statusMessage(tr("Explorer settings saved."), sak::kTimerStatusMessageMs);
 }
 
@@ -3215,6 +3241,8 @@ void FileManagementExplorerPanel::executePasteTo(const FileManagementTarget& tar
     TransferCompletion completion;
     completion.history_op = sources.move ? FileExplorerHistoryOperation::Move
                                          : FileExplorerHistoryOperation::Copy;
+    completion.card_operation = sources.move ? FileExplorerOperationType::Move
+                                             : FileExplorerOperationType::Copy;
     completion.source_target = source_target;
     completion.destination_target = target;
     completion.destination_dir = destination_dir;
@@ -3268,8 +3296,7 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
                                                       const TransferCompletion& completion) {
     FileExplorerStatusCardRequest card_request;
     card_request.result = FileExplorerReturnResult::InProgress;
-    card_request.operation = completion.move ? FileExplorerOperationType::Move
-                                             : FileExplorerOperationType::Copy;
+    card_request.operation = completion.card_operation;
     for (const FileExplorerTransferItem& item : request.items) {
         card_request.source.append(item.source_path);
     }
@@ -3308,7 +3335,10 @@ void FileManagementExplorerPanel::finishTransferWorker(FileExplorerTransferWorke
     m_status_center->addItem(terminalTransferCard(worker, completion, canceled));
     applyTransferSideEffects(worker, completion, written);
     if (!worker->blockers().isEmpty() && !canceled) {
-        sak::showWarningLogged(this, tr("Paste"), worker->blockers().join(QStringLiteral("\n")));
+        sak::showWarningLogged(this,
+                               completion.failure_title.isEmpty() ? tr("Paste")
+                                                                  : completion.failure_title,
+                               worker->blockers().join(QStringLiteral("\n")));
     }
     Q_EMIT statusMessage(
         canceled
@@ -3325,8 +3355,7 @@ FileExplorerStatusCardRequest FileManagementExplorerPanel::terminalTransferCard(
     terminal.result = canceled ? FileExplorerReturnResult::Cancelled
                                : (worker->blockers().isEmpty() ? FileExplorerReturnResult::Success
                                                                : FileExplorerReturnResult::Failed);
-    terminal.operation = completion.move ? FileExplorerOperationType::Move
-                                         : FileExplorerOperationType::Copy;
+    terminal.operation = completion.card_operation;
     for (const FileExplorerTransferItem& item : worker->completedItems()) {
         terminal.source.append(item.source_path);
     }
@@ -3446,6 +3475,7 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     request.raw_read_cap = kExplorerHashMaxBytes;
     TransferCompletion completion;
     completion.history_op = FileExplorerHistoryOperation::Move;
+    completion.card_operation = FileExplorerOperationType::Move;
     completion.source_target = target;
     completion.destination_target = target;
     completion.destination_dir = destination_dir;
@@ -3670,21 +3700,55 @@ bool FileManagementExplorerPanel::executeHistoryTransfer(const FileExplorerStora
     }
     const bool move = history.operation != FileExplorerHistoryOperation::Copy;
     QStringList blockers;
+    QStringList from_paths;
+    QString to_parent;
     for (const FileExplorerHistoryItem& item : history.items) {
         const QString from_path = undo ? item.destination_path : item.source_path;
         const QString to_path = undo ? item.source_path : item.destination_path;
+        from_paths.append(from_path);
+        if (to_parent.isEmpty()) {
+            to_parent = historyParentPath(to_path);
+        }
         applyHistoryTransferItem(HistoryTransferLeg{from_target, to_target, move, same_target},
                                  item.directory,
                                  from_path,
                                  to_path,
                                  &blockers);
     }
+    // Files: the replayed operation posts its own status-center card.
+    postHistoryCard(move ? FileExplorerOperationType::Move : FileExplorerOperationType::Copy,
+                    from_paths,
+                    to_parent,
+                    blockers.isEmpty());
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this,
                                undo ? tr("Undo") : tr("Redo"),
                                blockers.join(QStringLiteral("\n")));
     }
     return true;
+}
+
+QString FileManagementExplorerPanel::historyParentPath(const QString& path) {
+    QString clean = path;
+    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    while (clean.endsWith(QLatin1Char('/'))) {
+        clean.chop(1);
+    }
+    const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
+    return slash <= 0 ? QStringLiteral("/") : clean.left(slash);
+}
+
+void FileManagementExplorerPanel::postHistoryCard(const FileExplorerOperationType operation,
+                                                  const QStringList& sources,
+                                                  const QString& destination_dir,
+                                                  const bool ok) {
+    FileExplorerStatusCardRequest card;
+    card.result = ok ? FileExplorerReturnResult::Success : FileExplorerReturnResult::Failed;
+    card.operation = operation;
+    card.source = sources;
+    card.destination = {destination_dir};
+    card.items_count = sources.size();
+    m_status_center->addItem(card);
 }
 
 void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransferLeg& leg,
@@ -3734,6 +3798,17 @@ bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorage
             blockers->append(result.blockers);
         }
     }
+    // Files: the undo-delete posts a Delete-family card (Recycle on local
+    // volumes, permanent Delete on raw targets).
+    QStringList removed;
+    for (const FileExplorerHistoryItem& item : history.items) {
+        removed.append(item.destination_path);
+    }
+    postHistoryCard(target.local_file_system ? FileExplorerOperationType::Recycle
+                                             : FileExplorerOperationType::Delete,
+                    removed,
+                    QString(),
+                    blockers->isEmpty());
     return true;
 }
 
@@ -6574,41 +6649,8 @@ void FileManagementExplorerPanel::performInlineRename(const int row, const QStri
     }
 }
 
-int FileManagementExplorerPanel::deleteSelectedEntries(const FileManagementTarget& target,
-                                                       const FileExplorerSelection& selection,
-                                                       QStringList* blockers,
-                                                       QStringList* warnings) {
-    int deleted = 0;
-    for (const FileManagementEntry& entry : selection.entries) {
-        const auto result =
-            entry.directory ? FileManagementFileSystemBridge::deleteDirectory(target, entry.path)
-                            : FileManagementFileSystemBridge::deleteFile(target, entry.path);
-        blockers->append(result.blockers);
-        warnings->append(result.warnings);
-        if (result.ok) {
-            ++deleted;
-            logMessage(tr("Delete Entry: %1").arg(entry.path));
-        }
-    }
-    return deleted;
-}
-
 void FileManagementExplorerPanel::onDeleteClicked() {
     deleteSelectionWithConfirmation(false);
-}
-
-int FileManagementExplorerPanel::recycleSelectedEntries(const FileExplorerSelection& selection,
-                                                        QStringList* blockers) {
-    int deleted = 0;
-    for (const FileManagementEntry& entry : selection.entries) {
-        if (sak::sendPathToRecycleBin(entry.path)) {
-            ++deleted;
-            logMessage(tr("Recycle Entry: %1").arg(entry.path));
-        } else {
-            blockers->append(tr("Could not move %1 to the Recycle Bin.").arg(entry.path));
-        }
-    }
-    return deleted;
 }
 
 QString FileManagementExplorerPanel::deleteConfirmationText(
@@ -6649,28 +6691,26 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
     if (response != QMessageBox::Yes) {
         return;
     }
-    QStringList blockers;
-    QStringList warnings;
-    const int deleted = recycle ? recycleSelectedEntries(selection, &blockers)
-                                : deleteSelectedEntries(target, selection, &blockers, &warnings);
-
-    if (deleted == selection.count()) {
-        Q_EMIT statusMessage(tr("Delete Entry complete"), sak::kTimerStatusDefaultMs);
-        loadDirectory(m_current_path);
-        return;
+    // Files posts the Delete-family card and runs the removal on the worker
+    // (Recycle keeps the Delete headers per StatusCenterHelper.AddCard_Recycle).
+    FileExplorerTransferRequest request;
+    request.source_target = target;
+    request.destination_target = target;
+    request.kind = recycle ? FileExplorerTransferKind::Recycle : FileExplorerTransferKind::Delete;
+    for (const FileManagementEntry& entry : selection.entries) {
+        request.items.append({entry.path, QString(), entry.size_bytes, entry.directory});
     }
-
-    QStringList details;
-    details.append(blockers);
-    details.append(warnings);
-    sak::showWarningLogged(this,
-                           tr("Delete Entry"),
-                           details.isEmpty()
-                               ? tr("Deleted %1 of %2 item(s).").arg(deleted).arg(selection.count())
-                               : details.join(QStringLiteral("\n")));
-    if (deleted > 0) {
-        loadDirectory(m_current_path);
-    }
+    TransferCompletion completion;
+    completion.card_operation = recycle ? FileExplorerOperationType::Recycle
+                                        : FileExplorerOperationType::Delete;
+    completion.source_target = target;
+    completion.destination_target = target;
+    completion.destination_dir = m_current_path;
+    completion.status_template = tr("Deleted %1 of %2 item(s).");
+    completion.failure_title = tr("Delete Entry");
+    completion.requested_count = selection.count();
+    completion.record_history = false;
+    startTransferWorker(request, completion);
 }
 
 void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& position) {

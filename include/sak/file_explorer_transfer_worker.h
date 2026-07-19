@@ -81,11 +81,20 @@ private:
     bool m_last_file_hash_capped{false};
 };
 
+/// What one worker run does with its items (Files FileOperationType routing:
+/// Delete and Recycle post the Delete-family cards and walk no bytes).
+enum class FileExplorerTransferKind {
+    Transfer,
+    Delete,
+    Recycle,
+};
+
 /// One transfer batch for the worker.
 struct FileExplorerTransferRequest {
     FileManagementTarget source_target;
     FileManagementTarget destination_target;
     QList<FileExplorerTransferItem> items;
+    FileExplorerTransferKind kind{FileExplorerTransferKind::Transfer};
     bool move{false};
     /// Same-target move: rename legs instead of copy+delete.
     bool rename_within_target{false};
@@ -135,6 +144,7 @@ private:
     [[nodiscard]] bool transferOne(const FileExplorerTransferItem& item,
                                    FileExplorerTransferEngine* engine,
                                    FileExplorerStatusProgressReporter* reporter);
+    [[nodiscard]] bool deleteOne(const FileExplorerTransferItem& item);
 
     FileExplorerTransferRequest m_request;
     QStringList m_blockers;
