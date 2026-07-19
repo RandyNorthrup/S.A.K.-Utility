@@ -344,7 +344,9 @@ $unattendedArgs = @(
     "--locale=en_US",
     "--country=US",
     "--time-zone=America/Los_Angeles",
-    "--key=VK7JG-NPHTM-C97JM-9MPGT-3V66T",
+    # Microsoft's published generic Windows 11 Pro installation key (public,
+    # not a secret): https://learn.microsoft.com/windows-server/get-started/kms-client-activation-keys
+    "--key=VK7JG-NPHTM-C97JM-9MPGT-3V66T", # gitleaks:allow
     "--image-index=$ImageIndex",
     "--install-additions",
     "--additions-iso=C:\Program Files\Oracle\VirtualBox\VBoxGuestAdditions.iso",
