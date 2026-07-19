@@ -1,4 +1,4 @@
-﻿# OST Converter Tab -- Comprehensive Implementation Plan
+# OST Converter Tab -- Comprehensive Implementation Plan
 
 **Version**: 1.0
 **Date**: March 25, 2026
@@ -248,55 +248,55 @@ EmailInspectorPanel (existing -- becomes top-level tab container)
 |   +-- (unchanged -- all existing functionality preserved)
 |
 +-- Tab 1: OST Converter (NEW)
-    |
+ |
     +-- OstConverterWidget (QWidget) [Main UI]
-    |   +-- File Queue: Table showing added OST/PST files with metadata
-    |   +-- Output Settings: Format selector, destination, split options
-    |   +-- Filter Panel: Date range, folder selection, sender/recipient
-    |   +-- Recovery Options: Deleted items, corrupt block handling
-    |   +-- IMAP Settings: Server, port, SSL, credentials, folder mapping
-    |   +-- Progress Dashboard: Per-file progress bars, ETA, item counts
-    |   +-- Convert / Cancel buttons
-    |
+ |   +-- File Queue: Table showing added OST/PST files with metadata
+ |   +-- Output Settings: Format selector, destination, split options
+ |   +-- Filter Panel: Date range, folder selection, sender/recipient
+ |   +-- Recovery Options: Deleted items, corrupt block handling
+ |   +-- IMAP Settings: Server, port, SSL, credentials, folder mapping
+ |   +-- Progress Dashboard: Per-file progress bars, ETA, item counts
+ |   +-- Convert / Cancel buttons
+ |
     +-- OstConverterController (QObject) [Orchestration]
-    |   +-- Manages the conversion queue
-    |   +-- Creates and manages worker threads
-    |   +-- Aggregates progress from all workers
-    |   +-- Generates conversion report
-    |   +-- Signals: conversionStarted, fileProgress, fileComplete,
-    |               allComplete, errorOccurred
-    |
+ |   +-- Manages the conversion queue
+ |   +-- Creates and manages worker threads
+ |   +-- Aggregates progress from all workers
+ |   +-- Generates conversion report
+ |   +-- Signals: conversionStarted, fileProgress, fileComplete,
+ |               allComplete, errorOccurred
+ |
     +-- OstConversionWorker (QObject) [Worker Thread -- one per file]
-    |   +-- Owns a PstParser instance for reading the source file
-    |   +-- Iterates folder tree -> loads items -> writes to format writer
-    |   +-- Handles deleted item recovery (Recoverable Items folder scan)
-    |   +-- Handles corrupt block skip-and-log
-    |   +-- Reports per-item progress
-    |   +-- Supports cancellation via atomic flag
-    |
+ |   +-- Owns a PstParser instance for reading the source file
+ |   +-- Iterates folder tree -> loads items -> writes to format writer
+ |   +-- Handles deleted item recovery (Recoverable Items folder scan)
+ |   +-- Handles corrupt block skip-and-log
+ |   +-- Reports per-item progress
+ |   +-- Supports cancellation via atomic flag
+ |
     +-- Format Writers (one per output format)
-    |   +-- PstWriter -- Creates a new PST file (NDB/LTP/Messaging layers)
-    |   |   +-- PstSplitter -- Monitors output size, rotates to new volume
-    |   +-- EmlWriter -- Writes RFC 5322 .eml files (reuses EmailExportWorker logic)
-    |   +-- MsgWriter -- Writes MS-OXMSG compound files (.msg)
-    |   +-- MboxWriter -- Writes Unix mbox format (one per folder)
-    |   +-- DbxWriter -- Writes Outlook Express DBX format
-    |   +-- HtmlWriter -- Writes HTML pages with embedded images
-    |   +-- PdfWriter -- Writes PDF via QTextDocument -> QPdfWriter
-    |
+ |   +-- PstWriter -- Creates a new PST file (NDB/LTP/Messaging layers)
+ | |   +-- PstSplitter -- Monitors output size, rotates to new volume
+ |   +-- EmlWriter -- Writes RFC 5322 .eml files (reuses EmailExportWorker logic)
+ |   +-- MsgWriter -- Writes MS-OXMSG compound files (.msg)
+ |   +-- MboxWriter -- Writes Unix mbox format (one per folder)
+ |   +-- DbxWriter -- Writes Outlook Express DBX format
+ |   +-- HtmlWriter -- Writes HTML pages with embedded images
+ |   +-- PdfWriter -- Writes PDF via QTextDocument -> QPdfWriter
+ |
     +-- ImapUploader (QObject) [Worker Thread]
-    |   +-- Connects to IMAP server via QSslSocket
-    |   +-- Authenticates (PLAIN, LOGIN, XOAUTH2 for Gmail/365)
-    |   +-- Creates folder hierarchy on server
-    |   +-- Uploads messages via IMAP APPEND with flags and dates
-    |   +-- Reports per-message progress
-    |
+ |   +-- Connects to IMAP server via QSslSocket
+ |   +-- Authenticates (PLAIN, LOGIN, XOAUTH2 for Gmail/365)
+ |   +-- Creates folder hierarchy on server
+ |   +-- Uploads messages via IMAP APPEND with flags and dates
+ |   +-- Reports per-message progress
+ |
     +-- DeletedItemScanner (utility)
-    |   +-- Scans Recoverable Items folder (NID 0x0301)
-    |   +-- Walks orphaned NBT nodes not in hierarchy
-    |   +-- Attempts to read each orphaned node as a message
-    |   +-- Returns recovered items as PstItemDetail vector
-    |
+ |   +-- Scans Recoverable Items folder (NID 0x0301)
+ |   +-- Walks orphaned NBT nodes not in hierarchy
+ |   +-- Attempts to read each orphaned node as a message
+ |   +-- Returns recovered items as PstItemDetail vector
+ |
     +-- ConversionReportGenerator (utility)
         +-- Tracks per-file, per-folder, per-item status
         +-- Generates HTML report with statistics
@@ -948,91 +948,91 @@ public:
 
 ```
 +--------------------------------------------------------------------------+
-|  Email Tools                                                              |
+|  Email Tools |
 |  [Email Inspector] [OST Converter]                           <-- tab bar |
 +--------------------------------------------------------------------------+
-|                                                                          |
-|  +-- SOURCE FILES ------------------------------------------------+    |
-|  |                                                                  |    |
-|  |  [+ Add Files]  [+ Add Folder]  [x Remove]  [Clear All]        |    |
-|  |                                                                  |    |
-|  |  +----------------------------------------------------------+   |    |
-|  |  | File                 | Size    | Items  | Status         |   |    |
-|  |  |----------------------------------------------------------|   |    |
-|  |  | john@company.com.ost | 4.2 GB  | ~12400 | Queued         |   |    |
-|  |  | archive-2024.pst     | 1.8 GB  | ~5200  | Queued         |   |    |
-|  |  | mary.smith.ost       | 8.1 GB  | ~24000 | Queued         |   |    |
-|  |  +----------------------------------------------------------+   |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  +-- OUTPUT SETTINGS ---------------------------------------------+    |
-|  |                                                                  |    |
-|  |  Format: [PST v]  Destination: [C:\Output\________] [Browse]    |    |
-|  |                                                                  |    |
-|  |  [ ] Split PST files:  [5 GB v]  (2 GB / 5 GB / 10 GB / Custom)|    |
-|  |  [x] Preserve folder structure                                    |    |
-|  |  [x] Prefix filenames with date  (EML/MSG only)                   |    |
-|  |  Threads: [2 ^v]  (1-8, default = CPU cores / 2)              |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  +-- FILTERS (optional) ------------------------------------------+    |
-|  |                                                                  |    |
-|  |  Date range: [__________] to [__________]    (calendar pickers) |    |
-|  |  Folders:    [Include: ____________]  [Exclude: ____________]   |    |
-|  |  Sender:     [_______________________]                          |    |
-|  |  Recipient:  [_______________________]                          |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  +-- RECOVERY OPTIONS --------------------------------------------+    |
-|  |                                                                  |    |
-|  |  [ ] Recover deleted items (scan Recoverable Items folder)        |    |
-|  |  [ ] Deep recovery (scan orphaned nodes -- slow, thorough)         |    |
-|  |  [ ] Skip corrupt blocks (continue on errors, log skipped items)  |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  +-- IMAP UPLOAD (when format = IMAP) ----------------------------+    |
-|  |                                                                  |    |
-|  |  Server: [imap.gmail.com____]  Port: [993]  [x] SSL              |    |
-|  |  Auth:   [PLAIN v]                                              |    |
-|  |  User:   [user@gmail.com____]  Password: [********] [show]        |    |
-|  |                                                                  |    |
-|  |  Folder Mapping:                                                |    |
-|  |  +----------------------------------------------------------+   |    |
-|  |  | Source (PST)           | Target (IMAP)        | Skip    |   |    |
-|  |  |----------------------------------------------------------|   |    |
-|  |  | Inbox                  | INBOX                | [ ]       |   |    |
-|  |  | Sent Items             | [Gmail]/Sent Mail    | [ ]       |   |    |
-|  |  | Drafts                 | [Gmail]/Drafts       | [ ]       |   |    |
-|  |  | Deleted Items          | [Gmail]/Trash        | [x]       |   |    |
-|  |  | Custom Folder 1        | Custom Folder 1      | [ ]       |   |    |
-|  |  +----------------------------------------------------------+   |    |
-|  |                                                                  |    |
-|  |  [Test Connection]                                              |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  +-- PROGRESS ----------------------------------------------------+    |
-|  |                                                                  |    |
-|  |  Overall: [==============..............] 52%   ETA: ~4 min     |    |
-|  |                                                                  |    |
-|  |  File 1: john@company.com.ost                                   |    |
-|  |   [================================] 100%  DONE 12,400 items     |    |
-|  |                                                                  |    |
-|  |  File 2: archive-2024.pst                                       |    |
-|  |   [==========....................] 32%   Sent Items               |    |
-|  |   Items: 1,664 / 5,200  |  Written: 423 MB  |  Recovered: 12   |    |
-|  |                                                                  |    |
-|  |  File 3: mary.smith.ost                                         |    |
-|  |   Queued                                                         |    |
-|  |                                                                  |    |
-|  +------------------------------------------------------------------+    |
-|                                                                          |
-|  [> Convert All]  [Stop Cancel]  [View Report]                        |
-|                                                                          |
+| |
+|  +-- SOURCE FILES ------------------------------------------------+ |
+| | | |
+| |  [+ Add Files]  [+ Add Folder]  [x Remove]  [Clear All] | |
+| | | |
+| |  +----------------------------------------------------------+ | |
+| | | File | Size | Items | Status | | |
+| | |----------------------------------------------------------| | |
+| | | john@company.com.ost | 4.2 GB | ~12400 | Queued | | |
+| | | archive-2024.pst | 1.8 GB | ~5200 | Queued | | |
+| | | mary.smith.ost | 8.1 GB | ~24000 | Queued | | |
+| |  +----------------------------------------------------------+ | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  +-- OUTPUT SETTINGS ---------------------------------------------+ |
+| | | |
+| |  Format: [PST v]  Destination: [C:\Output\________] [Browse] | |
+| | | |
+| |  [ ] Split PST files:  [5 GB v]  (2 GB / 5 GB / 10 GB / Custom)| |
+| |  [x] Preserve folder structure | |
+| |  [x] Prefix filenames with date  (EML/MSG only) | |
+| |  Threads: [2 ^v]  (1-8, default = CPU cores / 2) | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  +-- FILTERS (optional) ------------------------------------------+ |
+| | | |
+| |  Date range: [__________] to [__________]    (calendar pickers) | |
+| |  Folders:    [Include: ____________]  [Exclude: ____________] | |
+| |  Sender:     [_______________________] | |
+| |  Recipient:  [_______________________] | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  +-- RECOVERY OPTIONS --------------------------------------------+ |
+| | | |
+| |  [ ] Recover deleted items (scan Recoverable Items folder) | |
+| |  [ ] Deep recovery (scan orphaned nodes -- slow, thorough) | |
+| |  [ ] Skip corrupt blocks (continue on errors, log skipped items) | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  +-- IMAP UPLOAD (when format = IMAP) ----------------------------+ |
+| | | |
+| |  Server: [imap.gmail.com____]  Port: [993]  [x] SSL | |
+| |  Auth:   [PLAIN v] | |
+| |  User:   [user@gmail.com____]  Password: [********] [show] | |
+| | | |
+| |  Folder Mapping: | |
+| |  +----------------------------------------------------------+ | |
+| | | Source (PST) | Target (IMAP) | Skip | | |
+| | |----------------------------------------------------------| | |
+| | | Inbox | INBOX | [ ] | | |
+| | | Sent Items | [Gmail]/Sent Mail | [ ] | | |
+| | | Drafts | [Gmail]/Drafts | [ ] | | |
+| | | Deleted Items | [Gmail]/Trash | [x] | | |
+| | | Custom Folder 1 | Custom Folder 1 | [ ] | | |
+| |  +----------------------------------------------------------+ | |
+| | | |
+| |  [Test Connection] | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  +-- PROGRESS ----------------------------------------------------+ |
+| | | |
+| |  Overall: [==============..............] 52%   ETA: ~4 min | |
+| | | |
+| |  File 1: john@company.com.ost | |
+| |   [================================] 100%  DONE 12,400 items | |
+| | | |
+| |  File 2: archive-2024.pst | |
+| |   [==========....................] 32%   Sent Items | |
+| |   Items: 1,664 / 5,200 |  Written: 423 MB |  Recovered: 12 | |
+| | | |
+| |  File 3: mary.smith.ost | |
+| |   Queued | |
+| | | |
+|  +------------------------------------------------------------------+ |
+| |
+|  [> Convert All]  [Stop Cancel]  [View Report] |
+| |
 +--------------------------------------------------------------------------+
 ```
 
@@ -1690,4 +1690,4 @@ connect(worker, &OstConversionWorker::itemProgress,
 **Document Version**: 1.0
 **Last Updated**: March 25, 2026
 **Author**: Randy Northrup
-**Status**: ✅ Implemented
+**Status**: [x] Implemented

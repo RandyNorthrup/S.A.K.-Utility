@@ -1,4 +1,4 @@
-# A2 — Multi-leaf fs-tree: design + implementation plan
+# A2 - Multi-leaf fs-tree: design + implementation plan
 
 > **STATUS (2026-06-14): DONE and Apple-certified (commits e29422e, 60f9101,
 > 34c3086).** Builder + commit-path wiring split the fs-tree into an internal
@@ -39,27 +39,27 @@ cap to thousands by splitting the fs-tree into an internal root + leaf nodes.
    keeps oid `kApfsFormatRootTreeOid` = 1028): one record per leaf, key = that
    leaf's first (smallest) key, value = 8-byte child node oid. node_count in the
    info trailer = 1 + leaf count; key_count = total records.
-3. **Volume object map**: gains an entry per node — `{1028 → rootPaddr}` plus
-   `{leafOid_i → leafPaddr_i}` for each leaf. For up to ~250 nodes these still
+3. **Volume object map**: gains an entry per node - `{1028 -> rootPaddr}` plus
+   `{leafOid_i -> leafPaddr_i}` for each leaf. For up to ~250 nodes these still
    fit one omap leaf (`buildObjectMapTreeBlock` already emits N entries; it would
    need the same overflow guard as the fs-tree for very large trees).
 
-## Ground truth (HARVESTED 2026-06-15 — apfs.kext split a S.A.K. MLH container
+## Ground truth (HARVESTED 2026-06-15 - apfs.kext split a S.A.K. MLH container
 ## after ~60 touch'd files into a root + 4 leaves; mlh.s60.img)
 - **Leaf node oid source**: CONFIRMED the container `nx_next_oid` (nx_superblock
   offset 0x58, = 1030 at genesis). The four leaves took oids 1030, 1031, 1032,
-  1033 (consecutive); `nx_next_oid` advanced 1030 → 1034 (consumed one per leaf).
+  1033 (consecutive); `nx_next_oid` advanced 1030 -> 1034 (consumed one per leaf).
   The fs-tree root keeps oid 1028 (`apfs_root_tree_oid`).
 - **Internal (root) node**: btn_flags = ROOT (0x0001, **not** LEAF), level 1,
   subtype FSTREE (0x0e), keeps the 40-byte btree_info trailer. Variable-kv TOC
   (8-byte entries). One record per child: **key = that child leaf's first
   (smallest) key, copied whole** (klen 24 for a leading dirent, 8 for a leading
-  inode), **value = the 8-byte child node oid** (vlen 8, oid only — no flags).
+  inode), **value = the 8-byte child node oid** (vlen 8, oid only - no flags).
   Records ordered by child first-key.
 - **Leaf nodes**: btn_flags = LEAF (0x0002), level 0, subtype FSTREE, **no**
   btree_info trailer, variable record counts (apfs.kext split unevenly: 73 and
   25 records in two of the leaves), holding the fs records for their key range.
-- **Volume object map** maps every node: {1028 → rootPaddr} + {1030..1033 →
+- **Volume object map** maps every node: {1028 -> rootPaddr} + {1030..1033 ->
   leafPaddr} (5 fixed-kv entries; the omap node TOC is 448 bytes, 16-byte
   keys/values).
 

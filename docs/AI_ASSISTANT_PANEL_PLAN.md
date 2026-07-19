@@ -2,7 +2,7 @@
 
 **Version**: 1.2
 **Date**: May 13, 2026
-**Status**: v1 complete (Milestones 1–10)
+**Status**: v1 complete (Milestones 1-10)
 **Target App**: S.A.K. Utility
 **Primary Language**: C++23
 **UI Framework**: Qt 6
@@ -12,7 +12,7 @@
 
 ## Current Implementation Progress
 
-All v1 milestones (1–10) are complete behind `SAK_ENABLE_AI_ASSISTANT`.
+All v1 milestones (1-10) are complete behind `SAK_ENABLE_AI_ASSISTANT`.
 
 Next-phase planning:
 
@@ -178,36 +178,36 @@ docs/AI_ASSISTANT_PANEL_PLAN.md
 
 ```text
 AiAssistantPanel (QWidget)
-  |
+ |
   +-- AiSessionController
-      |
+ |
       +-- OpenAIResponsesClient
-      |   +-- QNetworkAccessManager
-      |   +-- streaming parser
-      |   +-- usage parser
-      |
+ |   +-- QNetworkAccessManager
+ |   +-- streaming parser
+ |   +-- usage parser
+ |
       +-- AiConversationStore
-      |   +-- transcript.jsonl
-      |   +-- commands.jsonl
-      |   +-- usage.json
-      |   +-- artifacts/
-      |
+ |   +-- transcript.jsonl
+ |   +-- commands.jsonl
+ |   +-- usage.json
+ |   +-- artifacts/
+ |
       +-- AiToolRegistry
-      |   +-- shell/local execution
-      |   +-- web research
-      |   +-- screenshot
-      |   +-- download
-      |   +-- file/report helpers
-      |
+ |   +-- shell/local execution
+ |   +-- web research
+ |   +-- screenshot
+ |   +-- download
+ |   +-- file/report helpers
+ |
       +-- AiExecutionBroker
-      |   +-- normal QProcess backend
-      |   +-- elevated worker backend
-      |   +-- timeout/cancel/output capture
-      |
+ |   +-- normal QProcess backend
+ |   +-- elevated worker backend
+ |   +-- timeout/cancel/output capture
+ |
       +-- AiCredentialStore
-      |   +-- session memory
-      |   +-- encrypted app-directory DPAPI file
-      |
+ |   +-- session memory
+ |   +-- encrypted app-directory DPAPI file
+ |
       +-- AiTokenUsageTracker
       +-- AiReportGenerator
 ```
@@ -237,13 +237,13 @@ Recommended layout:
 
 ```text
 +-----------------------------------------------------------------------+
-| Chat transcript / assistant stream                          | Session |
-|                                                              | Agent   |
-|                                                              | OpenAI  |
-|                                                              | Context |
-|                                                              | Usage   |
-|--------------------------------------------------------------|         |
-| Attach | Instruction | Clear                    Send | Stop  |         |
+| Chat transcript / assistant stream | Session |
+| | Agent |
+| | OpenAI |
+| | Context |
+| | Usage |
+|--------------------------------------------------------------| |
+| Attach | Instruction | Clear                    Send | Stop | |
 +-----------------------------------------------------------------------+
 ```
 

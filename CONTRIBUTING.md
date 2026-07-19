@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to S.A.K. Utility! This document provides guidelines and instructions for contributing to the project.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
@@ -12,21 +12,21 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
 
-## 🤝 Code of Conduct
+## Code of Conduct
 
 - Be respectful and inclusive
 - Focus on constructive feedback
 - Help others learn and grow
 - Maintain professional communication
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
 - **Windows 10/11** (x64)
 - **Visual Studio 2022** with C++ Desktop Development
 - **CMake 3.28+**
-- **Qt 6.5.3** (msvc2019_64)
+- **Qt 6.10.3** (msvc2022_64) - the version CI builds and releases with
 - **Git**
 
 ### Setting Up Your Development Environment
@@ -46,7 +46,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 4. **Configure CMake**:
    ```powershell
-   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64"
+   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.10.3/msvc2022_64"
    ```
 
 5. **Build the project**:
@@ -54,7 +54,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
    cmake --build build --config Release
    ```
 
-## 💻 How to Contribute
+## How to Contribute
 
 ### Reporting Bugs
 
@@ -108,7 +108,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 6. **Create a Pull Request** on GitHub
 
-## 📝 Coding Standards
+## Coding Standards
 
 ### C++ Style Guide
 
@@ -228,13 +228,13 @@ auto* widget = new QWidget(this);  // 'this' manages lifetime
 
 ### TigerStyle Best Practices
 
-This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a guiding philosophy. These are best-practice targets to strive for — they do not block a PR that passes the release hooks (zero build warnings, zero build errors, all tests passing).
+This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a guiding philosophy. These are best-practice targets to strive for - they do not block a PR that passes the release hooks (zero build warnings, zero build errors, all tests passing).
 
 | Rule | Target | Enforced By |
 |---|---|---|
-| Function length | ≤70 lines | Lizard, code review |
-| Nesting depth | ≤3 levels | Lizard, code review |
-| Line length | ≤100 columns | `.clang-format` |
+| Function length | <=70 lines | Lizard, code review |
+| Nesting depth | <=3 levels | Lizard, code review |
+| Line length | <=100 columns | `.clang-format` |
 | Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Should have explanatory comment | Code review |
 | Magic numbers | Prefer named `constexpr` constants | Code review |
@@ -267,7 +267,7 @@ target_include_directories(target_name
 )
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Running Tests
 
@@ -285,7 +285,7 @@ ctest --test-dir build -C Release --output-on-failure
 ### Writing Tests
 
 - Create test files in `tests/unit/` (one per component)
-- Use Qt Test framework (`QTest`) — not raw `assert()`
+- Use Qt Test framework (`QTest`) - not raw `assert()`
 - Test both success and failure cases
 - Include edge cases
 - Verify cleanup (no leaks, proper RAII)
@@ -310,7 +310,7 @@ QTEST_MAIN(TestExample)
 #include "test_example.moc"
 ```
 
-## 🔄 Pull Request Process
+## Pull Request Process
 
 ### Before Submitting
 
@@ -355,23 +355,23 @@ Add screenshots showing UI changes
 3. Once approved, PR will be merged
 4. Your contribution will be included in the next release!
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [Qt Documentation](https://doc.qt.io/qt-6/)
 - [CMake Documentation](https://cmake.org/documentation/)
 - [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines)
 - [Conventional Commits](https://www.conventionalcommits.org/)
 
-## 🎉 Recognition
+## Recognition
 
 Contributors will be recognized in:
 - Release notes
 - README.md Contributors section
 
-## ❓ Questions?
+## Questions?
 
 - Open a [Discussion](https://github.com/RandyNorthrup/S.A.K.-Utility/discussions)
 - Create an [Issue](https://github.com/RandyNorthrup/S.A.K.-Utility/issues)
 - Contact the maintainers
 
-Thank you for contributing to S.A.K. Utility! 🚀
+Thank you for contributing to S.A.K. Utility!

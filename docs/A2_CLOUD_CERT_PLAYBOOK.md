@@ -1,8 +1,14 @@
 # A2 Cloud Certification Playbook (bare-metal hourly)
 
+STATUS 2026-07-19: SUPERSEDED - every tier this playbook targets is now
+implemented and Apple-certified (multi-block spaceman, CAB tier to the 32 TiB
+cap, repeated-overflow in-place commit, the 2.9-7.8 TiB dead zone, and the A8
+physical hardware gate). Kept as methodology history only; nothing below is a
+live work item. Current record: APFS_HFS_FULL_DRIVER_WRITE_PLAN.md section 3.
+
 Purpose: finish the **paused A2 tiers** (multi-block "2-block" spaceman, CAB tier,
 repeated-overflow-commit, dstream-xfield harvest) on a rented **bare-metal hourly**
-Linux box using a **sparse** large virtual disk + the existing qemu macOS Sequoia VM —
+Linux box using a **sparse** large virtual disk + the existing qemu macOS Sequoia VM -
 **without** a physical multi-TB drive. The physical 24 TB drive stays reserved for the
 **A8** hardware gate (real-device destructive + crash + rollback), which a sparse image
 cannot satisfy.
@@ -16,8 +22,8 @@ by the spaceman but never written. So a 24 TB container's actual written bytes a
 under ~1 GB. A **sparse image** that *presents* as 24 TB but only stores the written
 blocks is therefore equivalent, for the geometry/kernel/fsck cert, to a real 24 TB device.
 
-The local wall was **ext4's 16 TiB max file size** (`truncate -s 24T` → "File too large").
-The fix is a host filesystem with a large max file size — **XFS (max file 8 EiB)** — on a
+The local wall was **ext4's 16 TiB max file size** (`truncate -s 24T` -> "File too large").
+The fix is a host filesystem with a large max file size - **XFS (max file 8 EiB)** - on a
 *small* disk. You are paying for a small disk + a few hours of bare metal, not 24 TB of
 storage.
 
@@ -25,8 +31,8 @@ storage.
 
 - A bare-metal **hourly** host with hardware virtualization (VT-x/AMD-V):
   - Hetzner (dedicated, hourly via auction/cloud-metal), Equinix Metal, Vultr Bare Metal,
-    OVH/So you Start, Latitude.sh — any x86_64 metal with `/dev/kvm`.
-  - Specs: ≥ 8 cores, **≥ 32 GB RAM** (macOS VM ~8 GB + host headroom), **≥ 200 GB**
+    OVH/So you Start, Latitude.sh - any x86_64 metal with `/dev/kvm`.
+  - Specs: >= 8 cores, **>= 32 GB RAM** (macOS VM ~8 GB + host headroom), **>= 200 GB**
     local SSD/NVMe (host OS + ~10 GB macOS VM images + the sparse image's *actual* bytes).
     No large disk required.
 - The repo (this checkout) reachable from the host (git clone or `scp`).
@@ -35,7 +41,7 @@ storage.
   `sak-vm.sh`, `sak-click.sh`, and a `sak-boot-*.sh`. ~3.5 GB, `scp`-able.
 
 > EULA note: running macOS on non-Apple hardware is against Apple's license (gray area for
-> testing — identical to your current local qemu-macOS). The only license-clean option is a
+> testing - identical to your current local qemu-macOS). The only license-clean option is a
 > real cloud Mac (AWS EC2 Mac), which is far pricier and awkward to give a huge disk.
 
 ## 1. Provision + base host
@@ -84,7 +90,7 @@ cmake --build build --target sak_apfs_writer_cli
 
 If the **full** repo `CMakeLists.txt` fails to configure on Linux (it carries Windows-only
 GUI/`windeployqt` targets), build the CLI standalone with a throwaway `CMakeLists.txt`
-(does not modify the repo) — it needs only these five sources plus `Qt6::Core`:
+(does not modify the repo) - it needs only these five sources plus `Qt6::Core`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.21)
@@ -108,7 +114,7 @@ cmake -S . -B clibuild -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_TOP_L
 
 ## 4. Stage the macOS VM
 
-Fastest — copy your working VM from the WSL box:
+Fastest - copy your working VM from the WSL box:
 
 ```bash
 # from the WSL/Windows side
@@ -137,7 +143,7 @@ Pick the tier you are exercising (the writer's own geometry gate is the precise 
 > Reality check: the CAB tier, multi-block spaceman, and repeated-overflow-commit are
 > currently **fail-closed in the writer** (unimplemented), so `format-raw`/commit will
 > *reject* them until you implement those tiers. This box is the **develop + certify**
-> environment for that code — not a one-shot "run existing cert." `dstream-xfield` is a
+> environment for that code - not a one-shot "run existing cert." `dstream-xfield` is a
 > harvest task (read Apple's `xf_used_data` flag value, `0x08` vs `0x20`).
 
 ## 6. Attach to the macOS VM + run the Apple oracle
@@ -154,9 +160,9 @@ Add the sparse image as a raw disk in the boot script:
 ```bash
 cd /root/OSX-KVM && bash sak-boot-a2cloud.sh > /root/qemu.log 2>&1 &
 # drive recovery -> Terminal with sak-vm.sh / sak-click.sh (see the H2 session notes):
-#   diskutil list                      # find the A2 disk (diskN)
-#   /sbin/fsck_apfs -n /dev/diskN      # Apple fsck_apfs = the cert oracle
-#   diskutil apfs unlockVolume / mount # kernel mount (read the inserted file, RW touch)
+# diskutil list                      # find the A2 disk (diskN)
+# /sbin/fsck_apfs -n /dev/diskN      # Apple fsck_apfs = the cert oracle
+# diskutil apfs unlockVolume / mount # kernel mount (read the inserted file, RW touch)
 ```
 
 For the in-place commit tiers (repeated-overflow etc.), follow the existing A2 pattern:
@@ -175,19 +181,19 @@ scp root@<metal-host>:/root/shot.ppm ./
 
 ## 8. Cost + scope
 
-- Bare metal hourly: roughly **$0.5–2/hr**; a tier session is a few hours → a few dollars.
-- Disk: a small XFS scratch (~100 GB) — you are **not** buying 24 TB of cloud storage.
+- Bare metal hourly: roughly **$0.5-2/hr**; a tier session is a few hours -> a few dollars.
+- Disk: a small XFS scratch (~100 GB) - you are **not** buying 24 TB of cloud storage.
 - This unblocks **A2's paused engine tiers**. It does **not** replace **A8**: the final
   HFS/APFS hardware gate still needs a real physical multi-TB device for destructive +
   crash-interruption + rollback proof. Order the 24 TB drive only for A8.
 
-## Quick reference — sizes
+## Quick reference - sizes
 
 | Tier | Size to format | Notes |
 |------|----------------|-------|
 | multi-CIB (already certified) | up to ~1 TiB | repeated commits OK |
-| metadata-overflow (certified) | ~1.3–3 TiB | single insert-commit certified |
-| 2-block / multi-block spaceman | "full 4 TB" ~3–8.57 TiB | writer fail-closed today |
+| metadata-overflow (certified) | ~1.3-3 TiB | single insert-commit certified |
+| 2-block / multi-block spaceman | "full 4 TB" ~3-8.57 TiB | writer fail-closed today |
 | CAB tier | > 8.57 TiB (e.g. 10 TiB) | writer fail-closed today |
-| repeated-overflow-commit | overflow size, ≥2 commits | boundary-chunk bitmap rotation |
+| repeated-overflow-commit | overflow size, >=2 commits | boundary-chunk bitmap rotation |
 | dstream-xfield harvest | any | read Apple `xf_used_data` 0x08 vs 0x20 |

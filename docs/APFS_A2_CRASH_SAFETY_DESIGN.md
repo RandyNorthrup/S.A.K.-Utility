@@ -1,11 +1,11 @@
-# A2 — In-place commit crash-safety: design + Apple ground truth
+# A2 - In-place commit crash-safety: design + Apple ground truth
 
 The current in-place commit (insert/delete) COWs the file-system chain and
 advances the checkpoint ring, but **overwrites the live chunk-info block (187)
 and allocation bitmap (188) in place**. That breaks crash-safety: a commit
 interrupted after the bitmap write but before the new `nx_superblock` leaves the
 previous checkpoint (xid N-1) referencing blocks the now-modified bitmap marks
-free → `fsck_apfs` flags it. The crash-interruption gate (truncate mid-commit,
+free -> `fsck_apfs` flags it. The crash-interruption gate (truncate mid-commit,
 confirm the previous checkpoint still mounts) cannot pass until the cib/bitmap
 are copy-on-written like everything else.
 
@@ -16,20 +16,20 @@ Apple's apfs.kext never overwrites the cib/bitmap in place. The **internal pool*
 
 | IP block | role across the harvested commits (xid) |
 |----------|-----------------------------------------|
-| 185 | cib: ghost xid1 → reused at **xid7** |
+| 185 | cib: ghost xid1 -> reused at **xid7** |
 | 186 | bitmap for slot 185 |
-| 187 | cib: live xid2 → reused at xid5 |
+| 187 | cib: live xid2 -> reused at xid5 |
 | 188 | bitmap for slot 187 |
 | 189 | cib: first used at xid6 |
 | 190 | bitmap for slot 189 |
 
-The latest spaceman's `sm_dev[MAIN].cib_addr` (offset 2568) moved 187 → 185
+The latest spaceman's `sm_dev[MAIN].cib_addr` (offset 2568) moved 187 -> 185
 across the run. Each commit writes the new cib + bitmap into a **different** IP
 slot than the live one, so the previous checkpoint's cib/bitmap stay intact
 (crash-safe), and points the re-emitted spaceman at the new slot.
 
 Which IP slot is free is tracked by two structures:
-- **`sm_ip_bitmap` ring** — the 16 IP-bitmap blocks 169-184 (`sm_ip_bitmap_base`,
+- **`sm_ip_bitmap` ring** - the 16 IP-bitmap blocks 169-184 (`sm_ip_bitmap_base`,
   `sm_ip_bitmap_block_count`). Each commit consumes one to record that
   checkpoint's IP-region allocation state; the harvest changed blocks 171-175.
 - **Spaceman ring state** (offsets 0x144=2520 region): `sm_ip_bm_tx_multiplier`,
@@ -41,13 +41,13 @@ Which IP slot is free is tracked by two structures:
 ## Confirmed live IP state of a generated container (2026-06-14, step-1 prep)
 
 Parsed the spaceman of a certified generated 64 MiB container (mleaf.img, 22
-in-place commits) host-side — confirms the bug and pins the exact targets:
+in-place commits) host-side - confirms the bug and pins the exact targets:
 
 | spaceman field | offset | value |
 |----------------|--------|-------|
 | blocks_per_chunk | 0x24 | 32768 |
 | dev[MAIN] block_count / chunk_count / cib_count | 0x30/0x38/0x40 | 16384 / 1 / 1 |
-| dev[MAIN] addr_offset (→ cib_addr array) | 0x50 | 2568 |
+| dev[MAIN] addr_offset (-> cib_addr array) | 0x50 | 2568 |
 | flags | 0x90 | 0x1 |
 | sm_ip_bm_tx_multiplier | 0x94 | 16 |
 | sm_ip_block_count | 0x98 | **6** |
@@ -58,16 +58,16 @@ in-place commits) host-side — confirms the bug and pins the exact targets:
 | cib_addr[0] | 2568 | **187** |
 | ring xid | 2520 | 2 |
 | ring free-head | 2528 | **1** |
-| ring array (u16[16]) | 2536 | [FFFF, FFFF, 3,4,…,15, 0] |
+| ring array (u16[16]) | 2536 | [FFFF, FFFF, 3,4,...,15, 0] |
 
 So the generated 64 MiB container's IP region is **6 blocks = 3 cib/bitmap
 slots**: slot0 (185,186), slot1 (187,188), slot2 (189,190); the live slot is
 **slot1** (cib 187, bitmap 188). **The bug, confirmed empirically:** after 22
-commits `cib_addr` is still 187 and the ring free-head is still 1 — the writer
+commits `cib_addr` is still 187 and the ring free-head is still 1 - the writer
 rewrites slot1 in place every commit (Apple round-robins the slots and advances
-the ring). The implementation cycles cib/bitmap slot1→slot2→slot0→slot1… , moves
+the ring). The implementation cycles cib/bitmap slot1->slot2->slot0->slot1... , moves
 `cib_addr@2568` to the new slot's cib, advances the `sm_ip_bitmap` ring
-(free-head @2528, ring array @2536, xid @2520) over blocks 169–184, and re-emits
+(free-head @2528, ring array @2536, xid @2520) over blocks 169-184, and re-emits
 the spaceman with the new cib_addr + ring (not a verbatim copy). Parse any
 generated container's live spaceman the same way (highest-xid object of type
 0x80000005).
@@ -79,10 +79,10 @@ Parsed the cib/bitmap/ipbm bytes of the generated 64 MiB container:
   free_count 16181, bitmap_addr 188}. Overwritten in place each commit (xid 17).
 - **bitmap 188**: raw bit array, 203 bits set (203 allocated blocks in chunk 0).
 - **IP region 185-190**: 185 cib (xid 1, ghost), 186 ghost bitmap, 187 cib (xid
-  17, live), 188 live bitmap, **189 + 190 are ZEROED — the spare slot S.A.K.
+  17, live), 188 live bitmap, **189 + 190 are ZEROED - the spare slot S.A.K.
   never uses (the bug)**.
-- **ipbm ring**: block 169 = 0x03 (bits 0,1 → IP blocks 185,186 in use = the
-  ghost checkpoint's IP state), block 170 = 0x0f (bits 0-3 → 185,186,187,188 =
+- **ipbm ring**: block 169 = 0x03 (bits 0,1 -> IP blocks 185,186 in use = the
+  ghost checkpoint's IP state), block 170 = 0x0f (bits 0-3 -> 185,186,187,188 =
   the live checkpoint's IP state); 171-184 zero. So each ipbm block is a bitmap
   of the 6-block IP region for one checkpoint; the ring advances one block/commit.
 
@@ -90,8 +90,8 @@ Parsed the cib/bitmap/ipbm bytes of the generated 64 MiB container:
 go into the slot that is neither live nor ghost (the oldest, currently the spare
 189/190). After a commit at xid N: new live = the written slot, new ghost = the
 prior live slot, the prior ghost slot becomes reusable. Sequence of live cib:
-187 → 189 → 185 → 187 …  Each commit also: (a) updates `cib_addr@2568` to the new
-cib; (b) writes a fresh ipbm block (171, 172, …) holding the new IP state bitmap
+187 -> 189 -> 185 -> 187 ...  Each commit also: (a) updates `cib_addr@2568` to the new
+cib; (b) writes a fresh ipbm block (171, 172, ...) holding the new IP state bitmap
 (the bits for the new-live + new-ghost slots), and advances the ring free-head
 @2528 / ring array @2536 / xid @2520; (c) re-emits the spaceman carrying the new
 cib_addr + ring state. The old (now-ghost-aged-out) cib/bitmap blocks are only
@@ -111,7 +111,7 @@ returned to the chunk bitmap once their referencing checkpoint leaves the ring
 4. **Advance the `sm_ip_bitmap` ring**: consume the next IP-bitmap block (169-184)
    for this checkpoint, update the free-head/next chain and the ring xid, and
    record the IP-region allocation in it.
-5. **Re-emit the spaceman** with `cib_addr` → the new cib slot and the advanced
+5. **Re-emit the spaceman** with `cib_addr` -> the new cib slot and the advanced
    ring state (instead of copying it verbatim as the current engine does).
 6. **Free-queue (deferred reclamation)**: COW-freed fs blocks must not be reused
    until their xid ages out of the 4-checkpoint ring. Enqueue them in the
@@ -230,4 +230,4 @@ kernel's free-count cross-check balances. fsck_apfs is now fully clean.
 This is the single most intricate APFS subsystem (spaceman IP ring + free-queue +
 reaper) and, like A1, needs many VM `fsck_apfs` iterations. It is a focused
 multi-cycle effort and should be built fresh, not bolted on at the tail of a long
-session — a subtle spaceman bug corrupts the allocator silently.
+session - a subtle spaceman bug corrupts the allocator silently.

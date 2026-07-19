@@ -1,4 +1,4 @@
-# APFS A2 — repeated metadata-overflow in-place commit (cascade 5+) design
+# APFS A2 - repeated metadata-overflow in-place commit (cascade 5+) design
 
 Status: **DONE + Apple-certified 2026-06-18 (unified-group rotation), overflow AND CAB tiers.**
 A 2 TiB overflow container took 4 chained in-place commits (xid 2->6); the macOS kernel
@@ -33,7 +33,7 @@ This is the next A2 gap: **repeated** in-place commits on a metadata-overflow co
 On the overflow tier chunk 0 is fully reserved, so a commit allocates from the boundary
 chunk (`metadataChunks - 1`). The boundary chunk's allocation bitmap is copied-on-write to a
 **fixed** internal-pool block (`firstFreeIpBlock`). A second commit would re-COW that same
-block — but it is the live bitmap the previous checkpoint still references — corrupting the
+block - but it is the live bitmap the previous checkpoint still references - corrupting the
 allocator once the macOS kernel reclaims it. (apfsck does not model kernel continuation, so
 only `fsck_apfs` after a real kernel mount catches this; cert is VM-mandatory.)
 

@@ -263,22 +263,22 @@ Target layout:
 
 ```text
 +--------------------------------------------------------------------------------+
-| Tab strip: [Home] [C:\] [APFS Disk2 P2] [+]                                      |
+| Tab strip: [Home] [C:\] [APFS Disk2 P2] [+] |
 +--------------------------------------------------------------------------------+
-| Command bar: New | Cut | Copy | Paste | Rename | Delete | Sort | View | ...      |
+| Command bar: New | Cut | Copy | Paste | Rename | Delete | Sort | View | ... |
 +--------------------------------------------------------------------------------+
 | Back Forward Up | Omnibar breadcrumbs / editable path / search / command button |
 +--------------------------------------------------------------------------------+
-| Sidebar       | Main pane                                  | Preview/Details    |
-|               |                                            |                    |
-| Home          | Details/List/Grid/Cards/Columns             | metadata, preview  |
-| Favorites     |                                            | blockers, hashes   |
-| This PC       |                                            |                    |
-| Disks         | Optional dual pane splitter                 |                    |
-| Raw Images    |                                            |                    |
-| Recent        |                                            |                    |
+| Sidebar | Main pane | Preview/Details |
+| | | |
+| Home | Details/List/Grid/Cards/Columns | metadata, preview |
+| Favorites | | blockers, hashes |
+| This PC | | |
+| Disks | Optional dual pane splitter | |
+| Raw Images | | |
+| Recent | | |
 +--------------------------------------------------------------------------------+
-| Status bar: target, file system, selected count, size, write safety, warnings   |
+| Status bar: target, file system, selected count, size, write safety, warnings |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -1567,9 +1567,9 @@ Use this loop for each milestone:
 M0
  |
 M1 ----+
- |     |
-M2     |
- |     |
+ | |
+M2 |
+ | |
 M3 <---+
  |
 M4

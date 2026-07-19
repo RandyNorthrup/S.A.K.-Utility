@@ -9,8 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.9-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-133%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.2.0-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-142%20passing-brightgreen.svg)](tests/)
 
 Migration - Maintenance - Recovery - Imaging - Deployment - one portable toolkit.
 
@@ -22,7 +22,7 @@ Migration - Maintenance - Recovery - Imaging - Deployment - one portable toolkit
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.9** - AI Assistant production hardening release with exact context-window usage, workflow-selection role preview, task-specific technician roles, first-prompt role inference, chat title/rename/resume continuity, result-bubble copy, Enter-to-send, background-agent telemetry, live OpenAI smoke coverage, and the hardware-certified Partition Manager scope from v0.9.1.8.
+**Latest: v0.9.2.0** - Full driver-level APFS + HFS+/HFSX write, Apple-certified end to end (milestones A1-A8, H1-H8): crash-safe in-place COW mutation, snapshots, multi-volume, compression, FileVault encryption, clones/sparse/hard-links, arbitrary-depth HFS+ B-trees, journal replay, and physical-USB destructive + crash gates, all proven by Apple's own fsck validators and macOS kernel mounts, wired into the Partition Manager production route.
 
 ---
 

@@ -2,31 +2,31 @@
 
 **Version**: 1.0  
 **Date**: February 25, 2026  
-**Status**: ✅ Complete  
+**Status**: [x] Complete  
 **Completed in**: v0.8.5
 
 ---
 
-## 🎯 Executive Summary
+## Executive Summary
 
-The Network Diagnostics & Troubleshooting Panel provides enterprise-grade network analysis and troubleshooting capabilities directly within S.A.K. Utility. It enables technicians to rapidly diagnose connectivity issues, measure LAN/WAN performance, map network topology, inspect DNS/DHCP configuration, scan for open ports, analyze WiFi environments, and audit firewall rules — all without installing separate tools. This panel eliminates the need to carry a separate toolkit of command-line utilities by integrating them into a unified, visual interface.
+The Network Diagnostics & Troubleshooting Panel provides enterprise-grade network analysis and troubleshooting capabilities directly within S.A.K. Utility. It enables technicians to rapidly diagnose connectivity issues, measure LAN/WAN performance, map network topology, inspect DNS/DHCP configuration, scan for open ports, analyze WiFi environments, and audit firewall rules - all without installing separate tools. This panel eliminates the need to carry a separate toolkit of command-line utilities by integrating them into a unified, visual interface.
 
 ### Key Objectives
-- ✅ **Network Adapter Inspector** - Full adapter enumeration with IP config, MAC, link speed, driver info
-- ✅ **Connectivity Testing** - Visual ping, traceroute, and MTR-style combined diagnostics
-- ✅ **DNS Diagnostics** - Forward/reverse lookup, DNS server testing, record type queries, cache inspection
-- ✅ **Port Scanner** - TCP connect scanning with service fingerprinting for LAN/WAN targets
-- ✅ **LAN Bandwidth Testing** - iPerf3-based throughput measurement between SAK instances via bundled `iperf3.exe`
-- ✅ **Internet Speed Test** - HTTP-based download/upload speed measurement using public endpoints
-- ✅ **WiFi Analyzer** - SSID discovery, signal strength, channel utilization, security assessment
-- ✅ **Active Connections Monitor** - Real-time view of TCP/UDP connections with process mapping
-- ✅ **Firewall Rule Auditor** - Windows Firewall rule enumeration with conflict/gap analysis
-- ✅ **Network Share Browser** - Discover and test access to SMB shares on the local network
-- ✅ **Report Generation** - Professional HTML/JSON diagnostic reports
+- [x] **Network Adapter Inspector** - Full adapter enumeration with IP config, MAC, link speed, driver info
+- [x] **Connectivity Testing** - Visual ping, traceroute, and MTR-style combined diagnostics
+- [x] **DNS Diagnostics** - Forward/reverse lookup, DNS server testing, record type queries, cache inspection
+- [x] **Port Scanner** - TCP connect scanning with service fingerprinting for LAN/WAN targets
+- [x] **LAN Bandwidth Testing** - iPerf3-based throughput measurement between SAK instances via bundled `iperf3.exe`
+- [x] **Internet Speed Test** - HTTP-based download/upload speed measurement using public endpoints
+- [x] **WiFi Analyzer** - SSID discovery, signal strength, channel utilization, security assessment
+- [x] **Active Connections Monitor** - Real-time view of TCP/UDP connections with process mapping
+- [x] **Firewall Rule Auditor** - Windows Firewall rule enumeration with conflict/gap analysis
+- [x] **Network Share Browser** - Discover and test access to SMB shares on the local network
+- [x] **Report Generation** - Professional HTML/JSON diagnostic reports
 
 ---
 
-## 📊 Project Scope
+## Project Scope
 
 ### What is Network Diagnostics & Troubleshooting?
 
@@ -51,21 +51,21 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 ---
 
-## 🎯 Use Cases
+## Use Cases
 
 ### 1. **"Internet Not Working" Troubleshooting**
 **Scenario**: Customer reports "I can't access the internet." Technician needs to pinpoint the failure.
 
 **Workflow**:
 1. Open Network Diagnostics Panel
-2. **Adapter Inspector**: Ethernet shows "Connected" with IP 169.254.x.x (APIPA) → DHCP failure
-3. **Connectivity Test**: Ping gateway fails → no L3 connectivity
-4. **DNS Test**: DNS resolution fails → expected since no IP
-5. **Diagnosis**: DHCP server unreachable. Check cable → check DHCP server → check switch port
-6. After fixing: Re-run tests → all pass → generate report for ticket
+2. **Adapter Inspector**: Ethernet shows "Connected" with IP 169.254.x.x (APIPA) -> DHCP failure
+3. **Connectivity Test**: Ping gateway fails -> no L3 connectivity
+4. **DNS Test**: DNS resolution fails -> expected since no IP
+5. **Diagnosis**: DHCP server unreachable. Check cable -> check DHCP server -> check switch port
+6. After fixing: Re-run tests -> all pass -> generate report for ticket
 
 **Benefits**:
-- Systematic layer-by-layer diagnosis (L1 → L2 → L3 → DNS → Application)
+- Systematic layer-by-layer diagnosis (L1 -> L2 -> L3 -> DNS -> Application)
 - Visual indicators immediately show where the chain breaks
 - No command-line knowledge required
 
@@ -76,9 +76,9 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 **Workflow**:
 1. Open Network Diagnostics Panel
-2. **Adapter Inspector**: Shows link speed = 100 Mbps (should be 1000) → bad cable or autoneg issue
+2. **Adapter Inspector**: Shows link speed = 100 Mbps (should be 1000) -> bad cable or autoneg issue
 3. After fixing cable: Link speed = 1000 Mbps
-4. **LAN Bandwidth Test**: Run iPerf3 between workstation and NAS (SAK on both) → measures 920 Mbps throughput
+4. **LAN Bandwidth Test**: Run iPerf3 between workstation and NAS (SAK on both) -> measures 920 Mbps throughput
 5. **Confirmed**: Problem was cable/link negotiation, now resolved
 6. Generate performance report
 
@@ -94,9 +94,9 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 **Workflow**:
 1. Walk through office with laptop running SAK Utility
-2. Open Network Diagnostics → WiFi Analyzer
+2. Open Network Diagnostics -> WiFi Analyzer
 3. At each location, record: SSID, signal strength (dBm), channel, noise
-4. WiFi Analyzer shows channel utilization — channels 1, 6, 11 heat map
+4. WiFi Analyzer shows channel utilization - channels 1, 6, 11 heat map
 5. Identifies: 3 neighboring networks on channel 6 causing interference
 6. Recommendation: New AP on channel 1 in east wing
 
@@ -112,8 +112,8 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 **Workflow**:
 1. Open Network Diagnostics Panel
-2. **Port Scanner**: Scan api.example.com port 443 → "Filtered" (firewall blocking)
-3. **Firewall Rule Auditor**: Search rules for port 443 → find explicit Block rule for the application
+2. **Port Scanner**: Scan api.example.com port 443 -> "Filtered" (firewall blocking)
+3. **Firewall Rule Auditor**: Search rules for port 443 -> find explicit Block rule for the application
 4. **Active Connections**: App shows "SYN_SENT" (connection attempt timing out)
 5. **Fix**: Create allow rule for the app
 6. **Verify**: Port scan now shows "Open", app connects successfully
@@ -130,9 +130,9 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 **Workflow**:
 1. Open Network Diagnostics Panel
-2. **DNS Diagnostics**: Query failing domain against configured DNS (ISP's DNS) → NXDOMAIN
-3. **DNS Diagnostics**: Query same domain against 8.8.8.8 (Google DNS) → resolves correctly
-4. **DNS Diagnostics**: Query against 1.1.1.1 (Cloudflare DNS) → resolves correctly
+2. **DNS Diagnostics**: Query failing domain against configured DNS (ISP's DNS) -> NXDOMAIN
+3. **DNS Diagnostics**: Query same domain against 8.8.8.8 (Google DNS) -> resolves correctly
+4. **DNS Diagnostics**: Query against 1.1.1.1 (Cloudflare DNS) -> resolves correctly
 5. **Diagnosis**: ISP DNS server is failing for some domains
 6. **Fix**: Change DNS to 8.8.8.8 / 1.1.1.1
 7. **Verify**: All domains now resolve. Generate report.
@@ -153,9 +153,9 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 3. **Connectivity Test**: Ping domain controller, file server, internet gateway, DNS
 4. **DNS Diagnostics**: Verify AD DNS resolution (SRV records for _ldap._tcp)
 5. **Port Scanner**: Verify ports 445 (SMB), 389 (LDAP), 3389 (RDP), 80/443 (web) accessible
-6. **LAN Bandwidth Test**: Measure throughput to file server → confirm Gigabit performance
+6. **LAN Bandwidth Test**: Measure throughput to file server -> confirm Gigabit performance
 7. **Network Share Browser**: Verify access to deployment and user shares
-8. Generate "Network Readiness Report" → attach to deployment plan
+8. Generate "Network Readiness Report" -> attach to deployment plan
 
 **Benefits**:
 - Comprehensive pre-deployment checklist
@@ -164,99 +164,99 @@ The Network Diagnostics & Troubleshooting Panel provides enterprise-grade networ
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### Component Hierarchy
 
 ```
 NetworkDiagnosticPanel (QWidget)
-├─ NetworkDiagnosticController (QObject)
-│  ├─ State: Idle / Scanning / Testing / Monitoring
-│  ├─ Manages: All diagnostic workers
-│  └─ Aggregates: Results for report generation
-│
-├─ NetworkAdapterInspector (QObject) [Worker Thread]
-│  ├─ GetAdaptersAddresses API → Full adapter enumeration
-│  ├─ Adapter: Name, Description, MAC, Type (Ethernet/WiFi/VPN)
-│  ├─ IPv4/IPv6 addresses, subnet, gateway, DNS servers
-│  ├─ Link speed, media state
-│  ├─ Driver: name, version, date
-│  └─ Output: QVector<NetworkAdapterInfo>
-│
-├─ ConnectivityTester (QObject) [Worker Thread]
-│  ├─ Ping (ICMP Echo) via IcmpSendEcho2
-│  ├─ Traceroute via ICMP TTL expiration
-│  ├─ MTR mode (continuous traceroute with statistics)
-│  ├─ Configurable: target, count, interval, timeout, packet size
-│  └─ Output: PingResult, TracerouteResult
-│
-├─ DnsDiagnosticTool (QObject) [Worker Thread]
-│  ├─ Forward lookup (hostname → IP)
-│  ├─ Reverse lookup (IP → hostname)
-│  ├─ Record type queries (A, AAAA, MX, CNAME, TXT, SOA, SRV, NS, PTR)
-│  ├─ Multi-server comparison (test same query against multiple DNS servers)
-│  ├─ DNS cache inspection (ipconfig /displaydns parsing)
-│  ├─ Response time measurement per server
-│  └─ Output: DnsQueryResult
-│
-├─ PortScanner (QObject) [Worker Thread]
-│  ├─ TCP Connect scan (reliable, no raw sockets needed)
-│  ├─ Common port presets (Web, Email, Database, Infrastructure, Custom)
-│  ├─ Port range scanning (1-65535)
-│  ├─ Service fingerprinting (banner grabbing)
-│  ├─ Configurable: timeout, concurrent connections, retry
-│  └─ Output: QVector<PortScanResult>
-│
-├─ BandwidthTester (QObject) [Worker Thread]
-│  ├─ LAN: iPerf3 client/server via bundled iperf3.exe
-│  ├─ WAN: HTTP download speed test (configurable endpoint)
-│  ├─ Bidirectional throughput (upload + download)
-│  ├─ Duration-based testing (default 10 seconds)
-│  ├─ Real-time throughput graph
-│  └─ Output: BandwidthTestResult
-│
-├─ WiFiAnalyzer (QObject) [Worker Thread]
-│  ├─ Native WiFi API (wlanapi.dll) → SSID scan
-│  ├─ Signal strength (dBm + quality %)
-│  ├─ Channel and frequency (2.4 GHz / 5 GHz / 6 GHz)
-│  ├─ Security: Open / WPA2 / WPA3 / WEP
-│  ├─ Channel utilization analysis
-│  ├─ BSS type (Infrastructure / Ad-Hoc)
-│  └─ Output: QVector<WiFiNetworkInfo>
-│
-├─ ActiveConnectionsMonitor (QObject) [Worker Thread, Polling]
-│  ├─ GetExtendedTcpTable → TCP connections with process ID
-│  ├─ GetExtendedUdpTable → UDP listeners with process ID
-│  ├─ Process name resolution via OpenProcess + GetModuleFileName
-│  ├─ State tracking: LISTEN, ESTABLISHED, TIME_WAIT, SYN_SENT, etc.
-│  ├─ Real-time refresh (configurable interval)
-│  └─ Output: QVector<ConnectionInfo>
-│
-├─ FirewallRuleAuditor (QObject) [Worker Thread]
-│  ├─ INetFwPolicy2 COM interface → enumerate all rules
-│  ├─ Rule: Name, Direction, Action, Protocol, Port, Program, Profile
-│  ├─ Conflict detection (overlapping allow/block rules)
-│  ├─ Gap analysis (commonly needed ports not explicitly allowed)
-│  ├─ Search/filter by port, program, direction
-│  └─ Output: QVector<FirewallRule>, QVector<FirewallConflict>
-│
-├─ NetworkShareBrowser (QObject) [Worker Thread]
-│  ├─ NetShareEnum API → enumerate shares on target host
-│  ├─ WNetEnumResource → discover network resources
-│  ├─ Access testing (can current user read/write)
-│  ├─ Permission display
-│  └─ Output: QVector<NetworkShareInfo>
-│
-└─ NetworkDiagnosticReportGenerator (QObject)
-   ├─ Aggregates all diagnostic results
-   ├─ Pass/Fail indicators per test
-   ├─ Generates: HTML (printable), JSON (machine-readable)
-   └─ Recommendations engine
++- NetworkDiagnosticController (QObject)
+|  +- State: Idle / Scanning / Testing / Monitoring
+|  +- Manages: All diagnostic workers
+|  +- Aggregates: Results for report generation
+|
++- NetworkAdapterInspector (QObject) [Worker Thread]
+|  +- GetAdaptersAddresses API -> Full adapter enumeration
+|  +- Adapter: Name, Description, MAC, Type (Ethernet/WiFi/VPN)
+|  +- IPv4/IPv6 addresses, subnet, gateway, DNS servers
+|  +- Link speed, media state
+|  +- Driver: name, version, date
+|  +- Output: QVector<NetworkAdapterInfo>
+|
++- ConnectivityTester (QObject) [Worker Thread]
+|  +- Ping (ICMP Echo) via IcmpSendEcho2
+|  +- Traceroute via ICMP TTL expiration
+|  +- MTR mode (continuous traceroute with statistics)
+|  +- Configurable: target, count, interval, timeout, packet size
+|  +- Output: PingResult, TracerouteResult
+|
++- DnsDiagnosticTool (QObject) [Worker Thread]
+|  +- Forward lookup (hostname -> IP)
+|  +- Reverse lookup (IP -> hostname)
+|  +- Record type queries (A, AAAA, MX, CNAME, TXT, SOA, SRV, NS, PTR)
+|  +- Multi-server comparison (test same query against multiple DNS servers)
+|  +- DNS cache inspection (ipconfig /displaydns parsing)
+|  +- Response time measurement per server
+|  +- Output: DnsQueryResult
+|
++- PortScanner (QObject) [Worker Thread]
+|  +- TCP Connect scan (reliable, no raw sockets needed)
+|  +- Common port presets (Web, Email, Database, Infrastructure, Custom)
+|  +- Port range scanning (1-65535)
+|  +- Service fingerprinting (banner grabbing)
+|  +- Configurable: timeout, concurrent connections, retry
+|  +- Output: QVector<PortScanResult>
+|
++- BandwidthTester (QObject) [Worker Thread]
+|  +- LAN: iPerf3 client/server via bundled iperf3.exe
+|  +- WAN: HTTP download speed test (configurable endpoint)
+|  +- Bidirectional throughput (upload + download)
+|  +- Duration-based testing (default 10 seconds)
+|  +- Real-time throughput graph
+|  +- Output: BandwidthTestResult
+|
++- WiFiAnalyzer (QObject) [Worker Thread]
+|  +- Native WiFi API (wlanapi.dll) -> SSID scan
+|  +- Signal strength (dBm + quality %)
+|  +- Channel and frequency (2.4 GHz / 5 GHz / 6 GHz)
+|  +- Security: Open / WPA2 / WPA3 / WEP
+|  +- Channel utilization analysis
+|  +- BSS type (Infrastructure / Ad-Hoc)
+|  +- Output: QVector<WiFiNetworkInfo>
+|
++- ActiveConnectionsMonitor (QObject) [Worker Thread, Polling]
+|  +- GetExtendedTcpTable -> TCP connections with process ID
+|  +- GetExtendedUdpTable -> UDP listeners with process ID
+|  +- Process name resolution via OpenProcess + GetModuleFileName
+|  +- State tracking: LISTEN, ESTABLISHED, TIME_WAIT, SYN_SENT, etc.
+|  +- Real-time refresh (configurable interval)
+|  +- Output: QVector<ConnectionInfo>
+|
++- FirewallRuleAuditor (QObject) [Worker Thread]
+|  +- INetFwPolicy2 COM interface -> enumerate all rules
+|  +- Rule: Name, Direction, Action, Protocol, Port, Program, Profile
+|  +- Conflict detection (overlapping allow/block rules)
+|  +- Gap analysis (commonly needed ports not explicitly allowed)
+|  +- Search/filter by port, program, direction
+|  +- Output: QVector<FirewallRule>, QVector<FirewallConflict>
+|
++- NetworkShareBrowser (QObject) [Worker Thread]
+|  +- NetShareEnum API -> enumerate shares on target host
+|  +- WNetEnumResource -> discover network resources
+|  +- Access testing (can current user read/write)
+|  +- Permission display
+|  +- Output: QVector<NetworkShareInfo>
+|
++- NetworkDiagnosticReportGenerator (QObject)
+   +- Aggregates all diagnostic results
+   +- Pass/Fail indicators per test
+   +- Generates: HTML (printable), JSON (machine-readable)
+   +- Recommendations engine
 ```
 
 ---
 
-## 🛠️ Technical Specifications
+## Technical Specifications
 
 ### Network Adapter Inspector
 
@@ -858,25 +858,25 @@ PortScanResult PortScanner::scanPort(const QString& target, uint16_t port,
 
 ### Bandwidth Tester (iPerf3)
 
-**Purpose**: Measure LAN/WAN throughput using iPerf3 — the industry-standard bandwidth testing tool.
+**Purpose**: Measure LAN/WAN throughput using iPerf3 - the industry-standard bandwidth testing tool.
 
 **Why iPerf3?**
-- **Open source** (BSD 3-Clause) — freely redistributable
-- **Industry standard** — used by network engineers worldwide
-- **JSON output** — `--json` flag provides structured data
-- **Bidirectional** — test both directions simultaneously
-- **TCP and UDP modes** — measure throughput and jitter
-- **Portable** — single executable, no installation required
-- **Cross-platform** — works on Windows, Linux, macOS (SAK instances can be on any platform)
+- **Open source** (BSD 3-Clause) - freely redistributable
+- **Industry standard** - used by network engineers worldwide
+- **JSON output** - `--json` flag provides structured data
+- **Bidirectional** - test both directions simultaneously
+- **TCP and UDP modes** - measure throughput and jitter
+- **Portable** - single executable, no installation required
+- **Cross-platform** - works on Windows, Linux, macOS (SAK instances can be on any platform)
 
 **Bundle Strategy**:
 ```
 tools/
-└─ iperf3/
-   ├─ iperf3.exe             # iPerf3 client/server (~2 MB)
-   ├─ cygwin1.dll            # Cygwin runtime (required on Windows)
-   ├─ LICENSE                # BSD 3-Clause
-   └─ README.txt             # Version and attribution
++- iperf3/
+   +- iperf3.exe             # iPerf3 client/server (~2 MB)
+   +- cygwin1.dll            # Cygwin runtime (required on Windows)
+   +- LICENSE                # BSD 3-Clause
+   +- README.txt             # Version and attribution
 ```
 
 **Data Structures**:
@@ -1590,316 +1590,316 @@ private:
 
 ---
 
-## 🎨 User Interface Design
+## User Interface Design
 
 ### Network Diagnostics Panel Layout (Sub-Tab Design)
 
 The panel uses an internal tab bar for each diagnostic tool, keeping the interface clean.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Network Diagnostics & Troubleshooting Panel                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────── 🔌 NETWORK ADAPTERS ────────────────────────┐  │
-│  │                                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Adapter        | Type     | Status    | IP          | Speed│ │
-│  │  │────────────────────────────────────────────────────────│ │  │
-│  │  │ Ethernet       | Wired    | 🟢 Up    | 10.0.1.42   | 1 Gbps│ │
-│  │  │ Wi-Fi          | Wireless | 🟢 Up    | 10.0.1.105  | 866 Mbps│ │
-│  │  │ VPN Client     | VPN      | ⚫ Down  | —           | —     │ │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  Selected: Ethernet                                          │  │
-│  │  MAC: 00:1A:2B:3C:4D:5E  |  DHCP: Yes  |  Gateway: 10.0.1.1│  │
-│  │  DNS: 10.0.1.1, 8.8.8.8  |  Subnet: 255.255.255.0           │  │
-│  │  Driver: Intel I225-V (v12.19.1.37)                          │  │
-│  │                                                               │  │
-│  │  [🔄 Refresh]  [📋 Copy Config]                               │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-│  ┌─ 📡 DIAGNOSTIC TOOLS ─────────────────────────────────────────┐ │
-│  │ [Ping] [Traceroute] [MTR] [DNS] [Port Scan] [Bandwidth]      │ │
-│  │ [WiFi] [Connections] [Firewall] [Shares]                      │ │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-│  (Tool-specific content appears below based on selected tab)        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------------+
+| Network Diagnostics & Troubleshooting Panel |
++---------------------------------------------------------------------+
+| |
+|  +----------------  NETWORK ADAPTERS ------------------------+ |
+| | | |
+| |  +---------------------------------------------------------+ | |
+| | | Adapter | Type | Status | IP | Speed| |
+| | |--------------------------------------------------------| | |
+| | | Ethernet | Wired |  Up | 10.0.1.42 | 1 Gbps| |
+| | | Wi-Fi | Wireless |  Up | 10.0.1.105 | 866 Mbps| |
+| | | VPN Client | VPN |  Down | - | - | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  Selected: Ethernet | |
+| |  MAC: 00:1A:2B:3C:4D:5E |  DHCP: Yes |  Gateway: 10.0.1.1| |
+| |  DNS: 10.0.1.1, 8.8.8.8 |  Subnet: 255.255.255.0 | |
+| |  Driver: Intel I225-V (v12.19.1.37) | |
+| | | |
+| |  [ Refresh]  [ Copy Config] | |
+| | | |
+|  +---------------------------------------------------------------+ |
+| |
+|  +-  DIAGNOSTIC TOOLS -----------------------------------------+ |
+| | [Ping] [Traceroute] [MTR] [DNS] [Port Scan] [Bandwidth] | |
+| | [WiFi] [Connections] [Firewall] [Shares] | |
+|  +---------------------------------------------------------------+ |
+| |
+|  (Tool-specific content appears below based on selected tab) |
+| |
++---------------------------------------------------------------------+
 ```
 
 ### Ping Tool
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 📡 PING ────────────────────────────────────┐  │
-│  │                                                               │  │
-│  │  Target: [google.com_______________]  Count: [10]  ▼         │  │
-│  │  Interval: [1000] ms   Timeout: [4000] ms                   │  │
-│  │  Packet Size: [32] bytes   TTL: [128]                        │  │
-│  │                                                               │  │
-│  │  [▶️ Start Ping]  [⏹️ Stop]                                   │  │
-│  │                                                               │  │
-│  │  Results:                                                    │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ #   | Reply From      | Time    | TTL | Status          │ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ 1   | 142.250.80.46   | 12.4 ms | 118 | 🟢 Reply       │ │  │
-│  │  │ 2   | 142.250.80.46   | 11.8 ms | 118 | 🟢 Reply       │ │  │
-│  │  │ 3   | 142.250.80.46   | 13.1 ms | 118 | 🟢 Reply       │ │  │
-│  │  │ 4   | —               | —       | —   | 🔴 Timeout      │ │  │
-│  │  │ 5   | 142.250.80.46   | 12.0 ms | 118 | 🟢 Reply       │ │  │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  Statistics:                                                 │  │
-│  │  Sent: 5  |  Received: 4  |  Lost: 1 (20%)                 │  │
-│  │  RTT: min=11.8ms  avg=12.3ms  max=13.1ms  jitter=0.5ms     │  │
-│  │                                                               │  │
-│  │  [RTT graph/chart showing latency over time]                 │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  PING ------------------------------------+ |
+| | | |
+| |  Target: [google.com_______________]  Count: [10] | |
+| |  Interval: [1000] ms   Timeout: [4000] ms | |
+| |  Packet Size: [32] bytes   TTL: [128] | |
+| | | |
+| |  [ Start Ping]  [ Stop] | |
+| | | |
+| |  Results: | |
+| |  +---------------------------------------------------------+ | |
+| | | # | Reply From | Time | TTL | Status | | |
+| | |-------------------------------------------------------- | | |
+| | | 1 | 142.250.80.46 | 12.4 ms | 118 |  Reply | | |
+| | | 2 | 142.250.80.46 | 11.8 ms | 118 |  Reply | | |
+| | | 3 | 142.250.80.46 | 13.1 ms | 118 |  Reply | | |
+| | | 4 | - | - | - |  Timeout | | |
+| | | 5 | 142.250.80.46 | 12.0 ms | 118 |  Reply | | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  Statistics: | |
+| |  Sent: 5 |  Received: 4 |  Lost: 1 (20%) | |
+| |  RTT: min=11.8ms  avg=12.3ms  max=13.1ms  jitter=0.5ms | |
+| | | |
+| |  [RTT graph/chart showing latency over time] | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Traceroute Tool
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 🗺️ TRACEROUTE ──────────────────────────────┐  │
-│  │                                                               │  │
-│  │  Target: [google.com_______________]  Max Hops: [30]         │  │
-│  │                                                               │  │
-│  │  [▶️ Trace Route]  [⏹️ Stop]                                  │  │
-│  │                                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Hop | IP Address      | Hostname           | RTT 1-3   │ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │  1  | 10.0.1.1        | gateway.local      | 1ms 1ms 1ms│ │  │
-│  │  │  2  | 203.0.113.1     | isp-gw.example.com | 5ms 4ms 5ms│ │  │
-│  │  │  3  | 198.51.100.12   | core-rtr.isp.net   | 8ms 7ms 9ms│ │  │
-│  │  │  4  | * * *           | (timed out)        | — — —      │ │  │
-│  │  │  5  | 72.14.238.168   | google-peer.net    | 11ms 10ms 12ms│ │
-│  │  │  6  | 142.250.80.46   | lax17s55-in-f14    | 12ms 12ms 11ms│ │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  ✅ Target reached in 6 hops                                  │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  TRACEROUTE ------------------------------+ |
+| | | |
+| |  Target: [google.com_______________]  Max Hops: [30] | |
+| | | |
+| |  [ Trace Route]  [ Stop] | |
+| | | |
+| |  +---------------------------------------------------------+ | |
+| | | Hop | IP Address | Hostname | RTT 1-3 | | |
+| | |-------------------------------------------------------- | | |
+| | |  1 | 10.0.1.1 | gateway.local | 1ms 1ms 1ms| | |
+| | |  2 | 203.0.113.1 | isp-gw.example.com | 5ms 4ms 5ms| | |
+| | |  3 | 198.51.100.12 | core-rtr.isp.net | 8ms 7ms 9ms| | |
+| | |  4 | * * * | (timed out) | - - - | | |
+| | |  5 | 72.14.238.168 | google-peer.net | 11ms 10ms 12ms| |
+| | |  6 | 142.250.80.46 | lax17s55-in-f14 | 12ms 12ms 11ms| |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  [x] Target reached in 6 hops | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### DNS Diagnostic Tool
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 🌐 DNS DIAGNOSTICS ─────────────────────────┐  │
-│  │                                                               │  │
-│  │  Hostname: [example.com____________]                         │  │
-│  │  Record Type: [A] ▼  (A, AAAA, MX, CNAME, TXT, SOA, NS, SRV)│  │
-│  │  DNS Server:  [System Default] ▼                             │  │
-│  │                                                               │  │
-│  │  [🔍 Query]  [🔄 Compare All Servers]  [🗑️ Flush DNS Cache]  │  │
-│  │                                                               │  │
-│  │  Query Result:                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Server           | Response   | Time    | Status        │ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ System Default   | 93.184.216.34 | 15ms | 🟢 OK        │ │  │
-│  │  │ Google (8.8.8.8) | 93.184.216.34 | 22ms | 🟢 OK        │ │  │
-│  │  │ Cloudflare (1.1.1.1)| 93.184.216.34 | 8ms | 🟢 OK     │ │  │
-│  │  │ Quad9 (9.9.9.9)  | 93.184.216.34 | 18ms | 🟢 OK        │ │  │
-│  │  │ OpenDNS           | 93.184.216.34 | 25ms | 🟢 OK        │ │  │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  ✅ All servers agree: 93.184.216.34                          │  │
-│  │  ⚡ Fastest: Cloudflare (1.1.1.1) at 8ms                     │  │
-│  │  TTL: 300 seconds                                            │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  DNS DIAGNOSTICS -------------------------+ |
+| | | |
+| |  Hostname: [example.com____________] | |
+| |  Record Type: [A]   (A, AAAA, MX, CNAME, TXT, SOA, NS, SRV)| |
+| |  DNS Server:  [System Default] | |
+| | | |
+| |  [ Query]  [ Compare All Servers]  [ Flush DNS Cache] | |
+| | | |
+| |  Query Result: | |
+| |  +---------------------------------------------------------+ | |
+| | | Server | Response | Time | Status | | |
+| | |-------------------------------------------------------- | | |
+| | | System Default | 93.184.216.34 | 15ms |  OK | | |
+| | | Google (8.8.8.8) | 93.184.216.34 | 22ms |  OK | | |
+| | | Cloudflare (1.1.1.1)| 93.184.216.34 | 8ms |  OK | | |
+| | | Quad9 (9.9.9.9) | 93.184.216.34 | 18ms |  OK | | |
+| | | OpenDNS | 93.184.216.34 | 25ms |  OK | | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  [x] All servers agree: 93.184.216.34 | |
+| |   Fastest: Cloudflare (1.1.1.1) at 8ms | |
+| |  TTL: 300 seconds | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Port Scanner
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 🔓 PORT SCANNER ────────────────────────────┐  │
-│  │                                                               │  │
-│  │  Target: [192.168.1.100____________]                         │  │
-│  │  Preset: [Common Services] ▼  or Custom: [1-1024___]        │  │
-│  │  Timeout: [3000] ms  Concurrent: [50]  ☑ Banner Grab        │  │
-│  │                                                               │  │
-│  │  [🔍 Scan Ports]  [⏹️ Stop]                                   │  │
-│  │                                                               │  │
-│  │  Progress: ████████████████░░░░  80% (800/1000 ports)       │  │
-│  │                                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Port  | State    | Service | Response | Banner          │ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ 22    | 🟢 Open  | SSH     | 2.1 ms   | OpenSSH_8.9    │ │  │
-│  │  │ 80    | 🟢 Open  | HTTP    | 1.5 ms   | nginx/1.24     │ │  │
-│  │  │ 443   | 🟢 Open  | HTTPS   | 1.8 ms   | —              │ │  │
-│  │  │ 445   | 🔴 Closed| SMB     | 0.5 ms   | —              │ │  │
-│  │  │ 3389  | 🟡 Filtered| RDP   | timeout  | —              │ │  │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  Summary: 3 open, 997 closed, 0 filtered                    │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  PORT SCANNER ----------------------------+ |
+| | | |
+| |  Target: [192.168.1.100____________] | |
+| |  Preset: [Common Services]   or Custom: [1-1024___] | |
+| |  Timeout: [3000] ms  Concurrent: [50]   Banner Grab | |
+| | | |
+| |  [ Scan Ports]  [ Stop] | |
+| | | |
+| |  Progress: ################....  80% (800/1000 ports) | |
+| | | |
+| |  +---------------------------------------------------------+ | |
+| | | Port | State | Service | Response | Banner | | |
+| | |-------------------------------------------------------- | | |
+| | | 22 |  Open | SSH | 2.1 ms | OpenSSH_8.9 | | |
+| | | 80 |  Open | HTTP | 1.5 ms | nginx/1.24 | | |
+| | | 443 |  Open | HTTPS | 1.8 ms | - | | |
+| | | 445 |  Closed| SMB | 0.5 ms | - | | |
+| | | 3389 |  Filtered| RDP | timeout | - | | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  Summary: 3 open, 997 closed, 0 filtered | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Bandwidth Test (iPerf3)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── ⚡ BANDWIDTH TEST ──────────────────────────┐  │
-│  │                                                               │  │
-│  │  ┌─ LAN Bandwidth (iPerf3) ─────────────────────────────┐   │  │
-│  │  │                                                       │   │  │
-│  │  │  Mode: [● Client  ○ Server]                          │   │  │
-│  │  │                                                       │   │  │
-│  │  │  Server IP: [192.168.1.50________]  Port: [5201]     │   │  │
-│  │  │  Duration: [10] sec  Streams: [1]  ☑ Bidirectional   │   │  │
-│  │  │                                                       │   │  │
-│  │  │  [▶️ Run Test]  [⏹️ Stop]                              │   │  │
-│  │  │                                                       │   │  │
-│  │  │  Results:                                             │   │  │
-│  │  │  Download: 941.2 Mbps  ████████████████████ 94%       │   │  │
-│  │  │  Upload:   938.7 Mbps  ████████████████████ 94%       │   │  │
-│  │  │  Retransmits: 3  |  Jitter: 0.12ms                   │   │  │
-│  │  │                                                       │   │  │
-│  │  │  [Throughput graph over test duration]                 │   │  │
-│  │  │                                                       │   │  │
-│  │  └───────────────────────────────────────────────────────┘   │  │
-│  │                                                               │  │
-│  │  ┌─ Internet Speed ──────────────────────────────────────┐   │  │
-│  │  │                                                       │   │  │
-│  │  │  [▶️ Run Internet Speed Test]                          │   │  │
-│  │  │                                                       │   │  │
-│  │  │  Download: 245.3 Mbps  |  Upload: 35.1 Mbps          │   │  │
-│  │  │  Latency: 12ms                                        │   │  │
-│  │  │                                                       │   │  │
-│  │  └───────────────────────────────────────────────────────┘   │  │
-│  │                                                               │  │
-│  │  Server Mode:                                                │  │
-│  │  Status: ⚫ Not Running                                      │  │
-│  │  [▶️ Start iPerf3 Server]  (for other SAK instances to test)  │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  BANDWIDTH TEST --------------------------+ |
+| | | |
+| |  +- LAN Bandwidth (iPerf3) -----------------------------+ | |
+| | | | | |
+| | |  Mode: [ Client   Server] | | |
+| | | | | |
+| | |  Server IP: [192.168.1.50________]  Port: [5201] | | |
+| | |  Duration: [10] sec  Streams: [1]   Bidirectional | | |
+| | | | | |
+| | |  [ Run Test]  [ Stop] | | |
+| | | | | |
+| | |  Results: | | |
+| | |  Download: 941.2 Mbps  #################### 94% | | |
+| | |  Upload:   938.7 Mbps  #################### 94% | | |
+| | |  Retransmits: 3 |  Jitter: 0.12ms | | |
+| | | | | |
+| | |  [Throughput graph over test duration] | | |
+| | | | | |
+| |  +-------------------------------------------------------+ | |
+| | | |
+| |  +- Internet Speed --------------------------------------+ | |
+| | | | | |
+| | |  [ Run Internet Speed Test] | | |
+| | | | | |
+| | |  Download: 245.3 Mbps |  Upload: 35.1 Mbps | | |
+| | |  Latency: 12ms | | |
+| | | | | |
+| |  +-------------------------------------------------------+ | |
+| | | |
+| |  Server Mode: | |
+| |  Status:  Not Running | |
+| |  [ Start iPerf3 Server]  (for other SAK instances to test) | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### WiFi Analyzer
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 📶 WIFI ANALYZER ───────────────────────────┐  │
-│  │                                                               │  │
-│  │  [🔄 Scan Now]  [▶️ Continuous Scan (5s)]  [⏹️ Stop]          │  │
-│  │                                                               │  │
-│  │  Discovered Networks: 12                                     │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ SSID           | Signal | Ch | Band   | Security | Vendor│ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ CorpWiFi ★     | -42dBm | 36 | 5 GHz  | WPA3     | Ubiq.│ │  │
-│  │  │ CorpWiFi-Guest | -48dBm | 6  | 2.4GHz | WPA2     | Ubiq.│ │  │
-│  │  │ Neighbor-5G    | -65dBm | 40 | 5 GHz  | WPA2     | TP-L.│ │  │
-│  │  │ HomeNet        | -72dBm | 1  | 2.4GHz | WPA2     | Netg.│ │  │
-│  │  │ (hidden)       | -78dBm | 11 | 2.4GHz | WPA2     | Cisco│ │  │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  ★ = Currently connected                                    │  │
-│  │                                                               │  │
-│  │  Channel Utilization (2.4 GHz):                              │  │
-│  │  Ch 1:  ██░░░░░░░░  1 network  (-72 dBm avg)               │  │
-│  │  Ch 6:  ████░░░░░░  2 networks (-55 dBm avg) ⚠️ Busy        │  │
-│  │  Ch 11: ██░░░░░░░░  1 network  (-78 dBm avg)               │  │
-│  │                                                               │  │
-│  │  Channel Utilization (5 GHz):                                │  │
-│  │  Ch 36: ██░░░░░░░░  1 network  (-42 dBm avg) ✅ Clean       │  │
-│  │  Ch 40: ██░░░░░░░░  1 network  (-65 dBm avg) ✅ Clean       │  │
-│  │                                                               │  │
-│  │  ⚠️ Security Alert: 0 networks using WEP (insecure)         │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  WIFI ANALYZER ---------------------------+ |
+| | | |
+| |  [ Scan Now]  [ Continuous Scan (5s)]  [ Stop] | |
+| | | |
+| |  Discovered Networks: 12 | |
+| |  +---------------------------------------------------------+ | |
+| | | SSID | Signal | Ch | Band | Security | Vendor| | |
+| | |-------------------------------------------------------- | | |
+| | | CorpWiFi | -42dBm | 36 | 5 GHz | WPA3 | Ubiq.| | |
+| | | CorpWiFi-Guest | -48dBm | 6 | 2.4GHz | WPA2 | Ubiq.| | |
+| | | Neighbor-5G | -65dBm | 40 | 5 GHz | WPA2 | TP-L.| | |
+| | | HomeNet | -72dBm | 1 | 2.4GHz | WPA2 | Netg.| | |
+| | | (hidden) | -78dBm | 11 | 2.4GHz | WPA2 | Cisco| | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |   = Currently connected | |
+| | | |
+| |  Channel Utilization (2.4 GHz): | |
+| |  Ch 1:  ##........  1 network  (-72 dBm avg) | |
+| |  Ch 6:  ####......  2 networks (-55 dBm avg) WARNING Busy | |
+| |  Ch 11: ##........  1 network  (-78 dBm avg) | |
+| | | |
+| |  Channel Utilization (5 GHz): | |
+| |  Ch 36: ##........  1 network  (-42 dBm avg) [x] Clean | |
+| |  Ch 40: ##........  1 network  (-65 dBm avg) [x] Clean | |
+| | | |
+| |  WARNING Security Alert: 0 networks using WEP (insecure) | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Active Connections Monitor
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 🔗 ACTIVE CONNECTIONS ──────────────────────┐  │
-│  │                                                               │  │
-│  │  Filter: ☑ TCP ☑ UDP  Process: [__________]  Port: [____]   │  │
-│  │  Refresh: [2s] ▼  ☑ Auto-refresh                            │  │
-│  │                                                               │  │
-│  │  Connections: 47 (35 ESTABLISHED, 8 LISTEN, 4 TIME_WAIT)    │  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Process     | Proto | Local          | Remote         | State│ │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ chrome.exe  | TCP   | 10.0.1.42:52341| 142.250.80.46:443| ESTAB│ │
-│  │  │ chrome.exe  | TCP   | 10.0.1.42:52342| 185.70.41.35:443| ESTAB│ │
-│  │  │ svchost.exe | TCP   | 0.0.0.0:135    | 0.0.0.0:0      | LISTEN│ │
-│  │  │ Teams.exe   | UDP   | 10.0.1.42:50000| —              | —     │ │
-│  │  │ sak_utility | TCP   | 10.0.1.42:5201 | 0.0.0.0:0      | LISTEN│ │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  ACTIVE CONNECTIONS ----------------------+ |
+| | | |
+| |  Filter:  TCP  UDP  Process: [__________]  Port: [____] | |
+| |  Refresh: [2s]    Auto-refresh | |
+| | | |
+| |  Connections: 47 (35 ESTABLISHED, 8 LISTEN, 4 TIME_WAIT) | |
+| |  +---------------------------------------------------------+ | |
+| | | Process | Proto | Local | Remote | State| |
+| | |-------------------------------------------------------- | | |
+| | | chrome.exe | TCP | 10.0.1.42:52341| 142.250.80.46:443| ESTAB| |
+| | | chrome.exe | TCP | 10.0.1.42:52342| 185.70.41.35:443| ESTAB| |
+| | | svchost.exe | TCP | 0.0.0.0:135 | 0.0.0.0:0 | LISTEN| |
+| | | Teams.exe | UDP | 10.0.1.42:50000| - | - | |
+| | | sak_utility | TCP | 10.0.1.42:5201 | 0.0.0.0:0 | LISTEN| |
+| |  +---------------------------------------------------------+ | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Firewall Rule Auditor
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 🛡️ FIREWALL AUDITOR ────────────────────────┐  │
-│  │                                                               │  │
-│  │  [🔍 Audit Firewall]                                         │  │
-│  │                                                               │  │
-│  │  Search: [_______________]  Filter: [Inbound ▼] [All ▼]     │  │
-│  │                                                               │  │
-│  │  Rules: 312 (198 Allow, 114 Block)  |  Conflicts: 2  |  Gaps: 3│  │
-│  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │ Name                | Dir  | Action | Proto | Ports      │ │  │
-│  │  │──────────────────────────────────────────────────────── │ │  │
-│  │  │ Allow HTTP          | In   | Allow  | TCP   | 80         │ │  │
-│  │  │ Allow HTTPS         | In   | Allow  | TCP   | 443        │ │  │
-│  │  │ Block All Inbound   | In   | Block  | Any   | *          │ │  │
-│  │  │ Allow RDP           | In   | Allow  | TCP   | 3389       │ │  │
-│  │  └─────────────────────────────────────────────────────────┘ │  │
-│  │                                                               │  │
-│  │  ⚠️ Conflicts Detected:                                      │  │
-│  │  • "Allow HTTP" (port 80) conflicts with "Block All Inbound" │  │
-│  │  • "Allow RDP" is enabled on Public profile (security risk)  │  │
-│  │                                                               │  │
-│  │  📋 Gaps Detected:                                            │  │
-│  │  • No explicit rule for DNS (port 53 outbound)               │  │
-│  │  • ICMP (ping) blocked on all profiles                       │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  FIREWALL AUDITOR ------------------------+ |
+| | | |
+| |  [ Audit Firewall] | |
+| | | |
+| |  Search: [_______________]  Filter: [Inbound ] [All ] | |
+| | | |
+| |  Rules: 312 (198 Allow, 114 Block) |  Conflicts: 2 |  Gaps: 3| |
+| |  +---------------------------------------------------------+ | |
+| | | Name | Dir | Action | Proto | Ports | | |
+| | |-------------------------------------------------------- | | |
+| | | Allow HTTP | In | Allow | TCP | 80 | | |
+| | | Allow HTTPS | In | Allow | TCP | 443 | | |
+| | | Block All Inbound | In | Block | Any | * | | |
+| | | Allow RDP | In | Allow | TCP | 3389 | | |
+| |  +---------------------------------------------------------+ | |
+| | | |
+| |  WARNING Conflicts Detected: | |
+| |  - "Allow HTTP" (port 80) conflicts with "Block All Inbound" | |
+| |  - "Allow RDP" is enabled on Public profile (security risk) | |
+| | | |
+| |   Gaps Detected: | |
+| |  - No explicit rule for DNS (port 53 outbound) | |
+| |  - ICMP (ping) blocked on all profiles | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ### Report Generation
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────── 📄 NETWORK DIAGNOSTIC REPORT ───────────────┐  │
-│  │                                                               │  │
-│  │  Technician: [________________]  Ticket #: [___________]    │  │
-│  │  Notes:      [________________________________]             │  │
-│  │                                                               │  │
-│  │  Include in Report:                                          │  │
-│  │  ☑ Adapter Configuration    ☑ Ping Results                  │  │
-│  │  ☑ Traceroute Results       ☑ DNS Query Results             │  │
-│  │  ☑ Port Scan Results        ☑ Bandwidth Test Results        │  │
-│  │  ☑ WiFi Analysis            ☑ Firewall Audit                │  │
-│  │  ☐ Active Connections       ☐ Network Shares                │  │
-│  │                                                               │  │
-│  │  [📄 Generate HTML Report]  [📊 Export JSON]                  │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
++---------------------------------------------------------------------+
+|  +----------------  NETWORK DIAGNOSTIC REPORT ---------------+ |
+| | | |
+| |  Technician: [________________]  Ticket #: [___________] | |
+| |  Notes:      [________________________________] | |
+| | | |
+| |  Include in Report: | |
+| |   Adapter Configuration     Ping Results | |
+| |   Traceroute Results        DNS Query Results | |
+| |   Port Scan Results         Bandwidth Test Results | |
+| |   WiFi Analysis             Firewall Audit | |
+| |   Active Connections        Network Shares | |
+| | | |
+| |  [ Generate HTML Report]  [ Export JSON] | |
+| | | |
+|  +---------------------------------------------------------------+ |
 ```
 
 ---
 
-## 📂 File Structure
+## File Structure
 
 ### New Files to Create
 
@@ -1948,28 +1948,28 @@ scripts/bundle_iperf3.ps1              # Download + verify iperf3.exe
 
 ```
 tools/iperf3/
-├─ iperf3.exe                          # iPerf3 client/server (~2 MB)
-├─ cygwin1.dll                         # Cygwin runtime (required, ~3.4 MB)
-├─ LICENSE                             # BSD 3-Clause
-└─ README.txt                          # Version and attribution
++- iperf3.exe                          # iPerf3 client/server (~2 MB)
++- cygwin1.dll                         # Cygwin runtime (required, ~3.4 MB)
++- LICENSE                             # BSD 3-Clause
++- README.txt                          # Version and attribution
 
 resources/network/
-├─ oui_database.txt                    # MAC address vendor lookup (IEEE OUI)
-├─ report_template.html               # HTML report template
-└─ icons/
-   ├─ network_diagnostic.svg
-   ├─ ping.svg
-   ├─ traceroute.svg
-   ├─ dns.svg
-   ├─ port_scan.svg
-   ├─ bandwidth.svg
-   ├─ wifi.svg
-   └─ firewall.svg
++- oui_database.txt                    # MAC address vendor lookup (IEEE OUI)
++- report_template.html               # HTML report template
++- icons/
+   +- network_diagnostic.svg
+   +- ping.svg
+   +- traceroute.svg
+   +- dns.svg
+   +- port_scan.svg
+   +- bandwidth.svg
+   +- wifi.svg
+   +- firewall.svg
 ```
 
 ---
 
-## 🔧 Third-Party Dependencies
+## Third-Party Dependencies
 
 ### iPerf3 (iperf3.exe)
 
@@ -1981,10 +1981,10 @@ resources/network/
 | **Source** | https://github.com/esnet/iperf |
 | **Download** | https://github.com/ar51an/iperf3-win-builds/releases (Windows builds) |
 | **Size** | ~2 MB (iperf3.exe) + ~3.4 MB (cygwin1.dll) |
-| **Redistributable** | ✅ Yes (BSD 3-Clause — very permissive) |
+| **Redistributable** | [x] Yes (BSD 3-Clause - very permissive) |
 | **Purpose** | LAN/WAN bandwidth measurement (TCP/UDP throughput, jitter, packet loss) |
 | **Why this tool** | Industry standard, JSON output, client/server bidirectional, portable |
-| **Alternative considered** | Custom TCP speed test — rejected due to complexity and lack of standards compliance |
+| **Alternative considered** | Custom TCP speed test - rejected due to complexity and lack of standards compliance |
 
 **Bundle Script** (`scripts/bundle_iperf3.ps1`):
 ```powershell
@@ -2114,7 +2114,7 @@ All other network diagnostic capabilities use Windows built-in APIs:
 
 ---
 
-## 🔧 Implementation Phases
+## Implementation Phases
 
 ### Phase 1: Network Adapter Inspector (Week 1-2)
 
@@ -2133,10 +2133,10 @@ All other network diagnostic capabilities use Windows built-in APIs:
 8. Write unit tests with mock adapter data
 
 **Acceptance Criteria**:
-- ✅ All adapter types enumerated (Ethernet, WiFi, VPN, Loopback)
-- ✅ Complete IP configuration displayed
-- ✅ Link speed and media state accurate
-- ✅ Handles multiple adapters, multiple IPs per adapter, IPv6
+- [x] All adapter types enumerated (Ethernet, WiFi, VPN, Loopback)
+- [x] Complete IP configuration displayed
+- [x] Link speed and media state accurate
+- [x] Handles multiple adapters, multiple IPs per adapter, IPv6
 
 ---
 
@@ -2158,11 +2158,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 8. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ Ping works for hostnames and IP addresses
-- ✅ Real-time RTT graph updates per reply
-- ✅ Traceroute reaches target with correct hop count
-- ✅ MTR mode runs continuously with updating statistics
-- ✅ Cancellation responsive
+- [x] Ping works for hostnames and IP addresses
+- [x] Real-time RTT graph updates per reply
+- [x] Traceroute reaches target with correct hop count
+- [x] MTR mode runs continuously with updating statistics
+- [x] Cancellation responsive
 
 ---
 
@@ -2185,11 +2185,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 9. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ All record types query correctly
-- ✅ Custom DNS server override works
-- ✅ Multi-server comparison shows agreement/disagreement
-- ✅ Response times measured accurately
-- ✅ Cache display and flush work
+- [x] All record types query correctly
+- [x] Custom DNS server override works
+- [x] Multi-server comparison shows agreement/disagreement
+- [x] Response times measured accurately
+- [x] Cache display and flush work
 
 ---
 
@@ -2212,11 +2212,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 9. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ Accurately identifies Open/Closed/Filtered states
-- ✅ Concurrent scanning completes 1000 ports in < 30 seconds
-- ✅ Banner grabbing retrieves service versions
-- ✅ Presets cover common use cases
-- ✅ No false positives/negatives
+- [x] Accurately identifies Open/Closed/Filtered states
+- [x] Concurrent scanning completes 1000 ports in < 30 seconds
+- [x] Banner grabbing retrieves service versions
+- [x] Presets cover common use cases
+- [x] No false positives/negatives
 
 ---
 
@@ -2241,12 +2241,12 @@ All other network diagnostic capabilities use Windows built-in APIs:
 11. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ iPerf3 bundled and verified
-- ✅ Server mode starts/stops cleanly
-- ✅ Client mode measures throughput accurately
-- ✅ JSON output parsed correctly
-- ✅ Real-time graph updates smoothly
-- ✅ HTTP speed test provides reasonable internet speed estimate
+- [x] iPerf3 bundled and verified
+- [x] Server mode starts/stops cleanly
+- [x] Client mode measures throughput accurately
+- [x] JSON output parsed correctly
+- [x] Real-time graph updates smoothly
+- [x] HTTP speed test provides reasonable internet speed estimate
 
 ---
 
@@ -2270,12 +2270,12 @@ All other network diagnostic capabilities use Windows built-in APIs:
 10. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ All visible WiFi networks discovered
-- ✅ Signal strength accurate (matches other WiFi tools)
-- ✅ Channel utilization correctly calculated
-- ✅ Security types correctly identified
-- ✅ Vendor lookup works for common manufacturers
-- ✅ Handles systems with no WiFi adapter gracefully
+- [x] All visible WiFi networks discovered
+- [x] Signal strength accurate (matches other WiFi tools)
+- [x] Channel utilization correctly calculated
+- [x] Security types correctly identified
+- [x] Vendor lookup works for common manufacturers
+- [x] Handles systems with no WiFi adapter gracefully
 
 ---
 
@@ -2299,11 +2299,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 11. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ All TCP/UDP connections displayed with correct process names
-- ✅ Real-time updates work smoothly
-- ✅ Firewall rules fully enumerated (matches `netsh advfirewall` output)
-- ✅ Conflicts correctly identified
-- ✅ Gap analysis provides useful recommendations
+- [x] All TCP/UDP connections displayed with correct process names
+- [x] Real-time updates work smoothly
+- [x] Firewall rules fully enumerated (matches `netsh advfirewall` output)
+- [x] Conflicts correctly identified
+- [x] Gap analysis provides useful recommendations
 
 ---
 
@@ -2325,11 +2325,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 9. Write unit tests
 
 **Acceptance Criteria**:
-- ✅ Shares discovered on target host
-- ✅ Access permissions correctly tested
-- ✅ HTML report is print-ready and professional
-- ✅ JSON report is valid and complete
-- ✅ Section selection works
+- [x] Shares discovered on target host
+- [x] Access permissions correctly tested
+- [x] HTML report is print-ready and professional
+- [x] JSON report is valid and complete
+- [x] Section selection works
 
 ---
 
@@ -2358,11 +2358,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 16. Add panel to `MainWindow` tab widget
 
 **Acceptance Criteria**:
-- ✅ All sub-tabs functional and responsive
-- ✅ Real-time updates for ping, connections, WiFi
-- ✅ Graphs render correctly
-- ✅ Consistent with existing SAK UI style
-- ✅ Tab switching is instant
+- [x] All sub-tabs functional and responsive
+- [x] Real-time updates for ping, connections, WiFi
+- [x] Graphs render correctly
+- [x] Consistent with existing SAK UI style
+- [x] Tab switching is instant
 
 ---
 
@@ -2387,11 +2387,11 @@ All other network diagnostic capabilities use Windows built-in APIs:
 11. Write user documentation
 
 **Acceptance Criteria**:
-- ✅ Works on diverse network configurations
-- ✅ Graceful handling of missing adapters, no WiFi, restricted networks
-- ✅ Port scanner doesn't crash or hang on unresponsive targets
-- ✅ Connection monitor has minimal CPU overhead (< 1%)
-- ✅ Documentation complete
+- [x] Works on diverse network configurations
+- [x] Graceful handling of missing adapters, no WiFi, restricted networks
+- [x] Port scanner doesn't crash or hang on unresponsive targets
+- [x] Connection monitor has minimal CPU overhead (< 1%)
+- [x] Documentation complete
 
 ---
 
@@ -2399,7 +2399,7 @@ All other network diagnostic capabilities use Windows built-in APIs:
 
 ---
 
-## 📋 CMakeLists.txt Changes
+## CMakeLists.txt Changes
 
 ### New Source Files
 ```cmake
@@ -2467,7 +2467,7 @@ endif()
 
 ---
 
-## 📋 Configuration & Settings
+## Configuration & Settings
 
 ### ConfigManager Extensions
 
@@ -2550,7 +2550,7 @@ netdiag/favorite_targets = ["google.com", "1.1.1.1", "8.8.8.8"]
 
 ---
 
-## 🧪 Testing Strategy
+## Testing Strategy
 
 ### Unit Tests
 
@@ -2636,43 +2636,43 @@ netdiag/favorite_targets = ["google.com", "1.1.1.1", "8.8.8.8"]
 5. **No network** (adapter disabled)
 6. **Restricted network** (corporate firewall blocking ICMP, port scanning)
 7. **Dense WiFi environment** (10+ visible networks)
-8. **Two SAK instances** (iPerf3 server ↔ client test)
+8. **Two SAK instances** (iPerf3 server <-> client test)
 
 ---
 
-## 🚧 Limitations & Challenges
+## Limitations & Challenges
 
 ### Technical Limitations
 
 **Raw Socket Restrictions**:
-- ❌ Windows does not allow raw sockets for non-admin processes
-- ✅ SAK Utility runs as admin (manifest), so ICMP API works
-- ⚠️ Raw SYN scanning not possible without Npcap — using TCP connect scan instead (reliable but detectable)
+- [-] Windows does not allow raw sockets for non-admin processes
+- [x] SAK Utility runs as admin (manifest), so ICMP API works
+- WARNING Raw SYN scanning not possible without Npcap - using TCP connect scan instead (reliable but detectable)
 - **Mitigation**: TCP connect scan is sufficient for diagnostics; recommend Nmap for stealth scanning
 
 **WiFi Scanning**:
-- ⚠️ `WlanScan` may take 1-4 seconds per scan
-- ⚠️ Some drivers don't report all BSSIDs (especially in passive scan mode)
-- ⚠️ 6 GHz (WiFi 6E) scanning requires Windows 11 and compatible drivers
+- WARNING `WlanScan` may take 1-4 seconds per scan
+- WARNING Some drivers don't report all BSSIDs (especially in passive scan mode)
+- WARNING 6 GHz (WiFi 6E) scanning requires Windows 11 and compatible drivers
 - **Mitigation**: Use `WlanGetNetworkBssList` for complete BSS info; note 6 GHz limitations in UI
 
 **Firewall COM Interface**:
-- ⚠️ `INetFwPolicy2` COM interface requires COM initialization per-thread
-- ⚠️ Some third-party firewalls (e.g., Windows Defender Firewall disabled, third-party active) won't show rules
+- WARNING `INetFwPolicy2` COM interface requires COM initialization per-thread
+- WARNING Some third-party firewalls (e.g., Windows Defender Firewall disabled, third-party active) won't show rules
 - **Mitigation**: Detect active firewall product, warn if not Windows Firewall
 
 **iPerf3 Firewall Rules**:
-- ⚠️ iPerf3 server needs inbound port open (default 5201)
-- ⚠️ Windows Firewall will prompt to allow iperf3.exe
+- WARNING iPerf3 server needs inbound port open (default 5201)
+- WARNING Windows Firewall will prompt to allow iperf3.exe
 - **Mitigation**: Auto-create temporary firewall rule when starting server, remove on stop
 
 **Port Scanning Ethics**:
-- ⚠️ Port scanning remote hosts may violate acceptable use policies
+- WARNING Port scanning remote hosts may violate acceptable use policies
 - **Mitigation**: Add warning dialog before scanning non-local targets; default to local subnet scanning
 
 **DNS Server Override**:
-- ⚠️ `DnsQuery_W` with custom server requires `DNS_QUERY_BYPASS_CACHE` flag
-- ⚠️ Some corporate DNS proxies intercept all DNS traffic regardless of target server
+- WARNING `DnsQuery_W` with custom server requires `DNS_QUERY_BYPASS_CACHE` flag
+- WARNING Some corporate DNS proxies intercept all DNS traffic regardless of target server
 - **Mitigation**: Note in results if responses differ unexpectedly; suggest VPN testing
 
 ### Workarounds
@@ -2714,7 +2714,7 @@ void BandwidthTester::removeFirewallRule() {
 
 ---
 
-## 🎯 Success Metrics
+## Success Metrics
 
 | Metric | Target | Importance |
 |--------|--------|------------|
@@ -2733,13 +2733,13 @@ void BandwidthTester::removeFirewallRule() {
 
 ---
 
-## 🔒 Security Considerations
+## Security Considerations
 
 ### Port Scanning Ethics
 - Display warning before scanning non-local targets
 - Log all scan targets for audit trail
 - Default target presets point to localhost / LAN only
-- Do not support stealth scanning (SYN, FIN, Xmas tree) — TCP connect only
+- Do not support stealth scanning (SYN, FIN, Xmas tree) - TCP connect only
 
 ### iPerf3 Server Security
 - Bind server to specific interface (not 0.0.0.0) by default
@@ -2748,17 +2748,17 @@ void BandwidthTester::removeFirewallRule() {
 - Display server IP prominently so technician knows what's exposed
 
 ### Credential Protection
-- Network share browser may trigger Windows auth prompts — SAK does not store credentials
-- DNS cache display may reveal browsing history — warn before displaying
+- Network share browser may trigger Windows auth prompts - SAK does not store credentials
+- DNS cache display may reveal browsing history - warn before displaying
 
 ### Data Sensitivity
-- Active connections reveal all process communications — treat as sensitive
-- Firewall rules reveal security posture — sensitive in enterprise environments
-- Reports may contain IP addresses, MAC addresses — PII considerations
+- Active connections reveal all process communications - treat as sensitive
+- Firewall rules reveal security posture - sensitive in enterprise environments
+- Reports may contain IP addresses, MAC addresses - PII considerations
 
 ---
 
-## 💡 Future Enhancements (Post-v1.0)
+## Future Enhancements (Post-v1.0)
 
 ### v1.1 - Advanced Features
 - **Packet Capture**: Basic packet capture using Npcap (if installed) with protocol analysis
@@ -2779,7 +2779,7 @@ void BandwidthTester::removeFirewallRule() {
 
 ---
 
-## 📚 Resources
+## Resources
 
 ### Official Documentation
 - [IP Helper API](https://learn.microsoft.com/windows/win32/iphlp/ip-helper-start-page)
@@ -2801,7 +2801,7 @@ void BandwidthTester::removeFirewallRule() {
 
 ---
 
-## 📞 Support
+## Support
 
 **Questions?** Open a GitHub Discussion  
 **Found a Bug?** Open a GitHub Issue  
@@ -2812,4 +2812,4 @@ void BandwidthTester::removeFirewallRule() {
 **Document Version**: 1.0  
 **Last Updated**: February 25, 2026  
 **Author**: Randy Northrup  
-**Status**: ✅ Ready for Implementation
+**Status**: [x] Ready for Implementation

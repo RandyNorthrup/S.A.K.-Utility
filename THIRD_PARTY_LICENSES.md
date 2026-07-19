@@ -66,7 +66,7 @@ SOFTWARE.
 ## qrcodegen
 
 **License:** MIT
-**Version:** (bundled — Project Nayuki)
+**Version:** (bundled - Project Nayuki)
 **Website:** https://www.nayuki.io/page/qr-code-generator-library
 **Source:** https://github.com/nayuki/QR-Code-generator
 **Used for:** QR code generation for the WiFi Manager panel
@@ -577,7 +577,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **License:** Icons8 Free License (attribution required)
 **Website:** https://icons8.com/
 **Style:** Windows 11 Filled (Fluent Systems Filled)
-**Used for:** UI icons throughout the application — benchmark, duplicate finder, settings help, source, destination, orchestrator, network card, address book, attachment, calendar, search, opened folder, close window, export, radar, inbox, sent, drafts (edit-file), trash, spam, star, folder, clock
+**Used for:** UI icons throughout the application - benchmark, duplicate finder, settings help, source, destination, orchestrator, network card, address book, attachment, calendar, search, opened folder, close window, export, radar, inbox, sent, drafts (edit-file), trash, spam, star, folder, clock
 
 Free icons from Icons8 are used under their free license which requires
 attribution. Attribution is provided in this file, the README, and the

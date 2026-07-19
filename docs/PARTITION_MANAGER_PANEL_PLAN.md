@@ -224,20 +224,20 @@ Implementation target: add `MainWindow::createPartitionManagerPanel()` after `cr
 ```
 PartitionManagerPanel
 |-- Header toolbar
-|   |-- Scan Disks / Refresh Disks
-|   |-- Pending operation count
+| |-- Scan Disks / Refresh Disks
+| |-- Pending operation count
 |   `-- Apply / Undo / Redo / Discard
 |-- Main splitter
-|   |-- Left operation rail
-|   |   |-- Operations
-|   |   |-- Clone & Image
-|   |   |-- OS Migration
-|   |   |-- Boot Repair
-|   |   |-- SSD
-|   |   `-- Wipe
+| |-- Left operation rail
+| | |-- Operations
+| | |-- Clone & Image
+| | |-- OS Migration
+| | |-- Boot Repair
+| | |-- SSD
+| |   `-- Wipe
 |   `-- Center workspace
-|       |-- Partition table
-|       |-- Disk map list
+| |-- Partition table
+| |-- Disk map list
 |       `-- Legend
 `-- Bottom pending operation queue
 ```
