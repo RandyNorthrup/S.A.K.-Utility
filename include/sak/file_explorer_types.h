@@ -114,6 +114,15 @@ struct FileExplorerLayoutSizes {
                                          const FileExplorerLayoutSizes& rhs) = default;
 };
 
+// Files "Sort folders first / files first / together" placement
+// (SortFoldersFirstAction / SortFilesFirstAction /
+// SortFilesAndFoldersTogetherAction over SortDirectoriesAlongsideFiles).
+enum class FileExplorerFolderSortPlacement {
+    FoldersFirst,
+    FilesFirst,
+    Together,
+};
+
 struct FileExplorerViewSettings {
     FileExplorerViewMode mode{FileExplorerViewMode::Details};
     bool show_hidden{false};
@@ -124,6 +133,7 @@ struct FileExplorerViewSettings {
     FileExplorerGroupOption group_option{FileExplorerGroupOption::None};
     FileExplorerGroupDateUnit group_date_unit{FileExplorerGroupDateUnit::Year};
     Qt::SortOrder group_order{Qt::AscendingOrder};
+    FileExplorerFolderSortPlacement folder_placement{FileExplorerFolderSortPlacement::FoldersFirst};
 };
 
 struct FileExplorerPaneState {

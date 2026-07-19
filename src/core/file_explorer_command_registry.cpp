@@ -30,6 +30,7 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::Home, Group::Navigation},
         {Id::Refresh, Group::Navigation},
         {Id::NewFolder, Group::File},
+        {Id::CreateEmptyFile, Group::File},
         {Id::WriteFile, Group::File},
         {Id::Rename, Group::File},
         {Id::Delete, Group::File},
@@ -537,12 +538,20 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
 }
 
 // Write / destructive commands that mutate the target.
-QVector<FileExplorerCommand> writeCommands() {
+// The Files New flyout create commands (Folder / File / the S.A.K. import).
+QVector<FileExplorerCommand> createItemCommands() {
     return {
         makeCommand(FileExplorerCommandId::NewFolder,
                     QStringLiteral("New Folder"),
                     QStringLiteral("Create a folder in the current location."),
                     QStringLiteral("Ctrl+Shift+N"),
+                    {.write_operation = true}),
+        // Files CreateFileAction ("File" in the New flyout): name prompt,
+        // then an empty file; no default hotkey in Files.
+        makeCommand(FileExplorerCommandId::CreateEmptyFile,
+                    QStringLiteral("File"),
+                    QStringLiteral("Create an empty file in the current location."),
+                    {},
                     {.write_operation = true}),
         // Ctrl+Shift+I mirrors Files AddItemAction (new-item flow); Files
         // reserves Ctrl+Shift+V for paste-into-selection (C3).
@@ -551,6 +560,11 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Import or write a file into the current location."),
                     QStringLiteral("Ctrl+Shift+I"),
                     {.write_operation = true}),
+    };
+}
+
+QVector<FileExplorerCommand> writeCommands() {
+    return {
         makeCommand(FileExplorerCommandId::Paste,
                     QStringLiteral("Paste"),
                     QStringLiteral("Paste copied files into the current folder."),
@@ -751,6 +765,7 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
     QVector<FileExplorerCommand> registry;
     registry.append(openAndNavigationCommands());
     registry.append(clipboardAndSelectionCommands());
+    registry.append(createItemCommands());
     registry.append(writeCommands());
     registry.append(historyCommands());
     registry.append(archiveCommands());
@@ -857,6 +872,7 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::ClearSelection, "clear-selection"},
         {Id::InvertSelection, "invert-selection"},
         {Id::NewFolder, "new-folder"},
+        {Id::CreateEmptyFile, "create-file"},
         {Id::WriteFile, "write-file"},
         {Id::Rename, "rename"},
         {Id::Delete, "delete"},

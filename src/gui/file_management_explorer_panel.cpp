@@ -144,6 +144,9 @@ constexpr const char* kColumnsSizeKey = "ColumnsViewSize";
 constexpr const char* kGroupOptionKey = "GroupOption";
 constexpr const char* kGroupDirectionKey = "GroupDirection";
 constexpr const char* kGroupDateUnitKey = "GroupByDateUnit";
+// Files SortDirectoriesAlongsideFiles / SortFilesFirst pair, folded into one
+// three-state placement.
+constexpr const char* kFolderPlacementKey = "FolderSortPlacement";
 // Files global settings: selection checkboxes (FoldersSettingsService,
 // default true) and the flatten-folder opt-in (GeneralSettingsService,
 // default false; surfaced on the C6 settings page).
@@ -597,6 +600,7 @@ void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
         menu->clear();
         const FileExplorerCommandContext context = commandContext();
         addCommandMenuAction(menu, FileExplorerCommandId::NewFolder, context);
+        addCommandMenuAction(menu, FileExplorerCommandId::CreateEmptyFile, context);
         addCommandMenuAction(menu, FileExplorerCommandId::WriteFile, context);
     });
     connect(m_command_bar->selectionMenu(), &QMenu::aboutToShow, this, [this]() {
@@ -670,6 +674,8 @@ void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu, const bool includ
     connect(descending, &QAction::triggered, this, [this, current_column]() {
         applySortOrder(current_column, Qt::DescendingOrder);
     });
+    menu->addSeparator();
+    addSortPlacementActions(menu);
     // The Files toolbar exposes grouping as its own flyout beside sorting;
     // the S.A.K. command bar reuses the sort flyout for both, while the
     // background context menu adds Group by as a sibling submenu instead.
@@ -788,6 +794,41 @@ void FileManagementExplorerPanel::applySortOrder(const int column, const Qt::Sor
     if (auto* table = m_pane->tableView()) {
         table->horizontalHeader()->setSortIndicator(column, order);
     }
+}
+
+// Files SortFoldersFirst / SortFilesFirst / SortFilesAndFoldersTogether radio
+// group at the bottom of the sort flyout.
+void FileManagementExplorerPanel::addSortPlacementActions(QMenu* menu) {
+    static constexpr std::array kPlacements = {
+        std::pair{FileExplorerFolderSortPlacement::FoldersFirst, QT_TR_NOOP("Sort folders first")},
+        std::pair{FileExplorerFolderSortPlacement::FilesFirst, QT_TR_NOOP("Sort files first")},
+        std::pair{FileExplorerFolderSortPlacement::Together,
+                  QT_TR_NOOP("Sort files and folders together")},
+    };
+    for (const auto& [placement, label] : kPlacements) {
+        QAction* action = menu->addAction(tr(label));
+        action->setCheckable(true);
+        action->setChecked(m_pane_state.view.folder_placement == placement);
+        const FileExplorerFolderSortPlacement value = placement;
+        connect(action, &QAction::triggered, this, [this, value]() {
+            applyFolderSortPlacement(value);
+        });
+    }
+}
+
+void FileManagementExplorerPanel::applyFolderSortPlacement(
+    const FileExplorerFolderSortPlacement placement) {
+    m_pane_state.view.folder_placement = placement;
+    applyViewSettings();
+    // Placement only shows through an active sort; with no sort column yet
+    // the proxy would never re-run lessThan (Files always sorts by name).
+    if (m_pane && m_pane->sortFilterModel()) {
+        const int column = m_pane->sortFilterModel()->sortColumn() < 0
+                               ? FileExplorerItemModel::NameColumn
+                               : m_pane->sortFilterModel()->sortColumn();
+        applySortOrder(column, m_pane->sortFilterModel()->sortOrder());
+    }
+    saveViewSettings();
 }
 
 void FileManagementExplorerPanel::buildStatusRow(QVBoxLayout* root_layout) {
@@ -2189,6 +2230,9 @@ void FileManagementExplorerPanel::applyViewSettings() {
     m_pane->setGrouping(m_pane_state.view.group_option,
                         m_pane_state.view.group_date_unit,
                         m_pane_state.view.group_order);
+    if (auto* proxy = m_pane->sortFilterModel()) {
+        proxy->setFolderSortPlacement(m_pane_state.view.folder_placement);
+    }
     if (m_view_button) {
         FileExplorerCommandId iconCommand = FileExplorerCommandId::ViewDetails;
         switch (m_pane_state.view.mode) {
@@ -2253,6 +2297,10 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
         m_pane_state.view.group_date_unit = static_cast<FileExplorerGroupDateUnit>(
             settings.value(QString::fromLatin1(kGroupDateUnitKey)).toInt());
     }
+    if (settings.contains(QString::fromLatin1(kFolderPlacementKey))) {
+        m_pane_state.view.folder_placement = static_cast<FileExplorerFolderSortPlacement>(
+            settings.value(QString::fromLatin1(kFolderPlacementKey)).toInt());
+    }
     settings.endGroup();
     settings.endGroup();
     applyViewSettings();
@@ -2279,6 +2327,8 @@ void FileManagementExplorerPanel::saveViewSettings() const {
                       static_cast<int>(m_pane_state.view.group_order));
     settings.setValue(QString::fromLatin1(kGroupDateUnitKey),
                       static_cast<int>(m_pane_state.view.group_date_unit));
+    settings.setValue(QString::fromLatin1(kFolderPlacementKey),
+                      static_cast<int>(m_pane_state.view.folder_placement));
     settings.endGroup();
     settings.endGroup();
 }
@@ -4366,6 +4416,9 @@ bool FileManagementExplorerPanel::dispatchWriteCommand(const FileExplorerCommand
     switch (command) {
     case FileExplorerCommandId::NewFolder:
         onNewFolderClicked();
+        return true;
+    case FileExplorerCommandId::CreateEmptyFile:
+        onCreateFileClicked();
         return true;
     case FileExplorerCommandId::WriteFile:
         onWriteFileClicked();
@@ -6476,6 +6529,51 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
     }
 }
 
+void FileManagementExplorerPanel::onCreateFileClicked() {
+    // Files CreateFileAction (New > File): a name prompt, then an empty file
+    // (UIFilesystemHelpers.CreateFileFromDialogResultTypeAsync with
+    // AddItemDialogItemType.File and no template payload).
+    const auto target = currentTarget();
+    if (!target.can_write_files) {
+        sak::showWarningLogged(this, tr("New File"), target.blockers.join(QStringLiteral("\n")));
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("New File"), identity_blocker);
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, tr("New File"), tr("File name:"), QLineEdit::Normal, QStringLiteral("New File"), &ok);
+    if (!ok) {
+        return;
+    }
+    const QString path = targetPathForName(name);
+    if (path.isEmpty()) {
+        sak::showWarningLogged(this,
+                               tr("New File"),
+                               tr("Enter a file name without path separators."));
+        return;
+    }
+    // writeFile would overwrite an existing entry; creating must not.
+    if (destinationOccupied(target, m_current_path, name.trimmed())) {
+        sak::showWarningLogged(this,
+                               tr("New File"),
+                               tr("An item named %1 already exists here.").arg(name.trimmed()));
+        return;
+    }
+    const auto result = FileManagementFileSystemBridge::writeFile(target, path, QByteArray());
+    showMutationResult(tr("New File"), result);
+    if (result.ok) {
+        recordHistory(FileExplorerHistoryOperation::CreateNew,
+                      target,
+                      target,
+                      {FileExplorerHistoryItem{QString(), path, false}});
+        loadDirectory(m_current_path);
+    }
+}
+
 void FileManagementExplorerPanel::onWriteFileClicked() {
     const auto target = currentTarget();
     if (!target.can_write_files) {
@@ -6745,6 +6843,7 @@ void FileManagementExplorerPanel::buildBackgroundContextMenu(
     auto* new_menu = menu->addMenu(tr("New"));
     new_menu->setObjectName(QStringLiteral("fileExplorerContextNewMenu"));
     addCommandMenuAction(new_menu, FileExplorerCommandId::NewFolder, context);
+    addCommandMenuAction(new_menu, FileExplorerCommandId::CreateEmptyFile, context);
     addCommandMenuAction(new_menu, FileExplorerCommandId::WriteFile, context);
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::Paste, context);

@@ -115,11 +115,25 @@ bool FileExplorerSortFilterModel::tagFilterActive() const {
     return m_tag_filter_active;
 }
 
+void FileExplorerSortFilterModel::setFolderSortPlacement(
+    const FileExplorerFolderSortPlacement placement) {
+    if (m_folder_placement == placement) {
+        return;
+    }
+    m_folder_placement = placement;
+    invalidate();
+}
+
 bool FileExplorerSortFilterModel::lessThan(const QModelIndex& source_left,
                                            const QModelIndex& source_right) const {
     const bool left_directory = directoryAt(source_left);
-    if (left_directory != directoryAt(source_right)) {
-        return sortOrder() == Qt::DescendingOrder ? !left_directory : left_directory;
+    if (m_folder_placement != FileExplorerFolderSortPlacement::Together &&
+        left_directory != directoryAt(source_right)) {
+        // Pre-inverted so the placement holds visually under either order.
+        const bool prefer_left = m_folder_placement == FileExplorerFolderSortPlacement::FoldersFirst
+                                     ? left_directory
+                                     : !left_directory;
+        return sortOrder() == Qt::DescendingOrder ? !prefer_left : prefer_left;
     }
     if (const auto by_size = sizeLessThan(source_left, source_right)) {
         return *by_size;

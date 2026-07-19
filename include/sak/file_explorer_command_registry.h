@@ -30,6 +30,8 @@ enum class FileExplorerCommandId {
     ClearSelection,
     InvertSelection,
     NewFolder,
+    // "CreateFile" itself collides with the Win32 CreateFileA/W macro.
+    CreateEmptyFile,
     WriteFile,
     Rename,
     Delete,

@@ -106,6 +106,7 @@ private Q_SLOTS:
     void onOpenSelected();
     void onCopyPathClicked();
     void onNewFolderClicked();
+    void onCreateFileClicked();
     void onWriteFileClicked();
     void onRenameClicked();
     void onDeleteClicked();
@@ -133,6 +134,8 @@ private:
     void addGroupDirectionActions(QMenu* menu);
     void addGroupDateUnitActions(QMenu* menu);
     void applySortOrder(int column, Qt::SortOrder order);
+    void addSortPlacementActions(QMenu* menu);
+    void applyFolderSortPlacement(FileExplorerFolderSortPlacement placement);
     void applyGrouping(FileExplorerGroupOption option,
                        FileExplorerGroupDateUnit date_unit,
                        Qt::SortOrder order);

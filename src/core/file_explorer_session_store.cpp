@@ -32,6 +32,8 @@ void writePane(QSettings& settings, const QString& prefix, const FileExplorerPan
                       static_cast<int>(pane.view.group_order));
     settings.setValue(prefix + QStringLiteral("groupDateUnit"),
                       static_cast<int>(pane.view.group_date_unit));
+    settings.setValue(prefix + QStringLiteral("folderPlacement"),
+                      static_cast<int>(pane.view.folder_placement));
 }
 
 FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
@@ -74,6 +76,11 @@ FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
         settings
             .value(prefix + QStringLiteral("groupDateUnit"),
                    static_cast<int>(FileExplorerGroupDateUnit::Year))
+            .toInt());
+    pane.view.folder_placement = static_cast<FileExplorerFolderSortPlacement>(
+        settings
+            .value(prefix + QStringLiteral("folderPlacement"),
+                   static_cast<int>(FileExplorerFolderSortPlacement::FoldersFirst))
             .toInt());
     return pane;
 }

@@ -131,7 +131,8 @@ QAction* actionStartingWith(QMenu* menu, const QString& prefix) {
 // inside the named submenu (submenus are populated without being shown).
 bool triggerContextSubmenuAction(QWidget* target,
                                  const QString& submenu_object_name,
-                                 const QString& prefix) {
+                                 const QString& prefix,
+                                 const QPoint& at = QPoint()) {
     bool triggered = false;
     QTimer::singleShot(0, [&triggered, &submenu_object_name, &prefix]() {
         auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
@@ -145,7 +146,7 @@ bool triggerContextSubmenuAction(QWidget* target,
         }
         menu->close();
     });
-    const QPoint point = target->rect().center();
+    const QPoint point = at.isNull() ? target->rect().center() : at;
     QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
     QApplication::sendEvent(target, &event);
     QApplication::processEvents();
@@ -1940,6 +1941,92 @@ private Q_SLOTS:
         const auto* card = panel.statusCenterModel()->items().first();
         QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
         QCOMPARE(card->header(), QStringLiteral("Compressed 1 item to \"alpha.txt.zip\""));
+    }
+
+    // The Files sort-flyout placement radios (folders first / files first /
+    // together) reorder the fixture (mmm_folder, aaa.txt, zzz.txt) live.
+    // Takes parameters so QtTest does not run it as a test slot.
+    void verifySortPlacementRadios(sak::FileManagementExplorerPanel& panel, QTableView* table) {
+        const auto rowText = [table](const int row) {
+            return table->model()->index(row, 0).data(Qt::DisplayRole).toString();
+        };
+        // Files default placement: folders before files.
+        QCOMPARE(rowText(0), QStringLiteral("mmm_folder"));
+        auto* sortButton = child<QToolButton>(&panel, "fileExplorerSortButton");
+        QVERIFY(sortButton);
+        QVERIFY(sortButton->menu());
+        // The flyout rebuilds on aboutToShow, so pop it up before reading.
+        const auto sortMenuAction = [sortButton](const QString& prefix) {
+            sortButton->menu()->popup(QPoint(10, 10));
+            QApplication::processEvents();
+            QAction* action = actionStartingWith(sortButton->menu(), prefix);
+            sortButton->menu()->hide();
+            return action;
+        };
+        QAction* files_first = sortMenuAction(QStringLiteral("Sort files first"));
+        QVERIFY(files_first);
+        files_first->trigger();
+        QTRY_COMPARE(rowText(2), QStringLiteral("mmm_folder"));
+        QAction* together = sortMenuAction(QStringLiteral("Sort files and folders together"));
+        QVERIFY(together);
+        together->trigger();
+        QTRY_COMPARE(rowText(1), QStringLiteral("mmm_folder"));
+        QAction* folders_first = sortMenuAction(QStringLiteral("Sort folders first"));
+        QVERIFY(folders_first);
+        folders_first->trigger();
+        QTRY_COMPARE(rowText(0), QStringLiteral("mmm_folder"));
+    }
+
+    void newFileCreatesEmptyAndSortPlacementReorders() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkdir(QStringLiteral("mmm_folder")));
+        const auto writeText = [&root](const QString& name) {
+            QFile file(root.filePath(name));
+            if (!file.open(QIODevice::WriteOnly)) {
+                return false;
+            }
+            return file.write("placement payload") > 0;
+        };
+        QVERIFY(writeText(QStringLiteral("aaa.txt")));
+        QVERIFY(writeText(QStringLiteral("zzz.txt")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("aaa")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+
+        verifySortPlacementRadios(panel, table);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // Files New > File (CreateFileAction): name prompt (auto-accepted
+        // default "New File"), then an empty file lands through the bridge.
+        table->clearSelection();
+        QString input_label;
+        armAutoAcceptInputDialog(&input_label);
+        const QPoint empty_spot(table->viewport()->rect().center().x(),
+                                table->viewport()->rect().bottom() - 4);
+        QVERIFY(triggerContextSubmenuAction(table->viewport(),
+                                            QStringLiteral("fileExplorerContextNewMenu"),
+                                            QStringLiteral("File"),
+                                            empty_spot));
+        const QString created = root.filePath(QStringLiteral("New File"));
+        QTRY_VERIFY(QFileInfo::exists(created));
+        QCOMPARE(QFileInfo(created).size(), qint64(0));
     }
 
     void itemContextMenuFollowsFilesOrder() {
