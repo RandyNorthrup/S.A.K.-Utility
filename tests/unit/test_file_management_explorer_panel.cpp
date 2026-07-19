@@ -48,6 +48,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QShortcut>
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -127,6 +128,29 @@ QAction* actionStartingWith(QMenu* menu, const QString& prefix) {
         }
     }
     return nullptr;
+}
+
+// Opens the context menu and triggers the top-level action starting with
+// @p prefix.
+bool triggerContextMenuActionStartingWith(QWidget* target, const QString& prefix) {
+    bool triggered = false;
+    QTimer::singleShot(0, [&triggered, &prefix]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        if (QAction* action = actionStartingWith(menu, prefix); action && action->isEnabled()) {
+            action->trigger();
+            triggered = true;
+        }
+        menu->close();
+    });
+    const QPoint point = target->rect().center();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
+    QApplication::sendEvent(target, &event);
+    QApplication::processEvents();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    return triggered;
 }
 
 // Opens the item context menu and triggers the action starting with @p prefix
@@ -2037,6 +2061,113 @@ private Q_SLOTS:
         QCOMPARE(after.value(QStringLiteral("FavoriteTargetIds")).toStringList(),
                  (QStringList{QStringLiteral("disk:97:partition:7"),
                               QStringLiteral("disk:98:partition:8")}));
+    }
+
+    void selectionCommandsCopyPathAndHiddenToggleFollowFiles() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const auto writeText = [&root](const QString& name) {
+            QFile file(root.filePath(name));
+            return file.open(QIODevice::WriteOnly) && file.write("selection payload") > 0;
+        };
+        QVERIFY(writeText(QStringLiteral("a_sel.txt")));
+        QVERIFY(writeText(QStringLiteral("b_sel.txt")));
+        QVERIFY(writeText(QStringLiteral(".dot_hidden.txt")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("a_sel")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+
+        // Files ToggleShowHiddenItemsAction (Ctrl+H): the dot file appears
+        // and disappears with the toggle.
+        QCOMPARE(table->model()->rowCount(), 2);
+        panel.activateWindow();
+        table->setFocus();
+        QTest::keyClick(table, Qt::Key_H, Qt::ControlModifier);
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        QTest::keyClick(table, Qt::Key_H, Qt::ControlModifier);
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+
+        // Files SelectAll (Ctrl+A) / InvertSelection (selection flyout) /
+        // ClearSelection (Esc).
+        QTest::keyClick(table, Qt::Key_A, Qt::ControlModifier);
+        QTRY_COMPARE(table->selectionModel()->selectedRows().size(), 2);
+        auto* selectionButton = child<QToolButton>(&panel, "fileExplorerSelectionButton");
+        QVERIFY(selectionButton);
+        QVERIFY(selectionButton->menu());
+        selectionButton->menu()->popup(QPoint(10, 10));
+        QApplication::processEvents();
+        QAction* invert = actionStartingWith(selectionButton->menu(),
+                                             QStringLiteral("Invert Selection"));
+        QVERIFY(invert);
+        invert->trigger();
+        selectionButton->menu()->hide();
+        QTRY_COMPARE(table->selectionModel()->selectedRows().size(), 0);
+        QVERIFY(selectRowStable(table, QStringLiteral("a_sel")));
+        QTest::keyClick(table, Qt::Key_Escape);
+        QTRY_COMPARE(table->selectionModel()->selectedRows().size(), 0);
+
+        // Files CopyItemPathAction (Ctrl+Shift+C) and the quoted variant
+        // (Ctrl+Alt+C).
+        QVERIFY(selectRowStable(table, QStringLiteral("a_sel")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(QApplication::clipboard()->text().contains(QStringLiteral("a_sel.txt")));
+        QVERIFY(!QApplication::clipboard()->text().startsWith(QLatin1Char('"')));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier | Qt::AltModifier);
+        QTRY_VERIFY(QApplication::clipboard()->text().startsWith(QLatin1Char('"')));
+        QVERIFY(QApplication::clipboard()->text().contains(QStringLiteral("a_sel.txt")));
+    }
+
+    void createFolderWithSelectionSwallowsSelection() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile file(root.filePath(QStringLiteral("move_me.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("swallow payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("move_me")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+
+        // Files CreateFolderWithSelectionAction: the prompt (auto-accepted
+        // default "New folder") creates the folder and moves the selection
+        // into it through the same-target kernel.
+        QVERIFY(selectRowStable(table, QStringLiteral("move_me")));
+        QString input_label;
+        armAutoAcceptInputDialog(&input_label);
+        QVERIFY(triggerContextMenuActionStartingWith(
+            table->viewport(), QStringLiteral("Create folder with selection")));
+        const QString moved = root.filePath(QStringLiteral("New folder/move_me.txt"));
+        QTRY_VERIFY2(QFile::exists(moved), "selection was not moved into the new folder");
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("move_me.txt"))));
     }
 
     // The Files sort-flyout placement radios (folders first / files first /

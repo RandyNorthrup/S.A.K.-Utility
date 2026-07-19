@@ -4147,6 +4147,10 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
     action->setStatusTip(action->toolTip());
     if (!state.command.shortcut.trimmed().isEmpty()) {
         action->setShortcut(QKeySequence(state.command.shortcut));
+        // Display-only hint: the panel's own QShortcut handles the key.
+        // Leaving this at WindowShortcut makes the binding ambiguous with
+        // that QShortcut and Qt then fires neither (seen on Ctrl+H).
+        action->setShortcutContext(Qt::WidgetShortcut);
     }
     connect(action, &QAction::triggered, this, [this, command]() { executeCommand(command); });
     return action;
