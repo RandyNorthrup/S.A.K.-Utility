@@ -58,7 +58,10 @@ class QTimer;
 namespace sak {
 
 class AdvancedSearchWorker;
+class FileExplorerArchiveWorker;
 class FileExplorerStatusCenterFlyout;
+struct FileExplorerArchiveExtractItem;
+struct FileExplorerArchiveRequest;
 
 class FileManagementExplorerPanel : public QWidget {
     Q_OBJECT
@@ -468,27 +471,18 @@ private:
     };
     [[nodiscard]] QString selectionArchiveBaseName() const;
     void compressSelectionToZip();
-    QStringList compressSourcePaths(const FileManagementTarget& target,
-                                    const QTemporaryDir& staging,
-                                    QStringList* blockers);
     void extractSelection(ExtractMode mode);
-    bool extractOneArchive(ExtractMode mode,
-                           const FileManagementEntry& entry,
-                           const QString& staging_dir,
-                           QStringList* blockers);
-    bool extractArchiveViaDialog(const FileManagementTarget& target,
-                                 const FileManagementEntry& entry,
-                                 const QString& host_zip,
-                                 QStringList* blockers);
-    [[nodiscard]] static bool extractionNeedsWrapFolder(ExtractMode mode, const QString& host_zip);
-    QString stageEntryToHost(const FileManagementTarget& target,
-                             const FileManagementEntry& entry,
-                             const QString& staging_dir,
-                             QStringList* blockers);
-    bool deliverExtractedTree(const FileManagementTarget& target,
-                              const QString& host_out_dir,
-                              const QString& wrap_name,
-                              QStringList* blockers);
+    [[nodiscard]] QList<FileExplorerArchiveExtractItem> extractArchiveItems(
+        ExtractMode mode, const FileManagementTarget& target);
+    /// Card skeleton shared by the in-progress and terminal archive cards
+    /// (the zip codec reports no progress, so both are indeterminate).
+    [[nodiscard]] FileExplorerStatusCardRequest archiveCardRequest(
+        const FileExplorerArchiveRequest& request, FileExplorerReturnResult result) const;
+    void startArchiveWorker(const FileExplorerArchiveRequest& request,
+                            const QString& failure_title);
+    void finishArchiveWorker(FileExplorerArchiveWorker* worker,
+                             FileExplorerStatusCenterItem* card,
+                             const QString& failure_title);
     void addArchiveSubmenus(QMenu* menu, const FileExplorerCommandContext& context);
     void applyCommandState(QPushButton* button,
                            FileExplorerCommandId command,

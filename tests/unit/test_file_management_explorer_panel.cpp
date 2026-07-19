@@ -127,6 +127,32 @@ QAction* actionStartingWith(QMenu* menu, const QString& prefix) {
     return nullptr;
 }
 
+// Opens the item context menu and triggers the action starting with @p prefix
+// inside the named submenu (submenus are populated without being shown).
+bool triggerContextSubmenuAction(QWidget* target,
+                                 const QString& submenu_object_name,
+                                 const QString& prefix) {
+    bool triggered = false;
+    QTimer::singleShot(0, [&triggered, &submenu_object_name, &prefix]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        auto* submenu = menu->findChild<QMenu*>(submenu_object_name);
+        if (QAction* action = actionStartingWith(submenu, prefix); action && action->isEnabled()) {
+            action->trigger();
+            triggered = true;
+        }
+        menu->close();
+    });
+    const QPoint point = target->rect().center();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
+    QApplication::sendEvent(target, &event);
+    QApplication::processEvents();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    return triggered;
+}
+
 void resetExplorerPanelSettings() {
     QSettings settings;
     settings.beginGroup(QStringLiteral("FileManagementExplorer"));
@@ -1860,6 +1886,60 @@ private Q_SLOTS:
         QVERIFY2(QTest::qWaitFor([&flattened]() { return QFile::exists(flattened); }, 5000),
                  "smart extract did not flatten the single-root archive");
         QVERIFY(!QDir(root.filePath(QStringLiteral("wrapped"))).exists());
+
+        // The extract ran on the archive worker: the Files two-card pattern
+        // leaves one terminal Success card ("Extracted \"{zip}\" to ...").
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
+        QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
+        const auto* card = panel.statusCenterModel()->items().first();
+        QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
+        QVERIFY2(card->header().startsWith(QStringLiteral("Extracted \"wrapped.zip\" to \"")),
+                 qPrintable(card->header()));
+    }
+
+    void compressContextMenuRunsOnWorkerWithCompressCard() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile file(root.filePath(QStringLiteral("alpha.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("compress worker payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+
+        // Files Compress > "Create alpha.zip" packs on the archive worker and
+        // leaves a terminal Compress card pointing at the archive itself.
+        QVERIFY(selectRowStable(table, QStringLiteral("alpha")));
+        QVERIFY(triggerContextSubmenuAction(table->viewport(),
+                                            QStringLiteral("fileExplorerCompressMenu"),
+                                            QStringLiteral("Create ")));
+        QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
+        // Files GenerateArchiveNameFromItems: a single item keeps its own
+        // full name (extension included), so alpha.txt packs to alpha.txt.zip.
+        const QString zip = root.filePath(QStringLiteral("alpha.txt.zip"));
+        QVERIFY2(QTest::qWaitFor([&zip]() { return QFile::exists(zip); }, 5000),
+                 "compress worker did not write the zip");
+        QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
+        QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
+        const auto* card = panel.statusCenterModel()->items().first();
+        QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
+        QCOMPARE(card->header(), QStringLiteral("Compressed 1 item to \"alpha.txt.zip\""));
     }
 
     void itemContextMenuFollowsFilesOrder() {

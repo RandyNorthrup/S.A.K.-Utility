@@ -1076,6 +1076,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_storage_history.cpp
         ../src/core/file_explorer_status_center.cpp
         ../src/core/file_explorer_transfer_worker.cpp
+        ../src/core/file_explorer_archive_worker.cpp
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
@@ -1115,6 +1116,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../include/sak/file_explorer_status_center.h
         ../include/sak/file_explorer_status_center_widget.h
         ../include/sak/file_explorer_transfer_worker.h
+        ../include/sak/file_explorer_archive_worker.h
         ../include/sak/file_explorer_details_view.h
         ../include/sak/file_explorer_pane.h
         ../include/sak/file_explorer_details_pane.h
