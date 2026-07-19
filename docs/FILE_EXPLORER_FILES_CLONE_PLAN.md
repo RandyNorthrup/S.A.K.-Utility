@@ -277,3 +277,32 @@ Theme toggle: HAVE app-level. Settings surface for explorer options: C6.
 Every wave: implement -> clang-format/lizard/cppcheck gates -> tests ->
 commit with source citations. No wave claims done without raw-target proof
 where the feature touches file data.
+
+## 13. C8 certification record (2026-07-19)
+
+- Parity audit: every matrix item implemented; the four audit gaps
+  (create-file command, folder sort placement, favorites reorder dialog,
+  sidebar compact rail) closed and tested.
+- Raw APFS matrix: foreign mkapfs images, every transfer leg through the
+  bridge, apfsck -cw EXIT 0 post-mutation.
+- Raw HFS+ matrix: hdiutil-created Apple HFS+ image, all legs, shipped
+  back to a live Mac: kernel auto-mount + fsck_hfs "appears to be OK"
+  EXIT 0.
+- Physical destructive proof: disposable 8TB USB disk, partition retyped
+  to the Apple APFS GPT type, foreign 8 GiB container written to the raw
+  partition device, the full matrix run against
+  the GLOBALROOT partition path (production raw-device rule, no test
+  seam), device readback apfsck -cw EXIT 0, and the mutated container
+  kernel-mounted on macOS 15.7.7 with fsck_apfs EXIT 0 and byte-exact
+  file readback.
+- Screenshot A/B vs Files 4.1.1 on a virtual monitor, same fixture and
+  window rect: row order and shell anatomy match. Live driving exposed
+  four real defects (ambiguous Ctrl+L, one-way adaptive pane collapse,
+  missing default sort, path-edit commit not restoring the breadcrumb),
+  all fixed with regression tests. Accepted deviations documented in the
+  parity matrix: S.A.K. column superset, always-visible row checkboxes,
+  tinted monochrome icons, target-model sidebar sections with the
+  Scan Disks / Add Raw-Image footer, info pane visible by default.
+- Suites: explorer sweep 6/6 green (panel suite 76 tests); remaining
+  full-CTest failures are a pre-existing non-explorer cluster documented
+  in the tracker.
