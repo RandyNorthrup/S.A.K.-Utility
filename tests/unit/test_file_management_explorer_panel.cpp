@@ -14,6 +14,7 @@
 #include "sak/file_explorer_omnibar.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_properties_dialog.h"
+#include "sak/file_explorer_sidebar.h"
 #include "sak/file_explorer_sort_filter_model.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/file_management_explorer_panel.h"
@@ -27,6 +28,7 @@
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -1941,6 +1943,100 @@ private Q_SLOTS:
         const auto* card = panel.statusCenterModel()->items().first();
         QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
         QCOMPARE(card->header(), QStringLiteral("Compressed 1 item to \"alpha.txt.zip\""));
+    }
+
+    // Drives the sidebar context menu's "Reorder sidebar items..." into the
+    // Files ReorderSidebarItemsDialog: swap the two pins and Save. Takes
+    // parameters so QtTest does not run it as a test slot.
+    void driveReorderFavoritesDialog(QListWidget* list, bool* dialog_driven) {
+        QTimer::singleShot(0, [dialog_driven]() {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (!menu) {
+                return;
+            }
+            QAction* reorder = nullptr;
+            for (auto* action : menu->actions()) {
+                if (action->objectName() == QStringLiteral("fileExplorerReorderSidebarItems")) {
+                    reorder = action;
+                    break;
+                }
+            }
+            if (reorder && reorder->isEnabled()) {
+                QTimer::singleShot(0, [dialog_driven]() {
+                    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    if (!dialog) {
+                        return;
+                    }
+                    auto* items =
+                        dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerReorderList"));
+                    auto* buttons = dialog->findChild<QDialogButtonBox*>(
+                        QStringLiteral("fileExplorerReorderButtons"));
+                    if (!items || !buttons || items->count() != 2) {
+                        dialog->reject();
+                        return;
+                    }
+                    items->insertItem(1, items->takeItem(0));
+                    *dialog_driven = true;
+                    buttons->button(QDialogButtonBox::Save)->click();
+                });
+                reorder->trigger();
+            }
+            menu->close();
+        });
+        const QPoint corner(4, list->viewport()->rect().bottom() - 4);
+        QContextMenuEvent event(QContextMenuEvent::Mouse,
+                                corner,
+                                list->viewport()->mapToGlobal(corner));
+        QApplication::sendEvent(list->viewport(), &event);
+        QApplication::processEvents();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+
+    void sidebarCompactRailAndReorderDialogFollowFiles() {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.setValue(QStringLiteral("FavoriteTargetIds"),
+                          QStringList{QStringLiteral("disk:98:partition:8"),
+                                      QStringLiteral("disk:97:partition:7")});
+        settings.endGroup();
+        settings.sync();
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* sidebar = panel.findChild<sak::FileExplorerSidebar*>();
+        auto* list = child<QListWidget>(&panel, "fileExplorerTargetList");
+        QVERIFY(sidebar);
+        QVERIFY(list);
+
+        // Ctrl+B (Files ToggleSidebarAction): Expanded <-> the 56px icon-only
+        // compact rail; the sidebar stays visible instead of hiding.
+        panel.activateWindow();
+        QTest::keyClick(&panel, Qt::Key_B, Qt::ControlModifier);
+        QTRY_VERIFY(sidebar->isCompact());
+        QVERIFY(sidebar->isVisible());
+        QCOMPARE(sidebar->maximumWidth(), 56);
+        QVERIFY(list->count() > 0);
+        for (int row = 0; row < list->count(); ++row) {
+            QVERIFY2(list->item(row)->text().isEmpty(), "compact rail row still shows text");
+        }
+        QTest::keyClick(&panel, Qt::Key_B, Qt::ControlModifier);
+        QTRY_VERIFY(!sidebar->isCompact());
+        bool any_text = false;
+        for (int row = 0; row < list->count(); ++row) {
+            any_text = any_text || !list->item(row)->text().isEmpty();
+        }
+        QVERIFY2(any_text, "expanded sidebar rows did not restore their text");
+
+        bool dialog_driven = false;
+        driveReorderFavoritesDialog(list, &dialog_driven);
+        QVERIFY2(dialog_driven, "reorder dialog was not driven");
+        QSettings after;
+        after.beginGroup(QStringLiteral("FileManagementExplorer"));
+        QCOMPARE(after.value(QStringLiteral("FavoriteTargetIds")).toStringList(),
+                 (QStringList{QStringLiteral("disk:97:partition:7"),
+                              QStringLiteral("disk:98:partition:8")}));
     }
 
     // The Files sort-flyout placement radios (folders first / files first /

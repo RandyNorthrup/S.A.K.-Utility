@@ -25,7 +25,15 @@ public:
     [[nodiscard]] QPushButton* addManualButton() const;
     [[nodiscard]] QPushButton* settingsButton() const;
 
+    /// Files SidebarDisplayMode.Compact: a 56px icon-only rail
+    /// (SidebarStyles SidebarCompactOpenPaneLength) vs the expanded pane.
+    void setCompact(bool compact);
+    [[nodiscard]] bool isCompact() const { return m_compact; }
+    /// Re-applies the compact text stripping after the target list rebuilds.
+    void refreshCompactPresentation();
+
 private:
+    bool m_compact{false};
     QListWidget* m_target_list{nullptr};
     QPushButton* m_scan_disks_button{nullptr};
     QPushButton* m_add_manual_button{nullptr};

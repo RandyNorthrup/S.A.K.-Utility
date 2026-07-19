@@ -147,6 +147,8 @@ constexpr const char* kGroupDateUnitKey = "GroupByDateUnit";
 // Files SortDirectoriesAlongsideFiles / SortFilesFirst pair, folded into one
 // three-state placement.
 constexpr const char* kFolderPlacementKey = "FolderSortPlacement";
+// Files sidebar display mode (Compact icon rail vs Expanded), persisted.
+constexpr const char* kSidebarCompactKey = "SidebarCompact";
 // Files global settings: selection checkboxes (FoldersSettingsService,
 // default true) and the flatten-folder opt-in (GeneralSettingsService,
 // default false; surfaced on the C6 settings page).
@@ -1131,9 +1133,11 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::onAddManualTarget);
+    // Files ToggleSidebarAction switches Expanded <-> Compact (the 56px
+    // icon rail); the narrow-width responsive collapse still hides it.
     connect(m_sidebar_toggle_button, &QPushButton::clicked, this, [this]() {
         if (m_sidebar) {
-            m_sidebar->setVisible(!m_sidebar->isVisible());
+            setSidebarCompact(!m_sidebar->isCompact());
         }
     });
     connect(m_details_toggle_button, &QPushButton::clicked, this, [this]() {
@@ -2152,9 +2156,23 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     appendVisibleSidebarSections();
 
     m_target_list->blockSignals(false);
+    if (m_sidebar) {
+        m_sidebar->refreshCompactPresentation();
+    }
     if (!current_id.isEmpty()) {
         selectTargetById(current_id);
     }
+}
+
+void FileManagementExplorerPanel::setSidebarCompact(const bool compact) {
+    if (!m_sidebar) {
+        return;
+    }
+    m_sidebar->setCompact(compact);
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.setValue(QString::fromLatin1(kSidebarCompactKey), compact);
+    settings.endGroup();
 }
 
 void FileManagementExplorerPanel::selectTargetById(const QString& target_id) {
@@ -2205,6 +2223,9 @@ void FileManagementExplorerPanel::loadSidebarState() {
         settings.value(QString::fromLatin1(kFavoriteTargetIdsKey)).toStringList();
     m_recent_target_ids = settings.value(QString::fromLatin1(kRecentTargetIdsKey)).toStringList();
     m_last_target_id = settings.value(QString::fromLatin1(kLastTargetIdKey)).toString();
+    if (m_sidebar && settings.value(QString::fromLatin1(kSidebarCompactKey), false).toBool()) {
+        m_sidebar->setCompact(true);
+    }
     settings.endGroup();
     applyViewSettings();
 }
@@ -7394,21 +7415,70 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
         ejectLocalTargetAtIndex(menu_target_index);
     });
     menu.addSeparator();
-    auto* refresh = menu.addAction(tr("Refresh Mounted Targets"));
+    addSidebarGlobalMenuActions(&menu);
+    menu.exec(m_target_list->viewport()->mapToGlobal(position));
+}
+
+// The target-independent tail of the sidebar context menu: discovery,
+// recents, the Files reorder dialog, and the section toggles.
+void FileManagementExplorerPanel::addSidebarGlobalMenuActions(QMenu* menu) {
+    auto* refresh = menu->addAction(tr("Refresh Mounted Targets"));
     connect(
         refresh, &QAction::triggered, this, &FileManagementExplorerPanel::onRefreshMountedTargets);
-    auto* scan = menu.addAction(tr("Scan Disks"));
+    auto* scan = menu->addAction(tr("Scan Disks"));
     connect(scan, &QAction::triggered, this, &FileManagementExplorerPanel::onScanDiskTargets);
-    auto* addManual = menu.addAction(tr("Add Raw/Image"));
+    auto* addManual = menu->addAction(tr("Add Raw/Image"));
     connect(addManual, &QAction::triggered, this, &FileManagementExplorerPanel::onAddManualTarget);
-    auto* clearRecent = menu.addAction(tr("Clear Recent"));
+    auto* clearRecent = menu->addAction(tr("Clear Recent"));
     clearRecent->setObjectName(QStringLiteral("fileExplorerClearRecent"));
     clearRecent->setEnabled(!m_recent_target_ids.isEmpty());
     connect(
         clearRecent, &QAction::triggered, this, &FileManagementExplorerPanel::clearRecentTargets);
-    menu.addSeparator();
-    addSidebarSectionToggleMenu(&menu);
-    menu.exec(m_target_list->viewport()->mapToGlobal(position));
+    menu->addSeparator();
+    auto* reorder = menu->addAction(tr("Reorder sidebar items..."));
+    reorder->setObjectName(QStringLiteral("fileExplorerReorderSidebarItems"));
+    reorder->setEnabled(m_favorite_target_ids.size() > 1);
+    connect(reorder,
+            &QAction::triggered,
+            this,
+            &FileManagementExplorerPanel::showReorderFavoritesDialog);
+    addSidebarSectionToggleMenu(menu);
+}
+
+// Files ReorderSidebarItemsDialog: a drag-reorder list of the pinned items
+// with Save/Cancel; Save applies the new pin order.
+void FileManagementExplorerPanel::showReorderFavoritesDialog() {
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("fileExplorerReorderDialog"));
+    dialog.setWindowTitle(tr("Reorder sidebar items"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("fileExplorerReorderList"));
+    list->setDragDropMode(QAbstractItemView::InternalMove);
+    for (const QString& target_id : m_favorite_target_ids) {
+        const int index = targetIndexForId(target_id);
+        auto* item = new QListWidgetItem(
+            index >= 0 ? m_targets.at(index).label : tr("%1 [offline]").arg(target_id), list);
+        item->setData(Qt::UserRole, target_id);
+    }
+    layout->addWidget(list);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel,
+                                         &dialog);
+    buttons->setObjectName(QStringLiteral("fileExplorerReorderButtons"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QStringList reordered;
+    reordered.reserve(list->count());
+    for (int row = 0; row < list->count(); ++row) {
+        reordered.append(list->item(row)->data(Qt::UserRole).toString());
+    }
+    m_favorite_target_ids = reordered;
+    saveSidebarState();
+    rebuildTargetList();
 }
 
 void FileManagementExplorerPanel::onItemDoubleClicked(const QModelIndex& index) {

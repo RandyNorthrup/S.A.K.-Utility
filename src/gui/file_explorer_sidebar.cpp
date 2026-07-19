@@ -12,6 +12,15 @@
 
 namespace sak {
 
+namespace {
+
+// Files SidebarStyles.xaml SidebarCompactOpenPaneLength.
+constexpr int kSidebarCompactWidth = 56;
+// Stashes a row's full text while the compact rail shows icons only.
+constexpr int kSidebarCompactTextRole = Qt::UserRole + 97;
+
+}  // namespace
+
 FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
     setMinimumWidth(kFileExplorerSidebarMinW);
     setMaximumWidth(kFileExplorerSidebarMaxW);
@@ -63,6 +72,40 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
     footer_layout->addWidget(m_settings_button);
 
     layout->addWidget(footer, 0);
+}
+
+void FileExplorerSidebar::setCompact(const bool compact) {
+    if (m_compact == compact) {
+        return;
+    }
+    m_compact = compact;
+    setMinimumWidth(compact ? kSidebarCompactWidth : kFileExplorerSidebarMinW);
+    setMaximumWidth(compact ? kSidebarCompactWidth : kFileExplorerSidebarMaxW);
+    m_scan_disks_button->setText(compact ? QString() : tr("Scan Disks"));
+    m_add_manual_button->setText(compact ? QString() : tr("Add Raw/Image"));
+    refreshCompactPresentation();
+}
+
+void FileExplorerSidebar::refreshCompactPresentation() {
+    for (int row = 0; row < m_target_list->count(); ++row) {
+        QListWidgetItem* item = m_target_list->item(row);
+        if (!item) {
+            continue;
+        }
+        if (m_compact && !item->text().isEmpty()) {
+            item->setData(kSidebarCompactTextRole, item->text());
+            if (item->toolTip().isEmpty()) {
+                item->setToolTip(item->text());
+            }
+            item->setText(QString());
+        } else if (!m_compact && item->text().isEmpty()) {
+            const QString stored = item->data(kSidebarCompactTextRole).toString();
+            if (!stored.isEmpty()) {
+                item->setText(stored);
+                item->setData(kSidebarCompactTextRole, QVariant());
+            }
+        }
+    }
 }
 
 QListWidget* FileExplorerSidebar::targetList() const {

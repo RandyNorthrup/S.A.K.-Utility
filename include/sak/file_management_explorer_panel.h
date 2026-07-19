@@ -387,6 +387,9 @@ private:
     bool maybeStartFavoriteDrag(QEvent* event);
     [[nodiscard]] bool canEjectTarget(const FileManagementTarget& target) const;
     void ejectLocalTargetAtIndex(int target_index);
+    void showReorderFavoritesDialog();
+    void addSidebarGlobalMenuActions(QMenu* menu);
+    void setSidebarCompact(bool compact);
     /// Files ShowCheckboxesWhenSelectingItems: selection checkboxes.
     [[nodiscard]] bool showCheckboxesEnabled() const;
     void setShowCheckboxes(bool enabled);
