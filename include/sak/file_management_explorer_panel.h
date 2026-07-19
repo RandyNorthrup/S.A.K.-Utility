@@ -640,6 +640,9 @@ private:
     QSplitter* m_shell_splitter{nullptr};
     QPushButton* m_sidebar_toggle_button{nullptr};
     QPushButton* m_details_toggle_button{nullptr};
+    // Files IsInfoPaneEnabled: the user's info-pane preference survives the
+    // adaptive narrow-width hide so widening can bring the pane back.
+    bool m_details_pane_enabled{true};
     QPushButton* m_refresh_button{nullptr};
     QPushButton* m_scan_disks_button{nullptr};
     QPushButton* m_add_manual_button{nullptr};

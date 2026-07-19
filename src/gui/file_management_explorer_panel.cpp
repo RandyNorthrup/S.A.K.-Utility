@@ -508,6 +508,10 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
     m_status_center = new FileExplorerStatusCenterModel(this);
     setupUi();
     loadSidebarState();
+    // Files always starts with an active sort (SortOption defaults to Name
+    // ascending); without this the listing shows raw enumeration order until
+    // the user first touches a header or the sort flyout.
+    applySortOrder(FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
     setTargets(FileManagementFileSystemBridge::mountedTargets());
 }
 
@@ -1140,9 +1144,10 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
             setSidebarCompact(!m_sidebar->isCompact());
         }
     });
-    connect(m_details_toggle_button, &QPushButton::clicked, this, [this]() {
-        m_details_pane->setVisible(!m_details_pane->isVisible());
-    });
+    connect(m_details_toggle_button,
+            &QPushButton::clicked,
+            this,
+            &FileManagementExplorerPanel::togglePreviewPane);
     // Files SearchAction surfaces: the button enters the omnibar search mode;
     // Enter in the persistent quick-search box submits straight into the
     // listing (Files SubmitSearch).
@@ -1711,11 +1716,14 @@ void FileManagementExplorerPanel::onRenameTapTimeout() {
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     const int width = event ? event->size().width() : this->width();
-    if (m_sidebar && width < kSidebarCollapseWidth) {
-        m_sidebar->setVisible(false);
+    // Files adaptive triggers work both ways: panes hide below their
+    // breakpoints and come back once the shell is wide enough again (a
+    // construction-time narrow resize must not hide them permanently).
+    if (m_sidebar) {
+        m_sidebar->setVisible(width >= kSidebarCollapseWidth);
     }
-    if (m_details_pane && width < kDetailsTabsCollapseWidth) {
-        m_details_pane->setVisible(false);
+    if (m_details_pane) {
+        m_details_pane->setVisible(m_details_pane_enabled && width >= kDetailsTabsCollapseWidth);
     }
     if (m_omnibar) {
         // Files NavigationToolbar collapses Forward/Up/Refresh into an
@@ -5019,7 +5027,8 @@ void FileManagementExplorerPanel::finishArchiveWorker(FileExplorerArchiveWorker*
 
 void FileManagementExplorerPanel::togglePreviewPane() {
     if (m_details_pane) {
-        m_details_pane->setVisible(!m_details_pane->isVisible());
+        m_details_pane_enabled = !m_details_pane_enabled;
+        m_details_pane->setVisible(m_details_pane_enabled && width() >= kDetailsTabsCollapseWidth);
     }
 }
 
@@ -6443,6 +6452,11 @@ void FileManagementExplorerPanel::openSelectionInSecondPane() {
 
 void FileManagementExplorerPanel::onPathReturnPressed() {
     loadDirectory(m_path_edit->text());
+    // Files EditPath commit: Enter navigates and the breadcrumb replaces the
+    // editable field (edit mode otherwise lingers until a focus change).
+    if (m_omnibar) {
+        m_omnibar->setAddressEditMode(false);
+    }
 }
 
 void FileManagementExplorerPanel::onBackClicked() {

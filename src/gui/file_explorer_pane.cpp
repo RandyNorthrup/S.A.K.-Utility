@@ -44,6 +44,9 @@ void FileExplorerPane::buildModels() {
     m_item_model = new FileExplorerItemModel(this);
     m_sort_filter_model = new FileExplorerSortFilterModel(this);
     m_sort_filter_model->setSourceModel(m_item_model);
+    // Files SortOption default: every pane starts sorted by Name ascending
+    // instead of raw enumeration order.
+    m_sort_filter_model->sort(FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
     // Group-header proxy on top of the sorted rows (Files grouped
     // collections); transparent identity mapping while grouping is off.
     m_group_proxy = new FileExplorerGroupProxyModel(this);
@@ -51,6 +54,7 @@ void FileExplorerPane::buildModels() {
     m_columns_preview_model = new FileExplorerItemModel(this);
     m_columns_preview_proxy = new FileExplorerSortFilterModel(this);
     m_columns_preview_proxy->setSourceModel(m_columns_preview_model);
+    m_columns_preview_proxy->sort(FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
     m_selection_model = new QItemSelectionModel(m_group_proxy, this);
     connect(m_group_proxy, &QAbstractItemModel::modelReset, this, [this]() {
         applyGroupHeaderSpans();

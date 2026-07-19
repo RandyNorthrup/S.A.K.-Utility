@@ -2204,6 +2204,43 @@ private Q_SLOTS:
         QTRY_COMPARE(rowText(0), QStringLiteral("mmm_folder"));
     }
 
+    void initialListingIsSortedByNameAscending() {
+        // Files SortOption default: Name ascending with folders first, before
+        // the user ever touches a header or the sort flyout (A/B screenshot
+        // pass caught the listing in raw enumeration order).
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkdir(QStringLiteral("nnn_dir")));
+        const auto writeText = [&root](const QString& name) {
+            QFile file(root.filePath(name));
+            return file.open(QIODevice::WriteOnly) && file.write("sorted payload") > 0;
+        };
+        QVERIFY(writeText(QStringLiteral("zzz.txt")));
+        QVERIFY(writeText(QStringLiteral("aaa.txt")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("aaa")) >= 0);
+        const auto rowText = [table](const int row) {
+            return table->model()->index(row, 0).data(Qt::DisplayRole).toString();
+        };
+        QVERIFY2(rowText(0).startsWith(QStringLiteral("nnn_dir")), qPrintable(rowText(0)));
+        QVERIFY2(rowText(1).startsWith(QStringLiteral("aaa")), qPrintable(rowText(1)));
+        QVERIFY2(rowText(2).startsWith(QStringLiteral("zzz")), qPrintable(rowText(2)));
+    }
+
     void newFileCreatesEmptyAndSortPlacementReorders() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -2335,6 +2372,27 @@ private Q_SLOTS:
         QVERIFY(!details->isVisible());
         QVERIFY(table->isVisible());
         captureBaseline(&panel, QStringLiteral("narrow"));
+
+        // Files adaptive triggers restore both panes once the shell widens
+        // again (a transient narrow resize must not hide them for good).
+        panel.resize(1200, 640);
+        QApplication::processEvents();
+        QVERIFY(targetList->isVisible());
+        QVERIFY(details->isVisible());
+
+        // The info-pane toggle is a user preference: once switched off it
+        // stays off through adaptive resizes (Files IsInfoPaneEnabled).
+        auto* detailsToggle = child<QPushButton>(&panel, "fileExplorerDetailsToggleButton");
+        QVERIFY(detailsToggle);
+        detailsToggle->click();
+        QApplication::processEvents();
+        QVERIFY(!details->isVisible());
+        panel.resize(1300, 640);
+        QApplication::processEvents();
+        QVERIFY(!details->isVisible());
+        detailsToggle->click();
+        QApplication::processEvents();
+        QVERIFY(details->isVisible());
     }
 
     void paneStateLabelTracksLoadingEmptyAndError() {
@@ -3116,6 +3174,36 @@ private Q_SLOTS:
         QTRY_VERIFY(!suggestions->isVisible());
         QTest::keyClick(pathEdit, Qt::Key_Escape);
         QTRY_VERIFY(!panel.findChild<sak::FileExplorerOmnibar*>()->addressEditMode());
+    }
+
+    void editPathShortcutsEnterAddressEditMode() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        // Files EditPathAction: Ctrl+L and Alt+D swap the breadcrumb for the
+        // editable path field. MainWindow must not shadow Ctrl+L with an
+        // application-wide shortcut (the log toggle lives on Ctrl+Shift+L);
+        // an ambiguous binding leaves Qt firing neither and the keystrokes
+        // leak into the item view's type-ahead search.
+        auto* omnibar = panel.findChild<sak::FileExplorerOmnibar*>();
+        QVERIFY(omnibar);
+        QVERIFY(!omnibar->addressEditMode());
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_L, Qt::ControlModifier);
+        QTRY_VERIFY(omnibar->addressEditMode());
+
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
+        QTest::keyClick(pathEdit, Qt::Key_Escape);
+        QTRY_VERIFY(!omnibar->addressEditMode());
+
+        QTest::keyClick(&panel, Qt::Key_D, Qt::AltModifier);
+        QTRY_VERIFY(omnibar->addressEditMode());
+        // Files EditPath commit: Enter navigates and restores the breadcrumb.
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QTRY_VERIFY(!omnibar->addressEditMode());
     }
 
     void explorerTabCloseRemovesTabKeepingLast() {

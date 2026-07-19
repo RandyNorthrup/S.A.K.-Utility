@@ -1625,8 +1625,11 @@ void MainWindow::createKeyboardShortcuts() {
         m_tab_widget->setCurrentIndex(prev);
     });
 
-    // Ctrl+L: Toggle log panel visibility
-    auto* toggleLog = new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this);
+    // Ctrl+Shift+L: Toggle log panel visibility. Plain Ctrl+L belongs to the
+    // File Explorer omnibar (Files EditPathAction); an application-wide
+    // Ctrl+L here made the two ambiguous whenever the explorer had focus and
+    // Qt then fired neither shortcut.
+    auto* toggleLog = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+L")), this);
     toggleLog->setContext(Qt::ApplicationShortcut);
     connect(toggleLog, &QShortcut::activated, this, [this]() {
         if (m_logWindow) {
