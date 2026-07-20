@@ -295,15 +295,6 @@ private:
     void finishMovePaste();
     void exportSelectedDirectoryOut(const FileManagementEntry& entry);
     void crossPaneCopySelection();
-    int crossPaneCopyEntries(const FileManagementTarget& source,
-                             const FileManagementTarget& destination,
-                             const QString& destination_dir,
-                             QStringList* blockers);
-    bool crossPaneCopyOneEntry(const FileManagementTarget& source,
-                               const FileManagementTarget& destination,
-                               const QString& destination_dir,
-                               const FileManagementEntry& entry,
-                               QStringList* blockers);
     void comparePanes();
     void refreshOtherPane();
     [[nodiscard]] FileManagementTarget otherPaneTarget() const;
@@ -345,6 +336,15 @@ private:
                                                          const QList<PasteItem>& items,
                                                          PasteCollisionPolicy* policy,
                                                          QStringList* blockers);
+    /// Cross-pane copy resolution (special-entry, subfolder, and self-copy
+    /// guards) producing worker transfer items; the copy itself then runs on
+    /// the transfer worker like a paste instead of blocking the GUI thread.
+    [[nodiscard]] QList<FileExplorerTransferItem> resolveCrossPaneCopyItems(const PasteBatch& batch,
+                                                                            QStringList* blockers);
+    bool resolveCrossPaneCopyItem(const PasteBatch& batch,
+                                  const FileManagementEntry& entry,
+                                  FileExplorerTransferItem* item,
+                                  QStringList* blockers);
     /// Completion actions bound to one transfer worker run.
     struct TransferCompletion {
         FileExplorerHistoryOperation history_op{FileExplorerHistoryOperation::Copy};
@@ -361,6 +361,8 @@ private:
         bool move{false};
         bool consume_clipboard{false};
         bool record_history{true};
+        /// Cross-pane transfers: reload the other pane's listing on success.
+        bool refresh_other_pane{false};
     };
     /// Posts the in-progress status-center card, wires progress/cancel, and
     /// starts the transfer worker (Files FilesystemHelpers + StatusCenter).
@@ -373,16 +375,11 @@ private:
         const FileExplorerTransferWorker* worker,
         const TransferCompletion& completion,
         bool canceled) const;
+    void recordTransferHistory(const FileExplorerTransferWorker* worker,
+                               const TransferCompletion& completion);
     void applyTransferSideEffects(FileExplorerTransferWorker* worker,
                                   const TransferCompletion& completion,
                                   int written);
-    /// Synchronous engine adapter for the short in-place legs (history,
-    /// cross-pane copy); the paste path runs the same engine on the worker.
-    bool transferEntrySync(const FileManagementTarget& source_target,
-                           const PasteItem& item,
-                           const FileManagementTarget& target,
-                           const QString& destination,
-                           QStringList* blockers);
     /// Copy Out / Export Folder: one item to a picked host destination on the
     /// worker, with explicit capped-read semantics for oversized raw files.
     void startExportWorker(const FileManagementTarget& source_target,
@@ -750,6 +747,8 @@ private:
     // (refreshOtherPane, dual-pane restore) survives active-pane navigation.
     std::array<quint64, 2> m_listing_revision{0, 0};
     quint64 m_columns_preview_revision{0};
+    // Supersedes an in-flight details-pane preview read on selection change.
+    quint64 m_preview_revision{0};
     int m_current_target_index{-1};
     // Open explorer tabs; each carries an independent target+path+history+view via its primary
     // pane state. m_active_tab indexes the visible tab; m_restoring_tab suppresses the tab-switch

@@ -516,7 +516,13 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {
-    stopExplorerSearch();
+    if (m_search_worker) {
+        // Destruction is the one place a join is required: a running child
+        // QThread must not be destroyed with the panel. Interactive stops go
+        // through the non-blocking stopExplorerSearch instead.
+        m_search_worker->requestStop();
+        m_search_worker->wait(5000);
+    }
     saveTabSession();
 }
 
@@ -3477,18 +3483,24 @@ FileExplorerStatusCardRequest FileManagementExplorerPanel::terminalTransferCard(
     return terminal;
 }
 
+// Journal a finished transfer batch into the undo history.
+void FileManagementExplorerPanel::recordTransferHistory(const FileExplorerTransferWorker* worker,
+                                                        const TransferCompletion& completion) {
+    QList<FileExplorerHistoryItem> journal;
+    for (const FileExplorerTransferItem& item : worker->completedItems()) {
+        journal.append({item.source_path, item.destination_path, item.directory});
+    }
+    recordHistory(completion.history_op,
+                  completion.source_target,
+                  completion.destination_target,
+                  std::move(journal));
+}
+
 void FileManagementExplorerPanel::applyTransferSideEffects(FileExplorerTransferWorker* worker,
                                                            const TransferCompletion& completion,
                                                            const int written) {
     if (completion.record_history && written > 0) {
-        QList<FileExplorerHistoryItem> journal;
-        for (const FileExplorerTransferItem& item : worker->completedItems()) {
-            journal.append({item.source_path, item.destination_path, item.directory});
-        }
-        recordHistory(completion.history_op,
-                      completion.source_target,
-                      completion.destination_target,
-                      std::move(journal));
+        recordTransferHistory(worker, completion);
     }
     if (!worker->lastFileSha256().isEmpty() && !worker->completedItems().isEmpty()) {
         m_last_hash_name = nameForPath(worker->completedItems().last().source_path,
@@ -3504,6 +3516,9 @@ void FileManagementExplorerPanel::applyTransferSideEffects(FileExplorerTransferW
     }
     if (written > 0) {
         loadDirectory(m_current_path);
+        if (completion.refresh_other_pane) {
+            refreshOtherPane();
+        }
     }
     if (!worker->warnings().isEmpty()) {
         logMessage(worker->warnings().join(QLatin1Char('\n')));
@@ -3643,27 +3658,6 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         }
     }
     return moved;
-}
-
-// Synchronous adapter over the shared transfer engine (the worker path runs
-// the same legs off-thread with byte progress).
-bool FileManagementExplorerPanel::transferEntrySync(const FileManagementTarget& source_target,
-                                                    const PasteItem& item,
-                                                    const FileManagementTarget& target,
-                                                    const QString& destination,
-                                                    QStringList* blockers) {
-    FileExplorerTransferEngine engine(source_target, target, kExplorerHashMaxBytes);
-    const bool ok = engine.transferEntry({item.path, destination, item.size_bytes, item.directory});
-    blockers->append(engine.blockers());
-    if (!engine.warnings().isEmpty()) {
-        logMessage(engine.warnings().join(QLatin1Char('\n')));
-    }
-    if (ok && !engine.lastFileSha256().isEmpty()) {
-        m_last_hash_name = nameForPath(item.path, source_target.local_file_system);
-        m_last_hash_sha256 = engine.lastFileSha256();
-        m_last_hash_capped = engine.lastFileHashCapped();
-    }
-    return ok;
 }
 
 void FileManagementExplorerPanel::recordHistory(const FileExplorerHistoryOperation operation,
@@ -4009,48 +4003,46 @@ void FileManagementExplorerPanel::refreshOtherPane() {
     m_current_target_index = targetIndexForId(m_pane_state.location.target_id.value);
 }
 
-bool FileManagementExplorerPanel::crossPaneCopyOneEntry(const FileManagementTarget& source,
-                                                        const FileManagementTarget& destination,
-                                                        const QString& destination_dir,
-                                                        const FileManagementEntry& entry,
-                                                        QStringList* blockers) {
+// Pre-flight one cross-pane entry (special-entry, subfolder, and self-copy
+// guards) into a worker transfer item. Returns false (with a blocker) when the
+// entry must be skipped.
+bool FileManagementExplorerPanel::resolveCrossPaneCopyItem(const PasteBatch& batch,
+                                                           const FileManagementEntry& entry,
+                                                           FileExplorerTransferItem* item,
+                                                           QStringList* blockers) {
     if (!entry.directory && !entry.regular_file) {
         blockers->append(tr("Skipped special entry %1.").arg(entry.name));
         return false;
     }
-    const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
-                                FileExplorerTargetId::fromTarget(source).value ==
-                                    FileExplorerTargetId::fromTarget(destination).value;
     const QString destination_path =
-        childPathFor(destination_dir, entry.name, destination.local_file_system);
-    if (entry.directory && same_namespace &&
-        pathContains(entry.path, destination_dir, destination.local_file_system)) {
+        childPathFor(batch.destination_dir, entry.name, batch.target.local_file_system);
+    if (entry.directory && batch.same_namespace &&
+        pathContains(entry.path, batch.destination_dir, batch.target.local_file_system)) {
         blockers->append(tr("Cannot copy %1 into its own subfolder.").arg(entry.name));
         return false;
     }
     // Copying an entry onto itself (both panes in the same folder) would
     // otherwise stream a file over its own source; skip it like Files.
-    if (same_namespace && destination_path == entry.path) {
+    if (batch.same_namespace && destination_path == entry.path) {
         blockers->append(
             tr("Skipped %1: the source and destination are the same.").arg(entry.name));
         return false;
     }
-    const PasteItem item{entry.path, entry.size_bytes, entry.directory};
-    return transferEntrySync(source, item, destination, destination_path, blockers);
+    *item = {entry.path, destination_path, entry.size_bytes, entry.directory};
+    return true;
 }
 
-int FileManagementExplorerPanel::crossPaneCopyEntries(const FileManagementTarget& source,
-                                                      const FileManagementTarget& destination,
-                                                      const QString& destination_dir,
-                                                      QStringList* blockers) {
-    int written = 0;
+QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveCrossPaneCopyItems(
+    const PasteBatch& batch, QStringList* blockers) {
+    QList<FileExplorerTransferItem> items;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
-        if (crossPaneCopyOneEntry(source, destination, destination_dir, entry, blockers)) {
-            ++written;
+        FileExplorerTransferItem item;
+        if (resolveCrossPaneCopyItem(batch, entry, &item, blockers)) {
+            items.append(item);
         }
     }
-    return written;
+    return items;
 }
 
 void FileManagementExplorerPanel::crossPaneCopySelection() {
@@ -4067,17 +4059,39 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     if (!destination.local_file_system && !confirmTypedRawImport(destination, file_count)) {
         return;
     }
+    const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
+                                FileExplorerTargetId::fromTarget(source).value ==
+                                    FileExplorerTargetId::fromTarget(destination).value;
+    const PasteBatch batch{source, destination, destination_dir, false, false, same_namespace};
     QStringList blockers;
-    const int written = crossPaneCopyEntries(source, destination, destination_dir, &blockers);
-    if (written > 0) {
-        refreshOtherPane();
-    }
+    const QList<FileExplorerTransferItem> items = resolveCrossPaneCopyItems(batch, &blockers);
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Copy to Other Pane"), blockers.join(QLatin1Char('\n')));
     }
-    Q_EMIT statusMessage(
-        tr("Copied %1 of %2 item(s) to the other pane.").arg(written).arg(file_count),
-        sak::kTimerStatusDefaultMs);
+    if (items.isEmpty()) {
+        Q_EMIT statusMessage(
+            tr("Copied %1 of %2 item(s) to the other pane.").arg(0).arg(file_count),
+            sak::kTimerStatusDefaultMs);
+        return;
+    }
+    // The copy itself runs on the transfer worker with a status-center card
+    // (running it synchronously froze the GUI for the whole transfer).
+    FileExplorerTransferRequest request;
+    request.source_target = source;
+    request.destination_target = destination;
+    request.items = items;
+    request.raw_read_cap = kExplorerHashMaxBytes;
+    TransferCompletion completion;
+    completion.history_op = FileExplorerHistoryOperation::Copy;
+    completion.card_operation = FileExplorerOperationType::Copy;
+    completion.source_target = source;
+    completion.destination_target = destination;
+    completion.destination_dir = destination_dir;
+    completion.status_template = tr("Copied %1 of %2 item(s) to the other pane.");
+    completion.failure_title = tr("Copy to Other Pane");
+    completion.requested_count = file_count;
+    completion.refresh_other_pane = true;
+    startTransferWorker(request, completion);
 }
 
 void FileManagementExplorerPanel::comparePanes() {
@@ -5489,10 +5503,20 @@ void FileManagementExplorerPanel::stopExplorerSearch() {
     if (!m_search_worker) {
         return;
     }
-    m_search_worker->requestStop();
-    m_search_worker->wait(5000);
-    m_search_worker->deleteLater();
+    AdvancedSearchWorker* worker = m_search_worker;
     m_search_worker = nullptr;
+    // An interactive stop must not block the GUI thread (the old wait(5000)
+    // froze the panel for up to 5 s per superseded search): detach the result
+    // handlers so a stale search cannot repaint the suggestions, orphan the
+    // worker so panel teardown cannot destroy a running thread, and let it
+    // delete itself once its thread exits.
+    disconnect(worker, nullptr, this, nullptr);
+    worker->setParent(nullptr);
+    worker->requestStop();
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    if (!worker->isRunning()) {
+        worker->deleteLater();
+    }
 }
 
 // Shared worker setup for the inline search surfaces: suggestions cap at 10
@@ -6018,6 +6042,8 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
     if (!m_preview_text || !m_details_pane) {
         return;
     }
+    // Any selection change supersedes an in-flight preview read.
+    const quint64 preview_revision = ++m_preview_revision;
     if (selection.count() != 1) {
         showPreviewHint(selection.isEmpty() ? tr("Select a readable file to preview its contents.")
                                             : tr("%1 items selected.").arg(selection.count()));
@@ -6031,15 +6057,31 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
     if (entry.path == m_last_preview_path) {
         return;
     }
-    const auto read =
-        FileManagementFileSystemBridge::readFile(target, entry.path, kExplorerPreviewMaxBytes);
-    if (!read.ok) {
-        showPreviewHint(
-            tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
-        return;
-    }
-    m_last_preview_path = entry.path;
-    renderPreviewForEntry(entry, read.data);
+    // The read runs off the GUI thread: a raw-target preview walks the whole
+    // file-system metadata plus up to 1 MiB of extents, which froze the panel
+    // on every selection change when it ran synchronously here.
+    auto* watcher = new QFutureWatcher<FileManagementReadResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<FileManagementReadResult>::finished,
+        this,
+        [this, watcher, preview_revision, entry]() {
+            watcher->deleteLater();
+            if (preview_revision != m_preview_revision) {
+                return;  // a newer selection superseded this preview
+            }
+            const FileManagementReadResult read = watcher->result();
+            if (!read.ok) {
+                showPreviewHint(
+                    tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
+                return;
+            }
+            m_last_preview_path = entry.path;
+            renderPreviewForEntry(entry, read.data);
+        });
+    watcher->setFuture(QtConcurrent::run([target, path = entry.path]() {
+        return FileManagementFileSystemBridge::readFile(target, path, kExplorerPreviewMaxBytes);
+    }));
 }
 
 void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
