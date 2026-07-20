@@ -4,6 +4,7 @@
 #include "sak/splash_screen.h"
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
@@ -83,15 +84,16 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(par
 }
 
 void SplashScreen::showCentered() {
-    QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) {
-        show();
-        return;
+    if (QScreen* screen = QGuiApplication::primaryScreen()) {
+        const QRect screen_geometry = screen->availableGeometry();
+        move(screen_geometry.center() - rect().center());
     }
-
-    const QRect screen_geometry = screen->availableGeometry();
-    move(screen_geometry.center() - rect().center());
     show();
+    // Pump the just-posted expose/paint events so the splash is actually on
+    // screen before the caller starts main-window construction. Without this
+    // the first frame would only appear once the event loop runs, which is
+    // after all of the (potentially long) startup work.
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
 void SplashScreen::finish() {

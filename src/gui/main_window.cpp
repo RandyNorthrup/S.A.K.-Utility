@@ -42,7 +42,9 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -293,16 +295,18 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 <p>To Microsoft for Windows API documentation, PowerShell, Windows SDK, and ADK tools.</p>
 )SAKCREDITS";
 
-constexpr char kTooltipUserMigration[] = "Backup and restore user profiles (Ctrl+1)";
-constexpr char kTooltipOrganizer[] =
-    "Organize files, find duplicates, and advanced search (Ctrl+2)";
-constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applications (Ctrl+3)";
-constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+4)";
-constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+5)";
+// Tab tooltips carry no hardcoded shortcut hints: the Ctrl+N hint depends on
+// the tab's actual index (which shifts with SAK_ENABLE_AI_ASSISTANT), so it
+// is appended per-index by UpdateTabShortcutHints below.
+constexpr char kTooltipUserMigration[] = "Backup and restore user profiles";
+constexpr char kTooltipOrganizer[] = "Organize files, find duplicates, and advanced search";
+constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applications";
+constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives";
+constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests";
 constexpr char kTooltipNetworkManagement[] =
-    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+6)";
+    "Network diagnostics, WiFi management, and connectivity tools";
 constexpr char kTooltipEmailTool[] =
-    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+7)";
+    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles";
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 constexpr char kTooltipAiAssistant[] =
@@ -333,6 +337,9 @@ void AddTabWithTooltip(QTabWidget* tabWidget,
         tabWidget->setIconSize(QSize(kTabIconSize, kTabIconSize));
     }
     tabWidget->setTabToolTip(idx, QString::fromUtf8(tooltip));
+    // Base tooltip without the shortcut hint; UpdateTabShortcutHints rebuilds
+    // the visible tooltip from this whenever tab positions are final.
+    tabWidget->tabBar()->setTabData(idx, QString::fromUtf8(tooltip));
 
     // Set accessible name on the panel widget so screen readers
     // identify each tab's content area
@@ -342,6 +349,43 @@ void AddTabWithTooltip(QTabWidget* tabWidget,
 
     // Also set accessible text on the tab bar tab via tab widget
     tabWidget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
+}
+
+/// Shortcut hint for a tab index, mirroring createKeyboardShortcuts exactly:
+/// Ctrl+1..9 select indices 0..8, Ctrl+0 selects index 9, and Ctrl+Shift+1..5
+/// select indices 10..14.
+QString TabShortcutHint(int index) {
+    if (index < kDirectTabShortcutCount) {
+        return QStringLiteral(" (Ctrl+%1)").arg(index + 1);
+    }
+    if (index == kTenthTabIndex) {
+        return QStringLiteral(" (Ctrl+0)");
+    }
+    if (index >= kTabShortcutBaseOffset &&
+        index < kTabShortcutBaseOffset + kShiftTabShortcutCount) {
+        return QStringLiteral(" (Ctrl+Shift+%1)").arg(index - kTabShortcutBaseOffset + 1);
+    }
+    return {};
+}
+
+/// Rebuild every tab's tooltip as its stored base text plus the shortcut hint
+/// for the index the tab actually occupies, so the advertised Ctrl+N always
+/// selects the tab it is written on regardless of build configuration.
+void UpdateTabShortcutHints(QTabWidget* tabWidget) {
+    Q_ASSERT(tabWidget);
+    QTabBar* bar = tabWidget->tabBar();
+    for (int idx = 0; idx < tabWidget->count(); ++idx) {
+        const QString base = bar->tabData(idx).toString();
+        if (base.isEmpty()) {
+            continue;
+        }
+        const QString tooltip = base + TabShortcutHint(idx);
+        tabWidget->setTabToolTip(idx, tooltip);
+        tabWidget->setTabWhatsThis(idx, tooltip);
+        if (QWidget* panel = tabWidget->widget(idx)) {
+            panel->setAccessibleDescription(tooltip);
+        }
+    }
 }
 
 void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
@@ -385,9 +429,13 @@ QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html, const QString
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+    QElapsedTimer startup_timer;
+    startup_timer.start();
     setupUi();
+    logInfo("MainWindow startup: setupUi took {} ms", startup_timer.restart());
     if (!IsAccessibilityAuditMode()) {
         loadWindowState();
+        logInfo("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
     }
 }
 
@@ -417,13 +465,19 @@ void MainWindow::setupUi() {
            "or Ctrl+Tab / Ctrl+Shift+Tab to cycle."));
     setCentralWidget(m_tab_widget);
 
-    // Create UI elements
+    // Create UI elements. Phase timing goes to the log so a slow launch on a
+    // real desktop can be attributed to a specific phase after the fact.
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     createStatusBar();
+    logInfo("MainWindow startup: status bar took {} ms", phase_timer.restart());
 
     // Create shared log window BEFORE panels so connectLog() can reference it
     m_logWindow = new DetachableLogWindow(tr("S.A.K. Log"), this);
+    logInfo("MainWindow startup: log window took {} ms", phase_timer.restart());
 
     createPanels();
+    logInfo("MainWindow startup: panels took {} ms", phase_timer.restart());
     createKeyboardShortcuts();
 
     if (!IsAccessibilityAuditMode()) {
@@ -447,6 +501,16 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::createStatusBar() {
+    // First point in startup that needs the font database; with the async
+    // warmup from main() this normally reads back instantly, and the log
+    // shows how long the GUI thread still had to wait when it did not.
+    QElapsedTimer font_timer;
+    font_timer.start();
+    const auto font_family_count = QFontDatabase::families().size();
+    logInfo("MainWindow startup: font database ready ({} families) after {} ms",
+            font_family_count,
+            font_timer.elapsed());
+
     // Persistent status label
     m_status_label = new QLabel("Ready", this);
     m_status_label->setContentsMargins(
@@ -488,6 +552,10 @@ void MainWindow::createStatusBar() {
 #endif
     statusBar()->addPermanentWidget(m_vulnerability_summary_label);
 
+    createElevationStatusWidgets();
+}
+
+void MainWindow::createElevationStatusWidgets() {
     // Elevation status indicator
     m_elevation_label = new QWidget(this);
     auto* elev_layout = new QHBoxLayout(m_elevation_label);
@@ -496,7 +564,8 @@ void MainWindow::createStatusBar() {
     elev_layout->setSpacing(sak::ui::kSpacingTight);
     auto* elev_icon = new QLabel(m_elevation_label);
     auto* elev_text = new QLabel(m_elevation_label);
-    if (ElevationManager::isElevated()) {
+    const bool is_elevated = ElevationManager::isElevated();
+    if (is_elevated) {
         elev_icon->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg"))
                                  .pixmap(kStatusIconSize, kStatusIconSize));
         elev_text->setText(tr("Administrator"));
@@ -514,7 +583,7 @@ void MainWindow::createStatusBar() {
     statusBar()->addPermanentWidget(m_elevation_label);
 
     // "Restart as Administrator" button (only when not already elevated)
-    if (!ElevationManager::isElevated()) {
+    if (!is_elevated) {
         auto* elevate_btn = new QPushButton(this);
         elevate_btn->setText(tr("Run as Admin"));
         elevate_btn->setToolTip(tr("Restart S.A.K. Utility with administrator privileges"));
@@ -541,15 +610,21 @@ void MainWindow::createStatusBar() {
 }
 
 void MainWindow::createPanels() {
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     registerLazyToolTabs();
+    logInfo("MainWindow startup: lazy tab placeholders took {} ms", phase_timer.restart());
     createHelpPanel();
+    logInfo("MainWindow startup: help panel took {} ms", phase_timer.restart());
     createAboutPanel();
+    logInfo("MainWindow startup: about panel took {} ms", phase_timer.restart());
     // Build each tool panel only when its tab is first activated. Connected
     // before setupLogRouting so the panel exists before onTabChanged runs.
     connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int index) {
         materializeTab(index);
     });
     setupLogRouting();
+    UpdateTabShortcutHints(m_tab_widget);
     if (IsAccessibilityAuditMode()) {
         // Accessibility scan needs the full widget tree, so build every tab now.
         for (int slot = 0; slot < static_cast<int>(m_lazyTabs.size()); ++slot) {
@@ -626,7 +701,12 @@ void MainWindow::materializeTab(int slot) {
     lazy.built = true;
 
     QWidget* placeholder = m_tab_widget->widget(slot);
+    QElapsedTimer build_timer;
+    build_timer.start();
     lazy.build();  // Constructs the real panel and appends its tab at the end.
+    logInfo("MainWindow: tab {} built in {} ms",
+            m_tab_widget->tabText(m_tab_widget->count() - 1).toStdString(),
+            build_timer.restart());
 
     // Move the freshly built tab into the placeholder's slot and drop the
     // placeholder. Signals are blocked so the restructure does not emit a storm
@@ -643,6 +723,8 @@ void MainWindow::materializeTab(int slot) {
     }
 
     lazy.wire();  // Panel now occupies its final slot; safe to wire status/logs.
+    // The rebuilt tab re-set its base tooltip; re-append the shortcut hint.
+    UpdateTabShortcutHints(m_tab_widget);
 }
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
@@ -940,6 +1022,8 @@ void MainWindow::connectNetworkAdapterLogToggle() {
             &DetachableLogWindow::visibilityChanged,
             adapterToggle,
             &LogToggleSwitch::setChecked);
+    // Same paired Dark toggle every other Log switch gets via connectPanelLog.
+    attachThemeToggleToLogToggle(adapterToggle);
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {

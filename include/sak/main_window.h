@@ -110,6 +110,11 @@ private:
     void createStatusBar();
 
     /**
+     * @brief Create the elevation indicator and Run-as-Admin status widgets
+     */
+    void createElevationStatusWidgets();
+
+    /**
      * @brief Create feature panels
      */
     void createPanels();

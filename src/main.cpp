@@ -23,8 +23,10 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QHeaderView>
 #include <QIcon>
 #include <QLineEdit>
@@ -44,6 +46,7 @@
 #include <iostream>
 #include <memory>
 #include <print>
+#include <thread>
 
 namespace {
 
@@ -269,12 +272,25 @@ int runAccessibilityAudit(sak::MainWindow& main_window) {
     return 0;
 }
 
+/// @brief Populate the font database off the GUI thread.
+///
+/// The first widget polish otherwise pays the full enumeration on the GUI
+/// thread - over a second with thousands of installed font families, and tens
+/// of seconds when a freshly built binary's font-file reads are additionally
+/// being scanned by real-time antivirus. QFontDatabase is thread-safe; if the
+/// GUI thread needs fonts before the warmup finishes it simply blocks on the
+/// shared mutex for the remaining time instead of the full cost.
+void startFontDatabaseWarmup() {
+    std::thread([]() { QFontDatabase::families(); }).detach();
+}
+
 /// @brief Initialize the Qt application and apply theming.
 QApplication& initializeApp(int argc,
                             char* argv[],
                             bool accessibility_audit,
                             const QString& accessibility_audit_output) {
     static QApplication app(argc, argv);
+    startFontDatabaseWarmup();
     app.setApplicationName(sak::get_product_name());
     app.setApplicationVersion(sak::get_version());
     app.setOrganizationName(SAK_ORGANIZATION_NAME);
@@ -449,12 +465,16 @@ int showMainWindow(QApplication& app,
     if (accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("constructing-main-window"));
     }
+    QElapsedTimer window_timer;
+    window_timer.start();
     sak::MainWindow main_window;
+    sak::logInfo("Main window constructed in {} ms", window_timer.restart());
     if (accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("main-window-constructed"));
     }
     const bool headless_smoke_test = startup_smoke_test && ciStartupSmokeMode();
     prepareMainWindowForStartup(main_window, headless_smoke_test);
+    sak::logInfo("Main window show took {} ms", window_timer.elapsed());
 
     if (accessibility_audit) {
         return runAccessibilityAuditHeadless(app, main_window);
@@ -463,7 +483,16 @@ int showMainWindow(QApplication& app,
     scheduleStartupSmokeExitIfRequested(startup_smoke_test, app);
 
     if (splash) {
-        splash->finish();
+        // Close the splash from the event loop rather than here: the current
+        // tab's panel is materialized by a single-shot timer queued during
+        // show(), so this later-queued single-shot runs after it and the
+        // splash stays up over the first panel's construction instead of
+        // leaving a frozen, still-empty main window on screen.
+        auto* splash_ptr = splash.release();
+        QTimer::singleShot(0, &app, [splash_ptr]() {
+            splash_ptr->finish();
+            delete splash_ptr;
+        });
     }
 
     logMainWindowReady(headless_smoke_test);
