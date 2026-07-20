@@ -1963,6 +1963,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
+    void apfsWriter_inPlaceRenameOfHardLinkKeepsOneInode();
     void apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree();
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
     void apfsWriter_buildsThreeLevelFsTreeOnDeepOverflow();
@@ -14113,6 +14114,75 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjec
          .options = options});
     QVERIFY(!collide.ok);
     QVERIFY(collide.blockers.join(' ').contains(QStringLiteral("already exists")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceRenameOfHardLinkKeepsOneInode() {
+    // Renaming one name of a hard-linked file must retarget only that name and
+    // keep the inode as ONE fsroot record with its other link intact - not
+    // append a duplicate inode (which fsck rejects) with the stale old name.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("hlrn-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("HLRN"),
+                 .options = options})
+                .ok);
+
+    const QByteArray payload = QByteArray("hard-link-rename-").repeated(64);
+    const QString withFile = dir.filePath(QStringLiteral("hlrn-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+
+    const QString linked = dir.filePath(QStringLiteral("hlrn-linked.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileHardlink(
+                {.source_image_path = withFile,
+                 .written_image_path = linked,
+                 .source_file_name = QStringLiteral("orig.bin"),
+                 .link_file_name = QStringLiteral("link.bin"),
+                 .options = options})
+                .ok);
+
+    // Rename one of the two hard-link names.
+    const QString renamed = dir.filePath(QStringLiteral("hlrn-renamed.apfs"));
+    const auto rename = PartitionApfsWriter::commitImageOnlyFileRename(
+        {.source_image_path = linked,
+         .written_image_path = renamed,
+         .file_name = QStringLiteral("orig.bin"),
+         .new_file_name = QStringLiteral("renamed.bin"),
+         .options = options});
+    QVERIFY2(rename.ok, qPrintable(rename.blockers.join(QStringLiteral("; "))));
+
+    // Exactly two names remain: the renamed one and the untouched other link,
+    // with no stale "orig.bin" and no duplicate.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(renamed, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QStringList names;
+    for (const auto& entry : listing.entries) {
+        names.append(entry.name);
+    }
+    std::sort(names.begin(), names.end());
+    QCOMPARE(names, (QStringList{QStringLiteral("link.bin"), QStringLiteral("renamed.bin")}));
+
+    // Both surviving names resolve to the one inode's identical bytes.
+    QCOMPARE(PartitionApfsFileSystemReader::readFileFromImage(
+                 renamed, QStringLiteral("/renamed.bin"), static_cast<uint64_t>(payload.size()))
+                 .data,
+             payload);
+    QCOMPARE(PartitionApfsFileSystemReader::readFileFromImage(
+                 renamed, QStringLiteral("/link.bin"), static_cast<uint64_t>(payload.size()))
+                 .data,
+             payload);
+    verifyApfsContainerSuperblockChecksum(renamed);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree() {

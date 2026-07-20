@@ -8740,6 +8740,7 @@ QVector<uint64_t> expandFreeQueueEntries(const QVector<ApfsFreeQueueEntry>& entr
 struct ApfsMainFqAdvance {
     QVector<ApfsFreeQueueEntry> entries;  // the rebuilt queue (kept window + new runs)
     QVector<uint64_t> reclaimed;          // blocks freed back into the bitmap this commit
+    bool ok{true};                        // false when a live-queue read failed (blocker set)
 };
 
 ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
@@ -8907,6 +8908,39 @@ void coalesceHardlinkNamesExcluding(ApfsRootFilePayload* file,
     }
     file->primarySiblingId = 0;
     file->additionalLinks.clear();
+}
+
+// One hard-link name retarget: the sibling matching (oldName, oldParent) becomes
+// (newName, newParent).
+struct ApfsHardlinkRename {
+    QString oldName;
+    uint64_t oldParent{0};
+    QString newName;
+    uint64_t newParent{0};
+};
+
+// Coalesce a hard-linked inode's names while RENAMING the one matching
+// rename.old* to rename.new* -- the name a hard-link rename or move retargets.
+// The inode stays ONE record (nlink unchanged): the matched sibling re-emits
+// under its new name/parent keeping its sibling id, every other name re-emits
+// verbatim, lowest sibling id stays primary. A no-op when no sibling matches (a
+// non-target inode is byte-identical to plain coalesce).
+void coalesceHardlinkNamesRenaming(ApfsRootFilePayload* file,
+                                   const QVector<ApfsInodeSibling>& sibs,
+                                   const ApfsHardlinkRename& rename) {
+    QVector<ApfsInodeSibling> renamed;
+    renamed.reserve(sibs.size());
+    bool applied = false;
+    for (const ApfsInodeSibling& s : sibs) {
+        if (!applied && s.name == rename.oldName && s.parentId == rename.oldParent) {
+            applied = true;
+            renamed.append(
+                {.siblingId = s.siblingId, .parentId = rename.newParent, .name = rename.newName});
+            continue;
+        }
+        renamed.append(s);
+    }
+    coalesceHardlinkNames(file, renamed);
 }
 
 bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
@@ -13165,13 +13199,23 @@ bool buildGrownAllocatorSubtree(ApfsFsCommitContext* ctx,
 // pattern.
 ApfsMainFqAdvance advanceMainFqWithFreed(ApfsFsCommitContext* ctx,
                                          const QVector<uint64_t>& freed,
-                                         uint64_t newXid) {
-    QStringList ignore;
+                                         uint64_t newXid,
+                                         QStringList* blockers) {
+    // Capture read errors: an empty queue is legitimate (both calls return
+    // empty silently), but a genuine read failure appends a blocker. Swallowing
+    // it would publish a queue missing its pending frees and permanently leak
+    // those blocks, so ok goes false and the caller fails the resize.
+    QStringList probe;
     const uint64_t mainPaddr = findEphemeralPaddrByOid(
-        ctx->image, ctx->geometry, ctx->live, ctx->chain.mainFqTreeOid, &ignore);
+        ctx->image, ctx->geometry, ctx->live, ctx->chain.mainFqTreeOid, &probe);
     const QVector<ApfsFreeQueueEntry> live =
-        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &ignore);
-    return advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow);
+        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &probe);
+    ApfsMainFqAdvance advance = advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow);
+    if (!probe.isEmpty()) {
+        blockers->append(probe);
+        advance.ok = false;
+    }
+    return advance;
 }
 
 // The freed-block list a pool relocation puts on the main free-queue: the old pool, plus
@@ -13193,10 +13237,10 @@ QVector<uint64_t> relocateFreedBlocks(uint64_t oldIpBase,
 ApfsMainFqAdvance growMainFreeQueueAfterRelocate(ApfsFsCommitContext* ctx,
                                                  uint64_t oldIpBase,
                                                  uint64_t oldIpBlockCount,
-                                                 uint64_t newXid) {
-    return advanceMainFqWithFreed(ctx,
-                                  relocateFreedBlocks(oldIpBase, oldIpBlockCount, 0, 0),
-                                  newXid);
+                                                 uint64_t newXid,
+                                                 QStringList* blockers) {
+    return advanceMainFqWithFreed(
+        ctx, relocateFreedBlocks(oldIpBase, oldIpBlockCount, 0, 0), newXid, blockers);
 }
 
 bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
@@ -13207,8 +13251,11 @@ bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
     if (!planChunkAddingGrow(ctx, newBlockCount, &plan, blockers)) {
         return false;
     }
-    const ApfsMainFqAdvance mainFq =
-        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    const ApfsMainFqAdvance mainFq = growMainFreeQueueAfterRelocate(
+        ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid, blockers);
+    if (!mainFq.ok) {
+        return false;
+    }
     ApfsGrownAllocator alloc;
     if (!buildGrownAllocatorSubtree(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
@@ -13488,6 +13535,22 @@ int64_t multiChunkGrowFreeDelta(const ApfsChunkAddingGrowPlan& plan,
            newRingBlocks;
 }
 
+// Read the source container's internal-pool base/extent into @p plan, failing
+// closed when the spaceman base cannot be read.
+bool readGrowSourcePool(ApfsFsCommitContext* ctx,
+                        uint64_t oldChunks,
+                        ApfsChunkAddingGrowPlan* plan,
+                        QStringList* blockers) {
+    plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks) + ctx->layout.cabCount);
+    if (plan->oldIpBase == 0) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
+        return false;
+    }
+    return true;
+}
+
 bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                                       uint64_t newBlockCount,
                                       ApfsInPlaceCheckpointResult* result,
@@ -13510,11 +13573,7 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
     plan.newXid = ctx->live.xid + 1;
     plan.newIpBase = oldBlockCount;
     plan.newIpBlockCount = 3 * (newChunks + newCibs + newCabs);
-    plan.oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    plan.oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks) + ctx->layout.cabCount);
-    if (plan.oldIpBase == 0) {
-        blockers->append(
-            QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
+    if (!readGrowSourcePool(ctx, oldChunks, &plan, blockers)) {
         return false;
     }
     configureGrowTransition(ctx, ipBitmapSizeBlocks(newChunks, newCibs, newCabs), &plan, blockers);
@@ -13522,7 +13581,11 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
         ctx,
         relocateFreedBlocks(
             plan.oldIpBase, plan.oldIpBlockCount, plan.oldIpBmBase, plan.ipBmBlocks),
-        plan.newXid);
+        plan.newXid,
+        blockers);
+    if (!mainFq.ok) {
+        return false;
+    }
     ApfsMultiChunkGrownAllocator alloc;
     if (!buildMultiChunkGrownAllocator(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
@@ -13971,12 +14034,19 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
 // ip-bitmap ring (when the ring relocated) always frees onto the queue - it survives in chunk 0.
 ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
                                       const ApfsChunkAddingGrowPlan& plan,
-                                      bool poolInRemovedTail) {
-    QStringList ignore;
+                                      bool poolInRemovedTail,
+                                      QStringList* blockers) {
+    // See advanceMainFqWithFreed: a swallowed free-queue read error would drop
+    // pending frees and leak blocks, so a real error fails the shrink.
+    QStringList probe;
     const uint64_t mainPaddr = findEphemeralPaddrByOid(
-        ctx->image, ctx->geometry, ctx->live, ctx->chain.mainFqTreeOid, &ignore);
+        ctx->image, ctx->geometry, ctx->live, ctx->chain.mainFqTreeOid, &probe);
     const QVector<ApfsFreeQueueEntry> live =
-        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &ignore);
+        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &probe);
+    const bool readFailed = !probe.isEmpty();
+    if (readFailed) {
+        blockers->append(probe);
+    }
     QVector<uint64_t> freed;
     if (!poolInRemovedTail) {
         for (uint64_t b = plan.oldIpBase; b < plan.oldIpBase + plan.oldIpBlockCount; ++b) {
@@ -13991,7 +14061,10 @@ ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
             freed.append(b);
         }
     }
-    return advanceMainFreeQueue(live, freed, plan.newXid, kMainFqRollbackWindow);
+    ApfsMainFqAdvance advance =
+        advanceMainFreeQueue(live, freed, plan.newXid, kMainFqRollbackWindow);
+    advance.ok = !readFailed;
+    return advance;
 }
 
 // Lay out a data-preserving shrink: the relocated pool sits in chunk 0 (its bitmap already marks
@@ -14240,7 +14313,10 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
         return false;
     }
     const bool poolInRemovedTail = plan.oldIpBase >= newBlockCount;
-    const ApfsMainFqAdvance mainFq = shrinkMainFreeQueue(ctx, plan, poolInRemovedTail);
+    const ApfsMainFqAdvance mainFq = shrinkMainFreeQueue(ctx, plan, poolInRemovedTail, blockers);
+    if (!mainFq.ok) {
+        return false;
+    }
     ApfsMultiChunkGrownAllocator alloc;
     if (!buildShrinkAllocator(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
@@ -16089,47 +16165,110 @@ bool renameDirectoryNameCollision(const QVector<ApfsRootDirectoryPayload>& direc
     return false;
 }
 
+// Retarget the source inode's payload in place: a hard-linked inode renames
+// only the matched name and keeps its other links (one fsroot record); a plain
+// file just takes the new name/parent.
+void applyRenameToSourceInode(ApfsRootFilePayload* file,
+                              const ApfsRenameListInput& in,
+                              uint64_t destParent,
+                              QStringList* blockers) {
+    const QVector<ApfsInodeSibling> sibs =
+        recoverInodeSiblings(in.image, in.geometry, in.chain, file->fileId, blockers);
+    if (sibs.size() >= 2) {
+        coalesceHardlinkNamesRenaming(file,
+                                      sibs,
+                                      {.oldName = in.oldName,
+                                       .oldParent = in.targetParentId,
+                                       .newName = in.newName,
+                                       .newParent = destParent});
+        return;
+    }
+    file->fileName = in.newName;
+    file->parentDirectoryId = destParent;
+}
+
+// The source inode may own several directory entries (a hard link); its id is
+// found up front so every dir-entry of that inode coalesces into one record with
+// the source name renamed, whichever entry the walk hits first (appending the
+// source separately duplicated the fsroot inode key). 0 when no name matches.
+uint64_t findRenameSourceFileId(const ApfsRenameListInput& in) {
+    for (const ApfsRootFilePayload& file : in.allFiles) {
+        if (file.parentDirectoryId == in.targetParentId && file.fileName == in.oldName) {
+            return file.fileId;
+        }
+    }
+    return 0;
+}
+
+struct RenameBuildState {
+    QSet<uint64_t> keptIds;  // preserved inode ids (later hard-link dir-entries coalesced)
+    bool found{false};
+    bool duplicate{false};
+};
+
+struct RenameEntryContext {
+    const ApfsRenameListInput& in;
+    uint64_t destParent{0};
+    uint64_t sourceFileId{0};
+    const QHash<uint64_t, uint64_t>& owners;
+};
+
+// Append one restored dir-entry into @p files, coalescing hard links to one
+// record and renaming the source inode. Returns false only on a fatal restore
+// error (blocker set).
+bool appendRenameEntry(ApfsRootFilePayload file,
+                       const RenameEntryContext& ctx,
+                       RenameBuildState* state,
+                       QVector<ApfsRootFilePayload>* files,
+                       QStringList* blockers) {
+    const ApfsRenameListInput& in = ctx.in;
+    if (!restoreRenamePayload(&file, in, ctx.owners, blockers)) {
+        return false;
+    }
+    const bool isSourceInode = ctx.sourceFileId != 0 && file.fileId == ctx.sourceFileId;
+    const bool isSource = file.parentDirectoryId == in.targetParentId &&
+                          file.fileName == in.oldName;
+    state->duplicate = state->duplicate ||
+                       renameDestinationCollision(file, isSource, ctx.destParent, in.newName);
+    if (state->keptIds.contains(file.fileId)) {
+        return true;  // this inode's first dir-entry already emitted its one record
+    }
+    state->keptIds.insert(file.fileId);
+    if (isSourceInode) {
+        applyRenameToSourceInode(&file, in, ctx.destParent, blockers);
+        state->found = true;
+    } else {
+        // Preserve a hard-linked file as ONE inode with additionalLinks, not a
+        // duplicate inode per name (fsck rejects the duplicate fsroot key).
+        coalesceHardlinkNames(
+            &file, recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers));
+    }
+    files->append(file);
+    return true;
+}
+
 bool buildRenameFileList(const ApfsRenameListInput& in,
                          QVector<ApfsRootFilePayload>* files,
                          QStringList* blockers) {
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
-    const uint64_t destParent = in.destinationParentId != 0 ? in.destinationParentId
-                                                            : in.targetParentId;
-    bool found = false;
-    bool duplicate = false;
-    QSet<uint64_t> keptIds;  // preserved inode ids (a hard link's later dir-entries are coalesced)
-    for (ApfsRootFilePayload file : in.allFiles) {
-        // Keep each file's parent so the rest of the tree survives; the source is matched
-        // in its parent and any name collision in the DESTINATION parent (excluding the
-        // moved file itself), so a same-named file under a different parent is left alone.
-        if (!restoreRenamePayload(&file, in, owners, blockers)) {
+    const RenameEntryContext ctx{.in = in,
+                                 .destParent = in.destinationParentId != 0 ? in.destinationParentId
+                                                                           : in.targetParentId,
+                                 .sourceFileId = findRenameSourceFileId(in),
+                                 .owners = owners};
+    RenameBuildState state;
+    for (const ApfsRootFilePayload& file : in.allFiles) {
+        if (!appendRenameEntry(file, ctx, &state, files, blockers)) {
             return false;
         }
-        const bool isSource = file.parentDirectoryId == in.targetParentId &&
-                              file.fileName == in.oldName;
-        duplicate = duplicate || renameDestinationCollision(file, isSource, destParent, in.newName);
-        if (isSource) {
-            file.fileName = in.newName;
-            file.parentDirectoryId = destParent;
-            found = true;
-            files->append(file);
-        } else if (!keptIds.contains(file.fileId)) {
-            // Preserve a hard-linked file as ONE inode with additionalLinks, not a duplicate
-            // inode per name (fsck rejects the duplicate fsroot key); later names are skipped.
-            keptIds.insert(file.fileId);
-            coalesceHardlinkNames(
-                &file,
-                recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers));
-            files->append(file);
-        }
     }
-    if (!found) {
+    if (!state.found) {
         blockers->append(
             QStringLiteral("APFS file-rename-commit: file '%1' was not found").arg(in.oldName));
         return false;
     }
-    if (duplicate) {
+    if (state.duplicate) {
         blockers->append(QStringLiteral("APFS file-rename-commit: a file named '%1' already exists")
                              .arg(in.newName));
         return false;
