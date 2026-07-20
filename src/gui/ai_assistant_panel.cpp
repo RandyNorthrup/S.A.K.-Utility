@@ -3592,12 +3592,10 @@ QWidget* AiAssistantPanel::createContextPane() {
                                sak::ui::kMarginMedium);
     layout->setSpacing(sak::ui::kSpacingSmall);
 
-    setupContextPaneSessionSection(layout, pane);
-    setupContextPaneAgentSection(layout, pane);
-    setupContextPaneAccessSection(layout, pane);
-    setupContextPaneCredentialSection(layout, pane);
-    layout->addStretch();
-
+    // Adopt and style the scroll area while the pane is still empty: both
+    // setWidget and an ancestor setStyleSheet re-polish every existing
+    // descendant, so finalizing the ancestor chain first lets each section
+    // widget be polished exactly once at creation.
     auto* scroll = createScrollArea(this, pane);
     scroll->setObjectName(QStringLiteral("aiContextScroll"));
     scroll->setMinimumWidth(kContextScrollMinWidth);
@@ -3606,6 +3604,12 @@ QWidget* AiAssistantPanel::createContextPane() {
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setStyleSheet(
         sak::ui::backgroundStyle("QScrollArea#aiContextScroll", sak::ui::kColorBgSurface));
+
+    setupContextPaneSessionSection(layout, pane);
+    setupContextPaneAgentSection(layout, pane);
+    setupContextPaneAccessSection(layout, pane);
+    setupContextPaneCredentialSection(layout, pane);
+    layout->addStretch();
     return scroll;
 }
 
