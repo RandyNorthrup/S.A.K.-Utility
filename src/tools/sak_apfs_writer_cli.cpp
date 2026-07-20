@@ -1029,6 +1029,10 @@ std::optional<QJsonObject> buildCommitFileWriteReport(const CliInvocation& invoc
          .written_image_path = invocation.output_image_path,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .compress_zlib = invocation.compress_zlib,
+         .compress_lzfse = invocation.compress_lzfse,
+         .compress_lzvn = invocation.compress_lzvn,
+         .compress_lzbitmap = invocation.compress_lzbitmap,
          .options = imageWriteOptions(invocation.evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -1249,6 +1253,10 @@ std::optional<QJsonObject> buildCommitRawFileWriteReport(const CliInvocation& in
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
          .parent_directory_path = invocation.parent_directory_path,
+         .compress_zlib = invocation.compress_zlib,
+         .compress_lzfse = invocation.compress_lzfse,
+         .compress_lzvn = invocation.compress_lzvn,
+         .compress_lzbitmap = invocation.compress_lzbitmap,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -1342,6 +1350,10 @@ std::optional<QJsonObject> buildCommitRawDirectoryChildWriteReport(const CliInvo
          .directory_name = invocation.directory_name,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .compress_zlib = invocation.compress_zlib,
+         .compress_lzfse = invocation.compress_lzfse,
+         .compress_lzvn = invocation.compress_lzvn,
+         .compress_lzbitmap = invocation.compress_lzbitmap,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -1845,8 +1857,9 @@ struct CliOptions {
                                 QStringLiteral("Permit Windows raw-device mutation.")};
     QCommandLineOption compressZlib{
         {QStringLiteral("compress-zlib")},
-        QStringLiteral("Store the inserted file transparently compressed (inline zlib "
-                       "com.apple.decmpfs); for commit-image/raw-file-insert.")};
+        QStringLiteral("Store the inserted/written file transparently compressed (inline zlib "
+                       "com.apple.decmpfs); for commit-image/raw-file-insert, "
+                       "commit-raw-file-write, and commit-raw-directory-child-write.")};
     QCommandLineOption compressLzfse{
         {QStringLiteral("compress-lzfse")},
         QStringLiteral("Store the inserted file transparently compressed (inline LZFSE, "

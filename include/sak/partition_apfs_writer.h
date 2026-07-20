@@ -535,6 +535,13 @@ struct PartitionApfsRawDirectoryChildWriteCommitRequest {
     // the in-memory path unchanged. Mirrors PartitionApfsRawFileInsertCommitRequest.
     QString file_data_path;
     uint64_t file_data_stream_size{0};
+    // A5: store the child transparently compressed. Same flags and precedence as
+    // PartitionApfsRawFileInsertCommitRequest; incompatible with a streamed
+    // payload (fails closed).
+    bool compress_zlib{false};
+    bool compress_lzfse{false};
+    bool compress_lzvn{false};
+    bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

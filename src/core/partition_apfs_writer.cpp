@@ -16915,7 +16915,48 @@ struct ApfsRootFileWriteRequest {
     // (streamSize bytes) instead of fileData; fileData stays empty. Empty = in-memory.
     QString streamPath;
     uint64_t streamSize{0};
+    // A5: store the payload transparently compressed, mirroring
+    // ApfsFileInsertBuildInputs (zlib inline; lzfse/lzvn inline; lzbitmap
+    // resource fork; identical precedence). A streamed payload cannot compress
+    // (the codecs need the bytes in RAM), so that combination fails closed.
+    bool compress{false};
+    bool compressLzfse{false};
+    bool compressLzvn{false};
+    bool compressLzbitmap{false};
 };
+
+// Build the insert leg of a create-or-replace write through the shared
+// compression preflight, so a write honors the compress flags exactly like a
+// plain insert (previously they were parsed and silently dropped). Runs BEFORE
+// the replace delete so a failed build never costs the file being replaced.
+bool buildRootWriteInsertRequest(const ApfsRootFileWriteRequest& request,
+                                 const QVector<ApfsRootFilePayload>& existing,
+                                 ApfsFileInsertRequest* insert,
+                                 QStringList* blockers) {
+    const bool wantsCompression = request.compress || request.compressLzfse ||
+                                  request.compressLzvn || request.compressLzbitmap;
+    if (wantsCompression && !request.streamPath.isEmpty()) {
+        blockers->append(QStringLiteral(
+            "APFS file-write-commit: a streamed payload cannot be stored compressed"));
+        return false;
+    }
+    if (!buildFileInsertRequest({.existingFiles = existing,
+                                 .fileName = request.fileName,
+                                 .fileData = request.fileData,
+                                 .directories = request.directories,
+                                 .compress = request.compress,
+                                 .parentDirectoryId = request.parentDirectoryId,
+                                 .compressLzfse = request.compressLzfse,
+                                 .compressLzvn = request.compressLzvn,
+                                 .compressLzbitmap = request.compressLzbitmap},
+                                insert,
+                                blockers)) {
+        return false;
+    }
+    insert->streamPath = request.streamPath;
+    insert->streamSize = request.streamSize;
+    return true;
+}
 
 bool commitInPlaceRootFileWrite(QIODevice* image,
                                 const ApfsRootFileWriteRequest& request,
@@ -16931,6 +16972,15 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
     const bool exists =
         std::any_of(request.allFiles.cbegin(), request.allFiles.cend(), isReplacedFile);
     QVector<ApfsRootFilePayload> existing;
+    for (const ApfsRootFilePayload& file : request.allFiles) {
+        if (!isReplacedFile(file)) {
+            existing.append(file);
+        }
+    }
+    ApfsFileInsertRequest insert;
+    if (!buildRootWriteInsertRequest(request, existing, &insert, blockers)) {
+        return false;
+    }
     if (exists) {
         ApfsInPlaceCheckpointResult deleteResult;
         if (!commitInPlaceFileDelete(image,
@@ -16939,18 +16989,7 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
                                      blockers)) {
             return false;
         }
-        for (const ApfsRootFilePayload& file : request.allFiles) {
-            if (!isReplacedFile(file)) {
-                existing.append(file);
-            }
-        }
-    } else {
-        existing = request.allFiles;
     }
-    ApfsFileInsertRequest insert{
-        existing, fileName, request.fileData, request.directories, parentId};
-    insert.streamPath = request.streamPath;
-    insert.streamSize = request.streamSize;
     return commitInPlaceFileInsert(image, insert, result, blockers);
 }
 
@@ -21763,6 +21802,9 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     return result;
 }
 
+bool validateImageOnlyCommitSource(QLatin1StringView operation,
+                                   PartitionApfsImageCheckpointCommitResult* result);
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -21779,24 +21821,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
             QStringLiteral("APFS file-write-commit payload exceeds the current size cap"));
         return result;
     }
-    const auto source = validateImageOnlySource(result.source_image_path,
-                                                QLatin1StringView("file-write-commit"),
-                                                &result.blockers,
-                                                kApfsInPlaceCommitMaxBytes);
-    if (!source.ok) {
-        return result;
-    }
-    if (!appendSeparateOutputBlockers(source.info,
-                                      result.written_image_path,
-                                      QLatin1StringView("file-write-commit"),
-                                      &result.blockers)) {
-        return result;
-    }
-    if (!detectApfsImageSource(result.source_image_path,
-                               static_cast<uint64_t>(source.info.size()),
-                               QLatin1StringView("file-write-commit"),
-                               &result.blockers)
-             .has_value()) {
+    if (!validateImageOnlyCommitSource(QLatin1StringView("file-write-commit"), &result)) {
         return result;
     }
     QVector<ApfsRootFilePayload> allFiles;
@@ -21817,12 +21842,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                           &result.blockers)) {
         return result;
     }
+    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    writeRequest.compress = request.compress_zlib;
+    writeRequest.compressLzfse = request.compress_lzfse;
+    writeRequest.compressLzvn = request.compress_lzvn;
+    writeRequest.compressLzbitmap = request.compress_lzbitmap;
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceRootFileWrite(&image,
-                                   {allFiles, cleanFileName, request.file_data, directories},
-                                   &commit,
-                                   &commitBlockers)) {
+    if (commitInPlaceRootFileWrite(&image, writeRequest, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -22254,6 +22281,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
     }
     ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
     writeRequest.parentDirectoryId = parentDirectoryId;
+    writeRequest.compress = request.compress_zlib;
+    writeRequest.compressLzfse = request.compress_lzfse;
+    writeRequest.compressLzvn = request.compress_lzvn;
+    writeRequest.compressLzbitmap = request.compress_lzbitmap;
     if (streaming) {
         writeRequest.fileData.clear();
         writeRequest.streamPath = request.file_data_path.trimmed();
@@ -22582,18 +22613,20 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     if (!target) {
         return result;
     }
+    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    writeRequest.parentDirectoryId = parentId;
+    writeRequest.streamPath = request.file_data_path.trimmed();
+    writeRequest.streamSize = request.file_data_stream_size;
+    writeRequest.compress = request.compress_zlib;
+    writeRequest.compressLzfse = request.compress_lzfse;
+    writeRequest.compressLzvn = request.compress_lzvn;
+    writeRequest.compressLzbitmap = request.compress_lzbitmap;
+    if (streaming) {
+        writeRequest.fileData.clear();
+    }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceRootFileWrite(target.get(),
-                                   {allFiles,
-                                    cleanFileName,
-                                    request.file_data,
-                                    directories,
-                                    parentId,
-                                    request.file_data_path.trimmed(),
-                                    request.file_data_stream_size},
-                                   &commit,
-                                   &commitBlockers)) {
+    if (commitInPlaceRootFileWrite(target.get(), writeRequest, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

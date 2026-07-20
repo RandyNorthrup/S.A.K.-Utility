@@ -1899,6 +1899,7 @@ private Q_SLOTS:
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_streamedWriteFailsClosedOnShortPayloadSource();
     void apfsCompression_decmpfsHeaderRequiresCmpfSignature();
+    void apfsWriter_createOrReplaceWriteHonorsCompression();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
     void apfsWriter_backToBackFullSpillsSucceed();
@@ -8403,6 +8404,101 @@ void PartitionManagerCoreTests::apfsCompression_decmpfsHeaderRequiresCmpfSignatu
     QByteArray bad = good;
     bad[0] = 'X';
     QVERIFY(!apfsParseDecmpfsHeader(bad).has_value());
+}
+
+// The streamed+compress fail-closed leg of the create-or-replace compression
+// test. A free function (not a slot) so QtTest does not run it standalone.
+static void verifyStreamedCompressedWriteFailsClosed(const QString& img,
+                                                     const uint64_t bytes,
+                                                     const QString& payloadPath,
+                                                     const QByteArray& kept) {
+    const auto streamed =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("note.txt"),
+                                                 .file_data_path = payloadPath,
+                                                 .file_data_stream_size = 8192,
+                                                 .compress_zlib = true,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY(!streamed.ok);
+    QVERIFY2(streamed.blockers.join(QStringLiteral("; "))
+                 .contains(QStringLiteral("cannot be stored compressed")),
+             qPrintable(streamed.blockers.join(QStringLiteral("; "))));
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/note.txt"), static_cast<uint64_t>(kept.size()));
+    QVERIFY(readBack.ok);
+    QCOMPARE(readBack.data, kept);
+}
+
+void PartitionManagerCoreTests::apfsWriter_createOrReplaceWriteHonorsCompression() {
+    // The create-or-replace write path (commit-raw-file-write) must honor the
+    // compress flags exactly like a plain insert; previously they were parsed
+    // and silently dropped, landing an uncompressed file.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("write-compress.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("WriteCmp"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const QByteArray first(20'000, 'A');  // highly compressible
+    const auto create =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("note.txt"),
+                                                 .file_data = first,
+                                                 .compress_zlib = true,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(create.ok, qPrintable(create.blockers.join(QStringLiteral("; "))));
+    auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QVERIFY(listing.entries.first().compressed);
+    auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/note.txt"), static_cast<uint64_t>(first.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, first);
+
+    // Replace keeps honoring the flag (delete leg + compressed re-insert).
+    const QByteArray second(30'000, 'B');
+    const auto replace =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("note.txt"),
+                                                 .file_data = second,
+                                                 .compress_zlib = true,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(replace.ok, qPrintable(replace.blockers.join(QStringLiteral("; "))));
+    readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/note.txt"), static_cast<uint64_t>(second.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, second);
+    listing = PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY(listing.ok && listing.entries.size() == 1 && listing.entries.first().compressed);
+
+    // A streamed payload cannot compress: fails closed BEFORE the replace
+    // delete, so the file being replaced survives intact.
+    const QString payloadPath = dir.filePath(QStringLiteral("streamed.bin"));
+    QFile pf(payloadPath);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    QCOMPARE(pf.write(QByteArray(8192, 'C')), static_cast<qint64>(8192));
+    pf.close();
+    verifyStreamedCompressedWriteFailsClosed(img, bytes, payloadPath, second);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunks() {
