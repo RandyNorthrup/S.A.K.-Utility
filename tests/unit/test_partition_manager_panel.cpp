@@ -28,6 +28,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
@@ -1491,7 +1492,20 @@ void PartitionManagerPanelTests::unallocatedRoleUsesDarkGrayPalette() {
 }
 
 void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
+    // Run under the production tool-button style sheet: its padding is exactly
+    // what fixed-width font-metrics sizing used to undercount, eliding wider
+    // captions such as "Scan Disks".
+    const QString previousStyleSheet = qApp->styleSheet();
+    const auto restoreStyleSheet =
+        qScopeGuard([previousStyleSheet] { qApp->setStyleSheet(previousStyleSheet); });
+    qApp->setStyleSheet(sak::ui::actionButtonStyle("QPushButton, QToolButton",
+                                                   sak::ui::kPrimaryButtonTone,
+                                                   false,
+                                                   sak::ui::kButtonPaddingCompactCss));
+
     sak::PartitionManagerPanel panel;
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
     const QHash<QString, QString> expectedIcons{
         {QStringLiteral("Apply"), QStringLiteral(":/icons/icons/icons8-pm-apply.svg")},
@@ -1520,12 +1534,18 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
             button->icon().actualSize(QSize(30, 30), QIcon::Disabled, QIcon::Off);
         QVERIFY2(disabledIconSize.width() >= 24 && disabledIconSize.height() >= 24,
                  "Disabled ribbon icons should still come from crisp SVG resources");
-        QCOMPARE(button->minimumSize(), button->maximumSize());
-        QCOMPARE(button->property("ribbonButtonWidth").toInt(), button->minimumWidth());
-        QCOMPARE(button->property("ribbonButtonHeight").toInt(), button->minimumHeight());
-        QVERIFY2(button->minimumHeight() >= 64,
+        // Truncation-proof sizing: the layout hint must come from the active
+        // style (which knows the style-sheet padding and current font), the
+        // minimum hint must equal it so layouts can never shrink the button
+        // below it, and the realized geometry must grant the full hint.
+        QCOMPARE(button->minimumSizeHint(), button->sizeHint());
+        QVERIFY2(button->sizeHint().height() >= 64,
                  "Ribbon buttons should have one consistent commercial-toolbar height");
-        QVERIFY2(button->minimumWidth() >= button->fontMetrics().horizontalAdvance(it.key()),
+        QVERIFY2(button->sizeHint().width() > button->fontMetrics().horizontalAdvance(it.key()),
+                 qPrintable(QStringLiteral("Ribbon hint must exceed the bare caption width: %1")
+                                .arg(it.key())));
+        QVERIFY2(button->width() >= button->sizeHint().width() &&
+                     button->height() >= button->sizeHint().height(),
                  qPrintable(
                      QStringLiteral("Ribbon label must not be truncated: %1").arg(it.key())));
     }

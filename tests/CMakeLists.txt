@@ -495,6 +495,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ../src/gui/partition_manager_panel.cpp
         ../src/gui/detachable_log_window.cpp
         ../src/gui/follow_scroll_controller.cpp
+        ../src/gui/ribbon_tool_button.cpp
         ../src/core/file_recovery_engine.cpp
         ../src/core/apfs_crypto.cpp
         ../src/core/apfs_keybag.cpp

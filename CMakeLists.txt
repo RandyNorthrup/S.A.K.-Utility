@@ -682,6 +682,8 @@ set(GUI_SOURCES
     include/sak/install_summary_dialog.h
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
+    src/gui/ribbon_tool_button.cpp
+    include/sak/ribbon_tool_button.h
     src/gui/follow_scroll_controller.cpp
     include/sak/follow_scroll_controller.h
     src/gui/windows11_theme.cpp

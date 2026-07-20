@@ -16,6 +16,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
@@ -400,14 +401,13 @@ QToolButton* makeRibbonButton(const QString& text,
                               const QString& icon_path,
                               const QString& tooltip,
                               QWidget* parent) {
-    auto* button = new QToolButton(parent);
+    auto* button = new ui::RibbonToolButton(parent, QSize(kRibbonButtonWidth, kRibbonButtonHeight));
     button->setText(text);
     button->setIcon(QIcon(icon_path));
     button->setIconSize(QSize(kRibbonIconSize, kRibbonIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     button->setToolTip(tooltip);
     button->setAccessibleName(text);
-    button->setFixedSize(kRibbonButtonWidth, kRibbonButtonHeight);
     button->setStyleSheet(ribbonButtonStyle());
     return button;
 }

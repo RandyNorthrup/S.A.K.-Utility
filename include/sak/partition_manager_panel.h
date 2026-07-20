@@ -190,10 +190,6 @@ private:
                                   const QString& text,
                                   const QString& icon_path,
                                   const QString& tooltip);
-    QToolButton* createDisabledActionLink(QWidget* parent,
-                                          const QString& text,
-                                          const QString& icon_path,
-                                          const QString& reason);
     void addSidebarSection(QVBoxLayout* layout,
                            const QString& title,
                            const QVector<QToolButton*>& buttons,

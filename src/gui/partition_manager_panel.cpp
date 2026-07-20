@@ -18,6 +18,7 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+#include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractButton>
@@ -139,11 +140,10 @@ constexpr int kMaxSizeInputMb =
 constexpr int kMaxPartitionNumberInput = 256;
 constexpr int kActionsPaneWidth = 304;
 constexpr int kRibbonIconSize = 30;
+// Base ribbon cell; RibbonToolButton grows past it whenever the active style
+// needs more room for the caption, so labels are never elided.
 constexpr int kRibbonButtonWidth = 74;
 constexpr int kRibbonButtonHeight = 72;
-// Horizontal padding added around a ribbon button's label so a wider caption (e.g.
-// "Scan Disks") is never elided; the button grows past kRibbonButtonWidth to fit.
-constexpr int kRibbonButtonTextPadding = 16;
 constexpr int kActionIconSize = 16;
 constexpr int kActionLinkHeight = 22;
 constexpr int kDiskIconSize = 34;
@@ -8609,26 +8609,18 @@ QToolButton* PartitionManagerPanel::createRibbonButton(QWidget* parent,
                                                        const QString& text,
                                                        const QString& icon_path,
                                                        const QString& tooltip) {
-    auto* button = new QToolButton(parent);
+    auto* button = new ui::RibbonToolButton(parent, QSize(kRibbonButtonWidth, kRibbonButtonHeight));
     button->setText(text);
     button->setObjectName(QStringLiteral("partitionRibbonButton"));
     button->setIcon(icons8RibbonIcon(icon_path));
     button->setIconSize(QSize(kRibbonIconSize, kRibbonIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     button->setAutoRaise(true);
-    // Grow the button past the base width when the caption needs it, so labels like
-    // "Scan Disks" are shown in full rather than elided.
-    const int captionWidth = button->fontMetrics().horizontalAdvance(text) +
-                             kRibbonButtonTextPadding;
-    const int buttonWidth = std::max(kRibbonButtonWidth, captionWidth);
     button->setProperty("iconPath", icon_path);
     button->setProperty("iconSource", QStringLiteral("Icons8 SVG"));
     button->setProperty("iconModes", QStringLiteral("Normal,Disabled,Active,Selected"));
-    button->setProperty("ribbonButtonWidth", buttonWidth);
-    button->setProperty("ribbonButtonHeight", kRibbonButtonHeight);
     button->setAccessibleName(text);
     button->setToolTip(tooltip);
-    button->setFixedSize(buttonWidth, kRibbonButtonHeight);
     return button;
 }
 
@@ -8651,16 +8643,6 @@ QToolButton* PartitionManagerPanel::createActionLink(QWidget* parent,
     button->setMaximumHeight(kActionLinkHeight);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setStyleSheet(ui::partitionActionTextLinkStyle());
-    return button;
-}
-
-QToolButton* PartitionManagerPanel::createDisabledActionLink(QWidget* parent,
-                                                             const QString& text,
-                                                             const QString& icon_path,
-                                                             const QString& reason) {
-    auto* button = createActionLink(parent, text, icon_path, reason);
-    button->setEnabled(false);
-    button->setAccessibleDescription(reason);
     return button;
 }
 
