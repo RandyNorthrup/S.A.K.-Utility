@@ -88,6 +88,13 @@ QStringList FileExplorerArchiveWorker::collectCompressSources(const QString& sta
 
 void FileExplorerArchiveWorker::runExtract() {
     QTemporaryDir staging;
+    // A raw target stages the archive/output through this temp dir; an invalid
+    // temp dir would make QDir(staging.path()) resolve relative to the process
+    // working directory and clobber a same-named host file (mirrors runCompress).
+    if (!m_request.target.local_file_system && !staging.isValid()) {
+        m_blockers.append(QStringLiteral("Could not create a staging folder for extraction."));
+        return;
+    }
     for (const FileExplorerArchiveExtractItem& archive : m_request.archives) {
         if (checkStop()) {
             return;

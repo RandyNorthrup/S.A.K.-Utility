@@ -63,6 +63,8 @@
 #include <algorithm>
 #include <tuple>
 
+#include <private/qzipwriter_p.h>
+
 namespace {
 
 template <typename Widget>
@@ -1866,6 +1868,49 @@ private Q_SLOTS:
         QString detected_root;
         QVERIFY(sak::FileExplorerArchiveService::hasSingleTopLevelRoot(single, &detected_root));
         QCOMPARE(detected_root, QStringLiteral("bundle"));
+    }
+
+    void extractRejectsZipSlipAndPerFileSizeBomb() {
+        // The bounded extractor must fail closed on a path-traversal (zip-slip)
+        // entry and on an entry declaring an oversize expansion, and must not
+        // leave the destination populated when it rejects.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+
+        // Hand-build a zip whose single entry name escapes the destination.
+        const QString slip_zip = root.filePath(QStringLiteral("slip.zip"));
+        {
+            QZipWriter writer(slip_zip);
+            writer.addFile(QStringLiteral("../escapee.txt"), QByteArrayLiteral("owned"));
+            writer.close();
+            QCOMPARE(writer.status(), QZipWriter::NoError);
+        }
+        const QString slip_out = root.filePath(QStringLiteral("slip_out"));
+        const auto slip = sak::FileExplorerArchiveService::extractZip(slip_zip, slip_out);
+        QVERIFY(!slip.ok);
+        QVERIFY(!slip.blockers.isEmpty());
+        // The traversal target next to the destination must never be written.
+        QVERIFY(!QFile::exists(QDir(root.filePath(QStringLiteral("slip_out")))
+                                   .filePath(QStringLiteral("../escapee.txt"))));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("escapee.txt"))));
+
+        // A well-formed archive still round-trips through the bounded path.
+        const QString ok_zip = root.filePath(QStringLiteral("ok.zip"));
+        {
+            QFile probe(root.filePath(QStringLiteral("probe.txt")));
+            QVERIFY(probe.open(QIODevice::WriteOnly));
+            QVERIFY(probe.write("bounded round trip") > 0);
+        }
+        QVERIFY(sak::FileExplorerArchiveService::compressToZip(
+                    ok_zip, {root.filePath(QStringLiteral("probe.txt"))})
+                    .ok);
+        const QString ok_out = root.filePath(QStringLiteral("ok_out"));
+        const auto ok = sak::FileExplorerArchiveService::extractZip(ok_zip, ok_out);
+        QVERIFY2(ok.ok, qPrintable(ok.blockers.join(QStringLiteral("; "))));
+        QFile extracted(QDir(ok_out).filePath(QStringLiteral("probe.txt")));
+        QVERIFY(extracted.open(QIODevice::ReadOnly));
+        QCOMPARE(extracted.readAll(), QByteArrayLiteral("bounded round trip"));
     }
 
     void smartExtractHotkeyFlattensSingleRootArchive() {

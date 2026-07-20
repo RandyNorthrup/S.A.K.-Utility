@@ -540,13 +540,16 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
     FileManagementMutationResult result;
     result.path = destPath;
     QFile src(hostPath);
-    QFile dst(destPath);
+    // QSaveFile streams into a temporary and renames on commit(), so a canceled
+    // copy, a mid-stream read error, or a short/failed flush leaves any existing
+    // destination file untouched instead of truncating it to a partial file.
+    QSaveFile dst(destPath);
     if (!src.open(QIODevice::ReadOnly)) {
         result.blockers.append(
             QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
         return result;
     }
-    if (!dst.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (!dst.open(QIODevice::WriteOnly)) {
         result.blockers.append(QStringLiteral("Unable to write file: %1").arg(dst.errorString()));
         return result;
     }
@@ -554,14 +557,15 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
     uint64_t written = 0;
     for (;;) {
         if (observer.isCancelled()) {
-            // Files removes the partial destination of a canceled copy.
-            dst.close();
-            dst.remove();
+            // Files removes the partial destination of a canceled copy; cancelWriting
+            // discards the temporary and keeps the original destination intact.
+            dst.cancelWriting();
             result.blockers.append(kFileManagementTransferCancelledBlocker);
             return result;
         }
         const qint64 n = src.read(window.data(), window.size());
         if (n < 0) {
+            dst.cancelWriting();
             result.blockers.append(
                 QStringLiteral("Read error while streaming: %1").arg(src.errorString()));
             return result;
@@ -570,12 +574,18 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
             break;
         }
         if (dst.write(window.constData(), n) != n) {
+            dst.cancelWriting();
             result.blockers.append(
                 QStringLiteral("Short write while streaming file: %1").arg(destPath));
             return result;
         }
         written += static_cast<uint64_t>(n);
         observer.addBytes(n);
+    }
+    if (!dst.commit()) {
+        result.blockers.append(
+            QStringLiteral("Unable to finalize file: %1").arg(dst.errorString()));
+        return result;
     }
     result.bytes_written = written;
     result.ok = true;
