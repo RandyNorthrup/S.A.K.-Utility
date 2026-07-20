@@ -27,6 +27,18 @@ constexpr qsizetype kMd5DigestBytes = 16;
 constexpr std::size_t kMd5HexChars = 32;
 constexpr qsizetype kSha256DigestBytes = 32;
 constexpr std::size_t kSha256HexChars = 64;
+
+// Convert a filesystem path to a QString without a lossy narrow round-trip. On
+// Windows std::filesystem::path::string() emits CP_ACP bytes that QString would
+// then misread as UTF-8, mangling any non-ASCII path; native() preserves the
+// wide path. On POSIX native() is already a byte string.
+QString pathToQString(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return QString::fromStdWString(path.native());
+#else
+    return QString::fromStdString(path.native());
+#endif
+}
 }  // namespace
 
 file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexcept
@@ -106,15 +118,18 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
 
     try {
         // Open file with Qt
-        QFile file(QString::fromStdString(file_path.string()));
+        const QString qpath = pathToQString(file_path);
+        QFile file(qpath);
         if (!file.open(QIODevice::ReadOnly)) {
-            logError("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", qpath.toStdString());
             return std::unexpected(error_code::read_error);
         }
 
         // Initialize MD5 hash
         QCryptographicHash hash(QCryptographicHash::Md5);
-        hashFileInChunks(file, hash, progress, stop_token);
+        if (!hashFileInChunks(file, hash, progress, stop_token)) {
+            return std::unexpected(error_code::read_error);
+        }
 
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
@@ -142,15 +157,18 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
 
     try {
         // Open file with Qt
-        QFile file(QString::fromStdString(file_path.string()));
+        const QString qpath = pathToQString(file_path);
+        QFile file(qpath);
         if (!file.open(QIODevice::ReadOnly)) {
-            logError("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", qpath.toStdString());
             return std::unexpected(error_code::read_error);
         }
 
         // Initialize SHA-256 hash
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        hashFileInChunks(file, hash, progress, stop_token);
+        if (!hashFileInChunks(file, hash, progress, stop_token)) {
+            return std::unexpected(error_code::read_error);
+        }
 
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
@@ -203,7 +221,7 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
     }
 }
 
-void file_hasher::hashFileInChunks(
+bool file_hasher::hashFileInChunks(
     QFile& file,
     QCryptographicHash& hash,
     // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
@@ -212,10 +230,21 @@ void file_hasher::hashFileInChunks(
     const auto file_size = static_cast<std::size_t>(file.size());
     std::size_t bytes_processed = 0;
 
-    while (!file.atEnd() && !stop_token.stop_requested()) {
-        QByteArray buffer = file.read(m_chunk_size);
+    while (!stop_token.stop_requested()) {
+        const QByteArray buffer = file.read(m_chunk_size);
         if (buffer.isEmpty()) {
-            continue;
+            // An empty read is either a clean end-of-file or an I/O fault. The
+            // previous code did `continue`, which on a mid-file read error spun
+            // forever (atEnd stayed false) or, if atEnd flipped, returned a hash
+            // over only the readable prefix as if it were complete. Distinguish
+            // the two via error() so a fault fails closed.
+            if (file.error() != QFileDevice::NoError) {
+                logError("Read error while hashing '{}': {}",
+                         file.fileName().toStdString(),
+                         file.errorString().toStdString());
+                return false;
+            }
+            break;  // clean end-of-file
         }
 
         hash.addData(buffer);
@@ -224,6 +253,7 @@ void file_hasher::hashFileInChunks(
             progress(bytes_processed, file_size);
         }
     }
+    return true;
 }
 
 }  // namespace sak

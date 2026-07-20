@@ -116,7 +116,10 @@ private:
         -> std::expected<std::string, error_code>;
 
     /// @brief Hash file content in chunks with progress reporting
-    void hashFileInChunks(
+    /// @return false if an I/O read error interrupted hashing (the accumulated
+    ///         digest is then incomplete and must not be reported as success);
+    ///         true on clean end-of-file or a cancellation via @p stop_token.
+    [[nodiscard]] bool hashFileInChunks(
         QFile& file,
         QCryptographicHash& hash,
         // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()

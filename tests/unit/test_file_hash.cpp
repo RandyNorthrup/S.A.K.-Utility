@@ -57,6 +57,7 @@ private Q_SLOTS:
     // Convenience functions
     void md5File_convenience();
     void sha256File_convenience();
+    void hash_nonAsciiPath();
 
 private:
     QTemporaryDir m_tempDir;
@@ -318,6 +319,26 @@ void FileHashTests::sha256File_convenience() {
     auto result = sak::sha256File(m_knownFile);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().length(), std::size_t{64});
+}
+
+void FileHashTests::hash_nonAsciiPath() {
+    // A path with non-ASCII characters must hash correctly. Previously the path
+    // was round-tripped through a narrow (CP_ACP) string that QString misread as
+    // UTF-8, mangling the name so the open failed with read_error.
+    const QString unicodeName = QString::fromUtf8("caf\xC3\xA9_\xE6\x96\x87\xE4\xBB\xB6.txt");
+    const QString unicodePath = m_tempDir.filePath(unicodeName);
+    QFile f(unicodePath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("Hello, World!\n");
+    f.close();
+
+    // Same content as m_knownFile, so the digests must match.
+    sak::file_hasher hasher(sak::hash_algorithm::md5);
+    auto unicodeResult = hasher.calculateHash(std::filesystem::path(unicodePath.toStdWString()));
+    auto knownResult = hasher.calculateHash(m_knownFile);
+    QVERIFY2(unicodeResult.has_value(), "hashing a non-ASCII path must succeed");
+    QVERIFY(knownResult.has_value());
+    QCOMPARE(unicodeResult.value(), knownResult.value());
 }
 
 QTEST_GUILESS_MAIN(FileHashTests)
