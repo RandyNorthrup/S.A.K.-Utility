@@ -42,6 +42,7 @@ FileExplorerTransferEngine::FileExplorerTransferEngine(FileManagementTarget sour
 
 bool FileExplorerTransferEngine::transferEntry(const FileExplorerTransferItem& item,
                                                const FileManagementTransferObserver& observer) {
+    m_last_transfer_incomplete = false;
     if (m_source_target.local_file_system) {
         return transferFromHost(item, item.destination_path, observer);
     }
@@ -82,6 +83,9 @@ bool FileExplorerTransferEngine::transferFromHost(const FileExplorerTransferItem
             m_destination_target, item.source_path, destination, observer);
         m_warnings.append(result.warnings);
         m_blockers.append(result.blockers);
+        if (result.symlinks_skipped > 0 || result.entries_skipped > 0) {
+            m_last_transfer_incomplete = true;
+        }
         return result.ok;
     }
     const auto result = FileManagementFileSystemBridge::writeFileFromHostPath(
@@ -93,27 +97,37 @@ bool FileExplorerTransferEngine::transferFromHost(const FileExplorerTransferItem
     return true;
 }
 
+bool FileExplorerTransferEngine::transferRawDirectoryToLocal(
+    const FileExplorerTransferItem& item,
+    const QString& destination,
+    const FileManagementTransferObserver& observer) {
+    const auto result = FileManagementFileSystemBridge::exportDirectoryToHost(
+        m_source_target, item.source_path, destination, m_raw_read_cap, observer);
+    m_warnings.append(result.warnings);
+    m_blockers.append(result.blockers);
+    if (result.symlinks_skipped > 0 || result.entries_skipped > 0 || result.capped_files > 0) {
+        m_last_transfer_incomplete = true;
+    }
+    if (result.ok && result.capped_files > 0 && !m_allow_capped_raw_reads) {
+        // A truncated file means the tree did not land whole: report it and
+        // fail the item so a move never deletes the intact source.
+        m_blockers.append(QStringLiteral("%1 file(s) inside %2 exceed the raw read "
+                                         "window; the pasted copy is incomplete.")
+                              .arg(result.capped_files)
+                              .arg(transferItemName(item.source_path)));
+        return false;
+    }
+    return result.ok;
+}
+
 bool FileExplorerTransferEngine::transferRawToLocal(
     const FileExplorerTransferItem& item,
     const QString& destination,
     const FileManagementTransferObserver& observer) {
-    const QString name = transferItemName(item.source_path);
     if (item.directory) {
-        const auto result = FileManagementFileSystemBridge::exportDirectoryToHost(
-            m_source_target, item.source_path, destination, m_raw_read_cap, observer);
-        m_warnings.append(result.warnings);
-        m_blockers.append(result.blockers);
-        if (result.ok && result.capped_files > 0 && !m_allow_capped_raw_reads) {
-            // A truncated file means the tree did not land whole: report it and
-            // fail the item so a move never deletes the intact source.
-            m_blockers.append(QStringLiteral("%1 file(s) inside %2 exceed the raw read "
-                                             "window; the pasted copy is incomplete.")
-                                  .arg(result.capped_files)
-                                  .arg(name));
-            return false;
-        }
-        return result.ok;
+        return transferRawDirectoryToLocal(item, destination, observer);
     }
+    const QString name = transferItemName(item.source_path);
     if (item.size_bytes > m_raw_read_cap && !m_allow_capped_raw_reads) {
         m_blockers.append(QStringLiteral("%1 exceeds the raw read window; a complete paste "
                                          "is not possible (use Copy Out for an explicitly "
@@ -129,6 +143,11 @@ bool FileExplorerTransferEngine::transferRawToLocal(
     }
     m_last_file_sha256 = result.sha256;
     m_last_file_hash_capped = result.capped;
+    // A capped single-file read means the copy is truncated; a move must not
+    // then delete the whole source.
+    if (result.capped) {
+        m_last_transfer_incomplete = true;
+    }
     return true;
 }
 
@@ -153,6 +172,10 @@ bool FileExplorerTransferEngine::transferRawStaged(const FileExplorerTransferIte
     const bool ok = host_leg.transferFromHost(staged_item, item.destination_path, observer);
     m_warnings.append(host_leg.warnings());
     m_blockers.append(host_leg.blockers());
+    // Either leg dropping entries leaves the raw-to-raw copy incomplete.
+    if (!host_leg.lastTransferComplete()) {
+        m_last_transfer_incomplete = true;
+    }
     return ok;
 }
 
@@ -305,6 +328,16 @@ bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& ite
         return false;
     }
     if (m_request.move) {
+        // Never delete the source of a move whose copy did not land whole
+        // (skipped symlinks, capped raw files, or depth/entry-cap overflow):
+        // the item stays put and is reported as failed.
+        if (!engine->lastTransferComplete()) {
+            m_blockers.append(
+                QStringLiteral("Kept %1: the moved copy is incomplete, so the source was not "
+                               "removed.")
+                    .arg(item.source_path));
+            return false;
+        }
         return engine->deleteMovedSource(item);
     }
     return true;

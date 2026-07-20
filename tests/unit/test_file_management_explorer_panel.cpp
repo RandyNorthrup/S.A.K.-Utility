@@ -17,6 +17,7 @@
 #include "sak/file_explorer_sidebar.h"
 #include "sak/file_explorer_sort_filter_model.h"
 #include "sak/file_explorer_tag_store.h"
+#include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_explorer_panel.h"
 
 #include <QAbstractItemView>
@@ -1870,6 +1871,53 @@ private Q_SLOTS:
         QCOMPARE(detected_root, QStringLiteral("bundle"));
     }
 
+    void incompleteMoveMarksTransferEngineIncomplete() {
+        // A tree deeper than the import bound copies with entries dropped; the
+        // transfer engine must report the copy as incomplete so the move worker
+        // never deletes the intact source (lastTransferComplete gates the delete).
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        QString deep = QStringLiteral("root");
+        for (int level = 0; level < 40; ++level) {
+            deep += QStringLiteral("/d");
+        }
+        QVERIFY(QDir(source.path()).mkpath(deep));
+        {
+            QFile bottom(QDir(source.path()).filePath(deep + QStringLiteral("/leaf.txt")));
+            QVERIFY(bottom.open(QIODevice::WriteOnly));
+            QVERIFY(bottom.write("deep leaf") > 0);
+        }
+
+        const auto srcTarget = sak::FileManagementFileSystemBridge::localTarget(source.path());
+        const auto dstTarget = sak::FileManagementFileSystemBridge::localTarget(destination.path());
+        sak::FileExplorerTransferEngine engine(srcTarget, dstTarget, 0);
+        sak::FileExplorerTransferItem item;
+        item.source_path = QDir(source.path()).filePath(QStringLiteral("root"));
+        item.destination_path = QDir(destination.path()).filePath(QStringLiteral("moved-root"));
+        item.directory = true;
+        QVERIFY(engine.transferEntry(item));
+        QVERIFY(!engine.lastTransferComplete());
+        QVERIFY(QFileInfo(QDir(source.path()).filePath(QStringLiteral("root"))).isDir());
+
+        // A complete copy (shallow tree) leaves the engine reporting complete.
+        QTemporaryDir shallowSource;
+        QVERIFY(shallowSource.isValid());
+        {
+            QFile flat(QDir(shallowSource.path()).filePath(QStringLiteral("flat.txt")));
+            QVERIFY(flat.open(QIODevice::WriteOnly));
+            QVERIFY(flat.write("flat") > 0);
+        }
+        sak::FileExplorerTransferEngine engine2(
+            sak::FileManagementFileSystemBridge::localTarget(shallowSource.path()), dstTarget, 0);
+        sak::FileExplorerTransferItem flatItem;
+        flatItem.source_path = QDir(shallowSource.path()).filePath(QStringLiteral("flat.txt"));
+        flatItem.destination_path = QDir(destination.path()).filePath(QStringLiteral("flat.txt"));
+        QVERIFY(engine2.transferEntry(flatItem));
+        QVERIFY(engine2.lastTransferComplete());
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not
@@ -2174,6 +2222,74 @@ private Q_SLOTS:
         QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier | Qt::AltModifier);
         QTRY_VERIFY(QApplication::clipboard()->text().startsWith(QLatin1Char('"')));
         QVERIFY(QApplication::clipboard()->text().contains(QStringLiteral("a_sel.txt")));
+    }
+
+    void armAutoDismissMessageBox(QString* captured_text) {
+        auto* dismiss = new QTimer(this);
+        dismiss->setInterval(50);
+        connect(dismiss, &QTimer::timeout, this, [dismiss, captured_text]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                *captured_text = box->text();
+                dismiss->stop();
+                dismiss->deleteLater();
+                box->accept();
+            }
+        });
+        dismiss->start();
+    }
+
+    void newFolderOverExistingIsRefusedAndKeepsContents() {
+        // New Folder uses mkpath, which succeeds on an existing folder; without a
+        // guard it journals a CreateNew whose undo would recycle the pre-existing
+        // folder. The guard must refuse the create and leave the folder intact.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("New Folder")));
+        const QString keeper = root.filePath(QStringLiteral("New Folder/keep.txt"));
+        {
+            QFile file(keeper);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("must survive") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("New Folder")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+
+        // Ctrl+Shift+N auto-accepts the default name "New Folder", which already
+        // exists; the guard should warn and refuse.
+        QString input_label;
+        QString warning_text;
+        armAutoAcceptInputDialog(&input_label);
+        armAutoDismissMessageBox(&warning_text);
+        panel.activateWindow();
+        table->setFocus();
+        QTest::keyClick(table, Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY2(warning_text.contains(QStringLiteral("already exists")),
+                     qPrintable(warning_text));
+
+        // The pre-existing folder and its file are untouched, and an undo has
+        // nothing to remove (no CreateNew was journaled).
+        QVERIFY(QFileInfo(keeper).isFile());
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
+        QApplication::processEvents();
+        QVERIFY2(QFileInfo(keeper).isFile(), "undo deleted a pre-existing folder");
     }
 
     void createFolderWithSelectionSwallowsSelection() {

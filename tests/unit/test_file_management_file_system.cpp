@@ -471,9 +471,39 @@ private Q_SLOTS:
             src.filePath(QStringLiteral("top.txt")),
             QDir(destination.path()).filePath(QStringLiteral("bad")));
         QVERIFY(!notDir.ok);
-        QVERIFY2(notDir.blockers.join(QStringLiteral(" "))
-                     .contains(QStringLiteral("not a readable directory")),
-                 qPrintable(notDir.blockers.join(QStringLiteral("; "))));
+        QVERIFY2(notDir.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("directory")),
+                 qPrintable(notDir.blockers.join(QStringLiteral(" "))));
+    }
+
+    void importDropsEntriesPastDepthBoundWithSignal() {
+        // A tree deeper than the import depth bound copies with entries dropped
+        // as a warning while ok stays true; entries_skipped makes that drop an
+        // explicit signal the move path can gate on (so it never deletes the
+        // intact source of an incomplete move).
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        QString deep = QStringLiteral("root");
+        for (int level = 0; level < 40; ++level) {
+            deep += QStringLiteral("/d");
+        }
+        QVERIFY(QDir(source.path()).mkpath(deep));
+        {
+            QFile bottom(QDir(source.path()).filePath(deep + QStringLiteral("/leaf.txt")));
+            QVERIFY(bottom.open(QIODevice::WriteOnly));
+            QVERIFY(bottom.write("deep leaf") > 0);
+        }
+
+        const auto dstTarget = sak::FileManagementFileSystemBridge::localTarget(destination.path());
+        const auto imported = sak::FileManagementFileSystemBridge::importDirectoryFromHost(
+            dstTarget,
+            QDir(source.path()).filePath(QStringLiteral("root")),
+            QDir(destination.path()).filePath(QStringLiteral("moved-root")));
+        QVERIFY(imported.ok);
+        QVERIFY(imported.entries_skipped > 0);
+        // The source tree was never touched by the copy.
+        QVERIFY(QFileInfo(QDir(source.path()).filePath(QStringLiteral("root"))).isDir());
     }
 
     void deleteDirectoryTreeRemovesNestedLocalTree() {

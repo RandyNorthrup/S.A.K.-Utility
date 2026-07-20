@@ -3167,6 +3167,15 @@ bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTa
     if (kind == PasteEntryKind::None) {
         return true;
     }
+    if (kind == PasteEntryKind::Unknown) {
+        // The destination listing was not authoritative, so a Replace could
+        // delete the wrong kind or an unseen collision could be overwritten;
+        // fail closed and let the user retry rather than risk data loss.
+        blockers->append(tr("Could not verify whether %1 already exists at the destination; "
+                            "the item was skipped.")
+                             .arg(name));
+        return false;
+    }
     const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
     if (choice == PasteCollisionChoice::Skip) {
         return false;
@@ -3223,19 +3232,27 @@ FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destina
         }
         return info.isDir() ? PasteEntryKind::Directory : PasteEntryKind::File;
     }
-    // Raw target: reuse the live listing for the current folder; anything
-    // else is listed once through the bridge.
-    const QVector<FileManagementEntry> entries =
-        (m_item_model && directory == m_current_path)
-            ? m_item_model->entries()
-            : FileManagementFileSystemBridge::listDirectory(target,
-                                                            directory,
-                                                            kExplorerListMaxEntries)
-                  .entries;
-    for (const FileManagementEntry& entry : entries) {
-        if (entry.name == name) {
+    // Raw APFS/HFS+ default to case-insensitive, so a differing-case name still
+    // collides; matching case-insensitively can only over-detect, which is the
+    // safe bias (a false collision picks a new name, never a silent overwrite).
+    const auto matches = [&name](const FileManagementEntry& entry) {
+        return QString::compare(entry.name, name, Qt::CaseInsensitive) == 0;
+    };
+    // Query a fresh listing one past the cap so truncation is detectable; the
+    // display model may itself be truncated, so it is not authoritative here.
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        target, directory, kExplorerListMaxEntries + 1);
+    if (!listing.ok) {
+        return PasteEntryKind::Unknown;
+    }
+    for (const FileManagementEntry& entry : listing.entries) {
+        if (matches(entry)) {
             return entry.directory ? PasteEntryKind::Directory : PasteEntryKind::File;
         }
+    }
+    // A full-to-the-cap listing might hide a collision past the window.
+    if (listing.entries.size() > kExplorerListMaxEntries) {
+        return PasteEntryKind::Unknown;
     }
     return PasteEntryKind::None;
 }
@@ -3243,6 +3260,8 @@ FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destina
 bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
                                                       const QString& directory,
                                                       const QString& name) const {
+    // Unknown (non-authoritative listing) counts as occupied so name-generation
+    // fails closed onto a fresh incremental name.
     return destinationEntryKind(target, directory, name) != PasteEntryKind::None;
 }
 
@@ -3947,29 +3966,44 @@ void FileManagementExplorerPanel::refreshOtherPane() {
     m_current_target_index = targetIndexForId(m_pane_state.location.target_id.value);
 }
 
+bool FileManagementExplorerPanel::crossPaneCopyOneEntry(const FileManagementTarget& source,
+                                                        const FileManagementTarget& destination,
+                                                        const QString& destination_dir,
+                                                        const FileManagementEntry& entry,
+                                                        QStringList* blockers) {
+    if (!entry.directory && !entry.regular_file) {
+        blockers->append(tr("Skipped special entry %1.").arg(entry.name));
+        return false;
+    }
+    const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
+                                FileExplorerTargetId::fromTarget(source).value ==
+                                    FileExplorerTargetId::fromTarget(destination).value;
+    const QString destination_path =
+        childPathFor(destination_dir, entry.name, destination.local_file_system);
+    if (entry.directory && same_namespace &&
+        pathContains(entry.path, destination_dir, destination.local_file_system)) {
+        blockers->append(tr("Cannot copy %1 into its own subfolder.").arg(entry.name));
+        return false;
+    }
+    // Copying an entry onto itself (both panes in the same folder) would
+    // otherwise stream a file over its own source; skip it like Files.
+    if (same_namespace && destination_path == entry.path) {
+        blockers->append(
+            tr("Skipped %1: the source and destination are the same.").arg(entry.name));
+        return false;
+    }
+    const PasteItem item{entry.path, entry.size_bytes, entry.directory};
+    return transferEntrySync(source, item, destination, destination_path, blockers);
+}
+
 int FileManagementExplorerPanel::crossPaneCopyEntries(const FileManagementTarget& source,
                                                       const FileManagementTarget& destination,
                                                       const QString& destination_dir,
                                                       QStringList* blockers) {
     int written = 0;
-    const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
-                                FileExplorerTargetId::fromTarget(source).value ==
-                                    FileExplorerTargetId::fromTarget(destination).value;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
-        if (!entry.directory && !entry.regular_file) {
-            blockers->append(tr("Skipped special entry %1.").arg(entry.name));
-            continue;
-        }
-        const PasteItem item{entry.path, entry.size_bytes, entry.directory};
-        const QString destination_path =
-            childPathFor(destination_dir, entry.name, destination.local_file_system);
-        if (entry.directory && same_namespace &&
-            pathContains(entry.path, destination_dir, destination.local_file_system)) {
-            blockers->append(tr("Cannot copy %1 into its own subfolder.").arg(entry.name));
-            continue;
-        }
-        if (transferEntrySync(source, item, destination, destination_path, blockers)) {
+        if (crossPaneCopyOneEntry(source, destination, destination_dir, entry, blockers)) {
             ++written;
         }
     }
@@ -4568,34 +4602,63 @@ void FileManagementExplorerPanel::showSelectedItemProperties() {
         return;
     }
     // Files OpenPropertiesAction (Alt+Enter): a real Properties window. The
-    // name field doubles as a rename that commits on OK.
+    // name field doubles as a rename that commits on OK. The dialog is
+    // non-modal, so capture the folder + target identity at open and refuse the
+    // rename if the user navigated away before pressing OK (otherwise the
+    // rename would land on a same-named item in whatever folder is now active).
+    const QString captured_target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    const QString captured_directory = m_current_path;
     auto* dialog = new FileExplorerPropertiesDialog(currentTarget(), selection.entries, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &QDialog::accepted, this, [this, dialog]() {
-        commitPropertiesRename(dialog->originalName(), dialog->editedName());
-    });
+    connect(
+        dialog, &QDialog::accepted, this, [this, dialog, captured_target_id, captured_directory]() {
+            commitPropertiesRename(captured_target_id,
+                                   captured_directory,
+                                   dialog->originalName(),
+                                   dialog->editedName());
+        });
     dialog->show();
 }
 
-void FileManagementExplorerPanel::commitPropertiesRename(const QString& original,
-                                                         const QString& edited) {
-    if (original.isEmpty() || edited.isEmpty() || edited == original) {
-        return;
+bool FileManagementExplorerPanel::propertiesRenameAllowed(const FileManagementTarget& target,
+                                                          const QString& captured_target_id,
+                                                          const QString& captured_directory,
+                                                          const QString& edited) {
+    if (FileExplorerTargetId::fromTarget(target).value != captured_target_id ||
+        m_current_path != captured_directory) {
+        sak::showWarningLogged(
+            this,
+            tr("Rename"),
+            tr("The location changed while Properties was open; the rename was canceled."));
+        return false;
     }
-    const FileManagementTarget target = currentTarget();
     if (!target.can_write_files || !isSafeChildName(edited)) {
         sak::showWarningLogged(this, tr("Rename"), tr("Enter a name without path separators."));
-        return;
+        return false;
     }
     if (target.local_file_system && isReservedWindowsName(edited)) {
         sak::showWarningLogged(this,
                                tr("Rename"),
                                tr("'%1' is a reserved name on Windows.").arg(edited));
-        return;
+        return false;
     }
     QString identity_blocker;
     if (!validateCurrentTargetIdentity(&identity_blocker)) {
         sak::showWarningLogged(this, tr("Rename"), identity_blocker);
+        return false;
+    }
+    return true;
+}
+
+void FileManagementExplorerPanel::commitPropertiesRename(const QString& captured_target_id,
+                                                         const QString& captured_directory,
+                                                         const QString& original,
+                                                         const QString& edited) {
+    if (original.isEmpty() || edited.isEmpty() || edited == original) {
+        return;
+    }
+    const FileManagementTarget target = currentTarget();
+    if (!propertiesRenameAllowed(target, captured_target_id, captured_directory, edited)) {
         return;
     }
     const QString source_path = childPathFor(m_current_path, original, target.local_file_system);
@@ -4787,6 +4850,14 @@ void FileManagementExplorerPanel::createFolderWithSelection() {
                                                tr("New folder"),
                                                &accepted);
     if (!accepted || !isSafeChildName(name)) {
+        return;
+    }
+    // A create over an existing folder (mkpath) would journal a CreateNew that
+    // undo could use to recycle the pre-existing folder; refuse it.
+    if (destinationOccupied(target, m_current_path, name.trimmed())) {
+        sak::showWarningLogged(this,
+                               tr("Create Folder"),
+                               tr("An item named %1 already exists here.").arg(name.trimmed()));
         return;
     }
     const QString folder_path = childPathFor(m_current_path, name, target.local_file_system);
@@ -6555,6 +6626,15 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
         sak::showWarningLogged(this,
                                tr("New Folder"),
                                tr("Enter a folder name without path separators."));
+        return;
+    }
+    // createDirectory (mkpath) succeeds on an already-existing folder, which
+    // would journal a CreateNew whose undo then recycles the pre-existing
+    // folder and its contents; refuse a create over an existing entry.
+    if (destinationOccupied(target, m_current_path, name.trimmed())) {
+        sak::showWarningLogged(this,
+                               tr("New Folder"),
+                               tr("An item named %1 already exists here.").arg(name.trimmed()));
         return;
     }
     const auto result = FileManagementFileSystemBridge::createDirectory(target, path);

@@ -155,7 +155,8 @@ struct FileManagementDirectoryExportResult {
     int files_exported{0};
     int directories_created{0};
     int symlinks_skipped{0};
-    int capped_files{0};  ///< Raw files truncated at the per-file read window.
+    int capped_files{0};     ///< Raw files truncated at the per-file read window.
+    int entries_skipped{0};  ///< Entries dropped by the depth or per-directory bound.
     uint64_t bytes_written{0};
     QStringList blockers;
     QStringList warnings;
@@ -168,6 +169,7 @@ struct FileManagementDirectoryImportResult {
     int files_imported{0};
     int directories_created{0};  ///< Child directories created (the root is not counted).
     int symlinks_skipped{0};
+    int entries_skipped{0};      ///< Entries dropped by the depth or per-directory bound.
     uint64_t bytes_written{0};
     QStringList blockers;
     QStringList warnings;

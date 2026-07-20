@@ -1042,12 +1042,15 @@ void exportDirectoryLevel(const DirectoryExportContext& ctx,
                           const QDir& host_dir,
                           const int depth) {
     if (depth > kDirectoryExportMaxDepth) {
+        ++ctx.result.entries_skipped;
         ctx.result.warnings.append(
             QStringLiteral("Skipped %1: exceeds the export depth bound.").arg(source_path));
         return;
     }
+    // Request one past the cap so an over-full directory is detected precisely
+    // (a plain cap-sized listing cannot tell "exactly full" from "truncated").
     const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
-        ctx.target, source_path, kDirectoryExportMaxEntriesPerDirectory);
+        ctx.target, source_path, kDirectoryExportMaxEntriesPerDirectory + 1);
     if (!listing.ok) {
         ctx.result.blockers.append(listing.blockers.isEmpty()
                                        ? QStringLiteral("Could not list %1.").arg(source_path)
@@ -1055,12 +1058,22 @@ void exportDirectoryLevel(const DirectoryExportContext& ctx,
         return;
     }
     ctx.result.warnings.append(listing.warnings);
-    for (const FileManagementEntry& entry : listing.entries) {
+    qsizetype process = listing.entries.size();
+    if (process > kDirectoryExportMaxEntriesPerDirectory) {
+        ctx.result.entries_skipped +=
+            static_cast<int>(process - kDirectoryExportMaxEntriesPerDirectory);
+        ctx.result.warnings.append(
+            QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
+                .arg(source_path)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
+        process = kDirectoryExportMaxEntriesPerDirectory;
+    }
+    for (qsizetype index = 0; index < process; ++index) {
         if (ctx.observer.isCancelled()) {
             ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
             return;
         }
-        exportEntryToHost(ctx, entry, host_dir, depth);
+        exportEntryToHost(ctx, listing.entries.at(index), host_dir, depth);
     }
 }
 
@@ -1163,6 +1176,7 @@ void importDirectoryLevel(const DirectoryImportContext& ctx,
                           const QString& destination_dir,
                           const int depth) {
     if (depth > kDirectoryExportMaxDepth) {
+        ++ctx.result.entries_skipped;
         ctx.result.warnings.append(
             QStringLiteral("Skipped %1: exceeds the import depth bound.").arg(host_dir));
         return;
@@ -1170,6 +1184,8 @@ void importDirectoryLevel(const DirectoryImportContext& ctx,
     const QFileInfoList infos = QDir(host_dir).entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
     if (infos.size() > kDirectoryExportMaxEntriesPerDirectory) {
+        ctx.result.entries_skipped +=
+            static_cast<int>(infos.size() - kDirectoryExportMaxEntriesPerDirectory);
         ctx.result.warnings.append(
             QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
                 .arg(host_dir)

@@ -60,6 +60,10 @@ public:
     /// SHA-256 of the last raw-to-local single-file export (empty otherwise).
     [[nodiscard]] const QString& lastFileSha256() const { return m_last_file_sha256; }
     [[nodiscard]] bool lastFileHashCapped() const { return m_last_file_hash_capped; }
+    /// False when the last transferEntry copied but dropped entries (skipped
+    /// symlinks, capped raw files, or depth/entry-cap overflow); a move must
+    /// never delete the source when the copy did not land whole.
+    [[nodiscard]] bool lastTransferComplete() const { return !m_last_transfer_incomplete; }
 
 private:
     [[nodiscard]] bool transferFromHost(const FileExplorerTransferItem& item,
@@ -68,6 +72,9 @@ private:
     [[nodiscard]] bool transferRawToLocal(const FileExplorerTransferItem& item,
                                           const QString& destination,
                                           const FileManagementTransferObserver& observer);
+    [[nodiscard]] bool transferRawDirectoryToLocal(const FileExplorerTransferItem& item,
+                                                   const QString& destination,
+                                                   const FileManagementTransferObserver& observer);
     [[nodiscard]] bool transferRawStaged(const FileExplorerTransferItem& item,
                                          const FileManagementTransferObserver& observer);
 
@@ -79,6 +86,7 @@ private:
     QStringList m_warnings;
     QString m_last_file_sha256;
     bool m_last_file_hash_capped{false};
+    bool m_last_transfer_incomplete{false};
 };
 
 /// What one worker run does with its items (Files FileOperationType routing:

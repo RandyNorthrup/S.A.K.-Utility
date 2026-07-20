@@ -207,11 +207,14 @@ private:
         quint64 size_bytes{0};
         bool directory{false};
     };
-    /// What (if anything) occupies a destination child name.
+    /// What (if anything) occupies a destination child name. Unknown means the
+    /// listing was not authoritative (a raw list failed or was truncated), so
+    /// callers must fail closed rather than assume the name is free.
     enum class PasteEntryKind {
         None,
         File,
-        Directory
+        Directory,
+        Unknown
     };
     /// Clipboard payload gathered for a paste: host (local) source paths, or raw-target
     /// source items tagged with the source target identity. `move` mirrors the
@@ -285,6 +288,11 @@ private:
                              const FileManagementTarget& destination,
                              const QString& destination_dir,
                              QStringList* blockers);
+    bool crossPaneCopyOneEntry(const FileManagementTarget& source,
+                               const FileManagementTarget& destination,
+                               const QString& destination_dir,
+                               const FileManagementEntry& entry,
+                               QStringList* blockers);
     void comparePanes();
     void refreshOtherPane();
     [[nodiscard]] FileManagementTarget otherPaneTarget() const;
@@ -462,7 +470,14 @@ private:
     void buildBackgroundContextMenu(QMenu* menu, const FileExplorerCommandContext& context);
     void addTagsSubmenu(QMenu* menu, const FileExplorerCommandContext& context);
     void toggleTagOnSelection(const QString& tag, bool add);
-    void commitPropertiesRename(const QString& original, const QString& edited);
+    bool propertiesRenameAllowed(const FileManagementTarget& target,
+                                 const QString& captured_target_id,
+                                 const QString& captured_directory,
+                                 const QString& edited);
+    void commitPropertiesRename(const QString& captured_target_id,
+                                const QString& captured_directory,
+                                const QString& original,
+                                const QString& edited);
     void removeTagsFromSelection();
     void createFolderWithSelection();
     void openTerminalHere();
