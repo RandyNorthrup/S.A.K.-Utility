@@ -7980,6 +7980,8 @@ private:
                                                 HfsJournalReplayProgress* progress,
                                                 QStringList* blockers) {
         const uint16_t numBlocks = ju16(state, blhdr, kHfsJournalBlhdrNumBlocksField);
+        const uint32_t bytesUsed = ju32(state, blhdr, kHfsJournalBlhdrBytesUsedField);
+        uint64_t consumed = state.blhdr_size;
         uint64_t dataPosition = journalAdvance(state.region, progress->position, state.blhdr_size);
         for (uint16_t index = 1; index < numBlocks; ++index) {
             const qsizetype info = kHfsJournalBlockInfoOffset + index * kHfsJournalBlockInfoBytes;
@@ -7987,6 +7989,16 @@ private:
             const uint32_t blockSize = ju32(state, blhdr, info + kHfsJournalBlockInfoSizeField);
             if (blockSize == 0) {
                 continue;
+            }
+            // The transaction's payload must stay inside its declared bytes_used:
+            // crafted per-block sizes that overrun it would read the NEXT
+            // transaction's bytes here while the position advance below (by
+            // bytes_used) desynchronizes, replaying garbage into the volume.
+            consumed += blockSize;
+            if (consumed > bytesUsed) {
+                blockers->append(
+                    QStringLiteral("HFS+ journal transaction block sizes exceed its bytes_used"));
+                return false;
             }
             const auto data = readJournalCircular(state.region, dataPosition, blockSize);
             if (!data.has_value()) {

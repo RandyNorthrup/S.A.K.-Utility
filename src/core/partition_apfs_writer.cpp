@@ -6939,18 +6939,20 @@ void findFreeBlocksInBitmapContent(const QByteArray& bitmap,
 }
 
 // Read chunk `chunkIndex`'s allocation bitmap from the live cib. A cib entry with
-// bitmap_addr 0 means the chunk is entirely free (an all-zero bitmap).
-QByteArray readChunkAllocationBitmap(QIODevice* image,
-                                     const ApfsRepairGeometry& geometry,
-                                     const QByteArray& cib,
-                                     uint64_t chunkIndex,
-                                     QStringList* blockers) {
+// bitmap_addr 0 means the chunk is entirely free (an all-zero bitmap). A bitmap
+// block that cannot be read returns nullopt: treating a read fault as all-free
+// would hand out in-use blocks, so every caller must fail its commit instead.
+std::optional<QByteArray> readChunkAllocationBitmap(QIODevice* image,
+                                                    const ApfsRepairGeometry& geometry,
+                                                    const QByteArray& cib,
+                                                    uint64_t chunkIndex,
+                                                    QStringList* blockers) {
     QByteArray bitmap(geometry.blockSize, '\0');
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
                             static_cast<qsizetype>(chunkIndex) * kApfsChunkInfoEntryStride;
     const uint64_t bitmapAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
-    if (bitmapAddr != 0) {
-        readApfsRepairBlock(image, geometry, bitmapAddr, &bitmap, blockers);
+    if (bitmapAddr != 0 && !readApfsRepairBlock(image, geometry, bitmapAddr, &bitmap, blockers)) {
+        return std::nullopt;
     }
     return bitmap;
 }
@@ -8155,14 +8157,25 @@ bool writeApfsFileDataBlocks(QIODevice* image,
     for (qsizetype index = 0; index < dataBlocks.size(); ++index) {
         QByteArray block(geometry.blockSize, '\0');
         if (source.isFile()) {
-            const qint64 got = file.read(block.data(), geometry.blockSize);
-            if (got < 0) {
-                blockers->append(
-                    QStringLiteral("APFS file-write: read error on payload source '%1'")
-                        .arg(source.path()));
+            // Read exactly the declared bytes this block covers: a source that
+            // ended early (shrunk between size probe and stream) must fail the
+            // commit, not silently zero-pad the destination to the declared
+            // size. Growth past the declared size is ignored (the declared
+            // size rules the inode and the allocation).
+            const uint64_t offset = static_cast<uint64_t>(index) * geometry.blockSize;
+            const uint64_t remaining = offset < source.size() ? source.size() - offset : 0;
+            const qint64 want = static_cast<qint64>(qMin<uint64_t>(geometry.blockSize, remaining));
+            const qint64 got = file.read(block.data(), want);
+            if (got != want) {
+                blockers->append(QStringLiteral("APFS file-write: payload source '%1' ended "
+                                                "early (%2 of %3 bytes in block %4)")
+                                     .arg(source.path())
+                                     .arg(got)
+                                     .arg(want)
+                                     .arg(index));
                 return false;
             }
-            // Bytes past `got` stay zero (final-block padding / short read at EOF).
+            // Bytes past `want` stay zero (final-block padding).
         } else {
             const QByteArray& fileData = source.bytes();
             const qsizetype offset = index * geometry.blockSize;
@@ -8500,8 +8513,12 @@ bool applyOverflowAllocation(const ApfsFileInsertAllocation& alloc, QStringList*
             alloc.image, alloc.geometry, alloc.rotation.liveCib, &liveCib, blockers)) {
         return false;
     }
-    QByteArray allocBitmap = readChunkAllocationBitmap(
+    const auto readBitmap = readChunkAllocationBitmap(
         alloc.image, alloc.geometry, liveCib, alloc.layout.allocChunk, blockers);
+    if (!readBitmap) {
+        return false;
+    }
+    QByteArray allocBitmap = *readBitmap;
     const uint64_t chunkBase = alloc.layout.allocChunk * kApfsSpacemanBlocksPerChunk;
     QVector<uint64_t> freedRel;
     QVector<uint64_t> allocRel;
@@ -8541,8 +8558,12 @@ bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
         if (!readApfsRepairBlock(alloc.image, alloc.geometry, ownerAddr, &ownerCib, blockers)) {
             return false;
         }
-        QByteArray chunkBitmap = readChunkAllocationBitmap(
+        const auto readBitmap = readChunkAllocationBitmap(
             alloc.image, alloc.geometry, ownerCib, c % kApfsSpacemanChunksPerCib, blockers);
+        if (!readBitmap) {
+            return false;
+        }
+        QByteArray chunkBitmap = *readBitmap;
         const uint64_t chunkBase = c * alloc.layout.chunk0Blocks;
         for (uint64_t block : chunkFreedBlocks(alloc, c)) {
             const uint64_t bit = block - chunkBase;
@@ -9530,12 +9551,15 @@ bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* bl
     if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
         return false;
     }
-    const QByteArray synthBitmap =
+    const auto synthBitmap =
         readChunkAllocationBitmap(ctx->image, ctx->geometry, cib, ctx->layout.allocChunk, blockers);
+    if (!synthBitmap) {
+        return false;
+    }
     const uint64_t synthBase = ctx->layout.allocChunk * kApfsSpacemanBlocksPerChunk;
     QVector<uint64_t> synthFree;
     findFreeBlocksInBitmapContent(
-        synthBitmap,
+        *synthBitmap,
         {synthBase, ctx->layout.seedData, synthBase + kApfsSpacemanBlocksPerChunk},
         1,
         &synthFree);
@@ -9744,11 +9768,14 @@ bool allocateOverflowCommitBlocks(const ApfsFsCommitContext& ctx,
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
         return false;
     }
-    const QByteArray allocBitmap =
+    const auto allocBitmap =
         readChunkAllocationBitmap(ctx.image, ctx.geometry, cib, ctx.layout.allocChunk, blockers);
+    if (!allocBitmap) {
+        return false;
+    }
     QVector<uint64_t> free;
     findFreeBlocksInBitmapContent(
-        allocBitmap,
+        *allocBitmap,
         {chunkBase, ctx.layout.seedData, chunkBase + kApfsSpacemanBlocksPerChunk},
         need,
         &free);
@@ -9826,11 +9853,16 @@ void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
                 ctx.image, ctx.geometry, owningCibAddr(ctx, c), &ownerCib, blockers)) {
             return;
         }
-        const QByteArray chunkBitmap = readChunkAllocationBitmap(
+        const auto chunkBitmap = readChunkAllocationBitmap(
             ctx.image, ctx.geometry, ownerCib, chunkEntryInCib(c), blockers);
+        if (!chunkBitmap) {
+            // The caller sees the shortfall and fails the commit; the read
+            // fault is already in blockers.
+            return;
+        }
         const int remaining = need - static_cast<int>(newBlocks->size());
         QVector<uint64_t> chunkFree;
-        findFreeBlocksInBitmapContent(chunkBitmap,
+        findFreeBlocksInBitmapContent(*chunkBitmap,
                                       {c * ctx.layout.chunk0Blocks,
                                        c * ctx.layout.chunk0Blocks,
                                        (c + 1) * ctx.layout.chunk0Blocks},
@@ -12003,11 +12035,19 @@ QVector<uint64_t> collectSnapMetaTreeNodes(QIODevice* image,
 
 // Parse one snap-meta LEAF node's j_snap_metadata records into @snapshots (the
 // per-leaf half of readAllSnapshotMetadata). The value area ends before the trailer
-// only when the leaf is also the ROOT (the certified single-node tree).
-void appendSnapMetadataFromLeaf(const QByteArray& node,
+// only when the leaf is also the ROOT (the certified single-node tree). Fails
+// closed on an implausible key count (mirror of pushSnapMetaChildren): the
+// bounds-checked readers would otherwise parse a crafted leaf into garbage
+// records instead of surfacing the corruption.
+bool appendSnapMetadataFromLeaf(const QByteArray& node,
                                 uint32_t blockSize,
-                                QVector<ApfsSnapshotMetadata>* snapshots) {
+                                QVector<ApfsSnapshotMetadata>* snapshots,
+                                QStringList* blockers) {
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    if (nkeys > blockSize / kApfsBtreeVariableTocEntryBytes) {
+        blockers->append(QStringLiteral("APFS snap-meta tree walk: implausible leaf key count"));
+        return false;
+    }
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype keyArea = kApfsBtreeNodeHeaderBytes +
                               le16(node, kApfsBtreeNodeTableLengthOffset);
@@ -12032,6 +12072,7 @@ void appendSnapMetadataFromLeaf(const QByteArray& node,
                              nameLen > 0 ? nameLen - 1 : 0);  // drop the trailing NUL
         snapshots->append(snap);
     }
+    return true;
 }
 
 // Read every j_snap_metadata record from a snapshot-metadata tree back into
@@ -12049,7 +12090,10 @@ QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
         return snapshots;
     }
     for (const QByteArray& node : walk.leaves) {
-        appendSnapMetadataFromLeaf(node, geometry.blockSize, &snapshots);
+        if (!appendSnapMetadataFromLeaf(node, geometry.blockSize, &snapshots, blockers)) {
+            // An empty set fails the callers' apfs_num_snapshots cross-check.
+            return {};
+        }
     }
     return snapshots;
 }
@@ -12277,9 +12321,10 @@ bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* 
     // snapshot of a quiescent volume adds kApfsSnapshotAllocDelta (+2: its frozen superblock
     // plus the snapshot infrastructure) and each SUBSEQUENT one adds
     // kApfsSnapshotSubsequentAllocDelta (+1: just its own frozen superblock; the shared
-    // omap/catalog nodes were already counted by the earlier snapshot). A non-empty volume's
-    // later snapshots re-count their shared file blocks and so add more -- a documented
-    // follow-on (diverge-between-snapshots); the quiescent case is certified here.
+    // omap/catalog nodes were already counted by the earlier snapshot). These deltas are
+    // apfsck-certified on quiescent AND non-empty volumes (a one-file volume disproved the
+    // earlier 2*before-3 formula), and the diverge-between-snapshots path keeps the same
+    // per-snapshot delta.
     if (beforeAlloc < kApfsSnapshotLiveOnlyBlocks) {
         blockers->append(
             QStringLiteral("APFS snapshot-create: implausible volume allocated-block count"));
@@ -14981,6 +15026,14 @@ bool resolveSnapshotDeleteTarget(QIODevice* image,
     sel->omapSnapTree = le64(liveOmap, kApfsOmapSnapshotTreeOidOffset);
     const QVector<ApfsSnapshotMetadata> all =
         readAllSnapshotMetadata(image, ctx.geometry, sel->oldSnapMetaTree, blockers);
+    // Mirror snapshot-create's cross-check: an unreadable or short snap-meta walk
+    // would rebuild the surviving trees WITHOUT the snapshots it failed to read,
+    // silently deleting them along with the target.
+    if (static_cast<uint64_t>(all.size()) != le64(liveVol, kApfsVolumeNumSnapshotsOffset)) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-delete: the snap-meta tree does not match apfs_num_snapshots"));
+        return false;
+    }
     if (!selectSnapshotToDelete(all, snapshotName, &sel->target, &sel->remaining, blockers)) {
         return false;
     }

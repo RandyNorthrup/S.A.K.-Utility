@@ -157,11 +157,18 @@ struct ApfsDecmpfsHeader {
     if (attribute.size() < kApfsDecmpfsHeaderBytes) {
         return std::nullopt;
     }
-    return ApfsDecmpfsHeader{.signature = qFromLittleEndian<uint32_t>(attribute.constData()),
-                             .algo = qFromLittleEndian<uint32_t>(attribute.constData() +
-                                                                 kApfsDecmpfsAlgoOffset),
-                             .uncompressed_size = qFromLittleEndian<uint64_t>(
-                                 attribute.constData() + kApfsDecmpfsSizeOffset)};
+    const ApfsDecmpfsHeader header{.signature = qFromLittleEndian<uint32_t>(attribute.constData()),
+                                   .algo = qFromLittleEndian<uint32_t>(attribute.constData() +
+                                                                       kApfsDecmpfsAlgoOffset),
+                                   .uncompressed_size = qFromLittleEndian<uint64_t>(
+                                       attribute.constData() + kApfsDecmpfsSizeOffset)};
+    // The macOS kernel requires the 'cmpf' magic; a crafted attribute without
+    // it is not a decmpfs header, so refuse to route decode paths off its
+    // algo/size fields (defense-in-depth, mirrors decmpfs_validate_compressed_file).
+    if (header.signature != kApfsDecmpfsMagic) {
+        return std::nullopt;
+    }
+    return header;
 }
 
 // Decode a whole embedded inline decmpfs attribute (header + payload). Handles

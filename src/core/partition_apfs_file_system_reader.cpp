@@ -1003,6 +1003,16 @@ private:
         }
         uint64_t totalBytes = 0;
         for (const auto& extent : extents) {
+            // Overflow-safe ceiling: a crafted extent table (huge lengths or a
+            // wrapping sum) must not size a multi-GiB blob allocation; the
+            // ordinary read path is capped at kMaxFileReadBytes output anyway.
+            if (extent.length > kMaxFileReadBytes ||
+                totalBytes + extent.length > kMaxFileReadBytes) {
+                result->blockers.append(
+                    QStringLiteral("APFS ResourceFork stream %1 exceeds the read ceiling")
+                        .arg(objId));
+                return std::nullopt;
+            }
             totalBytes += extent.length;
         }
         PartitionApfsFileReadResult blobRead;

@@ -4,6 +4,7 @@
 /// @file test_partition_manager_core.cpp
 /// @brief Unit tests for Partition Manager core planning and safety.
 
+#include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
 #include "sak/apfs_lzbitmap.h"
@@ -1896,6 +1897,8 @@ private Q_SLOTS:
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
+    void apfsWriter_streamedWriteFailsClosedOnShortPayloadSource();
+    void apfsCompression_decmpfsHeaderRequiresCmpfSignature();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
     void apfsWriter_backToBackFullSpillsSucceed();
@@ -8343,6 +8346,63 @@ void PartitionManagerCoreTests::apfsWriter_streamedFileWriteMatchesInMemoryByteF
         streamImg, QStringLiteral("/big.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_streamedWriteFailsClosedOnShortPayloadSource() {
+    // A payload source that ends before its declared stream size (the host file
+    // shrank between size probe and stream) must fail the commit, not silently
+    // zero-pad the destination file to the declared size.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("short-stream.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("ShortSrc"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    const QString payloadPath = dir.filePath(QStringLiteral("short.bin"));
+    QFile pf(payloadPath);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    QCOMPARE(pf.write(QByteArray(10'000, 'x')), static_cast<qint64>(10'000));
+    pf.close();
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto commit =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("short.bin"),
+                                                 .file_data_path = payloadPath,
+                                                 .file_data_stream_size = 40'000,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY(!commit.ok);
+    QVERIFY2(commit.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("ended early")),
+             qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    // The aborted commit never reached the checkpoint write: the volume still
+    // lists no files and stays readable.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 0);
+}
+
+void PartitionManagerCoreTests::apfsCompression_decmpfsHeaderRequiresCmpfSignature() {
+    // Defense-in-depth: a crafted attribute without the 'cmpf' magic is not a
+    // decmpfs header and must not route decode paths off its algo/size fields.
+    const QByteArray good = apfsBuildDecmpfsHeader(kApfsCompressZlibAttr, 123);
+    const auto parsed = apfsParseDecmpfsHeader(good);
+    QVERIFY(parsed.has_value());
+    QCOMPARE(parsed->algo, kApfsCompressZlibAttr);
+    QCOMPARE(parsed->uncompressed_size, 123ULL);
+    QByteArray bad = good;
+    bad[0] = 'X';
+    QVERIFY(!apfsParseDecmpfsHeader(bad).has_value());
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunks() {
