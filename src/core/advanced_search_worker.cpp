@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QStringConverter>
 #include <QTextStream>
 
 #include <algorithm>
@@ -925,8 +926,11 @@ const char* resolveExifValuePtr(
     if (total_bytes <= kExifInlineValueBytes) {
         return entry + kExifValueOffset;
     }
+    // Resolve the out-of-line value offset with 64-bit math so a crafted
+    // offset near UINT32_MAX cannot wrap (or, when cast to int, go negative)
+    // and slip past the bound into a wild pointer.
     const uint32_t offset = readU32(entry + 8, little_endian);
-    if (static_cast<int>(offset + total_bytes) > data_size) {
+    if (static_cast<uint64_t>(offset) + total_bytes > static_cast<uint64_t>(data_size)) {
         return nullptr;
     }
     return base + offset;
@@ -943,19 +947,24 @@ void parseExifIFD(const QByteArray& tiffData,
     }
 
     const int data_size = tiffData.size();
-    if (static_cast<int>(ifdOffset + kExifEntryCountBytes) > data_size) {
+    // All range checks use 64-bit math: ifdOffset, entry offsets, and value
+    // sizes are attacker-controlled 32-bit fields, so 32-bit/int arithmetic
+    // would wrap or go negative and defeat the bound.
+    if (static_cast<uint64_t>(ifdOffset) + kExifEntryCountBytes >
+        static_cast<uint64_t>(data_size)) {
         return;
     }
 
     const char* base = tiffData.constData();
     const uint16_t entry_count = readU16(base + ifdOffset, littleEndian);
     for (uint16_t i = 0; i < entry_count; ++i) {
-        const uint32_t entry_offset = ifdOffset + kExifEntryCountBytes + (i * kExifIfdEntrySize);
-        if (static_cast<int>(entry_offset + kExifIfdEntrySize) > data_size) {
+        const uint64_t entry_offset = static_cast<uint64_t>(ifdOffset) + kExifEntryCountBytes +
+                                      (static_cast<uint64_t>(i) * kExifIfdEntrySize);
+        if (entry_offset + kExifIfdEntrySize > static_cast<uint64_t>(data_size)) {
             break;
         }
 
-        const char* entry = base + entry_offset;
+        const char* entry = base + static_cast<qsizetype>(entry_offset);
         const uint16_t tag = readU16(entry, littleEndian);
         const uint16_t type = readU16(entry + kExifEntryTypeOffset, littleEndian);
         const uint32_t count = readU32(entry + kExifEntryCountOffset, littleEndian);
@@ -971,9 +980,16 @@ void parseExifIFD(const QByteArray& tiffData,
             continue;
         }
 
-        const uint32_t total_bytes = count * static_cast<uint32_t>(unit_size);
-        const char* value_ptr =
-            resolveExifValuePtr(entry, base, total_bytes, data_size, littleEndian);
+        // count and unit_size are attacker-controlled; a 32-bit product can
+        // overflow, so size the value span in 64-bit and reject anything that
+        // cannot fit the buffer before it reaches the pointer math.
+        const uint64_t total_bytes = static_cast<uint64_t>(count) *
+                                     static_cast<uint64_t>(unit_size);
+        if (total_bytes > static_cast<uint64_t>(data_size)) {
+            continue;
+        }
+        const char* value_ptr = resolveExifValuePtr(
+            entry, base, static_cast<uint32_t>(total_bytes), data_size, littleEndian);
         if (!value_ptr) {
             continue;
         }
@@ -1098,20 +1114,30 @@ void parseITXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metada
         return metadata;
     }
 
-    int offset = kPngSignatureBytes;
+    qsizetype offset = kPngSignatureBytes;
     while (offset + kPngChunkOverheadBytes <= fileData.size()) {
+        // chunk_len is a full 32-bit on-disk field. Keep it and the offset
+        // advance in unsigned/qsizetype math: narrowing to int made a length
+        // >= 0x80000000 negative, which drove offset backwards and led to an
+        // out-of-bounds read before the buffer on the next iteration.
         const uint32_t chunk_len = readBE16(fileData.constData() + offset) *
                                        kPngChunkLengthHighWordFactor +
                                    readBE16(fileData.constData() + offset + kExifEntryCountBytes);
         const QByteArray chunk_type = fileData.mid(offset + kExifLongBytes, kExifLongBytes);
-        const int chunk_len_int = static_cast<int>(chunk_len);
 
         if (chunk_type == "IEND") {
             break;
         }
+        // A chunk that claims more bytes than remain is malformed: stop rather
+        // than advance past the end.
+        if (static_cast<uint64_t>(chunk_len) >
+            static_cast<uint64_t>(fileData.size() - offset - kPngChunkOverheadBytes)) {
+            break;
+        }
 
-        if (chunk_len_int > 0) {
-            const QByteArray chunk_data = fileData.mid(offset + kExifValueOffset, chunk_len_int);
+        if (chunk_len > 0) {
+            const QByteArray chunk_data = fileData.mid(offset + kExifValueOffset,
+                                                       static_cast<qsizetype>(chunk_len));
             if (chunk_type == "tEXt") {
                 parseTEXtChunk(chunk_data, metadata);
             } else if (chunk_type == "iTXt") {
@@ -1119,7 +1145,7 @@ void parseITXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metada
             }
         }
 
-        offset += kPngChunkOverheadBytes + chunk_len_int;
+        offset += kPngChunkOverheadBytes + static_cast<qsizetype>(chunk_len);
     }
 
     return metadata;
@@ -1365,41 +1391,60 @@ QByteArray decompressZipEntry(
     return inflateZipEntry(file_data.mid(data_start, entry_size), uncomp_size);
 }
 
+// Parse one ZIP local file header. Returns the next offset to visit, or -1 to
+// stop. All arithmetic is 64-bit: comp_size/name_len/extra_len are
+// attacker-controlled on-disk fields, so int/uint32 math could narrow negative
+// or wrap and drive the caller's offset backwards into an out-of-bounds read.
+[[nodiscard]] qsizetype processZipMetadataEntry(const QByteArray& fileData,
+                                                qsizetype offset,
+                                                QMap<QString, QString>& metadata) {
+    const qsizetype data_size = fileData.size();
+    if (!isZipLocalFileHeader(fileData, static_cast<int>(offset))) {
+        return -1;
+    }
+    const uint16_t name_len = readU16(fileData.constData() + offset + 26, true);
+    const uint16_t extra_len = readU16(fileData.constData() + offset + 28, true);
+    const uint32_t comp_size = readU32(fileData.constData() + offset + 18, true);
+    const uint16_t comp_method = readU16(fileData.constData() + offset + 8, true);
+    if (offset + kZipLocalHeaderSize + name_len > data_size) {
+        return -1;
+    }
+
+    const qsizetype data_start = offset + 30 + static_cast<qsizetype>(name_len) +
+                                 static_cast<qsizetype>(extra_len);
+    const qsizetype entry_size = static_cast<qsizetype>(comp_size);
+    if (data_start > data_size || entry_size > data_size - data_start) {
+        return -1;
+    }
+
+    const QString entry_name = QString::fromLatin1(fileData.constData() + offset + 30, name_len);
+    const bool wanted = isMetadataTarget(entry_name) &&
+                        (comp_method == kZipMethodStored || comp_method == kZipMethodDeflated);
+    if (wanted) {
+        QByteArray xml_data = decompressZipEntry(fileData,
+                                                 static_cast<int>(offset),
+                                                 static_cast<int>(data_start),
+                                                 static_cast<int>(entry_size),
+                                                 comp_method);
+        if (!xml_data.isEmpty()) {
+            extractXmlTags(QString::fromUtf8(xml_data), metadata);
+        }
+    }
+
+    // Always move forward: a zero-length stored entry would otherwise spin.
+    const qsizetype next = data_start + entry_size;
+    return next > offset ? next : -1;
+}
+
 [[nodiscard]] QMap<QString, QString> extractZipXmlMetadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
-    int offset = 0;
-    const int data_size = fileData.size();
-
+    qsizetype offset = 0;
+    const qsizetype data_size = fileData.size();
     while (offset + kZipLocalHeaderSize < data_size) {
-        if (!isZipLocalFileHeader(fileData, offset)) {
+        offset = processZipMetadataEntry(fileData, offset, metadata);
+        if (offset < 0) {
             break;
         }
-
-        const uint16_t name_len = readU16(fileData.constData() + offset + 26, true);
-        const uint16_t extra_len = readU16(fileData.constData() + offset + 28, true);
-        const uint32_t comp_size = readU32(fileData.constData() + offset + 18, true);
-        const uint16_t comp_method = readU16(fileData.constData() + offset + 8, true);
-
-        if (offset + kZipLocalHeaderSize + name_len > data_size) {
-            break;
-        }
-
-        const QString entry_name = QString::fromLatin1(fileData.constData() + offset + 30,
-                                                       name_len);
-        const int data_start = offset + 30 + name_len + extra_len;
-        const int entry_size = static_cast<int>(comp_size);
-
-        if (isMetadataTarget(entry_name) &&
-            (comp_method == kZipMethodStored || comp_method == kZipMethodDeflated) &&
-            data_start + entry_size <= data_size) {
-            QByteArray xml_data =
-                decompressZipEntry(fileData, offset, data_start, entry_size, comp_method);
-            if (!xml_data.isEmpty()) {
-                extractXmlTags(QString::fromUtf8(xml_data), metadata);
-            }
-        }
-
-        offset = data_start + entry_size;
     }
 
     return metadata;
@@ -1502,7 +1547,14 @@ bool canReadId3Frame(const QByteArray& file_data,
     if (frame_size == 0 || frame_id[0] == '\0') {
         return false;
     }
-    if (offset + kId3FrameHeaderSize + static_cast<int>(frame_size) > max_offset) {
+    // Subtraction-based bound in 64-bit: narrowing frame_size to int made a
+    // value >= 0x80000000 negative, so the additive check passed and the
+    // caller's offset advance then went deeply negative -> OOB read.
+    if (offset < 0 || max_offset < offset + kId3FrameHeaderSize) {
+        return false;
+    }
+    if (static_cast<std::uint64_t>(frame_size) >
+        static_cast<std::uint64_t>(max_offset - offset - kId3FrameHeaderSize)) {
         return false;
     }
     return offset + kId3FrameDataOffset <= file_data.size();
@@ -1517,11 +1569,17 @@ QString decodeId3FrameValue(const QByteArray& frame_data, std::uint8_t encoding)
     switch (encoding) {
     case kId3EncodingLatin1:
         return QString::fromLatin1(frame_data).trimmed();
-    case kId3EncodingUtf16:
-    case kId3EncodingUtf16Be:
-        return QString::fromUtf16(reinterpret_cast<const char16_t*>(frame_data.constData()),
-                                  frame_data.size() / kUtf16CodeUnitBytes)
-            .trimmed();
+    case kId3EncodingUtf16: {
+        // Encoding 1 is UTF-16 with a leading BOM; honor it rather than
+        // assuming the host byte order (QString::fromUtf16 is host-endian).
+        QStringDecoder decoder(QStringConverter::Utf16);
+        return QString(decoder.decode(frame_data)).trimmed();
+    }
+    case kId3EncodingUtf16Be: {
+        // Encoding 2 is UTF-16 big-endian with no BOM.
+        QStringDecoder decoder(QStringConverter::Utf16BE);
+        return QString(decoder.decode(frame_data)).trimmed();
+    }
     case kId3EncodingUtf8:
         return QString::fromUtf8(frame_data).trimmed();
     default:
@@ -1712,13 +1770,28 @@ std::optional<AdvancedSearchWorker::ArchiveEntry> AdvancedSearchWorker::readArch
         return std::nullopt;
     }
 
+    // compSize is an attacker-controlled 32-bit field. Size the entry and its
+    // successor offset in 64-bit and reject anything that would not fit the
+    // buffer, so a value >= 0x80000000 cannot narrow negative and drive the
+    // caller's offset backwards into an out-of-bounds read.
+    const qsizetype data_start = static_cast<qsizetype>(offset) + kZipLocalHeaderSize +
+                                 static_cast<qsizetype>(nameLen) + static_cast<qsizetype>(extraLen);
+    const qsizetype entry_size = static_cast<qsizetype>(compSize);
+    if (data_start > data_size || entry_size > data_size - data_start) {
+        return std::nullopt;
+    }
+    const qsizetype next_offset = data_start + entry_size;
+    if (next_offset <= offset) {  // must always advance
+        return std::nullopt;
+    }
+
     ArchiveEntry entry;
     entry.name = QString::fromUtf8(archive_data.constData() + offset + kZipLocalHeaderSize,
                                    nameLen);
     entry.path = QString("%1!/%2").arg(file_path, entry.name);
-    entry.data_start = offset + kZipLocalHeaderSize + nameLen + extraLen;
-    entry.entry_size = static_cast<int>(compSize);
-    entry.next_offset = entry.data_start + entry.entry_size;
+    entry.data_start = static_cast<int>(data_start);
+    entry.entry_size = static_cast<int>(entry_size);
+    entry.next_offset = static_cast<int>(next_offset);
     entry.compression_method = compMethod;
     entry.uncompressed_size = uncompSize;
     return entry;

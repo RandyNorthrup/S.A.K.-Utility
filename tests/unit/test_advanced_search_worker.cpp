@@ -100,6 +100,9 @@ private Q_SLOTS:
     // ── Progress Reporting ──
     void progress_emitsProgressSignal();
 
+    // ── Malformed-media hardening ──
+    void malformedMedia_doesNotCrash();
+
 private:
     void createTextFixtures();
     void createBinaryAndMetadataFixtures();
@@ -1146,6 +1149,99 @@ void AdvancedSearchWorkerTests::progress_emitsProgressSignal() {
 
     // Progress should be reported (at least the final report)
     QVERIFY(progressSpy.count() >= 1);
+}
+
+// ============================================================================
+// Malformed-media hardening
+// ============================================================================
+
+namespace {
+
+struct MalformedFixture {
+    const char* name;
+    QByteArray bytes;
+    bool image;  // true -> image-metadata search, false -> file-metadata
+};
+
+// Each fixture carries an on-disk length/offset field with the high bit set;
+// before the parser hardening these narrowed to negative ints and drove the
+// metadata parsers to read far outside the buffer (crash/OOB).
+QVector<MalformedFixture> buildMalformedMediaFixtures() {
+    QByteArray png;  // PNG with a first chunk length of 0x80000000.
+    png.append("\x89PNG\r\n\x1A\n", 8);
+    png.append("\x80\x00\x00\x00", 4);
+    png.append("tEXt", 4);
+    png.append("Comment\0value", 13);
+
+    QByteArray tiff;  // EXIF IFD entry whose value offset is 0xFFFFFFFF.
+    tiff.append("II", 2);
+    tiff.append("\x2A\x00", 2);
+    tiff.append("\x08\x00\x00\x00", 4);
+    tiff.append("\x01\x00", 2);          // 1 entry
+    tiff.append("\x31\x01", 2);          // Software tag
+    tiff.append("\x02\x00", 2);          // ASCII
+    tiff.append("\x40\x00\x00\x00", 4);  // count = 64 (out of line)
+    tiff.append("\xFF\xFF\xFF\xFF", 4);  // value offset = UINT32_MAX
+    tiff.append("\x00\x00\x00\x00", 4);  // no next IFD
+    const auto app1_len = static_cast<uint16_t>(2 + 6 + tiff.size());
+    QByteArray jpeg;
+    jpeg.append("\xFF\xD8", 2);
+    jpeg.append("\xFF\xE1", 2);
+    jpeg.append(static_cast<char>((app1_len >> 8) & 0xFF));
+    jpeg.append(static_cast<char>(app1_len & 0xFF));
+    jpeg.append("Exif\0\0", 6);
+    jpeg.append(tiff);
+    jpeg.append("\xFF\xD9", 2);
+
+    QByteArray zip;                     // ZIP local header with compressed-size 0x80000000.
+    zip.append("PK\x03\x04", 4);
+    zip.append(QByteArray(14, '\0'));   // version..crc
+    zip.append("\x00\x00\x00\x80", 4);  // compressed size (LE)
+    zip.append("\x00\x00\x00\x80", 4);  // uncompressed size
+    zip.append("\x08\x00", 2);          // name length = 8
+    zip.append("\x00\x00", 2);          // extra length
+    zip.append("core.xml", 8);
+
+    QByteArray mp3;                     // ID3v2 with a first frame size field of 0x80000000.
+    mp3.append("ID3", 3);
+    mp3.append("\x03\x00", 2);          // version
+    mp3.append("\x00", 1);              // flags
+    mp3.append("\x00\x00\x40\x00", 4);  // synchsafe tag size (8192)
+    mp3.append("TIT2", 4);              // frame id
+    mp3.append("\x80\x00\x00\x00", 4);  // frame size = 0x80000000
+    mp3.append("\x00\x00", 2);          // frame flags
+    mp3.append(QByteArray(64, 'A'));
+
+    return {{"bad.png", png, true},
+            {"bad.jpg", jpeg, true},
+            {"bad.docx", zip, false},
+            {"bad.mp3", mp3, false}};
+}
+
+}  // namespace
+
+void AdvancedSearchWorkerTests::malformedMedia_doesNotCrash() {
+    for (const auto& fx : buildMalformedMediaFixtures()) {
+        const QString path = m_temp_dir.path() + "/" + fx.name;
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QCOMPARE(f.write(fx.bytes), static_cast<qint64>(fx.bytes.size()));
+        f.close();
+
+        SearchConfig config;
+        config.root_path = path;
+        config.pattern = "value";
+        config.search_image_metadata = fx.image;
+        config.search_file_metadata = !fx.image;
+        config.exclude_patterns.clear();
+
+        // The assertion that matters is that the worker returns at all: a
+        // regression would crash the process or hang past the wait timeout.
+        AdvancedSearchWorker worker(config);
+        worker.start();
+        QVERIFY2(worker.wait(10'000),
+                 qPrintable(QStringLiteral("worker hung on malformed %1").arg(fx.name)));
+    }
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchWorkerTests)
