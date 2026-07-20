@@ -285,18 +285,16 @@ void startFontDatabaseWarmup() {
 }
 
 /// @brief Initialize the Qt application and apply theming.
-QApplication& initializeApp(int argc,
-                            char* argv[],
-                            bool accessibility_audit,
-                            const QString& accessibility_audit_output) {
+QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& options) {
     static QApplication app(argc, argv);
     startFontDatabaseWarmup();
     app.setApplicationName(sak::get_product_name());
     app.setApplicationVersion(sak::get_version());
     app.setOrganizationName(SAK_ORGANIZATION_NAME);
     app.setOrganizationDomain(SAK_ORGANIZATION_DOMAIN);
-    app.setProperty("sakAccessibilityAudit", accessibility_audit);
-    app.setProperty("sakAccessibilityAuditOutput", accessibility_audit_output);
+    app.setProperty("sakAccessibilityAudit", options.accessibility_audit);
+    app.setProperty("sakAccessibilityAuditOutput", options.accessibility_audit_output);
+    app.setProperty("sakStartupSmokeTest", options.startup_smoke_test);
 
     const QString icon_path = findIconPath();
     if (!icon_path.isEmpty()) {
@@ -304,7 +302,7 @@ QApplication& initializeApp(int argc,
     }
 
     sak::ui::applyWindows11Theme(app);
-    if (!accessibility_audit) {
+    if (!options.accessibility_audit) {
         sak::ui::installThemePolishHelper(app);
     }
 
@@ -506,8 +504,7 @@ int runApplication(int argc, char* argv[]) {
                                         QStringLiteral("parsed-arguments"));
     }
 
-    QApplication& app =
-        initializeApp(argc, argv, options.accessibility_audit, options.accessibility_audit_output);
+    QApplication& app = initializeApp(argc, argv, options);
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("app-initialized"));
     }

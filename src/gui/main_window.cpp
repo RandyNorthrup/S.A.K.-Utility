@@ -320,6 +320,11 @@ bool IsAccessibilityAuditMode() {
     return app && app->property("sakAccessibilityAudit").toBool();
 }
 
+bool IsStartupSmokeMode() {
+    const auto* app = QCoreApplication::instance();
+    return app && app->property("sakStartupSmokeTest").toBool();
+}
+
 void AddTabWithTooltip(QTabWidget* tabWidget,
                        QWidget* panel,
                        const char* tabTitle,
@@ -625,8 +630,10 @@ void MainWindow::createPanels() {
     });
     setupLogRouting();
     UpdateTabShortcutHints(m_tab_widget);
-    if (IsAccessibilityAuditMode()) {
-        // Accessibility scan needs the full widget tree, so build every tab now.
+    if (IsAccessibilityAuditMode() || IsStartupSmokeMode()) {
+        // The accessibility scan needs the full widget tree, and the startup
+        // smoke gate must catch a crash in ANY panel constructor - lazy tabs
+        // would otherwise leave every tool panel unbuilt in both modes.
         for (int slot = 0; slot < static_cast<int>(m_lazyTabs.size()); ++slot) {
             materializeTab(slot);
         }
