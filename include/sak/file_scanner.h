@@ -17,6 +17,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace sak {
@@ -167,6 +168,15 @@ private:
                               std::size_t current_depth,
                               std::stop_token stop_token) -> std::expected<void, error_code>;
 
+    /// @brief Decide whether a directory entry may be descended into.
+    /// @details Independent of the output type filter (so a files_only scan still
+    ///          recurses). Enforces depth/visibility, directory exclusions, the
+    ///          follow-symlinks policy (a symlinked directory is not traversed
+    ///          unless enabled), and cycle detection when following symlinks.
+    [[nodiscard]] bool canDescendInto(const std::filesystem::directory_entry& entry,
+                                      const scan_options& options,
+                                      std::size_t current_depth);
+
     /// @brief Process a single entry with exception handling (nesting reduction)
     auto processEntryWithErrorHandling(const std::filesystem::directory_entry& entry,
                                        const scan_options& options,
@@ -177,6 +187,9 @@ private:
 
     std::atomic<std::size_t> m_files_processed{0};    ///< Files processed counter
     std::atomic<std::uintmax_t> m_size_processed{0};  ///< Size processed counter
+    /// Canonical paths of directories already descended into during the current
+    /// scan; used only when follow_symlinks is set, to break symlink cycles.
+    std::unordered_set<std::string> m_visited_dirs;
 };
 
 }  // namespace sak

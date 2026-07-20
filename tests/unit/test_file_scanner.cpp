@@ -47,6 +47,9 @@ private Q_SLOTS:
     void listFiles_nonRecursive();
     void findFiles_byPattern();
 
+    // Symlink policy
+    void symlink_notFollowedWhenDisabled();
+
     // Callback
     void callback_falseStopsScan();
 
@@ -125,13 +128,13 @@ void FileScannerTests::scan_nonExistentDir() {
 void FileScannerTests::scanAndCollect_returnsAllFiles() {
     sak::file_scanner scanner;
     sak::scan_options opts;
-    // Note: files_only type_filter prevents directory recursion in shouldProcessEntry,
-    // so only root-level files are returned (file1.txt, file2.cpp)
+    // files_only filters the emitted entries to regular files but does not stop
+    // directory recursion, so all six files across the tree are returned.
     opts.type_filter = sak::file_type_filter::files_only;
 
     auto result = scanner.scanAndCollect(m_rootPath, opts);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().size(), std::size_t{2});
+    QCOMPARE(result.value().size(), std::size_t{6});
 }
 
 void FileScannerTests::scanAndCollect_respectsFilters() {
@@ -212,10 +215,10 @@ void FileScannerTests::typeFilter_filesOnly() {
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
+    // Directories are not emitted under files_only (so the count stays 0) but
+    // are still traversed, so every regular file in the tree is found.
     QCOMPARE(result.value().directories_found, std::size_t{0});
-    // files_only prevents directory recursion in shouldProcessEntry,
-    // so only root-level files (file1.txt, file2.cpp) are found
-    QCOMPARE(result.value().files_found, std::size_t{2});
+    QCOMPARE(result.value().files_found, std::size_t{6});
 }
 
 void FileScannerTests::typeFilter_dirsOnly() {
@@ -252,9 +255,9 @@ void FileScannerTests::cancellation_stopsScan() {
 void FileScannerTests::listFiles_recursive() {
     auto result = sak::file_scanner::listFiles(m_rootPath, true);
     QVERIFY(result.has_value());
-    // listFiles uses files_only internally, which prevents directory recursion.
-    // Only root-level files are returned.
-    QCOMPARE(result.value().size(), std::size_t{2});
+    // Recursive listing returns every file in the tree (files_only filters the
+    // emitted entries, not the traversal).
+    QCOMPARE(result.value().size(), std::size_t{6});
 }
 
 void FileScannerTests::listFiles_nonRecursive() {
@@ -266,9 +269,8 @@ void FileScannerTests::listFiles_nonRecursive() {
 void FileScannerTests::findFiles_byPattern() {
     auto result = sak::file_scanner::findFiles(m_rootPath, {"*.json"}, true);
     QVERIFY(result.has_value());
-    // findFiles uses files_only internally, preventing directory recursion.
-    // data.json is in dir_a/ which cannot be reached. Only root files are checked.
-    QCOMPARE(result.value().size(), std::size_t{0});
+    // Recursive find now reaches dir_a/data.json.
+    QCOMPARE(result.value().size(), std::size_t{1});
 }
 
 // ============================================================================
@@ -304,6 +306,43 @@ void FileScannerTests::progress_callbackInvoked() {
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
     QVERIFY(progressCalls > 0);
+}
+
+void FileScannerTests::symlink_notFollowedWhenDisabled() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path root = dir.path().toStdWString();
+
+    // Real subdirectory with one file, plus a symlink pointing back at the root
+    // (an ancestor). Following it would either escape the scan or recurse without
+    // bound.
+    std::filesystem::create_directory(root / "payload");
+    {
+        QFile f(QString::fromStdWString((root / "payload" / "p.txt").wstring()));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("data");
+        f.close();
+    }
+    std::error_code link_ec;
+    std::filesystem::create_directory_symlink(root, root / "loop", link_ec);
+    if (link_ec) {
+        QSKIP("Platform cannot create directory symlinks without privilege");
+    }
+
+    // Default (follow_symlinks=false): the symlinked directory is not traversed,
+    // so p.txt is found exactly once and the scan terminates.
+    sak::file_scanner scanner;
+    sak::scan_options opts;
+    auto result = scanner.scan(root, opts);
+    QVERIFY(result.has_value());
+    QCOMPARE(result.value().files_found, std::size_t{1});
+
+    // follow_symlinks=true must still terminate (cycle guard) rather than hang.
+    sak::file_scanner following_scanner;
+    sak::scan_options following;
+    following.follow_symlinks = true;
+    auto followed = following_scanner.scan(root, following);
+    QVERIFY(followed.has_value());
 }
 
 QTEST_GUILESS_MAIN(FileScannerTests)

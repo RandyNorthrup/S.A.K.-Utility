@@ -44,6 +44,17 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
     m_files_processed.store(0, std::memory_order_relaxed);
     m_size_processed.store(0, std::memory_order_relaxed);
 
+    // Reset the symlink-cycle guard and seed it with the root so a link pointing
+    // back at the root is caught. Only meaningful when following symlinks.
+    m_visited_dirs.clear();
+    if (options.follow_symlinks) {
+        std::error_code root_ec;
+        const auto canonical_root = std::filesystem::canonical(root_path, root_ec);
+        if (!root_ec) {
+            m_visited_dirs.insert(canonical_root.string());
+        }
+    }
+
     scan_statistics stats;
 
     logInfo("Starting directory scan: {}", root_path.string());
@@ -295,31 +306,60 @@ auto file_scanner::recurseIntoDirectory(const std::filesystem::path& dir_path,
     return {};
 }
 
+bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
+                                  const scan_options& options,
+                                  std::size_t current_depth) {
+    const auto& path = entry.path();
+    if (!passesDepthAndVisibility(path, options, current_depth)) {
+        return false;
+    }
+    if (isExcludedDirectory(path, options.exclude_dirs)) {
+        return false;
+    }
+    // Never follow a symlinked/junction directory unless explicitly enabled: a
+    // link can escape the scan root, and one pointing at an ancestor recurses
+    // without bound until the path length errors out (an effective hang).
+    if (entry.is_symlink() && !options.follow_symlinks) {
+        return false;
+    }
+    // When following is enabled, break cycles by canonical identity.
+    if (options.follow_symlinks) {
+        std::error_code ec;
+        const auto canonical = std::filesystem::canonical(path, ec);
+        if (!ec && !m_visited_dirs.insert(canonical.string()).second) {
+            return false;  // already descended into this directory this scan
+        }
+    }
+    return true;
+}
+
 auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& entry,
                                        const scan_options& options,
                                        scan_statistics& stats,
                                        std::size_t current_depth,
                                        std::stop_token stop_token)
     -> std::expected<void, error_code> {
-    if (!shouldProcessEntry(entry, options, current_depth)) {
+    const bool is_dir = entry.is_directory();
+    const bool is_file = entry.is_regular_file();
+
+    // Emission is gated by the output type filter (files_only/directories_only)
+    // and the file-specific filters. This is kept separate from the traversal
+    // decision so a files_only scan still recurses into subdirectories.
+    if (shouldProcessEntry(entry, options, current_depth)) {
+        if (is_file) {
+            updateFileStats(entry, options, stats);
+        } else if (is_dir) {
+            stats.directories_found++;
+        }
+        if (options.callback && !options.callback(entry.path(), is_dir)) {
+            return std::unexpected(error_code::operation_cancelled);
+        }
+    } else {
         stats.skipped_by_filter++;
-        return {};
     }
 
-    bool is_dir = entry.is_directory();
-    bool is_file = entry.is_regular_file();
-
-    if (is_file) {
-        updateFileStats(entry, options, stats);
-    } else if (is_dir) {
-        stats.directories_found++;
-    }
-
-    if (options.callback && !options.callback(entry.path(), is_dir)) {
-        return std::unexpected(error_code::operation_cancelled);
-    }
-
-    if (is_dir && options.recursive) {
+    // Traversal is decided independently of the output type filter.
+    if (is_dir && options.recursive && canDescendInto(entry, options, current_depth)) {
         return recurseIntoDirectory(entry.path(), options, stats, current_depth, stop_token);
     }
 
