@@ -1848,6 +1848,14 @@ private:
             if (header.has_value()) {
                 entry->size_bytes = header->uncompressed_size;
             }
+        } else if (decmpfsStreamByInode_.contains(record.file_id)) {
+            // A DSTREAM-backed decmpfs (attribute too large to embed) marks the
+            // file compressed too; its logical size is the inode's
+            // uncompressed-size field.
+            entry->compressed = true;
+            if (inode != inodeById_.cend()) {
+                entry->size_bytes = inode->uncompressed_size;
+            }
         } else if (entry->size_bytes == 0 && inode != inodeById_.cend()) {
             entry->size_bytes = inode->uncompressed_size;
         }
