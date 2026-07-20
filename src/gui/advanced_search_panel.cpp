@@ -34,6 +34,7 @@
 #include <QProcess>
 #include <QScrollArea>
 #include <QSet>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTextBlock>
@@ -1100,6 +1101,14 @@ FileManagementTarget AdvancedSearchPanel::currentSearchTarget() const {
 
 void AdvancedSearchPanel::populateFileExplorerRoot() {
     Q_ASSERT(m_file_explorer);
+    // Expanding the root lists the target's root directory synchronously, so
+    // defer it while the panel is hidden (it starts life as a non-current
+    // sub-tab); showEvent finishes any pending population.
+    if (!isVisible()) {
+        m_file_explorer_pending = true;
+        return;
+    }
+    m_file_explorer_pending = false;
     m_file_explorer->clear();
 
     const auto target = currentSearchTarget();
@@ -1118,6 +1127,13 @@ void AdvancedSearchPanel::populateFileExplorerRoot() {
                                                                      : QStyle::SP_DirIcon));
     addPlaceholderChild(rootItem);
     m_file_explorer->expandItem(rootItem);
+}
+
+void AdvancedSearchPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (m_file_explorer_pending) {
+        populateFileExplorerRoot();
+    }
 }
 
 void AdvancedSearchPanel::populateDirectoryChildren(QTreeWidgetItem* parentItem,

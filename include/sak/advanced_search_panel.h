@@ -92,6 +92,9 @@ private Q_SLOTS:
     void onPreviousMatch();
     void onNextMatch();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     // -- UI Setup --
     void setupUi();
@@ -168,6 +171,9 @@ private:
 
     // -- File Explorer (Left Panel) --
     QTreeWidget* m_file_explorer{nullptr};
+    // Root population is deferred while the panel is hidden (it lists the
+    // target's root directory synchronously); showEvent completes it.
+    bool m_file_explorer_pending{false};
 
     // -- Results Tree (Middle Panel) --
     QTreeWidget* m_results_tree{nullptr};

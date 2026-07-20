@@ -26,7 +26,9 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QIcon>
 #include <QLineEdit>
@@ -281,7 +283,15 @@ int runAccessibilityAudit(sak::MainWindow& main_window) {
 /// GUI thread needs fonts before the warmup finishes it simply blocks on the
 /// shared mutex for the remaining time instead of the full cost.
 void startFontDatabaseWarmup() {
-    std::thread([]() { QFontDatabase::families(); }).detach();
+    std::thread([]() {
+        QFontDatabase::families();
+        // Force a full font MATCH for a family that is not installed: the
+        // first such miss builds the alias table by walking every installed
+        // family (a second multi-second pass with large font collections),
+        // and style-sheet font stacks trigger exactly that miss. Fonts are
+        // thread-safe in Qt 6, so pay it here instead of on the GUI thread.
+        QFontMetrics(QFont(QStringLiteral("sak-alias-warmup-probe"))).height();
+    }).detach();
 }
 
 /// @brief Initialize the Qt application and apply theming.
