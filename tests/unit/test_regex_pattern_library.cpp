@@ -67,6 +67,11 @@ private Q_SLOTS:
     void builtinEmailPattern_matchesEmail();
     void builtinUrlPattern_matchesUrl();
     void builtinIpv4Pattern_matchesIp();
+
+    // ── Persistence (regression: inverted-assert crash + atomic save) ──
+    void construction_withNoSavedPatternsDoesNotAbort();
+    void persistence_roundTripSavesAndLoads();
+    void persistence_saveEmptyListDoesNotAbort();
 };
 
 // ── Per-test Cleanup ─────────────────────────────────────────────────────────
@@ -480,6 +485,44 @@ void RegexPatternLibraryTests::builtinIpv4Pattern_matchesIp() {
     QVERIFY(regex.match("192.168.1.1").hasMatch());
     QVERIFY(regex.match("10.0.0.255").hasMatch());
     QVERIFY(!regex.match("abc.def.ghi.jkl").hasMatch());
+}
+
+// ── Persistence ─────────────────────────────────────────────────────────────
+
+void RegexPatternLibraryTests::construction_withNoSavedPatternsDoesNotAbort() {
+    // init() has removed any persisted file, so the constructor's
+    // loadCustomPatterns() runs against an empty list. This must not abort
+    // (a prior inverted Q_ASSERT(!m_custom_patterns.empty()) crashed every
+    // debug-build construction of the library).
+    sak::RegexPatternLibrary lib(nullptr);
+    QCOMPARE(lib.customPatterns().size(), 0);
+}
+
+void RegexPatternLibraryTests::persistence_roundTripSavesAndLoads() {
+    {
+        sak::RegexPatternLibrary lib(nullptr);
+        lib.addCustomPattern("persisted", "Persisted", R"(persist\d+)");
+        QCOMPARE(lib.customPatterns().size(), 1);
+    }
+    // A fresh instance must reload the pattern saved by the previous one.
+    sak::RegexPatternLibrary reloaded(nullptr);
+    const auto customs = reloaded.customPatterns();
+    QCOMPARE(customs.size(), 1);
+    QCOMPARE(customs[0].key, QStringLiteral("persisted"));
+    QCOMPARE(customs[0].pattern, QStringLiteral(R"(persist\d+)"));
+}
+
+void RegexPatternLibraryTests::persistence_saveEmptyListDoesNotAbort() {
+    {
+        sak::RegexPatternLibrary lib(nullptr);
+        lib.addCustomPattern("temp", "Temp", R"(temp)");
+        // Removing the last pattern persists an empty list; the old inverted
+        // assert in saveCustomPatterns() aborted on exactly this path.
+        lib.removeCustomPattern("temp");
+        QCOMPARE(lib.customPatterns().size(), 0);
+    }
+    sak::RegexPatternLibrary reloaded(nullptr);
+    QCOMPARE(reloaded.customPatterns().size(), 0);
 }
 
 QTEST_GUILESS_MAIN(RegexPatternLibraryTests)

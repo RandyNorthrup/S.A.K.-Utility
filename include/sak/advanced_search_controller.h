@@ -130,8 +130,20 @@ private:
     /// @brief Clean up the current worker
     void cleanupWorker();
 
+    /// @brief Wire the current worker's signals, guarded by the search generation
+    ///
+    /// A worker emits cancelled()/finished()/resultsReady() from its own thread
+    /// as queued metacalls to this controller. Those events survive the worker's
+    /// destruction (Qt only drops posted events whose receiver is destroyed, not
+    /// whose sender is), so a stale worker from a superseded search could mutate
+    /// the state of the replacement search. Each connection therefore captures
+    /// the generation active when it was made and drops the signal if a newer
+    /// search has since started.
+    void connectWorkerSignals(AdvancedSearchWorker* worker, quint64 generation);
+
     State m_state = State::Idle;
     std::unique_ptr<AdvancedSearchWorker> m_worker;
+    quint64 m_worker_generation = 0;
     std::unique_ptr<RegexPatternLibrary> m_pattern_library;
 
     QStringList m_search_history;

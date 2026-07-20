@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 
 #include <algorithm>
 
@@ -213,8 +214,9 @@ void RegexPatternLibrary::clearAll() {
 // -- Persistence -------------------------------------------------------------
 
 void RegexPatternLibrary::loadCustomPatterns() {
-    Q_ASSERT(!m_custom_patterns.empty());
-    Q_ASSERT(!m_custom_patterns.isEmpty());
+    // No precondition on m_custom_patterns: this function is the populator, and a
+    // fresh profile legitimately has zero saved custom patterns. (A prior inverted
+    // Q_ASSERT(!empty) here aborted every debug-build construction of the library.)
     QFile file(m_storage_file);
     if (!file.exists()) {
         return;
@@ -258,8 +260,8 @@ void RegexPatternLibrary::loadCustomPatterns() {
 }
 
 void RegexPatternLibrary::saveCustomPatterns() {
-    Q_ASSERT(!m_custom_patterns.empty());
-    Q_ASSERT(!m_custom_patterns.isEmpty());
+    // Persisting an empty list is valid (the user may have deleted every custom
+    // pattern), so there is no non-empty precondition here.
     QJsonArray arr;
 
     for (const auto& p : m_custom_patterns) {
@@ -272,7 +274,10 @@ void RegexPatternLibrary::saveCustomPatterns() {
 
     QJsonDocument doc(arr);
 
-    QFile file(m_storage_file);
+    // QSaveFile writes to a temporary and atomically renames on commit(), so a
+    // short write / crash / full disk leaves the previously valid library intact
+    // instead of truncating it to partial or empty JSON.
+    QSaveFile file(m_storage_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         logError("RegexPatternLibrary: failed to open '{}' for writing",
                  m_storage_file.toStdString());
@@ -282,9 +287,14 @@ void RegexPatternLibrary::saveCustomPatterns() {
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         logError("RegexPatternLibrary: incomplete write of custom patterns");
+        file.cancelWriting();
         return;
     }
-    file.close();
+    if (!file.commit()) {
+        logError("RegexPatternLibrary: failed to commit custom patterns to '{}'",
+                 m_storage_file.toStdString());
+        return;
+    }
 
     logInfo("RegexPatternLibrary: saved {} custom patterns", m_custom_patterns.size());
 }

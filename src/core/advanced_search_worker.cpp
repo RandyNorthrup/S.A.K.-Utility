@@ -270,6 +270,19 @@ bool AdvancedSearchWorker::processSearchFile(const QString& file_path,
         return true;
     }
 
+    // Hard-cap the running total: searchFile caps a single file at max_results,
+    // not at the remaining allowance, so without truncating here the aggregate
+    // could overshoot the requested limit by up to a full file's worth.
+    if (m_config.max_results > 0) {
+        const int remaining = m_config.max_results - total_matches;
+        if (remaining <= 0) {
+            return false;
+        }
+        if (matches.size() > remaining) {
+            matches.resize(remaining);
+        }
+    }
+
     Q_EMIT fileSearched(file_path, matches.size());
     batch_matches.append(matches);
     total_matches += matches.size();
@@ -369,6 +382,16 @@ bool AdvancedSearchWorker::processTargetEntry(const FileManagementEntry& entry,
     return true;
 }
 
+void AdvancedSearchWorker::markTargetScanIncomplete(TargetBatchState& batch, const QString& note) {
+    batch.incomplete = true;
+    // Cap the retained notes so a deeply-truncated tree cannot grow this list
+    // without bound; the incomplete flag alone conveys the essential state.
+    constexpr int kMaxIncompleteNotes = 32;
+    if (batch.incomplete_notes.size() < kMaxIncompleteNotes) {
+        batch.incomplete_notes.append(note);
+    }
+}
+
 bool AdvancedSearchWorker::searchTargetDirectory(const QString& directory_path,
                                                  const QRegularExpression& regex,
                                                  int& total_matches,
@@ -384,7 +407,18 @@ bool AdvancedSearchWorker::searchTargetDirectory(const QString& directory_path,
         logWarning("AdvancedSearchWorker: target listing failed at '{}': {}",
                    directory_path.toStdString(),
                    listing.blockers.join(QStringLiteral("; ")).toStdString());
+        markTargetScanIncomplete(batch,
+                                 QStringLiteral("listing failed at '%1'").arg(directory_path));
         return true;
+    }
+    if (!listing.warnings.isEmpty()) {
+        // A truncated listing (ok == true but entries capped) silently omits
+        // files past the cap, which would otherwise turn a real match into a
+        // false "not found". Record it so the run is reported as incomplete.
+        markTargetScanIncomplete(batch,
+                                 QStringLiteral("listing truncated at '%1': %2")
+                                     .arg(directory_path,
+                                          listing.warnings.join(QStringLiteral("; "))));
     }
 
     for (const auto& entry : listing.entries) {
@@ -439,6 +473,22 @@ void AdvancedSearchWorker::runFileSystemTargetSearch(const QRegularExpression& r
 
     if (!batch.batch_matches.isEmpty()) {
         Q_EMIT resultsReady(batch.batch_matches);
+    }
+    if (batch.incomplete) {
+        // Some directories were not fully enumerated, so a "0 matches" or low
+        // count here is not authoritative. Report the run as incomplete and log
+        // the reasons rather than letting the user conclude the string is absent.
+        logWarning("AdvancedSearchWorker: target scan incomplete -- {}",
+                   batch.incomplete_notes.join(QStringLiteral("; ")).toStdString());
+        reportProgress(batch.file_count,
+                       batch.file_count,
+                       QString(
+                           "Search INCOMPLETE: %1 matches in %2 files (%3 scanned); some "
+                           "directories could not be fully listed, results may be missing matches")
+                           .arg(total_matches)
+                           .arg(total_files)
+                           .arg(batch.file_count));
+        return;
     }
     reportProgress(batch.file_count,
                    batch.file_count,
@@ -1939,6 +1989,26 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath
     return matches;
 }
 
+namespace {
+
+/// @brief Map a UTF-16 code-unit position to its UTF-8 byte offset.
+///
+/// QRegularExpression reports match positions as UTF-16 code-unit indexes into
+/// the decoded QString, but binary matches must report and slice raw UTF-8 byte
+/// offsets. Each non-ASCII codepoint occupies more bytes than code units, so the
+/// two indexes diverge after the first multibyte sequence.
+int utf16PosToUtf8Byte(const QString& text, int utf16_pos) {
+    if (utf16_pos <= 0) {
+        return 0;
+    }
+    if (utf16_pos >= text.size()) {
+        return static_cast<int>(text.toUtf8().size());
+    }
+    return static_cast<int>(text.left(utf16_pos).toUtf8().size());
+}
+
+}  // namespace
+
 QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
                                                         const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
@@ -1969,17 +2039,24 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
     while (matchIter.hasNext()) {
         auto regexMatch = matchIter.next();
 
+        // capturedStart()/capturedEnd() are UTF-16 indexes into textContent;
+        // convert to raw byte offsets so the reported offset and the hex slice
+        // align with the underlying file bytes.
+        const int matchStartByte = utf16PosToUtf8Byte(textContent,
+                                                      static_cast<int>(regexMatch.capturedStart()));
+        const int matchEndByte = utf16PosToUtf8Byte(textContent,
+                                                    static_cast<int>(regexMatch.capturedEnd()));
+
         SearchMatch match;
         match.file_path = filePath;
-        match.line_number = static_cast<int>(regexMatch.capturedStart());  // byte offset
+        match.line_number = matchStartByte;  // byte offset into the raw file
         match.line_content = regexMatch.captured();
         match.match_start = 0;
         match.match_end = static_cast<int>(regexMatch.capturedLength());
 
         // Provide hex context (16 bytes before and after)
-        const int start = std::max(0, static_cast<int>(regexMatch.capturedStart()) - 16);
-        const int end = std::min(static_cast<int>(content.size()),
-                                 static_cast<int>(regexMatch.capturedEnd()) + 16);
+        const int start = std::max(0, matchStartByte - 16);
+        const int end = std::min(static_cast<int>(content.size()), matchEndByte + 16);
         const QByteArray context = content.mid(start, end - start);
         match.context_before.append(QString("Hex: %1").arg(QString(context.toHex(' '))));
 
@@ -2001,18 +2078,21 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinaryBytes(
     while (matchIter.hasNext()) {
         const auto regexMatch = matchIter.next();
 
+        const int matchStartByte = utf16PosToUtf8Byte(textContent,
+                                                      static_cast<int>(regexMatch.capturedStart()));
+        const int matchEndByte = utf16PosToUtf8Byte(textContent,
+                                                    static_cast<int>(regexMatch.capturedEnd()));
+
         SearchMatch match;
         match.file_path = file_path;
-        match.line_number = static_cast<int>(regexMatch.capturedStart());
+        match.line_number = matchStartByte;  // byte offset into the raw file
         match.line_content = regexMatch.captured();
         match.match_start = 0;
         match.match_end = static_cast<int>(regexMatch.capturedLength());
 
         constexpr int kBinaryContextBytes = 16;
-        const int start =
-            std::max(0, static_cast<int>(regexMatch.capturedStart()) - kBinaryContextBytes);
-        const int end = std::min(static_cast<int>(data.size()),
-                                 static_cast<int>(regexMatch.capturedEnd()) + kBinaryContextBytes);
+        const int start = std::max(0, matchStartByte - kBinaryContextBytes);
+        const int end = std::min(static_cast<int>(data.size()), matchEndByte + kBinaryContextBytes);
         match.context_before.append(
             QString("Hex: %1").arg(QString(data.mid(start, end - start).toHex(' '))));
         matches.append(match);

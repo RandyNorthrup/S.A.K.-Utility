@@ -87,23 +87,10 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
 
     m_worker = std::make_unique<AdvancedSearchWorker>(effectiveConfig);
 
-    // Connect worker signals
-    connect(m_worker.get(), &WorkerBase::started, this, &AdvancedSearchController::onWorkerStarted);
-    connect(
-        m_worker.get(), &WorkerBase::finished, this, &AdvancedSearchController::onWorkerFinished);
-    connect(m_worker.get(), &WorkerBase::failed, this, &AdvancedSearchController::onWorkerFailed);
-    connect(
-        m_worker.get(), &WorkerBase::cancelled, this, &AdvancedSearchController::onWorkerCancelled);
-    connect(
-        m_worker.get(), &WorkerBase::progress, this, &AdvancedSearchController::onWorkerProgress);
-    connect(m_worker.get(),
-            &AdvancedSearchWorker::resultsReady,
-            this,
-            &AdvancedSearchController::onResultsReady);
-    connect(m_worker.get(),
-            &AdvancedSearchWorker::fileSearched,
-            this,
-            &AdvancedSearchController::onFileSearched);
+    // Connect worker signals, tagged with the generation of this search so that
+    // any queued signal from a superseded worker is dropped rather than allowed
+    // to corrupt the replacement search's state.
+    connectWorkerSignals(m_worker.get(), ++m_worker_generation);
 
     // Add to history
     addToHistory(config.pattern);
@@ -124,6 +111,10 @@ void AdvancedSearchController::cancelSearch() {
 
 void AdvancedSearchController::cleanupWorker() {
     if (m_worker) {
+        // Bump the generation so any already-queued signals from this worker are
+        // ignored by their guards, then disconnect to stop further emissions.
+        ++m_worker_generation;
+        m_worker->disconnect(this);
         if (m_worker->isRunning()) {
             m_worker->requestStop();
             if (!m_worker->wait(kWorkerStopTimeoutMs)) {
@@ -132,6 +123,65 @@ void AdvancedSearchController::cleanupWorker() {
         }
         m_worker.reset();
     }
+}
+
+void AdvancedSearchController::connectWorkerSignals(AdvancedSearchWorker* worker,
+                                                    quint64 generation) {
+    const auto stale = [this, generation] {
+        return generation != m_worker_generation;
+    };
+
+    connect(worker, &WorkerBase::started, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerStarted();
+    });
+    connect(worker, &WorkerBase::finished, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerFinished();
+    });
+    connect(worker, &WorkerBase::failed, this, [this, stale](int code, const QString& message) {
+        if (stale()) {
+            return;
+        }
+        onWorkerFailed(code, message);
+    });
+    connect(worker, &WorkerBase::cancelled, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerCancelled();
+    });
+    connect(worker,
+            &WorkerBase::progress,
+            this,
+            [this, stale](int current, int total, const QString& message) {
+                if (stale()) {
+                    return;
+                }
+                onWorkerProgress(current, total, message);
+            });
+    connect(worker,
+            &AdvancedSearchWorker::resultsReady,
+            this,
+            [this, stale](QVector<sak::SearchMatch> matches) {
+                if (stale()) {
+                    return;
+                }
+                onResultsReady(std::move(matches));
+            });
+    connect(worker,
+            &AdvancedSearchWorker::fileSearched,
+            this,
+            [this, stale](const QString& filePath, int matchCount) {
+                if (stale()) {
+                    return;
+                }
+                onFileSearched(filePath, matchCount);
+            });
 }
 
 // -- Worker Signal Handlers --------------------------------------------------

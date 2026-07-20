@@ -135,6 +135,12 @@ private:
     struct TargetBatchState {
         QVector<SearchMatch> batch_matches;
         int file_count = 0;
+        /// True when at least one directory listing failed or was truncated, so
+        /// some files were never read. The final result must then be surfaced as
+        /// incomplete rather than reported as an authoritative match count.
+        bool incomplete = false;
+        /// Human-readable notes describing why the scan is incomplete (capped).
+        QStringList incomplete_notes;
     };
 
     /// @brief Stream-search a virtual/raw target directory recursively
@@ -143,6 +149,9 @@ private:
                                int& total_matches,
                                int& total_files,
                                TargetBatchState& batch);
+
+    /// @brief Record that a target scan omitted files (failed/truncated listing)
+    static void markTargetScanIncomplete(TargetBatchState& batch, const QString& note);
 
     /// @brief Process one regular-file entry during a recursive target search
     bool processTargetEntry(const FileManagementEntry& entry,
