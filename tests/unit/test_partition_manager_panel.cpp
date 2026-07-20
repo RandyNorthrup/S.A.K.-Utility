@@ -72,7 +72,7 @@ private Q_SLOTS:
     void propertiesDialogShowsRawFilesystemMetadata();
     void propertiesAndInspectShowRawFilesystemSanityNotes();
     void extFilesystemWriteActionsQueueWithConfirmation() const;
-    void apfsRootFileMutationActionAllowsWritableApfsVolumes();
+    void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
@@ -1000,7 +1000,11 @@ void queueApfsVolumeLabelChangeAndVerify() {
     verifySingleQueuedOperation(&panel, QStringLiteral("APFS Change Volume Label"));
 }
 
-void queueApfsRootFileMutationAndVerify() {
+// Drives the APFS Container action dialog into snapshot-create mode (checking
+// the resize/name-field visibility toggles on the way) and verifies the queued
+// operation. The former per-file APFS/HFS mutation dialogs moved to the File
+// Management explorer; their coverage lives in the explorer bridge suites.
+void queueApfsContainerSnapshotAndVerify() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(generatedApfsInventoryFixture());
     auto* table = panel.findChild<QTableWidget*>();
@@ -1965,8 +1969,8 @@ void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation(
     queueExtResizeAndVerify(false);
 }
 
-void PartitionManagerPanelTests::apfsRootFileMutationActionAllowsWritableApfsVolumes() {
-    queueApfsRootFileMutationAndVerify();
+void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() {
+    queueApfsContainerSnapshotAndVerify();
     queueApfsVolumeLabelChangeAndVerify();
 
     sak::PartitionManagerPanel panel;

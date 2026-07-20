@@ -1986,6 +1986,7 @@ private Q_SLOTS:
     void apfsWriter_resourceForkLzvnCompressedFileRoundTrips();
     void apfsWriter_resourceForkLzfseCompressedFileRoundTrips();
     void apfsLzbitmapCodecRoundTrips();
+    void apfsLzbitmapDecodesAppleReferenceStream();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
     void apfsLzbitmapInlineAlgoDecodes();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
@@ -15147,9 +15148,10 @@ void PartitionManagerCoreTests::apfsResourceForkBlobLayoutMatchesApfsck() {
 void PartitionManagerCoreTests::apfsLzbitmapCodecRoundTrips() {
     // LZBITMAP (decmpfs algo 14) resource-fork container: build the block_offs[] table + per-block
     // LZBITMAP streams for payloads spanning several 64 KiB blocks and parse them back byte-exact.
-    // The clean-room zbm chunk codec is separately cross-validated against the reference (eafer
-    // MIT) decoder/encoder; this covers the container plus the stored-block fallback. Covers
-    // compressible, incompressible (0xFF stored blocks), single-block, and exact-boundary sizes.
+    // This is a self round-trip covering the container plus the stored-block fallback
+    // (compressible, incompressible 0xFF stored blocks, single-block, exact-boundary sizes); the
+    // codec itself is cross-validated against Apple's encoder in
+    // apfsLzbitmapDecodesAppleReferenceStream and kernel-certified in the encode direction.
     const int block = sak::kApfsLzbitmapBlockSize;
     QVector<QByteArray> payloads;
     // Multi-block compressible (spans 3 blocks + a partial remainder).
@@ -15179,6 +15181,28 @@ void PartitionManagerCoreTests::apfsLzbitmapCodecRoundTrips() {
         QVERIFY2(parsed.has_value(), "lzbitmap resource fork must parse back");
         QCOMPARE(*parsed, payload);
     }
+}
+
+void PartitionManagerCoreTests::apfsLzbitmapDecodesAppleReferenceStream() {
+    // Reference cross-validation against Apple's own codec, so a symmetric
+    // format bug in the clean-room implementation cannot pass: this stream was
+    // produced by macOS 15.7 libcompression (compression_encode_buffer,
+    // COMPRESSION_LZBITMAP) over the deterministic payload below, harvested on
+    // the live Mac cert rig (Apple's decoder round-tripped it there first).
+    // The encode direction is macOS-kernel-certified separately: the kernel
+    // read a S.A.K.-encoded LZBITMAP resource fork byte-exact (4193adf).
+    QByteArray payload;
+    for (int i = 0; i < 100; ++i) {
+        payload.append(QByteArrayLiteral("sak lzbitmap apple reference vector payload 0123.\n"));
+    }
+    QCOMPARE(payload.size(), 5000);
+    const QByteArray apple = QByteArray::fromHex(
+        "5a424d0970000088130042000045000045000073616b206c7a6269746d6170206170706c652072656665"
+        "72656e63652076636f722070796c6f616420303132332e0a736b6c7a18293255455867f3ffffffffffff"
+        "ffffffffffffffffffffffffffff5f00fcf20f40d77907000000000000000000060000000000");
+    const auto decoded = sak::apfsLzbitmapDecodeBlock(apple, payload.size());
+    QVERIFY2(decoded.has_value(), "Apple-encoded LZBITMAP stream must decode");
+    QCOMPARE(*decoded, payload);
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapInlineAlgoDecodes() {

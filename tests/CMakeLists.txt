@@ -42,22 +42,38 @@ if(WIN32)
     endif()
     if(_qt_test_dll AND EXISTS "${_qt_test_dll}")
         file(COPY "${_qt_test_dll}" DESTINATION "${SAK_MAIN_OUTPUT_DIR}")
-        message(STATUS "Deployed ${_qt_test_dll} ??? ${SAK_MAIN_OUTPUT_DIR}")
+        message(STATUS "Deployed ${_qt_test_dll} -> ${SAK_MAIN_OUTPUT_DIR}")
     else()
-        message(FATAL_ERROR "Qt6Test.dll not found ??? tests cannot run without it")
+        message(FATAL_ERROR "Qt6Test.dll not found - tests cannot run without it")
     endif()
     # windeployqt deploys only qwindows.dll; the GUI suites run on the
     # offscreen platform (QT_QPA_PLATFORM=offscreen) so no test window ever
-    # appears on the developer desktop. Deploy that plugin too.
+    # appears on the developer desktop. Deploy that plugin too. This must be
+    # loud on failure: the test environment forces the offscreen backend, so a
+    # missing plugin aborts every GUI suite at startup (0xC0000409) with no
+    # useful message.
     get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
+    if(NOT _qt_core_dll)
+        get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION)
+    endif()
+    set(_qt_offscreen "")
     if(_qt_core_dll)
         get_filename_component(_qt_bin_dir "${_qt_core_dll}" DIRECTORY)
-        set(_qt_offscreen "${_qt_bin_dir}/../plugins/platforms/qoffscreen.dll")
-        if(EXISTS "${_qt_offscreen}")
-            file(COPY "${_qt_offscreen}"
-                 DESTINATION "${SAK_MAIN_OUTPUT_DIR}/platforms")
-            message(STATUS "Deployed qoffscreen.dll for headless GUI tests")
-        endif()
+        foreach(_candidate qoffscreen.dll qoffscreend.dll)
+            if(EXISTS "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
+                set(_qt_offscreen "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
+                break()
+            endif()
+        endforeach()
+    endif()
+    if(_qt_offscreen)
+        file(COPY "${_qt_offscreen}"
+             DESTINATION "${SAK_MAIN_OUTPUT_DIR}/platforms")
+        message(STATUS "Deployed ${_qt_offscreen} for headless GUI tests")
+    else()
+        message(FATAL_ERROR
+            "qoffscreen.dll not found next to Qt6::Core - the GUI test suites "
+            "force QT_QPA_PLATFORM=offscreen and would abort at startup")
     endif()
 endif()
 
@@ -406,6 +422,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certif
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     message(STATUS "Added certification helper: file_management_live_certifier")
+endif()
+
+if(TARGET file_management_live_certifier AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1")
+    find_program(SAK_LIVE_CERT_TEST_POWERSHELL_PATH
+        NAMES pwsh.exe pwsh powershell.exe powershell
+        HINTS
+            "$ENV{ProgramFiles}/PowerShell/7"
+            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+    if(SAK_LIVE_CERT_TEST_POWERSHELL_PATH)
+        add_test(NAME test_file_management_live_certifier_gate
+                 COMMAND "${SAK_LIVE_CERT_TEST_POWERSHELL_PATH}"
+                         -NoProfile
+                         -ExecutionPolicy Bypass
+                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1"
+                         -CertifierPath "$<TARGET_FILE:file_management_live_certifier>"
+                         -OutputRoot "${TEST_OUTPUT_DIR}/file_management_live_certifier_gate"
+                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+        message(STATUS "Added live-certifier gate self-test: test_file_management_live_certifier_gate")
+    else()
+        message(WARNING "PowerShell not found; skipping live-certifier gate self-test")
+    endif()
 endif()
 
 if(TARGET sak_apfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1")
