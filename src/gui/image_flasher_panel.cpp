@@ -427,7 +427,7 @@ void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* pageLayout) {
 
     m_selectImageButton = new QPushButton(tr("Select Image File"), m_imageSelectionPage);
     m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_selectImageButton->setFixedWidth(kSelectImageButtonWidth);
+    m_selectImageButton->setMinimumWidth(kSelectImageButtonWidth);
     m_selectImageButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));

@@ -12,6 +12,7 @@
 #include "sak/ost_converter_constants.h"
 #include "sak/ost_converter_controller.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -199,12 +200,8 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_queue_table->setAccessibleName(tr("Email conversion queue"));
     m_queue_table->setHorizontalHeaderLabels(
         {tr("File"), tr("Size"), tr("Items"), tr("Status"), tr("Progress")});
-    m_queue_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_queue_table->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_queue_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_queue_table->setAlternatingRowColors(true);
+    configureStandardTable(m_queue_table, QAbstractItemView::SingleSelection);
     m_queue_table->horizontalHeader()->setStretchLastSection(true);
-    m_queue_table->verticalHeader()->setVisible(false);
     m_queue_table->setMinimumHeight(kQueueTableMinHeight);
 
     // Column widths

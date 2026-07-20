@@ -210,14 +210,14 @@ QWidget* DiagnosticBenchmarkPanel::createBenchmarkTab() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
-    auto* group = new QGroupBox("Hardware Inventory", this);
+    auto* group = new QGroupBox(tr("Hardware Inventory"), this);
     auto* layout = new QVBoxLayout(group);
 
     // Key/value labels
     auto add_info_row = [&](const QString& label_text, QLabel*& value_label) {
         auto* row = new QHBoxLayout();
         auto* key_label = new QLabel(label_text, this);
-        key_label->setFixedWidth(kDiagnosticLabelColumnWidth);
+        key_label->setMinimumWidth(kDiagnosticLabelColumnWidth);
         key_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
         row->addWidget(key_label);
 
@@ -227,26 +227,26 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
         layout->addLayout(row);
     };
 
-    add_info_row("CPU:", m_hw_cpu_label);
-    add_info_row("Memory:", m_hw_memory_label);
-    add_info_row("GPU:", m_hw_gpu_label);
-    add_info_row("Motherboard:", m_hw_motherboard_label);
-    add_info_row("OS:", m_hw_os_label);
-    add_info_row("Uptime:", m_hw_uptime_label);
-    add_info_row("Battery:", m_hw_battery_label);
+    add_info_row(tr("CPU:"), m_hw_cpu_label);
+    add_info_row(tr("Memory:"), m_hw_memory_label);
+    add_info_row(tr("GPU:"), m_hw_gpu_label);
+    add_info_row(tr("Motherboard:"), m_hw_motherboard_label);
+    add_info_row(tr("OS:"), m_hw_os_label);
+    add_info_row(tr("Uptime:"), m_hw_uptime_label);
+    add_info_row(tr("Battery:"), m_hw_battery_label);
 
     // Buttons
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
-    m_hw_rescan_button = new QPushButton("Scan Hardware", this);
+    m_hw_rescan_button = new QPushButton(tr("Scan Hardware"), this);
     m_hw_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_rescan_button->setAccessibleName(QStringLiteral("Scan Hardware"));
     m_hw_rescan_button->setToolTip(QStringLiteral("Scan and display hardware information"));
     m_hw_rescan_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_hw_rescan_button);
 
-    m_hw_copy_button = new QPushButton("Copy to Clipboard", this);
+    m_hw_copy_button = new QPushButton(tr("Copy to Clipboard"), this);
     m_hw_copy_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_copy_button->setAccessibleName(QStringLiteral("Copy Hardware Info"));
     m_hw_copy_button->setToolTip(QStringLiteral("Copy hardware inventory to the clipboard"));
@@ -614,14 +614,14 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
-    auto* group = new QGroupBox("Thermal Monitor", this);
+    auto* group = new QGroupBox(tr("Thermal Monitor"), this);
     auto* layout = new QVBoxLayout(group);
 
     auto add_thermal_row =
         [&](const QString& name, QLabel*& label, QProgressBar*& bar, int max_temp) {
             auto* row = new QHBoxLayout();
             auto* name_label = new QLabel(name, this);
-            name_label->setFixedWidth(kDiagnosticLabelColumnWidth);
+            name_label->setMinimumWidth(kDiagnosticLabelColumnWidth);
             name_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
             row->addWidget(name_label);
 

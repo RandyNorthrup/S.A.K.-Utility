@@ -201,11 +201,7 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
 
     m_onlineResultsTable = new QTableView(this);
     m_onlineResultsTable->setModel(m_onlineResultsModel);
-    m_onlineResultsTable->setAlternatingRowColors(true);
-    m_onlineResultsTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_onlineResultsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_onlineResultsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_onlineResultsTable->verticalHeader()->setVisible(false);
+    sak::configureStandardTable(m_onlineResultsTable, QAbstractItemView::SingleSelection);
     m_onlineResultsTable->horizontalHeader()->setStretchLastSection(true);
     m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
@@ -503,11 +499,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
 
     m_offlineResultsTable = new QTableView(this);
     m_offlineResultsTable->setModel(m_offlineResultsModel);
-    m_offlineResultsTable->setAlternatingRowColors(true);
-    m_offlineResultsTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_offlineResultsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_offlineResultsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_offlineResultsTable->verticalHeader()->setVisible(false);
+    sak::configureStandardTable(m_offlineResultsTable, QAbstractItemView::SingleSelection);
     m_offlineResultsTable->horizontalHeader()->setStretchLastSection(true);
     m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);

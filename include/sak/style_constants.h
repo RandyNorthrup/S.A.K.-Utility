@@ -55,7 +55,6 @@ constexpr int kToolButtonMenuIndicatorOffsetPx = -4;
 constexpr auto kButtonPaddingDefaultCss = "8px 20px";
 constexpr auto kButtonPaddingCompactCss = "8px 14px";
 constexpr auto kButtonPaddingSlimCss = "5px 14px";
-constexpr auto kButtonPaddingWideCss = "8px 24px";
 
 // -- Common UI Dimensions ----------------------------------------------------
 
@@ -767,18 +766,6 @@ struct ButtonTone {
     const char* border;
 };
 
-struct SolidButtonTone {
-    const char* normalBackground;
-    const char* hoverBackground;
-    const char* pressedBackground;
-    const char* disabledBackground;
-};
-
-struct SolidButtonMetrics {
-    const char* padding;
-    int radiusPx;
-};
-
 struct CalendarPopupSelectorTone {
     QString panel;
     QString border;
@@ -787,8 +774,6 @@ struct CalendarPopupSelectorTone {
     QString selection;
     QString selectionText;
 };
-
-inline constexpr SolidButtonMetrics kSolidButtonMetrics{kButtonPaddingWideCss, kCssRadiusSmallPx};
 
 inline QString buttonGradientRule(const QString& selector,
                                   const char* state,
@@ -956,35 +941,6 @@ inline constexpr ButtonTone kDiscordButtonTone{kColorDiscordButtonNormalTop,
                                                kColorDiscordButtonPressedMiddle,
                                                kColorDiscordButtonPressedBottom,
                                                kColorDiscordButtonBorder};
-
-inline constexpr SolidButtonTone kSolidPrimaryButtonTone{
-    kColorPrimary, kColorPrimaryHover, kColorPrimaryPressed, kColorTextDisabled};
-inline constexpr SolidButtonTone kSolidDangerButtonTone{
-    kColorDangerBtnNormal, kColorDangerBtnHover, kColorDangerBtnPressed, kColorTextDisabled};
-
-inline QString solidButtonStyle(const char* selector,
-                                const SolidButtonTone& tone,
-                                SolidButtonMetrics metrics = kSolidButtonMetrics) {
-    const auto css = [](const char* value) {
-        return QString::fromLatin1(value);
-    };
-    const QString s = css(selector);
-    return QStringLiteral(
-               "%1 { background: %2; color: %3; padding: %4; border-radius: %5px; "
-               "font-weight: %6; }"
-               "%1:hover { background: %7; }"
-               "%1:pressed { background: %8; }"
-               "%1:disabled { background: %9; }")
-        .arg(s,
-             css(tone.normalBackground),
-             css(kColorButtonTextOnTone),
-             css(metrics.padding),
-             QString::number(metrics.radiusPx),
-             QString::number(kFontWeightBold),
-             css(tone.hoverBackground),
-             css(tone.pressedBackground),
-             css(tone.disabledBackground));
-}
 
 inline QString colorWithAlpha(const char* color, double alpha) {
     const QColor qcolor(QString::fromLatin1(color));
@@ -1291,14 +1247,6 @@ inline const QString kDiscordButtonStyle = actionButtonStyle("QPushButton", kDis
 inline const QString kDiscordCompactButtonStyle =
     actionButtonStyle("QPushButton", kDiscordButtonTone, false, kButtonPaddingCompactCss);
 
-/// Solid primary button -- preserves legacy flat action colors.
-inline const QString kSolidPrimaryButtonStyle = solidButtonStyle("QPushButton",
-                                                                 kSolidPrimaryButtonTone);
-
-/// Solid danger button -- preserves legacy flat destructive-action colors.
-inline const QString kSolidDangerButtonStyle = solidButtonStyle("QPushButton",
-                                                                kSolidDangerButtonTone);
-
 /// Theme label text helpers.
 inline const QString kMutedLabelStyle = QStringLiteral("color: %1;").arg(cssColor(kColorTextMuted));
 inline const QString kTransparentWidgetStyle =
@@ -1388,22 +1336,6 @@ inline QString transparentBodyTextStyle(double point_size, const char* color) {
                "font-size: %1pt; line-height: 142%; color: %2;")
         .arg(point_size, 0, 'f', 1)
         .arg(cssColor(color));
-}
-
-inline QString surfaceStyle(const char* selector,
-                            const char* background,
-                            const char* border,
-                            int radius_px = kCssRadiusLargePx,
-                            int padding_px = kCssPaddingLargePx) {
-    return QStringLiteral(
-               "%1 { background: %2; border: %3px solid %4; "
-               "border-radius: %5px; padding: %6px; }")
-        .arg(QString::fromLatin1(selector))
-        .arg(cssColor(background))
-        .arg(kCssBorderWidthDefaultPx)
-        .arg(cssColor(border))
-        .arg(radius_px)
-        .arg(padding_px);
 }
 
 inline constexpr auto kCardFrameSelector = "QFrame[sakCard=\"true\"]";

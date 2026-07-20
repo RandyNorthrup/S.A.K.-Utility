@@ -187,13 +187,9 @@ ProgramTableUi buildProgramTableUi(AdvancedUninstallPanel* panel,
                                                  QObject::tr("Size"),
                                                  QObject::tr("Install Date")});
 
-    ui.program_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    ui.program_table->setSelectionMode(QAbstractItemView::SingleSelection);
-    ui.program_table->setAlternatingRowColors(true);
+    configureStandardTable(ui.program_table, QAbstractItemView::SingleSelection);
     ui.program_table->setSortingEnabled(true);
-    ui.program_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui.program_table->setContextMenuPolicy(Qt::CustomContextMenu);
-    ui.program_table->verticalHeader()->setVisible(false);
 
     auto* header = ui.program_table->horizontalHeader();
     header->setSectionResizeMode(cols.check, QHeaderView::Fixed);
@@ -291,12 +287,8 @@ void addLeftoverTable(AdvancedUninstallPanel* panel,
                                           QObject::tr("Type"),
                                           QObject::tr("Path"),
                                           QObject::tr("Size")});
-    ui->table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    ui->table->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    ui->table->setAlternatingRowColors(true);
-    ui->table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    configureStandardTable(ui->table, QAbstractItemView::ExtendedSelection);
     ui->table->setSortingEnabled(true);
-    ui->table->verticalHeader()->setVisible(false);
     configureLeftoverTableHeader(ui->table, cols);
     setAccessible(
         ui->table,

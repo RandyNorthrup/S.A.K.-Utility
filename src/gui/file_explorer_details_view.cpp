@@ -4,6 +4,7 @@
 #include "sak/file_explorer_details_view.h"
 
 #include "sak/file_explorer_item_model.h"
+#include "sak/widget_helpers.h"
 
 #include <QAbstractItemView>
 #include <QHeaderView>
@@ -40,15 +41,11 @@ namespace sak {
 
 FileExplorerDetailsView::FileExplorerDetailsView(QWidget* parent) : QTableView(parent) {
     setObjectName(QStringLiteral("fileExplorerTable"));
-    setSelectionBehavior(QAbstractItemView::SelectRows);
-    setSelectionMode(QAbstractItemView::ExtendedSelection);
-    setEditTriggers(QAbstractItemView::NoEditTriggers);
-    setAlternatingRowColors(true);
+    configureStandardTable(this, QAbstractItemView::ExtendedSelection);
     setSortingEnabled(true);
     setAccessibleName(tr("File explorer directory listing"));
     setContextMenuPolicy(Qt::CustomContextMenu);
     setShowGrid(false);
-    verticalHeader()->setVisible(false);
     horizontalHeader()->setSectionsMovable(true);
     horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(horizontalHeader(),

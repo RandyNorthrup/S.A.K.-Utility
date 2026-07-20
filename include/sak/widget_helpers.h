@@ -11,16 +11,19 @@
 
 #include "style_constants.h"
 
+#include <QAbstractItemView>
 #include <QColor>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QIcon>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QString>
+#include <QTableView>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -293,19 +296,6 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
     return QColor(ui::kStatusColorIdle);
 }
 
-/// @brief Map a progress percentage to an appropriate color
-/// @param percent Progress value (0-100+)
-/// @return Green for 100%+, Orange for in-progress, Gray for 0%
-[[nodiscard]] inline QColor progressColor(int percent) {
-    if (percent >= kPercentMax) {
-        return QColor(ui::kStatusColorSuccess);
-    }
-    if (percent > 0) {
-        return QColor(ui::kStatusColorWarning);
-    }
-    return QColor(ui::kStatusColorIdle);
-}
-
 /// @brief Apply background and foreground colors to a table widget item
 /// @param item The table widget item to style (null-safe)
 /// @param color The background color to apply (foreground set to white)
@@ -315,6 +305,15 @@ inline void applyStatusColors(QTableWidgetItem* item, const QColor& color) {
     }
     item->setBackground(color);
     item->setForeground(Qt::white);
+}
+
+/// @brief Apply the standard read-only table baseline shared across panels.
+inline void configureStandardTable(QTableView* table, QAbstractItemView::SelectionMode mode) {
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(mode);
+    table->setAlternatingRowColors(true);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->verticalHeader()->setVisible(false);
 }
 
 }  // namespace sak

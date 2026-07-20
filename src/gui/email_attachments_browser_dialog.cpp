@@ -12,6 +12,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -159,13 +160,9 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
                                         tr("Source Email"),
                                         tr("Sender"),
                                         tr("Date")});
-    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    configureStandardTable(m_table, QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
-    m_table->setAlternatingRowColors(true);
     m_table->horizontalHeader()->setStretchLastSection(true);
-    m_table->verticalHeader()->setVisible(false);
 
     m_table->horizontalHeader()->setSectionResizeMode(ColSelect, QHeaderView::Fixed);
     m_table->setColumnWidth(ColSelect, email::kAttachmentIndicatorColumnWidth);

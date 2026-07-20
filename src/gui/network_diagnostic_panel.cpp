@@ -395,11 +395,7 @@ void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* lay
     m_adapterTable->setColumnCount(kAdapterColumnCount);
     m_adapterTable->setHorizontalHeaderLabels(
         {tr("Name"), tr("Type"), tr("Status"), tr("IP Address"), tr("MAC"), tr("Speed")});
-    m_adapterTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_adapterTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_adapterTable->setAlternatingRowColors(true);
-    m_adapterTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_adapterTable->verticalHeader()->setVisible(false);
+    configureStandardTable(m_adapterTable, QAbstractItemView::ExtendedSelection);
     m_adapterTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto* header = m_adapterTable->horizontalHeader();

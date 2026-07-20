@@ -10,6 +10,7 @@
 #include "sak/email_inspector_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -1018,14 +1019,10 @@ void EmailCalendarDialog::setupDayEventList(QVBoxLayout* layout) {
     m_day_event_list->setAccessibleName(tr("Events for selected date"));
     m_day_event_list->setColumnCount(DayColCount);
     m_day_event_list->setHorizontalHeaderLabels({tr("Time"), tr("Subject")});
-    m_day_event_list->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_day_event_list->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_day_event_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    configureStandardTable(m_day_event_list, QAbstractItemView::SingleSelection);
     m_day_event_list->horizontalHeader()->setStretchLastSection(true);
     m_day_event_list->setColumnWidth(DayColTime, email::kCalendarDayTimeColumnWidth);
-    m_day_event_list->verticalHeader()->setVisible(false);
     m_day_event_list->setMaximumHeight(email::kCalendarDayListMaxHeight);
-    m_day_event_list->setAlternatingRowColors(true);
     m_day_event_list->setStyleSheet(ui::calendarEventTableStyle());
     connect(m_day_event_list, &QTableWidget::cellClicked, this, [this](int row, int /*col*/) {
         auto* item = m_day_event_list->item(row, DayColSubject);

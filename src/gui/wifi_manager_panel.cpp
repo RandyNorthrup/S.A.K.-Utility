@@ -171,7 +171,6 @@ namespace {
 
 constexpr int kWifiPasswordIconSize = ui::kUiIconSmall;
 constexpr int kWifiSelectColumnWidth = kSelectColumnW;
-constexpr int kQrHeaderToggleWidth = 180;
 constexpr int kQrBrowseButtonWidth = kSnapButtonW;
 constexpr int kBatchQrDialogMinWidth = 400;
 constexpr int kQrMultiDialogWidth = kDialogWidthMedium;
@@ -734,8 +733,7 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     optLayout->addWidget(ctl.chkJpg);
     optLayout->addWidget(ctl.chkBmp);
     optLayout->addSpacing(sak::ui::kSpacingDefault);
-    ctl.headerToggle = new LogToggleSwitch("Location header", optWidget);
-    ctl.headerToggle->setFixedWidth(kQrHeaderToggleWidth);
+    ctl.headerToggle = new LogToggleSwitch(tr("Location header"), optWidget);
     ctl.headerToggle->setChecked(true);
     optLayout->addWidget(ctl.headerToggle);
     optLayout->addStretch();
@@ -745,9 +743,9 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
 
     auto* outerLayout = new QVBoxLayout(page);
     auto* btnRow = new QHBoxLayout;
-    ctl.btnCancel0 = new QPushButton("Cancel");
+    ctl.btnCancel0 = new QPushButton(tr("Cancel"));
     ctl.btnCancel0->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ctl.btnNext = new QPushButton("Next >");
+    ctl.btnNext = new QPushButton(tr("Next >"));
     ctl.btnNext->setDefault(true);
     ctl.btnNext->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     btnRow->addStretch();
@@ -761,18 +759,18 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
 QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
-    layout->addWidget(new QLabel("Choose output directory:"));
+    layout->addWidget(new QLabel(tr("Choose output directory:")));
     auto* dirRow = new QHBoxLayout;
     ctl.dirEdit = new QLineEdit;
     ctl.dirEdit->setReadOnly(true);
-    ctl.dirEdit->setPlaceholderText("Click Browse to select a folder...");
-    ctl.btnBrowse = new QPushButton("Browse...");
-    ctl.btnBrowse->setFixedWidth(kQrBrowseButtonWidth);
+    ctl.dirEdit->setPlaceholderText(tr("Click Browse to select a folder..."));
+    ctl.btnBrowse = new QPushButton(tr("Browse..."));
+    ctl.btnBrowse->setMinimumWidth(kQrBrowseButtonWidth);
     ctl.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     dirRow->addWidget(ctl.dirEdit, 1);
     dirRow->addWidget(ctl.btnBrowse);
     layout->addLayout(dirRow);
-    ctl.subLabel = new QLabel("Files will be saved to: (select a folder first)");
+    ctl.subLabel = new QLabel(tr("Files will be saved to: (select a folder first)"));
     ctl.subLabel->setWordWrap(true);
     ctl.subLabel->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeSmall));
@@ -1022,19 +1020,19 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int networkCount) {
     }
 
     layout->addSpacing(sak::ui::kSpacingMedium);
-    ui.headerToggle = new LogToggleSwitch("Location header", dlg);
-    ui.headerToggle->setFixedWidth(kQrHeaderToggleWidth);
+    ui.headerToggle = new LogToggleSwitch(QObject::tr("Location header"), dlg);
     ui.headerToggle->setChecked(true);
     layout->addWidget(ui.headerToggle);
     layout->addSpacing(sak::ui::kSpacingMedium);
 
-    layout->addWidget(new QLabel("Output directory (one subfolder per network):", dlg));
+    layout->addWidget(
+        new QLabel(QObject::tr("Output directory (one subfolder per network):"), dlg));
     auto* dirRow = new QHBoxLayout;
     ui.dirEdit = new QLineEdit(dlg);
     ui.dirEdit->setReadOnly(true);
-    ui.dirEdit->setPlaceholderText("Click Browse...");
-    ui.btnBrowse = new QPushButton("Browse...", dlg);
-    ui.btnBrowse->setFixedWidth(kQrBrowseButtonWidth);
+    ui.dirEdit->setPlaceholderText(QObject::tr("Click Browse..."));
+    ui.btnBrowse = new QPushButton(QObject::tr("Browse..."), dlg);
+    ui.btnBrowse->setMinimumWidth(kQrBrowseButtonWidth);
     ui.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     dirRow->addWidget(ui.dirEdit, 1);
     dirRow->addWidget(ui.btnBrowse);
@@ -1116,14 +1114,14 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCoun
     layout->addWidget(hintLbl);
 
     auto* navBar = new QHBoxLayout();
-    ui.prevBtn = new QPushButton("< Prev", dlg);
-    ui.nextBtn = new QPushButton("Next >", dlg);
+    ui.prevBtn = new QPushButton(QObject::tr("< Prev"), dlg);
+    ui.nextBtn = new QPushButton(QObject::tr("Next >"), dlg);
     ui.closeBtn = new QPushButton("Close", dlg);
     ui.prevBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ui.nextBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ui.closeBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ui.prevBtn->setFixedWidth(kQrNavButtonWidth);
-    ui.nextBtn->setFixedWidth(kQrNavButtonWidth);
+    ui.prevBtn->setMinimumWidth(kQrNavButtonWidth);
+    ui.nextBtn->setMinimumWidth(kQrNavButtonWidth);
     navBar->addWidget(ui.prevBtn);
     navBar->addStretch();
     navBar->addWidget(ui.closeBtn);
