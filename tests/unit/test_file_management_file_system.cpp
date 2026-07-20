@@ -44,6 +44,50 @@ private Q_SLOTS:
         QCOMPARE(QString::fromUtf8(read.data), QStringLiteral("hello target bridge"));
     }
 
+    void readFileRejectsFilesOverMaxBytes() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString filePath = QDir(temp.path()).filePath(QStringLiteral("big.bin"));
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray(100, 'x'));
+        file.close();
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
+
+        // Over the cap: must be rejected, not silently truncated to the limit.
+        const auto capped = sak::FileManagementFileSystemBridge::readFile(target, filePath, 10);
+        QVERIFY(!capped.ok);
+        QVERIFY(!capped.blockers.isEmpty());
+
+        // Within the cap: full content is returned.
+        const auto full = sak::FileManagementFileSystemBridge::readFile(target, filePath, 1024);
+        QVERIFY(full.ok);
+        QCOMPARE(full.data.size(), 100);
+    }
+
+    void writeFileLocalAtomicRoundTrip() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString filePath = QDir(temp.path()).filePath(QStringLiteral("data.bin"));
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
+
+        const QByteArray first = QByteArrayLiteral("original contents");
+        const auto write1 = sak::FileManagementFileSystemBridge::writeFile(target, filePath, first);
+        QVERIFY2(write1.ok, qPrintable(write1.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(write1.bytes_written, static_cast<uint64_t>(first.size()));
+
+        // Overwrite replaces the contents wholesale (atomic commit).
+        const QByteArray second = QByteArrayLiteral("new");
+        const auto write2 =
+            sak::FileManagementFileSystemBridge::writeFile(target, filePath, second);
+        QVERIFY2(write2.ok, qPrintable(write2.blockers.join(QStringLiteral("; "))));
+
+        const auto read = sak::FileManagementFileSystemBridge::readFile(target, filePath, 1024);
+        QVERIFY(read.ok);
+        QCOMPARE(read.data, second);
+    }
+
     void writeFileFromHostPathStreamsLocalCopyWithNoCap() {
         // writeFileFromHostPath streams a host file into the destination through a fixed
         // window (peak RAM one window), so the copy is byte-exact and has no size cap. The

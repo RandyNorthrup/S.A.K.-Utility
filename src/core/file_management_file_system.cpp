@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <limits>
 #include <optional>
 
 namespace sak {
@@ -107,6 +108,12 @@ uint64_t probeApfsContainerBytes(const QString& root_path) {
     const bool sane_block_size = block_size >= 4096 && block_size <= 65'536 &&
                                  (block_size & (block_size - 1)) == 0;
     if (!sane_block_size || block_count == 0) {
+        return 0;
+    }
+    // Reject a block count that would overflow the 64-bit byte size. A corrupt
+    // superblock with an absurd nx_block_count otherwise wraps to a small,
+    // in-range value and marks a garbage container as writable.
+    if (block_count > std::numeric_limits<quint64>::max() / block_size) {
         return 0;
     }
     return block_size * block_count;
@@ -244,15 +251,28 @@ FileManagementTarget applyCapabilities(FileManagementTarget target) {
     const bool readableNonNative =
         FileManagementFileSystemBridge::isReadableNonNativeFileSystem(fs);
 
+    // Inventory may report a volume as read-only (write-protected, read-only
+    // mount). Preserve that so a writable-looking badge is not shown for a
+    // volume the OS will reject writes on.
+    const bool inbound_read_only = target.read_only;
+
     target.file_system = displayFileSystem(fs);
     target.local_file_system = target.kind == FileManagementTargetKind::LocalPath || native;
-    target.read_only = !target.local_file_system;
+    target.read_only = inbound_read_only || !target.local_file_system;
     target.can_browse = target.local_file_system || readableNonNative;
     target.can_read_files = target.local_file_system || readableNonNative;
     target.can_write_files = target.local_file_system || computeWritableNonNative(fs, target);
     target.can_organize = target.local_file_system;
     target.can_duplicate_scan = target.local_file_system || readableNonNative;
     target.can_advanced_search = target.local_file_system || readableNonNative;
+    // A local volume the OS reports read-only cannot accept writes or organize
+    // moves; pre-block instead of failing at write time. Non-local certified raw
+    // writes intentionally keep can_write_files even though the target is
+    // surfaced read-only for browsing semantics.
+    if (target.local_file_system && inbound_read_only) {
+        target.can_write_files = false;
+        target.can_organize = false;
+    }
     appendTargetBlockers(target, fs);
     return target;
 }
@@ -385,12 +405,36 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
         result.blockers.append(QStringLiteral("Could not open file: %1").arg(path));
         return result;
     }
-    if (maxBytes > 0 && static_cast<uint64_t>(file.size()) > maxBytes) {
+
+    QByteArray data;
+    if (maxBytes > 0) {
+        if (static_cast<uint64_t>(file.size()) > maxBytes) {
+            result.blockers.append(
+                QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
+            return result;
+        }
+        // Read one past the cap so a file that grew between size() and read
+        // (TOCTOU) is rejected rather than returned over-limit.
+        data = file.read(static_cast<qint64>(maxBytes) + 1);
+        if (static_cast<uint64_t>(data.size()) > maxBytes) {
+            result.blockers.append(
+                QStringLiteral("File exceeds read limit: %1 bytes").arg(maxBytes));
+            return result;
+        }
+    } else {
+        data = file.readAll();
+    }
+
+    // readAll()/read() return whatever was read before an I/O fault without
+    // signalling failure; check error() so truncated data is not surfaced as a
+    // complete, successful read.
+    if (file.error() != QFileDevice::NoError) {
         result.blockers.append(
-            QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
+            QStringLiteral("Read error on %1: %2").arg(path, file.errorString()));
         return result;
     }
-    result.data = file.readAll();
+
+    result.data = data;
     result.ok = true;
     return result;
 }
@@ -1464,8 +1508,12 @@ FileManagementMutationResult deleteDirectoryTreeDepthFirst(const FileManagementT
             QStringLiteral("Skipped %1: exceeds the delete depth bound.").arg(path));
         return result;
     }
+    // List one past the per-directory cap so a directory too large to enumerate
+    // in a single pass is detected. Deleting a truncated listing would remove the
+    // first N entries and then fail closed on the still-non-empty parent, leaving
+    // the tree partially and irreversibly destroyed.
     const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
-        target, path, kDirectoryExportMaxEntriesPerDirectory);
+        target, path, kDirectoryExportMaxEntriesPerDirectory + 1);
     if (!listing.ok) {
         FileManagementMutationResult result;
         result.file_system = target.file_system;
@@ -1473,6 +1521,20 @@ FileManagementMutationResult deleteDirectoryTreeDepthFirst(const FileManagementT
         result.blockers.append(listing.blockers.isEmpty()
                                    ? QStringLiteral("Could not list %1.").arg(path)
                                    : listing.blockers.join(QStringLiteral("; ")));
+        return result;
+    }
+    if (listing.entries.size() > kDirectoryExportMaxEntriesPerDirectory ||
+        !listing.warnings.isEmpty()) {
+        // Fail closed BEFORE removing anything so we never partially destroy a
+        // directory we cannot finish enumerating.
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(
+            QStringLiteral("Directory %1 has more than %2 entries; aborting before any deletion "
+                           "to avoid partial, irreversible destruction.")
+                .arg(path)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
         return result;
     }
     for (const FileManagementEntry& entry : listing.entries) {
@@ -1510,17 +1572,29 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         FileManagementMutationResult result;
         result.file_system = target.file_system;
         result.path = path;
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        // QSaveFile writes to a temporary and atomically renames on commit(), so
+        // a short write (e.g. the destination volume runs out of space) leaves
+        // the original file intact instead of truncating it to zero and losing
+        // the previous contents.
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
             result.blockers.append(
                 QStringLiteral("Unable to write file: %1").arg(file.errorString()));
             return result;
         }
-        result.bytes_written = static_cast<uint64_t>(file.write(data));
-        result.ok = result.bytes_written == static_cast<uint64_t>(data.size());
-        if (!result.ok) {
+        const qint64 written = file.write(data);
+        if (written != static_cast<qint64>(data.size())) {
             result.blockers.append(QStringLiteral("Short write while writing file: %1").arg(path));
+            file.cancelWriting();
+            return result;
         }
+        if (!file.commit()) {
+            result.blockers.append(
+                QStringLiteral("Failed to commit file %1: %2").arg(path, file.errorString()));
+            return result;
+        }
+        result.bytes_written = static_cast<uint64_t>(written);
+        result.ok = true;
         return result;
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
@@ -1633,10 +1707,36 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
 
 namespace {
 
+FileManagementMutationResult deleteRawEntry(const FileManagementTarget& target,
+                                            const FileManagementEntry& entry) {
+    return entry.directory ? FileManagementFileSystemBridge::deleteDirectoryTree(target, entry.path)
+                           : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+}
+
+// Return the sole entry whose name matches @p name case-insensitively, or
+// nullptr when there are zero or (ambiguously) more than one. @p count receives
+// the number of matches.
+const FileManagementEntry* uniqueCaseInsensitiveMatch(const QVector<FileManagementEntry>& entries,
+                                                      const QString& name,
+                                                      int& count) {
+    const FileManagementEntry* match = nullptr;
+    count = 0;
+    for (const FileManagementEntry& entry : entries) {
+        if (QString::compare(entry.name, name, Qt::CaseInsensitive) == 0) {
+            match = &entry;
+            ++count;
+        }
+    }
+    return match;
+}
+
 // Raw-target occupant removal for removeExistingEntry: the occupant is found in
-// a fresh listing one past the bound so truncation is detectable; raw APFS/HFS+
-// default to case-insensitive, so a differing-case occupant still matches and
-// its actual on-disk path is the one deleted.
+// a fresh listing one past the bound so truncation is detectable. An exact
+// (case-sensitive) name match is deleted directly since it is unambiguous on
+// both case-sensitive and case-insensitive volumes. When only a differing-case
+// occupant exists (case-insensitive volume) it is deleted, but two differing-case
+// matches signal a case-sensitive volume where deleting either would remove the
+// wrong file, so that fails closed rather than risking silent data loss.
 FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& target,
                                                     const QString& path,
                                                     const int max_entries,
@@ -1646,11 +1746,22 @@ FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& 
         FileManagementFileSystemBridge::listDirectory(target, parent, max_entries + 1);
     if (listing.ok) {
         for (const FileManagementEntry& entry : listing.entries) {
-            if (QString::compare(entry.name, name, Qt::CaseInsensitive) == 0) {
-                return entry.directory
-                           ? FileManagementFileSystemBridge::deleteDirectoryTree(target, entry.path)
-                           : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+            if (entry.name == name) {
+                return deleteRawEntry(target, entry);
             }
+        }
+        int ci_count = 0;
+        const FileManagementEntry* ci_match =
+            uniqueCaseInsensitiveMatch(listing.entries, name, ci_count);
+        if (ci_count == 1) {
+            return deleteRawEntry(target, *ci_match);
+        }
+        if (ci_count > 1) {
+            result.blockers.append(
+                QStringLiteral("Multiple entries match %1 only by case; refusing to delete on a "
+                               "case-sensitive volume to avoid removing the wrong file.")
+                    .arg(name));
+            return result;
         }
         if (listing.entries.size() <= max_entries) {
             result.ok = true;
