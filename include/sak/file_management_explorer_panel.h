@@ -35,6 +35,7 @@
 #include <QUrl>
 #include <QWidget>
 
+#include <array>
 #include <functional>
 
 class QJsonArray;
@@ -194,6 +195,9 @@ private:
     [[nodiscard]] QString targetPathForName(const QString& name) const;
     [[nodiscard]] bool validateCurrentTargetIdentity(QString* blocker) const;
     void loadDirectory(const QString& path, bool add_history = true);
+    void deliverListingResult(const FileManagementListResult& result,
+                              quint64 listing_revision,
+                              int load_pane);
     void loadColumnsPreview(const QString& path);
     void populateTable(const FileManagementListResult& result);
     void selectPendingSearchResult();
@@ -465,6 +469,9 @@ private:
     bool undoByDeletingCreatedEntries(const FileExplorerStorageHistory& history,
                                       bool undo_of_create);
     bool redoCreateEntries(const FileExplorerStorageHistory& history);
+    void historyDeleteOneEntry(const FileManagementTarget& target,
+                               const FileExplorerHistoryItem& item,
+                               QStringList* blockers);
     bool executeHistoryDelete(const FileExplorerStorageHistory& history,
                               bool created_entries,
                               QStringList* blockers);
@@ -738,7 +745,10 @@ private:
     QStringList m_favorite_target_ids;
     QStringList m_recent_target_ids;
     QString m_last_target_id;
-    quint64 m_listing_revision{0};
+    // Per-pane listing revisions: a load started for pane N is superseded only
+    // by a NEWER load for pane N, so a deliberately-targeted background load
+    // (refreshOtherPane, dual-pane restore) survives active-pane navigation.
+    std::array<quint64, 2> m_listing_revision{0, 0};
     quint64 m_columns_preview_revision{0};
     int m_current_target_index{-1};
     // Open explorer tabs; each carries an independent target+path+history+view via its primary

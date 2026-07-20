@@ -2447,7 +2447,7 @@ bool FileManagementExplorerPanel::validateCurrentTargetIdentity(QString* blocker
 
 void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString& message,
                                                                    const bool is_error) {
-    ++m_listing_revision;
+    ++m_listing_revision[m_active_pane_index];
     ++m_columns_preview_revision;
     if (is_error) {
         m_summary_label->setText(message);
@@ -2475,6 +2475,27 @@ void FileManagementExplorerPanel::clearFolderFilterOnNavigation() {
     if (m_pane && m_pane->sortFilterModel()) {
         m_pane->sortFilterModel()->setNameFilter(QString());
     }
+}
+
+// Completion routing for one async directory listing: dropped only when a
+// NEWER load for the same pane superseded it (per-pane revisions). A result
+// for the now-inactive pane (refreshOtherPane, dual-pane restore, or a user
+// pane switch mid-load) hops over, populates that pane's own model, and hops
+// back -- dropping it left the pane stuck on its loading state.
+void FileManagementExplorerPanel::deliverListingResult(const FileManagementListResult& result,
+                                                       const quint64 listing_revision,
+                                                       const int load_pane) {
+    if (listing_revision != m_listing_revision[load_pane]) {
+        return;
+    }
+    if (load_pane != m_active_pane_index) {
+        const int current = m_active_pane_index;
+        activatePane(load_pane);
+        populateTable(result);
+        activatePane(current);
+        return;
+    }
+    populateTable(result);
 }
 
 void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool add_history) {
@@ -2509,8 +2530,8 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
         m_preview_text->setPlainText(tr("Select a readable file and choose Preview."));
     }
 
-    const quint64 listing_revision = ++m_listing_revision;
     const int load_pane = m_active_pane_index;
+    const quint64 listing_revision = ++m_listing_revision[load_pane];
     ++m_columns_preview_revision;
     if (m_pane) {
         m_pane->clearColumnsPreview();
@@ -2526,12 +2547,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
             this,
             [this, watcher, listing_revision, load_pane]() {
                 watcher->deleteLater();
-                // Drop the result if a newer load superseded it, or the user switched the active
-                // pane mid-load (the data belongs to the other pane).
-                if (listing_revision != m_listing_revision || load_pane != m_active_pane_index) {
-                    return;
-                }
-                populateTable(watcher->result());
+                deliverListingResult(watcher->result(), listing_revision, load_pane);
             });
     watcher->setFuture(QtConcurrent::run([target, path = m_current_path]() {
         return FileManagementFileSystemBridge::listDirectory(target, path, kExplorerListMaxEntries);
@@ -3874,6 +3890,40 @@ void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransfer
     }
 }
 
+// Undo-deletes one entry a Copy or CreateNew produced, but only when what
+// occupies the path is still the KIND the operation created: a same-named
+// entry the user put there since (or a kind swap) is not the copied item and
+// must not be deleted by an undo. An already-vacant path needs nothing.
+void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarget& target,
+                                                        const FileExplorerHistoryItem& item,
+                                                        QStringList* blockers) {
+    const QString name = nameForPath(item.destination_path, target.local_file_system);
+    const QString parent = parentPathForEntry(item.destination_path, target.local_file_system);
+    const PasteEntryKind kind = destinationEntryKind(target, parent, name);
+    if (kind == PasteEntryKind::None) {
+        return;
+    }
+    if (kind != (item.directory ? PasteEntryKind::Directory : PasteEntryKind::File)) {
+        blockers->append(
+            tr("%1 changed since the operation; it was not deleted.").arg(item.destination_path));
+        return;
+    }
+    if (target.local_file_system) {
+        if (!sak::sendPathToRecycleBin(item.destination_path)) {
+            blockers->append(
+                tr("Could not move %1 to the Recycle Bin.").arg(item.destination_path));
+        }
+        return;
+    }
+    const auto result =
+        item.directory
+            ? FileManagementFileSystemBridge::deleteDirectoryTree(target, item.destination_path)
+            : FileManagementFileSystemBridge::deleteFile(target, item.destination_path);
+    if (!result.ok) {
+        blockers->append(result.blockers);
+    }
+}
+
 // Deletes the entries a Copy or CreateNew produced: local paths recycle
 // (Files undoes these with permanently:false), raw paths delete through the
 // certified writers.
@@ -3888,20 +3938,7 @@ bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorage
     }
     const FileManagementTarget target = m_targets.at(target_index);
     for (const FileExplorerHistoryItem& item : history.items) {
-        if (target.local_file_system) {
-            if (!sak::sendPathToRecycleBin(item.destination_path)) {
-                blockers->append(
-                    tr("Could not move %1 to the Recycle Bin.").arg(item.destination_path));
-            }
-            continue;
-        }
-        const auto result =
-            item.directory
-                ? FileManagementFileSystemBridge::deleteDirectoryTree(target, item.destination_path)
-                : FileManagementFileSystemBridge::deleteFile(target, item.destination_path);
-        if (!result.ok) {
-            blockers->append(result.blockers);
-        }
+        historyDeleteOneEntry(target, item, blockers);
     }
     // Files: the undo-delete posts a Delete-family card (Recycle on local
     // volumes, permanent Delete on raw targets).
