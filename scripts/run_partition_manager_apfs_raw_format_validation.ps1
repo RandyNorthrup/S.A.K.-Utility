@@ -226,7 +226,7 @@ try {
 
     $directoryPath = "/" + $DirectoryName
     $directoryCreateResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "create-raw-root-directory",
+        "commit-raw-directory-create",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
@@ -246,7 +246,7 @@ try {
     [System.IO.File]::WriteAllBytes($childPayloadPath, [System.Text.Encoding]::UTF8.GetBytes($ChildFileText))
     $childPath = $directoryPath + "/" + $ChildFileName
     $childWriteResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "write-raw-root-directory-file",
+        "commit-raw-directory-child-write",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
@@ -271,7 +271,7 @@ try {
     $patchedChildFileBytes = Get-PatchedUtf8Bytes -OriginalText $ChildFileText -OffsetBytes $ChildPatchOffsetBytes -PatchText $ChildPatchFileText
     $expectedPatchedChildHash = Get-Sha256HexFromBytes -Bytes $patchedChildFileBytes
     $childPatchResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "patch-raw-root-directory-file",
+        "commit-raw-file-patch",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
@@ -294,7 +294,7 @@ try {
     Assert-Condition -Condition ($childPatchVerifyResult.ExitCode -eq 0) -Message ("APFS raw directory child patch verify failed: " + ($childPatchVerifyResult.Output -join "`n"))
 
     $nonEmptyDirectoryDeleteResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "delete-raw-root-directory",
+        "commit-raw-directory-delete",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
@@ -305,7 +305,7 @@ try {
     Assert-Condition -Condition ($nonEmptyDirectoryDeleteResult.ExitCode -ne 0) -Message "APFS raw directory delete accepted a non-empty directory."
 
     $childDeleteResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "delete-raw-root-directory-file",
+        "commit-raw-directory-child-delete",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
@@ -324,7 +324,7 @@ try {
     Assert-Condition -Condition ($childDeleteVerifyResult.ExitCode -eq 0) -Message ("APFS raw directory child delete verify failed: " + ($childDeleteVerifyResult.Output -join "`n"))
 
     $directoryDeleteResult = Invoke-Certifier -Path $ApfsWriterCliPath -Arguments @(
-        "delete-raw-root-directory",
+        "commit-raw-directory-delete",
         "--target", $targetPath,
         "--size-bytes", ([string][uint64]$partition.Size),
         "--directory-name", $DirectoryName,
