@@ -13,7 +13,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <regex>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -49,6 +52,19 @@ constexpr int kUtf8ThreeContinuations = 3;
 constexpr int kUtf8TwoByteSequenceLength = 2;
 constexpr int kUtf8ThreeByteSequenceLength = 3;
 constexpr int kUtf8FourByteSequenceLength = 4;
+// RFC 3629 second-byte boundaries used to reject overlong encodings, UTF-16
+// surrogates (U+D800..U+DFFF), and code points above U+10FFFF.
+constexpr unsigned char kUtf8ContinuationMin = 0x80;
+constexpr unsigned char kUtf8ContinuationMax = 0xBF;
+constexpr unsigned char kUtf8ThreeByteLeadE0 = 0xE0;
+constexpr unsigned char kUtf8ThreeByteLeadED = 0xED;
+constexpr unsigned char kUtf8ThreeByteE0MinSecond = 0xA0;  // reject E0 80..9F (overlong)
+constexpr unsigned char kUtf8ThreeByteEDMaxSecond = 0x9F;  // reject ED A0..BF (surrogate)
+constexpr unsigned char kUtf8FourByteMinLead = 0xF0;
+constexpr unsigned char kUtf8FourByteMaxLead = 0xF4;       // U+10FFFF cap
+constexpr unsigned char kUtf8FourByteLeadF4 = 0xF4;
+constexpr unsigned char kUtf8FourByteF0MinSecond = 0x90;   // reject F0 80..8F (overlong)
+constexpr unsigned char kUtf8FourByteF4MaxSecond = 0x8F;   // reject F4 90..BF (> U+10FFFF)
 constexpr std::uintmax_t kFileDescriptorWarnNumerator = 4;
 constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
 constexpr std::size_t kUnknownHardwareThreadLimit = 64;
@@ -72,6 +88,35 @@ bool hasContinuationBytes(std::string_view str, std::size_t pos, int count) noex
     return true;
 }
 
+// Validate the second byte of a 3-byte sequence per RFC 3629, rejecting
+// overlong forms (lead E0, second < 0xA0) and surrogates (lead ED, second > 0x9F).
+bool isValidThreeByteSecond(unsigned char lead, unsigned char second) noexcept {
+    unsigned char lo = kUtf8ContinuationMin;
+    unsigned char hi = kUtf8ContinuationMax;
+    if (lead == kUtf8ThreeByteLeadE0) {
+        lo = kUtf8ThreeByteE0MinSecond;
+    } else if (lead == kUtf8ThreeByteLeadED) {
+        hi = kUtf8ThreeByteEDMaxSecond;
+    }
+    return second >= lo && second <= hi;
+}
+
+// Validate the lead and second byte of a 4-byte sequence per RFC 3629, keeping
+// only U+10000..U+10FFFF (leads F0..F4 with the matching second-byte window).
+bool isValidFourByteLeadPair(unsigned char lead, unsigned char second) noexcept {
+    if (lead < kUtf8FourByteMinLead || lead > kUtf8FourByteMaxLead) {
+        return false;
+    }
+    unsigned char lo = kUtf8ContinuationMin;
+    unsigned char hi = kUtf8ContinuationMax;
+    if (lead == kUtf8FourByteMinLead) {
+        lo = kUtf8FourByteF0MinSecond;
+    } else if (lead == kUtf8FourByteLeadF4) {
+        hi = kUtf8FourByteF4MaxSecond;
+    }
+    return second >= lo && second <= hi;
+}
+
 int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
     Q_ASSERT(!str.empty());
     Q_ASSERT(pos < str.size());
@@ -83,12 +128,18 @@ int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
                    : 0;
     }
     if ((lead & kUtf8ThreeByteMask) == kUtf8ThreeByteTag) {
-        return hasContinuationBytes(str, pos, kUtf8TwoContinuations) ? kUtf8ThreeByteSequenceLength
-                                                                     : 0;
+        if (!hasContinuationBytes(str, pos, kUtf8TwoContinuations)) {
+            return 0;
+        }
+        const auto second = static_cast<unsigned char>(str[pos + 1]);
+        return isValidThreeByteSecond(lead, second) ? kUtf8ThreeByteSequenceLength : 0;
     }
     if ((lead & kUtf8FourByteMask) == kUtf8FourByteTag) {
-        return hasContinuationBytes(str, pos, kUtf8ThreeContinuations) ? kUtf8FourByteSequenceLength
-                                                                       : 0;
+        if (!hasContinuationBytes(str, pos, kUtf8ThreeContinuations)) {
+            return 0;
+        }
+        const auto second = static_cast<unsigned char>(str[pos + 1]);
+        return isValidFourByteLeadPair(lead, second) ? kUtf8FourByteSequenceLength : 0;
     }
     return 0;
 }
@@ -184,6 +235,26 @@ validation_result input_validator::validatePathExistence(const std::filesystem::
 namespace {
 
 #ifdef _WIN32
+// Probe whether opening @p path for @p desired_access is denied by the file's
+// DACL. Only ERROR_ACCESS_DENIED counts as a denial; other open failures
+// (sharing violations, transient errors) are not treated as permission
+// problems here so the advisory check does not produce false positives.
+bool windowsAccessDenied(const std::filesystem::path& path, DWORD desired_access, DWORD attrs) {
+    const DWORD flags = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 ? FILE_FLAG_BACKUP_SEMANTICS : 0UL;
+    HANDLE handle = CreateFileW(path.wstring().c_str(),
+                                desired_access,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                flags,
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    }
+    CloseHandle(handle);
+    return false;
+}
+
 validation_result checkWindowsPermissions(const std::filesystem::path& path,
                                           const path_validation_config& config) {
     DWORD attrs = GetFileAttributesW(path.wstring().c_str());
@@ -192,10 +263,26 @@ validation_result checkWindowsPermissions(const std::filesystem::path& path,
             return input_validator::failure(error_code::permission_denied,
                                             "Cannot check file permissions");
         }
+        return input_validator::success();
     }
 
-    if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
-        return input_validator::failure(error_code::permission_denied, "Path is read-only");
+    // Actually test read access against the DACL rather than assuming a file
+    // with normal attributes is readable (a deny-read ACE leaves attributes
+    // untouched but still blocks the open).
+    if (config.check_read_permission && windowsAccessDenied(path, GENERIC_READ, attrs)) {
+        return input_validator::failure(error_code::permission_denied, "Path is not readable");
+    }
+
+    if (config.check_write_permission) {
+        if ((attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+            return input_validator::failure(error_code::permission_denied, "Path is read-only");
+        }
+        // Directories cannot be opened for GENERIC_WRITE data access, so limit
+        // the ACL-based write probe to regular files.
+        if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+            windowsAccessDenied(path, GENERIC_WRITE, attrs)) {
+            return input_validator::failure(error_code::permission_denied, "Path is not writable");
+        }
     }
 
     return input_validator::success();
@@ -214,6 +301,39 @@ validation_result checkUnixPermissions(const std::filesystem::path& path,
     return input_validator::success();
 }
 #endif
+
+// Split a path into normalized, comparable components. On Windows the components
+// are lowercased so containment is case-insensitive (matching the platform
+// filesystem). Empty (trailing-separator) and "." elements are dropped so
+// "C:/safe/" and "C:/safe" compare equal.
+std::vector<std::string> normalizedPathComponents(const std::filesystem::path& p) {
+    std::vector<std::string> components;
+    for (const auto& part : p.lexically_normal()) {
+        std::string component = part.string();
+        if (component.empty() || component == ".") {
+            continue;
+        }
+#ifdef _WIN32
+        std::transform(component.begin(), component.end(), component.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+#endif
+        components.push_back(std::move(component));
+    }
+    return components;
+}
+
+// True when path is base itself or a descendant, compared component-by-component.
+// Unlike a raw string prefix test this cannot be fooled by sibling names that
+// share a textual prefix ("safe" vs "safeevil").
+bool baseContainsPath(const std::filesystem::path& base, const std::filesystem::path& path) {
+    const auto base_components = normalizedPathComponents(base);
+    const auto path_components = normalizedPathComponents(path);
+    if (path_components.size() < base_components.size()) {
+        return false;
+    }
+    return std::equal(base_components.begin(), base_components.end(), path_components.begin());
+}
 
 }  // namespace
 
@@ -315,17 +435,10 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
             return failure(error_code::invalid_path, "Cannot canonicalize base directory");
         }
 
-        // Check if path starts with base (case-insensitive on Windows)
-        auto path_str = canonical_path.string();
-        auto base_str = canonical_base.string();
-
-#ifdef _WIN32
-        // Windows filesystem is case-insensitive
-        std::transform(path_str.begin(), path_str.end(), path_str.begin(), ::tolower);
-        std::transform(base_str.begin(), base_str.end(), base_str.begin(), ::tolower);
-#endif
-
-        if (path_str.find(base_str) != 0) {
+        // Containment must be tested component-by-component. A raw string prefix
+        // test accepts sibling directories that share a textual prefix -- e.g.
+        // base "C:/safe" would wrongly contain "C:/safeevil/payload".
+        if (!baseContainsPath(canonical_base, canonical_path)) {
             return failure(error_code::path_traversal_attempt,
                            "Path is outside allowed base directory");
         }

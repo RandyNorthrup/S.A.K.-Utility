@@ -33,6 +33,7 @@ private Q_SLOTS:
     // Path-within-base validation
     void pathWithinBase_validSubpath();
     void pathWithinBase_traversalRejected();
+    void pathWithinBase_siblingPrefixRejected();
 
     // String validation
     void validateString_normal();
@@ -59,6 +60,7 @@ private Q_SLOTS:
     void safeMultiply_overflow();
     void safeCast_validCast();
     void safeCast_overflowCast();
+    void safeCast_signedToUnsignedWidening();
 
     // Buffer validation
     void validateBufferSize_withinLimits();
@@ -76,6 +78,7 @@ private Q_SLOTS:
     void containsControlChars_detected();
     void isValidUtf8_valid();
     void isValidUtf8_invalid();
+    void isValidUtf8_rejectsSurrogatesAndOverlong();
 
 private:
     QTemporaryDir m_tempDir;
@@ -164,6 +167,15 @@ void InputValidatorTests::pathWithinBase_validSubpath() {
 void InputValidatorTests::pathWithinBase_traversalRejected() {
     auto result = sak::input_validator::validatePathWithinBase(
         m_basePath / ".." / ".." / "etc" / "passwd", m_basePath);
+    QVERIFY(!result.is_valid);
+}
+
+void InputValidatorTests::pathWithinBase_siblingPrefixRejected() {
+    // A sibling directory that shares a textual prefix with the base ("<base>evil")
+    // must not be considered inside the base. A raw string prefix test accepted it.
+    std::filesystem::path sibling = m_basePath;
+    sibling += "evil";
+    auto result = sak::input_validator::validatePathWithinBase(sibling / "payload", m_basePath);
     QVERIFY(!result.is_valid);
 }
 
@@ -316,6 +328,25 @@ void InputValidatorTests::safeCast_overflowCast() {
     QVERIFY(!result.has_value());
 }
 
+void InputValidatorTests::safeCast_signedToUnsignedWidening() {
+    // Positive signed -> wider unsigned must succeed. The old limits-cast check
+    // compared against static_cast<int64_t>(UINT64_MAX) == -1 and rejected every
+    // positive value.
+    auto ok = sak::input_validator::safeCast<std::uint64_t>(std::int64_t{1});
+    QVERIFY(ok.has_value());
+    QCOMPARE(ok.value(), std::uint64_t{1});
+
+    auto big =
+        sak::input_validator::safeCast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
+    QVERIFY(big.has_value());
+    QCOMPARE(big.value(), static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()));
+
+    // Negative -> unsigned must still be rejected.
+    auto neg = sak::input_validator::safeCast<std::uint64_t>(std::int64_t{-1});
+    QVERIFY(!neg.has_value());
+    QCOMPARE(neg.error(), sak::error_code::integer_overflow);
+}
+
 // ============================================================================
 // Buffer Validation Tests
 // ============================================================================
@@ -396,6 +427,21 @@ void InputValidatorTests::isValidUtf8_invalid() {
 
     // Invalid UTF-8: overlong 2-byte encoding of ASCII
     QVERIFY(!sak::input_validator::isValidUtf8("\xC0\x80"));
+}
+
+void InputValidatorTests::isValidUtf8_rejectsSurrogatesAndOverlong() {
+    // RFC 3629 forbids these even though their continuation-byte shape is valid.
+    // UTF-16 surrogate U+D800 encoded as ED A0 80.
+    QVERIFY(!sak::input_validator::isValidUtf8("\xED\xA0\x80"));
+    // Overlong 3-byte encoding of '/' (U+002F).
+    QVERIFY(!sak::input_validator::isValidUtf8("\xE0\x80\xAF"));
+    // 4-byte lead above the U+10FFFF cap (F5) and overlong 4-byte (F0 80 80 80).
+    QVERIFY(!sak::input_validator::isValidUtf8("\xF5\x80\x80\x80"));
+    QVERIFY(!sak::input_validator::isValidUtf8("\xF0\x80\x80\x80"));
+
+    // Legitimate multibyte sequences must still validate (no over-rejection).
+    QVERIFY(sak::input_validator::isValidUtf8("\xE2\x82\xAC"));      // euro sign U+20AC
+    QVERIFY(sak::input_validator::isValidUtf8("\xF0\x9F\x98\x80"));  // emoji U+1F600
 }
 
 QTEST_GUILESS_MAIN(InputValidatorTests)

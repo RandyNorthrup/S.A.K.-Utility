@@ -16,6 +16,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 namespace sak {
 
@@ -326,10 +328,15 @@ std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
 
 template <typename To, typename From>
 std::expected<To, error_code> input_validator::safeCast(From value) {
-    // Check if cast would overflow or underflow
-    if constexpr (std::is_integral_v<To> && std::is_integral_v<From>) {
-        if (value < static_cast<From>((std::numeric_limits<To>::min)()) ||
-            value > static_cast<From>((std::numeric_limits<To>::max)())) {
+    // Use std::in_range for the range test. Casting To's limits into From (the
+    // previous approach) is wrong for signed->unsigned widening: e.g. with
+    // To=uint64_t, static_cast<int64_t>(UINT64_MAX) == -1, so every positive
+    // int64_t was compared against -1 and wrongly rejected. std::in_range handles
+    // all signed/unsigned width combinations correctly. bool is excluded because
+    // std::in_range is not defined for it.
+    if constexpr (std::is_integral_v<To> && std::is_integral_v<From> && !std::is_same_v<To, bool> &&
+                  !std::is_same_v<From, bool>) {
+        if (!std::in_range<To>(value)) {
             return std::unexpected(error_code::integer_overflow);
         }
     }
