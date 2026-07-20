@@ -525,6 +525,40 @@ private Q_SLOTS:
         QVERIFY(!QDir(dir.filePath(QStringLiteral("gone"))).exists());
     }
 
+    void removeExistingEntryResolvesKindAtExecutionTime() {
+        // The deferred Replace delete: a directory tree occupying the path is
+        // removed whole, a vacant path succeeds without touching anything, and
+        // a raw target whose listing cannot be trusted fails closed.
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QDir dir(root.path());
+        QVERIFY(dir.mkpath(QStringLiteral("occupied/nested")));
+        QFile child(dir.filePath(QStringLiteral("occupied/nested/old.bin")));
+        QVERIFY(child.open(QIODevice::WriteOnly));
+        QVERIFY(child.write(QByteArrayLiteral("old")) == 3);
+        child.close();
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(root.path());
+        const auto removed = sak::FileManagementFileSystemBridge::removeExistingEntry(
+            target, dir.filePath(QStringLiteral("occupied")), 100);
+        QVERIFY2(removed.ok, qPrintable(removed.blockers.join(QStringLiteral("; "))));
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("occupied"))).exists());
+
+        const auto vacant = sak::FileManagementFileSystemBridge::removeExistingEntry(
+            target, dir.filePath(QStringLiteral("never-existed.txt")), 100);
+        QVERIFY(vacant.ok);
+
+        // Raw target with a missing backing image: the occupant cannot be
+        // verified, so nothing is deleted and the result carries a blocker.
+        sak::FileManagementTarget raw = sak::FileManagementFileSystemBridge::manualTarget(
+            dir.filePath(QStringLiteral("missing.img")), QStringLiteral("apfs"));
+        raw.local_file_system = false;
+        const auto unverified = sak::FileManagementFileSystemBridge::removeExistingEntry(
+            raw, QStringLiteral("/dest/a.txt"), 100);
+        QVERIFY(!unverified.ok);
+        QVERIFY(!unverified.blockers.isEmpty());
+    }
+
     // Read a raw file back through the bridge for byte comparison. Takes
     // parameters so QtTest does not run it as a test slot.
     QByteArray rawReadAll(const sak::FileManagementTarget& target, const QString& path) {

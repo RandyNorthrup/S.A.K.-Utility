@@ -43,6 +43,9 @@ FileExplorerTransferEngine::FileExplorerTransferEngine(FileManagementTarget sour
 bool FileExplorerTransferEngine::transferEntry(const FileExplorerTransferItem& item,
                                                const FileManagementTransferObserver& observer) {
     m_last_transfer_incomplete = false;
+    if (!removeReplacedDestination(item)) {
+        return false;
+    }
     if (m_source_target.local_file_system) {
         return transferFromHost(item, item.destination_path, observer);
     }
@@ -53,6 +56,9 @@ bool FileExplorerTransferEngine::transferEntry(const FileExplorerTransferItem& i
 }
 
 bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferItem& item) {
+    if (!removeReplacedDestination(item)) {
+        return false;
+    }
     const auto result = FileManagementFileSystemBridge::renameEntry(m_destination_target,
                                                                     item.source_path,
                                                                     item.destination_path);
@@ -60,6 +66,23 @@ bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferIt
         m_blockers.append(result.blockers);
     }
     return result.ok;
+}
+
+bool FileExplorerTransferEngine::removeReplacedDestination(const FileExplorerTransferItem& item) {
+    if (!item.replace_destination) {
+        return true;
+    }
+    // The Replace delete is deferred from collision resolution to right before
+    // this item's own copy: a cancel or failure earlier in the batch must not
+    // cost destinations that were never rewritten.
+    const auto removed = FileManagementFileSystemBridge::removeExistingEntry(
+        m_destination_target, item.destination_path, kDiscoveryMaxEntriesPerDirectory);
+    if (!removed.ok) {
+        m_blockers.append(QStringLiteral("Could not replace %1: %2")
+                              .arg(transferItemName(item.destination_path),
+                                   removed.blockers.join(QStringLiteral("; "))));
+    }
+    return removed.ok;
 }
 
 bool FileExplorerTransferEngine::deleteMovedSource(const FileExplorerTransferItem& item) {

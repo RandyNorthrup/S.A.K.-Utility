@@ -1918,6 +1918,51 @@ private Q_SLOTS:
         QVERIFY(engine2.lastTransferComplete());
     }
 
+    void replaceDeferredToTransferRemovesOccupantAtCopyTime() {
+        // Replace no longer deletes destinations at collision-resolve time: the
+        // engine removes the occupant right before the item's own copy and
+        // resolves its kind authoritatively then (here a directory tree occupies
+        // the path a file is landing on).
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        {
+            QFile payload(QDir(source.path()).filePath(QStringLiteral("a.txt")));
+            QVERIFY(payload.open(QIODevice::WriteOnly));
+            QVERIFY(payload.write("replacement payload") > 0);
+        }
+        const QString occupied = QDir(destination.path()).filePath(QStringLiteral("a.txt"));
+        QVERIFY(QDir(destination.path()).mkpath(QStringLiteral("a.txt/nested")));
+        {
+            QFile child(occupied + QStringLiteral("/nested/child.bin"));
+            QVERIFY(child.open(QIODevice::WriteOnly));
+            QVERIFY(child.write("old") > 0);
+        }
+
+        sak::FileExplorerTransferEngine engine(
+            sak::FileManagementFileSystemBridge::localTarget(source.path()),
+            sak::FileManagementFileSystemBridge::localTarget(destination.path()),
+            0);
+        sak::FileExplorerTransferItem item;
+        item.source_path = QDir(source.path()).filePath(QStringLiteral("a.txt"));
+        item.destination_path = occupied;
+        item.replace_destination = true;
+        QVERIFY(engine.transferEntry(item));
+        QVERIFY(QFileInfo(occupied).isFile());
+        QFile out(occupied);
+        QVERIFY(out.open(QIODevice::ReadOnly));
+        QCOMPARE(out.readAll(), QByteArrayLiteral("replacement payload"));
+
+        // An occupant that vanished between resolve and copy is not an error.
+        sak::FileExplorerTransferItem vacant;
+        vacant.source_path = item.source_path;
+        vacant.destination_path = QDir(destination.path()).filePath(QStringLiteral("b.txt"));
+        vacant.replace_destination = true;
+        QVERIFY(engine.transferEntry(vacant));
+        QVERIFY(QFileInfo(vacant.destination_path).isFile());
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not

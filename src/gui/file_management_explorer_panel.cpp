@@ -3151,18 +3151,18 @@ FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
     return choice;
 }
 
-// Resolve a destination-name collision for one item at *destination. Returns false
-// when the item should be skipped; Generate rewrites *destination with the Files
-// incremental name; Replace removes the occupying entry first (trees included) so
-// every backend - raw writers cannot overwrite in place - lands with identical
-// semantics.
+// Resolve a destination-name collision for one item at destination->path. Returns
+// false when the item should be skipped; Generate rewrites the path with the Files
+// incremental name; Replace only MARKS the item (destination->replace) - the actual
+// occupant delete is deferred to just before that item's own copy, so a cancel or
+// failure earlier in the batch never costs destinations that were not rewritten.
 bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTarget& target,
                                                           const bool multiple,
                                                           PasteCollisionPolicy* policy,
-                                                          QString* destination,
+                                                          PasteDestination* destination,
                                                           QStringList* blockers) {
-    const QString name = nameForPath(*destination, target.local_file_system);
-    const QString destination_dir = parentPathForEntry(*destination, target.local_file_system);
+    const QString name = nameForPath(destination->path, target.local_file_system);
+    const QString destination_dir = parentPathForEntry(destination->path, target.local_file_system);
     const PasteEntryKind kind = destinationEntryKind(target, destination_dir, name);
     if (kind == PasteEntryKind::None) {
         return true;
@@ -3181,19 +3181,12 @@ bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTa
         return false;
     }
     if (choice == PasteCollisionChoice::GenerateNew) {
-        *destination = childPathFor(destination_dir,
-                                    uniqueChildName(target, destination_dir, name),
-                                    target.local_file_system);
+        destination->path = childPathFor(destination_dir,
+                                         uniqueChildName(target, destination_dir, name),
+                                         target.local_file_system);
         return true;
     }
-    const auto removed = kind == PasteEntryKind::Directory
-                             ? FileManagementFileSystemBridge::deleteDirectoryTree(target,
-                                                                                   *destination)
-                             : FileManagementFileSystemBridge::deleteFile(target, *destination);
-    if (!removed.ok) {
-        blockers->append(tr("Could not replace %1.").arg(name));
-        return false;
-    }
+    destination->replace = true;
     return true;
 }
 
@@ -3368,23 +3361,25 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
                                  .arg(name));
             continue;
         }
-        QString destination =
-            childPathFor(batch.destination_dir, name, batch.target.local_file_system);
-        if (batch.same_namespace && destination == item.path) {
+        PasteDestination destination{
+            childPathFor(batch.destination_dir, name, batch.target.local_file_system), false};
+        if (batch.same_namespace && destination.path == item.path) {
             if (batch.move) {
                 // Files FilesystemOperations.MoveAsync: same path is a no-op success.
                 continue;
             }
             // Same-folder copy-paste duplicates with the Files incremental
             // name; no conflict dialog fires (GetCollisions skips src==dest).
-            destination = childPathFor(batch.destination_dir,
-                                       uniqueChildName(batch.target, batch.destination_dir, name),
-                                       batch.target.local_file_system);
+            destination.path =
+                childPathFor(batch.destination_dir,
+                             uniqueChildName(batch.target, batch.destination_dir, name),
+                             batch.target.local_file_system);
         } else if (!resolvePasteDestination(
                        batch.target, batch.multiple, policy, &destination, blockers)) {
             continue;
         }
-        resolved.append({item.path, destination, item.size_bytes, item.directory});
+        resolved.append(
+            {item.path, destination.path, item.size_bytes, item.directory, destination.replace});
     }
     return resolved;
 }
@@ -3595,8 +3590,9 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
     int moved = 0;
     for (const PasteItem& item : items) {
         const QString name = nameForPath(item.path, target.local_file_system);
-        QString destination = childPathFor(destination_dir, name, target.local_file_system);
-        if (destination == item.path) {
+        PasteDestination destination{childPathFor(destination_dir, name, target.local_file_system),
+                                     false};
+        if (destination.path == item.path) {
             // Files FilesystemOperations.MoveAsync: same path is a no-op success.
             ++moved;
             continue;
@@ -3608,14 +3604,24 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         if (!resolvePasteDestination(target, multiple, policy, &destination, blockers)) {
             continue;
         }
+        // A Replace-resolved occupant is removed immediately before this item's
+        // own rename (kind re-resolved authoritatively at execution time).
+        if (destination.replace) {
+            const auto removed = FileManagementFileSystemBridge::removeExistingEntry(
+                target, destination.path, kExplorerListMaxEntries);
+            if (!removed.ok) {
+                blockers->append(tr("Could not replace %1.").arg(name));
+                continue;
+            }
+        }
         // renameEntry reparents through the certified writers on raw volumes
         // (directories included) and QFile::rename locally, no data copy.
         const auto result =
-            FileManagementFileSystemBridge::renameEntry(target, item.path, destination);
+            FileManagementFileSystemBridge::renameEntry(target, item.path, destination.path);
         if (result.ok) {
             ++moved;
             m_last_mutation = result;
-            m_transfer_journal.append({item.path, destination, item.directory});
+            m_transfer_journal.append({item.path, destination.path, item.directory});
         } else {
             blockers->append(result.blockers);
         }

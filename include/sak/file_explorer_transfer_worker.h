@@ -26,6 +26,10 @@ struct FileExplorerTransferItem {
     QString destination_path;
     quint64 size_bytes{0};
     bool directory{false};
+    /// Replace-resolved collision: the engine removes the destination's current
+    /// occupant right before this item's own copy (not batch-up-front), so a
+    /// cancel or failure earlier in the batch leaves it untouched.
+    bool replace_destination{false};
 };
 
 /// Shared synchronous transfer legs between two targets: host source streams
@@ -66,6 +70,7 @@ public:
     [[nodiscard]] bool lastTransferComplete() const { return !m_last_transfer_incomplete; }
 
 private:
+    [[nodiscard]] bool removeReplacedDestination(const FileExplorerTransferItem& item);
     [[nodiscard]] bool transferFromHost(const FileExplorerTransferItem& item,
                                         const QString& destination,
                                         const FileManagementTransferObserver& observer);

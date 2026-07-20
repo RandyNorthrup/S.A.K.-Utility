@@ -268,6 +268,14 @@ public:
         const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
+    /// Remove whatever currently occupies @p path so a Replace paste can land.
+    /// The occupant's kind is resolved at execution time from the file system
+    /// itself: local targets via QFileInfo, raw targets from a fresh listing
+    /// bounded by @p max_entries (matched case-insensitively). An already-vacant
+    /// path succeeds; a failed or truncated listing fails closed with nothing
+    /// deleted.
+    [[nodiscard]] static FileManagementMutationResult removeExistingEntry(
+        const FileManagementTarget& target, const QString& path, int max_entries);
     [[nodiscard]] static FileManagementMutationResult renameEntry(
         const FileManagementTarget& target,
         const QString& source_path,

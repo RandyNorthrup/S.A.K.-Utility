@@ -1633,6 +1633,59 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
 
 namespace {
 
+// Raw-target occupant removal for removeExistingEntry: the occupant is found in
+// a fresh listing one past the bound so truncation is detectable; raw APFS/HFS+
+// default to case-insensitive, so a differing-case occupant still matches and
+// its actual on-disk path is the one deleted.
+FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& target,
+                                                    const QString& path,
+                                                    const int max_entries,
+                                                    FileManagementMutationResult result) {
+    const auto [parent, name] = apfsParentAndName(displayPath(path));
+    const FileManagementListResult listing =
+        FileManagementFileSystemBridge::listDirectory(target, parent, max_entries + 1);
+    if (listing.ok) {
+        for (const FileManagementEntry& entry : listing.entries) {
+            if (QString::compare(entry.name, name, Qt::CaseInsensitive) == 0) {
+                return entry.directory
+                           ? FileManagementFileSystemBridge::deleteDirectoryTree(target, entry.path)
+                           : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+            }
+        }
+        if (listing.entries.size() <= max_entries) {
+            result.ok = true;
+            return result;
+        }
+    }
+    result.blockers.append(
+        QStringLiteral("Could not verify what occupies %1; nothing was replaced.").arg(path));
+    result.blockers.append(listing.blockers);
+    return result;
+}
+
+}  // namespace
+
+FileManagementMutationResult FileManagementFileSystemBridge::removeExistingEntry(
+    const FileManagementTarget& target, const QString& path, const int max_entries) {
+    FileManagementMutationResult result;
+    result.file_system = target.file_system;
+    result.path = path;
+    if (!target.local_file_system) {
+        return removeExistingRawEntry(target, path, max_entries, std::move(result));
+    }
+    const QFileInfo info(path);
+    if (!info.exists() && !info.isSymLink()) {
+        result.ok = true;
+        return result;
+    }
+    // A symlink to a directory is removed as the link itself, never as the
+    // tree behind it.
+    return info.isDir() && !info.isSymLink() ? deleteDirectoryTree(target, path)
+                                             : deleteFile(target, path);
+}
+
+namespace {
+
 // Route an APFS rename/move onto the certified COW engine via the general file-move
 // commit (a same-parent move is a plain rename; a cross-parent move reparents the file).
 // An empty directory component means the container root. Limited to root + one level.

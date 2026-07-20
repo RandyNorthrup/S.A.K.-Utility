@@ -263,10 +263,17 @@ private:
     PasteCollisionChoice resolvePasteCollision(const QString& name,
                                                bool multiple,
                                                PasteCollisionPolicy* policy);
+    /// One resolved paste destination: the final path plus whether an existing
+    /// occupant must still be removed (deferred to just before that item's own
+    /// copy, so an earlier cancel or failure leaves it untouched).
+    struct PasteDestination {
+        QString path;
+        bool replace{false};
+    };
     bool resolvePasteDestination(const FileManagementTarget& target,
                                  bool multiple,
                                  PasteCollisionPolicy* policy,
-                                 QString* destination,
+                                 PasteDestination* destination,
                                  QStringList* blockers);
     [[nodiscard]] QString uniqueChildName(const FileManagementTarget& target,
                                           const QString& directory,
