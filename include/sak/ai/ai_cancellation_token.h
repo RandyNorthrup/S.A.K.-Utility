@@ -8,7 +8,9 @@
 #include <QString>
 #include <QVector>
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace sak::ai {
 
@@ -33,10 +35,14 @@ public:
 
 private:
     struct State {
-        QString id;
+        QString id;  // set once at construction, never mutated afterwards
         std::weak_ptr<State> parent;
+        // The token is shared across the UI thread (cancel) and worker threads
+        // (createChild/isCancellationRequested), so mutable state is synchronized:
+        // cancelled is atomic for lock-free polling; mutex guards the rest.
+        std::atomic<bool> cancelled{false};
+        std::mutex mutex;
         QVector<std::weak_ptr<State>> children;
-        bool cancelled{false};
         QString reason;
         QDateTime cancelled_at_utc;
     };
