@@ -2033,6 +2033,7 @@ private Q_SLOTS:
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
+    void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
     void safetyValidator_restoreImageRequiresSizesAndOverwriteConfirmation();
     void safetyValidator_requiresRecoveredPartitionRestoreAcknowledgement();
     void safetyValidator_requiresPartitionRegionCloneConfirmation();
@@ -16999,6 +17000,33 @@ void PartitionManagerCoreTests::
 
     operation.payload[QStringLiteral("target_path")] = QStringLiteral("C:\\disk0.img");
     preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("source disk")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksCreateImageVolumeGuidAliasToSource() {
+    // A "\\?\Volume{GUID}" alias for a source-disk volume has no drive-letter prefix, so a
+    // text check misses it and the image write would corrupt the very disk being imaged.
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    const QString guid = QStringLiteral("{11111111-1111-1111-1111-111111111111}");
+    auto& sourcePartition = inventory.disks.first().partitions[1];
+    QVERIFY(sourcePartition.volume.has_value());
+    sourcePartition.volume->volume_guid = QStringLiteral("\\\\?\\Volume%1\\").arg(guid);
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 0;
+    target.size_bytes = inventory.disks.first().size_bytes;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\?\\Volume%1\\disk0.img").arg(guid);
+    payload[QStringLiteral("source_size_bytes")] = QString::number(target.size_bytes);
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
+                                                              target,
+                                                              payload);
+
+    PartitionOperationPlanner planner;
+    const auto preview = planner.previewOperation(inventory, operation);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("source disk")));
 }

@@ -508,6 +508,26 @@ bool targetPathStartsWithDrive(const QString& targetPath, const QString& driveLe
     return targetPath.startsWith(drivePrefix, Qt::CaseInsensitive);
 }
 
+// A "\\?\Volume{GUID}\" alias names a volume without a drive letter. Match the stable {GUID}
+// token so a volume-GUID target path is recognized as the same volume despite path-form
+// differences (trailing slash, \\?\ vs \\.\).
+bool targetPathReferencesVolumeGuid(const QString& targetPath, const QString& volumeGuid) {
+    if (volumeGuid.isEmpty()) {
+        return false;
+    }
+    const int open = volumeGuid.indexOf(QLatin1Char('{'));
+    const int close = volumeGuid.indexOf(QLatin1Char('}'), open + 1);
+    if (open >= 0 && close > open) {
+        return targetPath.contains(volumeGuid.mid(open, close - open + 1), Qt::CaseInsensitive);
+    }
+    return targetPath.contains(volumeGuid, Qt::CaseInsensitive);
+}
+
+bool targetPathReferencesVolume(const QString& targetPath, const PartitionVolumeInfo& volume) {
+    return targetPathStartsWithDrive(targetPath, volume.drive_letter) ||
+           targetPathReferencesVolumeGuid(targetPath, volume.volume_guid);
+}
+
 bool createImageTargetsRawDevice(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::CreateImage &&
            targetPathIsRawDevice(operation);
@@ -516,8 +536,7 @@ bool createImageTargetsRawDevice(const PartitionOperation& operation) {
 bool createImageTargetsSourcePartition(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::CreateImage && partition.volume &&
-           targetPathStartsWithDrive(normalizedTargetPath(operation),
-                                     partition.volume->drive_letter);
+           targetPathReferencesVolume(normalizedTargetPath(operation), *partition.volume);
 }
 
 bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
@@ -526,10 +545,11 @@ bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
         return false;
     }
     const QString targetPath = normalizedTargetPath(operation);
-    return std::any_of(
-        disk.partitions.cbegin(), disk.partitions.cend(), [&targetPath](const auto& p) {
-            return p.volume && targetPathStartsWithDrive(targetPath, p.volume->drive_letter);
-        });
+    return std::any_of(disk.partitions.cbegin(),
+                       disk.partitions.cend(),
+                       [&targetPath](const auto& p) {
+                           return p.volume && targetPathReferencesVolume(targetPath, *p.volume);
+                       });
 }
 
 bool isSupportedAllocationUnitSize(uint64_t value) {

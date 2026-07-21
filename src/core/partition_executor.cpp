@@ -98,8 +98,16 @@ public:
             // Best-effort owner-only permissions; %TEMP% is already user-scoped on Windows.
             file->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
             const QByteArray secret = credential.secret.toUtf8();
-            file->write(secret);
-            file->flush();
+            // Fail closed on a short write / flush failure (e.g. a full TEMP): a 0-byte or
+            // partial credential file would otherwise silently change the encryption password
+            // (e.g. to empty) instead of aborting the operation.
+            if (file->write(secret) != secret.size() || !file->flush()) {
+                m_ok = false;
+                m_error = QStringLiteral(
+                    "Unable to write encryption credential file (disk full or "
+                    "I/O error)");
+                return;
+            }
             // Release the parent handle so the writer child can open the file; the
             // QTemporaryFile object keeps the path alive until this guard is destroyed.
             file->close();
