@@ -33,6 +33,7 @@ private Q_SLOTS:
     void loadMessageDetailFromValidFile();
     void readMessagesSync();
     void readMessageDetailSync();
+    void nestedMultipartRecoversBodyAndAttachment();
 
     // -- From Line Detection ---------------------------------------------
     void fromLineDetectsValidSeparator();
@@ -256,6 +257,53 @@ void TestMboxParser::readMessageDetailSync() {
     }
     parser.close();
     delete temp_file;
+}
+
+void TestMboxParser::nestedMultipartRecoversBodyAndAttachment() {
+    // A multipart/mixed whose first part is itself a multipart/alternative:
+    // without recursion the inner text bodies are lost entirely.
+    QByteArray content =
+        "From sender@example.com Mon Jan  1 00:00:00 2024\r\n"
+        "Subject: Nested\r\n"
+        "Content-Type: multipart/mixed; boundary=\"OUTER\"\r\n"
+        "\r\n"
+        "--OUTER\r\n"
+        "Content-Type: multipart/alternative; boundary=\"INNER\"\r\n"
+        "\r\n"
+        "--INNER\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "Hello plain body\r\n"
+        "--INNER\r\n"
+        "Content-Type: text/html\r\n"
+        "\r\n"
+        "<p>Hello html body</p>\r\n"
+        "--INNER--\r\n"
+        "--OUTER\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "Content-Disposition: attachment; filename=\"a.bin\"\r\n"
+        "\r\n"
+        "payload-bytes\r\n"
+        "--OUTER--\r\n";
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(content);
+    temp_file.close();
+
+    MboxParser parser;
+    parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 1);
+
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QVERIFY(detail->body_plain.contains(QStringLiteral("Hello plain body")));
+    QVERIFY(detail->body_html.contains(QStringLiteral("Hello html body")));
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("a.bin"));
+    parser.close();
 }
 
 // ============================================================================

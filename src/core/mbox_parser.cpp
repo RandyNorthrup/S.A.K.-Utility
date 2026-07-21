@@ -176,6 +176,11 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
 
         auto raw = readRawMessage(msg_idx);
         if (!raw) {
+            // Do not drop it silently: the message stays counted by messageCount()
+            // so skipping it without a trace hides a list/count mismatch.
+            sak::logWarning("MboxParser: skipping unreadable message {} (error {})",
+                            std::to_string(msg_idx),
+                            std::to_string(static_cast<int>(raw.error())));
             continue;
         }
 
@@ -574,9 +579,29 @@ void MboxParser::appendAttachment(const MimePartInfo& part,
     detail.attachments.append(std::move(att));
 }
 
+void MboxParser::recurseMultipartPart(const QString& part_content_type,
+                                      const QByteArray& part_body,
+                                      sak::MboxMessageDetail& detail,
+                                      int& attachment_idx,
+                                      int depth) {
+    constexpr int kMaxMimeDepth = 20;
+    if (depth >= kMaxMimeDepth) {
+        return;
+    }
+    const QString sub_boundary = extractBoundary(part_content_type);
+    if (sub_boundary.isEmpty()) {
+        return;
+    }
+    const QByteArray delimiter = QByteArrayLiteral("--") + sub_boundary.toUtf8();
+    for (const auto& sub_part : splitMimeParts(part_body, delimiter)) {
+        processMimePart(sub_part, detail, attachment_idx, depth + 1);
+    }
+}
+
 void MboxParser::processMimePart(const QByteArray& part,
                                  sak::MboxMessageDetail& detail,
-                                 int& attachment_idx) {
+                                 int& attachment_idx,
+                                 int depth) {
     auto part_headers = parseHeaders(part);
     QString part_ct = part_headers.value(QStringLiteral("content-type"),
                                          QStringLiteral("text/plain"));
@@ -588,6 +613,14 @@ void MboxParser::processMimePart(const QByteArray& part,
         return;
     }
     QByteArray part_body = part.mid(part_body_start);
+
+    // Nested multipart/* part: recurse into its sub-parts. Without this, an inner
+    // multipart yields nothing (it is neither text nor an attachment) and its
+    // contents -- body and attachments -- are lost.
+    if (part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
+        recurseMultipartPart(part_ct, part_body, detail, attachment_idx, depth);
+        return;
+    }
 
     bool is_attachment = part_disp.startsWith(QLatin1String("attachment"), Qt::CaseInsensitive);
     bool is_non_text = !part_ct.startsWith(QLatin1String("text/"), Qt::CaseInsensitive) &&

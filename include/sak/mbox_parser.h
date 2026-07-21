@@ -113,7 +113,13 @@ private:
     /// Process one MIME part (text or attachment)
     void processMimePart(const QByteArray& part,
                          sak::MboxMessageDetail& detail,
-                         int& attachment_idx);
+                         int& attachment_idx,
+                         int depth = 0);
+    void recurseMultipartPart(const QString& part_content_type,
+                              const QByteArray& part_body,
+                              sak::MboxMessageDetail& detail,
+                              int& attachment_idx,
+                              int depth);
 
     /// MIME part metadata for attachment processing
     struct MimePartInfo {
