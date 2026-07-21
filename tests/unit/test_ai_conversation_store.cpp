@@ -26,6 +26,7 @@ private Q_SLOTS:
     void commandLogPath_createsLogsDirectoryAndReturnsPath();
     void artifactPath_createsSubdirectoryAndReturnsPath();
     void renameSession_updatesTitleAndArtifactRoot();
+    void caseOnlyRename_preservesArtifacts();
     void memoryFile_appendsEntries();
     void memoryFile_initializesStructuredSections();
     void memoryFile_trimPreservesStructuredSections();
@@ -215,6 +216,14 @@ void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() 
     const QString downloads_dir = store.artifactSubdir(QStringLiteral("downloads"), &error);
     QVERIFY2(!downloads_dir.isEmpty(), qPrintable(error));
     QVERIFY(QDir(downloads_dir).exists());
+
+    // P08-01: a filename that escapes the artifact subdir must be rejected.
+    error.clear();
+    const QString escaped = store.artifactPath(QStringLiteral("downloads"),
+                                               QStringLiteral("../../../../evil.txt"),
+                                               &error);
+    QVERIFY(escaped.isEmpty());
+    QVERIFY(!error.isEmpty());
 }
 
 void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {
@@ -240,6 +249,32 @@ void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {
     QVERIFY(root.endsWith(QStringLiteral("/artifacts/Drive Check _ SSD")));
     QVERIFY(QDir(root).exists());
     QVERIFY(QFile::exists(QDir(root).filePath(QStringLiteral("logs/before.txt"))));
+}
+
+void AiConversationStoreTests::caseOnlyRename_preservesArtifacts() {
+    // P08-02: a case-only title change ("Foo" -> "foo") maps to the same physical
+    // artifact directory on a case-insensitive filesystem; the rename must not
+    // merge-then-delete that shared directory and destroy the artifacts.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Foo"), &error));
+    const QString log =
+        store.artifactPath(QStringLiteral("logs"), QStringLiteral("keep.txt"), &error);
+    QVERIFY2(!log.isEmpty(), qPrintable(error));
+    QFile file(log);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("keep");
+    file.close();
+
+    QVERIFY2(store.renameCurrentSession(QStringLiteral("foo"), &error), qPrintable(error));
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("foo"));
+
+    const QString root = store.artifactRootDirectory(&error);
+    QVERIFY2(!root.isEmpty(), qPrintable(error));
+    QVERIFY(QFile::exists(QDir(root).filePath(QStringLiteral("logs/keep.txt"))));
 }
 
 void AiConversationStoreTests::memoryFile_appendsEntries() {

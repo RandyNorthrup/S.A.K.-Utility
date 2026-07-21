@@ -114,6 +114,10 @@ private:
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,
                                                            const QString& fallback_id);
+    [[nodiscard]] static bool renameArtifactDirectory(const QString& old_name,
+                                                      const QString& new_name,
+                                                      const QString& artifacts_root,
+                                                      QString* error_message);
 
     QString m_root_dir;
     AiSessionInfo m_current_session;

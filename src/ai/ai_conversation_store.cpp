@@ -872,25 +872,43 @@ bool ConversationStore::renameCurrentSession(const QString& title, QString* erro
                                                                 m_current_session.id);
     const QString new_artifact_name = safeArtifactDirectoryName(trimmed, m_current_session.id);
     const QString artifacts_root = QDir(currentSessionPath()).filePath(QStringLiteral("artifacts"));
-    if (old_artifact_name != new_artifact_name && QDir(artifacts_root).exists()) {
-        QDir root_dir(artifacts_root);
-        const QString old_path = root_dir.filePath(old_artifact_name);
-        const QString new_path = root_dir.filePath(new_artifact_name);
-        if (QDir(old_path).exists()) {
-            if (!QDir(new_path).exists()) {
-                if (!root_dir.rename(old_artifact_name, new_artifact_name)) {
-                    if (!mergeDirectoryContents(old_path, new_path, error_message)) {
-                        return false;
-                    }
-                }
-            } else if (!mergeDirectoryContents(old_path, new_path, error_message)) {
-                return false;
-            }
-        }
+    if (!renameArtifactDirectory(
+            old_artifact_name, new_artifact_name, artifacts_root, error_message)) {
+        return false;
     }
     m_current_session.title = trimmed;
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
+}
+
+bool ConversationStore::renameArtifactDirectory(const QString& old_name,
+                                                const QString& new_name,
+                                                const QString& artifacts_root,
+                                                QString* error_message) {
+    if (old_name == new_name || !QDir(artifacts_root).exists()) {
+        return true;
+    }
+    QDir root_dir(artifacts_root);
+    const QString old_path = root_dir.filePath(old_name);
+    const QString new_path = root_dir.filePath(new_name);
+    // A case-only rename ("Foo" -> "foo") produces different names but the same
+    // physical directory on case-insensitive filesystems. Merging then
+    // removeRecursively-ing the "source" would delete every artifact, so treat a
+    // canonically-identical target as an in-place rename (manifest update only).
+    const QString old_canonical = QFileInfo(old_path).canonicalFilePath();
+    const QString new_canonical = QFileInfo(new_path).canonicalFilePath();
+    // Case-insensitive: on Windows canonicalFilePath preserves the requested case,
+    // so "Foo" and "foo" (the same NTFS directory) yield case-different strings.
+    const bool same_physical_dir =
+        !old_canonical.isEmpty() &&
+        QString::compare(old_canonical, new_canonical, Qt::CaseInsensitive) == 0;
+    if (!QDir(old_path).exists() || same_physical_dir) {
+        return true;
+    }
+    if (!QDir(new_path).exists() && root_dir.rename(old_name, new_name)) {
+        return true;
+    }
+    return mergeDirectoryContents(old_path, new_path, error_message);
 }
 
 bool ConversationStore::appendTranscript(const QString& role,
@@ -1008,7 +1026,19 @@ QString ConversationStore::artifactPath(const QString& subdir,
     if (dir.isEmpty()) {
         return {};
     }
-    return QDir(dir).filePath(filename);
+    // Confine the model-supplied filename to the artifact subdir: QDir::filePath
+    // returns an absolute path verbatim and does not resolve "..", so without this
+    // an artifact write could overwrite an arbitrary file.
+    const QString base = QDir::cleanPath(dir);
+    const QString resolved = QDir::cleanPath(QDir(dir).filePath(filename));
+    if (resolved != base && !resolved.startsWith(base + QLatin1Char('/'))) {
+        if (error_message) {
+            *error_message = QStringLiteral("Artifact filename escapes the artifact directory: %1")
+                                 .arg(filename);
+        }
+        return {};
+    }
+    return resolved;
 }
 
 bool ConversationStore::appendContext(const QString& kind,
@@ -1182,8 +1212,18 @@ bool ConversationStore::appendJsonLine(const QString& filename,
         }
         return false;
     }
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-    file.write("\n");
+    const qint64 start_size = file.size();
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    if (file.write(payload) != payload.size() || !file.flush()) {
+        // Roll back the partial line so the JSONL file stays parseable, and report
+        // failure instead of claiming a truncated record was persisted.
+        file.resize(start_size);
+        if (error_message) {
+            *error_message =
+                QStringLiteral("Short write appending %1: %2").arg(filename, file.errorString());
+        }
+        return false;
+    }
     return true;
 }
 
