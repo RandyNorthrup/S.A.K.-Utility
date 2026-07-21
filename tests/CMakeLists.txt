@@ -3944,6 +3944,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     message(STATUS "Added unit test: test_email_profile_manager")
 endif()
 
+# test_email_attachment_saver --- short-write + dedupe integrity
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_attachment_saver.cpp")
+    add_executable(test_email_attachment_saver
+        unit/test_email_attachment_saver.cpp
+        ../src/core/email_attachment_saver.cpp
+        ../src/core/logger.cpp
+        ../include/sak/email_attachment_saver.h
+    )
+    set_target_properties(test_email_attachment_saver PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_email_attachment_saver PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_attachment_saver PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_attachment_saver")
+endif()
+
 # test_email_report_generator ??? HTML, JSON, CSV output validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     add_executable(test_email_report_generator

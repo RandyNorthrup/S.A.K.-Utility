@@ -11,6 +11,7 @@
 #include <QByteArray>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSaveFile>
 
 namespace sak {
 
@@ -40,14 +41,26 @@ QString sanitizeAttachmentFilename(const QString& filename) {
 // ============================================================================
 
 AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray& data) {
-    QFile file(path);
+    // QSaveFile writes to a temporary and only replaces the target on commit(),
+    // so a short/failed write never leaves a truncated file reported as saved.
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
         sak::logError("Failed to save attachment: {}", path.toStdString());
         return {false, path, error};
     }
-    file.write(data);
-    file.close();
+    const qint64 written = file.write(data);
+    if (written != static_cast<qint64>(data.size())) {
+        file.cancelWriting();
+        QString error = QStringLiteral("Short write saving attachment: %1").arg(path);
+        sak::logError("Short write saving attachment: {}", path.toStdString());
+        return {false, path, error};
+    }
+    if (!file.commit()) {
+        QString error = QStringLiteral("Failed to finalize attachment: %1").arg(path);
+        sak::logError("Failed to finalize attachment: {}", path.toStdString());
+        return {false, path, error};
+    }
     return {true, path, {}};
 }
 
@@ -71,6 +84,15 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
             file_path = QStringLiteral("%1/%2_%3%4").arg(dir, base, QString::number(counter), ext);
             ++counter;
         } while (QFile::exists(file_path) && counter <= kMaxDedupeAttempts);
+    }
+
+    // Never write onto an existing file: when every dedupe slot is taken the loop
+    // above exits with a path that still exists, and saveAttachmentToPath would
+    // otherwise truncate it.
+    if (QFile::exists(file_path)) {
+        QString error = QStringLiteral("No unique attachment name available in: %1").arg(dir);
+        sak::logError("No unique attachment name available in: {}", dir.toStdString());
+        return {false, file_path, error};
     }
 
     return saveAttachmentToPath(file_path, data);
