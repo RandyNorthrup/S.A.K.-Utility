@@ -124,18 +124,38 @@ std::expected<void, error_code> PstSplitter::rotateVolume() {
             std::to_string(m_volume_index),
             volumePath(m_volume_index).toStdString());
 
-    // Recreate folder hierarchy in the new volume
+    // Recreate the folder hierarchy in the new volume parent-before-child. The
+    // m_folder_info QHash has arbitrary iteration order, so recreating a child
+    // before its parent would attach it to the stale volume-1 parent NID (which,
+    // with m_next_nid restarting per volume, can collide with an unrelated new
+    // folder and misattach messages). A parent that is not itself a tracked
+    // folder is the fixed root and passes through unchanged.
     m_folder_nid_map.clear();
-    for (auto it = m_folder_info.constBegin(); it != m_folder_info.constEnd(); ++it) {
-        const auto& info = it.value();
-        uint64_t old_nid = it.key();
-        uint64_t parent = info.parent_nid;
-        if (m_folder_nid_map.contains(parent)) {
-            parent = m_folder_nid_map.value(parent);
-        }
-        auto new_nid = m_current_writer->createFolder(parent, info.name, info.container_class);
-        if (new_nid.has_value()) {
+    QList<uint64_t> pending = m_folder_info.keys();
+    while (!pending.isEmpty()) {
+        bool progressed = false;
+        for (int i = pending.size() - 1; i >= 0; --i) {
+            const uint64_t old_nid = pending.at(i);
+            const auto& info = m_folder_info.value(old_nid);
+            uint64_t parent = info.parent_nid;
+            if (m_folder_info.contains(parent)) {
+                if (!m_folder_nid_map.contains(parent)) {
+                    continue;  // parent folder not recreated yet; revisit next pass
+                }
+                parent = m_folder_nid_map.value(parent);
+            }
+            auto new_nid = m_current_writer->createFolder(parent, info.name, info.container_class);
+            if (!new_nid.has_value()) {
+                return std::unexpected(new_nid.error());
+            }
             m_folder_nid_map.insert(old_nid, new_nid.value());
+            pending.removeAt(i);
+            progressed = true;
+        }
+        if (!progressed) {
+            // Remaining folders have an unresolvable parent (cycle/orphan): fail the
+            // rotation rather than silently misattaching them.
+            return std::unexpected(error_code::write_error);
         }
     }
 
