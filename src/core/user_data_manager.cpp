@@ -55,62 +55,121 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
     Q_ASSERT_X(!backup_dir.isEmpty(), "backupAppData", "backup_dir must not be empty");
     Q_EMIT operationStarted(app_name, "backup");
 
-    // Validate inputs
-    if (source_paths.isEmpty()) {
-        Q_EMIT operationError(app_name, "No source paths specified");
+    if (!validateBackupRequest(app_name, source_paths, backup_dir, config)) {
         return std::nullopt;
     }
 
-    // Create backup directory
-    QDir dir(backup_dir);
-    if (!dir.exists() && !dir.mkpath(".")) {
-        Q_EMIT operationError(app_name, "Failed to create backup directory");
-        return std::nullopt;
-    }
-
-    // Generate backup filename
+    // Generate a collision-free backup path (payload plus a ".json" sidecar).
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QString safe_name = app_name;
     safe_name.replace(QRegularExpression("[^a-zA-Z0-9_-]"), "_");
-    QString archive_name = QString("%1_%2.zip").arg(safe_name, timestamp);
-    QString archive_path = dir.filePath(archive_name);
+    QString base_name = QString("%1_%2").arg(safe_name, timestamp);
+    QString backup_path = uniqueBackupPath(backup_dir, base_name, config.compress);
 
     // Calculate total size
     qint64 total_size = calculateSize(source_paths);
     Q_EMIT progressUpdate(0, total_size, "Calculating size...");
 
-    // Create archive
-    if (config.compress) {
-        if (!createArchive(source_paths, archive_path, config)) {
-            Q_EMIT operationError(app_name, "Failed to create archive");
-            return std::nullopt;
-        }
-    } else {
-        // Direct copy without compression
-        QString copy_dir = dir.filePath(safe_name + "_" + timestamp);
-        if (!copySourcesToDest(source_paths, copy_dir, config.exclude_patterns)) {
-            Q_EMIT operationError(app_name, "Failed to copy directory");
-            return std::nullopt;
-        }
+    // Create archive (compressed) or copy tree (uncompressed) at backup_path.
+    if (!writeBackupPayload(app_name, source_paths, backup_path, config)) {
+        return std::nullopt;
     }
 
     // Verify checksum
     QString checksum;
     if (config.verify_checksum && config.compress) {
         Q_EMIT progressUpdate(total_size, total_size, "Verifying checksum...");
-        checksum = generateChecksum(archive_path);
+        checksum = generateChecksum(backup_path);
         if (checksum.isEmpty()) {
             Q_EMIT operationError(app_name, "Failed to generate checksum");
             return std::nullopt;
         }
     }
 
-    // Build and persist backup entry
-    BackupEntry entry = buildBackupResult(app_name, source_paths, archive_path, total_size, config);
+    // Persist metadata that already carries the checksum. Fail closed on a
+    // metadata write failure so a backup is never reported successful while its
+    // required .json sidecar is missing (which would make restore skip integrity
+    // checks or fail outright).
+    BackupEntry entry = buildBackupResult(app_name, source_paths, backup_path, total_size, config);
     entry.checksum = checksum;
+    if (!writeMetadata(entry, backup_path + ".json")) {
+        removeBackupPayload(backup_path, config.compress);
+        Q_EMIT operationError(app_name, "Failed to write backup metadata");
+        return std::nullopt;
+    }
 
     Q_EMIT operationCompleted(app_name, true, "Backup completed successfully");
     return entry;
+}
+
+bool UserDataManager::validateBackupRequest(const QString& app_name,
+                                            const QStringList& source_paths,
+                                            const QString& backup_dir,
+                                            const BackupConfig& config) {
+    if (source_paths.isEmpty()) {
+        Q_EMIT operationError(app_name, "No source paths specified");
+        return false;
+    }
+    QDir dir(backup_dir);
+    if (!dir.exists() && !dir.mkpath(".")) {
+        Q_EMIT operationError(app_name, "Failed to create backup directory");
+        return false;
+    }
+    // Encryption is only applied to compressed archives, and needs a password.
+    // Reject either mismatch up front so a requested encryption can never
+    // silently produce a readable plaintext archive or copy directory.
+    if (config.encrypt && !config.compress) {
+        Q_EMIT operationError(app_name, "Encryption requires compression");
+        return false;
+    }
+    if (config.encrypt && config.password.isEmpty()) {
+        Q_EMIT operationError(app_name, "Encryption requires a password");
+        return false;
+    }
+    return true;
+}
+
+bool UserDataManager::writeBackupPayload(const QString& app_name,
+                                         const QStringList& source_paths,
+                                         const QString& backup_path,
+                                         const BackupConfig& config) {
+    if (config.compress) {
+        if (!createArchive(source_paths, backup_path, config)) {
+            Q_EMIT operationError(app_name, "Failed to create archive");
+            return false;
+        }
+        return true;
+    }
+    if (!copySourcesToDest(source_paths, backup_path, config.exclude_patterns)) {
+        Q_EMIT operationError(app_name, "Failed to copy directory");
+        return false;
+    }
+    return true;
+}
+
+QString UserDataManager::uniqueBackupPath(const QString& backup_dir,
+                                          const QString& base_name,
+                                          bool compress) {
+    QDir dir(backup_dir);
+    const QString suffix = compress ? QStringLiteral(".zip") : QString();
+    QString candidate = dir.filePath(base_name + suffix);
+    int counter = 1;
+    // A backup is its payload plus a ".json" sidecar; treat either already
+    // existing as a collision so a prior backup that shares this one-second
+    // timestamp is never overwritten.
+    while (QFileInfo::exists(candidate) || QFileInfo::exists(candidate + ".json")) {
+        candidate = dir.filePath(QString("%1_%2%3").arg(base_name).arg(counter).arg(suffix));
+        ++counter;
+    }
+    return candidate;
+}
+
+void UserDataManager::removeBackupPayload(const QString& backup_path, bool compress) {
+    if (compress) {
+        QFile::remove(backup_path);
+    } else {
+        QDir(backup_path).removeRecursively();
+    }
 }
 
 UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& app_name,
@@ -125,15 +184,8 @@ UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& a
     entry.backup_date = QDateTime::currentDateTime();
     entry.total_size_bytes = total_size;
     entry.compressed_size_bytes = config.compress ? QFileInfo(archive_path).size() : total_size;
-    entry.encrypted = false;
+    entry.encrypted = config.encrypt;
     entry.excluded_patterns = config.exclude_patterns;
-
-    // Write metadata
-    QString metadata_path = archive_path + ".json";
-    if (!writeMetadata(entry, metadata_path)) {
-        sak::logWarning("[UserDataManager] Failed to write metadata");
-    }
-
     return entry;
 }
 
@@ -188,7 +240,9 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
         }
     }
 
-    // Create backup of existing data
+    // Create backup of existing data. Fail closed: if a complete safety copy
+    // cannot be made, abort before the -Force extraction below overwrites the
+    // only intact original with an incomplete/absent backup.
     if (config.create_backup) {
         QDir restore(restore_dir);
         if (restore.exists()) {
@@ -196,21 +250,39 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
                                   QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
             QString backup_existing = restore.filePath("../" + backup_name);
             if (!copyDirectory(restore_dir, backup_existing, {})) {
-                sak::logWarning("[UserDataManager] Failed to backup existing data");
+                Q_EMIT operationError(entry.app_name,
+                                      "Failed to back up existing data before restore");
+                return false;
             }
         }
     }
 
-    // Extract archive
+    if (!restorePayload(backup_path, restore_dir, entry, config)) {
+        return false;
+    }
+
+    Q_EMIT operationCompleted(entry.app_name, true, "Restore completed successfully");
+    return true;
+}
+
+bool UserDataManager::restorePayload(const QString& backup_path,
+                                     const QString& restore_dir,
+                                     const BackupEntry& entry,
+                                     const RestoreConfig& config) {
     if (backup_path.endsWith(".zip")) {
         Q_EMIT progressUpdate(0, entry.compressed_size_bytes, "Extracting archive...");
         if (!extractArchive(backup_path, restore_dir, config)) {
             Q_EMIT operationError(entry.app_name, "Failed to extract archive");
             return false;
         }
+        return true;
     }
-
-    Q_EMIT operationCompleted(entry.app_name, true, "Restore completed successfully");
+    // Uncompressed backups are a directory payload: copy the tree back in.
+    Q_EMIT progressUpdate(0, entry.total_size_bytes, "Copying backup...");
+    if (!copyDirectory(backup_path, restore_dir, {})) {
+        Q_EMIT operationError(entry.app_name, "Failed to copy backup contents");
+        return false;
+    }
     return true;
 }
 
@@ -304,8 +376,11 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
     std::vector<BackupEntry> backups;
 
     QDir dir(backup_dir);
-    QStringList filters = {"*.zip"};
-    auto files = dir.entryList(filters, QDir::Files, QDir::Time);
+    // Compressed backups are *.zip files; uncompressed backups are directories.
+    // Both carry a "<name>.json" sidecar, so entries without one are skipped
+    // below and unrelated files/directories are ignored.
+    auto files = dir.entryList({"*.zip"}, QDir::Files, QDir::Time);
+    files += dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Time);
 
     for (const auto& file : files) {
         QString metadata_path = dir.filePath(file) + ".json";
@@ -426,13 +501,18 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
         return false;
     }
 
-    // Write encrypted data
+    // Write encrypted data. On any write failure remove the file so a readable
+    // plaintext (or a truncated) archive is never left behind when encryption
+    // was requested.
     if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         sak::logWarning("[UserDataManager] Failed to write encrypted file");
+        QFile::remove(archive_path);
         return false;
     }
     if (archive.write(*encrypted) != encrypted->size()) {
         sak::logWarning("[UserDataManager] Incomplete write of encrypted file");
+        archive.close();
+        QFile::remove(archive_path);
         return false;
     }
     archive.close();
@@ -525,6 +605,10 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
     QString temp_path = temp.fileName();
     if (temp.write(*decrypted) != decrypted->size()) {
         sak::logError("[UserDataManager] Incomplete write of decrypted temporary file");
+        // AutoRemove is off, so a partial plaintext would otherwise linger in
+        // TEMP; delete whatever bytes were written before returning.
+        temp.close();
+        QFile::remove(temp_path);
         return {};
     }
     temp.close();
@@ -644,7 +728,10 @@ bool UserDataManager::copyDirectory(const QString& source,
 
         QString dest_file = dest_dir.filePath(file);
         if (!QFile::copy(source_file, dest_file)) {
+            // Fail closed: a partial copy must not be reported as a complete
+            // backup (callers such as the pre-restore safety copy rely on this).
             sak::logWarning("[UserDataManager] Failed to copy {}", source_file.toStdString());
+            return false;
         }
     }
 

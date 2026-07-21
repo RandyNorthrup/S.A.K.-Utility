@@ -211,12 +211,38 @@ private:
      */
     std::optional<BackupEntry> readMetadata(const QString& metadata_path) const;
 
-    /// @brief Build a BackupEntry from completed backup and write metadata
+    /// @brief Build a BackupEntry describing a completed backup (no I/O)
     BackupEntry buildBackupResult(const QString& app_name,
                                   const QStringList& source_paths,
                                   const QString& archive_path,
                                   qint64 total_size,
                                   const BackupConfig& config);
+
+    /// @brief Validate a backup request; emits operationError and returns false on reject
+    bool validateBackupRequest(const QString& app_name,
+                               const QStringList& source_paths,
+                               const QString& backup_dir,
+                               const BackupConfig& config);
+
+    /// @brief Write the backup payload (archive or copy tree); emits error on failure
+    bool writeBackupPayload(const QString& app_name,
+                            const QStringList& source_paths,
+                            const QString& backup_path,
+                            const BackupConfig& config);
+
+    /// @brief Resolve a collision-free backup path (payload + ".json" sidecar)
+    static QString uniqueBackupPath(const QString& backup_dir,
+                                    const QString& base_name,
+                                    bool compress);
+
+    /// @brief Remove a partially written backup payload (archive file or dir)
+    static void removeBackupPayload(const QString& backup_path, bool compress);
+
+    /// @brief Restore a backup payload (zip archive or directory) into restore_dir
+    bool restorePayload(const QString& backup_path,
+                        const QString& restore_dir,
+                        const BackupEntry& entry,
+                        const RestoreConfig& config);
 };
 
 }  // namespace sak
