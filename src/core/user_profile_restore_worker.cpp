@@ -42,6 +42,37 @@ bool buildSafePath(const QString& basePath, const QString& relativePath, QString
     outPath = combined;
     return true;
 }
+
+// True if the path is a reparse point (junction/symlink), on either the backup
+// source or the restore destination side.
+bool isReparsePoint(const QFileInfo& info) {
+    return info.isSymLink() || info.isJunction();
+}
+
+// A junction or symlink on either side lets the copy read from outside the
+// backup root or write outside the validated profile root; refuse to traverse.
+bool restoreEntryEscapesRoot(const QFileInfo& sourceEntry, const QString& destItem) {
+    return isReparsePoint(sourceEntry) || isReparsePoint(QFileInfo(destItem));
+}
+
+// Replace an existing destination file only after the new copy is fully written.
+// The original is removed after a temporary sibling holds the replacement, so
+// any failure leaves the original destination intact.
+bool copyFileReplacingExisting(const QString& source, const QString& finalDestPath) {
+    if (!QFileInfo::exists(finalDestPath)) {
+        return QFile::copy(source, finalDestPath);
+    }
+    const QString tempPath = finalDestPath + QStringLiteral(".sakrestore.tmp");
+    QFile::remove(tempPath);
+    if (!QFile::copy(source, tempPath)) {
+        return false;
+    }
+    if (!QFile::remove(finalDestPath)) {
+        QFile::remove(tempPath);
+        return false;
+    }
+    return QFile::rename(tempPath, finalDestPath);
+}
 }  // namespace
 
 UserProfileRestoreWorker::UserProfileRestoreWorker(QObject* parent)
@@ -52,8 +83,15 @@ UserProfileRestoreWorker::UserProfileRestoreWorker(QObject* parent)
 UserProfileRestoreWorker::~UserProfileRestoreWorker() {
     if (isRunning()) {
         cancel();
-        wait(kTimeoutThreadTerminateMs);
+        // A large in-flight QFile::copy cannot observe cancellation, so the
+        // bounded wait can time out. Block until the thread has fully exited
+        // rather than destroying a running QThread (which aborts the process).
+        if (!wait(kTimeoutThreadTerminateMs)) {
+            wait();
+        }
     }
+    delete m_fileFilter;
+    delete m_permissionManager;
 }
 
 void UserProfileRestoreWorker::startRestore(const QString& backupPath,
@@ -150,7 +188,10 @@ void UserProfileRestoreWorker::run() {
 
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);
-    Q_EMIT restoreComplete(true, summary);
+    // Report success only when nothing errored (copy/mkpath/remove failure or a
+    // refused reparse point); a partial restore must not read as clean success.
+    const bool success = (m_filesErrored == 0);
+    Q_EMIT restoreComplete(success, summary);
 
     m_running = false;
 }
@@ -319,6 +360,15 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
         QString sourceItem = entry.absoluteFilePath();
         QString destItem = destDir + "/" + entry.fileName();
 
+        // Refuse junctions/symlinks on either side: they can read outside the
+        // backup or write outside the approved profile root (e.g. into System32).
+        if (restoreEntryEscapesRoot(entry, destItem)) {
+            Q_EMIT logMessage(
+                tr("Skipping reparse point to prevent restore escape: %1").arg(sourceItem), true);
+            m_filesErrored++;
+            continue;
+        }
+
         // Recursively copy subdirectory
         if (entry.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
             Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
@@ -359,8 +409,8 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
         return false;
     }
 
-    // Copy the file
-    if (!QFile::copy(source, finalDestPath)) {
+    // Copy the file (atomically replacing an existing destination, if any).
+    if (!copyFileReplacingExisting(source, finalDestPath)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
@@ -426,13 +476,10 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             m_filesSkipped++;
             return false;
         }
+        // Do not delete here: copyFileReplacingExisting removes the original
+        // only after the replacement is fully written, so a failed copy never
+        // leaves the destination missing.
         Q_EMIT logMessage(tr("Replacing with newer file: %1").arg(destInfo.fileName()), false);
-        if (!QFile::remove(finalDestPath)) {
-            sak::logError("Failed to remove existing file for replacement: {}",
-                          finalDestPath.toStdString());
-            m_filesErrored++;
-            return false;
-        }
         break;
     }
 
@@ -444,12 +491,6 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             return false;
         }
         Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
-        if (!QFile::remove(finalDestPath)) {
-            sak::logError("Failed to remove existing file for replacement: {}",
-                          finalDestPath.toStdString());
-            m_filesErrored++;
-            return false;
-        }
         break;
     }
 
