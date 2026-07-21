@@ -101,4 +101,12 @@ private:
                             const QString& folder_path,
                             const sak::PstFolder& folder,
                             SearchState& state);
+
+    /// Search one page of folder items. Returns false when the search should stop
+    /// (cancelled or the result cap was reached).
+    [[nodiscard]] bool searchItemPage(PstParser* parser,
+                                      const sak::EmailSearchCriteria& criteria,
+                                      const QString& folder_path,
+                                      const QVector<sak::PstItemSummary>& page,
+                                      SearchState& state);
 };

@@ -90,17 +90,37 @@ void EmailSearchWorker::searchSingleFolder(PstParser* parser,
                                            const QString& folder_path,
                                            const sak::PstFolder& folder,
                                            SearchState& state) {
-    auto items = parser->readFolderItems(folder.node_id, 0, sak::email::kMaxItemsPerLoad);
-    if (!items) {
-        return;
-    }
-
-    for (const auto& item : *items) {
-        if (m_cancelled.load(std::memory_order_relaxed)) {
+    // Page the whole folder: readFolderItems returns only [offset, offset+limit),
+    // so a single call silently skipped every item past the first kMaxItemsPerLoad.
+    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
+        auto items = parser->readFolderItems(folder.node_id, offset, sak::email::kMaxItemsPerLoad);
+        if (!items) {
+            // A folder-read failure is surfaced, not silently treated as empty.
+            Q_EMIT errorOccurred(
+                QStringLiteral("Failed to read folder '%1' during search").arg(folder_path));
+            return;
+        }
+        const auto& page = *items;
+        if (!searchItemPage(parser, criteria, folder_path, page, state)) {
+            return;  // cancelled or result cap reached
+        }
+        if (page.size() < sak::email::kMaxItemsPerLoad) {
             break;
         }
+    }
+}
+
+bool EmailSearchWorker::searchItemPage(PstParser* parser,
+                                       const sak::EmailSearchCriteria& criteria,
+                                       const QString& folder_path,
+                                       const QVector<sak::PstItemSummary>& page,
+                                       SearchState& state) {
+    for (const auto& item : page) {
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return false;
+        }
         if (state.total_hits >= sak::email::kMaxSearchResults) {
-            break;
+            return false;
         }
         ++state.items_searched;
 
@@ -128,6 +148,7 @@ void EmailSearchWorker::searchSingleFolder(PstParser* parser,
             Q_EMIT progressUpdated(state.items_searched, state.total_items);
         }
     }
+    return true;
 }
 
 // ============================================================================
