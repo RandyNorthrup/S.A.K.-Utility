@@ -57,6 +57,10 @@ private:
 
     PstParser* m_parser;  ///< Non-owning
     QSet<uint64_t> m_reachable_nids;
+    /// False when a folder read failed while building m_reachable_nids, meaning
+    /// the set is incomplete and must not be used to classify orphans (a live
+    /// message missing from it would be mis-reported as deleted).
+    bool m_reachable_reliable = true;
     std::atomic<bool> m_cancelled{false};
 };
 

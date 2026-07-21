@@ -120,6 +120,12 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
 
     // Build the set of NIDs reachable from the folder hierarchy
     buildReachableSet();
+    if (!m_reachable_reliable) {
+        // The reachability set is incomplete; classifying orphans against it would
+        // mis-report live messages as deleted, so skip orphan recovery entirely.
+        logWarning("DeletedItemScanner: folder read failed; skipping orphan scan");
+        return recovered;
+    }
 
     // Get all NBT node IDs
     QVector<uint64_t> all_nids = m_parser->allNodeIds();
@@ -180,18 +186,29 @@ void DeletedItemScanner::cancel() {
 
 void DeletedItemScanner::buildReachableSet() {
     m_reachable_nids.clear();
+    m_reachable_reliable = true;
 
     PstFolderTree tree = m_parser->folderTree();
 
     std::function<void(const PstFolder&)> walk;
     walk = [&](const PstFolder& folder) {
+        if (!m_reachable_reliable) {
+            return;
+        }
         m_reachable_nids.insert(folder.node_id);
 
         // Load all item NIDs in this folder
         int offset = 0;
         while (true) {
             auto items = m_parser->readFolderItems(folder.node_id, offset, kScanBatchSize);
-            if (!items.has_value() || items.value().isEmpty()) {
+            if (!items.has_value()) {
+                // A read failure (not end-of-folder) leaves later live NIDs out of
+                // the reachable set. Mark the whole build unreliable and stop so
+                // scanOrphanedNodes does not resurrect live messages as deleted.
+                m_reachable_reliable = false;
+                return;
+            }
+            if (items.value().isEmpty()) {
                 break;
             }
             for (const auto& item : items.value()) {
@@ -206,6 +223,9 @@ void DeletedItemScanner::buildReachableSet() {
     };
 
     for (const auto& root : tree) {
+        if (!m_reachable_reliable) {
+            break;
+        }
         walk(root);
     }
 }
