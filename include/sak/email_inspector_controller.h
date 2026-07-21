@@ -8,9 +8,11 @@
 
 #include "sak/email_types.h"
 
+#include <QFutureSynchronizer>
 #include <QObject>
 #include <QSet>
 
+#include <functional>
 #include <memory>
 
 class PstParser;
@@ -173,6 +175,7 @@ Q_SIGNALS:
 
 private:
     void setState(State new_state);
+    void runTracked(std::function<void()> task);
     void connectPstSignals();
     void connectMboxSignals();
     void connectSearchSignals();
@@ -196,6 +199,11 @@ private:
     std::unique_ptr<EmailExportWorker> m_export_worker;
     std::unique_ptr<EmailProfileManager> m_profile_manager;
     std::unique_ptr<EmailReportGenerator> m_report_generator;
+
+    /// Retains every detached QtConcurrent::run future so cancelOperation() (and
+    /// thus the destructor) can block until no background thread is still using
+    /// the parsers/workers before they are destroyed.
+    QFutureSynchronizer<void> m_tasks;
 
     // Cached data for reports
     sak::PstFileInfo m_cached_file_info;

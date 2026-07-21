@@ -182,7 +182,7 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
         m_pst_parser->loadAttachmentContent(message_node_id, attachment_index);
     } else if (m_file_type == FileType::Mbox) {
         int msg_idx = static_cast<int>(message_node_id);
-        (void)QtConcurrent::run([this, msg_idx, attachment_index]() {
+        runTracked([this, msg_idx, attachment_index]() {
             auto result = m_mbox_parser->readAttachmentData(msg_idx, attachment_index);
             if (result) {
                 auto detail = m_mbox_parser->readMessageDetail(msg_idx);
@@ -215,10 +215,9 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
     Q_EMIT logOutput(QStringLiteral("Searching for \"%1\"...").arg(criteria.query_text));
 
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
-        (void)QtConcurrent::run(
-            [this, criteria]() { m_search_worker->search(m_pst_parser.get(), criteria); });
+        runTracked([this, criteria]() { m_search_worker->search(m_pst_parser.get(), criteria); });
     } else if (m_file_type == FileType::Mbox) {
-        (void)QtConcurrent::run(
+        runTracked(
             [this, criteria]() { m_search_worker->searchMbox(m_mbox_parser.get(), criteria); });
     }
 }
@@ -237,10 +236,9 @@ void EmailInspectorController::exportItems(const sak::EmailExportConfig& config)
     Q_EMIT logOutput(QStringLiteral("Starting export to %1...").arg(config.output_path));
 
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
-        (void)QtConcurrent::run(
-            [this, config]() { m_export_worker->exportItems(m_pst_parser.get(), config); });
+        runTracked([this, config]() { m_export_worker->exportItems(m_pst_parser.get(), config); });
     } else if (m_file_type == FileType::Mbox) {
-        (void)QtConcurrent::run(
+        runTracked(
             [this, config]() { m_export_worker->exportMboxItems(m_mbox_parser.get(), config); });
     }
 }
@@ -253,7 +251,7 @@ void EmailInspectorController::discoverProfiles() {
     setState(State::DiscoveringProfiles);
     Q_EMIT logOutput(QStringLiteral("Discovering email client profiles..."));
 
-    (void)QtConcurrent::run([this]() { m_profile_manager->discoverProfiles(); });
+    runTracked([this]() { m_profile_manager->discoverProfiles(); });
 }
 
 void EmailInspectorController::backupProfiles(const QVector<int>& profile_indices,
@@ -261,7 +259,7 @@ void EmailInspectorController::backupProfiles(const QVector<int>& profile_indice
     setState(State::BackingUp);
     Q_EMIT logOutput(QStringLiteral("Backing up profiles to %1...").arg(backup_path));
 
-    (void)QtConcurrent::run([this, profile_indices, backup_path]() {
+    runTracked([this, profile_indices, backup_path]() {
         m_profile_manager->backupProfiles(profile_indices, backup_path);
     });
 }
@@ -270,8 +268,7 @@ void EmailInspectorController::restoreProfiles(const QString& manifest_path) {
     setState(State::Restoring);
     Q_EMIT logOutput(QStringLiteral("Restoring profiles from %1...").arg(manifest_path));
 
-    (void)QtConcurrent::run(
-        [this, manifest_path]() { m_profile_manager->restoreProfiles(manifest_path); });
+    runTracked([this, manifest_path]() { m_profile_manager->restoreProfiles(manifest_path); });
 }
 
 // ============================================================================
@@ -332,12 +329,24 @@ void EmailInspectorController::generateReport(const QString& output_path,
 // Cancel
 // ============================================================================
 
+void EmailInspectorController::runTracked(std::function<void()> task) {
+    // Retain the future so cancelOperation() can wait for it: a bare, discarded
+    // QtConcurrent::run would let the pool thread outlive the controller and
+    // dereference freed parser/worker members.
+    m_tasks.addFuture(QtConcurrent::run(std::move(task)));
+}
+
 void EmailInspectorController::cancelOperation() {
     m_pst_parser->cancel();
     m_mbox_parser->cancel();
     m_search_worker->cancel();
     m_export_worker->cancel();
     m_profile_manager->cancel();
+    // Block until every in-flight task observes the cancel flags and returns, so
+    // no background thread is still inside the parsers/workers when they (and this
+    // controller) are destroyed.
+    m_tasks.waitForFinished();
+    m_tasks.clearFutures();
     setState(State::Idle);
 }
 
