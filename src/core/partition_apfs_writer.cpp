@@ -5282,6 +5282,44 @@ bool commitIpBitmapRing(QByteArray* object,
                                 : advanceIpBitmapRing(object, ctx, blockers);
 }
 
+// Re-point the spaceman cib address-array: entry 0 (the rotated cib/cab) plus any
+// k>0 slots this commit copied-on-wrote. The array offset comes from the (possibly
+// foreign) on-disk spaceman, so the highest entry we are about to write is bounded
+// against the re-emitted object size first: a corrupt sm_addr_offset fails closed
+// instead of driving an unchecked out-of-bounds heap write.
+bool applyCibArrayRepoints(const ApfsCheckpointCommitContext& ctx,
+                           QByteArray* object,
+                           QStringList* blockers) {
+    // Only group slot 0 rotates, so just re-point spaceman address-array entry 0
+    // (the live cib 0, or the live cab 0 on the CAB tier); the rest of the array
+    // (immutable cibs/cabs) carries through from the previous checkpoint's copy.
+    // Write at the main device's real sm_addr_offset (where apfsck reads the cib array);
+    // for S.A.K.-generated volumes this equals spacemanCibArrayOffset, and a resize's
+    // applyIpBmSizeTransition/applyChunkAddingSpacemanPatches have already updated the field
+    // so a foreign spaceman (array packed at its own offset) is re-pointed correctly.
+    const qsizetype arrayBase =
+        le32(*object, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset);
+    qsizetype maxEntryIndex = 0;
+    for (const QPair<uint64_t, uint64_t>& repoint : ctx.cibArrayRepoints) {
+        maxEntryIndex = std::max(maxEntryIndex, static_cast<qsizetype>(repoint.first));
+    }
+    const qsizetype maxWriteEnd = arrayBase + maxEntryIndex * 8 +
+                                  static_cast<qsizetype>(sizeof(uint64_t));
+    if (arrayBase <= 0 || maxWriteEnd > object->size()) {
+        blockers->append(
+            QStringLiteral("APFS spaceman cib address-array offset is out of bounds; aborting to "
+                           "avoid an out-of-bounds write"));
+        return false;
+    }
+    writeLe64(object, arrayBase, ctx.newCibAddr);
+    // Keystone S4b: re-point each cib k>0 this commit copied-on-wrote to its new free-pool
+    // slot. The whole spaceman is re-emitted, so writing entry k is crash-safe.
+    for (const QPair<uint64_t, uint64_t>& repoint : ctx.cibArrayRepoints) {
+        writeLe64(object, arrayBase + static_cast<qsizetype>(repoint.first) * 8, repoint.second);
+    }
+    return true;
+}
+
 // Apply this commit's mutations to the re-emitted spaceman: the net free-count
 // delta, the rotated cib_addr, the IP free-queue counts (sfq_count + oldest_xid
 // from the rolling window), and the sm_ip_bitmap ring advance.
@@ -5309,24 +5347,8 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
     }
     applyIpBmSizeTransition(ctx, object);
     applyChunkAddingSpacemanPatches(ctx, object);
-    if (ctx.newCibAddr != 0) {
-        // Only group slot 0 rotates, so just re-point spaceman address-array entry 0
-        // (the live cib 0, or the live cab 0 on the CAB tier); the rest of the array
-        // (immutable cibs/cabs) carries through from the previous checkpoint's copy.
-        // Write at the main device's real sm_addr_offset (where apfsck reads the cib array);
-        // for S.A.K.-generated volumes this equals spacemanCibArrayOffset, and a resize's
-        // applyIpBmSizeTransition/applyChunkAddingSpacemanPatches have already updated the field
-        // above, so a foreign spaceman (array packed at its own offset) is re-pointed correctly.
-        const qsizetype arrayBase =
-            le32(*object, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset);
-        writeLe64(object, arrayBase, ctx.newCibAddr);
-        // Keystone S4b: re-point each cib k>0 this commit copied-on-wrote to its new free-pool
-        // slot. The whole spaceman is re-emitted, so writing entry k is crash-safe.
-        for (const QPair<uint64_t, uint64_t>& repoint : ctx.cibArrayRepoints) {
-            writeLe64(object,
-                      arrayBase + static_cast<qsizetype>(repoint.first) * 8,
-                      repoint.second);
-        }
+    if (ctx.newCibAddr != 0 && !applyCibArrayRepoints(ctx, object, blockers)) {
+        return false;
     }
     if (!ctx.ipFqEntries.isEmpty()) {
         uint64_t pendingBlocks = 0;
