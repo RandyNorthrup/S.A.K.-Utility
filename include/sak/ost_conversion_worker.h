@@ -72,7 +72,9 @@ private:
                        OstConversionResult& result);
 
     /// Initialize format-specific writers based on config
-    void initializeFormatWriters(const OstConversionConfig& config, const QString& source_path);
+    [[nodiscard]] bool initializeFormatWriters(const OstConversionConfig& config,
+                                               const QString& source_path,
+                                               OstConversionResult& result);
 
     void computeSourceChecksumIfRequested(const QString& source_path,
                                           const OstConversionConfig& config,

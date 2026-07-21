@@ -104,7 +104,13 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     Q_EMIT conversionStarted(m_items_total);
 
-    initializeFormatWriters(config, source_path);
+    // Abort before touching the source if the output writer could not be created,
+    // so nothing is reported as converted into a writer that was never opened.
+    if (!initializeFormatWriters(config, source_path, result)) {
+        result.finished = QDateTime::currentDateTime();
+        Q_EMIT conversionFinished(result);
+        return;
+    }
 
     // Get folder tree and process
     PstFolderTree tree = parser->folderTree();
@@ -181,47 +187,76 @@ qint64 splitSizeToBytes(PstSplitSize split_size, qint64 custom_mb) {
     }
 }
 
+/// Pick an output base name whose <directory>/<name>.pst target does not already
+/// exist. Two sources with the same basename in different folders (mail.ost in
+/// A\ and B\) would otherwise both resolve to <directory>/mail.pst and the second
+/// job would truncate the first job's finished PST.
+QString uniqueOutputBaseName(const QString& directory, const QString& base_name) {
+    QString name = base_name;
+    int counter = 1;
+    while (QFile::exists(directory + QStringLiteral("/") + name + QStringLiteral(".pst"))) {
+        name = base_name + QStringLiteral("_") + QString::number(counter);
+        ++counter;
+    }
+    return name;
+}
+
 }  // namespace
 
-void OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
-                                                  const QString& source_path) {
+bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
+                                                  const QString& source_path,
+                                                  OstConversionResult& result) {
     m_pst_writer.reset();
     m_pst_splitter.reset();
     m_mbox_writer.reset();
     m_dbx_writer.reset();
     m_pst_folder_nids.clear();
 
-    if (config.format == OstOutputFormat::Pst) {
-        QString base_name = QFileInfo(source_path).completeBaseName();
-        if (config.split_size != PstSplitSize::NoSplit) {
-            qint64 max_bytes = splitSizeToBytes(config.split_size, config.custom_split_mb);
-            QString base_path = config.output_directory + QStringLiteral("/") + base_name;
-            m_pst_splitter = std::make_unique<PstSplitter>(base_path, max_bytes);
-            if (!m_pst_splitter->create().has_value()) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-            }
-        } else {
-            QString out_path = config.output_directory + QStringLiteral("/") + base_name +
-                               QStringLiteral(".pst");
-            m_pst_writer = std::make_unique<PstWriter>(out_path);
-            if (!m_pst_writer->create().has_value()) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-            }
+    if (config.format != OstOutputFormat::Pst) {
+        if (config.format == OstOutputFormat::Mbox) {
+            m_mbox_writer = std::make_unique<MboxWriter>(config.output_directory,
+                                                         config.one_mbox_per_folder);
+        } else if (config.format == OstOutputFormat::Dbx) {
+            m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
         }
-    } else if (config.format == OstOutputFormat::Mbox) {
-        m_mbox_writer = std::make_unique<MboxWriter>(config.output_directory,
-                                                     config.one_mbox_per_folder);
-    } else if (config.format == OstOutputFormat::Dbx) {
-        m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
+        return true;
     }
+
+    const QString base_name = uniqueOutputBaseName(config.output_directory,
+                                                   QFileInfo(source_path).completeBaseName());
+    if (config.split_size != PstSplitSize::NoSplit) {
+        const qint64 max_bytes = splitSizeToBytes(config.split_size, config.custom_split_mb);
+        const QString base_path = config.output_directory + QStringLiteral("/") + base_name;
+        m_pst_splitter = std::make_unique<PstSplitter>(base_path, max_bytes);
+        if (!m_pst_splitter->create().has_value()) {
+            m_pst_splitter.reset();
+            result.errors.append(QStringLiteral("Failed to create PST output"));
+            Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
+            return false;
+        }
+        return true;
+    }
+
+    const QString out_path = config.output_directory + QStringLiteral("/") + base_name +
+                             QStringLiteral(".pst");
+    m_pst_writer = std::make_unique<PstWriter>(out_path);
+    if (!m_pst_writer->create().has_value()) {
+        m_pst_writer.reset();
+        result.errors.append(QStringLiteral("Failed to create PST output"));
+        Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
+        return false;
+    }
+    return true;
 }
 
 void OstConversionWorker::finalizeWriters(OstConversionResult& result) {
-    if (m_pst_writer) {
-        std::ignore = m_pst_writer->finalize();
+    if (m_pst_writer && !m_pst_writer->finalize().has_value()) {
+        result.errors.append(QStringLiteral("Failed to finalize PST output"));
     }
     if (m_pst_splitter) {
-        std::ignore = m_pst_splitter->finalizeAll();
+        if (!m_pst_splitter->finalizeAll().has_value()) {
+            result.errors.append(QStringLiteral("Failed to finalize PST volumes"));
+        }
         result.pst_volumes_created = m_pst_splitter->volumeCount();
     }
     if (m_mbox_writer) {
