@@ -16,6 +16,33 @@
 
 namespace sak {
 
+namespace {
+// Strip header-injection vectors from a header value: CR/LF/tab collapse to a
+// single space and other C0 control characters are dropped, so a value cannot
+// forge a second header or terminate the header block.
+QString sanitizeHeaderValue(const QString& value) {
+    QString out;
+    out.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('\r') || ch == QLatin1Char('\n') || ch == QLatin1Char('\t')) {
+            out.append(QLatin1Char(' '));
+        } else if (ch.unicode() >= 0x20) {
+            out.append(ch);
+        }
+    }
+    return out;
+}
+
+// Sanitize a quoted-string MIME parameter value (filename=): strip controls and
+// backslash-escape quotes/backslashes so it cannot break out of the quotes.
+QString sanitizeQuotedParam(const QString& value) {
+    QString out = sanitizeHeaderValue(value);
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return out;
+}
+}  // namespace
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -74,11 +101,19 @@ QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
 
     QString file_path;
     if (m_one_per_folder && !folder_path.isEmpty()) {
-        QString safe_name = sanitizeFolderName(folder_path);
-        file_path = m_output_dir + QStringLiteral("/") + safe_name + QStringLiteral(".mbox");
+        const QString safe_name = sanitizeFolderName(folder_path);
+        const QString base = m_output_dir + QStringLiteral("/") + safe_name;
+        // Two distinct folders can sanitize to the same name (e.g. "A_B/C" and
+        // "A/B_C" -> "A_B_C"); disambiguate with a numeric suffix so their mail
+        // does not interleave into one mailbox.
+        file_path = base + QStringLiteral(".mbox");
+        for (int suffix = 2; m_used_file_paths.contains(file_path); ++suffix) {
+            file_path = base + QStringLiteral(" (%1).mbox").arg(suffix);
+        }
     } else {
         file_path = m_output_dir + QStringLiteral("/mailbox.mbox");
     }
+    m_used_file_paths.insert(file_path);
 
     QDir().mkpath(QFileInfo(file_path).absolutePath());
 
@@ -102,23 +137,22 @@ QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
                                         const QDateTime& date,
                                         const QVector<QPair<QString, QByteArray>>& attachments) {
     QByteArray message;
-    message.append(
-        "From: " +
-        (item.sender_name.isEmpty() ? sender : item.sender_name + " <" + sender + ">").toUtf8() +
-        "\r\n");
+    const QString from_value = item.sender_name.isEmpty() ? sender
+                                                          : item.sender_name + " <" + sender + ">";
+    message.append("From: " + sanitizeHeaderValue(from_value).toUtf8() + "\r\n");
 
     if (!item.display_to.isEmpty()) {
-        message.append("To: " + item.display_to.toUtf8() + "\r\n");
+        message.append("To: " + sanitizeHeaderValue(item.display_to).toUtf8() + "\r\n");
     }
     if (!item.display_cc.isEmpty()) {
-        message.append("Cc: " + item.display_cc.toUtf8() + "\r\n");
+        message.append("Cc: " + sanitizeHeaderValue(item.display_cc).toUtf8() + "\r\n");
     }
     if (!item.subject.isEmpty()) {
-        message.append("Subject: " + item.subject.toUtf8() + "\r\n");
+        message.append("Subject: " + sanitizeHeaderValue(item.subject).toUtf8() + "\r\n");
     }
     message.append("Date: " + date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
     if (!item.message_id.isEmpty()) {
-        message.append("Message-ID: " + item.message_id.toUtf8() + "\r\n");
+        message.append("Message-ID: " + sanitizeHeaderValue(item.message_id).toUtf8() + "\r\n");
     }
 
     if (!item.body_html.isEmpty() || !attachments.isEmpty()) {
@@ -132,7 +166,11 @@ QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
         message.append("--" + boundary.toUtf8() + "\r\n");
         if (!item.body_html.isEmpty()) {
             message.append("Content-Type: text/html; charset=utf-8\r\n");
-            message.append("Content-Transfer-Encoding: quoted-printable\r\n");
+            // The body is emitted raw, not quoted-printable-encoded; labelling it
+            // quoted-printable makes a reader decode "=XX" sequences in the HTML
+            // (e.g. tracking URLs) and swallow trailing '=' as soft breaks. mbox
+            // bodies are 8-bit clean, so 8bit is the correct label.
+            message.append("Content-Transfer-Encoding: 8bit\r\n");
             message.append("\r\n");
             message.append(item.body_html.toUtf8());
         } else {
@@ -145,8 +183,8 @@ QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
         for (const auto& [att_name, att_data] : attachments) {
             message.append("--" + boundary.toUtf8() + "\r\n");
             message.append("Content-Type: application/octet-stream\r\n");
-            message.append("Content-Disposition: attachment; filename=\"" + att_name.toUtf8() +
-                           "\"\r\n");
+            message.append("Content-Disposition: attachment; filename=\"" +
+                           sanitizeQuotedParam(att_name).toUtf8() + "\"\r\n");
             message.append("Content-Transfer-Encoding: base64\r\n");
             message.append("\r\n");
             message.append(att_data.toBase64());

@@ -261,6 +261,66 @@ private Q_SLOTS:
     // Bytes Written Tracking
     // ====================================================================
 
+    // ====================================================================
+    // Header Injection — CRLF in header values must not forge headers
+    // ====================================================================
+
+    void testHeaderInjectionStripped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Hello\r\nBcc: attacker@evil.com");
+        item.sender_name = QStringLiteral("Sender");
+        item.sender_email = QStringLiteral("sender@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+
+        // The CRLF is collapsed, so no forged Bcc header line appears in the
+        // header block; the subject text stays on the Subject line.
+        QVERIFY(!content.contains("\nBcc: attacker@evil.com"));
+        QVERIFY(content.contains("Subject: Hello"));
+        QVERIFY(content.contains("attacker@evil.com"));  // present, but folded into Subject
+    }
+
+    // ====================================================================
+    // Body Transfer-Encoding — raw UTF-8 must be labelled 8bit, not QP
+    // ====================================================================
+
+    void testPlainBodyLabeled8bit() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Encoding");
+        item.sender_name = QStringLiteral("Sender");
+        // A body with "=20" would be corrupted if decoded as quoted-printable.
+        item.body_plain = QStringLiteral("value=20more");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+
+        QVERIFY(content.contains("Content-Transfer-Encoding: 8bit"));
+        QVERIFY(!content.contains("quoted-printable"));
+        QVERIFY(content.contains("value=20more"));
+    }
+
     void testBytesWrittenTracking() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());

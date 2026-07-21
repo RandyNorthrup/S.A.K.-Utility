@@ -4222,6 +4222,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
     add_executable(test_html_email_writer
         unit/test_html_email_writer.cpp
         ../src/core/html_email_writer.cpp
+        ../src/core/email_attachment_saver.cpp
         ../src/core/logger.cpp
         ../include/sak/html_email_writer.h
         ../include/sak/email_types.h

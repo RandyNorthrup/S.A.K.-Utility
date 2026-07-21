@@ -22,6 +22,33 @@ namespace sak {
 namespace {
 constexpr qsizetype kEmlInitialReserveBytes = 4096;
 
+// Remove header-injection vectors from a header value: CR/LF (which would start a
+// forged header or the body) become spaces, and other C0 control characters are
+// dropped. RFC 5322 unstructured header values are single logical lines.
+QString sanitizeHeaderValue(const QString& value) {
+    QString out;
+    out.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('\r') || ch == QLatin1Char('\n') || ch == QLatin1Char('\t')) {
+            out.append(QLatin1Char(' '));
+        } else if (ch.unicode() >= 0x20) {
+            out.append(ch);
+        }
+        // else: drop other C0 control characters
+    }
+    return out;
+}
+
+// Sanitize a value destined for a quoted-string MIME parameter (name=, filename=):
+// strip CR/LF/controls and backslash-escape embedded quotes and backslashes so the
+// value cannot break out of the quoted string.
+QString sanitizeQuotedParam(const QString& value) {
+    QString out = sanitizeHeaderValue(value);
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return out;
+}
+
 void appendHeader(QByteArray& eml, const char* name, const QString& value) {
     if (value.isEmpty()) {
         return;
@@ -29,7 +56,7 @@ void appendHeader(QByteArray& eml, const char* name, const QString& value) {
 
     eml.append(name);
     eml.append(": ");
-    eml.append(value.toUtf8());
+    eml.append(sanitizeHeaderValue(value).toUtf8());
     eml.append("\r\n");
 }
 
@@ -56,7 +83,11 @@ QByteArray emlBoundary(const PstItemDetail& item) {
 void appendSimplePlainMessage(QByteArray& eml, const QString& body) {
     eml.append("MIME-Version: 1.0\r\n");
     eml.append("Content-Type: text/plain; charset=utf-8\r\n");
-    eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
+    // The body is emitted as raw UTF-8, not quoted-printable-encoded. Labelling
+    // it quoted-printable makes a compliant reader decode "=XX" sequences and
+    // treat a trailing '=' as a soft line break, corrupting the content. 8bit is
+    // the correct label for raw UTF-8 bodies.
+    eml.append("Content-Transfer-Encoding: 8bit\r\n");
     eml.append("\r\n");
     eml.append(body.toUtf8());
 }
@@ -68,7 +99,9 @@ void appendBodyPart(QByteArray& eml,
     eml.append("--" + boundary + "\r\n");
     eml.append(content_type);
     eml.append("\r\n");
-    eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
+    // Raw UTF-8 body: label it 8bit, not quoted-printable (see
+    // appendSimplePlainMessage).
+    eml.append("Content-Transfer-Encoding: 8bit\r\n");
     eml.append("\r\n");
     eml.append(body.toUtf8());
     eml.append("\r\n");
@@ -78,10 +111,11 @@ void appendAttachmentParts(QByteArray& eml,
                            const QByteArray& boundary,
                            const QVector<QPair<QString, QByteArray>>& attachments) {
     for (const auto& [name, data] : attachments) {
+        const QByteArray safe_name = sanitizeQuotedParam(name).toUtf8();
         eml.append("--" + boundary + "\r\n");
-        eml.append("Content-Type: application/octet-stream; name=\"" + name.toUtf8() + "\"\r\n");
+        eml.append("Content-Type: application/octet-stream; name=\"" + safe_name + "\"\r\n");
         eml.append("Content-Transfer-Encoding: base64\r\n");
-        eml.append("Content-Disposition: attachment; filename=\"" + name.toUtf8() + "\"\r\n");
+        eml.append("Content-Disposition: attachment; filename=\"" + safe_name + "\"\r\n");
         eml.append("\r\n");
         eml.append(data.toBase64());
         eml.append("\r\n");

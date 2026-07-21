@@ -11,6 +11,7 @@
 
 #include <QFile>
 #include <QHash>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -60,6 +61,9 @@ private:
     QString m_output_dir;
     bool m_one_per_folder;
     QHash<QString, QFile*> m_open_files;
+    /// Resolved .mbox paths already in use, so two distinct folders whose names
+    /// sanitize to the same file do not silently merge into one mailbox.
+    QSet<QString> m_used_file_paths;
     qint64 m_bytes_written = 0;
 };
 

@@ -6,6 +6,7 @@
 
 #include "sak/html_email_writer.h"
 
+#include "sak/email_attachment_saver.h"
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/report_style_constants.h"
@@ -126,12 +127,22 @@ QString HtmlEmailWriter::saveFileAttachments(
     }
 
     for (const auto& [name, data] : attachment_data) {
-        if (!attachments_dir.isEmpty()) {
-            QFile att_file(attachments_dir + QStringLiteral("/") + name);
-            if (att_file.open(QIODevice::WriteOnly)) {
-                att_file.write(data);
-                m_bytes_written += data.size();
-            }
+        if (attachments_dir.isEmpty()) {
+            continue;
+        }
+        // Reduce to a bare, sanitized filename so a hostile PidTagAttachLongFilename
+        // like "../../../pwned.html" cannot escape the per-message _files directory.
+        const QString safe_name = sanitizeAttachmentFilename(QFileInfo(name).fileName());
+        QFile att_file(attachments_dir + QStringLiteral("/") + safe_name);
+        if (att_file.open(QIODevice::WriteOnly) &&
+            att_file.write(data) == static_cast<qint64>(data.size())) {
+            m_bytes_written += data.size();
+        } else {
+            // Do not silently drop: the generated HTML lists this attachment, so
+            // a failed write must at least be logged.
+            logError("HtmlEmailWriter: failed to write attachment '{}': {}",
+                     safe_name.toStdString(),
+                     att_file.errorString().toStdString());
         }
     }
 

@@ -134,6 +134,62 @@ private Q_SLOTS:
     // From_ escaping in body
     // ====================================================================
 
+    // ====================================================================
+    // Distinct folders that sanitize to the same name must not merge
+    // ====================================================================
+
+    void testCollidingFolderNamesStayDistinct() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::MboxWriter writer(temp_dir.path(), true);
+
+        sak::PstItemDetail item;
+        item.sender_email = QStringLiteral("a@test.com");
+        item.body_plain = QStringLiteral("content");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        // "A_B/C" and "A/B_C" both sanitize to "A_B_C".
+        item.subject = QStringLiteral("one");
+        std::ignore = writer.writeMessage(item, {}, QStringLiteral("A_B/C"));
+        item.subject = QStringLiteral("two");
+        std::ignore = writer.writeMessage(item, {}, QStringLiteral("A/B_C"));
+        writer.finalize();
+
+        QDir dir(temp_dir.path());
+        const QStringList files = dir.entryList({QStringLiteral("*.mbox")}, QDir::Files);
+        // Two distinct folders must produce two distinct mailbox files.
+        QCOMPARE(files.size(), 2);
+    }
+
+    // ====================================================================
+    // Header injection — CRLF in a field must not forge a header
+    // ====================================================================
+
+    void testHeaderInjectionStripped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Report\r\nBcc: attacker@evil.com");
+        item.sender_email = QStringLiteral("a@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        std::ignore = writer.writeMessage(item, {}, QString());
+        writer.finalize();
+
+        QDir dir(temp_dir.path());
+        const QStringList files = dir.entryList({QStringLiteral("*.mbox")}, QDir::Files);
+        QVERIFY(!files.isEmpty());
+        QFile file(dir.filePath(files.first()));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(!content.contains("\nBcc: attacker@evil.com"));
+    }
+
     void testFromEscaping() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());

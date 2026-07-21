@@ -132,6 +132,43 @@ private Q_SLOTS:
     // Date prefix in filename
     // ====================================================================
 
+    // ====================================================================
+    // Attachment path traversal must be contained
+    // ====================================================================
+
+    void testAttachmentTraversalContained() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        // A canary file three levels above where a "../../../" name would land.
+        const QString canary = temp_dir.path() + QStringLiteral("/canary.html");
+        {
+            QFile f(canary);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("ORIGINAL");
+            f.close();
+        }
+
+        sak::HtmlEmailWriter writer(temp_dir.path() + QStringLiteral("/a/b/c"), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Evil");
+        item.sender_email = QStringLiteral("test@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        QVector<QPair<QString, QByteArray>> attachments;
+        attachments.append({QStringLiteral("../../../../canary.html"), QByteArray("PWNED")});
+
+        auto result = writer.writeMessage(item, attachments, QString());
+        QVERIFY(result.has_value());
+
+        // The canary outside the export tree must be untouched.
+        QFile c(canary);
+        QVERIFY(c.open(QIODevice::ReadOnly));
+        QCOMPARE(c.readAll(), QByteArray("ORIGINAL"));
+    }
+
     void testDatePrefix() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
