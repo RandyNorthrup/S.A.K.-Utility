@@ -31,6 +31,7 @@ private Q_SLOTS:
     void memoryFile_initializesStructuredSections();
     void memoryFile_trimPreservesStructuredSections();
     void searchSessions_findsTranscriptAndCommandIndex();
+    void appendCommand_redactsSecretsInPersistedRecord();
 };
 
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
@@ -409,6 +410,26 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
         return hit.source == QStringLiteral("command") &&
                hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
     }));
+}
+
+void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
+    // P08-20 / P08-21: command records must not persist raw credentials.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Secrets"), &error));
+
+    const QString secret = QStringLiteral("ctx7") + QStringLiteral("s") +
+                           QStringLiteral("k-fc513191-580d-40c0-b244-17ea71f182b9");
+    QVERIFY(store.appendCommand(QStringLiteral("Invoke-RestMethod -Headers @{ Authorization = '") +
+                                    secret + QStringLiteral("' }"),
+                                QJsonObject{{QStringLiteral("success"), true}},
+                                &error));
+
+    QFile commands(store.currentSessionInfo().path + QStringLiteral("/commands.jsonl"));
+    QVERIFY(commands.open(QIODevice::ReadOnly | QIODevice::Text));
+    QVERIFY(!QString::fromUtf8(commands.readAll()).contains(secret));
 }
 
 QTEST_GUILESS_MAIN(AiConversationStoreTests)

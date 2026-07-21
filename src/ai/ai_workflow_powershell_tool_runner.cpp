@@ -100,10 +100,13 @@ void recordWorkflowCompletion(const QString& command_id,
         callbacks.record_command(preview, json);
     }
     if (callbacks.append_session_memory) {
+        // Redact before truncating so a secret cannot survive by being split.
+        const QString safe_preview =
+            CredentialStore::redactSecrets(preview).left(kSessionMemoryPreviewChars);
         callbacks.append_session_memory(QStringLiteral("Tool"),
                                         QStringLiteral("Workflow PowerShell finished"),
                                         QStringLiteral("%1 exit=%2 cancelled=%3 timed_out=%4")
-                                            .arg(preview.left(kSessionMemoryPreviewChars))
+                                            .arg(safe_preview)
                                             .arg(command_result.exit_code)
                                             .arg(command_result.cancelled)
                                             .arg(command_result.timed_out));

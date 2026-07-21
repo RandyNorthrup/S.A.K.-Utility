@@ -1629,6 +1629,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
         unit/test_ai_conversation_store.cpp
         ../src/core/app_paths.cpp
         ../src/ai/ai_conversation_store.cpp
+        ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../include/sak/ai/ai_conversation_store.h
@@ -1641,7 +1642,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ai_conversation_store PRIVATE
-        Qt6::Core Qt6::Test
+        Qt6::Core Qt6::Test Crypt32
     )
     target_include_directories(test_ai_conversation_store PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

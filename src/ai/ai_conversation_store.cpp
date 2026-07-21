@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_conversation_store.h"
 
+#include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_paths.h"
 
 #include <QDir>
@@ -934,8 +935,13 @@ bool ConversationStore::appendTranscript(const QString& role,
 bool ConversationStore::appendCommand(const QString& command,
                                       const QJsonObject& result,
                                       QString* error_message) {
+    // Redact at the persistence boundary: some callers (tool-result recorder,
+    // workflow PowerShell runner) pass the raw command/preview, which can contain
+    // passwords or API keys. This is the single point every command record and its
+    // search-index entry pass through.
+    const QString redacted_command = CredentialStore::redactSecrets(command);
     QJsonObject obj;
-    obj[QStringLiteral("command")] = command;
+    obj[QStringLiteral("command")] = redacted_command;
     obj[QStringLiteral("result")] = result;
     if (!appendJsonLine(QString::fromLatin1(kCommandsFile), obj, error_message)) {
         return false;
@@ -943,7 +949,7 @@ bool ConversationStore::appendCommand(const QString& command,
     QJsonObject index;
     index[QStringLiteral("source")] = QStringLiteral("command");
     index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(
-        command, QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)));
+        redacted_command, QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)));
     (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
