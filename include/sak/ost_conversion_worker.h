@@ -22,8 +22,10 @@ class PstParser;
 namespace sak {
 
 class DbxWriter;
+class EmlWriter;
 class HtmlEmailWriter;
 class MboxWriter;
+class MsgWriter;
 class PdfEmailWriter;
 class PstSplitter;
 class PstWriter;
@@ -75,6 +77,8 @@ private:
     [[nodiscard]] bool initializeFormatWriters(const OstConversionConfig& config,
                                                const QString& source_path,
                                                OstConversionResult& result);
+    /// Create the persistent per-item writer for a non-PST format.
+    void createPerItemWriter(const OstConversionConfig& config);
 
     void computeSourceChecksumIfRequested(const QString& source_path,
                                           const OstConversionConfig& config,
@@ -186,11 +190,18 @@ private:
     int m_items_done = 0;
     int m_items_total = 0;
 
-    // Per-conversion format writer instances
+    // Per-conversion format writer instances. The per-message writers below are
+    // held for the whole conversion (not recreated per item) so their filename
+    // collision counters persist -- otherwise every duplicate subject overwrote
+    // the previous export.
     std::unique_ptr<PstWriter> m_pst_writer;
     std::unique_ptr<PstSplitter> m_pst_splitter;
     std::unique_ptr<MboxWriter> m_mbox_writer;
     std::unique_ptr<DbxWriter> m_dbx_writer;
+    std::unique_ptr<EmlWriter> m_eml_writer;
+    std::unique_ptr<MsgWriter> m_msg_writer;
+    std::unique_ptr<HtmlEmailWriter> m_html_writer;
+    std::unique_ptr<PdfEmailWriter> m_pdf_writer;
     QHash<QString, uint64_t> m_pst_folder_nids;
 };
 

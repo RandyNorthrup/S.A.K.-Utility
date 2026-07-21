@@ -203,6 +203,40 @@ QString uniqueOutputBaseName(const QString& directory, const QString& base_name)
 
 }  // namespace
 
+void OstConversionWorker::createPerItemWriter(const OstConversionConfig& config) {
+    switch (config.format) {
+    case OstOutputFormat::Eml:
+        m_eml_writer = std::make_unique<EmlWriter>(config.output_directory,
+                                                   config.prefix_filename_with_date,
+                                                   config.preserve_folder_structure);
+        break;
+    case OstOutputFormat::Msg:
+        m_msg_writer = std::make_unique<MsgWriter>(config.output_directory,
+                                                   config.prefix_filename_with_date,
+                                                   config.preserve_folder_structure);
+        break;
+    case OstOutputFormat::Html:
+        m_html_writer = std::make_unique<HtmlEmailWriter>(config.output_directory,
+                                                          config.prefix_filename_with_date,
+                                                          config.preserve_folder_structure);
+        break;
+    case OstOutputFormat::Pdf:
+        m_pdf_writer = std::make_unique<PdfEmailWriter>(config.output_directory,
+                                                        config.prefix_filename_with_date,
+                                                        config.preserve_folder_structure);
+        break;
+    case OstOutputFormat::Mbox:
+        m_mbox_writer = std::make_unique<MboxWriter>(config.output_directory,
+                                                     config.one_mbox_per_folder);
+        break;
+    case OstOutputFormat::Dbx:
+        m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
+        break;
+    default:
+        break;  // Pst handled by the caller; ImapUpload has no per-item writer
+    }
+}
+
 bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
                                                   const QString& source_path,
                                                   OstConversionResult& result) {
@@ -210,15 +244,14 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
     m_pst_splitter.reset();
     m_mbox_writer.reset();
     m_dbx_writer.reset();
+    m_eml_writer.reset();
+    m_msg_writer.reset();
+    m_html_writer.reset();
+    m_pdf_writer.reset();
     m_pst_folder_nids.clear();
 
     if (config.format != OstOutputFormat::Pst) {
-        if (config.format == OstOutputFormat::Mbox) {
-            m_mbox_writer = std::make_unique<MboxWriter>(config.output_directory,
-                                                         config.one_mbox_per_folder);
-        } else if (config.format == OstOutputFormat::Dbx) {
-            m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
-        }
+        createPerItemWriter(config);
         return true;
     }
 
@@ -492,20 +525,24 @@ bool OstConversionWorker::writeItemEml(const PstItemDetail& item,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
+    Q_UNUSED(config);
+    if (!m_eml_writer) {
+        ++result.items_failed;
+        result.errors.append("EML writer not initialized for: " + item.subject);
+        return false;
+    }
     auto attachment_data = collectAttachments(item, parser, result);
 
-    EmlWriter writer(config.output_directory,
-                     config.prefix_filename_with_date,
-                     config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
+    auto write_result = m_eml_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write EML for: " + item.subject);
         return false;
     }
 
-    result.bytes_written += writer.totalBytesWritten();
+    // The writer persists across the run, so its byte count is cumulative: assign
+    // it rather than add a per-message delta.
+    result.bytes_written = m_eml_writer->totalBytesWritten();
     return true;
 }
 
@@ -585,6 +622,12 @@ bool OstConversionWorker::writeItemMsg(const PstItemDetail& item,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
+    Q_UNUSED(config);
+    if (!m_msg_writer) {
+        ++result.items_failed;
+        result.errors.append("MSG writer not initialized for: " + item.subject);
+        return false;
+    }
     auto attachment_data = collectAttachments(item, parser, result);
 
     // Get all MAPI properties for forensic-grade export
@@ -594,18 +637,14 @@ bool OstConversionWorker::writeItemMsg(const PstItemDetail& item,
         all_props = props_result.value();
     }
 
-    MsgWriter writer(config.output_directory,
-                     config.prefix_filename_with_date,
-                     config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, all_props, attachment_data, folder_path);
+    auto write_result = m_msg_writer->writeMessage(item, all_props, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write MSG for: " + item.subject);
         return false;
     }
 
-    result.bytes_written += writer.totalBytesWritten();
+    result.bytes_written = m_msg_writer->totalBytesWritten();
     return true;
 }
 
@@ -662,20 +701,22 @@ bool OstConversionWorker::writeItemHtml(const PstItemDetail& item,
                                         const QString& folder_path,
                                         const OstConversionConfig& config,
                                         OstConversionResult& result) {
+    Q_UNUSED(config);
+    if (!m_html_writer) {
+        ++result.items_failed;
+        result.errors.append("HTML writer not initialized for: " + item.subject);
+        return false;
+    }
     auto attachment_data = collectAttachments(item, parser, result);
 
-    HtmlEmailWriter writer(config.output_directory,
-                           config.prefix_filename_with_date,
-                           config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
+    auto write_result = m_html_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write HTML for: " + item.subject);
         return false;
     }
 
-    result.bytes_written += writer.totalBytesWritten();
+    result.bytes_written = m_html_writer->totalBytesWritten();
     return true;
 }
 
@@ -684,20 +725,22 @@ bool OstConversionWorker::writeItemPdf(const PstItemDetail& item,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
+    Q_UNUSED(config);
+    if (!m_pdf_writer) {
+        ++result.items_failed;
+        result.errors.append("PDF writer not initialized for: " + item.subject);
+        return false;
+    }
     auto attachment_data = collectAttachments(item, parser, result);
 
-    PdfEmailWriter writer(config.output_directory,
-                          config.prefix_filename_with_date,
-                          config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
+    auto write_result = m_pdf_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write PDF for: " + item.subject);
         return false;
     }
 
-    result.bytes_written += writer.totalBytesWritten();
+    result.bytes_written = m_pdf_writer->totalBytesWritten();
     return true;
 }
 
