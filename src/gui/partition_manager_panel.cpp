@@ -4168,8 +4168,22 @@ ClusterSizeWidgets addClusterSizeControls(PartitionOperationDialog& dialog,
 }
 
 bool clusterBackupIsOffTarget(const QString& backup, const PartitionVolumeInfo& volume) {
+    if (backup.isEmpty()) {
+        return false;
+    }
+    // Compare the resolved volume device, not the drive-letter TEXT: a junction (E:\link ->
+    // T:\stash) or a folder mount (T: also at C:\Mounts\Data) has a different letter prefix
+    // yet physically lives on the target volume, so a text prefix check wrongly treats it as
+    // off-target and the reformat would destroy the "backup".
+    const QString targetRoot = volume.drive_letter.left(1).toUpper() + QStringLiteral(":/");
+    const QString targetDevice = QStorageInfo(targetRoot).device();
+    const QString backupDevice = QStorageInfo(backup).device();
+    if (!targetDevice.isEmpty() && !backupDevice.isEmpty()) {
+        return targetDevice.compare(backupDevice, Qt::CaseInsensitive) != 0;
+    }
+    // Fall back to the drive-letter text check when a volume device cannot be resolved.
     const QString targetPrefix = volume.drive_letter.left(1).toUpper() + QStringLiteral(":");
-    return !backup.isEmpty() && !backup.startsWith(targetPrefix, Qt::CaseInsensitive);
+    return !backup.startsWith(targetPrefix, Qt::CaseInsensitive);
 }
 
 void updateClusterSizePreview(PartitionOperationDialog& dialog,
@@ -9192,6 +9206,16 @@ void PartitionManagerPanel::updateDetails() {
 
 void PartitionManagerPanel::queueOperation(PartitionOperationType type,
                                            const QJsonObject& payload) {
+    // Choke point for every queue mutation (toolbar, context menu, wizards). While an Apply
+    // runs the executor is consuming the queue, so reject changes here rather than relying on
+    // toolbar buttons being disabled -- context-menu actions bypass that.
+    const auto state = m_controller->state();
+    if (state == PartitionManagerState::AwaitingElevation ||
+        state == PartitionManagerState::Applying || state == PartitionManagerState::Verifying) {
+        Q_EMIT statusMessage(tr("Finish or cancel the running operation before changing the queue"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
     const auto target = selectedTarget();
     if (!target) {
         Q_EMIT statusMessage(tr("Select a target first"), sak::kTimerStatusDefaultMs);
@@ -10656,29 +10680,33 @@ void PartitionManagerPanel::onExtendPartitionWizard() {
 }
 
 void PartitionManagerPanel::onQuickPartition() {
-    const auto* disk = selectedDisk();
-    const QString blocker = quickPartitionBlocker(disk);
+    const auto* diskPtr = selectedDisk();
+    const QString blocker = quickPartitionBlocker(diskPtr);
     if (!blocker.isEmpty()) {
         showWarningLogged(this, tr("Quick Partition"), blocker);
         return;
     }
+    // Copy the disk by value: a background inventory refresh can complete during the modal
+    // dialog's nested event loop and replace the controller's inventory, dangling a pointer
+    // into it. The local copy outlives exec(), so the lambdas below stay valid.
+    const PartitionDiskInfo disk = *diskPtr;
 
     PartitionOperationDialog dialog(
         tr("Quick Partition"),
-        tr("Disk %1 - %2").arg(disk->disk_number).arg(formatPartitionBytes(disk->size_bytes)),
+        tr("Disk %1 - %2").arg(disk.disk_number).arg(formatPartitionBytes(disk.size_bytes)),
         tr("Queues a full-disk layout. Review Pending Operations before Apply."),
         this);
-    const auto widgets = addQuickPartitionControls(dialog, *disk);
+    const auto widgets = addQuickPartitionControls(dialog, disk);
     auto updatePreview = [&]() {
-        updateQuickPartitionPreview(dialog, widgets, *disk);
+        updateQuickPartitionPreview(dialog, widgets, disk);
     };
     auto connectTableEditors = [&]() {
         connectQuickPartitionTableEditors(widgets, dialog, updatePreview);
     };
     auto rebuildAndPreview = [&]() {
-        rebuildQuickPartitionControlsAndPreview(widgets, *disk, connectTableEditors, updatePreview);
+        rebuildQuickPartitionControlsAndPreview(widgets, disk, connectTableEditors, updatePreview);
     };
-    connectQuickPartitionPresetControls(dialog, widgets, *disk, connectTableEditors, updatePreview);
+    connectQuickPartitionPresetControls(dialog, widgets, disk, connectTableEditors, updatePreview);
     connectQuickPartitionLiveControls(dialog, widgets, rebuildAndPreview, updatePreview);
     connectTableEditors();
     updatePreview();
@@ -10686,7 +10714,7 @@ void PartitionManagerPanel::onQuickPartition() {
         return;
     }
 
-    queueQuickPartitionOperations(*disk, quickPartitionOptions(widgets));
+    queueQuickPartitionOperations(disk, quickPartitionOptions(widgets));
     Q_EMIT statusMessage(tr("Quick Partition queued"), sak::kTimerStatusDefaultMs);
 }
 
