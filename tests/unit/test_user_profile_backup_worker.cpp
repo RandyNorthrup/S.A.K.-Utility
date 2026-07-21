@@ -3,7 +3,10 @@
 
 #include "sak/user_profile_backup_worker.h"
 
+#include <QDir>
 #include <QTest>
+
+#include <atomic>
 
 using namespace sak;
 
@@ -24,6 +27,9 @@ private Q_SLOTS:
 
     // ── Cancel ──────────────────────────────────────────────
     void testCancelWhenNotRunning();
+
+    // ── Encryption not supported (P06-25) ───────────────────
+    void testEncryptedBackupRefusedFailsClosed();
 };
 
 // ============================================================================
@@ -51,6 +57,50 @@ void TestUserProfileBackupWorker::testCancelWhenNotRunning() {
     // Cancel when not running should not crash
     worker.cancel();
     QVERIFY(!worker.isRunning());
+}
+
+// ============================================================================
+// Encryption not supported (P06-25): a backup requesting encryption must abort
+// with a failure instead of writing plaintext copies mislabeled as AES-256.
+// ============================================================================
+
+void TestUserProfileBackupWorker::testEncryptedBackupRefusedFailsClosed() {
+    UserProfileBackupWorker worker;
+
+    UserProfile user;
+    user.username = "tester";
+    user.profile_path = QDir::tempPath();
+    user.is_selected = true;
+
+    std::atomic<bool> done{false};
+    bool successFlag = true;
+    QString message;
+    // DirectConnection avoids marshalling BackupManifest (no metatype); the
+    // captures are read only after wait() joins the worker thread.
+    QObject::connect(
+        &worker,
+        &UserProfileBackupWorker::backupComplete,
+        &worker,
+        [&](bool ok, const QString& msg, const BackupManifest&) {
+            successFlag = ok;
+            message = msg;
+            done.store(true);
+        },
+        Qt::DirectConnection);
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.encrypt = true;
+    options.password = "secret";
+    worker.startBackup(BackupManifest{},
+                       {user},
+                       QDir::tempPath() + "/sak_up_backup_test_dest",
+                       SmartFilter{},
+                       options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(done.load(), 5000);
+    worker.wait();
+    QVERIFY(!successFlag);
+    QVERIFY(message.contains("not supported"));
 }
 
 QTEST_MAIN(TestUserProfileBackupWorker)

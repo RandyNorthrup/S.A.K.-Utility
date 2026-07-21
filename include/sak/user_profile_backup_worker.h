@@ -140,6 +140,9 @@ private:
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,
                        const FolderSelection& folderConfig);
+    void copyDirectoryEntry(const QString& sourceItem,
+                            const QString& destDir,
+                            const FolderSelection& folderConfig);
     bool createDirectory(const QString& path);
 
     // Validation

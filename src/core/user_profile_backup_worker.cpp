@@ -29,6 +29,16 @@ constexpr int kProgressEmitFileInterval = 100;
 constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
 constexpr double kDiskSpaceSafetyMultiplier = 1.1;
 constexpr int kDiskSpaceDisplayPrecision = 1;
+
+// True if the path is an NTFS reparse point (junction/symlink/mount point).
+bool isReparsePoint(const QString& path) {
+#ifdef Q_OS_WIN
+    const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    return QFileInfo(path).isSymLink();
+#endif
+}
 }  // namespace
 
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
@@ -39,8 +49,14 @@ UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
 UserProfileBackupWorker::~UserProfileBackupWorker() {
     if (isRunning()) {
         cancel();
-        wait(kTimeoutThreadTerminateMs);
+        // Never let ~QThread run on a live thread: if an in-flight copy of a
+        // large/stalled file outlasts the grace period, block until it finishes.
+        if (!wait(kTimeoutThreadTerminateMs)) {
+            wait();
+        }
     }
+    delete m_fileFilter;
+    delete m_permissionManager;
 }
 
 void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
@@ -96,6 +112,15 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
     Q_EMIT logMessage(tr("Users to backup: %1").arg(m_users.size()), false);
 
+    // Encryption is offered in the wizard but not implemented in this worker.
+    // Refuse rather than writing plaintext copies the user believes are AES-256.
+    if (m_encrypt) {
+        Q_EMIT logMessage(tr("Encrypted backup is not supported; aborting"), true);
+        Q_EMIT backupComplete(false, tr("Encrypted backup is not supported"), m_manifest);
+        m_running = false;
+        return;
+    }
+
     // Validate inputs
     if (!validateSourcePaths()) {
         Q_EMIT backupComplete(false, tr("Invalid source paths"), m_manifest);
@@ -103,20 +128,21 @@ void UserProfileBackupWorker::run() {
         return;
     }
 
-    // Check disk space
-    if (!checkDiskSpace()) {
-        Q_EMIT backupComplete(false, tr("Insufficient disk space"), m_manifest);
-        m_running = false;
-        return;
-    }
-
-    // Calculate total size for progress
+    // Calculate the total size first so the disk-space check has a real
+    // requirement to compare against (an empty total would always pass).
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
     Q_EMIT logMessage(
         tr("Total estimated size: %1 GB")
             .arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', kBackupSizeDisplayPrecision),
         false);
+
+    // Check disk space
+    if (!checkDiskSpace()) {
+        Q_EMIT backupComplete(false, tr("Insufficient disk space"), m_manifest);
+        m_running = false;
+        return;
+    }
 
     // Create backup directory structure
     if (!createBackupStructure()) {
@@ -127,6 +153,14 @@ void UserProfileBackupWorker::run() {
 
     // Backup each user
     backupAllUsers();
+
+    // A cancel may have been requested mid-copy; report failure and never fall
+    // through to the success summary (exactly one terminal signal is emitted).
+    if (m_cancelled) {
+        Q_EMIT backupComplete(false, tr("Backup cancelled"), m_manifest);
+        m_running = false;
+        return;
+    }
 
     // Save manifest and emit summary
     emitBackupSummary();
@@ -139,9 +173,8 @@ void UserProfileBackupWorker::backupAllUsers() {
     int userIndex = 0;
     for (const auto& user : m_users) {
         if (m_cancelled) {
+            // run() owns the single terminal backupComplete signal; just stop.
             Q_EMIT logMessage(tr("Backup cancelled by user"), true);
-            Q_EMIT backupComplete(false, tr("Backup cancelled"), m_manifest);
-            m_running = false;
             return;
         }
 
@@ -166,7 +199,8 @@ void UserProfileBackupWorker::backupAllUsers() {
 void UserProfileBackupWorker::emitBackupSummary() {
     // Save manifest
     Q_EMIT logMessage(tr("Saving backup manifest..."), false);
-    if (!saveManifest()) {
+    const bool manifestSaved = saveManifest();
+    if (!manifestSaved) {
         Q_EMIT logMessage(tr("Warning: Failed to save manifest"), true);
     }
 
@@ -182,7 +216,10 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
-    Q_EMIT backupComplete(true, summary, m_manifest);
+    // Report success only when every file copied and the restore manifest was
+    // written; otherwise the backup is partial/unrestorable.
+    const bool success = (m_filesErrored == 0) && manifestSaved;
+    Q_EMIT backupComplete(success, summary, m_manifest);
 }
 
 bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString& userBackupPath) {
@@ -278,21 +315,35 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         if (m_cancelled) {
             return false;
         }
-
-        QString sourceItem = it.next();
-        QFileInfo itemInfo(sourceItem);
-        QString destItem = destDir + "/" + itemInfo.fileName();
-
-        if (itemInfo.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
-            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
-        }
-
-        if (itemInfo.isFile()) {
-            copyFileWithFiltering(sourceItem, destItem, itemInfo.size());
-        }
+        copyDirectoryEntry(it.next(), destDir, folderConfig);
     }
 
     return true;
+}
+
+void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
+                                                 const QString& destDir,
+                                                 const FolderSelection& folderConfig) {
+    QFileInfo itemInfo(sourceItem);
+    QString destItem = destDir + "/" + itemInfo.fileName();
+
+    if (itemInfo.isDir()) {
+        // Never recurse into a junction/symlink directory: it can loop back
+        // into the same profile (unbounded recursion) or point outside it
+        // (foreign, possibly privileged data pulled into the backup).
+        if (isReparsePoint(sourceItem)) {
+            Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourceItem), false);
+            return;
+        }
+        if (!copyDirectory(sourceItem, destItem, folderConfig)) {
+            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
+        }
+        return;
+    }
+
+    if (itemInfo.isFile()) {
+        copyFileWithFiltering(sourceItem, destItem, itemInfo.size());
+    }
 }
 
 bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
