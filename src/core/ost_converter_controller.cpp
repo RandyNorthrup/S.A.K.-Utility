@@ -138,9 +138,10 @@ void OstConverterController::cancelAll() {
                 aw.thread->terminate();
                 aw.thread->wait(ost::kTimeoutThreadTerminateMs);
             }
+            delete aw.worker;
+            aw.worker = nullptr;
             delete aw.thread;
             aw.thread = nullptr;
-            aw.worker = nullptr;
         }
     }
     m_active_workers.clear();
@@ -292,7 +293,11 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
 
     auto& job = m_queue[file_index];
 
-    if (result.items_failed > 0 && result.items_converted == 0) {
+    // A run that converted nothing but recorded errors is a failure -- notably a
+    // source-open failure emits conversionFinished with items_failed==0,
+    // items_converted==0 and a non-empty errors list, which the old
+    // items_failed-only gate mis-classified as success.
+    if ((result.items_failed > 0 || !result.errors.isEmpty()) && result.items_converted == 0) {
         job.status = OstConversionJob::Status::Failed;
         job.error_message = result.errors.isEmpty() ? tr("All items failed")
                                                     : result.errors.first();
@@ -311,19 +316,27 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
 
     Q_EMIT fileConversionComplete(file_index, result);
 
-    // Clean up worker thread
-    if (worker_index >= 0) {
-        auto& aw = m_active_workers[worker_index];
-        if (aw.thread) {
-            aw.thread->quit();
-            aw.thread->wait(ost::kTimeoutThreadShutdownMs);
-            aw.thread->deleteLater();
-        }
-        m_active_workers.removeAt(worker_index);
-    }
+    destroyActiveWorker(worker_index);
 
     // Start next file if available
     startNextFile();
+}
+
+void OstConverterController::destroyActiveWorker(int worker_index) {
+    if (worker_index < 0 || worker_index >= m_active_workers.size()) {
+        return;
+    }
+    // The worker was created without a parent and never deleted, leaking on every
+    // completed conversion; delete it once its thread has stopped, then the thread.
+    auto& aw = m_active_workers[worker_index];
+    if (aw.thread) {
+        aw.thread->quit();
+        aw.thread->wait(ost::kTimeoutThreadShutdownMs);
+        delete aw.worker;
+        aw.worker = nullptr;
+        aw.thread->deleteLater();
+    }
+    m_active_workers.removeAt(worker_index);
 }
 
 void OstConverterController::onWorkerProgress(int items_done, int items_total, QString folder) {

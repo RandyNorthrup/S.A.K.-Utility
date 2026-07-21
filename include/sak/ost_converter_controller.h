@@ -88,6 +88,10 @@ private Q_SLOTS:
 
 private:
     void startNextFile();
+
+    /// Stop and destroy the worker + thread at @p worker_index, then drop it from
+    /// m_active_workers.
+    void destroyActiveWorker(int worker_index);
     void finalizeBatch();
 
     QVector<OstConversionJob> m_queue;
