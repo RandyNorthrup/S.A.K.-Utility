@@ -76,8 +76,11 @@ QString partitionAlias(uint32_t diskNumber, uint32_t partitionNumber) {
 }
 
 bool isRawDevicePath(const QString& path) {
-    return path.startsWith(QStringLiteral("\\\\.\\")) ||
-           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"));
+    // Windows device paths are case-insensitive, so a lowercase "\\?\globalroot\..." names
+    // the same raw device; matching case-sensitively would misclassify it as an image file
+    // and skip the raw-partition safety gate.
+    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
+           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive);
 }
 
 // Derive an APFS container's byte size from its block-0 superblock (nx_block_size *

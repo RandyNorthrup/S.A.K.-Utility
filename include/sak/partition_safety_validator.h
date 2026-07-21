@@ -42,6 +42,10 @@ private:
                                        const PartitionDiskInfo& selectedDisk,
                                        const PartitionOperation& operation,
                                        PartitionValidationResult* result) const;
+    void validateRawVolumeAliasWriteTarget(const PartitionInventory& inventory,
+                                           const PartitionDiskInfo& selectedDisk,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result) const;
     void validateUnallocatedOperation(const PartitionDiskInfo& disk,
                                       const PartitionOperation& operation,
                                       PartitionValidationResult* result) const;

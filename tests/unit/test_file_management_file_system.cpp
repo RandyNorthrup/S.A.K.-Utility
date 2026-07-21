@@ -194,6 +194,23 @@ private Q_SLOTS:
         QVERIFY(!target.blockers.isEmpty());
     }
 
+    void rawDevicePathClassificationIsCaseInsensitive() {
+        // Windows device paths are case-insensitive: a lowercase "globalroot" names the same
+        // raw partition and must be classified identically, not misread as an image file.
+        const uint64_t size = 128ULL * 1024ULL * 1024ULL;
+        const auto upper = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
+            QStringLiteral("APFS"),
+            size);
+        const auto lower = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\globalroot\\device\\harddisk4\\partition2"),
+            QStringLiteral("APFS"),
+            size);
+        QCOMPARE(lower.kind, upper.kind);
+        QCOMPARE(lower.can_write_files, upper.can_write_files);
+        QVERIFY(lower.can_write_files);
+    }
+
     void apfsRawWritesSpanCertifiedMultiCibRange() {
         // A1/A2: the in-place COW engine is Apple-certified across the single-CIB,
         // multi-CIB, metadata-overflow, and CAB tiers, so the File Explorer write gate

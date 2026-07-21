@@ -2036,6 +2036,7 @@ private Q_SLOTS:
     void safetyValidator_requiresRecoveredPartitionRestoreAcknowledgement();
     void safetyValidator_requiresPartitionRegionCloneConfirmation();
     void safetyValidator_blocksUnsafePayloadTargetDisk();
+    void safetyValidator_blocksRawVolumeAliasTargetDisk();
     void safetyValidator_blocksTooSmallCloneTarget();
     void safetyValidator_blocksTooSmallPartitionRegionClone();
     void safetyValidator_blocksUnsupportedFileSystemConversion();
@@ -17112,6 +17113,32 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafePayloadTargetDisk() 
     const auto preview = planner.previewOperation(inventory, operation);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("Payload target disk")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksRawVolumeAliasTargetDisk() {
+    // A raw "\\.\C:" volume alias is not a \\.\PhysicalDriveN, so it previously skipped the
+    // payload target-disk safety checks entirely. C: lives on system Disk 0, so a clone with
+    // that alias target must be blocked (protected system disk) rather than slip through.
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    appendDisposableTargetDisk(&inventory);
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 1;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\C:");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("4194304");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CloneDisk,
+                                                              target,
+                                                              payload);
+
+    PartitionOperationPlanner planner;
+    const auto preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("Payload target disk is system")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksTooSmallCloneTarget() {

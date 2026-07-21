@@ -466,6 +466,35 @@ std::optional<uint32_t> targetPhysicalDriveNumber(const PartitionOperation& oper
     return physicalDriveNumberFromPath(normalizedTargetPath(operation));
 }
 
+// A raw "\\.\X:" volume alias resolves to a drive letter; unlike \\.\PhysicalDriveN it still
+// writes to a real disk but is not caught by targetPhysicalDriveNumber.
+std::optional<QString> rawVolumeAliasLetter(const QString& targetPath) {
+    QString path = targetPath.trimmed();
+    path.replace('/', '\\');
+    const QString prefix = QStringLiteral("\\\\.\\");
+    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return std::nullopt;
+    }
+    const QString rest = path.mid(prefix.size());
+    if (rest.size() == 2 && rest.at(0).isLetter() && rest.at(1) == QLatin1Char(':')) {
+        return rest.left(1).toUpper();
+    }
+    return std::nullopt;
+}
+
+const PartitionDiskInfo* diskForDriveLetter(const PartitionInventory& inventory,
+                                            const QString& letter) {
+    for (const auto& disk : inventory.disks) {
+        for (const auto& partition : disk.partitions) {
+            if (partition.volume &&
+                partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0) {
+                return &disk;
+            }
+        }
+    }
+    return nullptr;
+}
+
 bool targetPathIsPhysicalDrive(const PartitionOperation& operation) {
     return targetPhysicalDriveNumber(operation).has_value();
 }
@@ -1846,6 +1875,9 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(
 
     const auto targetDiskNumber = targetPhysicalDriveNumber(operation);
     if (!targetDiskNumber.has_value()) {
+        // Not a \\.\PhysicalDriveN path. A raw "\\.\X:" volume alias still writes to a disk
+        // and must be validated (or blocked); an image-file target is left to other checks.
+        validateRawVolumeAliasWriteTarget(inventory, selectedDisk, operation, result);
         return;
     }
 
@@ -1885,6 +1917,39 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(
                      QStringLiteral(
                          "Partition clone target disk number must match the physical target path"));
     }
+}
+
+void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
+    const PartitionInventory& inventory,
+    const PartitionDiskInfo& selectedDisk,
+    const PartitionOperation& operation,
+    PartitionValidationResult* result) const {
+    if (!targetPathIsRawDevice(operation)) {
+        return;  // An image-file target: covered by the image-destination checks.
+    }
+    const auto letter = rawVolumeAliasLetter(normalizedTargetPath(operation));
+    const PartitionDiskInfo* targetDisk =
+        letter.has_value() ? diskForDriveLetter(inventory, *letter) : nullptr;
+    // A raw \\.\ device alias we cannot resolve to a known disk must fail closed rather than
+    // slip past every disk-safety check below.
+    addBlockerIf(result,
+                 targetDisk == nullptr,
+                 QStringLiteral("Raw device target could not be resolved to a known disk; use a "
+                                "\\\\.\\PhysicalDriveN path"));
+    if (!targetDisk) {
+        return;
+    }
+    addCommonDiskWarnings(*targetDisk, result);
+    addBlockerIf(result,
+                 isUnsafeRawWriteTargetDisk(*targetDisk),
+                 QStringLiteral(
+                     "Payload target disk is system, boot, read-only, dynamic, or Storage Spaces"));
+    const bool cloneLike = operation.type == PartitionOperationType::CloneDisk ||
+                           operation.type == PartitionOperationType::MigrateOs ||
+                           operation.type == PartitionOperationType::ClonePartition;
+    addBlockerIf(result,
+                 cloneLike && targetDisk->disk_number == selectedDisk.disk_number,
+                 QStringLiteral("Source and payload target disk must be different"));
 }
 
 void PartitionSafetyValidator::validatePartitionOperation(const PartitionInventory& inventory,

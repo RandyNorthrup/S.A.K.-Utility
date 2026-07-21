@@ -513,8 +513,9 @@ void markFileSparse(int fileDescriptor) {
 
 bool isWindowsRawDevicePath(const QString& path) {
 #ifdef Q_OS_WIN
-    return path.startsWith(QStringLiteral("\\\\.\\")) ||
-           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"));
+    // Device paths are case-insensitive on Windows (e.g. lowercase "globalroot").
+    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
+           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive);
 #else
     Q_UNUSED(path);
     return false;
