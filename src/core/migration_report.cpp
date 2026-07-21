@@ -234,7 +234,13 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
 
     QTextStream out(&file);
     out << QJsonDocument(root).toJson(QJsonDocument::Indented);
+    out.flush();
     file.close();
+    if (out.status() != QTextStream::Ok || file.error() != QFileDevice::NoError) {
+        sak::logWarning("[MigrationReport] Write failed while exporting: {}",
+                        file_path.toStdString());
+        return false;
+    }
 
     return true;
 }
@@ -262,14 +268,20 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
             << "," << escapeCsvField(entry.install_date.toString(Qt::ISODate)) << ","
             << escapeCsvField(entry.choco_package) << ","
             << QString::number(entry.confidence, 'f', kConfidenceCsvPrecision) << ","
-            << entry.match_type << "," << (entry.available ? "Yes" : "No") << ","
+            << escapeCsvField(entry.match_type) << "," << (entry.available ? "Yes" : "No") << ","
             << escapeCsvField(entry.available_version) << "," << (entry.selected ? "Yes" : "No")
             << "," << (entry.version_lock ? "Yes" : "No") << ","
             << escapeCsvField(entry.locked_version) << "," << escapeCsvField(entry.notes) << ","
-            << entry.status << "," << escapeCsvField(entry.error_message) << "\n";
+            << escapeCsvField(entry.status) << "," << escapeCsvField(entry.error_message) << "\n";
     }
 
+    out.flush();
     file.close();
+    if (out.status() != QTextStream::Ok || file.error() != QFileDevice::NoError) {
+        sak::logWarning("[MigrationReport] Write failed while exporting: {}",
+                        file_path.toStdString());
+        return false;
+    }
     return true;
 }
 
@@ -284,13 +296,18 @@ bool MigrationReport::exportToHtml(const QString& file_path) const {
 
     QTextStream out(&file);
     out << formatHtmlReport();
+    out.flush();
     file.close();
+    if (out.status() != QTextStream::Ok || file.error() != QFileDevice::NoError) {
+        sak::logWarning("[MigrationReport] Write failed while exporting: {}",
+                        file_path.toStdString());
+        return false;
+    }
 
     return true;
 }
 
 bool MigrationReport::importFromJson(const QString& file_path) {
-    Q_ASSERT(!m_entries.empty());
     Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -326,15 +343,19 @@ bool MigrationReport::importFromJson(const QString& file_path) {
         m_metadata.report_version = metadata["report_version"].toString();
     }
 
-    // Entries
-    m_entries.clear();
-    if (root.contains("entries")) {
-        QJsonArray entries = root["entries"].toArray();
-        std::transform(entries.begin(),
-                       entries.end(),
-                       std::back_inserter(m_entries),
-                       [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
+    // Entries: validate and parse into a local vector, committing only on
+    // success so a malformed import never silently wipes the current report.
+    if (!root.contains("entries") || !root["entries"].isArray()) {
+        sak::logWarning("[MigrationReport] Missing or invalid 'entries' array; import rejected");
+        return false;
     }
+    std::vector<MigrationEntry> parsed;
+    const QJsonArray entries = root["entries"].toArray();
+    std::transform(entries.begin(),
+                   entries.end(),
+                   std::back_inserter(parsed),
+                   [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
+    m_entries = std::move(parsed);
 
     return true;
 }
@@ -448,12 +469,19 @@ QString MigrationReport::getCurrentUser() const {
 }
 
 QString MigrationReport::escapeCsvField(const QString& field) {
-    if (field.contains(',') || field.contains('"') || field.contains('\n')) {
-        QString escaped = field;
+    // Neutralize spreadsheet formula injection: a field whose first character is
+    // a formula trigger is evaluated by Excel/Calc, so prefix a single quote to
+    // force it to be treated as literal text.
+    QString value = field;
+    if (!value.isEmpty() && QString("=+-@\t\r").contains(value.at(0))) {
+        value.prepend('\'');
+    }
+    if (value.contains(',') || value.contains('"') || value.contains('\n') || value != field) {
+        QString escaped = value;
         escaped.replace("\"", "\"\"");
         return "\"" + escaped + "\"";
     }
-    return field;
+    return value;
 }
 
 QString MigrationReport::formatHtmlReport() const {
@@ -471,13 +499,16 @@ QString MigrationReport::formatHtmlReport() const {
 
     // Metadata
     out << "<div class=\"metadata\">\n<h2>Source System Information</h2>\n<table>\n";
-    out << "<tr><td>Machine Name:</td><td>" << m_metadata.source_machine << "</td></tr>\n";
-    out << "<tr><td>Operating System:</td><td>" << m_metadata.source_os << " "
-        << m_metadata.source_os_version << "</td></tr>\n";
-    out << "<tr><td>Created By:</td><td>" << m_metadata.created_by << "</td></tr>\n";
+    out << "<tr><td>Machine Name:</td><td>" << m_metadata.source_machine.toHtmlEscaped()
+        << "</td></tr>\n";
+    out << "<tr><td>Operating System:</td><td>" << m_metadata.source_os.toHtmlEscaped() << " "
+        << m_metadata.source_os_version.toHtmlEscaped() << "</td></tr>\n";
+    out << "<tr><td>Created By:</td><td>" << m_metadata.created_by.toHtmlEscaped()
+        << "</td></tr>\n";
     out << "<tr><td>Created At:</td><td>" << m_metadata.created_at.toString("yyyy-MM-dd HH:mm:ss")
         << "</td></tr>\n";
-    out << "<tr><td>Report Version:</td><td>" << m_metadata.report_version << "</td></tr>\n";
+    out << "<tr><td>Report Version:</td><td>" << m_metadata.report_version.toHtmlEscaped()
+        << "</td></tr>\n";
     out << "</table>\n</div>\n";
 
     // Statistics
@@ -528,18 +559,18 @@ void MigrationReport::buildHtmlEntryRows(QTextStream& out) const {
             row_class = " class=\"fuzzy\"";
         }
         out << "<tr" << row_class << ">\n";
-        out << "<td>" << entry.app_name << "</td>\n";
-        out << "<td>" << entry.app_version << "</td>\n";
-        out << "<td>" << entry.app_publisher << "</td>\n";
+        out << "<td>" << entry.app_name.toHtmlEscaped() << "</td>\n";
+        out << "<td>" << entry.app_version.toHtmlEscaped() << "</td>\n";
+        out << "<td>" << entry.app_publisher.toHtmlEscaped() << "</td>\n";
         out << "<td>"
             << (entry.choco_package.isEmpty() ? "<span class=\"unmatched\">No "
                                                 "match</span>"
-                                              : entry.choco_package)
+                                              : entry.choco_package.toHtmlEscaped())
             << "</td>\n";
         out << "<td class=\"confidence\">"
             << QString::number(entry.confidence * kPercentMaxF, 'f', kConfidencePercentPrecision)
             << "%</td>\n";
-        out << "<td>" << entry.match_type << "</td>\n";
+        out << "<td>" << entry.match_type.toHtmlEscaped() << "</td>\n";
         out << "<td>"
             << (entry.selected ? "<span class=\"selected\">\xe2\x9c\x93 Yes</span>" : "No")
             << "</td>\n";

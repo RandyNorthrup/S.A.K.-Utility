@@ -3,6 +3,10 @@
 
 #include "sak/migration_report.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QTemporaryDir>
 #include <QTest>
 
 using namespace sak;
@@ -50,6 +54,12 @@ private Q_SLOTS:
 
     // ── Metadata ────────────────────────────────────────────
     void testInitialMetadata();
+
+    // ── Export/import safety (P06-37/38/39/40) ──────────────
+    void testHtmlEscapesMarkup();
+    void testCsvNeutralizesFormula();
+    void testImportRejectsInvalidPreservesEntries();
+    void testExportSuccessReportsTrue();
 
 private:
     MigrationReport m_report;
@@ -271,6 +281,95 @@ void TestMigrationReport::testInitialMetadata() {
     const auto& meta = m_report.getMetadata();
     QCOMPARE(meta.report_version, "1.0");
     QVERIFY(!meta.source_os.isEmpty());
+}
+
+// ============================================================================
+// Export/import safety (P06-37/38/39/40)
+// ============================================================================
+
+// P06-38: HTML export must escape attacker-controlled markup so an app name
+// like "<script>...</script>" cannot execute when the report is opened.
+void TestMigrationReport::testHtmlEscapesMarkup() {
+    auto e = makeEntry("<script>alert(1)</script>", "", 0.5, "exact");
+    e.app_publisher = "<img src=x onerror=alert(2)>";
+    m_report.addEntry(e);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("out.html");
+    QVERIFY(m_report.exportToHtml(path));
+
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QString html = QString::fromUtf8(f.readAll());
+    QVERIFY(!html.contains("<script>alert(1)</script>"));
+    QVERIFY(html.contains("&lt;script&gt;"));
+    QVERIFY(!html.contains("<img src=x onerror"));
+    QVERIFY(html.contains("&lt;img src=x"));
+}
+
+// P06-39: CSV export must neutralize spreadsheet formula injection by prefixing
+// a leading single quote to fields that start with a formula trigger.
+void TestMigrationReport::testCsvNeutralizesFormula() {
+    auto e = makeEntry("=HYPERLINK(\"http://x\",\"y\")", "", 0.5, "@cmd");
+    m_report.addEntry(e);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("out.csv");
+    QVERIFY(m_report.exportToCsv(path));
+
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QString csv = QString::fromUtf8(f.readAll());
+    QVERIFY(csv.contains("\"'=HYPERLINK"));
+    QVERIFY(csv.contains("\"'@cmd\""));
+    QVERIFY(!csv.contains(",=HYPERLINK"));
+}
+
+// P06-37: a malformed import must be rejected without wiping the current report.
+void TestMigrationReport::testImportRejectsInvalidPreservesEntries() {
+    m_report.addEntry(makeEntry("Keep1", "k1", 0.9, "exact"));
+    m_report.addEntry(makeEntry("Keep2", "k2", 0.8, "fuzzy"));
+    QCOMPARE(m_report.getEntryCount(), 2);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString empty = QDir(dir.path()).filePath("empty.json");
+    {
+        QFile f(empty);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QCOMPARE(f.write("{}"), 2);
+    }
+    QVERIFY(!m_report.importFromJson(empty));
+    QCOMPARE(m_report.getEntryCount(), 2);
+
+    const QString bad = QDir(dir.path()).filePath("bad.json");
+    {
+        QFile f(bad);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        const QByteArray payload = "{\"entries\": 5}";
+        QCOMPARE(f.write(payload), payload.size());
+    }
+    QVERIFY(!m_report.importFromJson(bad));
+    QCOMPARE(m_report.getEntryCount(), 2);
+}
+
+// P06-40: a successful export returns true and writes a non-empty file.
+void TestMigrationReport::testExportSuccessReportsTrue() {
+    m_report.addEntry(makeEntry("App1", "app1", 0.9, "exact"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString js = QDir(dir.path()).filePath("r.json");
+    const QString cs = QDir(dir.path()).filePath("r.csv");
+    const QString ht = QDir(dir.path()).filePath("r.html");
+    QVERIFY(m_report.exportToJson(js));
+    QVERIFY(m_report.exportToCsv(cs));
+    QVERIFY(m_report.exportToHtml(ht));
+    QVERIFY(QFileInfo(js).size() > 0);
+    QVERIFY(QFileInfo(cs).size() > 0);
+    QVERIFY(QFileInfo(ht).size() > 0);
 }
 
 QTEST_MAIN(TestMigrationReport)
