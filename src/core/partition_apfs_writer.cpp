@@ -1574,6 +1574,20 @@ uint32_t drecNameLenAndHash(const QString& name) {
     return ((crc & 0x3F'FF'FF) << 10) | nameLength;
 }
 
+// Two names occupy the SAME j_drec key on the writer's case-insensitive volume
+// (APFS_INCOMPAT_CASE_INSENSITIVE, always set) iff their full-case-folded NFD
+// forms are equal -- the exact normalization Apple hashes into the drec key. So
+// 'Foo' and 'foo' are one name on disk; comparing names for an existing-entry
+// collision must use this, not an exact QString ==, or a second record with an
+// identical key is emitted and corrupts the fsroot b-tree.
+QString apfsNormalizedName(const QString& name) {
+    return appleCaseFold(name).normalized(QString::NormalizationForm_D);
+}
+
+bool apfsNamesCollide(const QString& a, const QString& b) {
+    return apfsNormalizedName(a) == apfsNormalizedName(b);
+}
+
 QByteArray fsKey(uint64_t objectId,
                  uint8_t recordType,
                  qsizetype keyBytes = kApfsFormattedRootInodeKeyBytes) {
@@ -17206,7 +17220,8 @@ bool collectExistingFullFsTree(const QString& sourcePath,
         return false;
     }
     for (const auto& file : *files) {
-        if (file.parentDirectoryId == kApfsRootDirectoryId && file.fileName == newFileName) {
+        if (file.parentDirectoryId == kApfsRootDirectoryId &&
+            apfsNamesCollide(file.fileName, newFileName)) {
             blockers->append(
                 QStringLiteral("APFS file-insert-commit: a file named '%1' already exists")
                     .arg(newFileName));
@@ -17215,7 +17230,7 @@ bool collectExistingFullFsTree(const QString& sourcePath,
     }
     for (const auto& directory : *directories) {
         if (directory.parentDirectoryId == kApfsRootDirectoryId &&
-            directory.directoryName == newFileName) {
+            apfsNamesCollide(directory.directoryName, newFileName)) {
             blockers->append(
                 QStringLiteral("APFS file-insert-commit: a directory named '%1' already exists")
                     .arg(newFileName));
@@ -17232,12 +17247,13 @@ bool nameExistsInParent(const QVector<ApfsRootFilePayload>& files,
                         uint64_t parentId,
                         const QString& name) {
     for (const auto& directory : directories) {
-        if (directory.parentDirectoryId == parentId && directory.directoryName == name) {
+        if (directory.parentDirectoryId == parentId &&
+            apfsNamesCollide(directory.directoryName, name)) {
             return true;
         }
     }
     for (const auto& file : files) {
-        if (file.parentDirectoryId == parentId && file.fileName == name) {
+        if (file.parentDirectoryId == parentId && apfsNamesCollide(file.fileName, name)) {
             return true;
         }
     }

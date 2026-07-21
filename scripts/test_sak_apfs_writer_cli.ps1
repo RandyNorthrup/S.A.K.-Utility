@@ -196,6 +196,31 @@ if ($LASTEXITCODE -ne 0) {
 }
 Assert-CommitOk -Report (Read-Report $replaceReportPath) -Label "commit-image-file-write (replace)" -OutputImage $replacedImagePath
 
+# --- Negative: case-insensitive name collision is detected (P01-11) ---
+# The writer's volume is APFS_INCOMPAT_CASE_INSENSITIVE, so 'Foo' and 'foo' hash
+# to the same j_drec key. Inserting 'CaseFold' then 'casefold' must fail closed
+# rather than emit a second drec with an identical key (fsroot b-tree corruption).
+$caseInsertImagePath = Join-Path $runRoot "case-insert.apfs"
+$caseInsertReportPath = Join-Path $runRoot "commit-image-file-insert-case.json"
+& $CliPath commit-image-file-insert `
+    --target $imagePath `
+    --size-bytes $sizeBytes `
+    --output-image $caseInsertImagePath `
+    --file-name "CaseFold" `
+    --payload-file $payloadPath `
+    --output-json $caseInsertReportPath
+Assert-CommitOk -Report (Read-Report $caseInsertReportPath) -Label "commit-image-file-insert (CaseFold)" -OutputImage $caseInsertImagePath
+
+$caseCollisionReportPath = Join-Path $runRoot "commit-image-file-insert-case-collision.json"
+& $CliPath commit-image-file-insert `
+    --target $caseInsertImagePath `
+    --size-bytes $sizeBytes `
+    --output-image (Join-Path $runRoot "case-collision.apfs") `
+    --file-name "casefold" `
+    --payload-file $payloadPath `
+    --output-json $caseCollisionReportPath
+Assert-Blocked -Report (Read-Report $caseCollisionReportPath) -Label "case-insensitive commit-image-file-insert collision" -ExpectSubstring "already exists"
+
 # --- COW root-file patch (in range) ---
 [byte[]]$patchBytes = for ($i = 0; $i -lt 257; $i++) { [byte](65 + ($i % 26)) }
 [System.IO.File]::WriteAllBytes($patchPayloadPath, $patchBytes)
