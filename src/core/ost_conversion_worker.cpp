@@ -30,6 +30,35 @@
 #include <optional>
 #include <tuple>
 
+namespace {
+
+/// Sanitize one folder-tree path segment so a parsed PST/OST folder name can
+/// never escape the output root. Path separators, control and Windows-reserved
+/// characters are replaced, trailing dots/spaces are stripped, and a segment
+/// that reduces to "." / ".." / empty (which would traverse) becomes "_".
+QString sanitizeFolderSegment(const QString& raw) {
+    static const QString kForbidden = QStringLiteral("<>:\"/\\|?*");
+    QString out;
+    out.reserve(raw.size());
+    for (QChar character : raw) {
+        if (character.unicode() < 0x20 || kForbidden.contains(character)) {
+            out += QLatin1Char('_');
+        } else {
+            out += character;
+        }
+    }
+    out = out.trimmed();
+    while (out.endsWith(QLatin1Char('.')) || out.endsWith(QLatin1Char(' '))) {
+        out.chop(1);
+    }
+    if (out.isEmpty()) {
+        return QStringLiteral("_");
+    }
+    return out;
+}
+
+}  // namespace
+
 namespace sak {
 
 // ============================================================================
@@ -340,8 +369,11 @@ void OstConversionWorker::processFolder(PstParser* parser,
         return;
     }
 
-    QString folder_path = parent_path.isEmpty() ? folder.display_name
-                                                : parent_path + "/" + folder.display_name;
+    // Sanitize each segment: folder.display_name comes verbatim from the parsed
+    // PST/OST and is appended to the output directory by every writer, so a name
+    // containing "../" would otherwise write outside the chosen output root.
+    const QString safe_segment = sanitizeFolderSegment(folder.display_name);
+    QString folder_path = parent_path.isEmpty() ? safe_segment : parent_path + "/" + safe_segment;
 
     if (!folderPassesFilter(folder.display_name, config)) {
         return;

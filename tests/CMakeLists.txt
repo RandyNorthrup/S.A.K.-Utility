@@ -4064,6 +4064,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ../src/core/mbox_writer.cpp
         ../src/core/dbx_writer.cpp
         ../src/core/html_email_writer.cpp
+        ../src/core/email_attachment_saver.cpp
         ../src/core/pdf_email_writer.cpp
         ../src/core/deleted_item_scanner.cpp
         ../src/core/imap_uploader.cpp
