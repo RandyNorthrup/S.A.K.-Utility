@@ -3893,6 +3893,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
         ../src/core/email_export_worker.cpp
         ../src/core/eml_writer.cpp
         ../src/core/html_email_writer.cpp
+        ../src/core/email_attachment_saver.cpp
         ../src/core/pdf_email_writer.cpp
         ../src/core/pst_parser.cpp
         ../src/core/mbox_parser.cpp
