@@ -1846,6 +1846,7 @@ class PartitionManagerCoreTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
     void fileSystemDetector_detectsRawSignatures();
     void fileSystemDetector_flagsMalformedMetadataSanityWarnings();
     void fileSystemDetector_readsProbeBytesFromPath();
@@ -3385,6 +3386,14 @@ PartitionInventory singleDataDiskInventory(bool dynamicDisk = false) {
          disk.size_bytes - partition.offset_bytes - partition.size_bytes});
     inventory.disks.append(disk);
     return inventory;
+}
+
+void PartitionManagerCoreTests::initTestCase() {
+    // The filesystem tool manifest resolves from the trusted executable directory in
+    // production; the source-tree (CWD) fallback is gated behind this developer opt-in so an
+    // attacker-writable CWD cannot supply elevated tools. The test tree relies on that
+    // fallback, so opt in explicitly here.
+    qputenv("SAK_DEV_SOURCE_TREE", "1");
 }
 
 void PartitionManagerCoreTests::fileSystemDetector_detectsRawSignatures() {
@@ -16631,6 +16640,9 @@ void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
     const auto script = builder.buildScript(operation);
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(QStringLiteral("robocopy.exe")));
+    // Merge must preserve NTFS security metadata (ACLs/owner/audit), so /COPYALL not /COPY:DAT.
+    QVERIFY(script.script.contains(QStringLiteral("/COPYALL")));
+    QVERIFY(!script.script.contains(QStringLiteral("/COPY:DAT")));
     QVERIFY(script.script.contains(QStringLiteral("Remove-Partition")));
     QVERIFY(script.script.contains(QStringLiteral("Resize-Partition")));
 }
@@ -16811,6 +16823,9 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript()
     QVERIFY(script.script.contains(QStringLiteral(
         "Assert-SakSampleCopy $srcVerify $dstVerify $expectedBytes $sourceOffset $targetOffset")));
     QVERIFY(script.script.contains(QStringLiteral("[int64]($targetStart + $point)")));
+    // The raw write must abort if the target disk could not actually be taken offline,
+    // rather than silently corrupting a still-mounted volume.
+    QVERIFY(script.script.contains(QStringLiteral("if (-not $verify.IsOffline)")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsOsMigrationBootValidationScript() {

@@ -1472,7 +1472,7 @@ QString hfsFileMutationInvoke(const PartitionOperation& operation,
     return invoke + QLatin1Char('\n');
 }
 
-QString runtimeFilesystemManifestPath() {
+QString sourceTreeManifestFromCwd() {
     QDir sourceCandidate = QDir::current();
     for (int depth = 0; depth < kRuntimeManifestSourceFallbackDepth; ++depth) {
         const QString sourceManifest =
@@ -1488,16 +1488,37 @@ QString runtimeFilesystemManifestPath() {
             break;
         }
     }
+    return {};
+}
 
+QString runtimeFilesystemManifestPath() {
+    // Resolve the manifest that declares the elevated filesystem tools from the TRUSTED
+    // executable directory first. The source-tree walk below trusts the current working
+    // directory, which an attacker can control when the app is launched from a user-writable
+    // folder (e.g. a portable extract), so it is gated behind an explicit developer opt-in and
+    // never used as the default for elevated operations.
     const QString appDir = QCoreApplication::applicationDirPath();
-    if (!appDir.trimmed().isEmpty()) {
-        const QString appManifest =
-            PartitionFileSystemToolManifest::defaultRuntimeManifestPath(appDir);
-        if (QFileInfo::exists(appManifest)) {
-            return appManifest;
+    const QString appManifest =
+        appDir.trimmed().isEmpty()
+            ? QString()
+            : PartitionFileSystemToolManifest::defaultRuntimeManifestPath(appDir);
+    if (!appManifest.isEmpty() && QFileInfo::exists(appManifest)) {
+        return appManifest;
+    }
+
+    if (qEnvironmentVariableIsSet("SAK_DEV_SOURCE_TREE")) {
+        const QString sourceManifest = sourceTreeManifestFromCwd();
+        if (!sourceManifest.isEmpty()) {
+            return sourceManifest;
         }
     }
-    return QDir::current().filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());
+
+    // Fall back to the trusted app-dir path (which then fails closed if the manifest is
+    // absent) rather than a CWD-relative path an attacker could populate.
+    return appManifest.isEmpty()
+               ? QDir::current().filePath(
+                     PartitionFileSystemToolManifest::defaultRuntimeRelativePath())
+               : appManifest;
 }
 
 QString runtimeApfsWriterCliPath() {
@@ -2144,7 +2165,10 @@ QString cloneTransferRawTargetFunctionsScript() {
         "Stop; if ($disk.IsBoot -or $disk.IsSystem) { throw 'Target disk is current OS "
         "disk' }; if ($disk.IsReadOnly) { throw 'Target disk is read-only' }; if "
         "($disk.BusType -eq 'Spaces') { throw 'Storage Spaces target disks are blocked' }; "
-        "Set-Disk -Number $n -IsOffline $true -ErrorAction SilentlyContinue; return $n }\n"
+        "Set-Disk -Number $n -IsOffline $true -ErrorAction SilentlyContinue; $verify = "
+        "Get-Disk -Number $n -ErrorAction Stop; if (-not $verify.IsOffline) { throw "
+        "'Could not take target disk offline (locked/pagefile); aborting to avoid "
+        "corrupting mounted volumes' }; return $n }\n"
         "function Restore-SakRawWriteTarget($n) { if ($null -ne $n) { Set-Disk -Number $n "
         "-IsOffline $false -ErrorAction SilentlyContinue } }\n");
 }
@@ -4412,7 +4436,7 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "$destination = ('{0}:\\{1}' -f $targetVolume.DriveLetter, $mergeFolder)\n"
                      "New-Item -ItemType Directory -Force -Path $destination | Out-Null\n"
                      "robocopy.exe ('{0}:\\' -f $sourceVolume.DriveLetter) $destination /E "
-                     "/COPY:DAT /DCOPY:DAT /R:1 /W:1\n"
+                     "/COPYALL /DCOPY:DAT /R:1 /W:1\n"
                      "if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }\n"
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
                      "$supported = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %4\n"
