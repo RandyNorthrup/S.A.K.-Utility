@@ -106,6 +106,20 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     return doc.object();
 }
 
+// Return a non-empty error if the response is flagged incomplete (e.g. truncated by
+// max_output_tokens), else an empty string.
+[[nodiscard]] QString incompleteResponseError(const QJsonObject& root) {
+    if (root.value(QStringLiteral("status")).toString() != QStringLiteral("incomplete")) {
+        return {};
+    }
+    const QString reason = root.value(QStringLiteral("incomplete_details"))
+                               .toObject()
+                               .value(QStringLiteral("reason"))
+                               .toString();
+    return reason.isEmpty() ? QStringLiteral("OpenAI response is incomplete")
+                            : QStringLiteral("OpenAI response is incomplete: %1").arg(reason);
+}
+
 void appendFunctionCallFromOutputItem(OpenAIResponseResult* result, const QJsonObject& item) {
     OpenAIFunctionCall call;
     call.call_id = item.value(QStringLiteral("call_id")).toString();
@@ -694,6 +708,11 @@ void OpenAIResponsesClient::cancel() {
 
     auto* reply = m_current_reply;
     m_current_reply = nullptr;
+    // Detach our finished handler first: abort() fires finished synchronously, which
+    // would otherwise run handleCreateFinished and emit requestFailed("Operation
+    // canceled") plus a second requestFinished(), making the UI record the user's
+    // deliberate stop as a failed request.
+    reply->disconnect(this);
     reply->abort();
     reply->deleteLater();
     Q_EMIT requestFinished();
@@ -724,6 +743,15 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     result.output_text = output_parts.join(QStringLiteral("\n"));
     if (result.output_text.isEmpty()) {
         result.output_text = root->value(QStringLiteral("output_text")).toString();
+    }
+
+    // A status of "incomplete" (e.g. max_output_tokens) can carry a truncated tool call
+    // with invalid JSON arguments; treating it as complete would let a partial/dangerous
+    // call (e.g. a half-formed delete path) reach dispatch. Fail closed instead.
+    const QString incomplete = incompleteResponseError(*root);
+    if (!incomplete.isEmpty() && error_message) {
+        *error_message = incomplete;
+        return result;
     }
 
     if (result.output_text.trimmed().isEmpty() && result.function_calls.isEmpty() &&

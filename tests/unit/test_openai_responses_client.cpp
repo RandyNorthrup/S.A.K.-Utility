@@ -19,6 +19,7 @@ private Q_SLOTS:
     void parseResponseObject_extractsFunctionCall();
     void parseResponseObject_extractsUrlCitations();
     void parseResponseObject_apiError_reportsMessage();
+    void parseResponseObject_incompleteStatusReportsError();
     void parseInputTokenCountObject_extractsExactCount();
     void parseModelsList_extractsIds();
     void redactSecrets_redactsOpenAiAndBearerTokens();
@@ -392,6 +393,31 @@ void OpenAIResponsesClientTests::parseResponseObject_extractsFunctionCall() {
     QCOMPARE(result.function_calls[0].call_id, QStringLiteral("call_123"));
     QCOMPARE(result.function_calls[0].name, QStringLiteral("run_powershell"));
     QVERIFY(result.function_calls[0].arguments_json.contains(QStringLiteral("Get-PhysicalDisk")));
+}
+
+void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsError() {
+    // A truncated (max_output_tokens) response carries a function_call with invalid,
+    // partial JSON arguments. It must be reported as an error, not accepted as complete,
+    // so the truncated tool call never reaches dispatch.
+    const QByteArray json = R"({
+      "id": "resp_1",
+      "status": "incomplete",
+      "incomplete_details": {"reason": "max_output_tokens"},
+      "output": [
+        {
+          "type": "function_call",
+          "call_id": "c1",
+          "name": "delete_files",
+          "arguments": "{\"path\":\"/tmp"
+        }
+      ]
+    })";
+
+    QString error;
+    const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
+    QVERIFY(!error.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("incomplete")));
+    QVERIFY(error.contains(QStringLiteral("max_output_tokens")));
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {
