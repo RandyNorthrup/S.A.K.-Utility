@@ -1384,27 +1384,26 @@ void EmailCalendarDialog::onExportIcsClicked() {
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::Ics;
     config.output_path = dir_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    // One export pass aggregating every folder: the controller rejects a second
+    // export while the first is still running, so a per-folder loop exported only
+    // the first folder.
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 void EmailCalendarDialog::onExportCsvClicked() {
-    QString file_path = QFileDialog::getSaveFileName(this,
-                                                     tr("Export Calendar as CSV"),
-                                                     QStringLiteral("calendar.csv"),
-                                                     tr("CSV Files (*.csv)"));
-    if (file_path.isEmpty()) {
+    // The exporter treats output_path as a directory (it appends its own
+    // calendar_export.csv), so ask for a directory, not a file name.
+    QString dir_path =
+        QFileDialog::getExistingDirectory(this, tr("Select Export Directory for Calendar CSV"));
+    if (dir_path.isEmpty()) {
         return;
     }
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::CsvCalendar;
-    config.output_path = file_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    config.output_path = dir_path;
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 // ============================================================================
@@ -1451,6 +1450,53 @@ void EmailCalendarDialog::onDayEventListContextMenu(const QPoint& pos) {
     showEventContextMenu(m_day_event_list->viewport()->mapToGlobal(pos), node_id);
 }
 
+namespace {
+
+/// Escape a string for an RFC 5545 TEXT value so event text cannot terminate the
+/// property line or inject a forged property: backslash, semicolon and comma are
+/// escaped and every CR/LF becomes the literal "\n".
+QString icsEscapeText(const QString& value) {
+    QString out = value;
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char(';'), QStringLiteral("\\;"));
+    out.replace(QLatin1Char(','), QStringLiteral("\\,"));
+    out.replace(QStringLiteral("\r\n"), QStringLiteral("\\n"));
+    out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
+    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    return out;
+}
+
+/// Fold a content line to <=75 octets per RFC 5545 3.1; continuation lines begin
+/// with a single space. Folding is byte-based and never splits a UTF-8 sequence.
+QString icsFoldLine(const QString& line) {
+    constexpr int kMaxOctets = 75;
+    const QByteArray utf8 = line.toUtf8();
+    if (utf8.size() <= kMaxOctets) {
+        return line;
+    }
+    QByteArray folded;
+    int pos = 0;
+    while (pos < utf8.size()) {
+        int take = qMin(kMaxOctets, static_cast<int>(utf8.size()) - pos);
+        while (pos + take < utf8.size() && take > 1 && (utf8.at(pos + take) & 0xC0) == 0x80) {
+            --take;
+        }
+        if (!folded.isEmpty()) {
+            folded += "\r\n ";
+        }
+        folded += utf8.mid(pos, take);
+        pos += take;
+    }
+    return QString::fromUtf8(folded);
+}
+
+/// Emit one folded, escaped RFC 5545 TEXT property line.
+void writeIcsTextProperty(QTextStream& out, const QString& name, const QString& value) {
+    out << icsFoldLine(name + QStringLiteral(":") + icsEscapeText(value)) << "\r\n";
+}
+
+}  // namespace
+
 void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
     QString file_path = QFileDialog::getSaveFileName(
         this,
@@ -1476,12 +1522,14 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
     if (evt.end_time.isValid()) {
         out << "DTEND:" << evt.end_time.toUTC().toString("yyyyMMdd'T'HHmmss'Z'") << "\r\n";
     }
-    out << "SUMMARY:" << evt.subject << "\r\n";
+    writeIcsTextProperty(out, QStringLiteral("SUMMARY"), evt.subject);
     if (!evt.location.isEmpty()) {
-        out << "LOCATION:" << evt.location << "\r\n";
+        writeIcsTextProperty(out, QStringLiteral("LOCATION"), evt.location);
     }
     if (!evt.body_plain.isEmpty()) {
-        out << "DESCRIPTION:" << evt.body_plain.left(kIcsDescriptionMaxChars) << "\r\n";
+        writeIcsTextProperty(out,
+                             QStringLiteral("DESCRIPTION"),
+                             evt.body_plain.left(kIcsDescriptionMaxChars));
     }
     out << "END:VEVENT\r\n"
         << "END:VCALENDAR\r\n";

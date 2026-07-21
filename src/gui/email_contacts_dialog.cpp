@@ -223,27 +223,26 @@ void EmailContactsDialog::onExportVcfClicked() {
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::Vcf;
     config.output_path = dir_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    // One export pass aggregating every folder: the controller rejects a second
+    // export while the first is still running, so a per-folder loop exported only
+    // the first folder.
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 void EmailContactsDialog::onExportCsvClicked() {
-    QString file_path = QFileDialog::getSaveFileName(this,
-                                                     tr("Export Contacts as CSV"),
-                                                     QStringLiteral("contacts.csv"),
-                                                     tr("CSV Files (*.csv)"));
-    if (file_path.isEmpty()) {
+    // The exporter treats output_path as a directory (it appends its own
+    // contacts_export.csv), so ask for a directory, not a file name.
+    QString dir_path =
+        QFileDialog::getExistingDirectory(this, tr("Select Export Directory for Contacts CSV"));
+    if (dir_path.isEmpty()) {
         return;
     }
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::CsvContacts;
-    config.output_path = file_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    config.output_path = dir_path;
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,

@@ -191,6 +191,25 @@ void prepareMessageWriters(sak::ExportFormat format,
     }
 }
 
+/// Append every item node id in a folder to `out`, paging past the per-call
+/// kMaxItemsPerLoad cap so no item beyond the first page is dropped.
+void pageFolderItemIds(PstParser* parser, uint64_t folder_id, QVector<uint64_t>& out) {
+    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
+        auto items_result =
+            parser->readFolderItems(folder_id, offset, sak::email::kMaxItemsPerLoad);
+        if (!items_result.has_value()) {
+            break;
+        }
+        const auto& page = items_result.value();
+        for (const auto& item : page) {
+            out.append(item.node_id);
+        }
+        if (page.size() < sak::email::kMaxItemsPerLoad) {
+            break;
+        }
+    }
+}
+
 /// Human-readable name for an attachment, falling back to an index-based label.
 QString attachmentDisplayName(const sak::PstAttachmentInfo& att, int att_idx) {
     const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
@@ -447,24 +466,19 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
 QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
                                                     const sak::EmailExportConfig& config) {
     QVector<uint64_t> item_ids = config.item_ids;
-    if (!item_ids.isEmpty() || config.folder_id == 0) {
+    if (!item_ids.isEmpty()) {
         return item_ids;
     }
-    // Page through the whole folder: readFolderItems caps each call at kMaxItemsPerLoad,
-    // so a single call silently drops every item past the first page.
-    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
-        auto items_result =
-            parser->readFolderItems(config.folder_id, offset, sak::email::kMaxItemsPerLoad);
-        if (!items_result.has_value()) {
-            break;
-        }
-        const auto& page = items_result.value();
-        for (const auto& item : page) {
-            item_ids.append(item.node_id);
-        }
-        if (page.size() < sak::email::kMaxItemsPerLoad) {
-            break;
-        }
+    // Aggregate every requested folder into one pass. folder_ids (a multi-folder
+    // export) takes precedence; fall back to the single folder_id. The caller
+    // serializes exports and CSV/ICS write one output file, so all folders must
+    // be unioned here rather than exported one call at a time.
+    QVector<uint64_t> folders = config.folder_ids;
+    if (folders.isEmpty() && config.folder_id != 0) {
+        folders.append(config.folder_id);
+    }
+    for (uint64_t folder : folders) {
+        pageFolderItemIds(parser, folder, item_ids);
     }
     return item_ids;
 }

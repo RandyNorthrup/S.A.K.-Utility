@@ -331,9 +331,10 @@ struct EmailSearchHit {
 /// @brief Configuration for an export operation
 struct EmailExportConfig {
     ExportFormat format = ExportFormat::Eml;
-    QString output_path;         ///< Directory to export into
-    QVector<uint64_t> item_ids;  ///< Specific items (empty = entire folder)
-    uint64_t folder_id = 0;      ///< Folder to export (0 = all selected)
+    QString output_path;           ///< Directory to export into
+    QVector<uint64_t> item_ids;    ///< Specific items (empty = entire folder)
+    uint64_t folder_id = 0;        ///< Single folder to export (0 = all selected)
+    QVector<uint64_t> folder_ids;  ///< Multiple folders to aggregate in one pass
     bool recurse_subfolders = false;
 
     // CSV options
