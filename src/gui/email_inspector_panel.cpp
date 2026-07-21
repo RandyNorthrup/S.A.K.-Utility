@@ -1355,6 +1355,7 @@ void EmailInspectorPanel::onFileClosed() {
     m_current_items.clear();
     m_current_folder_id = 0;
     m_current_item_id = 0;
+    m_current_detail = {};
     m_current_page = 0;
     m_current_total = 0;
     m_contact_folder_ids.clear();
@@ -1597,6 +1598,15 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
 
     // Display headers
     m_headers_browser->setPlainText(detail.raw_headers);
+
+    // Commit the state the attachment-save handlers read. Without this the MBOX
+    // flow left m_current_detail / m_current_item_id at their stale PST values,
+    // so Save Attachment(s) acted on a previously-selected PST message.
+    m_current_item_id = static_cast<uint64_t>(detail.message_index);
+    sak::PstItemDetail normalized;
+    normalized.node_id = m_current_item_id;
+    normalized.attachments = detail.attachments;
+    m_current_detail = normalized;
 
     // Attachments
     displayAttachments(detail.attachments);
