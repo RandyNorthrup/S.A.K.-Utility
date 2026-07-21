@@ -169,6 +169,23 @@ qint64 jsonlSizeCapForLabel(const QString& label) {
     return kMaxTraceJsonlBytes;
 }
 
+bool writeAppendPayload(QFile& file,
+                        const QJsonObject& object,
+                        const QString& label,
+                        QString* error_message) {
+    const qint64 start_size = file.size();
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    if (file.write(payload) == payload.size() && file.flush()) {
+        return true;
+    }
+    // Roll the partial line back so the JSONL stays parseable and report failure.
+    file.resize(start_size);
+    if (error_message) {
+        *error_message = QStringLiteral("Could not append %1: %2").arg(label, file.errorString());
+    }
+    return false;
+}
+
 bool appendJsonLine(const QString& path,
                     const QJsonObject& object,
                     const QString& label,
@@ -199,9 +216,7 @@ bool appendJsonLine(const QString& path,
         }
         return false;
     }
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-    file.write("\n");
-    return true;
+    return writeAppendPayload(file, object, label, error_message);
 }
 
 }  // namespace
@@ -220,7 +235,10 @@ QJsonObject AiTraceEvent::toJson() const {
     obj[QStringLiteral("status")] = status;
     obj[QStringLiteral("duration_ms")] = static_cast<double>(duration_ms);
     obj[QStringLiteral("token_usage")] = tokenUsageToJson(token_usage);
-    obj[QStringLiteral("metadata")] = metadata;
+    // Redact here too: trace.jsonl must share the same secret-redaction guarantee
+    // as turn_replay.jsonl, or workflow input values / command previews containing
+    // passwords, bearer tokens or API keys are persisted in cleartext.
+    obj[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
     return obj;
 }
 
@@ -264,7 +282,8 @@ QJsonObject AiActivityEvent::toJson() const {
     obj[QStringLiteral("question_for_human")] = question_for_human;
     obj[QStringLiteral("recovery_action")] = recovery_action;
     obj[QStringLiteral("error")] = error;
-    obj[QStringLiteral("metadata")] = metadata;
+    // Same redaction as trace.jsonl / turn_replay.jsonl (see AiTraceEvent::toJson).
+    obj[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
     return obj;
 }
 

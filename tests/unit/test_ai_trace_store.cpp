@@ -20,6 +20,7 @@ private Q_SLOTS:
     void traceEvent_roundTripsTokenUsageAndMetadata();
     void activityEvent_roundTripsContractFields();
     void appendReplayEvent_writesCompactReplayJsonl();
+    void traceAndActivityMetadata_isRedacted();
 };
 
 void AiTraceStoreTests::appendEvent_writesTraceJsonl() {
@@ -220,6 +221,53 @@ void AiTraceStoreTests::appendReplayEvent_writesCompactReplayJsonl() {
     const QString line = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
     QVERIFY(!line.contains(QStringLiteral("ctx7") + QStringLiteral("sk-")));
     QVERIFY(!line.contains(QStringLiteral("abcdefghijklmnopqrstuvwxyz")));
+}
+
+void AiTraceStoreTests::traceAndActivityMetadata_isRedacted() {
+    // P08-16: trace.jsonl and activity.jsonl must redact secrets like the replay
+    // artifact does, not persist workflow input values / previews in cleartext.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+
+    const QString secret = QStringLiteral("ctx7") + QStringLiteral("s") +
+                           QStringLiteral("k-fc513191-580d-40c0-b244-17ea71f182b9");
+    QJsonObject metadata;
+    metadata[QStringLiteral("model")] = QStringLiteral("gpt-5.5");
+    metadata[QStringLiteral("api_key")] = secret;
+
+    QString error;
+    auto trace = sak::ai::TraceStore::event({QStringLiteral("run_5"),
+                                             QStringLiteral("model_call"),
+                                             QStringLiteral("responses.create"),
+                                             QStringLiteral("completed")});
+    trace.metadata = metadata;
+    QVERIFY2(store.appendEvent(trace, &error), qPrintable(error));
+
+    auto activity = sak::ai::TraceStore::activityEvent({QStringLiteral("session_5"),
+                                                        QStringLiteral("run_5"),
+                                                        QStringLiteral("tool_call"),
+                                                        QStringLiteral("complete"),
+                                                        QStringLiteral("done"),
+                                                        metadata});
+    QVERIFY2(store.appendActivityEvent(activity, &error), qPrintable(error));
+
+    const auto trace_events = store.loadEvents(&error);
+    QCOMPARE(trace_events.size(), 1);
+    QCOMPARE(trace_events.first().metadata.value(QStringLiteral("api_key")).toString(),
+             QStringLiteral("[redacted]"));
+    QCOMPARE(trace_events.first().metadata.value(QStringLiteral("model")).toString(),
+             QStringLiteral("gpt-5.5"));
+
+    const auto activity_events = store.loadActivityEvents(&error);
+    QCOMPARE(activity_events.size(), 1);
+    QCOMPARE(activity_events.first().metadata.value(QStringLiteral("api_key")).toString(),
+             QStringLiteral("[redacted]"));
+
+    // The raw secret must not survive anywhere in the trace file.
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    QVERIFY(!QString::fromUtf8(file.readAll()).contains(secret));
 }
 
 QTEST_GUILESS_MAIN(AiTraceStoreTests)

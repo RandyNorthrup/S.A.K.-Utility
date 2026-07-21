@@ -43,12 +43,21 @@ TokenUsage TokenUsageTracker::fromJson(const QJsonObject& usage_json) noexcept {
     usage.output_tokens = jsonInt64(usage_json, QStringLiteral("output_tokens"));
     usage.total_tokens = jsonInt64(usage_json, QStringLiteral("total_tokens"));
 
+    // The OpenAI API path nests these under *_tokens_details; the trace-store
+    // writer (tokenUsageToJson) emits them as flat keys. Accept both so persisted
+    // trace/activity events round-trip instead of always reloading as zero.
     const auto input_details = usage_json.value(QStringLiteral("input_tokens_details")).toObject();
     usage.cached_input_tokens = jsonInt64(input_details, QStringLiteral("cached_tokens"));
+    if (usage.cached_input_tokens == 0) {
+        usage.cached_input_tokens = jsonInt64(usage_json, QStringLiteral("cached_input_tokens"));
+    }
 
     const auto output_details =
         usage_json.value(QStringLiteral("output_tokens_details")).toObject();
     usage.reasoning_tokens = jsonInt64(output_details, QStringLiteral("reasoning_tokens"));
+    if (usage.reasoning_tokens == 0) {
+        usage.reasoning_tokens = jsonInt64(usage_json, QStringLiteral("reasoning_tokens"));
+    }
 
     return usage;
 }
