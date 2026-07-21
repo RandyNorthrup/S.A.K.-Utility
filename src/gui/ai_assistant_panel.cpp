@@ -1995,9 +1995,15 @@ QString dataUrlForBytes(const QString& mime_type, const QByteArray& bytes) {
 }
 
 QString safeDownloadFileName(const QUrl& url, const QString& filename) {
-    QString safe_name = filename.trimmed();
+    // Reduce to a bare filename: a download must never create or escape into other
+    // directories, so strip any path components the model supplied (defense in depth;
+    // ConversationStore::artifactPath also confines the result to the downloads dir).
+    QString safe_name = QFileInfo(filename.trimmed()).fileName();
     if (safe_name.isEmpty()) {
         safe_name = QFileInfo(url.path()).fileName();
+    }
+    if (safe_name == QStringLiteral("..") || safe_name == QStringLiteral(".")) {
+        safe_name.clear();
     }
     if (safe_name.isEmpty()) {
         safe_name = QStringLiteral("download_%1.bin")
@@ -5431,6 +5437,10 @@ bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& con
         metadata[QStringLiteral("result_error_message")] =
             result_error.left(kMetadataPreviewMaxChars);
     }
+    // Record the result under the key the report reader inspects (tool_result), so a
+    // built-in tool failure (success:false) surfaces as a report finding rather than
+    // vanishing. Persisted metadata is redacted by the trace store on write.
+    metadata[QStringLiteral("tool_result")] = result;
     const QString status = outcome.dispatched
                                ? (result.value(QStringLiteral("success")).toBool(false)
                                       ? QStringLiteral("completed")
@@ -7208,7 +7218,15 @@ QString AiAssistantPanel::generateReport(QString* error_message,
     inputs.citations = m_citations;
     inputs.tool_calls = m_toolCallsThisSession;
 
+    if (error_message) {
+        error_message->clear();
+    }
     PanelReportData report_data = collectPanelReportData(inputs, report_path, error_message);
+    if (error_message && !error_message->isEmpty()) {
+        // The transcript exists but could not be read (locked/ACL denies read); fail rather
+        // than emit a report that silently presents an empty conversation as complete.
+        return {};
+    }
     appendTraceAndGateData(inputs, &report_data);
     evaluatePanelReportData(&report_data);
     const QString output_text = renderPanelReport(report_data, report_path, output_format);
@@ -9962,12 +9980,24 @@ void AiAssistantPanel::onSessionSelected(int index) {
         return;
     }
 
+    if (isAiBusy()) {
+        // Switching the active session mid-run would persist the arriving response into
+        // the wrong session; block it and revert the combo to the running session.
+        appendLocalEvent(
+            tr("Cannot switch AI sessions while a run is in progress. Stop it first."));
+        reloadSessionPicker();
+        return;
+    }
+
     QString error;
     if (!m_conversationStore->openSession(session_id, &error)) {
         appendLocalEvent(tr("Could not open AI session: %1").arg(error));
         return;
     }
 
+    // Reset per-session safety state so it cannot leak across a switch (e.g. a restore
+    // point already offered in the previous session must not suppress the offer here).
+    m_restorePointOfferedThisSession = false;
     m_previousResponseId.clear();
     if (m_tokenTracker) {
         m_tokenTracker->reset();
@@ -10347,6 +10377,9 @@ void AiAssistantPanel::cancelLocalAiWork() {
     if (m_toolTurn.active()) {
         resetPendingToolTurn();
     }
+    // Tearing down the tool turn must also clear the active-tool count; otherwise the
+    // status keeps reporting N tools running after the user has stopped the run.
+    m_runState.active_tools = 0;
     m_activeUserMessage.clear();
     m_pendingSteeringMessages.clear();
 }
