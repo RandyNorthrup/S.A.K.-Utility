@@ -36,6 +36,7 @@ private Q_SLOTS:
     void classifiesWin32McpToolRisk();
     void win32McpEnvironmentIncludesProviderValues();
     void win32McpResultExtractsTextAndRiskFlags();
+    void win32McpResultFlagsLogicalToolError();
     void planWin32McpCallBuildsReadOnlyPlan();
     void planWin32McpCallClampsTimeout();
     void checkAvailabilityRejectsUnsupportedAppAction();
@@ -159,6 +160,32 @@ void AiProviderGatewayTests::win32McpResultExtractsTextAndRiskFlags() {
     QCOMPARE(result.value(QStringLiteral("result_text")).toString(),
              QStringLiteral("Window A\nWindow B"));
     QVERIFY(result.contains(QStringLiteral("mcp_result")));
+    // A successful result must not be flagged as a tool error.
+    QVERIFY(!result.value(QStringLiteral("mcp_is_error")).toBool(true));
+}
+
+void AiProviderGatewayTests::win32McpResultFlagsLogicalToolError() {
+    // An MCP tools/call result with isError:true is a logical failure (no transport
+    // error); win32McpResult must surface it so the runner does not record a success.
+    const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("win32_mcp")}};
+    const QJsonObject mcp_message{
+        {QStringLiteral("result"),
+         QJsonObject{{QStringLiteral("isError"), true},
+                     {QStringLiteral("content"),
+                      QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                             {QStringLiteral("text"),
+                                              QStringLiteral("element not found")}}}}}}};
+
+    const QJsonObject result =
+        sak::ai::AiProviderGateway::win32McpResult(provider,
+                                                   QStringLiteral("click_element"),
+                                                   QJsonObject{},
+                                                   QStringLiteral("standard"),
+                                                   mcp_message);
+
+    QVERIFY(result.value(QStringLiteral("mcp_is_error")).toBool(false));
+    QCOMPARE(result.value(QStringLiteral("result_text")).toString(),
+             QStringLiteral("element not found"));
 }
 
 void AiProviderGatewayTests::planWin32McpCallBuildsReadOnlyPlan() {

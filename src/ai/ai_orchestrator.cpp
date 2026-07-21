@@ -273,6 +273,13 @@ QJsonObject AiOrchestratorResult::toJson() const {
         flag_array.append(flag);
     }
     obj[QStringLiteral("flags")] = flag_array;
+    // Persist cleanup failures: recordWorkflowResult and the run trace serialize this
+    // object, and omitting the field silently drops which cleanup phases failed.
+    QJsonArray cleanup_array;
+    for (const auto& phase_id : cleanup_failures) {
+        cleanup_array.append(phase_id);
+    }
+    obj[QStringLiteral("cleanup_failures")] = cleanup_array;
     return obj;
 }
 

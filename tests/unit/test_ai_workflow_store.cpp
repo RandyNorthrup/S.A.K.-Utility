@@ -19,6 +19,8 @@ private Q_SLOTS:
     void rejectInvalidWorkflow();
     void loadBuiltInWorkflows();
     void userDirectoryOverridesBuiltInWorkflow();
+    void rejectUnknownPhaseType();
+    void earlierInvalidFileDoesNotRejectLaterValidOne();
 };
 
 namespace {
@@ -129,6 +131,48 @@ void AiWorkflowStoreTests::userDirectoryOverridesBuiltInWorkflow() {
     const auto* workflow = store.workflowById(QStringLiteral("download_offline_installer"));
     QVERIFY(workflow != nullptr);
     QCOMPARE(workflow->title, QStringLiteral("Custom Offline Installer"));
+}
+
+void AiWorkflowStoreTests::rejectUnknownPhaseType() {
+    // A misspelled phase type (e.g. "tool-action") has no runtime handler; it must fail
+    // validation at load rather than silently loading and only erroring at run time.
+    QJsonObject object = validWorkflowObject();
+    QJsonObject phase = object.value(QStringLiteral("phases")).toArray().at(0).toObject();
+    phase[QStringLiteral("type")] = QStringLiteral("tool-action");
+    object[QStringLiteral("phases")] = QJsonArray{phase};
+
+    QStringList errors;
+    const auto workflow =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("bad_type"), &errors);
+    QVERIFY(!workflow.isValid());
+
+    QStringList detail;
+    (void)workflow.isValid(&detail);
+    QVERIFY(detail.join(QStringLiteral("\n")).contains(QStringLiteral("unsupported type")));
+}
+
+void AiWorkflowStoreTests::earlierInvalidFileDoesNotRejectLaterValidOne() {
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+
+    // a_bad.json is valid JSON but an invalid workflow; b_good.json is fully valid.
+    // Directory load is name-ordered, so the bad file is processed first and appends to
+    // the shared error list. The good file must still load (isValid must be delta-based).
+    QJsonObject bad = validWorkflowObject(QStringLiteral("bad_wf"));
+    bad.remove(QStringLiteral("id"));
+    bad.remove(QStringLiteral("title"));
+    QVERIFY(writeJsonFile(QDir(temp_dir.path()).filePath(QStringLiteral("a_bad.json")), bad));
+
+    const QJsonObject good = validWorkflowObject(QStringLiteral("good_wf"),
+                                                 QStringLiteral("Good Workflow"));
+    QVERIFY(writeJsonFile(QDir(temp_dir.path()).filePath(QStringLiteral("b_good.json")), good));
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    // The load returns false because a_bad.json is invalid; the good file must still load.
+    (void)store.loadDirectory(temp_dir.path(), &errors);
+
+    QVERIFY(store.workflowById(QStringLiteral("good_wf")) != nullptr);
 }
 
 QTEST_MAIN(AiWorkflowStoreTests)

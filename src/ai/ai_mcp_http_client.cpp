@@ -66,13 +66,15 @@ struct HttpWorkerSinks {
     return doc.object();
 }
 
-[[nodiscard]] QJsonObject extractJsonRpcMessage(const QByteArray& response_body,
-                                                QString* error_message) {
-    const QByteArray trimmed = response_body.trimmed();
-    if (trimmed.startsWith('{')) {
-        return parseJsonObject(trimmed, error_message);
-    }
+// A JSON-RPC response carries an id and either a result or an error; a notification
+// (e.g. notifications/progress) has a method and no id. Only the former is our answer.
+[[nodiscard]] bool isJsonRpcResponse(const QJsonObject& object) {
+    return object.contains(QStringLiteral("id")) &&
+           (object.contains(QStringLiteral("result")) || object.contains(QStringLiteral("error")));
+}
 
+[[nodiscard]] QJsonObject scanSseForJsonRpcResponse(const QByteArray& response_body,
+                                                    QString* error_message) {
     QByteArray combined_data;
     const QList<QByteArray> lines = response_body.split('\n');
     for (QByteArray line : lines) {
@@ -87,27 +89,40 @@ struct HttpWorkerSinks {
 
         QString ignored_error;
         const QJsonObject object = parseJsonObject(data, &ignored_error);
-        if (!object.isEmpty()) {
+        if (object.isEmpty()) {
+            // A JSON object may span multiple data: lines; accumulate partial fragments.
+            if (!combined_data.isEmpty()) {
+                combined_data.append('\n');
+            }
+            combined_data.append(data);
+            continue;
+        }
+        // Skip streamed notifications (progress/logging) that precede the response, so we
+        // return the id-bearing result rather than the first data event.
+        if (isJsonRpcResponse(object)) {
             if (error_message) {
                 error_message->clear();
             }
             return object;
         }
-
-        if (!combined_data.isEmpty()) {
-            combined_data.append('\n');
-        }
-        combined_data.append(data);
     }
 
     if (!combined_data.isEmpty()) {
         return parseJsonObject(combined_data, error_message);
     }
-
     if (error_message) {
         *error_message = QStringLiteral("MCP response did not contain JSON-RPC data");
     }
     return {};
+}
+
+[[nodiscard]] QJsonObject extractJsonRpcMessage(const QByteArray& response_body,
+                                                QString* error_message) {
+    const QByteArray trimmed = response_body.trimmed();
+    if (trimmed.startsWith('{')) {
+        return parseJsonObject(trimmed, error_message);
+    }
+    return scanSseForJsonRpcResponse(response_body, error_message);
 }
 
 class HttpToolCallWorker final : public QObject {

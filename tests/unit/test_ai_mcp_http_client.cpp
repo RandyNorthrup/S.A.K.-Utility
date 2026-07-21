@@ -16,6 +16,7 @@ private Q_SLOTS:
     void parsesSseJsonRpcMessage();
     void parsesPlainJsonRpcMessage();
     void rejectsSseWithoutJsonRpcData();
+    void skipsSseNotificationsBeforeResponse();
 };
 
 void AiMcpHttpClientTests::buildsMcpToolCallPayload() {
@@ -57,6 +58,27 @@ void AiMcpHttpClientTests::parsesSseJsonRpcMessage() {
                  .value(QStringLiteral("text"))
                  .toString(),
              QStringLiteral("ok"));
+}
+
+void AiMcpHttpClientTests::skipsSseNotificationsBeforeResponse() {
+    // A spec-compliant server may stream a progress notification (no id) before the
+    // id-bearing result. The first data event must not be mistaken for the response.
+    const QByteArray response =
+        "data: "
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}\n"
+        "\n"
+        "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\","
+        "\"text\":\"done\"}]}}\n"
+        "\n";
+
+    QString error;
+    const QJsonObject message = sak::ai::AiMcpHttpClient::extractJsonRpcMessageForTesting(response,
+                                                                                          &error);
+
+    QVERIFY(error.isEmpty());
+    QCOMPARE(message.value(QStringLiteral("id")).toInt(), 1);
+    QVERIFY(message.contains(QStringLiteral("result")));
+    QVERIFY(!message.contains(QStringLiteral("method")));
 }
 
 void AiMcpHttpClientTests::parsesPlainJsonRpcMessage() {

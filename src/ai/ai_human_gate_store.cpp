@@ -36,8 +36,18 @@ bool appendJsonLine(const QString& path, const QJsonObject& object, QString* err
         }
         return false;
     }
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-    file.write("\n");
+    const qint64 original_size = file.size();
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    if (file.write(payload) != payload.size() || !file.flush()) {
+        // Roll back a partial record: otherwise loadGates skips the malformed line and an
+        // already-approved gate resolves back to its older pending record on next start.
+        const QString detail = file.errorString();
+        file.resize(original_size);
+        if (error_message) {
+            *error_message = QStringLiteral("Short write to human-gate log: %1").arg(detail);
+        }
+        return false;
+    }
     return true;
 }
 

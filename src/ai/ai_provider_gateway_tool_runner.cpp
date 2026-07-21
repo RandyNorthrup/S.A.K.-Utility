@@ -125,7 +125,7 @@ QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& pla
 }
 
 QJsonObject runWin32McpCall(const QJsonObject& args,
-                            AiProviderGateway* gateway,
+                            const AiProviderGateway* gateway,
                             AiProviderGatewayToolAccess access,
                             const AiProviderGatewayToolCallbacks& callbacks) {
     if (chatOnly(access)) {
@@ -145,6 +145,11 @@ QJsonObject runWin32McpCall(const QJsonObject& args,
     QJsonObject result = gateway->callWin32Mcp(plan, &error);
     if (!error.isEmpty()) {
         return toolError(error);
+    }
+    if (result.value(QStringLiteral("mcp_is_error")).toBool(false)) {
+        const QString text = result.value(QStringLiteral("result_text")).toString();
+        return toolError(text.isEmpty() ? QStringLiteral("Win32 MCP tool reported an error")
+                                        : QStringLiteral("Win32 MCP tool error: %1").arg(text));
     }
     return finalizeResult(std::move(result), QStringLiteral("win32_mcp_call"));
 }
@@ -306,7 +311,7 @@ QJsonObject appActionPlanResult(const QString& operation,
 
 QJsonObject runGatewayReadOperation(const QString& operation,
                                     const QJsonObject& args,
-                                    AiProviderGateway* gateway) {
+                                    const AiProviderGateway* gateway) {
     QString error;
     QJsonObject result;
     if (operation == QLatin1String("providers")) {
@@ -337,7 +342,7 @@ QJsonObject runGatewayReadOperation(const QString& operation,
 }
 
 QJsonObject runAppAction(const QJsonObject& args,
-                         AiProviderGateway* gateway,
+                         const AiProviderGateway* gateway,
                          AiProviderGatewayToolAccess access,
                          const AiProviderGatewayToolCallbacks& callbacks,
                          AiProviderGatewayToolOptions options) {
@@ -392,7 +397,7 @@ QJsonObject runAppAction(const QJsonObject& args,
 }  // namespace
 
 QJsonObject AiProviderGatewayToolRunner::run(const QJsonObject& args,
-                                             AiProviderGateway* gateway,
+                                             const AiProviderGateway* gateway,
                                              AiProviderGatewayToolAccess access,
                                              const AiProviderGatewayToolCallbacks& callbacks,
                                              AiProviderGatewayToolOptions options) {

@@ -478,6 +478,12 @@ void AiOrchestratorTests::cleanupFailureRecordedButRunCompletes() {
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(),
              QStringLiteral("continue_degraded"));
     QVERIFY(recovery.value(QStringLiteral("safe_to_continue")).toBool(false));
+
+    // The persisted JSON (used by the transcript + run trace) must retain cleanup_failures.
+    const QJsonArray persisted =
+        result.toJson().value(QStringLiteral("cleanup_failures")).toArray();
+    QCOMPARE(persisted.size(), 1);
+    QCOMPARE(persisted.first().toString(), QStringLiteral("cleanup"));
 }
 
 void AiOrchestratorTests::retriesTransientToolFailureOnce() {

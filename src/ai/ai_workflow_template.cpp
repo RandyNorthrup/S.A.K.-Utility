@@ -159,6 +159,13 @@ void validateWorkflowRequiredFields(const WorkflowTemplate& workflow, QStringLis
     }
 }
 
+[[nodiscard]] bool isKnownPhaseType(const QString& type) {
+    return type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("overseer"), Qt::CaseInsensitive) == 0;
+}
+
 void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* errors) {
     for (const auto& phase : workflow.phases) {
         if (phase.id.isEmpty()) {
@@ -166,6 +173,11 @@ void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* error
         }
         if (phase.type.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 missing type").arg(phase.id));
+        } else if (!isKnownPhaseType(phase.type)) {
+            // Reject unknown types at load: at runtime they have no handler and only
+            // surface as a per-phase error, hiding the author's typo (e.g. "tool-action").
+            errors->append(
+                QStringLiteral("Phase %1 has unsupported type '%2'").arg(phase.id, phase.type));
         }
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
@@ -242,9 +254,13 @@ void appendStringListSummary(QStringList* lines,
 bool WorkflowTemplate::isValid(QStringList* errors) const {
     QStringList local_errors;
     QStringList* target = errors != nullptr ? errors : &local_errors;
+    // Judge validity by whether THIS workflow adds errors, not by whether the (possibly
+    // shared, accumulating) list is empty: a caller that reuses one list across files
+    // must not have an earlier file's error invalidate a later valid one.
+    const qsizetype before = target->size();
     validateWorkflowRequiredFields(*this, target);
     validateWorkflowPhases(*this, target);
-    return target->isEmpty();
+    return target->size() == before;
 }
 
 QString WorkflowTemplate::promptSummary() const {

@@ -45,7 +45,7 @@ struct AiProviderGatewayToolCallbacks {
 class AiProviderGatewayToolRunner {
 public:
     [[nodiscard]] static QJsonObject run(const QJsonObject& args,
-                                         AiProviderGateway* gateway,
+                                         const AiProviderGateway* gateway,
                                          AiProviderGatewayToolAccess access,
                                          const AiProviderGatewayToolCallbacks& callbacks,
                                          AiProviderGatewayToolOptions options = {});

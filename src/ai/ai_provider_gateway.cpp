@@ -640,6 +640,10 @@ QJsonObject AiProviderGateway::win32McpResult(const QJsonObject& provider,
     result[QStringLiteral("provider_tool")] = tool_name;
     result[QStringLiteral("mcp_request_arguments")] = tool_arguments;
     result[QStringLiteral("security_profile")] = security_profile;
+    // MCP tools/call signals a LOGICAL tool failure via result.isError (no transport
+    // error); surface it so callers do not record the call as a success.
+    result[QStringLiteral("mcp_is_error")] =
+        result_value.toObject().value(QStringLiteral("isError")).toBool(false);
     result[QStringLiteral("read_only_tool")] = isWin32ReadOnlyTool(tool_name);
     result[QStringLiteral("high_risk_tool")] = isWin32HighRiskTool(tool_name);
     result[QStringLiteral("mcp_result_preview_json")] =
