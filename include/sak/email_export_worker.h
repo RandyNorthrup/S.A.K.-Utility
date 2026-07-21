@@ -116,9 +116,19 @@ private:
     [[nodiscard]] bool exportAttachments(PstParser* parser,
                                          const sak::PstItemDetail& item,
                                          const QString& output_dir,
-                                         const sak::EmailExportConfig& config);
+                                         const sak::EmailExportConfig& config,
+                                         sak::EmailExportResult& result);
     [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachmentData(
-        PstParser* parser, const sak::PstItemDetail& item, const sak::EmailExportConfig& config);
+        PstParser* parser,
+        const sak::PstItemDetail& item,
+        const sak::EmailExportConfig& config,
+        sak::EmailExportResult& result);
+    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectMboxAttachmentData(
+        MboxParser* parser,
+        int message_index,
+        const sak::PstItemDetail& item,
+        const sak::EmailExportConfig& config,
+        sak::EmailExportResult& result);
     [[nodiscard]] bool saveSidecarAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& exported_file_path,

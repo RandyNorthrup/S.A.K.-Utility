@@ -191,6 +191,28 @@ void prepareMessageWriters(sak::ExportFormat format,
     }
 }
 
+/// Human-readable name for an attachment, falling back to an index-based label.
+QString attachmentDisplayName(const sak::PstAttachmentInfo& att, int att_idx) {
+    const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+    return name.isEmpty() ? QStringLiteral("attachment_%1").arg(att_idx) : name;
+}
+
+/// Whether an attachment should be extracted given the skip-inline and filter config.
+bool passesAttachmentFilter(const sak::PstAttachmentInfo& att,
+                            const sak::EmailExportConfig& config) {
+    if (config.skip_inline_images && !att.content_id.isEmpty()) {
+        return false;
+    }
+    if (config.attachment_filter.isEmpty()) {
+        return true;
+    }
+    const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+    QRegularExpression filter(QRegularExpression::wildcardToRegularExpression(
+                                  config.attachment_filter),
+                              QRegularExpression::CaseInsensitiveOption);
+    return filter.match(name).hasMatch();
+}
+
 /// Collect MBOX message indices to export
 QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& item_ids) {
     QVector<int> indices;
@@ -200,10 +222,19 @@ QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& ite
     if (!indices.isEmpty()) {
         return indices;
     }
-    auto messages = parser->readMessages(0, sak::email::kMaxItemsPerLoad);
-    if (messages.has_value()) {
-        for (const auto& msg : messages.value()) {
+    // Page through the whole mailbox: readMessages caps each call at kMaxItemsPerLoad,
+    // so a single call silently drops every message past the first page.
+    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
+        auto messages = parser->readMessages(offset, sak::email::kMaxItemsPerLoad);
+        if (!messages.has_value()) {
+            break;
+        }
+        const auto& page = messages.value();
+        for (const auto& msg : page) {
             indices.append(msg.message_index);
+        }
+        if (page.size() < sak::email::kMaxItemsPerLoad) {
+            break;
         }
     }
     return indices;
@@ -419,12 +450,21 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
     if (!item_ids.isEmpty() || config.folder_id == 0) {
         return item_ids;
     }
-    auto items_result = parser->readFolderItems(config.folder_id, 0, sak::email::kMaxItemsPerLoad);
-    if (!items_result.has_value()) {
-        return item_ids;
-    }
-    for (const auto& item : items_result.value()) {
-        item_ids.append(item.node_id);
+    // Page through the whole folder: readFolderItems caps each call at kMaxItemsPerLoad,
+    // so a single call silently drops every item past the first page.
+    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
+        auto items_result =
+            parser->readFolderItems(config.folder_id, offset, sak::email::kMaxItemsPerLoad);
+        if (!items_result.has_value()) {
+            break;
+        }
+        const auto& page = items_result.value();
+        for (const auto& item : page) {
+            item_ids.append(item.node_id);
+        }
+        if (page.size() < sak::email::kMaxItemsPerLoad) {
+            break;
+        }
     }
     return item_ids;
 }
@@ -486,7 +526,7 @@ bool EmailExportWorker::exportOnePstItem(const PstItemExportContext& context,
 
     auto attachment_data =
         isMessageFileFormat(context.config.format)
-            ? collectAttachmentData(context.parser, detail.value(), context.config)
+            ? collectAttachmentData(context.parser, detail.value(), context.config, context.result)
             : QVector<QPair<QString, QByteArray>>{};
     switch (context.config.format) {
     case sak::ExportFormat::Eml:
@@ -512,8 +552,11 @@ bool EmailExportWorker::exportOnePstItem(const PstItemExportContext& context,
             {detail.value(), context.config.output_path, index, attachment_data, false},
             context.result.total_bytes);
     case sak::ExportFormat::Attachments:
-        return exportAttachments(
-            context.parser, detail.value(), context.config.output_path, context.config);
+        return exportAttachments(context.parser,
+                                 detail.value(),
+                                 context.config.output_path,
+                                 context.config,
+                                 context.result);
     default:
         return false;
     }
@@ -663,7 +706,10 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
     }
 
     const auto item = mboxDetailAsPstItem(detail.value());
-    const QVector<QPair<QString, QByteArray>> attachment_data;
+    // Previously an empty vector, so every MBOX attachment was silently discarded.
+    // Read the real bytes so message-file writers embed/save them like the PST path.
+    const auto attachment_data = collectMboxAttachmentData(
+        context.parser, message_index, item, context.config, context.result);
     switch (context.effective_format) {
     case sak::ExportFormat::Html:
         return writeHtml(*context.writers.html, item, attachment_data, context.result.total_bytes);
@@ -1138,7 +1184,10 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
 // ============================================================================
 
 QVector<QPair<QString, QByteArray>> EmailExportWorker::collectAttachmentData(
-    PstParser* parser, const sak::PstItemDetail& item, const sak::EmailExportConfig& config) {
+    PstParser* parser,
+    const sak::PstItemDetail& item,
+    const sak::EmailExportConfig& config,
+    sak::EmailExportResult& result) {
     QVector<QPair<QString, QByteArray>> attachment_data;
     if (parser == nullptr || item.attachments.isEmpty()) {
         return attachment_data;
@@ -1150,13 +1199,48 @@ QVector<QPair<QString, QByteArray>> EmailExportWorker::collectAttachmentData(
         if (config.skip_inline_images && !att.content_id.isEmpty()) {
             continue;
         }
+        const QString name = attachmentDisplayName(att, att_idx);
         auto data = parser->readAttachmentData(item.node_id, att.index);
         if (!data.has_value()) {
+            // Surface the loss: an unreadable attachment is dropped from the message
+            // body, but the message was previously reported as fully exported.
+            result.errors.append(
+                QStringLiteral("Attachment '%1' in item NID %2 could not be read and was omitted")
+                    .arg(name)
+                    .arg(item.node_id));
             continue;
         }
-        QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-        if (name.isEmpty()) {
-            name = QStringLiteral("attachment_%1").arg(att_idx);
+        attachment_data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+    }
+
+    return attachment_data;
+}
+
+QVector<QPair<QString, QByteArray>> EmailExportWorker::collectMboxAttachmentData(
+    MboxParser* parser,
+    int message_index,
+    const sak::PstItemDetail& item,
+    const sak::EmailExportConfig& config,
+    sak::EmailExportResult& result) {
+    QVector<QPair<QString, QByteArray>> attachment_data;
+    if (parser == nullptr || item.attachments.isEmpty()) {
+        return attachment_data;
+    }
+    attachment_data.reserve(item.attachments.size());
+
+    for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
+        const auto& att = item.attachments.at(att_idx);
+        if (config.skip_inline_images && !att.content_id.isEmpty()) {
+            continue;
+        }
+        const QString name = attachmentDisplayName(att, att_idx);
+        auto data = parser->readAttachmentData(message_index, att.index);
+        if (!data.has_value()) {
+            result.errors.append(
+                QStringLiteral("Attachment '%1' in message %2 could not be read and was omitted")
+                    .arg(name)
+                    .arg(message_index));
+            continue;
         }
         attachment_data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
     }
@@ -1205,36 +1289,37 @@ bool EmailExportWorker::saveSidecarAttachments(
 bool EmailExportWorker::exportAttachments(PstParser* parser,
                                           const sak::PstItemDetail& item,
                                           const QString& output_dir,
-                                          const sak::EmailExportConfig& config) {
+                                          const sak::EmailExportConfig& config,
+                                          sak::EmailExportResult& result) {
     if (item.attachments.isEmpty()) {
         return true;
     }
 
-    bool any_success = false;
+    int eligible = 0;
+    int succeeded = 0;
+    QStringList failed_names;
     for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
         const auto& att = item.attachments[att_idx];
-
-        // Skip inline images if configured
-        if (config.skip_inline_images && !att.content_id.isEmpty()) {
+        if (!passesAttachmentFilter(att, config)) {
             continue;
         }
-
-        // Apply attachment filter if set
-        if (!config.attachment_filter.isEmpty()) {
-            QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-            QRegularExpression filter(QRegularExpression::wildcardToRegularExpression(
-                                          config.attachment_filter),
-                                      QRegularExpression::CaseInsensitiveOption);
-            if (!filter.match(name).hasMatch()) {
-                continue;
-            }
-        }
-
+        ++eligible;
         if (extractAttachment(parser, item.node_id, att_idx, output_dir)) {
-            any_success = true;
+            ++succeeded;
+        } else {
+            failed_names.append(attachmentDisplayName(att, att_idx));
         }
     }
-    return any_success;
+
+    // A message with an eligible attachment that failed to extract must be recorded as
+    // failed/partial, not silently counted complete because a sibling attachment succeeded.
+    if (succeeded < eligible) {
+        result.errors.append(QStringLiteral("Item NID %1: failed to extract attachment(s): %2")
+                                 .arg(item.node_id)
+                                 .arg(failed_names.join(QStringLiteral(", "))));
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
