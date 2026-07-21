@@ -252,37 +252,31 @@ void OstConversionWorker::processFolderTree(PstParser* parser,
     }
 }
 
-void OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
+bool OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
                                             PstParser* parser,
                                             const QString& folder_path,
                                             const OstConversionConfig& config,
                                             OstConversionResult& result) {
     switch (config.format) {
     case OstOutputFormat::Eml:
-        writeItemEml(item, parser, folder_path, config, result);
-        break;
+        return writeItemEml(item, parser, folder_path, config, result);
     case OstOutputFormat::Pst:
-        writeItemPst(item, parser, folder_path, config, result);
-        break;
+        return writeItemPst(item, parser, folder_path, config, result);
     case OstOutputFormat::Msg:
-        writeItemMsg(item, parser, folder_path, config, result);
-        break;
+        return writeItemMsg(item, parser, folder_path, config, result);
     case OstOutputFormat::Mbox:
-        writeItemMbox(item, parser, folder_path, config, result);
-        break;
+        return writeItemMbox(item, parser, folder_path, config, result);
     case OstOutputFormat::Dbx:
-        writeItemDbx(item, parser, folder_path, config, result);
-        break;
+        return writeItemDbx(item, parser, folder_path, config, result);
     case OstOutputFormat::Html:
-        writeItemHtml(item, parser, folder_path, config, result);
-        break;
+        return writeItemHtml(item, parser, folder_path, config, result);
     case OstOutputFormat::Pdf:
-        writeItemPdf(item, parser, folder_path, config, result);
-        break;
+        return writeItemPdf(item, parser, folder_path, config, result);
     case OstOutputFormat::ImapUpload:
-        // IMAP upload is handled by the controller, not per-item
-        break;
+        // IMAP upload is handled by the controller, not per-item.
+        return true;
     }
+    return true;
 }
 
 void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary,
@@ -316,10 +310,13 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
         return;
     }
 
-    writeItemByFormat(detail, parser, folder_path, config, result);
+    // Count exactly one outcome per item: the writers already increment
+    // items_failed on failure, so items_converted must only rise on success.
+    if (writeItemByFormat(detail, parser, folder_path, config, result)) {
+        ++result.items_converted;
+    }
 
     ++m_items_done;
-    ++result.items_converted;
     ++result.folders_processed;
 
     Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
@@ -438,24 +435,29 @@ bool OstConversionWorker::itemPassesDateFilter(const PstItemDetail& item,
 // ============================================================================
 
 QVector<QPair<QString, QByteArray>> OstConversionWorker::collectAttachments(
-    const PstItemDetail& item, PstParser* parser) {
+    const PstItemDetail& item, PstParser* parser, OstConversionResult& result) {
     QVector<QPair<QString, QByteArray>> attachment_data;
     for (const auto& att : item.attachments) {
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         auto data = parser->readAttachmentData(item.node_id, att.index);
         if (data.has_value()) {
-            QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
             attachment_data.append({name, data.value()});
+        } else {
+            // Surface the loss: the item is otherwise written, but an attachment
+            // declared in the metadata could not be read and is silently missing.
+            result.errors.append(QStringLiteral("Attachment '%1' dropped from '%2' (read failed)")
+                                     .arg(name, item.subject));
         }
     }
     return attachment_data;
 }
 
-void OstConversionWorker::writeItemEml(const PstItemDetail& item,
+bool OstConversionWorker::writeItemEml(const PstItemDetail& item,
                                        PstParser* parser,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     EmlWriter writer(config.output_directory,
                      config.prefix_filename_with_date,
@@ -465,10 +467,11 @@ void OstConversionWorker::writeItemEml(const PstItemDetail& item,
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write EML for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += writer.totalBytesWritten();
+    return true;
 }
 
 std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QString& folder_path) {
@@ -505,18 +508,18 @@ std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QStr
     return m_pst_folder_nids.value(folder_path, kPstRootFolderNid);
 }
 
-void OstConversionWorker::writeItemPst(const PstItemDetail& item,
+bool OstConversionWorker::writeItemPst(const PstItemDetail& item,
                                        PstParser* parser,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
     Q_UNUSED(config);
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     auto hierarchy_result = ensurePstFolderHierarchy(folder_path);
     if (!hierarchy_result.has_value()) {
         ++result.items_failed;
-        return;
+        return false;
     }
 
     uint64_t folder_nid = hierarchy_result.value();
@@ -528,25 +531,26 @@ void OstConversionWorker::writeItemPst(const PstItemDetail& item,
         write_result = m_pst_writer->writeMessage(folder_nid, item, attachment_data);
     } else {
         ++result.items_failed;
-        return;
+        return false;
     }
 
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write PST item: " + item.subject);
-    } else {
-        if (m_pst_writer) {
-            result.bytes_written = m_pst_writer->currentSize();
-        }
+        return false;
     }
+    if (m_pst_writer) {
+        result.bytes_written = m_pst_writer->currentSize();
+    }
+    return true;
 }
 
-void OstConversionWorker::writeItemMsg(const PstItemDetail& item,
+bool OstConversionWorker::writeItemMsg(const PstItemDetail& item,
                                        PstParser* parser,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     // Get all MAPI properties for forensic-grade export
     QVector<MapiProperty> all_props;
@@ -563,13 +567,14 @@ void OstConversionWorker::writeItemMsg(const PstItemDetail& item,
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write MSG for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += writer.totalBytesWritten();
+    return true;
 }
 
-void OstConversionWorker::writeItemMbox(const PstItemDetail& item,
+bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
                                         PstParser* parser,
                                         const QString& folder_path,
                                         const OstConversionConfig& config,
@@ -578,21 +583,22 @@ void OstConversionWorker::writeItemMbox(const PstItemDetail& item,
     if (!m_mbox_writer) {
         ++result.items_failed;
         result.errors.append("MBOX writer not initialized for: " + item.subject);
-        return;
+        return false;
     }
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     auto write_result = m_mbox_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write MBOX for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += m_mbox_writer->totalBytesWritten();
+    return true;
 }
 
-void OstConversionWorker::writeItemDbx(const PstItemDetail& item,
+bool OstConversionWorker::writeItemDbx(const PstItemDetail& item,
                                        PstParser* parser,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
@@ -601,26 +607,27 @@ void OstConversionWorker::writeItemDbx(const PstItemDetail& item,
     if (!m_dbx_writer) {
         ++result.items_failed;
         result.errors.append("DBX writer not initialized for: " + item.subject);
-        return;
+        return false;
     }
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     auto write_result = m_dbx_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write DBX for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += m_dbx_writer->totalBytesWritten();
+    return true;
 }
 
-void OstConversionWorker::writeItemHtml(const PstItemDetail& item,
+bool OstConversionWorker::writeItemHtml(const PstItemDetail& item,
                                         PstParser* parser,
                                         const QString& folder_path,
                                         const OstConversionConfig& config,
                                         OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     HtmlEmailWriter writer(config.output_directory,
                            config.prefix_filename_with_date,
@@ -630,18 +637,19 @@ void OstConversionWorker::writeItemHtml(const PstItemDetail& item,
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write HTML for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += writer.totalBytesWritten();
+    return true;
 }
 
-void OstConversionWorker::writeItemPdf(const PstItemDetail& item,
+bool OstConversionWorker::writeItemPdf(const PstItemDetail& item,
                                        PstParser* parser,
                                        const QString& folder_path,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
+    auto attachment_data = collectAttachments(item, parser, result);
 
     PdfEmailWriter writer(config.output_directory,
                           config.prefix_filename_with_date,
@@ -651,10 +659,11 @@ void OstConversionWorker::writeItemPdf(const PstItemDetail& item,
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write PDF for: " + item.subject);
-        return;
+        return false;
     }
 
     result.bytes_written += writer.totalBytesWritten();
+    return true;
 }
 
 // ============================================================================
@@ -706,9 +715,12 @@ void OstConversionWorker::processRecoveredItems(PstParser* parser,
             return;
         }
 
-        writeItemByFormat(item, parser, recovery_folder, config, result);
+        // Only count a recovered item once it was actually written; a failed
+        // write already increments items_failed inside the writer.
+        if (writeItemByFormat(item, parser, recovery_folder, config, result)) {
+            ++result.items_recovered;
+        }
 
-        ++result.items_recovered;
         ++m_items_done;
         Q_EMIT progressUpdated(m_items_done, m_items_total, recovery_folder);
     }

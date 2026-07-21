@@ -92,69 +92,71 @@ private:
     [[nodiscard]] bool itemPassesDateFilter(const PstItemDetail& item,
                                             const OstConversionConfig& config) const;
 
-    /// Write an item using the EML writer
-    void writeItemEml(const PstItemDetail& item,
-                      PstParser* parser,
-                      const QString& folder_path,
-                      const OstConversionConfig& config,
-                      OstConversionResult& result);
+    /// Write an item using the EML writer. Returns true on success.
+    [[nodiscard]] bool writeItemEml(const PstItemDetail& item,
+                                    PstParser* parser,
+                                    const QString& folder_path,
+                                    const OstConversionConfig& config,
+                                    OstConversionResult& result);
 
-    /// Write an item using the PST writer / splitter
-    void writeItemPst(const PstItemDetail& item,
-                      PstParser* parser,
-                      const QString& folder_path,
-                      const OstConversionConfig& config,
-                      OstConversionResult& result);
+    /// Write an item using the PST writer / splitter. Returns true on success.
+    [[nodiscard]] bool writeItemPst(const PstItemDetail& item,
+                                    PstParser* parser,
+                                    const QString& folder_path,
+                                    const OstConversionConfig& config,
+                                    OstConversionResult& result);
 
-    /// Write an item as MSG (OLE2 compound file)
-    void writeItemMsg(const PstItemDetail& item,
-                      PstParser* parser,
-                      const QString& folder_path,
-                      const OstConversionConfig& config,
-                      OstConversionResult& result);
+    /// Write an item as MSG (OLE2 compound file). Returns true on success.
+    [[nodiscard]] bool writeItemMsg(const PstItemDetail& item,
+                                    PstParser* parser,
+                                    const QString& folder_path,
+                                    const OstConversionConfig& config,
+                                    OstConversionResult& result);
 
-    /// Write an item to MBOX
-    void writeItemMbox(const PstItemDetail& item,
-                       PstParser* parser,
-                       const QString& folder_path,
-                       const OstConversionConfig& config,
-                       OstConversionResult& result);
+    /// Write an item to MBOX. Returns true on success.
+    [[nodiscard]] bool writeItemMbox(const PstItemDetail& item,
+                                     PstParser* parser,
+                                     const QString& folder_path,
+                                     const OstConversionConfig& config,
+                                     OstConversionResult& result);
 
-    /// Write an item as DBX (Outlook Express)
-    void writeItemDbx(const PstItemDetail& item,
-                      PstParser* parser,
-                      const QString& folder_path,
-                      const OstConversionConfig& config,
-                      OstConversionResult& result);
+    /// Write an item as DBX (Outlook Express). Returns true on success.
+    [[nodiscard]] bool writeItemDbx(const PstItemDetail& item,
+                                    PstParser* parser,
+                                    const QString& folder_path,
+                                    const OstConversionConfig& config,
+                                    OstConversionResult& result);
 
-    /// Write an item as HTML
-    void writeItemHtml(const PstItemDetail& item,
-                       PstParser* parser,
-                       const QString& folder_path,
-                       const OstConversionConfig& config,
-                       OstConversionResult& result);
+    /// Write an item as HTML. Returns true on success.
+    [[nodiscard]] bool writeItemHtml(const PstItemDetail& item,
+                                     PstParser* parser,
+                                     const QString& folder_path,
+                                     const OstConversionConfig& config,
+                                     OstConversionResult& result);
 
-    /// Write an item as PDF
-    void writeItemPdf(const PstItemDetail& item,
-                      PstParser* parser,
-                      const QString& folder_path,
-                      const OstConversionConfig& config,
-                      OstConversionResult& result);
+    /// Write an item as PDF. Returns true on success.
+    [[nodiscard]] bool writeItemPdf(const PstItemDetail& item,
+                                    PstParser* parser,
+                                    const QString& folder_path,
+                                    const OstConversionConfig& config,
+                                    OstConversionResult& result);
 
-    /// Collect attachment data for an item
-    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachments(const PstItemDetail& item,
-                                                                         PstParser* parser);
+    /// Collect attachment data for an item. Records an error for every
+    /// attachment whose bytes could not be read so the loss is not silent.
+    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachments(
+        const PstItemDetail& item, PstParser* parser, OstConversionResult& result);
 
     /// Check if an item passes sender/recipient filter
     [[nodiscard]] bool itemPassesSenderFilter(const PstItemDetail& item,
                                               const OstConversionConfig& config) const;
 
-    /// Dispatch an item to the correct format-specific writer
-    void writeItemByFormat(const PstItemDetail& item,
-                           PstParser* parser,
-                           const QString& folder_path,
-                           const OstConversionConfig& config,
-                           OstConversionResult& result);
+    /// Dispatch an item to the correct format-specific writer. Returns true when
+    /// the item was written successfully (or the format is not per-item).
+    [[nodiscard]] bool writeItemByFormat(const PstItemDetail& item,
+                                         PstParser* parser,
+                                         const QString& folder_path,
+                                         const OstConversionConfig& config,
+                                         OstConversionResult& result);
 
     /// Process a single item: read detail, filter, and write
     void processItemInFolder(const PstItemSummary& item_summary,
