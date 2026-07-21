@@ -72,6 +72,7 @@ constexpr auto kApfsRecoveryKeyPayload = "apfs_recovery_key";
 // Placeholder tokens the executor substitutes with each credential's locked temp-file path.
 constexpr auto kApfsVolumePasswordPlaceholder = "__SAK_APFS_VOLUME_PASSWORD_FILE__";
 constexpr auto kApfsRecoveryKeyPlaceholder = "__SAK_APFS_RECOVERY_KEY_FILE__";
+constexpr auto kBitLockerRecoveryPlaceholder = "__SAK_BITLOCKER_RECOVERY_FILE__";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
 // A6 FileVault was Apple-certified only at the single-chunk tier (the encryption unit tests and
 // the macOS-kernel unlock/mount cert all used 64-128 MiB volumes). The keybag reserved-prefix
@@ -4630,15 +4631,19 @@ PartitionScript PartitionScriptBuilder::buildBitLockerScript(
         if (recoveryPassword.isEmpty()) {
             return invalidScript(QStringLiteral("BitLocker unlock requires recovery_password"));
         }
+        // Keep the recovery password out of the script text AND off every process command
+        // line: the executor materializes it to a locked temp file, the script reads it into
+        // a variable, and the in-process Unlock-BitLocker cmdlet consumes it (unlike
+        // manage-bde.exe -RecoveryPassword, which exposes the value as a child-process argv).
+        out.credential_files.append(
+            {QString::fromLatin1(kBitLockerRecoveryPlaceholder), recoveryPassword});
         out.script += QStringLiteral(
-                          "$recoveryPassword = %1\n"
-                          "manage-bde.exe -unlock $mountPoint -RecoveryPassword "
-                          "$recoveryPassword\n"
-                          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n")
-                          .arg(quotePowerShell(recoveryPassword));
+                          "$recoveryPassword = (Get-Content -Raw -LiteralPath '%1').Trim()\n"
+                          "Unlock-BitLocker -MountPoint $mountPoint "
+                          "-RecoveryPassword $recoveryPassword -ErrorAction Stop | Out-Null\n")
+                          .arg(QString::fromLatin1(kBitLockerRecoveryPlaceholder));
+        // The script text now holds only the placeholder path, not the secret.
         out.dry_run_script = out.script;
-        out.dry_run_script.replace(quotePowerShell(recoveryPassword),
-                                   quotePowerShell(QStringLiteral("<redacted>")));
     } else if (operation.type == PartitionOperationType::BitLockerSuspend) {
         out.script += QStringLiteral(
             "manage-bde.exe -protectors -disable $mountPoint\n"

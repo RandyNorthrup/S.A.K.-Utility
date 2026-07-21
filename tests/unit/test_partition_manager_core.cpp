@@ -18361,13 +18361,19 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBitLockerMutationScripts() {
                                                            unlockPayload);
     PartitionScriptBuilder builder;
     const auto unlockScript = builder.buildScript(unlock);
+    const QString kSecret =
+        QStringLiteral("111111-222222-333333-444444-555555-666666-777777-888888");
     QVERIFY(unlockScript.valid());
-    QVERIFY(unlockScript.script.contains(QStringLiteral("manage-bde.exe -unlock")));
-    QVERIFY(unlockScript.script.contains(
-        QStringLiteral("111111-222222-333333-444444-555555-666666-777777-888888")));
-    QVERIFY(unlockScript.dry_run_script.contains(QStringLiteral("<redacted>")));
-    QVERIFY(!unlockScript.dry_run_script.contains(
-        QStringLiteral("111111-222222-333333-444444-555555-666666-777777-888888")));
+    // The recovery password must never appear in the script text (it would land on the
+    // powershell/child command line); it is supplied via a locked credential temp file, and
+    // the in-process Unlock-BitLocker cmdlet consumes it (not manage-bde -RecoveryPassword).
+    QVERIFY(unlockScript.script.contains(QStringLiteral("Unlock-BitLocker -MountPoint")));
+    QVERIFY(!unlockScript.script.contains(QStringLiteral("manage-bde.exe -unlock")));
+    QVERIFY(!unlockScript.script.contains(kSecret));
+    QVERIFY(!unlockScript.dry_run_script.contains(kSecret));
+    QCOMPARE(unlockScript.credential_files.size(), 1);
+    QCOMPARE(unlockScript.credential_files.first().secret, kSecret);
+    QVERIFY(unlockScript.script.contains(unlockScript.credential_files.first().placeholder));
 
     const auto suspend = builder.buildScript(
         PartitionOperationPlanner::makeOperation(PartitionOperationType::BitLockerSuspend, target));
