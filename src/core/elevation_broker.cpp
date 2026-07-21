@@ -66,7 +66,7 @@ auto ElevationBroker::executeTask(const QString& task_id,
     }
 
     // Send task request
-    m_current_task_id = task_id;
+    setCurrentTaskId(task_id);
     QByteArray request = buildTaskRequest(task_id, payload);
     if (!sendRaw(request)) {
         sak::logError("ElevationBroker: failed to send task request");
@@ -126,7 +126,7 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
         result.success = msg.json["success"].toBool(false);
         result.data = msg.json["data"].toObject();
         result.error_message = result.data.value(QStringLiteral("error_message")).toString();
-        m_current_task_id.clear();
+        setCurrentTaskId(QString());
         sak::logInfo("ElevationBroker: task '{}' completed (success={})",
                      task_id.toStdString(),
                      result.success);
@@ -137,7 +137,7 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
         ElevatedTaskResult result;
         result.success = false;
         result.error_message = msg.json["message"].toString();
-        m_current_task_id.clear();
+        setCurrentTaskId(QString());
         int code = msg.json["code"].toInt(0);
         sak::logError("ElevationBroker: task '{}' failed: {} (code {})",
                       task_id.toStdString(),
@@ -150,17 +150,28 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
     return std::unexpected(sak::error_code::helper_connection_failed);
 }
 
+void ElevationBroker::setCurrentTaskId(const QString& id) {
+    std::lock_guard<std::mutex> lock(m_task_state_mutex);
+    m_current_task_id = id;
+}
+
 void ElevationBroker::cancelCurrentTask() {
-    if (!isConnected() || m_current_task_id.isEmpty()) {
+    // Snapshot the id under the lock: this runs on the GUI thread while the
+    // worker thread may be clearing it in handleTaskMessage/cleanup.
+    QString task_id;
+    {
+        std::lock_guard<std::mutex> lock(m_task_state_mutex);
+        task_id = m_current_task_id;
+    }
+    if (!isConnected() || task_id.isEmpty()) {
         return;
     }
 
-    QByteArray cancel = buildCancelRequest(m_current_task_id);
+    QByteArray cancel = buildCancelRequest(task_id);
     if (!sendRaw(cancel)) {
-        sak::logWarning("ElevationBroker: cancel send failed for '{}'",
-                        m_current_task_id.toStdString());
+        sak::logWarning("ElevationBroker: cancel send failed for '{}'", task_id.toStdString());
     } else {
-        sak::logInfo("ElevationBroker: cancel requested for '{}'", m_current_task_id.toStdString());
+        sak::logInfo("ElevationBroker: cancel requested for '{}'", task_id.toStdString());
     }
 }
 
@@ -282,6 +293,10 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
 
 bool ElevationBroker::sendRaw(const QByteArray& data) {
 #ifdef _WIN32
+    // Serialize every pipe write: the worker thread sends the task request while
+    // the GUI thread may send a cancel frame; interleaved WriteFile calls on a
+    // byte-mode pipe would corrupt the framing.
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -402,7 +417,7 @@ void ElevationBroker::cleanup() {
     }
 #endif
     m_pipe_name.clear();
-    m_current_task_id.clear();
+    setCurrentTaskId(QString());
     Q_EMIT helperDisconnected();
 }
 

@@ -17077,6 +17077,10 @@ void PartitionManagerCoreTests::
     script = PartitionScriptBuilder().buildScript(operation);
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(QStringLiteral("PhysicalDrive0")));
+    // P09-07: the execution script re-checks the image file length against the
+    // queued size before offlining the target, closing the queue-to-apply TOCTOU
+    // window where the image could be truncated or swapped for a smaller one.
+    QVERIFY(script.script.contains(QStringLiteral("Source image changed since it was queued")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_requiresRecoveredPartitionRestoreAcknowledgement() {

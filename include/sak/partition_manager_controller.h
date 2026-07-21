@@ -68,6 +68,7 @@ private:
     bool m_apply_dry_run{false};
 
     [[nodiscard]] bool applyIsRunning() const;
+    [[nodiscard]] bool revalidateBeforeApply(bool dry_run);
     void setState(PartitionManagerState state);
     void emitQueueChanged();
     void finishApplyQueue(QFutureWatcher<PartitionExecutionResult>* watcher);

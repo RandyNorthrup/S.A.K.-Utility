@@ -168,10 +168,7 @@ void PartitionManagerController::applyQueue(bool dry_run, bool use_elevation) {
                              sak::kTimerStatusDefaultMs);
         return;
     }
-    if (!m_queue.canApply(m_inventory.layout_hash)) {
-        Q_EMIT statusMessage(QStringLiteral(
-                                 "Partition queue cannot apply: refresh or fix blockers"),
-                             sak::kTimerStatusDefaultMs);
+    if (!revalidateBeforeApply(dry_run)) {
         return;
     }
 
@@ -202,6 +199,35 @@ void PartitionManagerController::applyQueue(bool dry_run, bool use_elevation) {
     watcher->setFuture(QtConcurrent::run([executor, operations, dry_run, shouldUseElevation]() {
         return executor->execute(operations, dry_run, shouldUseElevation);
     }));
+}
+
+bool PartitionManagerController::revalidateBeforeApply(bool dry_run) {
+    // A real (non-dry-run) apply re-scans live storage right before dispatching.
+    // The queue was planned against a cached inventory, so a disk hot-swap since
+    // the last manual refresh (same disk number, different serial) would let the
+    // batch run against the wrong physical disk. The queue's planned base hash is
+    // compared against a fresh live hash (which folds in every disk serial), so any
+    // change fails closed instead of wiping the replacement disk.
+    const PartitionInventory live = dry_run ? m_inventory
+                                            : StorageInventoryWorker::scanCurrentSystem();
+    if (m_queue.canApply(live.layout_hash)) {
+        if (!dry_run) {
+            m_inventory = live;
+        }
+        return true;
+    }
+    if (!dry_run && live.layout_hash != m_inventory.layout_hash) {
+        m_inventory = live;
+        Q_EMIT inventoryChanged(m_inventory);
+        emitQueueChanged();
+        Q_EMIT statusMessage(
+            QStringLiteral("Storage changed since planning; refresh and re-review before applying"),
+            sak::kTimerStatusDefaultMs);
+        return false;
+    }
+    Q_EMIT statusMessage(QStringLiteral("Partition queue cannot apply: refresh or fix blockers"),
+                         sak::kTimerStatusDefaultMs);
+    return false;
 }
 
 void PartitionManagerController::finishApplyQueue(

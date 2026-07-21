@@ -15,6 +15,7 @@
 
 #include <expected>
 #include <memory>
+#include <mutex>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -35,8 +36,10 @@ struct ElevatedTaskResult {
 /// connects over a named pipe, dispatches tasks, and relays progress.
 /// The helper auto-exits after an inactivity timeout.
 ///
-/// Thread-safety: use one broker instance from one thread at a time.
-/// Long-running calls should be dispatched from a worker thread by callers.
+/// Thread-safety: executeTask() runs synchronously on a worker thread while
+/// cancelCurrentTask() may be invoked from the GUI thread. The current task id
+/// is guarded by m_task_state_mutex and every pipe write is serialized by
+/// m_send_mutex so a concurrent cancel cannot tear the id or interleave frames.
 class ElevationBroker : public QObject {
     Q_OBJECT
 
@@ -118,8 +121,13 @@ private:
     /// @brief Find the helper executable path
     [[nodiscard]] static auto findHelperPath() -> std::expected<QString, sak::error_code>;
 
+    /// @brief Set the current task id under m_task_state_mutex
+    void setCurrentTaskId(const QString& id);
+
     QString m_pipe_name;
     QString m_current_task_id;
+    mutable std::mutex m_task_state_mutex;
+    std::mutex m_send_mutex;
 
 #ifdef _WIN32
     HANDLE m_pipe_handle{INVALID_HANDLE_VALUE};

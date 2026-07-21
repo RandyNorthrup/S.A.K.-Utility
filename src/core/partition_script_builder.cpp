@@ -2176,6 +2176,10 @@ QString cloneTransferRawTargetFunctionsScript() {
 QString cloneTransferExecutionScript() {
     return QStringLiteral(
         "$in = Open-SakRead $src\n"
+        "if ($expectedBytes -gt 0 -and $sourceOffset -eq 0 -and -not "
+        "$src.StartsWith('\\\\.\\') -and [uint64]$in.Length -ne $expectedBytes) { $in.Dispose(); "
+        "throw \"Source image changed since it was queued (expected $expectedBytes bytes, found "
+        "$($in.Length)); aborting before touching the target disk\" }\n"
         "$sakRawTargetDisk = Assert-SakRawWriteTarget $dst\n"
         "try { try { if ($expectedBytes -eq 0) { try { $expectedBytes = [uint64]$in.Length "
         "- $sourceOffset } catch {} }; [void]$in.Seek([int64]$sourceOffset, "
