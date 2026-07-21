@@ -9,6 +9,8 @@
 #include "sak/email_types.h"
 
 #include <QDir>
+#include <QFileInfo>
+#include <QHash>
 #include <QObject>
 #include <QSet>
 
@@ -47,6 +49,12 @@ private:
     std::atomic<bool> m_cancelled{false};
     QVector<sak::EmailClientProfile> m_profiles;
 
+    /// Original data-file path -> the actual on-disk backup basename that was
+    /// written for it (only populated on a successful copy). Consumed by
+    /// createBackupManifest so the manifest names the real file, not a colliding
+    /// original basename or a file that never got copied.
+    QHash<QString, QString> m_backup_dest_names;
+
     // Discovery per client
     QVector<sak::EmailClientProfile> discoverOutlookProfiles();
     QVector<sak::EmailClientProfile> discoverThunderbirdProfiles();
@@ -54,6 +62,7 @@ private:
     void discoverWmsProfiles(QVector<sak::EmailClientProfile>& results);
 
     // Backup helpers
+    [[nodiscard]] int countTotalDataFiles(const QVector<int>& profile_indices) const;
     [[nodiscard]] bool exportRegistryKey(const QString& key_path, const QString& output_file);
     [[nodiscard]] bool createBackupManifest(const QString& backup_path,
                                             const QVector<sak::EmailClientProfile>& profiles);
@@ -62,10 +71,16 @@ private:
                              int& files_done,
                              int total_files,
                              qint64& bytes_copied);
+    [[nodiscard]] static QString uniqueBackupDestination(const QString& backup_path,
+                                                         const QFileInfo& source);
 
     // Restore helpers
     [[nodiscard]] bool importRegistryKey(const QString& reg_file);
     void restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir);
+    void restoreRegistryFromManifest(const QJsonObject& prof, const QString& backup_dir);
+    void restoreOneDataFile(const QJsonObject& file_obj,
+                            const QString& backup_dir,
+                            const QString& home_root);
 
     // Thunderbird helpers
     void scanThunderbirdDir(const QDir& dir, QVector<sak::EmailDataFile>& files);

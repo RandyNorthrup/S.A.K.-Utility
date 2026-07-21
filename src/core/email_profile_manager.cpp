@@ -28,6 +28,37 @@ constexpr int kRegistryPathMinimumBytes = 4;
 constexpr qsizetype kMapiPropertyLeafNameLength = 8;
 constexpr qsizetype kMapiPropertyTypePrefixLength = 4;
 
+/// Resolve a manifest-supplied file name strictly inside `dir`. Returns the
+/// absolute path only when `name` is a bare basename (no directory component,
+/// not absolute, not "."/".."); otherwise returns an empty string so the caller
+/// rejects it. This confines both the backup source read and the registry
+/// import to the backup directory, blocking "../../payload.reg" style escapes.
+QString resolveWithinDirectory(const QString& dir, const QString& name) {
+    if (name.isEmpty()) {
+        return {};
+    }
+    const QString bare = QFileInfo(name).fileName();
+    if (bare != name || bare == QStringLiteral(".") || bare == QStringLiteral("..")) {
+        return {};
+    }
+    return QDir(dir).absoluteFilePath(bare);
+}
+
+/// True when `candidate` is an absolute path that, once normalized, stays inside
+/// `root`. Used to confine restore destinations to the user's home tree so a
+/// crafted manifest cannot create files in system or other-user locations.
+bool destinationWithinRoot(const QString& root, const QString& candidate) {
+    if (candidate.isEmpty()) {
+        return false;
+    }
+    const QString norm = QDir::cleanPath(QFileInfo(candidate).absoluteFilePath());
+    QString root_norm = QDir::cleanPath(QDir(root).absolutePath());
+    if (!root_norm.endsWith(QLatin1Char('/'))) {
+        root_norm += QLatin1Char('/');
+    }
+    return (norm + QLatin1Char('/')).startsWith(root_norm, Qt::CaseInsensitive);
+}
+
 /// Outlook version keys in order of preference (newest first)
 const QStringList kOutlookVersions = {
     QStringLiteral("16.0"),  // Office 2016/2019/2021/365
@@ -188,8 +219,14 @@ void EmailProfileManager::discoverProfiles() {
 
 void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
                                          const QString& backup_path) {
-    Q_ASSERT(!backup_path.isEmpty());
+    // Fail closed instead of asserting: an empty path is caller/UI error but must
+    // not abort the process in a release build or crash the debug test harness.
+    if (backup_path.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral("Backup path is empty"));
+        return;
+    }
     m_cancelled.store(false);
+    m_backup_dest_names.clear();
 
     QDir dir(backup_path);
     if (!dir.mkpath(QStringLiteral("."))) {
@@ -197,12 +234,7 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
         return;
     }
 
-    int total_files = 0;
-    for (int idx : profile_indices) {
-        if (idx >= 0 && idx < m_profiles.size()) {
-            total_files += m_profiles[idx].data_files.size();
-        }
-    }
+    const int total_files = countTotalDataFiles(profile_indices);
 
     int files_done = 0;
     qint64 bytes_copied = 0;
@@ -224,6 +256,16 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
         sak::logWarning("Failed to create backup manifest in: {}", backup_path.toStdString());
     }
     Q_EMIT backupComplete(backup_path, files_done, bytes_copied);
+}
+
+int EmailProfileManager::countTotalDataFiles(const QVector<int>& profile_indices) const {
+    int total = 0;
+    for (int idx : profile_indices) {
+        if (idx >= 0 && idx < m_profiles.size()) {
+            total += m_profiles[idx].data_files.size();
+        }
+    }
+    return total;
 }
 
 void EmailProfileManager::backupSingleProfile(const sak::EmailClientProfile& profile,
@@ -250,18 +292,34 @@ void EmailProfileManager::backupSingleProfile(const sak::EmailClientProfile& pro
             continue;
         }
 
-        QString dest = backup_path + QLatin1Char('/') + fi.fileName();
-        if (QFile::exists(dest)) {
-            dest = backup_path + QLatin1Char('/') + fi.completeBaseName() +
-                   QStringLiteral("_backup.") + fi.suffix();
+        const QString dest = uniqueBackupDestination(backup_path, fi);
+        if (!QFile::copy(data_file.path, dest)) {
+            // A failed required copy is a backup failure, not silent success:
+            // surface it and do not count it toward files_done or the manifest.
+            Q_EMIT errorOccurred(QStringLiteral("Failed to back up: %1").arg(data_file.path));
+            continue;
         }
 
-        if (QFile::copy(data_file.path, dest)) {
-            bytes_copied += fi.size();
-        }
+        // Record the ACTUAL on-disk name (which may carry a collision suffix) so
+        // the manifest points restore at the real file, not the original basename.
+        m_backup_dest_names.insert(data_file.path, QFileInfo(dest).fileName());
+        bytes_copied += fi.size();
         files_done++;
         Q_EMIT backupProgress(files_done, total_files, bytes_copied);
     }
+}
+
+QString EmailProfileManager::uniqueBackupDestination(const QString& backup_path,
+                                                     const QFileInfo& source) {
+    QString dest = backup_path + QLatin1Char('/') + source.fileName();
+    int attempt = 1;
+    while (QFile::exists(dest)) {
+        const QString suffix_index = attempt > 1 ? QString::number(attempt) : QString();
+        dest = backup_path + QLatin1Char('/') + source.completeBaseName() +
+               QStringLiteral("_backup") + suffix_index + QLatin1Char('.') + source.suffix();
+        ++attempt;
+    }
+    return dest;
 }
 
 void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
@@ -298,30 +356,57 @@ void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
 }
 
 void EmailProfileManager::restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir) {
-    QString reg_file = prof[QStringLiteral("registry_file")].toString();
-    if (!reg_file.isEmpty()) {
-        QString full_reg = backup_dir + QLatin1Char('/') + reg_file;
-        if (QFile::exists(full_reg)) {
-            if (!importRegistryKey(full_reg)) {
-                sak::logWarning("Failed to import registry key: {}", full_reg.toStdString());
-            }
-        }
-    }
+    restoreRegistryFromManifest(prof, backup_dir);
 
-    QJsonArray files = prof[QStringLiteral("data_files")].toArray();
+    const QString home_root = QDir::homePath();
+    const QJsonArray files = prof[QStringLiteral("data_files")].toArray();
     for (const auto& file_val : files) {
-        QJsonObject file_obj = file_val.toObject();
-        QString original = file_obj[QStringLiteral("original_path")].toString();
-        QString backed_up = file_obj[QStringLiteral("backed_up_name")].toString();
-        QString source = backup_dir + QLatin1Char('/') + backed_up;
+        restoreOneDataFile(file_val.toObject(), backup_dir, home_root);
+    }
+}
 
-        if (!QFile::exists(source) || QFile::exists(original)) {
-            continue;
-        }
-        QDir().mkpath(QFileInfo(original).absolutePath());
-        if (!QFile::copy(source, original)) {
-            sak::logWarning("Failed to restore file: {}", original.toStdString());
-        }
+void EmailProfileManager::restoreRegistryFromManifest(const QJsonObject& prof,
+                                                      const QString& backup_dir) {
+    const QString reg_name = prof[QStringLiteral("registry_file")].toString();
+    if (reg_name.isEmpty()) {
+        return;
+    }
+    // Confine the .reg to the backup directory: a manifest is untrusted input and
+    // "../../payload.reg" would otherwise import an arbitrary registry file.
+    const QString full_reg = resolveWithinDirectory(backup_dir, reg_name);
+    if (full_reg.isEmpty()) {
+        sak::logWarning("Rejected registry file escaping backup dir: {}", reg_name.toStdString());
+        return;
+    }
+    if (QFile::exists(full_reg) && !importRegistryKey(full_reg)) {
+        sak::logWarning("Failed to import registry key: {}", full_reg.toStdString());
+    }
+}
+
+void EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
+                                             const QString& backup_dir,
+                                             const QString& home_root) {
+    const QString original = file_obj[QStringLiteral("original_path")].toString();
+    const QString backed_up = file_obj[QStringLiteral("backed_up_name")].toString();
+
+    // Source must be a bare name inside the backup dir; destination must be an
+    // absolute path confined to the user's home tree.
+    const QString source = resolveWithinDirectory(backup_dir, backed_up);
+    if (source.isEmpty()) {
+        sak::logWarning("Rejected backup source escaping backup dir: {}", backed_up.toStdString());
+        return;
+    }
+    if (!destinationWithinRoot(home_root, original)) {
+        sak::logWarning("Rejected restore destination outside user home: {}",
+                        original.toStdString());
+        return;
+    }
+    if (!QFile::exists(source) || QFile::exists(original)) {
+        return;
+    }
+    QDir().mkpath(QFileInfo(original).absolutePath());
+    if (!QFile::copy(source, original)) {
+        sak::logWarning("Failed to restore file: {}", original.toStdString());
     }
 }
 
@@ -625,11 +710,18 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
 
         QJsonArray files_array;
         for (const auto& df : profile.data_files) {
+            // Only manifest files that were actually copied; the recorded name is
+            // the real on-disk basename (with any collision suffix), so restore
+            // never points at a missing file or another profile's copy.
+            const auto dest_it = m_backup_dest_names.constFind(df.path);
+            if (dest_it == m_backup_dest_names.constEnd()) {
+                continue;
+            }
             QJsonObject file_obj;
             file_obj[QStringLiteral("original_path")] = df.path;
             file_obj[QStringLiteral("type")] = df.type;
             file_obj[QStringLiteral("size_bytes")] = df.size_bytes;
-            file_obj[QStringLiteral("backed_up_name")] = QFileInfo(df.path).fileName();
+            file_obj[QStringLiteral("backed_up_name")] = dest_it.value();
             files_array.append(file_obj);
         }
         prof[QStringLiteral("data_files")] = files_array;

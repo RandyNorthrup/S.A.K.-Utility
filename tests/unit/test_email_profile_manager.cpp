@@ -7,6 +7,11 @@
 #include "sak/email_profile_manager.h"
 #include "sak/email_types.h"
 
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -40,6 +45,7 @@ private Q_SLOTS:
     // -- Restore Invalid Inputs ------------------------------------------
     void restoreFromNonExistentManifest();
     void restoreFromEmptyPath();
+    void restoreRejectsPathTraversal();
 
     // -- Profile Structure -----------------------------------------------
     void profilePopulation();
@@ -187,6 +193,50 @@ void TestEmailProfileManager::restoreFromEmptyPath() {
 
     // Empty path should produce an error
     QVERIFY(error_spy.count() > 0 || true);
+}
+
+void TestEmailProfileManager::restoreRejectsPathTraversal() {
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+    const QString backup_dir = backup_root.path() + QStringLiteral("/bk");
+    QVERIFY(QDir().mkpath(backup_dir));
+
+    // The traversal source target sits one level ABOVE the backup directory.
+    const QString evil_source = backup_root.path() + QStringLiteral("/evil.txt");
+    {
+        QFile file(evil_source);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("payload");
+    }
+
+    // Destination a crafted manifest tries to create, outside the user home tree.
+    const QString pwned_dest = backup_root.path() + QStringLiteral("/pwned.txt");
+
+    QJsonObject file_obj;
+    file_obj[QStringLiteral("original_path")] = pwned_dest;                      // outside home
+    file_obj[QStringLiteral("backed_up_name")] = QStringLiteral("../evil.txt");  // escapes bk
+    QJsonArray files;
+    files.append(file_obj);
+    QJsonObject prof;
+    prof[QStringLiteral("registry_file")] = QStringLiteral("../evil.reg");  // escapes bk
+    prof[QStringLiteral("data_files")] = files;
+    QJsonArray profiles;
+    profiles.append(prof);
+    QJsonObject root;
+    root[QStringLiteral("profiles")] = profiles;
+
+    const QString manifest = backup_dir + QStringLiteral("/backup_manifest.json");
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson());
+    }
+
+    EmailProfileManager manager;
+    manager.restoreProfiles(manifest);
+
+    // The confinement must have blocked the write: no file created outside backup.
+    QVERIFY(!QFile::exists(pwned_dest));
 }
 
 // ============================================================================
