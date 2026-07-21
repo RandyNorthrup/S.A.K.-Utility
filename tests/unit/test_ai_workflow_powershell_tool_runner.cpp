@@ -14,6 +14,7 @@ private Q_SLOTS:
     void guardBlocksBadPowerShell();
     void sensitiveCommandRequiresConfirmation();
     void successfulRunRecordsRedactedCommand();
+    void clampsCallerControlledOutputCap();
 };
 
 void AiWorkflowPowerShellToolRunnerTests::rejectsMissingCommand() {
@@ -112,6 +113,39 @@ void AiWorkflowPowerShellToolRunnerTests::successfulRunRecordsRedactedCommand() 
                  .contains(QStringLiteral("secret-value")));
     QCOMPARE(recorded_preview, QStringLiteral("safe preview"));
     QVERIFY(recorded_result.value(QStringLiteral("success")).toBool(false));
+}
+
+void AiWorkflowPowerShellToolRunnerTests::clampsCallerControlledOutputCap() {
+    int seen_cap = -1;
+    sak::ai::AiWorkflowPowerShellToolCallbacks callbacks;
+    callbacks.allocate_command_id = [] {
+        return QStringLiteral("cmd_cap");
+    };
+    callbacks.execute_powershell = [&seen_cap](const sak::ai::AiCommandRequest& request,
+                                               const QString&) {
+        seen_cap = request.max_output_bytes;
+        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+    };
+
+    const sak::ai::AiWorkflowPowerShellToolOptions options;
+
+    // A near-INT_MAX request must be clamped down to the hard ceiling, not honored.
+    const QJsonObject high = sak::ai::AiWorkflowPowerShellToolRunner::run(
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Write-Output ok")},
+                    {QStringLiteral("max_output_bytes"), 2'147'483'647}},
+        {},
+        callbacks);
+    QVERIFY(high.value(QStringLiteral("success")).toBool(false));
+    QCOMPARE(seen_cap, options.max_output_bytes);
+
+    // A tiny request must be raised to the floor.
+    const QJsonObject low = sak::ai::AiWorkflowPowerShellToolRunner::run(
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Write-Output ok")},
+                    {QStringLiteral("max_output_bytes"), 1}},
+        {},
+        callbacks);
+    QVERIFY(low.value(QStringLiteral("success")).toBool(false));
+    QCOMPARE(seen_cap, options.min_output_bytes);
 }
 
 QTEST_GUILESS_MAIN(AiWorkflowPowerShellToolRunnerTests)

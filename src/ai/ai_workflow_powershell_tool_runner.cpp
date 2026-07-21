@@ -129,9 +129,12 @@ QJsonObject AiWorkflowPowerShellToolRunner::run(const QJsonObject& args,
                                                 const AiWorkflowPowerShellToolCallbacks& callbacks,
                                                 AiWorkflowPowerShellToolOptions options) {
     AiCommandRequest request = ExecutionBroker::requestFromJson(args);
+    // Clamp the caller-supplied cap on BOTH sides: a lower floor keeps output usable,
+    // an upper ceiling stops a phase from requesting ~2GB and OOMing the process.
+    const int requested_output_bytes =
+        args.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes);
     request.max_output_bytes =
-        std::max(args.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes),
-                 options.min_output_bytes);
+        std::clamp(requested_output_bytes, options.min_output_bytes, options.max_output_bytes);
     if (request.command.trimmed().isEmpty()) {
         return toolError(
             QStringLiteral("Workflow PowerShell phase requires explicit arguments.command"));

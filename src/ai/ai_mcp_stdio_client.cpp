@@ -30,6 +30,11 @@ constexpr int kInitializeId = 1;
 constexpr int kToolCallId = 2;
 constexpr int kMcpStdioErrorPreviewChars = 2000;
 constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
+// Abort once this many stdout bytes buffer without a newline, so a server that streams
+// a newline-free byte stream cannot grow the QProcess buffer until the process OOMs.
+constexpr qint64 kMaxStdioReadBufferBytes = 8 * 1024 * 1024;  // 8 MiB
+// Only the tail of stderr is retained for the error preview; drop the rest.
+constexpr qsizetype kMaxStderrTailBytes = 64 * 1024;  // 64 KiB
 
 [[nodiscard]] QJsonObject initializePayload() {
     return QJsonObject{
@@ -99,19 +104,13 @@ struct StdioCallState {
     QString error_message;
 };
 
-QString processStderr(QProcess* process) {
-    return QString::fromUtf8(process ? process->readAllStandardError() : QByteArray()).trimmed();
-}
-
-QString timeoutMessage(QProcess* process) {
-    const QString stderr_text = processStderr(process);
+QString timeoutMessage(const QString& stderr_text) {
     return stderr_text.isEmpty() ? QStringLiteral("MCP stdio request timed out")
                                  : QStringLiteral("MCP stdio request timed out: %1")
                                        .arg(stderr_text.left(kMcpStdioErrorPreviewChars));
 }
 
-QString exitedMessage(QProcess* process) {
-    const QString stderr_text = processStderr(process);
+QString exitedMessage(const QString& stderr_text) {
     return stderr_text.isEmpty() ? QStringLiteral("MCP stdio server exited before response")
                                  : QStringLiteral("MCP stdio server exited before response: %1")
                                        .arg(stderr_text.left(kMcpStdioErrorPreviewChars));
@@ -180,14 +179,34 @@ private:
                          QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                          this,
                          [this](int, QProcess::ExitStatus) {
-                             fail(exitedMessage(m_process), false);
+                             fail(exitedMessage(currentStderr()), false);
                          });
         QObject::connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
             handleReadyRead();
         });
-        QObject::connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
-            fail(timeoutMessage(m_process));
+        QObject::connect(m_process, &QProcess::readyReadStandardError, this, [this]() {
+            drainStderr();
         });
+        QObject::connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
+            fail(timeoutMessage(currentStderr()));
+        });
+    }
+
+    // Drain stderr as it arrives, retaining only the trailing bytes for diagnostics so an
+    // unbounded stderr stream cannot accumulate in the QProcess buffer.
+    void drainStderr() {
+        if (!m_process) {
+            return;
+        }
+        m_stderrTail.append(m_process->readAllStandardError());
+        if (m_stderrTail.size() > kMaxStderrTailBytes) {
+            m_stderrTail = m_stderrTail.right(kMaxStderrTailBytes);
+        }
+    }
+
+    QString currentStderr() {
+        drainStderr();
+        return QString::fromUtf8(m_stderrTail).trimmed();
     }
 
     void onStarted() {
@@ -200,6 +219,12 @@ private:
             if (!processLine(m_process->readLine().trimmed())) {
                 return;
             }
+        }
+        // No complete line yet, but bytes keep buffering: a server streaming newline-free
+        // output. Abort before the QProcess buffer can grow large enough to OOM the app.
+        if (m_process->bytesAvailable() > kMaxStdioReadBufferBytes) {
+            fail(QStringLiteral("MCP stdio response exceeded %1 bytes without a newline")
+                     .arg(kMaxStdioReadBufferBytes));
         }
     }
 
@@ -293,6 +318,7 @@ private:
     QThread* m_ownerThread{nullptr};
     QProcess* m_process{nullptr};
     QTimer* m_timeoutTimer{nullptr};
+    QByteArray m_stderrTail;
     StdioPhase m_phase{StdioPhase::Starting};
     std::atomic_bool m_completed{false};
 };

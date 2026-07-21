@@ -15,9 +15,11 @@ namespace sak::ai {
 
 struct AiWorkflowPowerShellToolOptions {
     static constexpr int kDefaultOutputKilobytes = 512;
+    static constexpr int kMaxOutputKilobytes = 64 * 1024;  // 64 MiB hard ceiling
 
     int default_output_bytes = kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
     int min_output_bytes = static_cast<int>(sak::kBytesPerKB);
+    int max_output_bytes = kMaxOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
 };
 
 struct AiWorkflowPowerShellToolCallbacks {
