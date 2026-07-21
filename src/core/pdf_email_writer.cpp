@@ -16,6 +16,7 @@
 #include <QPageSize>
 #include <QPdfWriter>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTextDocument>
 
 #include <algorithm>
@@ -77,24 +78,36 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
     // Build HTML content for the PDF
     QString html_content = buildHtmlForPdf(item, attachment_data);
 
-    // Render via QPdfWriter
-    QPdfWriter writer(full_path);
-    QPageLayout layout(QPageSize(QPageSize::Letter),
-                       QPageLayout::Portrait,
-                       QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
-                       QPageLayout::Millimeter);
-    writer.setPageLayout(layout);
-    writer.setResolution(kPdfDpi);
-    writer.setTitle(item.subject);
-    writer.setCreator(QStringLiteral("S.A.K. Utility"));
+    // Render via QPdfWriter into a QSaveFile so a locked/read-only destination
+    // fails loudly instead of leaving a stale file that exists()-based success
+    // would report as a fresh export.
+    QSaveFile out_file(full_path);
+    if (!out_file.open(QIODevice::WriteOnly)) {
+        return std::unexpected(error_code::write_error);
+    }
+    {
+        QPdfWriter writer(&out_file);
+        QPageLayout layout(QPageSize(QPageSize::Letter),
+                           QPageLayout::Portrait,
+                           QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
+                           QPageLayout::Millimeter);
+        writer.setPageLayout(layout);
+        writer.setResolution(kPdfDpi);
+        writer.setTitle(item.subject);
+        writer.setCreator(QStringLiteral("S.A.K. Utility"));
 
-    QTextDocument doc;
-    doc.setHtml(html_content);
-    doc.setPageSize(QSizeF(writer.width(), writer.height()));
-    doc.print(&writer);
+        QTextDocument doc;
+        doc.setHtml(html_content);
+        doc.setPageSize(QSizeF(writer.width(), writer.height()));
+        doc.print(&writer);
+    }  // writer destroyed here: the PDF is fully flushed to out_file before commit
+
+    if (!out_file.commit()) {
+        return std::unexpected(error_code::write_error);
+    }
 
     QFileInfo fi(full_path);
-    if (!fi.exists()) {
+    if (fi.size() == 0) {
         return std::unexpected(error_code::write_error);
     }
 
