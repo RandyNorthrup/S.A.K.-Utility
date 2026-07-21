@@ -199,12 +199,9 @@ private:
     void rebuildTable(const PartitionInventory& inventory);
     void rebuildDiskMap(const PartitionInventory& inventory);
     void addDiskMapRow(QVBoxLayout* layout, const PartitionDiskInfo& disk);
-    void addPartitionSegmentsToDiskMap(QHBoxLayout* layout,
-                                       const PartitionDiskInfo& disk,
-                                       const std::optional<PartitionTarget>& selected);
-    void addUnallocatedSegmentsToDiskMap(QHBoxLayout* layout,
-                                         const PartitionDiskInfo& disk,
-                                         const std::optional<PartitionTarget>& selected);
+    void addOrderedDiskMapSegments(QHBoxLayout* layout,
+                                   const PartitionDiskInfo& disk,
+                                   const std::optional<PartitionTarget>& selected);
     QWidget* createPartitionSegment(const PartitionDiskInfo& disk,
                                     const PartitionInfoEx& partition,
                                     const std::optional<PartitionTarget>& selected);

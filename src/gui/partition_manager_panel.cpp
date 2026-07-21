@@ -68,6 +68,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStorageInfo>
 #include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -2935,8 +2936,11 @@ private:
     [[nodiscard]] static uint64_t bytesForX(const QRect& track, uint64_t totalBytes, int x) {
         const int clampedX = std::clamp(x, track.left(), track.right());
         const uint64_t safeTotal = std::max(totalBytes, kDiskMapMinimumBytes);
+        // Map across width-1 pixels so the far-right pixel resolves to the full total:
+        // dividing by width left the maximum ~total/width bytes short and unreachable.
+        const int span = std::max(track.width() - 1, 1);
         return (static_cast<uint64_t>(clampedX - track.left()) * safeTotal) /
-               std::max(static_cast<uint64_t>(track.width()), kDiskMapMinimumBytes);
+               static_cast<uint64_t>(span);
     }
 
     void updateDrag(const QPoint& position) {
@@ -8836,29 +8840,39 @@ void PartitionManagerPanel::addDiskMapRow(QVBoxLayout* layout, const PartitionDi
     barLayout->setContentsMargins(
         ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     barLayout->setSpacing(kDiskMapSegmentSpacing);
-    addPartitionSegmentsToDiskMap(barLayout, disk, selected);
-    addUnallocatedSegmentsToDiskMap(barLayout, disk, selected);
+    addOrderedDiskMapSegments(barLayout, disk, selected);
     rowLayout->addWidget(bar);
     layout->addWidget(row);
 }
 
-void PartitionManagerPanel::addPartitionSegmentsToDiskMap(
+void PartitionManagerPanel::addOrderedDiskMapSegments(
     QHBoxLayout* layout,
     const PartitionDiskInfo& disk,
     const std::optional<PartitionTarget>& selected) {
+    // Interleave partitions and unallocated regions by physical offset so the bar reflects
+    // the true on-disk order (e.g. [A][gap][B]); adding all partitions then all gaps
+    // rendered [A][B][gap] and misrepresented the layout.
+    struct MapSegment {
+        uint64_t offset;
+        uint64_t size;
+        QWidget* widget;
+    };
+    QVector<MapSegment> ordered;
+    ordered.reserve(disk.partitions.size() + disk.unallocated_regions.size());
     for (const auto& partition : disk.partitions) {
-        layout->addWidget(createPartitionSegment(disk, partition, selected),
-                          stretchForBytes(partition.size_bytes, disk.size_bytes));
+        ordered.append({partition.offset_bytes,
+                        partition.size_bytes,
+                        createPartitionSegment(disk, partition, selected)});
     }
-}
-
-void PartitionManagerPanel::addUnallocatedSegmentsToDiskMap(
-    QHBoxLayout* layout,
-    const PartitionDiskInfo& disk,
-    const std::optional<PartitionTarget>& selected) {
     for (const auto& region : disk.unallocated_regions) {
-        layout->addWidget(createUnallocatedSegment(region, selected),
-                          stretchForBytes(region.size_bytes, disk.size_bytes));
+        ordered.append(
+            {region.offset_bytes, region.size_bytes, createUnallocatedSegment(region, selected)});
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const MapSegment& lhs, const MapSegment& rhs) {
+        return lhs.offset < rhs.offset;
+    });
+    for (const auto& segment : ordered) {
+        layout->addWidget(segment.widget, stretchForBytes(segment.size, disk.size_bytes));
     }
 }
 
@@ -10844,6 +10858,84 @@ void PartitionManagerPanel::onCloneDisk() {
     queueOperation(PartitionOperationType::CloneDisk, payload);
 }
 
+namespace {
+
+// A custom raw clone target ("\\.\D:" or "\\.\PhysicalDriveN") is typed free-form and skips
+// the region-target size/safety gates. Resolve it against the inventory and return a blocker
+// string if it names a protected system volume/disk or is smaller than the source.
+[[nodiscard]] bool partitionIsProtected(const PartitionInfoEx& partition) {
+    return partition.is_system || partition.is_boot || partition.is_efi || partition.is_msr ||
+           partition.is_recovery;
+}
+
+[[nodiscard]] QString customRawVolumeBlocker(const PartitionInventory& inventory,
+                                             const QString& letter,
+                                             const QString& target,
+                                             uint64_t sourceSize) {
+    for (const auto& disk : inventory.disks) {
+        for (const auto& partition : disk.partitions) {
+            if (!partition.volume ||
+                partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) != 0) {
+                continue;
+            }
+            if (partitionIsProtected(partition)) {
+                return QObject::tr("Target %1 is a protected system/boot volume.").arg(target);
+            }
+            if (partition.size_bytes < sourceSize) {
+                return QObject::tr("Target volume %1 (%2) is smaller than the source (%3).")
+                    .arg(target,
+                         formatPartitionBytes(partition.size_bytes),
+                         formatPartitionBytes(sourceSize));
+            }
+            return {};
+        }
+    }
+    return {};  // unknown volume: not in inventory, cannot validate here
+}
+
+[[nodiscard]] QString customRawDiskBlocker(const PartitionInventory& inventory,
+                                           uint32_t diskNumber,
+                                           uint64_t sourceSize) {
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, diskNumber);
+    if (!disk) {
+        return {};
+    }
+    if (disk->is_system || disk->is_boot) {
+        return QObject::tr("Target Disk %1 holds the running system.").arg(diskNumber);
+    }
+    if (disk->size_bytes < sourceSize) {
+        return QObject::tr("Target Disk %1 (%2) is smaller than the source (%3).")
+            .arg(diskNumber)
+            .arg(formatPartitionBytes(disk->size_bytes), formatPartitionBytes(sourceSize));
+    }
+    return {};
+}
+
+[[nodiscard]] QString customRawCloneBlocker(const PartitionInventory& inventory,
+                                            const QString& targetPath,
+                                            uint64_t sourceSize) {
+    const QString prefix = QStringLiteral("\\\\.\\");
+    const QString trimmed = targetPath.trimmed();
+    if (!trimmed.startsWith(prefix)) {
+        return {};  // image file target: covered by the image size checks elsewhere
+    }
+    const QString rest = trimmed.mid(prefix.size());
+    if (rest.size() == 2 && rest.at(0).isLetter() && rest.at(1) == QLatin1Char(':')) {
+        return customRawVolumeBlocker(inventory, rest.left(1).toUpper(), trimmed, sourceSize);
+    }
+    const QString diskToken = QStringLiteral("PhysicalDrive");
+    if (rest.startsWith(diskToken, Qt::CaseInsensitive)) {
+        bool ok = false;
+        const uint32_t number = rest.mid(diskToken.size()).toUInt(&ok);
+        if (ok) {
+            return customRawDiskBlocker(inventory, number, sourceSize);
+        }
+    }
+    return {};
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onCopyPartitionWizard() {
     const auto selected = selectedTarget();
     if (!selected || selected->kind != PartitionTargetKind::Partition) {
@@ -10866,6 +10958,17 @@ void PartitionManagerPanel::onCopyPartitionWizard() {
                                selected->size_bytes);
     if (!result) {
         return;
+    }
+    if (!result->target_region_selected) {
+        // Region targets are gated by the safety validator; a free-typed custom raw target
+        // is not, so validate it here before it can overwrite a system/undersized target.
+        const QString blocker = customRawCloneBlocker(m_controller->inventory(),
+                                                      result->target_path,
+                                                      result->source_size_bytes);
+        if (!blocker.isEmpty()) {
+            showWarningLogged(this, tr("Copy Partition Wizard"), blocker);
+            return;
+        }
     }
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = sourcePath;
@@ -10915,6 +11018,36 @@ void PartitionManagerPanel::onCreateImage() {
     }
 }
 
+namespace {
+
+// Best-effort: return true if the image path's volume sits on the given physical disk, so a
+// restore does not offline the very disk holding the image (which then cannot be read).
+[[nodiscard]] bool imageResidesOnDisk(const PartitionInventory& inventory,
+                                      const QString& path,
+                                      uint32_t diskNumber) {
+    const QString root = QStorageInfo(path).rootPath();
+    const QString source = root.isEmpty() ? QFileInfo(path).absoluteFilePath() : root;
+    if (source.size() < 2 || source.at(1) != QLatin1Char(':')) {
+        return false;  // UNC / unmapped path: cannot attribute to a local disk here
+    }
+    const QString letter = source.left(1).toUpper();
+    for (const auto& disk : inventory.disks) {
+        for (const auto& partition : disk.partitions) {
+            if (partition.volume &&
+                partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0) {
+                return disk.disk_number == diskNumber;
+            }
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool restoreImageFileIsUsable(const QFileInfo& info) {
+    return info.exists() && info.isFile() && info.size() > 0;
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onRestoreImage() {
     const auto selected = selectedTarget();
     if (!selected || selected->kind != PartitionTargetKind::Disk) {
@@ -10928,10 +11061,19 @@ void PartitionManagerPanel::onRestoreImage() {
     }
 
     const QFileInfo imageInfo(path);
-    if (!imageInfo.exists() || !imageInfo.isFile() || imageInfo.size() <= 0) {
+    if (!restoreImageFileIsUsable(imageInfo)) {
         showWarningLogged(this,
                           tr("Restore Image"),
                           tr("Select a readable, non-empty disk image file."));
+        return;
+    }
+    if (imageResidesOnDisk(m_controller->inventory(), path, selected->disk_number)) {
+        showWarningLogged(
+            this,
+            tr("Restore Image"),
+            tr("The image file resides on target Disk %1. Restoring would offline the disk "
+               "that holds the image and fail. Choose an image stored on a different disk.")
+                .arg(selected->disk_number));
         return;
     }
     const auto imageSize = static_cast<uint64_t>(imageInfo.size());
