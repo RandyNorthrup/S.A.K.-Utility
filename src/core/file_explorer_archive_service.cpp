@@ -16,6 +16,14 @@
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 
+#ifdef _WIN32
+#include <windows.h>
+// Undefine Windows macros that conflict with Qt
+#undef emit
+#undef signals
+#undef slots
+#endif
+
 namespace sak {
 
 namespace {
@@ -38,6 +46,40 @@ bool entryEscapesDestination(const QString& destination_dir, const QString& entr
     const QString candidate = QDir::cleanPath(destination_dir + QLatin1Char('/') + entry_name);
     const QString root = QDir::cleanPath(destination_dir);
     return candidate != root && !candidate.startsWith(root + QLatin1Char('/'));
+}
+
+// True when @p path is an existing reparse point (symlink or junction). On
+// Windows the native attribute covers both; elsewhere a symlink is equivalent.
+bool isReparsePoint(const QString& path) {
+#ifdef _WIN32
+    const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    return QFileInfo(path).isSymLink();
+#endif
+}
+
+// True when any parent directory of @p out_path between @p destination_dir and
+// the leaf is an existing reparse point. The lexical containment check trusts
+// the path text, but a pre-planted junction (e.g. destination\sub pointing at an
+// unrelated system folder) would redirect the write outside the destination even
+// though the text stays under it, so each descended component is checked.
+bool traversesReparsePoint(const QString& destination_dir, const QString& out_path) {
+    const QString root = QDir::cleanPath(destination_dir);
+    const QString full = QDir::cleanPath(out_path);
+    if (!full.startsWith(root + QLatin1Char('/'))) {
+        return false;
+    }
+    const QStringList parts =
+        full.mid(root.length() + 1).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    QString current = root;
+    for (qsizetype i = 0; i + 1 < parts.size(); ++i) {
+        current += QLatin1Char('/') + parts.at(i);
+        if (isReparsePoint(current)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Materialize one file entry at @p out_path (parent dirs, corrupt-payload
@@ -91,6 +133,12 @@ bool extractZipEntry(const QZipReader& reader,
         return false;
     }
     const QString out_path = QDir(destination_dir).filePath(info.filePath);
+    if (traversesReparsePoint(destination_dir, out_path)) {
+        result->blockers.append(
+            QStringLiteral("Refused entry %1 (path crosses a symlink or junction).")
+                .arg(info.filePath));
+        return false;
+    }
     if (info.isDir) {
         if (QDir().mkpath(out_path)) {
             return true;

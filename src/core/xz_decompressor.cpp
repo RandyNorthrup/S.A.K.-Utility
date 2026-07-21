@@ -13,8 +13,11 @@ XzDecompressor::~XzDecompressor() {
 }
 
 bool XzDecompressor::initStream() {
-    // Automatic format detection (XZ or LZMA), no memory limit
-    lzma_ret ret = lzma_stream_decoder(&m_lzmaStream, UINT64_MAX, 0);
+    // Automatic format detection (XZ or legacy .lzma-alone), no memory limit.
+    // lzma_stream_decoder only decodes .xz containers and fails with
+    // LZMA_FORMAT_ERROR on a valid legacy .lzma file; lzma_auto_decoder handles
+    // both, matching what the decompressor factory already advertises.
+    lzma_ret ret = lzma_auto_decoder(&m_lzmaStream, UINT64_MAX, 0);
     if (ret != LZMA_OK) {
         m_lastError =
             QString("Failed to initialize lzma: error code %1").arg(static_cast<int>(ret));

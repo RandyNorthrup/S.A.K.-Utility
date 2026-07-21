@@ -120,6 +120,7 @@ bool FileExplorerArchiveWorker::extractOne(const FileExplorerArchiveExtractItem&
         const auto result = FileExplorerArchiveService::extractZip(host_zip,
                                                                    archive.dialog_destination);
         m_blockers.append(result.blockers);
+        m_warnings.append(result.warnings);
         return result.ok;
     }
     // Files smart rule: a single top-level folder extracts in place (no
@@ -129,10 +130,21 @@ bool FileExplorerArchiveWorker::extractOne(const FileExplorerArchiveExtractItem&
                       (m_request.wrap_mode == FileExplorerArchiveWrapMode::Smart &&
                        !FileExplorerArchiveService::hasSingleTopLevelRoot(host_zip, nullptr));
     if (local) {
-        const QString destination = wrap ? childPath(availableChildName(stem))
-                                         : m_request.directory;
+        QString destination = m_request.directory;
+        if (wrap) {
+            const QString child = availableChildName(stem);
+            if (child.isEmpty()) {
+                m_blockers.append(
+                    QStringLiteral("Could not find an unused name for %1; all numbered "
+                                   "variants are in use.")
+                        .arg(stem));
+                return false;
+            }
+            destination = childPath(child);
+        }
         const auto result = FileExplorerArchiveService::extractZip(host_zip, destination);
         m_blockers.append(result.blockers);
+        m_warnings.append(result.warnings);
         return result.ok;
     }
     return extractRawArchive(host_zip, wrap ? stem : QString());
@@ -149,12 +161,21 @@ bool FileExplorerArchiveWorker::extractRawArchive(const QString& host_zip,
     }
     const auto result = FileExplorerArchiveService::extractZip(host_zip, out.path());
     m_blockers.append(result.blockers);
+    m_warnings.append(result.warnings);
     return result.ok && deliverTree(out.path(), wrap_name);
 }
 
 bool FileExplorerArchiveWorker::deliverTree(const QString& host_out_dir, const QString& wrap_name) {
     if (!wrap_name.isEmpty()) {
-        const QString destination = childPath(availableChildName(wrap_name));
+        const QString child = availableChildName(wrap_name);
+        if (child.isEmpty()) {
+            m_blockers.append(
+                QStringLiteral("Could not find an unused name for %1; all numbered variants "
+                               "are in use.")
+                    .arg(wrap_name));
+            return false;
+        }
+        const QString destination = childPath(child);
         const auto result = FileManagementFileSystemBridge::importDirectoryFromHost(
             m_request.target, host_out_dir, destination);
         m_blockers.append(result.blockers);
@@ -210,14 +231,15 @@ QString FileExplorerArchiveWorker::availableChildName(const QString& name) const
     const qsizetype last_dot = name.lastIndexOf(QLatin1Char('.'));
     const QString base = last_dot > 0 ? name.left(last_dot) : name;
     const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
-    QString candidate = name;
     for (int index = 2; index < 10'000; ++index) {
-        candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
+        const QString candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
         if (!destinationOccupied(candidate)) {
-            break;
+            return candidate;
         }
     }
-    return candidate;
+    // Every "{name} (2..9999)" variant is occupied: signal exhaustion instead of
+    // returning an occupied name, which the caller would extract into/over.
+    return QString();
 }
 
 bool FileExplorerArchiveWorker::destinationOccupied(const QString& name) const {

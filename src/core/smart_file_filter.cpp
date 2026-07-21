@@ -4,6 +4,7 @@
 #include "sak/smart_file_filter.h"
 
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QDir>
 
@@ -46,11 +47,20 @@ void SmartFileFilter::setRules(const SmartFilter& rules) {
 
 void SmartFileFilter::compileRegexPatterns() {
     m_compiledPatterns.clear();
+    m_invalidPatterns.clear();
 
     for (const QString& pattern : m_rules.exclude_patterns) {
         QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
         if (regex.isValid()) {
             m_compiledPatterns.append(regex);
+        } else {
+            // Record and log the rejected rule instead of dropping it silently:
+            // otherwise files the user meant to exclude are processed with no
+            // indication the pattern was invalid.
+            const QString detail = QStringLiteral("%1: %2").arg(pattern, regex.errorString());
+            m_invalidPatterns.append(detail);
+            logWarning("SmartFileFilter: ignoring invalid exclude pattern {}",
+                       detail.toStdString());
         }
     }
 }

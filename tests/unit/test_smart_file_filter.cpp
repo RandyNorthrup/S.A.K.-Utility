@@ -35,6 +35,7 @@ private Q_SLOTS:
     // Pattern exclusion
     void excludePattern_matchesRegex();
     void excludePattern_noMatch();
+    void excludePattern_invalidRecorded();
 
     // Folder exclusion
     void excludeFolder_detected();
@@ -189,6 +190,27 @@ void SmartFileFilterTests::excludePattern_noMatch() {
 
     QFileInfo docFile(m_tempDir.filePath("normal.txt"));
     QVERIFY(!filter.shouldExcludeFile(docFile, m_profilePath));
+}
+
+void SmartFileFilterTests::excludePattern_invalidRecorded() {
+    sak::SmartFilter rules;
+    // One invalid regex (unterminated class) alongside a valid one.
+    rules.exclude_patterns = {"[unterminated", ".*\\.tmp$"};
+    rules.dangerous_files.clear();
+    rules.exclude_folders.clear();
+
+    sak::SmartFileFilter filter(rules);
+
+    // The invalid pattern is surfaced rather than silently dropped.
+    QCOMPARE(filter.invalidPatterns().size(), 1);
+    QVERIFY(filter.invalidPatterns().first().contains(QStringLiteral("[unterminated")));
+
+    // The valid pattern still filters.
+    QFile f(m_tempDir.filePath("temp.tmp"));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("x");
+    f.close();
+    QVERIFY(filter.shouldExcludeFile(QFileInfo(m_tempDir.filePath("temp.tmp")), m_profilePath));
 }
 
 // ============================================================================

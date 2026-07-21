@@ -34,6 +34,7 @@ bool StreamingDecompressor::open(const QString& filePath) {
     m_compressedBytesRead = 0;
     m_decompressedBytesProduced = 0;
     m_eof = false;
+    m_input_exhausted = false;
     m_initialized = true;
 
     logInfo("Opened {} file: {}", formatName().toStdString(), filePath.toStdString());
@@ -49,6 +50,7 @@ void StreamingDecompressor::close() {
         m_file.close();
     }
     m_eof = false;
+    m_input_exhausted = false;
 }
 
 bool StreamingDecompressor::isOpen() const {
@@ -68,23 +70,8 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
 
     setOutput(data, static_cast<size_t>(maxSize));
 
-    while (outputRemaining() > 0 && !m_eof) {
-        if (!tryRefillInput()) {
-            return -1;
-        }
-        if (m_eof) {
-            break;
-        }
-
-        StepResult result = decompressStep();
-        if (result == StepResult::stream_end) {
-            m_eof = true;
-            break;
-        }
-        if (result == StepResult::error) {
-            logError(m_lastError.toStdString());
-            return -1;
-        }
+    if (!pumpDecoder()) {
+        return -1;
     }
 
     qint64 bytesProduced = maxSize - static_cast<qint64>(outputRemaining());
@@ -110,6 +97,39 @@ qint64 StreamingDecompressor::decompressedBytesProduced() const {
     return m_decompressedBytesProduced;
 }
 
+bool StreamingDecompressor::pumpDecoder() {
+    while (outputRemaining() > 0 && !m_eof) {
+        if (!tryRefillInput()) {
+            return false;
+        }
+
+        const size_t output_before = outputRemaining();
+        const StepResult result = decompressStep();
+        if (result == StepResult::stream_end) {
+            m_eof = true;
+            return true;
+        }
+        if (result == StepResult::error) {
+            logError(m_lastError.toStdString());
+            return false;
+        }
+
+        // The decoder reported ok but made no progress and there is no more
+        // compressed input to give it: the stream ended before the decoder
+        // reached end-of-stream, i.e. it is truncated. Fail closed rather than
+        // returning the partial output as a clean EOF (which would, e.g., flash a
+        // truncated disk image with no warning).
+        if (m_input_exhausted && inputEmpty() && outputRemaining() == output_before) {
+            m_lastError = QStringLiteral(
+                "Compressed stream is truncated: the input ended before the decoder "
+                "reached end-of-stream");
+            logError(m_lastError.toStdString());
+            return false;
+        }
+    }
+    return true;
+}
+
 bool StreamingDecompressor::tryRefillInput() {
     if (!inputEmpty()) {
         return true;
@@ -118,7 +138,10 @@ bool StreamingDecompressor::tryRefillInput() {
         return true;
     }
     if (m_file.atEnd()) {
-        m_eof = true;
+        // No more compressed bytes on disk. This is NOT end-of-stream: only the
+        // decoder confirming stream_end sets m_eof. Marking the input exhausted
+        // lets read() detect a truncated stream (input gone, decoder not done).
+        m_input_exhausted = true;
         return true;
     }
     return false;

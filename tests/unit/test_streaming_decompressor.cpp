@@ -11,6 +11,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <zlib.h>
+
 class StreamingDecompressorTests : public QObject {
     Q_OBJECT
 
@@ -39,11 +41,17 @@ private Q_SLOTS:
     // atEnd on fresh decompressor
     void atEnd_beforeOpen();
 
+    // Truncated vs complete real gzip stream
+    void completeGzip_readsAllBytes();
+    void truncatedGzip_reportsError();
+
 private:
     QTemporaryDir m_tempDir;
 
     void writeFile(const QString& name, const QByteArray& content);
     QString filePath(const QString& name) const;
+    static QByteArray gzipCompress(const QByteArray& input);
+    static qint64 readFully(sak::StreamingDecompressor& decomp);
 };
 
 void StreamingDecompressorTests::initTestCase() {
@@ -199,6 +207,82 @@ void StreamingDecompressorTests::atEnd_beforeOpen() {
         [[maybe_unused]] bool ended = decomp->atEnd();
         QVERIFY(true);
     }
+}
+
+// ============================================================================
+// Truncated stream detection (must fail closed, not report a clean short read)
+// ============================================================================
+
+QByteArray StreamingDecompressorTests::gzipCompress(const QByteArray& input) {
+    z_stream zs{};
+    // windowBits 15 + 16 selects the gzip wrapper.
+    const int init =
+        deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
+    if (init != Z_OK) {
+        return {};
+    }
+    zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(input.constData()));
+    zs.avail_in = static_cast<uInt>(input.size());
+
+    QByteArray out;
+    char buffer[16'384];
+    int ret = Z_OK;
+    do {
+        zs.next_out = reinterpret_cast<Bytef*>(buffer);
+        zs.avail_out = sizeof(buffer);
+        ret = deflate(&zs, Z_FINISH);
+        out.append(buffer, static_cast<qsizetype>(sizeof(buffer) - zs.avail_out));
+    } while (ret == Z_OK);
+    deflateEnd(&zs);
+    return ret == Z_STREAM_END ? out : QByteArray();
+}
+
+qint64 StreamingDecompressorTests::readFully(sak::StreamingDecompressor& decomp) {
+    qint64 total = 0;
+    char buffer[8192];
+    for (;;) {
+        const qint64 n = decomp.read(buffer, sizeof(buffer));
+        if (n < 0) {
+            return -1;  // error (e.g. truncated stream)
+        }
+        if (n == 0) {
+            return total;  // clean end-of-stream
+        }
+        total += n;
+    }
+}
+
+void StreamingDecompressorTests::completeGzip_readsAllBytes() {
+    QByteArray payload(300'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 31 + 7) & 0xFF);
+    }
+    const QByteArray gz = gzipCompress(payload);
+    QVERIFY(!gz.isEmpty());
+    writeFile("complete.gz", gz);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("complete.gz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("complete.gz")));
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(payload.size()));
+}
+
+void StreamingDecompressorTests::truncatedGzip_reportsError() {
+    QByteArray payload(300'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 31 + 7) & 0xFF);
+    }
+    QByteArray gz = gzipCompress(payload);
+    QVERIFY(gz.size() > 200);
+    gz.chop(gz.size() / 2);  // drop the second half: real compressed data + trailer
+    writeFile("truncated.gz", gz);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("truncated.gz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("truncated.gz")));
+    // A truncated stream must fail closed (return -1), not report a clean EOF
+    // over the partial output.
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
 }
 
 QTEST_GUILESS_MAIN(StreamingDecompressorTests)

@@ -108,8 +108,13 @@ protected:
     QString m_lastError;
 
 private:
-    /// @brief Attempt to refill input; sets m_eof at end of file
-    /// @return true if input available or eof reached, false on read error
+    /// @brief Decode into the current output buffer until it fills or the stream
+    ///        ends.
+    /// @return false on a decode/read error or a detected truncated stream.
+    bool pumpDecoder();
+
+    /// @brief Attempt to refill input; marks the input exhausted at end of file
+    /// @return true if input available or file exhausted, false on read error
     bool tryRefillInput();
 
     /// @brief Fill m_inputBuffer from m_file and call setInputFromBuffer()
@@ -117,7 +122,12 @@ private:
 
     QFile m_file;
     bool m_initialized{false};
+    /// Terminal success: the decoder reported end-of-stream. Distinct from
+    /// m_input_exhausted so a file that ends before the decoder finishes (a
+    /// truncated stream) is reported as an error instead of a clean EOF.
     bool m_eof{false};
+    /// The compressed input file has been fully read (no more bytes on disk).
+    bool m_input_exhausted{false};
     qint64 m_compressedBytesRead{0};
     qint64 m_decompressedBytesProduced{0};
 };

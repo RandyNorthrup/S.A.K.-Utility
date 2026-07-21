@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStringList>
 
 namespace sak {
 
@@ -74,6 +75,15 @@ public:
      */
     bool isDangerousFile(const QString& fileName) const;
 
+    /**
+     * @brief Exclusion patterns that failed to compile as regular expressions.
+     *
+     * Each entry is "<pattern>: <error>". An invalid rule is dropped from the
+     * active pattern set, so callers should surface these to the user rather
+     * than silently letting the intended-to-exclude files through.
+     */
+    const QStringList& invalidPatterns() const { return m_invalidPatterns; }
+
 private:
     void compileRegexPatterns();
     bool matchesPattern(const QString& fileName) const;
@@ -81,6 +91,7 @@ private:
 
     SmartFilter m_rules;
     QVector<QRegularExpression> m_compiledPatterns;
+    QStringList m_invalidPatterns;
     QSet<QString> m_dangerousFilesSet;
     QSet<QString> m_excludeFoldersSet;
 };
