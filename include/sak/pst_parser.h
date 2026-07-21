@@ -245,27 +245,38 @@ private:
     /// Read a single data block by Block ID
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlock(uint64_t bid);
 
-    /// Read a multi-block data tree (XBLOCK/XXBLOCK)
+    /// Read a multi-block data tree (XBLOCK/XXBLOCK). @p depth bounds recursion so
+    /// a cyclic or self-referential internal block cannot overflow the stack.
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTree(
-        uint64_t bid, QVector<int>* block_offsets = nullptr);
+        uint64_t bid, QVector<int>* block_offsets = nullptr, int depth = 0);
 
     /// Extract attachment data bytes from a resolved subnode
     [[nodiscard]] std::expected<QByteArray, sak::error_code> extractAttachmentFromSubnode(
         const sak::PstNode& subnode);
+
+    /// Dispatch an internal data block to its XBLOCK/XXBLOCK child reader.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readInternalDataBlock(
+        const QByteArray& data,
+        uint8_t block_level,
+        uint16_t entry_count,
+        QVector<int>* block_offsets,
+        int depth);
 
     /// Read child blocks from an XBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXblockChildren(
         const QByteArray& data,
         uint16_t entry_count,
         QByteArray& result,
-        QVector<int>* block_offsets);
+        QVector<int>* block_offsets,
+        int depth);
 
     /// Read child blocks from an XXBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXxblockChildren(
         const QByteArray& data,
         uint16_t entry_count,
         QByteArray& result,
-        QVector<int>* block_offsets);
+        QVector<int>* block_offsets,
+        int depth);
 
     /// Decompress a 4K-page block if the footer indicates zlib compression
     [[nodiscard]] QByteArray decompressBlockIf4k(const QByteArray& raw,

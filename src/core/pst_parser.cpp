@@ -121,7 +121,8 @@ static constexpr int kHeaderDataVersionOffset = 10;
 static constexpr int kHeaderClientVersionOffset = 12;
 static constexpr int kHeaderPlatformCreateOffset = 14;
 static constexpr int kHeaderPlatformAccessOffset = 15;
-static constexpr int kHeaderEncryptionOffset = 513;
+static constexpr int kHeaderEncryptionOffset = 513;      // bCryptMethod, Unicode header
+static constexpr int kHeaderEncryptionOffsetAnsi = 465;  // bCryptMethod, ANSI header
 static constexpr int kUnicodeRootOffset = 0xB4;
 static constexpr int kAnsiRootOffset = 0xA4;
 static constexpr int kRootFileSizeOffset = 4;
@@ -266,6 +267,15 @@ static bool isKnownDataVersion(uint16_t version) {
 
 template <typename T>
 static T localReadLE(const QByteArray& data, int offset) {
+    // Bounds-check every fixed read: BTree leaf loops derive the record stride
+    // from an attacker-controlled entry_size that can be smaller than the fixed
+    // record actually read (e.g. a legacy page reading a uint32 at off+24 while
+    // entry_size is 2), which would over-read past the page buffer. Return 0 for
+    // an out-of-range field rather than performing an OOB memcpy.
+    if (offset < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(sizeof(T)) > data.size()) {
+        return T{0};
+    }
     T value;
     std::memcpy(&value, data.constData() + offset, sizeof(T));
     return value;
@@ -1099,11 +1109,18 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }
-        if (found_count != attachment_index) {
-            ++found_count;
+        // Count with the SAME success gate as readAttachments (which only advances
+        // its exposed index when readSingleAttachment succeeds). The callers hold
+        // that compacted index, so a subnode readAttachments skipped as unparsable
+        // must be skipped here too -- otherwise a failed earlier attachment shifts
+        // the indices and the wrong attachment's bytes are returned.
+        if (!readSingleAttachment(sub_it.value(), found_count)) {
             continue;
         }
-        return extractAttachmentFromSubnode(sub_it.value());
+        if (found_count == attachment_index) {
+            return extractAttachmentFromSubnode(sub_it.value());
+        }
+        ++found_count;
     }
 
     return std::unexpected(error_code::pst_attachment_error);
@@ -1153,7 +1170,16 @@ std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray&
 }
 
 std::expected<void, error_code> PstParser::parseHeaderEncryption(const QByteArray& data) {
-    m_header.encryption_type = static_cast<uint8_t>(data[kHeaderEncryptionOffset]);
+    // bCryptMethod lives at a different offset per format: 513 in the Unicode
+    // header, 465 in the 512-byte ANSI header. Reading 513 for an ANSI PST both
+    // reads past the header and misdetects the crypt method, so an encoded ANSI
+    // file decodes as garbage.
+    const int encryption_offset = m_is_unicode ? kHeaderEncryptionOffset
+                                               : kHeaderEncryptionOffsetAnsi;
+    if (encryption_offset >= data.size()) {
+        return std::unexpected(error_code::pst_invalid_header);
+    }
+    m_header.encryption_type = static_cast<uint8_t>(data[encryption_offset]);
     m_encryption_type = m_header.encryption_type;
 
     if (m_encryption_type == sak::email::kEncryptHigh) {
@@ -1418,7 +1444,15 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
 }
 
 std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
-                                                              QVector<int>* block_offsets) {
+                                                              QVector<int>* block_offsets,
+                                                              int depth) {
+    // Bound recursion: a crafted PST can build a self-referential or cyclic chain
+    // of internal (XBLOCK/XXBLOCK) blocks that would otherwise recurse until the
+    // native stack overflows.
+    if (depth > kMaxBTreeDepth) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+
     bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
         auto result = readBlock(bid);
@@ -1440,15 +1474,32 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
 
     uint8_t block_level = static_cast<uint8_t>(data[1]);
     uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
-    QByteArray result;
 
+    // The in-block entry count is independent of the block's byte length (which
+    // comes from the BBT), so a small block can claim a large count. Reject any
+    // count whose entries would run past the block before reading child bids.
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+    if (static_cast<int64_t>(kBlockTreeHeaderSize) + static_cast<int64_t>(entry_count) * bid_size >
+        data.size()) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+
+    return readInternalDataBlock(data, block_level, entry_count, block_offsets, depth);
+}
+
+std::expected<QByteArray, error_code> PstParser::readInternalDataBlock(const QByteArray& data,
+                                                                       uint8_t block_level,
+                                                                       uint16_t entry_count,
+                                                                       QVector<int>* block_offsets,
+                                                                       int depth) {
+    QByteArray result;
     if (block_level == kDataTreeXBlockLevel) {
-        auto status = readXblockChildren(data, entry_count, result, block_offsets);
+        auto status = readXblockChildren(data, entry_count, result, block_offsets, depth + 1);
         if (!status) {
             return std::unexpected(status.error());
         }
     } else if (block_level == kDataTreeXxBlockLevel) {
-        auto status = readXxblockChildren(data, entry_count, result, block_offsets);
+        auto status = readXxblockChildren(data, entry_count, result, block_offsets, depth + 1);
         if (!status) {
             return std::unexpected(status.error());
         }
@@ -1461,7 +1512,8 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
 std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& data,
                                                               uint16_t entry_count,
                                                               QByteArray& result,
-                                                              QVector<int>* block_offsets) {
+                                                              QVector<int>* block_offsets,
+                                                              int depth) {
     int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
         int offset = kBlockTreeHeaderSize + (idx * bid_size);
@@ -1472,7 +1524,7 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         // nesting where an XBLOCK entry itself carries the internal bid flag (0x02).
         int base_offset = result.size();
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, block_offsets ? &child_offsets : nullptr);
+        auto child_data = readDataTree(child_bid, block_offsets ? &child_offsets : nullptr, depth);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
@@ -1489,7 +1541,8 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
 std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray& data,
                                                                uint16_t entry_count,
                                                                QByteArray& result,
-                                                               QVector<int>* block_offsets) {
+                                                               QVector<int>* block_offsets,
+                                                               int depth) {
     int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
         int offset = kBlockTreeHeaderSize + (idx * bid_size);
@@ -1497,7 +1550,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
                                           : readLE<uint32_t>(data, offset);
         int base_offset = result.size();
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, &child_offsets);
+        auto child_data = readDataTree(child_bid, &child_offsets, depth);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
@@ -1908,14 +1961,22 @@ int PstParser::tcRowOffset(const TcRowMatrix& matrix,
                            int row_size,
                            int rows_per_block,
                            int block_count) {
-    if (rows_per_block <= 0) {
+    if (rows_per_block <= 0 || block_count <= 0) {
         return -1;
     }
-    const int block_i = static_cast<int>(row_index) / rows_per_block;
-    const int row_in_block = static_cast<int>(row_index) % rows_per_block;
-    if (block_i >= block_count) {
+    // Do the division in unsigned 64-bit: row_index is untrusted file data, and a
+    // value >= 0x80000000 cast to int becomes negative, producing a negative
+    // block index that reads block_ends out of bounds.
+    const uint64_t block_u = static_cast<uint64_t>(row_index) /
+                             static_cast<uint32_t>(rows_per_block);
+    const uint64_t row_in_block_u = static_cast<uint64_t>(row_index) %
+                                    static_cast<uint32_t>(rows_per_block);
+    if (block_u >= static_cast<uint64_t>(block_count) ||
+        block_u >= static_cast<uint64_t>(matrix.block_ends.size())) {
         return -1;
     }
+    const int block_i = static_cast<int>(block_u);
+    const int row_in_block = static_cast<int>(row_in_block_u);
     const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
     const int block_end = matrix.block_ends[block_i];
     const int off = block_start + row_in_block * row_size;
