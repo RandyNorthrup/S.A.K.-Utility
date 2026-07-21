@@ -2007,14 +2007,102 @@ QString safeDownloadFileName(const QUrl& url, const QString& filename) {
     return safe_name;
 }
 
-bool downloadUrlBytes(const QUrl& url, QByteArray* bytes, QString* error_message) {
-    struct DownloadState {
-        QByteArray payload;
-        QString error;
-        bool ok{false};
-        bool timed_out{false};
-    };
+// Hard ceiling on a single AI-tool download so a server that streams a multi-gigabyte
+// (or unbounded chunked) body cannot buffer the whole response into RAM and OOM the app.
+constexpr qint64 kMaxDownloadBytes = 512LL * 1024 * 1024;  // 512 MiB
 
+struct DownloadState {
+    QByteArray payload;
+    QString error;
+    bool ok{false};
+    bool timed_out{false};
+};
+
+using DownloadFinish = std::function<void(bool timed_out, const QString& cap_error)>;
+
+void applyDownloadOutcome(DownloadState* state,
+                          QNetworkReply* reply,
+                          bool timed_out,
+                          const QString& cap_error) {
+    state->timed_out = timed_out;
+    if (timed_out) {
+        state->error = QStringLiteral("Download timed out");
+    } else if (!cap_error.isEmpty()) {
+        state->error = cap_error;
+    } else if (reply->error() != QNetworkReply::NoError) {
+        state->error = QStringLiteral("Download failed: %1").arg(reply->errorString());
+    } else {
+        state->payload.append(reply->readAll());
+        state->ok = true;
+    }
+}
+
+// Wire the two size-guard signals: a Content-Length early reject and a running-total abort,
+// so neither an advertised-too-large body nor a lying/omitted length can OOM the app.
+void connectDownloadCaps(QNetworkReply* reply,
+                         QObject* worker,
+                         DownloadState* state,
+                         const DownloadFinish& finish) {
+    QObject::connect(reply, &QNetworkReply::metaDataChanged, worker, [reply, finish]() {
+        const QVariant length = reply->header(QNetworkRequest::ContentLengthHeader);
+        if (length.isValid() && length.toLongLong() > kMaxDownloadBytes) {
+            reply->abort();
+            finish(false,
+                   QStringLiteral("Download size %1 exceeds %2 byte limit")
+                       .arg(length.toLongLong())
+                       .arg(kMaxDownloadBytes));
+        }
+    });
+    QObject::connect(reply, &QNetworkReply::readyRead, worker, [reply, state, finish]() {
+        state->payload.append(reply->readAll());
+        if (state->payload.size() > kMaxDownloadBytes) {
+            reply->abort();
+            finish(false, QStringLiteral("Download exceeded %1 byte limit").arg(kMaxDownloadBytes));
+        }
+    });
+}
+
+void startDownloadOnWorker(QObject* worker,
+                           const QUrl& url,
+                           DownloadState* state,
+                           QSemaphore* done,
+                           QThread* network_thread) {
+    auto* nam = new QNetworkAccessManager(worker);
+    nam->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    auto* reply = nam->get(request);
+    auto* timeout_timer = new QTimer(worker);
+    timeout_timer->setSingleShot(true);
+    const auto completed = std::make_shared<std::atomic_bool>(false);
+    const DownloadFinish finish = [state, done, network_thread, reply, timeout_timer, completed](
+                                      bool timed_out, const QString& cap_error) {
+        bool expected = false;
+        if (!completed->compare_exchange_strong(expected, true)) {
+            return;
+        }
+        if (timeout_timer->isActive()) {
+            timeout_timer->stop();
+        }
+        applyDownloadOutcome(state, reply, timed_out, cap_error);
+        reply->deleteLater();
+        done->release();
+        network_thread->quit();
+    };
+    connectDownloadCaps(reply, worker, state, finish);
+    QObject::connect(reply, &QNetworkReply::finished, worker, [finish]() {
+        finish(false, QString());
+    });
+    QObject::connect(timeout_timer, &QTimer::timeout, worker, [reply, finish]() {
+        reply->abort();
+        finish(true, QString());
+    });
+    constexpr int kDownloadTimeoutMs = 5 * 60 * 1000;
+    timeout_timer->start(kDownloadTimeoutMs);
+}
+
+bool downloadUrlBytes(const QUrl& url, QByteArray* bytes, QString* error_message) {
     DownloadState state;
     QSemaphore done;
     QThread network_thread;
@@ -2022,43 +2110,7 @@ bool downloadUrlBytes(const QUrl& url, QByteArray* bytes, QString* error_message
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [&, worker]() {
-        auto* nam = new QNetworkAccessManager(worker);
-        nam->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
-        QNetworkRequest request(url);
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                             QNetworkRequest::NoLessSafeRedirectPolicy);
-        auto* reply = nam->get(request);
-        auto* timeout_timer = new QTimer(worker);
-        timeout_timer->setSingleShot(true);
-        const auto completed = std::make_shared<std::atomic_bool>(false);
-        const auto finish = [&, reply, timeout_timer, completed](bool timed_out) {
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true)) {
-                return;
-            }
-            if (timeout_timer->isActive()) {
-                timeout_timer->stop();
-            }
-            state.timed_out = timed_out;
-            if (timed_out) {
-                state.error = QStringLiteral("Download timed out");
-            } else if (reply->error() != QNetworkReply::NoError) {
-                state.error = QStringLiteral("Download failed: %1").arg(reply->errorString());
-            } else {
-                state.payload = reply->readAll();
-                state.ok = true;
-            }
-            reply->deleteLater();
-            done.release();
-            network_thread.quit();
-        };
-        QObject::connect(reply, &QNetworkReply::finished, worker, [finish]() { finish(false); });
-        QObject::connect(timeout_timer, &QTimer::timeout, worker, [reply, finish]() {
-            reply->abort();
-            finish(true);
-        });
-        constexpr int kDownloadTimeoutMs = 5 * 60 * 1000;
-        timeout_timer->start(kDownloadTimeoutMs);
+        startDownloadOnWorker(worker, url, &state, &done, &network_thread);
     });
     network_thread.start();
     done.acquire();
