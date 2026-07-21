@@ -38,6 +38,18 @@ struct ImapSessionResult {
     QString error_message;
 };
 
+/// Wrap a value as an RFC 3501 quoted string: backslash-escape `"` and `\`, and
+/// strip CR/LF (which are illegal in a quoted string and would otherwise let a
+/// crafted username/password or PST-derived folder name inject IMAP commands).
+QString imapQuote(const QString& raw) {
+    QString escaped = raw;
+    escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    escaped.remove(QLatin1Char('\r'));
+    escaped.remove(QLatin1Char('\n'));
+    return QStringLiteral("\"") + escaped + QStringLiteral("\"");
+}
+
 QString formatImapDateForAppend(const QDateTime& date) {
     static const char* kMonths[] = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -168,8 +180,8 @@ private:
         ++m_tagCounter;
         m_currentTag =
             QStringLiteral("A%1").arg(m_tagCounter, kImapTagWidth, kDecimalBase, QChar('0'));
-        const QString command = m_currentTag + QStringLiteral(" APPEND \"%1\" %2%3{%4}\r\n")
-                                                   .arg(m_request.target_folder,
+        const QString command = m_currentTag + QStringLiteral(" APPEND %1 %2%3{%4}\r\n")
+                                                   .arg(imapQuote(m_request.target_folder),
                                                         flagsForCurrentMessage(),
                                                         dateForCurrentMessage())
                                                    .arg(messages().at(m_currentIndex).size());
@@ -232,9 +244,9 @@ private:
             sendCommand(plainAuthCommand(), auth_done);
             break;
         case ImapAuthMethod::Login:
-            sendCommand(
-                QStringLiteral("LOGIN \"%1\" \"%2\"").arg(config().username, config().password),
-                auth_done);
+            sendCommand(QStringLiteral("LOGIN %1 %2")
+                            .arg(imapQuote(config().username), imapQuote(config().password)),
+                        auth_done);
             break;
         case ImapAuthMethod::XOAuth2:
             sendCommand(xoauth2AuthCommand(), auth_done);
@@ -264,7 +276,9 @@ private:
     }
 
     void handleAuthResponse(const QString& response) {
-        if (!response.contains(QStringLiteral("OK"))) {
+        // Require the TAGGED OK: an untagged "* OK" preceding a tagged "Axxx NO"
+        // would otherwise be read as a successful authentication.
+        if (!response.contains(m_currentTag + QStringLiteral(" OK"))) {
             finish(false,
                    error_code::authentication_failed,
                    QStringLiteral("Authentication failed"));
@@ -283,12 +297,12 @@ private:
         if (m_request.upload_started) {
             m_request.upload_started(messages().size());
         }
-        sendCommand(QStringLiteral("CREATE \"%1\"").arg(m_request.target_folder),
+        sendCommand(QStringLiteral("CREATE %1").arg(imapQuote(m_request.target_folder)),
                     [this](const QString& response) { handleCreateResponse(response); });
     }
 
     void handleNoopResponse(const QString& response) {
-        if (!response.contains(QStringLiteral("OK"))) {
+        if (!response.contains(m_currentTag + QStringLiteral(" OK"))) {
             failConnection(QStringLiteral("NOOP failed"));
             return;
         }
@@ -296,7 +310,9 @@ private:
     }
 
     void handleCreateResponse(const QString& response) {
-        if (response.contains(QStringLiteral("OK")) && m_request.folder_created) {
+        // Only signal a real creation on the tagged OK; a NO (folder exists) still
+        // proceeds to append but must not fire folder_created.
+        if (response.contains(m_currentTag + QStringLiteral(" OK")) && m_request.folder_created) {
             m_request.folder_created(m_request.target_folder);
         }
         appendNext();
@@ -313,9 +329,24 @@ private:
         handleTaggedResponse();
     }
 
+    /// True when the current tag's response line has arrived complete (the tag is
+    /// present and a CRLF follows it), so a partial read is not decided early.
+    bool bufferHasCompleteTaggedLine() const {
+        if (m_currentTag.isEmpty()) {
+            return false;
+        }
+        const int tag_pos = m_buffer.indexOf(m_currentTag);
+        return tag_pos >= 0 && m_buffer.indexOf(QStringLiteral("\r\n"), tag_pos) >= 0;
+    }
+
     bool handleGreeting() {
         if (!m_waitingGreeting) {
             return false;
+        }
+        // Wait for a complete greeting line before judging it (a partial read may
+        // not yet contain the OK).
+        if (!m_buffer.contains(QStringLiteral("\r\n"))) {
+            return true;
         }
         if (!m_buffer.contains(QStringLiteral("OK"))) {
             failConnection(QStringLiteral("Bad server greeting: ") +
@@ -329,21 +360,31 @@ private:
     }
 
     bool handleContinuation() {
-        if (!m_waitingContinuation || !m_buffer.contains(QStringLiteral("+"))) {
-            return m_waitingContinuation;
+        if (!m_waitingContinuation) {
+            return false;
         }
-        m_waitingContinuation = false;
-        m_buffer.clear();
-        if (m_socket->write(m_pendingLiteral) < 0) {
-            failConnection(m_socket->errorString());
+        if (m_buffer.contains(QStringLiteral("+"))) {
+            m_waitingContinuation = false;
+            m_buffer.clear();
+            if (m_socket->write(m_pendingLiteral) < 0) {
+                failConnection(m_socket->errorString());
+            } else {
+                resetTimeout();
+            }
             return true;
         }
-        resetTimeout();
-        return true;
+        // The server may reject the APPEND outright with a tagged NO/BAD instead of
+        // a '+' continuation; stop waiting and let handleTaggedResponse run rather
+        // than hanging until the timeout aborts the whole upload.
+        if (bufferHasCompleteTaggedLine()) {
+            m_waitingContinuation = false;
+            return false;
+        }
+        return true;  // continuation not yet complete
     }
 
     void handleTaggedResponse() {
-        if (m_currentTag.isEmpty() || !m_taggedCallback || !m_buffer.contains(m_currentTag)) {
+        if (!m_taggedCallback || !bufferHasCompleteTaggedLine()) {
             return;
         }
         const QString response = m_buffer;
@@ -444,6 +485,7 @@ ImapUploader::~ImapUploader() {
 // ======================================================================
 
 std::expected<void, error_code> ImapUploader::testConnection(const ImapServerConfig& config) {
+    m_cancelled.store(false);
     const QVector<QByteArray> messages;
     const QVector<QStringList> flags;
     const QVector<QDateTime> dates;
@@ -467,6 +509,7 @@ std::expected<int, error_code> ImapUploader::uploadFolder(const ImapServerConfig
                                                           const QVector<QDateTime>& dates) {
     Q_ASSERT(eml_contents.size() == flags_list.size());
     Q_ASSERT(eml_contents.size() == dates.size());
+    m_cancelled.store(false);
 
     const ImapSessionResult result = runImapSession(
         {.config = &config,
@@ -485,7 +528,12 @@ std::expected<int, error_code> ImapUploader::uploadFolder(const ImapServerConfig
          .folder_created = [this](const QString& folder) { Q_EMIT folderCreated(folder); }});
 
     Q_EMIT uploadComplete(result.uploaded, result.failed);
-    if (!result.success && result.error != error_code::operation_cancelled) {
+    if (result.error == error_code::operation_cancelled) {
+        // A cancelled upload is not a success: surface it so the caller does not
+        // treat the partial uploaded count as a completed transfer.
+        return std::unexpected(error_code::operation_cancelled);
+    }
+    if (!result.success) {
         Q_EMIT errorOccurred(result.error_message);
         return std::unexpected(result.error);
     }
@@ -502,6 +550,7 @@ void ImapUploader::cancel() {
 // ======================================================================
 
 std::expected<void, error_code> ImapUploader::connectAndAuth(const ImapServerConfig& config) {
+    m_cancelled.store(false);
     const QVector<QByteArray> messages;
     const QVector<QStringList> flags;
     const QVector<QDateTime> dates;
