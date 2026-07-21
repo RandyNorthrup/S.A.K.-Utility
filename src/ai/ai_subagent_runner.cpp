@@ -402,7 +402,10 @@ QJsonObject AiSubagentResult::toJson() const {
 
     QJsonObject usage_obj;
     usage_obj[QStringLiteral("input_tokens")] = static_cast<double>(usage.input_tokens);
+    usage_obj[QStringLiteral("cached_input_tokens")] =
+        static_cast<double>(usage.cached_input_tokens);
     usage_obj[QStringLiteral("output_tokens")] = static_cast<double>(usage.output_tokens);
+    usage_obj[QStringLiteral("reasoning_tokens")] = static_cast<double>(usage.reasoning_tokens);
     usage_obj[QStringLiteral("total_tokens")] = static_cast<double>(usage.total_tokens);
     obj[QStringLiteral("usage")] = usage_obj;
     return obj;
@@ -433,12 +436,13 @@ AiSubagentResult AiSubagentResult::fromJson(const QJsonObject& object) {
     result.error_message = object.value(QStringLiteral("error_message")).toString();
 
     const auto usage_obj = object.value(QStringLiteral("usage")).toObject();
-    result.usage.input_tokens =
-        static_cast<int>(usage_obj.value(QStringLiteral("input_tokens")).toDouble(0.0));
-    result.usage.output_tokens =
-        static_cast<int>(usage_obj.value(QStringLiteral("output_tokens")).toDouble(0.0));
-    result.usage.total_tokens =
-        static_cast<int>(usage_obj.value(QStringLiteral("total_tokens")).toDouble(0.0));
+    result.usage.input_tokens = usage_obj.value(QStringLiteral("input_tokens")).toInteger(0);
+    result.usage.cached_input_tokens =
+        usage_obj.value(QStringLiteral("cached_input_tokens")).toInteger(0);
+    result.usage.output_tokens = usage_obj.value(QStringLiteral("output_tokens")).toInteger(0);
+    result.usage.reasoning_tokens =
+        usage_obj.value(QStringLiteral("reasoning_tokens")).toInteger(0);
+    result.usage.total_tokens = usage_obj.value(QStringLiteral("total_tokens")).toInteger(0);
     return result;
 }
 

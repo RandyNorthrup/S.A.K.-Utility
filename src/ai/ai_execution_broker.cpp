@@ -26,7 +26,7 @@ constexpr int kMinTimeoutSeconds = 5;
 constexpr int kMaxTimeoutSeconds = 3600;
 constexpr int kMinOutputCap = 1024;
 
-[[nodiscard]] QString cappedTail(const QString& value, int max_bytes) {
+[[nodiscard]] QString cappedHeadTail(const QString& value, int max_bytes) {
     if (max_bytes <= 0) {
         return {};
     }
@@ -34,8 +34,14 @@ constexpr int kMinOutputCap = 1024;
     if (bytes.size() <= max_bytes) {
         return value;
     }
-    return QString::fromUtf8(bytes.left(max_bytes)) +
-           QStringLiteral("\n...[output truncated to %1 bytes]").arg(max_bytes);
+    // Keep the head AND the tail, eliding only the middle: the terminal lines usually
+    // carry the actual failure/error, so keeping only the head would hide it.
+    const int omitted = static_cast<int>(bytes.size()) - max_bytes;
+    const int head_bytes = max_bytes / 2;
+    const int tail_bytes = max_bytes - head_bytes;
+    return QString::fromUtf8(bytes.left(head_bytes)) +
+           QStringLiteral("\n...[%1 bytes truncated]...\n").arg(omitted) +
+           QString::fromUtf8(bytes.right(tail_bytes));
 }
 
 }  // namespace
@@ -353,8 +359,8 @@ void ExecutionBroker::onProcessFinished(int exit_code, int exit_status) {
     result.exit_status = exit_status;
     result.duration_ms = m_timer.elapsed();
     const int half_cap = std::max(m_max_output_bytes / 2, kMinOutputCap);
-    result.stdout_text = cappedTail(m_stdout_buffer, half_cap);
-    result.stderr_text = cappedTail(m_stderr_buffer, half_cap);
+    result.stdout_text = cappedHeadTail(m_stdout_buffer, half_cap);
+    result.stderr_text = cappedHeadTail(m_stderr_buffer, half_cap);
     if (m_cancel_requested) {
         result.error_message = QStringLiteral("Command cancelled");
     }
@@ -396,8 +402,8 @@ void ExecutionBroker::onTimeoutTick() {
         result.exit_code = -1;
         result.duration_ms = m_timer.elapsed();
         const int half_cap = std::max(m_max_output_bytes / 2, kMinOutputCap);
-        result.stdout_text = cappedTail(m_stdout_buffer, half_cap);
-        result.stderr_text = cappedTail(m_stderr_buffer, half_cap);
+        result.stdout_text = cappedHeadTail(m_stdout_buffer, half_cap);
+        result.stderr_text = cappedHeadTail(m_stderr_buffer, half_cap);
         result.error_message = QStringLiteral("Command timed out");
         completeWith(std::move(result));
         return;

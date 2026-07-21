@@ -30,6 +30,7 @@ private Q_SLOTS:
     void startProcess_rejectsEmptyProgram();
     void processRequestFromJson_parsesArguments();
     void toJson_redactsSecretsInStdoutAndStderr();
+    void runPowerShell_truncationKeepsTerminalError();
 };
 
 namespace {
@@ -354,6 +355,27 @@ void AiExecutionBrokerTests::toJson_redactsSecretsInStdoutAndStderr() {
     QVERIFY(stdout_field.contains(QStringLiteral("[redacted")) ||
             stdout_field.contains(QStringLiteral("sk-...[redacted]")));
     QVERIFY(stderr_field.contains(QStringLiteral("[redacted]")));
+}
+
+void AiExecutionBrokerTests::runPowerShell_truncationKeepsTerminalError() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    // Emit a large head of filler followed by a terminal marker line, with a cap small
+    // enough to force truncation but larger than the streaming buffer keeps, so the
+    // final-output-carrying tail must survive. Before the fix, only the head was kept.
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Write-Output ('A' * 20000); Write-Output 'TERMINAL-ERR-ZZZ'");
+    request.timeout_seconds = 20;
+    request.max_output_bytes = 8192;
+
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_trunc")));
+    QVERIFY(waitForFinish(finished_spy));
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(result.started);
+    QVERIFY(result.stdout_text.contains(QStringLiteral("truncated")));
+    QVERIFY(result.stdout_text.contains(QStringLiteral("TERMINAL-ERR-ZZZ")));
 }
 
 QTEST_GUILESS_MAIN(AiExecutionBrokerTests)

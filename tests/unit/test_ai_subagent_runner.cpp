@@ -258,6 +258,11 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
     result.summary = QStringLiteral("googlechrome candidate");
     result.confidence = 0.75;
     result.artifacts << QStringLiteral("artifacts/manifest.json");
+    result.usage.input_tokens = 100;
+    result.usage.cached_input_tokens = 40;
+    result.usage.output_tokens = 50;
+    result.usage.reasoning_tokens = 30;
+    result.usage.total_tokens = 220;
     sak::ai::AiSubagentFinding finding;
     finding.severity = QStringLiteral("info");
     finding.title = QStringLiteral("Candidate found");
@@ -271,6 +276,12 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
     QCOMPARE(result_copy.findings.size(), 1);
     QCOMPARE(result_copy.findings.first().title, finding.title);
     QCOMPARE(result_copy.confidence, 0.75);
+    // All four detailed token counts must survive the round trip, not just totals.
+    QCOMPARE(result_copy.usage.input_tokens, 100);
+    QCOMPARE(result_copy.usage.cached_input_tokens, 40);
+    QCOMPARE(result_copy.usage.output_tokens, 50);
+    QCOMPARE(result_copy.usage.reasoning_tokens, 30);
+    QCOMPARE(result_copy.usage.total_tokens, 220);
 }
 
 void AiSubagentRunnerTests::retriesUntilSuccess() {
