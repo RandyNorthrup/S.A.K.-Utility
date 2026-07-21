@@ -3107,6 +3107,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
     message(STATUS "Added unit test: test_quick_action_result_io")
 endif()
 
+# test_keep_awake -- KeepAwake refcount / guard lifetime (P06-08 overlap)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_keep_awake.cpp")
+    add_executable(test_keep_awake
+        unit/test_keep_awake.cpp
+        ../src/core/keep_awake.cpp
+        ../include/sak/keep_awake.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_keep_awake PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_keep_awake PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_keep_awake PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_keep_awake COMMAND test_keep_awake
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_keep_awake")
+endif()
+
 # test_quick_action_controller ??? registration, lookup, category filtering
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     add_executable(test_quick_action_controller

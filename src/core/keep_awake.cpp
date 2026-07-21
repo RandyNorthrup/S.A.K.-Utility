@@ -17,7 +17,10 @@ namespace sak {
 
 auto KeepAwake::start(PowerRequest request, const char* reason)
     -> std::expected<void, sak::error_code> {
-    if (s_is_active) {
+    // Only the first outstanding request installs the real execution state;
+    // overlapping guards just bump the count so an early stop() cannot drop
+    // a still-active guard.
+    if (s_active_count.fetch_add(1, std::memory_order_acq_rel) != 0) {
         sak::logInfo("KeepAwake already active");
         return {};
     }
@@ -37,17 +40,24 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
     if (result == 0) {
         DWORD error = GetLastError();
         sak::logError("Failed to set thread execution state: error {}", error);
+        // Fail closed: undo the count so state reflects the failed request.
+        s_active_count.fetch_sub(1, std::memory_order_acq_rel);
         return std::unexpected(sak::error_code::platform_not_supported);
     }
 
-    s_is_active = true;
     sak::logInfo("KeepAwake started: {}", reason);
 
     return {};
 }
 
 auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
-    if (!s_is_active) {
+    // Release one reference, clamping at zero so a stray stop() never
+    // underflows. Only the final release (1 -> 0) clears the real state.
+    int prev = s_active_count.load(std::memory_order_acquire);
+    while (prev > 0 && !s_active_count.compare_exchange_weak(
+                           prev, prev - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {}
+
+    if (prev != 1) {
         return {};
     }
 
@@ -56,17 +66,18 @@ auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
     if (result == 0) {
         DWORD error = GetLastError();
         sak::logError("Failed to clear thread execution state: error {}", error);
+        // Fail closed: restore the reference so callers stay awake.
+        s_active_count.fetch_add(1, std::memory_order_acq_rel);
         return std::unexpected(sak::error_code::platform_not_supported);
     }
 
-    s_is_active = false;
     sak::logInfo("KeepAwake stopped");
 
     return {};
 }
 
 bool KeepAwake::isActive() noexcept {
-    return s_is_active;
+    return s_active_count.load(std::memory_order_acquire) > 0;
 }
 
 // ============================================================================

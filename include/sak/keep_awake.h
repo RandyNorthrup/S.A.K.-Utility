@@ -5,6 +5,7 @@
 
 #include "sak/error_codes.h"
 
+#include <atomic>
 #include <expected>
 
 #ifdef _WIN32
@@ -53,7 +54,10 @@ public:
     [[nodiscard]] static bool isActive() noexcept;
 
 private:
-    static inline bool s_is_active = false;
+    // Reference count of outstanding requests. Overlapping guards on
+    // different threads each hold one; the real execution-state request is
+    // installed on 0 -> 1 and cleared only on the final 1 -> 0 transition.
+    static inline std::atomic<int> s_active_count{0};
 };
 
 /**

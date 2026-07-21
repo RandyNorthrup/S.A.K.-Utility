@@ -18,6 +18,7 @@ private Q_SLOTS:
     void startStop_cycle();
     void startStop_doubleStart();
     void startStop_doubleStop();
+    void overlapping_refcount();
     void guard_construction();
     void guard_nonCopyable();
     void guard_scopeActivation();
@@ -46,12 +47,37 @@ void TestKeepAwake::startStop_doubleStart() {
     const auto result2 = KeepAwake::start();
     QVERIFY(result1.has_value());
     QVERIFY(KeepAwake::isActive());
+    // Two starts require two stops to fully release (reference counted).
     [[maybe_unused]] const auto cleanup2 = KeepAwake::stop();
+    [[maybe_unused]] const auto cleanup3 = KeepAwake::stop();
+    QVERIFY(!KeepAwake::isActive());
 }
 
 void TestKeepAwake::startStop_doubleStop() {
     [[maybe_unused]] const auto first_stop = KeepAwake::stop();
     const auto result = KeepAwake::stop();
+    QVERIFY(!KeepAwake::isActive());
+}
+
+void TestKeepAwake::overlapping_refcount() {
+    // Regression: overlapping keep-awake guards (e.g. a flash worker and a
+    // stress-test worker running at once). The first stop() must NOT drop the
+    // request while a second guard is still active.
+    [[maybe_unused]] const auto cleanup = KeepAwake::stop();
+    QVERIFY(!KeepAwake::isActive());
+
+    const auto worker_a = KeepAwake::start();  // thread A installs
+    const auto worker_b = KeepAwake::start();  // thread B overlaps
+    QVERIFY(worker_a.has_value());
+    QVERIFY(worker_b.has_value());
+    QVERIFY(KeepAwake::isActive());
+
+    // Worker A finishes first: still-running worker B must stay awake.
+    [[maybe_unused]] const auto stop_a = KeepAwake::stop();
+    QVERIFY(KeepAwake::isActive());
+
+    // Worker B finishes: now the system may sleep again.
+    [[maybe_unused]] const auto stop_b = KeepAwake::stop();
     QVERIFY(!KeepAwake::isActive());
 }
 
