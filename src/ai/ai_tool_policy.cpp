@@ -93,9 +93,28 @@ bool hasScanIntent(const QString& user_message) {
                            QStringLiteral("scan using")});
 }
 
+bool hasNegatedActionIntent(const QString& text) {
+    // Substring intent inference cannot tell "install X" from "do not install X".
+    // If the message forbids or disclaims the action, do not treat it as explicit
+    // affirmative intent; the caller then falls through to the stricter gate.
+    return textMatchesAny(text,
+                          {QStringLiteral("do not "),
+                           QStringLiteral("don't "),
+                           QStringLiteral("dont "),
+                           QStringLiteral("never "),
+                           QStringLiteral("instead of "),
+                           QStringLiteral("rather than "),
+                           QStringLiteral("without "),
+                           QStringLiteral("no need to "),
+                           QStringLiteral("avoid ")});
+}
+
 bool hasExplicitPackageMutationIntent(const AiToolCallRequest& request) {
     const QString text = norm(request.user_message);
     if (text.isEmpty()) {
+        return false;
+    }
+    if (hasNegatedActionIntent(text)) {
         return false;
     }
     const QString op = norm(request.operation);
@@ -299,9 +318,13 @@ bool isMutatingPackageOperation(const QString& operation) {
 }
 
 bool commandLooksRiskyChange(const QString& preview) {
+    // A blacklist is fail-open, so it must at least cover the common mutating
+    // cmdlets/commands. Earlier revisions omitted rename/move/copy/content-writing
+    // verbs, so Rename-Item / Move-Item / Copy-Item / Add-Content / Out-File and
+    // the cmd.exe equivalents executed under the read-only lease.
     static const QRegularExpression risky(
         QStringLiteral(
-            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b))"),
+            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b))"),
         QRegularExpression::CaseInsensitiveOption);
     return risky.match(preview).hasMatch();
 }

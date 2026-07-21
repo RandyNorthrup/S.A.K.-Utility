@@ -10,6 +10,7 @@ class AiToolPolicyTests : public QObject {
 
 private Q_SLOTS:
     void readOnlyPolicyBlocksRiskyCommands();
+    void readOnlyPolicyBlocksMutatingFileCmdlets();
     void readOnlyPolicyAllowsProviderGatewayStatus();
     void readOnlyPolicyAllowsSessionSearch();
     void packagePolicyRequiresLeaseForInstall();
@@ -33,6 +34,25 @@ void AiToolPolicyTests::readOnlyPolicyBlocksRiskyCommands() {
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(!decision.allowed);
     QVERIFY(decision.risky_change);
+}
+
+void AiToolPolicyTests::readOnlyPolicyBlocksMutatingFileCmdlets() {
+    // P08-04: rename/move/copy/content-writing commands must not run under the
+    // read-only lease. Each must be flagged risky and blocked.
+    const QStringList mutating = {QStringLiteral("Rename-Item a.txt b.txt"),
+                                  QStringLiteral("Move-Item C:\\a C:\\b"),
+                                  QStringLiteral("Copy-Item C:\\a C:\\b"),
+                                  QStringLiteral("Add-Content log.txt 'x'"),
+                                  QStringLiteral("'x' | Out-File log.txt")};
+    for (const auto& preview : mutating) {
+        sak::ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("run_powershell");
+        request.command_preview = preview;
+        const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc,
+                                                          request);
+        QVERIFY2(!decision.allowed, qPrintable(preview));
+        QVERIFY2(decision.risky_change, qPrintable(preview));
+    }
 }
 
 void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
@@ -132,6 +152,14 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent_data() {
         << QStringLiteral("upgrade") << QStringLiteral("upgrade firefox") << true;
     QTest::newRow("uninstall-explicit")
         << QStringLiteral("uninstall") << QStringLiteral("uninstall firefox") << true;
+    // Negated intent must not be read as authorization (P08-05).
+    QTest::newRow("install-negated-do-not")
+        << QStringLiteral("install") << QStringLiteral("do not install Foo; only search for it")
+        << false;
+    QTest::newRow("install-negated-dont")
+        << QStringLiteral("install") << QStringLiteral("don't install anything") << false;
+    QTest::newRow("install-negated-instead")
+        << QStringLiteral("install") << QStringLiteral("search for it instead of install") << false;
 }
 
 void AiToolPolicyTests::packageMutationRequiresExplicitIntent() {
