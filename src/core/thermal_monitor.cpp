@@ -51,6 +51,7 @@ void ThermalMonitor::start(int interval_ms) {
     }
 
     m_interval_ms = interval_ms;
+    m_active = true;
     logInfo("Thermal monitor started ({}ms interval)", interval_ms);
 
     // Fire initial poll immediately
@@ -58,6 +59,9 @@ void ThermalMonitor::start(int interval_ms) {
 }
 
 void ThermalMonitor::stop() {
+    // Record stop intent FIRST: during an in-flight poll the timer is inactive, so without this a
+    // stop() would be a no-op and onPollComplete would re-arm the timer, resuming forever.
+    m_active = false;
     if (m_timer.isActive()) {
         m_timer.stop();
         logInfo("Thermal monitor stopped");
@@ -110,6 +114,12 @@ void ThermalMonitor::onTimerTick() {
 }
 
 void ThermalMonitor::onPollComplete() {
+    // If stop() was called while this poll was in flight, drop the stale result and do NOT re-arm
+    // the timer (this also stops the dtor's stop()+waitForFinished() teardown from resurrecting
+    // it).
+    if (!m_active) {
+        return;
+    }
     processReadings(m_poll_watcher.result());
     m_timer.start(m_interval_ms);
 }

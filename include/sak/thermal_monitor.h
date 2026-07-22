@@ -116,6 +116,8 @@ private:
     QTimer m_timer;
     QFutureWatcher<QVector<ThermalReading>> m_poll_watcher;
     int m_interval_ms{sak::kTimerBroadcastMs};  ///< Configured poll interval
+    bool m_active{
+        false};  ///< true between start() and stop(); gates timer re-arm in onPollComplete
     QVector<ThermalReading> m_history;
 
     /// Warning thresholds (Celsius)

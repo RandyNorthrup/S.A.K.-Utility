@@ -27,17 +27,33 @@ namespace {
 
 constexpr qsizetype kDiagnosticHtmlInitialReserveChars = 32'768;
 
+/// @brief True if a value leads with a character that spreadsheet apps treat as a formula.
+bool startsWithFormulaChar(const QString& value) {
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+    const QChar first = trimmed.at(0);
+    return first == QLatin1Char('=') || first == QLatin1Char('+') || first == QLatin1Char('-') ||
+           first == QLatin1Char('@') || first == QLatin1Char('\t') || first == QLatin1Char('\r');
+}
+
 /// @brief Escape a value for CSV output (RFC 4180 compliant)
 /// If the value contains commas, quotes, or newlines, wrap in quotes and
 /// double any embedded quotes.
 QString csvEscape(const QString& value) {
-    if (value.contains(QLatin1Char(',')) || value.contains(QLatin1Char('"')) ||
-        value.contains(QLatin1Char('\n'))) {
-        QString escaped = value;
-        escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-        return QLatin1Char('"') + escaped + QLatin1Char('"');
+    QString sanitized = value;
+    // Formula/CSV injection (CWE-1236): a cell like =HYPERLINK(...) is executed when the report is
+    // opened in Excel/Calc. A leading apostrophe forces the cell to plain text (even unquoted).
+    if (startsWithFormulaChar(sanitized)) {
+        sanitized.prepend(QLatin1Char('\''));
     }
-    return value;
+    if (sanitized.contains(QLatin1Char(',')) || sanitized.contains(QLatin1Char('"')) ||
+        sanitized.contains(QLatin1Char('\n'))) {
+        sanitized.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+        return QLatin1Char('"') + sanitized + QLatin1Char('"');
+    }
+    return sanitized;
 }
 
 QJsonArray stringListToJsonArray(const QStringList& values) {
@@ -83,6 +99,20 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
     return true;
 }
 
+/// @brief Flush a QTextStream + its QFile and report whether the full write reached disk.
+/// Catches both encoding/short-write failures (stream status) and disk-full flush failures.
+bool flushAndClose(QTextStream& stream, QFile& file) {
+    stream.flush();
+    if (stream.status() != QTextStream::Ok) {
+        return false;
+    }
+    if (!file.flush()) {
+        return false;
+    }
+    file.close();
+    return file.error() == QFileDevice::NoError;
+}
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -122,7 +152,12 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
     stream << html;
-    file.close();
+    if (!flushAndClose(stream, file)) {
+        const QString err = QString("Incomplete write to %1").arg(output_path);
+        Q_EMIT errorOccurred(err);
+        logError("{}", err.toStdString());
+        return false;
+    }
 
     logInfo("HTML report generated: {}", output_path.toStdString());
     Q_EMIT reportGenerated("HTML", output_path);
@@ -341,7 +376,10 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
     writeCsvSmartHealth(out);
     writeCsvBenchmarks(out);
 
-    file.close();
+    if (!flushAndClose(out, file)) {
+        Q_EMIT errorOccurred(QString("Incomplete write to %1").arg(output_path));
+        return false;
+    }
     logInfo("CSV report generated: {}", output_path.toStdString());
     Q_EMIT reportGenerated("CSV", output_path);
     return true;

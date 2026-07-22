@@ -26,6 +26,7 @@ private Q_SLOTS:
     void htmlContainsKeyData();
     void jsonContainsStructuredData();
     void csvContainsHeaders();
+    void csvNeutralizesFormulaInjection();
 
 private:
     DiagnosticReportData createSampleData();
@@ -195,6 +196,30 @@ void DiagnosticReportGeneratorTests::csvContainsHeaders() {
 
     // CSV should have at least a header line
     QVERIFY(content.contains("\n"));
+}
+
+// P07-11: a hardware string beginning with a formula character must be neutralized (prefixed with
+// an apostrophe) so opening the CSV in Excel/Calc does not execute it.
+void DiagnosticReportGeneratorTests::csvNeutralizesFormulaInjection() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    DiagnosticReportData data = createSampleData();
+    data.inventory.cpu.name = QStringLiteral("=HYPERLINK(\"http://evil\",\"x\")");
+
+    DiagnosticReportGenerator gen;
+    gen.setReportData(data);
+    const QString path = tempDir.filePath("inject.csv");
+    QVERIFY(gen.generateCsv(path));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString content = QString::fromUtf8(file.readAll());
+
+    // The raw formula (a cell starting with '=') must never appear; the value is quoted and
+    // apostrophe-prefixed so the cell reads as text.
+    QVERIFY(!content.contains(QStringLiteral(",=HYPERLINK")));
+    QVERIFY(content.contains(QStringLiteral("'=HYPERLINK")));
 }
 
 QTEST_MAIN(DiagnosticReportGeneratorTests)
