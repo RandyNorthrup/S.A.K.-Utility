@@ -33,6 +33,7 @@ public:
 
 private:
     bool m_requires_reboot{false};
+    QString m_winsock_backup_path;
 
     void flushDNS();
     void resetWinsock();

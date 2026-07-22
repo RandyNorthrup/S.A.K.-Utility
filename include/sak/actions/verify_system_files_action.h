@@ -41,8 +41,10 @@ private:
     QString m_log_path;
     bool m_sfc_found_issues{false};
     bool m_sfc_repaired{false};
+    bool m_sfc_ran{false};
     bool m_dism_successful{false};
     bool m_dism_repaired_issues{false};
+    bool m_dism_assessed{false};
     QString m_cbs_log_path;
 
     void runDISM();

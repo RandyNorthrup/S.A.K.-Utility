@@ -116,6 +116,7 @@ void ResetNetworkAction::execute() {
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     m_requires_reboot = false;
+    m_winsock_backup_path.clear();
     QStringList errors;
 
     if (!executeFlushDns(errors)) {
@@ -139,7 +140,6 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     Q_EMIT executionProgress("Backing up Winsock catalog...", progress::kStep5);
 
     QTemporaryFile backupFile(QDir::temp().filePath(QStringLiteral("sak_winsock_XXXXXX.txt")));
-    backupFile.setAutoRemove(true);
     if (!backupFile.open()) {
         errors << "Failed to create temp file for Winsock backup";
     } else {
@@ -152,6 +152,11 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
             errors << "Winsock backup timed out";
         } else if (proc.exit_code != 0) {
             errors << QString("Winsock backup failed (exit %1)").arg(proc.exit_code);
+        } else {
+            // Only retain and report a backup that actually wrote successfully; on any
+            // failure the QTemporaryFile auto-removes so no empty/false backup survives.
+            backupFile.setAutoRemove(false);
+            m_winsock_backup_path = backupPath;
         }
     }
 
@@ -345,10 +350,13 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
         result.message += " - REBOOT REQUIRED for Winsock/TCP-IP changes";
     }
 
-    QString backupPath = QDir::temp().filePath("winsock_backup.txt");
-    result.log = QString("Winsock backup saved to: %1\n\nVerification:\n%2")
-                     .arg(backupPath)
-                     .arg(verifyOutput);
+    if (!m_winsock_backup_path.isEmpty()) {
+        result.log = QString("Winsock backup saved to: %1\n\nVerification:\n%2")
+                         .arg(m_winsock_backup_path)
+                         .arg(verifyOutput);
+    } else {
+        result.log = QString("Winsock backup unavailable\n\nVerification:\n%1").arg(verifyOutput);
+    }
 
     if (!errors.isEmpty()) {
         result.log += "\nErrors:\n" + errors.join("\n");

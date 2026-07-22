@@ -14,6 +14,17 @@
 
 namespace sak {
 
+namespace {
+// A DISM health probe only produced an authoritative verdict if its stdout carries one of the
+// known result phrases. On elevation refusal / error 740 / timeout, stdout has none of these,
+// so the probe is treated as "did not run" and verification fails closed.
+bool dismProbeCompleted(const ProcessResult& proc) {
+    return proc.std_out.contains("corruption", Qt::CaseInsensitive) ||
+           proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
+           proc.std_out.contains("The operation completed successfully", Qt::CaseInsensitive);
+}
+}  // namespace
+
 VerifySystemFilesAction::VerifySystemFilesAction(QObject* parent) : QuickAction(parent) {}
 
 void VerifySystemFilesAction::runSFC() {
@@ -51,6 +62,11 @@ void VerifySystemFilesAction::runSFC() {
         m_sfc_found_issues = true;
         m_sfc_repaired = accumulated_output.contains("successfully repaired", Qt::CaseInsensitive);
     }
+    // SFC only ran authoritatively if it either found corruption or gave a clean bill of health;
+    // an elevation refusal / aborted service leaves neither phrase, so m_sfc_ran stays false.
+    m_sfc_ran = m_sfc_found_issues ||
+                accumulated_output.contains("did not find any integrity violations",
+                                            Qt::CaseInsensitive);
 }
 
 bool VerifySystemFilesAction::runDismCheckHealth() {
@@ -70,6 +86,9 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     if (proc.cancelled) {
         return false;  // cancelled probe conservatively reports no corruption
     }
+    if (dismProbeCompleted(proc)) {
+        m_dism_assessed = true;
+    }
     return proc.std_out.contains("corruption", Qt::CaseInsensitive);
 }
 
@@ -85,6 +104,9 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     }
     if (proc.cancelled) {
         return false;  // cancelled probe conservatively reports nothing to repair
+    }
+    if (dismProbeCompleted(proc)) {
+        m_dism_assessed = true;
     }
     return proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
            proc.std_out.contains("corruption", Qt::CaseInsensitive);
@@ -126,7 +148,7 @@ void VerifySystemFilesAction::runDISM() {
 
     if (corruption_detected || repair_needed) {
         runDismRestoreHealth();
-    } else {
+    } else if (m_dism_assessed) {
         Q_EMIT executionProgress("DISM: No corruption detected", progress::kStep85);
         m_dism_successful = true;
         m_dism_repaired_issues = false;
@@ -162,8 +184,10 @@ void VerifySystemFilesAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
+    m_sfc_ran = false;
     m_dism_successful = false;
     m_dism_repaired_issues = false;
+    m_dism_assessed = false;
 
     runSFC();
     if (isCancelled()) {
@@ -181,7 +205,7 @@ void VerifySystemFilesAction::execute() {
 }
 
 bool VerifySystemFilesAction::verificationSucceeded() const {
-    return m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
+    return m_sfc_ran && m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
 }
 
 VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificationResult(
