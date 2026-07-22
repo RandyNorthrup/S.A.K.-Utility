@@ -178,12 +178,17 @@ std::expected<QString, error_code> EmlWriter::writeMessage(
 
     QString filename = sanitizeFilename(item.subject, item.date);
 
-    // Resolve collisions
+    // Resolve collisions. Keep incrementing until the suffixed candidate is
+    // actually free: a single _(n) attempt could still collide (e.g. a message
+    // whose subject already ends in "_(1)", or a file left by a prior run), which
+    // would silently overwrite a distinct earlier message.
     QString full_path = target_dir + "/" + filename + ".eml";
     if (QFile::exists(full_path)) {
-        int& counter = m_filename_counters[full_path];
-        ++counter;
-        full_path = target_dir + "/" + filename + "_(" + QString::number(counter) + ").eml";
+        int& counter = m_filename_counters[target_dir + "/" + filename];
+        do {
+            ++counter;
+            full_path = target_dir + "/" + filename + "_(" + QString::number(counter) + ").eml";
+        } while (QFile::exists(full_path));
     }
 
     QByteArray content = buildEmlContent(item, attachment_data);

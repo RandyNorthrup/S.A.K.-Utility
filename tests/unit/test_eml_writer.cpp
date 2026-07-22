@@ -340,6 +340,40 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
         QVERIFY(writer.totalBytesWritten() > 0);
     }
+
+    // A generated _(n) collision name must itself be checked for existence so a
+    // distinct message is never overwritten (P05-35 residual). Writing "foo",
+    // then "foo_(1)", then "foo" again must yield three distinct files -- the
+    // third must not clobber the second's foo_(1).eml.
+    void collisionSuffixDoesNotOverwriteDistinctMessage() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+        QVector<QPair<QString, QByteArray>> none;
+
+        auto write = [&](const QString& subject) {
+            sak::PstItemDetail item;
+            item.subject = subject;
+            item.sender_email = QStringLiteral("s@example.com");
+            item.body_plain = QStringLiteral("body of ") + subject;
+            item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+            return writer.writeMessage(item, none, QString());
+        };
+
+        QVERIFY(write(QStringLiteral("foo")).has_value());
+        auto second = write(QStringLiteral("foo_(1)"));
+        QVERIFY(second.has_value());
+        auto third = write(QStringLiteral("foo"));
+        QVERIFY(third.has_value());
+
+        // Three distinct files; the second file's content is intact.
+        QCOMPARE(QDir(temp_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files).size(), 3);
+        QVERIFY(third.value() != second.value());
+        QFile f(second.value());
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QVERIFY(f.readAll().contains("body of foo_(1)"));
+    }
 };
 
 QTEST_MAIN(TestEmlWriter)
