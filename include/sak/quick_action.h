@@ -133,7 +133,7 @@ public:
      * @brief Get current status
      * @return Current action status
      */
-    ActionStatus status() const { return m_status; }
+    ActionStatus status() const { return m_status.load(); }
 
     /**
      * @brief Get last scan result
@@ -152,6 +152,10 @@ public:
      * @param status New status
      */
     void updateStatus(ActionStatus status) { setStatus(status); }
+
+    /// @brief Clear the cancellation flag before a fresh run (a stale flag from a prior
+    ///        completed/cancelled run would otherwise make every future run cancel immediately).
+    void clearCancellation() { resetCancelled(); }
 
     /**
      * @brief Apply execution result from controller
@@ -319,7 +323,7 @@ protected:
     static QString sanitizePathForBackup(const QString& path);
 
 private:
-    ActionStatus m_status{ActionStatus::Idle};
+    std::atomic<ActionStatus> m_status{ActionStatus::Idle};
     ScanResult m_scan_result;
     ExecutionResult m_execution_result;
     std::atomic<bool> m_cancelled{false};

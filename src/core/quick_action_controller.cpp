@@ -130,7 +130,6 @@ void QuickActionController::setBackupLocation(const QString& backup_location) {
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
-    Q_ASSERT(!m_actions.empty());
     Q_ASSERT(action);
     if (!action) {
         return QString();
@@ -339,7 +338,6 @@ void QuickActionController::cancelCurrentAction() {
 
 void QuickActionController::onScanComplete() {
     Q_ASSERT(m_scan_thread);
-    Q_ASSERT(!m_scan_queue.isEmpty());
     if (!m_current_scan_action) {
         return;
     }
@@ -367,7 +365,6 @@ void QuickActionController::onScanComplete() {
 
 void QuickActionController::onExecutionComplete() {
     Q_ASSERT(m_execution_thread);
-    Q_ASSERT(!m_action_queue.isEmpty());
     if (!m_current_execution_action) {
         return;
     }
@@ -411,9 +408,9 @@ void QuickActionController::onWorkerError(const QString& error) {
 }
 
 void QuickActionController::startScanWorker(QuickAction* action) {
-    Q_ASSERT(m_scan_thread);
     Q_ASSERT(action);
     m_current_scan_action = action;
+    action->clearCancellation();  // a stale cancel flag would abort this fresh run immediately
     Q_EMIT actionScanStarted(action);
     logOperation(action, "Scan started");
 
@@ -421,7 +418,9 @@ void QuickActionController::startScanWorker(QuickAction* action) {
     m_scan_thread = new QThread(this);
     action->moveToThread(m_scan_thread);
 
-    // Connect completion
+    // Connect completion (drop any prior connection so re-running an action fires onScanComplete
+    // exactly once; UniqueConnection is ignored for lambda connections).
+    disconnect(action, &QuickAction::scanComplete, this, nullptr);
     connect(
         action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult& result) {
             Q_UNUSED(result);
@@ -439,9 +438,9 @@ void QuickActionController::startScanWorker(QuickAction* action) {
 }
 
 void QuickActionController::startExecutionWorker(QuickAction* action) {
-    Q_ASSERT(m_execution_thread);
     Q_ASSERT(action);
     m_current_execution_action = action;
+    action->clearCancellation();  // a stale cancel flag would abort this fresh run immediately
     Q_EMIT actionExecutionStarted(action);
     logOperation(action, "Execution started");
 
@@ -449,7 +448,8 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
     m_execution_thread = new QThread(this);
     action->moveToThread(m_execution_thread);
 
-    // Connect completion
+    // Connect completion (drop any prior connection so re-running fires onExecutionComplete once)
+    disconnect(action, &QuickAction::executionComplete, this, nullptr);
     connect(action,
             &QuickAction::executionComplete,
             this,

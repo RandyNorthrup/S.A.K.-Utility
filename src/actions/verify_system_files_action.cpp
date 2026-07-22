@@ -58,9 +58,17 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
         "DISM.exe /Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismCheckMs);
+    // Thread cancellation like runSFC/runDismRestoreHealth so cancel() force-terminates the
+    // child; otherwise the probe ignores cancel and the controller's thread->wait(10s) times
+    // out and deletes a still-running thread.
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismCheckMs, true, true, [this]() {
+        return isCancelled();
+    });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
+    }
+    if (proc.cancelled) {
+        return false;  // cancelled probe conservatively reports no corruption
     }
     return proc.std_out.contains("corruption", Qt::CaseInsensitive);
 }
@@ -69,9 +77,14 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
     QString script = "DISM.exe /Online /Cleanup-Image /ScanHealth";
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs);
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
+        return isCancelled();
+    });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM ScanHealth warning: " + proc.std_err.trimmed());
+    }
+    if (proc.cancelled) {
+        return false;  // cancelled probe conservatively reports nothing to repair
     }
     return proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
            proc.std_out.contains("corruption", Qt::CaseInsensitive);

@@ -20,8 +20,9 @@ constexpr int kCompletedInPrefixWidth = 15;
 QuickAction::QuickAction(QObject* parent) : QObject(parent) {}
 
 void QuickAction::setStatus(ActionStatus status) {
-    if (m_status != status) {
-        m_status = status;
+    // Single atomic exchange: the compare-and-store is one op, closing the check-then-set
+    // window that could double-emit when the GUI-thread cancel and worker-thread setStatus race.
+    if (m_status.exchange(status) != status) {
         Q_EMIT statusChanged(status);
     }
 }
@@ -37,7 +38,9 @@ void QuickAction::setExecutionResult(const ExecutionResult& result) {
 void QuickAction::cancel() {
     m_cancelled = true;
 
-    if (m_status == ActionStatus::Scanning || m_status == ActionStatus::Running) {
+    // One atomic load so the guard sees a single consistent snapshot of the status word.
+    const ActionStatus current = m_status.load();
+    if (current == ActionStatus::Scanning || current == ActionStatus::Running) {
         setStatus(ActionStatus::Cancelled);
     }
 }
