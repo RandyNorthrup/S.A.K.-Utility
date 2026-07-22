@@ -112,8 +112,11 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
 
     Q_EMIT conversionStarted(m_queue.size());
 
-    // Launch up to max_threads concurrent workers
-    int threads_to_launch = qMin(config.max_threads, m_queue.size());
+    // Launch up to max_threads concurrent workers. Clamp to at least one: a
+    // zero/negative max_threads would launch no worker, so finalizeBatch() would
+    // never run and the batch would wedge (m_running stuck true, no completion
+    // signal). m_queue is non-empty per the guard above, so this launches >= 1.
+    int threads_to_launch = qMin(qMax(config.max_threads, 1), m_queue.size());
     for (int i = 0; i < threads_to_launch; ++i) {
         startNextFile();
     }

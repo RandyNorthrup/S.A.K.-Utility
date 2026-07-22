@@ -228,6 +228,34 @@ private Q_SLOTS:
         ctrl.cancelAll();  // Should not crash
         QVERIFY(!ctrl.isRunning());
     }
+
+    // ====================================================================
+    // P05-40: a zero/negative max_threads must clamp to one worker, not
+    // leave the batch permanently stuck (no worker, no completion signal).
+    // ====================================================================
+
+    void testZeroThreadsDoesNotWedgeBatch() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QString path = createTempFile(temp, "email.ost");
+
+        sak::OstConverterController ctrl;
+        ctrl.addFile(path);
+
+        QSignalSpy complete_spy(&ctrl, &sak::OstConverterController::allConversionsComplete);
+
+        sak::OstConversionConfig config;
+        config.output_directory = temp.path();
+        config.format = sak::OstOutputFormat::Eml;
+        config.max_threads = 0;  // would launch zero workers without the clamp
+
+        ctrl.startConversion(config);
+
+        constexpr int kBatchWaitMs = 15'000;
+        QVERIFY2(complete_spy.wait(kBatchWaitMs),
+                 "batch wedged: allConversionsComplete never fired");
+        QVERIFY(!ctrl.isRunning());
+    }
 };
 
 QTEST_MAIN(TestOstConverterController)
