@@ -110,6 +110,13 @@ private slots:
 
     // ---- Early failure: device open fails (non-admin) ----
     void executeFailsWhenDeviceInvalid();
+
+    // ---- P07-54: sector-size-aware write padding (512e vs 4Kn) ----
+    void padToSectorSizeAlreadyAligned512();
+    void padToSectorSizePads512();
+    void padToSectorSizePads4Kn();
+    void padToSectorSizeAlreadyAligned4Kn();
+    void padToSectorSizeRejectsBogusSectorSize();
 };
 
 // ===========================================================================
@@ -328,6 +335,53 @@ void FlashWorkerTests::executeFailsWhenDeviceInvalid() {
 
     // DeviceIoControl / CreateFileW should fail → failed() emitted.
     QVERIFY2(failedSpy.count() >= 1, "Expected failed() signal when device path is invalid");
+}
+
+// ===========================================================================
+// P07-54: raw-device write padding aligns to the target's logical sector size.
+// A 512-only assumption fails every unbuffered write on a 4Kn (4096-byte
+// logical sector) disk; padToSectorSize now takes the queried sector size.
+// ===========================================================================
+
+void FlashWorkerTests::padToSectorSizeAlreadyAligned512() {
+    QByteArray buf(1024, 'x');
+    qint64 bytesRead = 1024;  // exact multiple of 512
+    QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 512));
+    QCOMPARE(bytesRead, static_cast<qint64>(1024));
+    QCOMPARE(buf.size(), 1024);
+}
+
+void FlashWorkerTests::padToSectorSizePads512() {
+    QByteArray buf(4096, 'x');
+    qint64 bytesRead = 513;                          // one byte past a 512 boundary
+    QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 512));
+    QCOMPARE(bytesRead, static_cast<qint64>(1024));  // rounded up to 2 sectors
+    QCOMPARE(buf.size(), 1024);
+    QCOMPARE(buf.at(1023), '\0');                    // tail zero-filled
+}
+
+void FlashWorkerTests::padToSectorSizePads4Kn() {
+    QByteArray buf(16'384, 'x');
+    qint64 bytesRead = 513;                          // aligned to 512 but NOT to 4096
+    QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 4096));
+    QCOMPARE(bytesRead, static_cast<qint64>(4096));  // one full 4Kn sector
+    QCOMPARE(buf.size(), 4096);
+    QCOMPARE(buf.at(4095), '\0');
+}
+
+void FlashWorkerTests::padToSectorSizeAlreadyAligned4Kn() {
+    QByteArray buf(8192, 'x');
+    qint64 bytesRead = 8192;  // exact multiple of 4096
+    QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 4096));
+    QCOMPARE(bytesRead, static_cast<qint64>(8192));
+    QCOMPARE(buf.size(), 8192);
+}
+
+void FlashWorkerTests::padToSectorSizeRejectsBogusSectorSize() {
+    QByteArray buf(1024, 'x');
+    qint64 bytesRead = 500;
+    QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, 0));
+    QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, -512));
 }
 
 // ===========================================================================

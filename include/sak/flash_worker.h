@@ -126,6 +126,17 @@ public:
      */
     void setBufferSize(qint64 sizeBytes);
 
+    /// @brief Zero-pad a buffer up to a whole multiple of the device sector size
+    /// @param buffer Buffer to pad in place (grown to the padded size)
+    /// @param bytesRead In/out valid byte count; set to the padded size on success
+    /// @param sectorSize Device logical sector size (512 for 512e, 4096 for 4Kn)
+    /// @return false on a bogus sector size or a failed/oversized allocation
+    /// @note Unbuffered raw-device writes must be a whole multiple of the LOGICAL
+    ///       sector size; a 512-only assumption fails every write on a 4Kn disk.
+    [[nodiscard]] static bool padToSectorSize(QByteArray& buffer,
+                                              qint64& bytesRead,
+                                              qint64 sectorSize);
+
 Q_SIGNALS:
     /**
      * @brief Emitted periodically during write
@@ -175,7 +186,10 @@ private:
     bool writeImage();
     bool writeChunk(const QByteArray& buffer, qint64 bytesRead);
     bool prepareSourceChecksum();
-    bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead);
+    /// @brief Query the target's logical sector size (IOCTL_DISK_GET_DRIVE_GEOMETRY)
+    /// @note Sets m_sectorSize; keeps the 512-byte default if the query fails
+    void queryDeviceSectorSize();
+    bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) const;
     sak::ValidationResult verifyImage();
     QString calculateChecksum(HANDLE handle, qint64 size);
     sak::ValidationResult verifyFull();
@@ -208,6 +222,7 @@ private:
     qint64 m_totalBytes;
     std::atomic<double> m_speedMBps;
     qint64 m_bufferSize;
+    qint64 m_sectorSize;  ///< Target logical sector size; 512 until queryDeviceSectorSize()
     bool m_verificationEnabled;
     sak::ValidationMode m_validationMode;
 

@@ -58,6 +58,7 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
     , m_totalBytes(0)
     , m_speedMBps(0.0)
     , m_bufferSize(kFlashBufferSize)
+    , m_sectorSize(kDeviceSectorSizeBytes)
     , m_verificationEnabled(true)
     , m_validationMode(sak::ValidationMode::Full)
     , m_lastProgressUpdate(0)
@@ -173,7 +174,39 @@ bool FlashWorker::openDevice() {
         return false;
     }
 
+    queryDeviceSectorSize();
     return true;
+}
+
+void FlashWorker::queryDeviceSectorSize() {
+    // Default stays 512 (historical assumption). A 4Kn device answers this basic
+    // IOCTL reliably; if it somehow fails there, a 512-padded write is rejected by
+    // WriteFile and the flash aborts with an error -- surfaced, never silent.
+    m_sectorSize = kDeviceSectorSizeBytes;
+    if (m_deviceHandle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    DISK_GEOMETRY geometry{};
+    DWORD bytesReturned = 0;
+    if (DeviceIoControl(m_deviceHandle,
+                        IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                        nullptr,
+                        0,
+                        &geometry,
+                        sizeof(geometry),
+                        &bytesReturned,
+                        nullptr) &&
+        geometry.BytesPerSector > 0) {
+        m_sectorSize = static_cast<qint64>(geometry.BytesPerSector);
+        sak::logInfo(
+            QString("Target logical sector size: %1 bytes").arg(m_sectorSize).toStdString());
+    } else {
+        sak::logWarning(QString("Could not query sector size (error %1); assuming %2 bytes")
+                            .arg(GetLastError())
+                            .arg(m_sectorSize)
+                            .toStdString());
+    }
 }
 
 void FlashWorker::closeDevice() {
@@ -239,13 +272,22 @@ bool FlashWorker::prepareSourceChecksum() {
     return true;
 }
 
-bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
+bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) const {
+    return padToSectorSize(buffer, bytesRead, m_sectorSize);
+}
+
+bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 sectorSize) {
     Q_ASSERT(!buffer.isEmpty());
-    if (bytesRead % kDeviceSectorSizeBytes == 0) {
+    // Fail closed on bogus geometry rather than dividing by zero / under-padding.
+    if (sectorSize <= 0) {
+        sak::logError(QString("Invalid sector size for padding: %1").arg(sectorSize).toStdString());
+        return false;
+    }
+    if (bytesRead % sectorSize == 0) {
         return true;
     }
 
-    qint64 paddedSize = ((bytesRead / kDeviceSectorSizeBytes) + 1) * kDeviceSectorSizeBytes;
+    qint64 paddedSize = ((bytesRead / sectorSize) + 1) * sectorSize;
 
     // Validate padded size is reasonable
     if (paddedSize > buffer.capacity() * kPaddingCapacityGrowthLimit || paddedSize < 0) {
