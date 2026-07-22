@@ -18,7 +18,6 @@ namespace {
 
 constexpr int kSearchCacheMaxCost = 1000;
 constexpr size_t kCandidateReserveDivisor = 2;
-constexpr double kExactCandidateMinConfidence = 0.5;
 constexpr double kCaseInsensitiveExactConfidence = 0.95;
 constexpr int kChocoSearchResultLimit = 10;
 constexpr int kMinimumKeywordLength = 3;
@@ -217,7 +216,7 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
     // Phase 1: Quick exact matches (no API calls needed)
     std::vector<std::pair<int, MatchResult>> exact_results;
     std::vector<std::pair<int, AppScanner::AppInfo>> fuzzy_candidates;
-    collectExactMatches(apps, exact_results, fuzzy_candidates);
+    collectExactMatches(apps, choco_mgr, config, exact_results, fuzzy_candidates);
 
     // Phase 2: Parallel fuzzy/search matching for remaining apps
     QThreadPool pool;
@@ -264,19 +263,26 @@ std::pair<int, std::optional<PackageMatcher::MatchResult>> PackageMatcher::match
 
 void PackageMatcher::collectExactMatches(
     const std::vector<AppScanner::AppInfo>& apps,
+    ChocolateyManager* choco_mgr,
+    const MatchConfig& config,
     std::vector<std::pair<int, MatchResult>>& exact_results,
     std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates) {
     const size_t app_count = apps.size();
     exact_results.reserve(app_count / kCandidateReserveDivisor);
     fuzzy_candidates.reserve(app_count / kCandidateReserveDivisor);
 
+    // Route through resolveExactMatch (which honors use_exact_mappings, min_confidence, and
+    // verify_availability and updates m_exact_match_count) so the parallel path matches findMatch
+    // instead of admitting disabled/sub-threshold/unavailable exact hits. Phase 1 is single-
+    // threaded (runs before the Phase 2 QThreadPool), so no stats lock is needed.
     for (size_t i = 0; i < app_count; ++i) {
-        QString base_name = extractBaseAppName(apps[i].name);
-        auto exact = exactMatch(base_name);
-        if (exact.has_value() && exact->confidence >= kExactCandidateMinConfidence) {
+        const QString base_name = extractBaseAppName(apps[i].name);
+        std::optional<MatchResult> exact;
+        if (config.use_exact_mappings) {
+            exact = resolveExactMatch(base_name, choco_mgr, config);
+        }
+        if (exact.has_value()) {
             exact_results.push_back({static_cast<int>(i), *exact});
-            QMutexLocker locker(&m_stats_mutex);
-            m_exact_match_count++;
         } else {
             fuzzy_candidates.push_back({static_cast<int>(i), apps[i]});
         }

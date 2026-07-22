@@ -128,6 +128,8 @@ private:
 
     /// @brief Phase 1: Collect exact matches and separate remaining fuzzy candidates.
     void collectExactMatches(const std::vector<AppScanner::AppInfo>& apps,
+                             ChocolateyManager* choco_mgr,
+                             const MatchConfig& config,
                              std::vector<std::pair<int, MatchResult>>& exact_results,
                              std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates);
     /// @brief Merge exact and fuzzy/search results in original order; return only matched entries.

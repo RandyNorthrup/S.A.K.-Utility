@@ -20,6 +20,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QSaveFile>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
@@ -271,18 +272,27 @@ void OfflineDeploymentWorker::emitInternalizationResult(const QString& pkg_id,
 
 void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
                                              const BuildBundleContext& ctx) {
-    // Write manifest
+    // Write manifest. A failed/short manifest write must NOT be reported as a completed bundle:
+    // installFromBundle would later fail with "Manifest is empty or unreadable".
     if (!manifest.packages.isEmpty()) {
-        bool manifest_ok = writeManifest(manifest, ctx.output_dir);
-        if (manifest_ok) {
-            writeReadme(manifest, ctx.output_dir);
+        if (!writeManifest(manifest, ctx.output_dir)) {
+            QDir(ctx.work_dir).removeRecursively();
+            m_running = false;
             QMetaObject::invokeMethod(
                 this,
-                [this, output_dir = ctx.output_dir]() {
-                    Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
+                [this, dir = ctx.output_dir]() {
+                    Q_EMIT operationError("Failed to write manifest to " + dir);
                 },
                 Qt::QueuedConnection);
+            return;
         }
+        writeReadme(manifest, ctx.output_dir);
+        QMetaObject::invokeMethod(
+            this,
+            [this, output_dir = ctx.output_dir]() {
+                Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
+            },
+            Qt::QueuedConnection);
     }
 
     // Clean up work directory
@@ -713,13 +723,21 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url, const QStr
         return false;
     }
 
-    QFile file(output_path);
+    // QSaveFile: fail closed on a short write / flush failure so a truncated installer is never
+    // counted as a downloaded package; the temp file is discarded on any failure.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly)) {
         sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
         return false;
     }
-    file.write(transfer.body);
-    file.close();
+    const qint64 written = file.write(transfer.body);
+    if (written != transfer.body.size() || !file.commit()) {
+        sak::logError("[DirectDownload] Short write for {}: {} of {} bytes",
+                      output_path.toStdString(),
+                      written,
+                      static_cast<qint64>(transfer.body.size()));
+        return false;
+    }
     return true;
 }
 
@@ -801,7 +819,19 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
     }
 
     QJsonDocument doc(root);
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json) != json.size()) {
+        sak::logError("[OfflineDeploymentWorker] Short write on manifest: {}",
+                      manifest_path.toStdString());
+        file.close();
+        return false;
+    }
+    if (!file.flush()) {  // surface a buffered-write failure (QFile::close() is void)
+        sak::logError("[OfflineDeploymentWorker] Failed to flush manifest: {}",
+                      manifest_path.toStdString());
+        file.close();
+        return false;
+    }
     file.close();
 
     sak::logInfo("[OfflineDeploymentWorker] Manifest written: {}", manifest_path.toStdString());

@@ -174,9 +174,10 @@ void NuGetApiClient::resolveDependencies(const QString& package_id, const QStrin
     m_resolved_deps.clear();
     m_deps_to_resolve.clear();
     m_visited_deps.clear();
-    m_dependency_depth = 0;
+    m_root_id_lower = package_id.toLower();
+    m_root_version = version;
 
-    m_deps_to_resolve.append(package_id);
+    m_deps_to_resolve.append({package_id, 0});
     m_visited_deps.insert(package_id.toLower());
 
     sak::logInfo("[NuGetApiClient] Resolving dependencies for {} {}",
@@ -332,6 +333,10 @@ void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
         int start = disposition.indexOf("filename=") + kContentDispositionFilenamePrefixLength;
         filename = disposition.mid(start).trimmed();
         filename.remove('"');
+        // Confine a hostile Content-Disposition name to a bare basename: fileName() strips
+        // ../ traversal, drive letters and absolute paths (both / and \ separators on Windows),
+        // so the write can never escape output_dir.
+        filename = QFileInfo(filename).fileName();
     }
     if (filename.isEmpty()) {
         filename = package_id + ".nupkg";
@@ -345,8 +350,20 @@ void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
         return;
     }
 
-    file.write(data);
+    // Fail closed on a short/failed write (disk full, quota): a truncated .nupkg must not be
+    // reported as a complete download. flush() surfaces a buffered write failure (close() is void).
+    const qint64 written = file.write(data);
+    const bool flushed = file.flush();
     file.close();
+    if (written != data.size() || !flushed) {
+        file.remove();
+        sak::logError("[NuGetApiClient] Incomplete write ({} of {} bytes) to: {}",
+                      static_cast<long long>(written),
+                      static_cast<long long>(data.size()),
+                      file_path.toStdString());
+        Q_EMIT errorOccurred("download", "Incomplete write for " + package_id);
+        return;
+    }
 
     sak::logInfo("[NuGetApiClient] Downloaded {} ({} bytes)", file_path.toStdString(), data.size());
     Q_EMIT downloadComplete(package_id, file_path);
@@ -364,61 +381,103 @@ void NuGetApiClient::resolveNextDependency() {
         return;
     }
 
-    if (m_dependency_depth >= offline::kMaxDependencyDepth) {
-        sak::logWarning("[NuGetApiClient] Max dependency depth reached");
-        Q_EMIT dependenciesResolved(m_resolved_deps);
-        return;
-    }
-
-    QString next_id = m_deps_to_resolve.takeFirst();
-    m_dependency_depth++;
+    const auto next = m_deps_to_resolve.takeFirst();
+    const QString next_id = next.first;
+    const int depth = next.second;
+    // Only the root node carries a pinned version; children are resolved to their latest.
+    const bool pinned_root = !m_root_version.isEmpty() && next_id.toLower() == m_root_id_lower;
 
     // Build OData URL manually — QUrlQuery double-encodes OData quotes and $ params.
-    QString encoded_id = QString(QUrl::toPercentEncoding(next_id));
-    QString url_str =
-        QString(
-            "%1%2?$filter=IsLatestVersion%20and%20Id%20eq%20%27%3%27"
-            "&searchTerm=%27%4%27&targetFramework=%27%27"
-            "&includePrerelease=false")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath, encoded_id, encoded_id);
+    const QString encoded_id = QString(QUrl::toPercentEncoding(next_id));
+    const QString url_str = buildDependencyUrl(encoded_id, pinned_root);
 
     auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
     m_pending_ops++;
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        m_pending_ops--;
-        reply->deleteLater();
+    connect(reply, &QNetworkReply::finished, this, [this, reply, pinned_root, depth]() {
+        handleDependencyReply(reply, pinned_root, depth);
+    });
+}
 
-        if (m_cancelled) {
+QString NuGetApiClient::buildDependencyUrl(const QString& encoded_id, bool pinned_root) const {
+    if (pinned_root) {
+        // FindPackagesById returns EVERY version (with its Dependencies), so the exact pinned
+        // root version can be selected instead of the feed's IsLatestVersion.
+        return QString("%1%2?id=%27%3%27")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath, encoded_id);
+    }
+    return QString(
+               "%1%2?$filter=IsLatestVersion%20and%20Id%20eq%20%27%3%27"
+               "&searchTerm=%27%4%27&targetFramework=%27%27"
+               "&includePrerelease=false")
+        .arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath, encoded_id, encoded_id);
+}
+
+int NuGetApiClient::indexOfVersion(const QVector<ChocoPackageMetadata>& results,
+                                   const QString& version) const {
+    for (int i = 0; i < results.size(); ++i) {
+        if (results.at(i).version == version) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void NuGetApiClient::enqueueDependencies(const ChocoPackageMetadata& pkg, int depth) {
+    // Enforce the graph-depth cap at enqueue time (root=0..kMaxDependencyDepth-1 levels), so the
+    // cap limits recursion depth, not the flat number of packages processed. Breadth is never cut.
+    if (depth + 1 >= offline::kMaxDependencyDepth) {
+        return;
+    }
+    for (const auto& dep_id : pkg.dependency_ids) {
+        const QString lower_dep = dep_id.toLower();
+        if (!m_visited_deps.contains(lower_dep)) {
+            m_visited_deps.insert(lower_dep);
+            m_deps_to_resolve.append({dep_id, depth + 1});
+        }
+    }
+}
+
+void NuGetApiClient::handleDependencyReply(QNetworkReply* reply, bool pinned_root, int depth) {
+    m_pending_ops--;
+    reply->deleteLater();
+    if (m_cancelled) {
+        return;
+    }
+    if (reply->error() != QNetworkReply::NoError) {
+        sak::logWarning("[NuGetApiClient] Dep resolve error: {}",
+                        reply->errorString().toStdString());
+        resolveNextDependency();
+        return;
+    }
+
+    const QByteArray data = reply->readAll();
+    const auto results = parseODataFeed(data);
+
+    if (pinned_root) {
+        const int idx = indexOfVersion(results, m_root_version);
+        if (idx < 0) {
+            // Fail closed: the requested version is unavailable; never silently resolve latest.
+            Q_EMIT errorOccurred("dependencies",
+                                 "Requested version " + m_root_version + " of " + m_root_id_lower +
+                                     " not available");
             return;
         }
-
-        if (reply->error() != QNetworkReply::NoError) {
-            sak::logWarning("[NuGetApiClient] Dep resolve error: {}",
-                            reply->errorString().toStdString());
+        const auto& pkg = results.at(idx);
+        m_resolved_deps.append(pkg);
+        enqueueDependencies(pkg, depth);
+    } else {
+        if (results.isEmpty()) {
             resolveNextDependency();
             return;
         }
+        const auto& pkg = results.first();
+        m_resolved_deps.append(pkg);
+        enqueueDependencies(pkg, depth);
+    }
 
-        QByteArray data = reply->readAll();
-        auto results = parseODataFeed(data);
-
-        if (!results.isEmpty()) {
-            auto& pkg = results.first();
-            m_resolved_deps.append(pkg);
-
-            for (const auto& dep_id : pkg.dependency_ids) {
-                QString lower_dep = dep_id.toLower();
-                if (!m_visited_deps.contains(lower_dep)) {
-                    m_visited_deps.insert(lower_dep);
-                    m_deps_to_resolve.append(dep_id);
-                }
-            }
-        }
-
-        resolveNextDependency();
-    });
+    resolveNextDependency();
 }
 
 // ============================================================================

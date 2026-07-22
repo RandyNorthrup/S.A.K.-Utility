@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 
 #include <algorithm>
 
@@ -149,15 +150,26 @@ bool PackageListManager::saveToFile(const PackageList& list, const QString& file
     }
     root["packages"] = packages;
 
-    QFile file(file_path);
+    // QSaveFile: a plain WriteOnly open truncates the existing list to 0 before writing, so a
+    // failed/short write would destroy the prior good list. QSaveFile writes to a temp file and
+    // only atomically renames on commit(), leaving the previous file intact on any failure.
+    QSaveFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logError("[PackageListManager] Cannot write: {}", file_path.toStdString());
         return false;
     }
 
     QJsonDocument doc(root);
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        sak::logError("[PackageListManager] Incomplete write: {}", file_path.toStdString());
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit()) {
+        sak::logError("[PackageListManager] Commit failed: {}", file_path.toStdString());
+        return false;
+    }
 
     sak::logInfo("[PackageListManager] Saved list '{}' ({} packages) to: {}",
                  list.name.toStdString(),

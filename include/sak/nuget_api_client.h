@@ -11,8 +11,10 @@
 #pragma once
 
 #include <QDomDocument>
+#include <QList>
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QVector>
 
@@ -99,6 +101,11 @@ private:
                              const QString& package_id,
                              const QString& output_dir);
     void resolveNextDependency();
+    [[nodiscard]] QString buildDependencyUrl(const QString& encoded_id, bool pinned_root) const;
+    void handleDependencyReply(QNetworkReply* reply, bool pinned_root, int depth);
+    [[nodiscard]] int indexOfVersion(const QVector<ChocoPackageMetadata>& results,
+                                     const QString& version) const;
+    void enqueueDependencies(const ChocoPackageMetadata& pkg, int depth);
 
     [[nodiscard]] QVector<ChocoPackageMetadata> parseODataFeed(const QByteArray& xml);
     [[nodiscard]] ChocoPackageMetadata parseODataEntry(const QDomElement& entry) const;
@@ -117,9 +124,10 @@ private:
 
     // Dependency resolution state
     QVector<ChocoPackageMetadata> m_resolved_deps;
-    QStringList m_deps_to_resolve;
+    QList<QPair<QString, int>> m_deps_to_resolve;  // (package_id, graph_depth)
     QSet<QString> m_visited_deps;
-    int m_dependency_depth{0};
+    QString m_root_id_lower;  // lowercased root id, to detect the pinned-version root node
+    QString m_root_version;   // requested root version ("" = latest)
 };
 
 }  // namespace sak

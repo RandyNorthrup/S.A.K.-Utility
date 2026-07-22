@@ -42,6 +42,7 @@ private Q_SLOTS:
 
     // Save/load
     void saveLoad_roundTrip();
+    void saveToFile_overwriteExisting_atomicReplace();
     void loadFromFile_nonexistent_returnsEmpty();
     void saveToFile_invalidPath_returnsFalse();
 
@@ -232,6 +233,29 @@ void TestPackageListManager::saveLoad_roundTrip() {
         QCOMPARE(loaded.entries[index].version, original.entries[index].version);
         QCOMPARE(loaded.entries[index].notes, original.entries[index].notes);
     }
+}
+
+// P07-41: saving over an existing list uses QSaveFile (temp + atomic rename); a successful save
+// fully and cleanly replaces the prior content (and, on failure, would leave it intact).
+void TestPackageListManager::saveToFile_overwriteExisting_atomicReplace() {
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    const QString file_path = temp_dir.path() + "/list.json";
+
+    auto first = sak::PackageListManager::createList("First", "old");
+    sak::PackageListManager::addPackage(first, "firefox", "1.0", "");
+    QVERIFY(sak::PackageListManager::saveToFile(first, file_path));
+
+    auto second = sak::PackageListManager::createList("Second", "new");
+    sak::PackageListManager::addPackage(second, "vlc", "2.0", "");
+    sak::PackageListManager::addPackage(second, "git", "3.0", "");
+    QVERIFY(sak::PackageListManager::saveToFile(second, file_path));
+
+    auto loaded = sak::PackageListManager::loadFromFile(file_path);
+    QCOMPARE(loaded.name, QStringLiteral("Second"));
+    QCOMPARE(loaded.entries.size(), 2);
+    QCOMPARE(loaded.entries[0].package_id, QStringLiteral("vlc"));
+    QCOMPARE(loaded.entries[1].package_id, QStringLiteral("git"));
 }
 
 void TestPackageListManager::loadFromFile_nonexistent_returnsEmpty() {

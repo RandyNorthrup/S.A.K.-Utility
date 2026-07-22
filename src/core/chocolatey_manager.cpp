@@ -45,6 +45,10 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
         return false;
     }
     m_choco_dir = choco_portable_path;
+    // Reset stale state so a re-init to a directory lacking choco.exe fails closed instead of
+    // silently retaining the previously found executable and reporting initialized.
+    m_choco_path.clear();
+    m_initialized = false;
 
     // Look for choco.exe in common locations within portable directory
     QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),

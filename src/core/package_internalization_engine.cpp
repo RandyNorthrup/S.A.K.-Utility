@@ -18,6 +18,8 @@
 #include <QDomElement>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <QSet>
 #include <QThread>
 #include <QUrl>
 #include <QUrlQuery>
@@ -38,12 +40,25 @@ NetworkTransferRequest makeVersionRequest(const QUrl& url) {
     return request;
 }
 
-QString binaryFilenameForUrl(const QUrl& url, int index) {
-    QString filename = url.fileName();
-    if (filename.isEmpty()) {
-        filename = QString("binary_%1").arg(index + 1);
+QString uniqueBinaryFilename(const QUrl& url, int index, QSet<QString>& used_names) {
+    QString base = url.fileName();
+    if (base.isEmpty()) {
+        base = QString("binary_%1").arg(index + 1);
     }
-    return filename;
+    // Two distinct URLs can share a basename (x86 vs x64 setup.exe); disambiguate so the second
+    // never overwrites the first on disk and the rewritten script maps each URL to its own file.
+    QString candidate = base;
+    const QFileInfo info(base);
+    const QString stem = info.completeBaseName();
+    const QString suffix = info.suffix();
+    int counter = 1;
+    while (used_names.contains(candidate)) {
+        candidate = suffix.isEmpty() ? QString("%1_%2").arg(stem).arg(counter)
+                                     : QString("%1_%2.%3").arg(stem).arg(counter).arg(suffix);
+        ++counter;
+    }
+    used_names.insert(candidate);
+    return candidate;
 }
 
 NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
@@ -56,13 +71,17 @@ NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
 }
 
 bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
-    QFile file(output_path);
+    // QSaveFile: verify the full byte count and atomically commit, so a partial write (disk full)
+    // leaves no truncated installer that would be repacked as a "successfully internalized" file.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly)) {
         error = "Cannot write file: " + output_path;
         return false;
     }
-    file.write(body);
-    file.close();
+    if (file.write(body) != body.size() || !file.commit()) {
+        error = "Failed to write file: " + output_path;
+        return false;
+    }
     return true;
 }
 }  // namespace
@@ -459,6 +478,9 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
     QStringList urls_to_download = collectBinaryUrls(parsed);
     m_current_progress.binary_total = urls_to_download.size();
 
+    // Same iteration order + shared used_names as buildLocalFilenameMap, so the on-disk name and
+    // the rewritten-script name for each URL always agree.
+    QSet<QString> used_names;
     for (int idx = 0; idx < urls_to_download.size(); ++idx) {
         if (m_cancelled) {
             return false;
@@ -471,7 +493,7 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
 
         const QString& url = urls_to_download[idx];
         const QUrl parsed_url(url);
-        const QString filename = binaryFilenameForUrl(parsed_url, idx);
+        const QString filename = uniqueBinaryFilename(parsed_url, idx, used_names);
         const QString output_path = tools_dir + "/" + filename;
         const NetworkTransferRequest request = makeBinaryDownloadRequest(parsed_url);
 
@@ -524,15 +546,13 @@ QStringList PackageInternalizationEngine::collectBinaryUrls(
 QHash<QString, QString> PackageInternalizationEngine::buildLocalFilenameMap(
     const ParsedInstallScript& parsed) const {
     QHash<QString, QString> local_filenames;
-    int idx = 0;
-    for (const auto& url : collectBinaryUrls(parsed)) {
-        ++idx;
-        QUrl parsed_url(url);
-        QString filename = parsed_url.fileName();
-        if (filename.isEmpty()) {
-            filename = QString("binary_%1").arg(idx);
-        }
-        local_filenames.insert(url, filename);
+    QSet<QString> used_names;
+    const QStringList urls = collectBinaryUrls(parsed);
+    for (int idx = 0; idx < urls.size(); ++idx) {
+        // Mirror downloadAllBinaries exactly (same order, index base, and disambiguation) so each
+        // URL maps to the identical local filename that was written to disk.
+        const QString filename = uniqueBinaryFilename(QUrl(urls[idx]), idx, used_names);
+        local_filenames.insert(urls[idx], filename);
     }
     return local_filenames;
 }
