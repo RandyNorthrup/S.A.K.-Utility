@@ -95,6 +95,7 @@ bool writeExportFile(const QString& path,
 struct HfsExportFrame {
     QString source_path;
     QString output_directory;
+    uint32_t catalog_id{0};  // CNID of this directory; 0 = the export root
 };
 
 void appendHfsExportRequestBlockers(const QString& imagePath,
@@ -117,7 +118,7 @@ void appendHfsExportRequestBlockers(const QString& imagePath,
 
 class HfsDirectoryExporter {
 public:
-    HfsDirectoryExporter(QIODevice* image, PartitionHfsDirectoryExportOptions options)
+    HfsDirectoryExporter(QIODevice* image, const PartitionHfsDirectoryExportOptions& options)
         : image_(image), options_(options) {}
 
     PartitionHfsDirectoryExportResult run(const QString& sourcePath,
@@ -136,11 +137,14 @@ public:
 
 private:
     bool processFrame(const HfsExportFrame& frame) {
-        const QString visitKey = frame.source_path.toLower();
-        if (visited_directories_.contains(visitKey)) {
+        // Dedupe by CNID, not a folded path: on an HFSX (binary-compare) volume /Foo and /foo
+        // are genuinely distinct directories that a lowercased path key would collide (dropping
+        // one subtree), and HFS+ directory hard links reach one CNID by several paths (a path
+        // key would re-export it or loop). The catalog id is unambiguous under either compare.
+        if (visited_directories_.contains(frame.catalog_id)) {
             return true;
         }
-        visited_directories_.insert(visitKey);
+        visited_directories_.insert(frame.catalog_id);
 
         const auto listing = PartitionHfsFileSystemReader::listDirectory(
             image_, frame.source_path, std::max(1, options_.max_entries - result_.entries_scanned));
@@ -200,7 +204,7 @@ private:
             return false;
         }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath});
+        pending_.append({entry.path, targetPath, entry.catalog_id});
         return true;
     }
 
@@ -283,7 +287,7 @@ private:
     PartitionHfsDirectoryExportOptions options_;
     PartitionHfsDirectoryExportResult result_;
     QVector<HfsExportFrame> pending_;
-    QSet<QString> visited_directories_;
+    QSet<uint32_t> visited_directories_;
 };
 
 }  // namespace

@@ -126,6 +126,8 @@ constexpr uint32_t kApfsContainerIncompatFusion = 0x00'00'01'00;
 constexpr uint64_t kApfsSupportedContainerIncompat = kApfsContainerIncompatVersion2 |
                                                      kApfsContainerIncompatFusion;
 constexpr uint64_t kApfsVolumeIncompatIncompleteRestore = 0x00'00'00'10;
+constexpr uint64_t kApfsVolumeIncompatCaseInsensitive =
+    0x00'00'00'01;  // APFS_INCOMPAT_CASE_INSENSITIVE
 constexpr uint64_t kApfsObjIdMask = 0x0F'FF'FF'FF'FF'FF'FF'FFULL;
 constexpr uint64_t kApfsObjTypeMask = 0xF0'00'00'00'00'00'00'00ULL;
 constexpr int kApfsObjTypeShift = 60;
@@ -670,6 +672,7 @@ private:
         }
         const uint64_t volumeIncompatible = le64(volumeBlock,
                                                  kApfsVolumeIncompatibleFeaturesOffset);
+        volumeCaseInsensitive_ = (volumeIncompatible & kApfsVolumeIncompatCaseInsensitive) != 0;
         if ((volumeIncompatible & kApfsVolumeIncompatIncompleteRestore) != 0) {
             result->blockers.append(QStringLiteral("APFS volume has incomplete-restore state"));
             return false;
@@ -1779,13 +1782,23 @@ private:
         return records;
     }
 
+    // Match a path component against a directory record name using the VOLUME's case
+    // sensitivity: a case-insensitive compare on a case-SENSITIVE volume returns the first
+    // case-variant sibling in b-tree order (the wrong object).
+    [[nodiscard]] bool componentMatchesName(const QString& recordName,
+                                            const QString& component) const {
+        return recordName.compare(component,
+                                  volumeCaseInsensitive_ ? Qt::CaseInsensitive
+                                                         : Qt::CaseSensitive) == 0;
+    }
+
     [[nodiscard]] std::optional<uint64_t> resolveDirectory(
         const QString& path, PartitionApfsFileReadResult* result) const {
         uint64_t current = kApfsRootDirectoryId;
         for (const auto& part : pathParts(path)) {
             const auto records = directoryRecordsFor(current);
             auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
-                return record.name.compare(part, Qt::CaseInsensitive) == 0;
+                return componentMatchesName(record.name, part);
             });
             if (match == records.cend()) {
                 result->blockers.append(
@@ -1813,7 +1826,7 @@ private:
         for (int index = 0; index < parts.size() - 1; ++index) {
             const auto records = directoryRecordsFor(parent);
             auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
-                return record.name.compare(parts.at(index), Qt::CaseInsensitive) == 0;
+                return componentMatchesName(record.name, parts.at(index));
             });
             if (match == records.cend() || match->directory_type != kApfsDirTypeDirectory) {
                 result->blockers.append(
@@ -1824,7 +1837,7 @@ private:
         }
         const auto records = directoryRecordsFor(parent);
         auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
-            return record.name.compare(parts.constLast(), Qt::CaseInsensitive) == 0;
+            return componentMatchesName(record.name, parts.constLast());
         });
         if (match == records.cend()) {
             result->blockers.append(QStringLiteral("APFS file path not found: %1").arg(path));
@@ -2180,6 +2193,9 @@ private:
     uint64_t rootTreeAddress_{0};
     bool rootTreeEncrypted_{false};
     bool volumeOneKey_{false};  // ONEKEY whole-volume FileVault: data tweak = block addr
+    // APFS_INCOMPAT_CASE_INSENSITIVE: default volumes are case-insensitive (the common case);
+    // a case-SENSITIVE volume needs exact-case path lookups. Set from the volume superblock.
+    bool volumeCaseInsensitive_{true};
     QByteArray containerUuid_;
     uint64_t keylockerPaddr_{0};
     QByteArray vek_;  // 32-byte AES-XTS volume key (empty = locked / unencrypted)
@@ -2210,6 +2226,7 @@ private:
 struct ApfsExportFrame {
     QString source_path;
     QString output_directory;
+    uint64_t object_id{0};  // inode object id of this directory; 0 = the export root
 };
 
 void appendApfsExportRequestBlockers(const QString& imagePath,
@@ -2251,11 +2268,14 @@ public:
 
 private:
     [[nodiscard]] bool processFrame(const ApfsExportFrame& frame) {
-        const QString visitKey = cleanPath(frame.source_path).toLower();
-        if (visited_directories_.contains(visitKey)) {
+        // Dedupe by inode object id, not a folded path: on a case-SENSITIVE APFS volume /Foo
+        // and /foo are distinct directories a lowercased key would collide (dropping a subtree),
+        // and a hard-linked directory reaches one inode by several paths. The object id is
+        // unambiguous under either case-sensitivity.
+        if (visited_directories_.contains(frame.object_id)) {
             return true;
         }
-        visited_directories_.insert(visitKey);
+        visited_directories_.insert(frame.object_id);
         const auto listing = reader_.listDirectory(
             frame.source_path, std::max(1, options_.max_entries - result_.entries_scanned));
         result_.warnings.append(listing.warnings);
@@ -2319,7 +2339,7 @@ private:
             return false;
         }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath});
+        pending_.append({entry.path, targetPath, entry.object_id});
         return true;
     }
 
@@ -2364,7 +2384,7 @@ private:
     PartitionApfsDirectoryExportOptions options_;
     PartitionApfsDirectoryExportResult result_;
     QVector<ApfsExportFrame> pending_;
-    QSet<QString> visited_directories_;
+    QSet<uint64_t> visited_directories_;
 };
 
 PartitionApfsFileReadResult withOpenedApfsImage(

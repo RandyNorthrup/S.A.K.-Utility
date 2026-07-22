@@ -10791,9 +10791,13 @@ private:
             const qsizetype extentOffset = offset + index * kHfsExtentBytes;
             const uint32_t start = be32(node, extentOffset + kHfsExtentStartBlockOffset);
             const uint32_t blockCount = be32(node, extentOffset + kHfsExtentBlockCountOffset);
-            if (blockCount != 0) {
-                extents.append(HfsExtent{.start_block = start, .block_count = blockCount});
+            if (blockCount == 0) {
+                // The first zero-count entry TERMINATES the list (matching parseFork); skipping
+                // it and continuing would compact a malformed record and mismap every later
+                // extent onto the wrong logical blocks.
+                break;
             }
+            extents.append(HfsExtent{.start_block = start, .block_count = blockCount});
         }
         return extents;
     }
@@ -11455,7 +11459,9 @@ private:
             const uint32_t start = be32(node, extentOffset + kHfsExtentStartBlockOffset);
             const uint32_t count = be32(node, extentOffset + kHfsExtentBlockCountOffset);
             if (count == 0) {
-                continue;
+                // First zero-count descriptor terminates the record (matching parseFork);
+                // continuing would mismap later extents onto the wrong logical blocks.
+                break;
             }
             record.extents.append(HfsExtent{.start_block = start, .block_count = count});
         }
@@ -11580,6 +11586,12 @@ private:
     [[nodiscard]] std::optional<QVector<HfsCatalogRecord>> childRecords(uint32_t folderId,
                                                                         int maxEntries) {
         QVector<HfsCatalogRecord> records;
+        // Scan one past the cap so a folder with MORE children than the budget is detected and
+        // surfaced as a truncation warning, rather than pre-truncated to exactly the budget and
+        // reported as a complete listing (the exporter's cap detector never fires on a listing
+        // that already fits, so the drop was silent).
+        const int scanCap = maxEntries < std::numeric_limits<int>::max() ? maxEntries + 1
+                                                                         : maxEntries;
         uint32_t nodeNumber = m_catalog.first_leaf_node;
         int visited = 0;
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
@@ -11592,8 +11604,8 @@ private:
                 m_blockers.append(QStringLiteral("Invalid HFS+ catalog leaf node"));
                 return std::nullopt;
             }
-            appendChildRecords(*node, nodeNumber, folderId, maxEntries, &records);
-            if (!m_blockers.isEmpty() || records.size() >= maxEntries) {
+            appendChildRecords(*node, nodeNumber, folderId, scanCap, &records);
+            if (!m_blockers.isEmpty() || records.size() >= scanCap) {
                 break;
             }
             nodeNumber = be32(*node, 0);
@@ -11602,6 +11614,18 @@ private:
         if (visited >= kMaxCatalogLeafNodesToScan) {
             m_blockers.append(QStringLiteral("HFS+ catalog scan limit reached"));
             return std::nullopt;
+        }
+        return finishChildRecords(records, maxEntries);
+    }
+
+    // Trim a one-past-the-cap scan back to the budget, warning when entries were dropped, and
+    // return the listing (or nullopt on any recorded blocker).
+    [[nodiscard]] std::optional<QVector<HfsCatalogRecord>> finishChildRecords(
+        QVector<HfsCatalogRecord>& records, int maxEntries) {
+        if (records.size() > maxEntries) {
+            records.resize(maxEntries);
+            m_warnings.append(QStringLiteral(
+                "HFS+ directory listing truncated at the entry cap; some entries were not listed"));
         }
         return m_blockers.isEmpty() ? std::optional<QVector<HfsCatalogRecord>>(records)
                                     : std::nullopt;

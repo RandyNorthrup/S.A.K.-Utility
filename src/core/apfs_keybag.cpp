@@ -73,18 +73,25 @@ void assignKeyBlobField(KeyBlobParams* out, uint8_t tag, const QByteArray& value
 /// @brief Parse a flat sequence of DER TLV fields (short + long-form lengths).
 QList<DerField> derParse(const QByteArray& buf) {
     QList<DerField> out;
-    int i = 0;
+    qsizetype i = 0;
     while (i + 2 <= buf.size()) {
         const uint8_t tag = static_cast<uint8_t>(buf.at(i++));
-        int len = static_cast<uint8_t>(buf.at(i++));
+        qint64 len = static_cast<uint8_t>(buf.at(i++));
         if ((len & 0x80) != 0) {
-            int n = len & 0x7f;
+            const int n = static_cast<int>(len & 0x7f);
             len = 0;
-            for (int k = 0; k < n && i < buf.size(); ++k) {
+            // Reject the indefinite form (n==0), a length that cannot fit qint64 (n>8), or one
+            // whose length bytes run off the buffer -- accumulating them unchecked overflowed
+            // the old signed int to a NEGATIVE len that slipped past the i+len bound and drove
+            // buf.at(i) to a negative (out-of-bounds) index.
+            if (n == 0 || n > 8 || i + n > buf.size()) {
+                break;
+            }
+            for (int k = 0; k < n; ++k) {
                 len = (len << 8) | static_cast<uint8_t>(buf.at(i++));
             }
         }
-        if (i + len > buf.size()) {
+        if (len < 0 || i + len > buf.size()) {
             break;
         }
         out.append({tag, buf.mid(i, len)});

@@ -46,6 +46,7 @@ constexpr uint32_t kExtCompatHasJournal = 0x0004;
 constexpr uint32_t kExtIncompatCompression = 0x0001;
 constexpr uint32_t kExtIncompatNeedsRecovery = 0x0004;
 constexpr uint32_t kExtIncompatJournalDevice = 0x0008;
+constexpr uint32_t kExtIncompatMetaBg = 0x0010;
 constexpr uint32_t kExtIncompatExtents = 0x0040;
 constexpr uint32_t kExtIncompat64Bit = 0x0080;
 constexpr uint32_t kExtIncompatInlineData = 0x8000;
@@ -314,10 +315,21 @@ public:
         }
 
         const QString parent = normalizedDisplayPath(path);
-        const auto records = readDirectoryRecords(*inode, std::max(1, maxEntries));
+        // Read one past the cap so a directory with MORE entries than the budget is detected
+        // and surfaced as a truncation warning, instead of pre-truncated to exactly the cap and
+        // reported as a complete listing (the exporter's cap detector never fires on a listing
+        // that already fits, so the drop was silent).
+        const int requested = std::max(1, maxEntries);
+        const int scanCap = requested < std::numeric_limits<int>::max() ? requested + 1 : requested;
+        auto records = readDirectoryRecords(*inode, scanCap);
         if (!records.has_value()) {
             result.blockers = m_blockers;
             return result;
+        }
+        if (records->size() > requested) {
+            records->resize(requested);
+            result.warnings.append(QStringLiteral(
+                "Ext directory listing truncated at the entry cap; some entries were not listed"));
         }
         for (const auto& record : *records) {
             const auto child = readInode(record.inode);
@@ -438,6 +450,12 @@ private:
         }
         if ((m_superblock.incompat & kExtIncompatEncrypt) != 0) {
             m_blockers.append(QStringLiteral("Encrypted ext volumes are not supported"));
+        }
+        if ((m_superblock.incompat & kExtIncompatMetaBg) != 0) {
+            // META_BG relocates the group-descriptor table into per-meta-group blocks;
+            // groupDescriptorOffset assumes one flat table at block 1/2, so it would read
+            // descriptors from the wrong blocks. Fail closed rather than mismap every group.
+            m_blockers.append(QStringLiteral("Meta-block-group ext volumes are not supported"));
         }
     }
 
@@ -982,6 +1000,7 @@ bool writeExportFile(const QString& path,
 struct ExtExportFrame {
     QString source_path;
     QString output_directory;
+    uint32_t inode{0};  // inode number of this directory; 0 = the export root
 };
 
 void appendExtExportRequestBlockers(const QString& imagePath,
@@ -1023,11 +1042,13 @@ public:
 
 private:
     bool processFrame(const ExtExportFrame& frame) {
-        const QString visitKey = frame.source_path.toLower();
-        if (visited_directories_.contains(visitKey)) {
+        // Dedupe by inode number, not a folded path: ext2/3/4 names are case-SENSITIVE, so
+        // sibling dirs /Foo and /foo are distinct but a lowercased path key collides them and
+        // drops one subtree. The inode number is unambiguous (and dedups hard-link cycles).
+        if (visited_directories_.contains(frame.inode)) {
             return true;
         }
-        visited_directories_.insert(visitKey);
+        visited_directories_.insert(frame.inode);
 
         const auto listing = PartitionExtFileSystemReader::listDirectory(
             image_, frame.source_path, std::max(1, options_.max_entries - result_.entries_scanned));
@@ -1090,7 +1111,7 @@ private:
             return false;
         }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath});
+        pending_.append({entry.path, targetPath, entry.inode});
         return true;
     }
 
@@ -1157,7 +1178,7 @@ private:
     PartitionExtDirectoryExportOptions options_;
     PartitionExtDirectoryExportResult result_;
     QVector<ExtExportFrame> pending_;
-    QSet<QString> visited_directories_;
+    QSet<uint32_t> visited_directories_;
 };
 
 }  // namespace
