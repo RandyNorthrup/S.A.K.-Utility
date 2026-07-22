@@ -88,6 +88,21 @@ int UserProfileBackupWizard::getCompressionLevel() const {
                : kCompressionLevelBalanced;
 }
 
+PermissionMode UserProfileBackupWizard::getPermissionMode() const {
+    // The settings-page combo is built in enum order; map its index explicitly so
+    // an unset or out-of-range field falls back to the safest mode (StripAll).
+    switch (field("permissionMode").toInt()) {
+    case 1:
+        return PermissionMode::PreserveOriginal;
+    case 2:
+        return PermissionMode::AssignToDestination;
+    case 3:
+        return PermissionMode::Hybrid;
+    default:
+        return PermissionMode::StripAll;
+    }
+}
+
 bool UserProfileBackupWizard::isEncryptionEnabled() const {
     return field("encryptionEnabled").toBool();
 }

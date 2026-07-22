@@ -8,10 +8,11 @@
 #include "sak/user_profile_backup_worker.h"
 
 #include <QDateTime>
-#include <QFile>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -19,6 +20,28 @@ namespace sak {
 namespace {
 constexpr int kCompressionFastMaxLevel = 3;
 constexpr int kCompressionBalancedMaxLevel = 6;
+
+// Write JSON to `path` atomically: QSaveFile stages a temp file and only renames
+// it into place on commit(), so a short or interrupted write never leaves a
+// truncated sidecar behind. `error` is set on failure.
+bool writeJsonSidecarAtomic(const QString& path, const QJsonDocument& doc, QString& error) {
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        error = file.errorString();
+        return false;
+    }
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        error = QStringLiteral("incomplete write");
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit()) {
+        error = file.errorString();
+        return false;
+    }
+    return true;
+}
 }  // namespace
 
 // ============================================================================
@@ -117,7 +140,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
     }
 
     SmartFilter smartFilter = wiz->getSmartFilter();
-    PermissionMode permissionMode = PermissionMode::StripAll;
+    PermissionMode permissionMode = wiz->getPermissionMode();
 
     int compressionLevel = wiz->getCompressionLevel();
     bool encrypt = wiz->isEncryptionEnabled();
@@ -133,17 +156,62 @@ void UserProfileBackupExecutePage::onStartBackup() {
         appendLog(tr("Encryption: Enabled (AES-256)"));
     }
 
-    saveInstalledAppsToBackup(wiz->installedApps());
-    saveWifiProfilesToBackup(wiz->wifiProfiles());
-    saveEthernetConfigsToBackup(wiz->ethernetConfigs());
-    saveAppDataSourcesToBackup(wiz->appDataSources());
+    // The sidecars are written into the destination directory, so it must exist
+    // and be writable before anything is saved (previously they were written
+    // first and silently failed when the directory did not yet exist).
+    if (!ensureDestinationDirectory()) {
+        failBackupPreflight(
+            tr("Destination directory could not be created: %1").arg(m_destinationPath));
+        return;
+    }
+
+    // Save every metadata sidecar atomically; if any fails, do not start the
+    // backup -- a missing WiFi/Ethernet/app sidecar must not be reported as a
+    // successful backup.
+    if (!saveAllSidecars(wiz)) {
+        failBackupPreflight(
+            tr("Failed to write one or more backup metadata files; backup not started."));
+        return;
+    }
+
     connectAndStartBackupWorker(smartFilter, permissionMode, compressionLevel, encrypt, password);
 }
 
-void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
+bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz) {
+    // Every sidecar is attempted (left operand runs first) so all failures are
+    // logged, but any single failure makes the whole set fail.
+    bool ok = saveInstalledAppsToBackup(wiz->installedApps());
+    ok = saveWifiProfilesToBackup(wiz->wifiProfiles()) && ok;
+    ok = saveEthernetConfigsToBackup(wiz->ethernetConfigs()) && ok;
+    ok = saveAppDataSourcesToBackup(wiz->appDataSources()) && ok;
+    return ok;
+}
+
+bool UserProfileBackupExecutePage::ensureDestinationDirectory() {
+    QDir dir(m_destinationPath);
+    if (dir.exists()) {
+        return true;
+    }
+    if (!QDir().mkpath(m_destinationPath)) {
+        sak::logError("Could not create backup destination: {}", m_destinationPath.toStdString());
+        return false;
+    }
+    return true;
+}
+
+void UserProfileBackupExecutePage::failBackupPreflight(const QString& message) {
+    sak::logError("Backup preflight failed: {}", message.toStdString());
+    appendLog(tr("ERROR: %1").arg(message));
+    m_statusLabel->setText(tr("Backup failed to start"));
+    // Allow the user to fix the problem and retry; do not mark the page complete.
+    m_started = false;
+    m_startButton->setEnabled(true);
+}
+
+bool UserProfileBackupExecutePage::saveInstalledAppsToBackup(
     const QVector<InstalledAppInfo>& installedApps) {
     if (installedApps.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray appsArray;
@@ -157,27 +225,21 @@ void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
         appsArray.append(appObj);
     }
 
-    QJsonDocument doc(appsArray);
-    QFile appsFile(m_destinationPath + "/installed_apps.json");
-    if (appsFile.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (appsFile.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of installed apps list");
-            appendLog(tr("WARNING: Incomplete write of installed applications list"));
-        }
-        appsFile.close();
-        appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
-    } else {
-        sak::logError("Could not save installed apps list: {}",
-                      appsFile.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save installed applications list"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/installed_apps.json", QJsonDocument(appsArray), error)) {
+        sak::logError("Could not save installed apps list: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save installed applications list: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
+    return true;
 }
 
-void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
+bool UserProfileBackupExecutePage::saveWifiProfilesToBackup(
     const QVector<WifiProfileInfo>& profiles) {
     if (profiles.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -187,29 +249,24 @@ void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/wifi_profiles.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of WiFi profiles");
-            appendLog(tr("WARNING: Incomplete write of WiFi profiles"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 WiFi profile(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save WiFi profiles: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save WiFi profiles"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/wifi_profiles.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save WiFi profiles: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save WiFi profiles: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 WiFi profile(s) to backup").arg(arr.size()));
+    return true;
 }
 
-void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
+bool UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
     const QVector<EthernetConfigInfo>& configs) {
     if (configs.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -219,29 +276,24 @@ void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/ethernet_configs.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of Ethernet configs");
-            appendLog(tr("WARNING: Incomplete write of Ethernet configurations"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 Ethernet configuration(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save Ethernet configs: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save Ethernet configurations"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/ethernet_configs.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save Ethernet configs: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save Ethernet configurations: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 Ethernet configuration(s) to backup").arg(arr.size()));
+    return true;
 }
 
-void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
+bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
     const QVector<AppDataSourceInfo>& sources) {
     if (sources.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -251,23 +303,18 @@ void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/app_data_sources.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of app data sources");
-            appendLog(tr("WARNING: Incomplete write of application data sources"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 application data source(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save app data sources: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save application data sources"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/app_data_sources.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save app data sources: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save application data sources: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 application data source(s) to backup").arg(arr.size()));
+    return true;
 }
 
 void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,

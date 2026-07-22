@@ -667,6 +667,7 @@ void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* 
     // Register wizard fields for validation
     registerField("destination*", m_destinationEdit);
     registerField("compressionLevel", m_compressionCombo, "currentIndex");
+    registerField("permissionMode", m_permissionModeCombo, "currentIndex");
     registerField("encryptionEnabled", m_encryptionCheck);
     registerField("encryptionPassword", m_passwordEdit);
 }

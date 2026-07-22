@@ -76,6 +76,12 @@ public:
     int getCompressionLevel() const;
 
     /**
+     * @brief Get the permission mode chosen on the settings page.
+     * @return the selected PermissionMode, or StripAll (safest) if unset/invalid.
+     */
+    PermissionMode getPermissionMode() const;
+
+    /**
      * @brief Check if encryption is enabled
      */
     [[nodiscard]] bool isEncryptionEnabled() const;
@@ -405,17 +411,25 @@ private:
     void setupUi();
     void appendLog(const QString& message);
 
-    /// @brief Save installed apps list from wizard to backup directory
-    void saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
+    /// @brief Ensure the backup destination directory exists (create if needed)
+    /// @return true if the directory exists or was created, false otherwise
+    bool ensureDestinationDirectory();
+    /// @brief Report a pre-start failure, re-enable retry, leave page incomplete
+    void failBackupPreflight(const QString& message);
+    /// @brief Write every metadata sidecar; false if any write fails
+    bool saveAllSidecars(UserProfileBackupWizard* wiz);
 
-    /// @brief Save WiFi profiles from wizard to backup directory
-    void saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
+    /// @brief Save installed apps list to backup directory; false on write failure
+    bool saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
 
-    /// @brief Save Ethernet configs from wizard to backup directory
-    void saveEthernetConfigsToBackup(const QVector<EthernetConfigInfo>& configs);
+    /// @brief Save WiFi profiles to backup directory; false on write failure
+    bool saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
 
-    /// @brief Save app data sources from wizard to backup directory
-    void saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
+    /// @brief Save Ethernet configs to backup directory; false on write failure
+    bool saveEthernetConfigsToBackup(const QVector<EthernetConfigInfo>& configs);
+
+    /// @brief Save app data sources to backup directory; false on write failure
+    bool saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
     void connectAndStartBackupWorker(SmartFilter smartFilter,
