@@ -1512,7 +1512,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_health_ledger.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ai_tool_health_ledger PRIVATE
-        Qt6::Core Qt6::Test
+        Qt6::Core Qt6::Concurrent Qt6::Test
     )
     target_include_directories(test_ai_tool_health_ledger PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

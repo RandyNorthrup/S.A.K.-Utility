@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
+#include <QMutex>
 #include <QString>
 
 namespace sak::ai {
@@ -71,8 +72,17 @@ private:
     [[nodiscard]] QDateTime normalizedNow(QDateTime now_utc) const;
     [[nodiscard]] int backoffMs(int consecutive_failures) const;
     [[nodiscard]] bool recordIsFresh(const AiToolHealthRecord& record, QDateTime now_utc) const;
+    // Unlocked cores: callers must already hold m_mutex. They exist so the
+    // public methods can lock once and the record*/prune paths can persist
+    // without re-locking the non-recursive mutex (which would self-deadlock).
+    [[nodiscard]] bool saveUnlocked(QString* error_message) const;
+    [[nodiscard]] QJsonObject snapshotUnlocked() const;
     void persistIfConfigured() const;
 
+    // Guards every access to m_records and the config fields. The ledger is
+    // read on the GUI thread (run-details snapshot) while tool dispatch may
+    // record success/failure from a worker thread, so all access is serialized.
+    mutable QMutex m_mutex;
     QHash<QString, AiToolHealthRecord> m_records;
     int m_suppress_after_failures{kAiToolHealthDefaultSuppressAfterFailures};
     int m_base_backoff_ms{kAiToolHealthDefaultBaseBackoffMs};

@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QFuture>
+#include <QtConcurrent>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -13,6 +15,7 @@ private Q_SLOTS:
     void repeatedFailuresSuppressTemporarily();
     void persistsFreshRecordsAndPrunesExpired();
     void classifyResultUsesSpecificFailureFields();
+    void concurrentRecordAndReadIsThreadSafe();
 };
 
 void AiToolHealthLedgerTests::recordSuccessClearsBackoff() {
@@ -89,6 +92,48 @@ void AiToolHealthLedgerTests::classifyResultUsesSpecificFailureFields() {
                          {QStringLiteral("error_message"), QStringLiteral("Checksum mismatch")}};
     QCOMPARE(sak::ai::AiToolHealthLedger::classifyResult(checksum),
              QStringLiteral("checksum_mismatch"));
+}
+
+// Tool dispatch may record success/failure from a worker thread while the GUI
+// thread reads the ledger (run-details snapshot). Before the mutex was added the
+// shared QHash was written and iterated concurrently -- undefined behavior that
+// crashes intermittently. This hammers both paths in parallel; it must not crash
+// and every recorded tool must survive.
+void AiToolHealthLedgerTests::concurrentRecordAndReadIsThreadSafe() {
+    sak::ai::AiToolHealthLedger ledger(3, 1000, 10'000);
+    constexpr int kToolCount = 32;
+    constexpr int kIterations = 200;
+
+    QVector<int> indices(kToolCount);
+    for (int i = 0; i < kToolCount; ++i) {
+        indices[i] = i;
+    }
+
+    QFuture<void> writers = QtConcurrent::map(indices, [&ledger](int tool) {
+        const QString key = QStringLiteral("tool_%1").arg(tool);
+        for (int i = 0; i < kIterations; ++i) {
+            if ((i & 1) == 0) {
+                ledger.recordSuccess(key, i);
+            } else {
+                ledger.recordFailure(key, QStringLiteral("timeout"), QStringLiteral("slow"), i);
+            }
+        }
+    });
+
+    // Concurrent readers on the calling thread while the pool writes.
+    for (int i = 0; i < kIterations * 4; ++i) {
+        const QJsonObject snap = ledger.snapshot();
+        QVERIFY(snap.value(QStringLiteral("record_count")).toInt() >= 0);
+        (void)ledger.check(QStringLiteral("tool_%1").arg(i % kToolCount));
+        (void)ledger.size();
+    }
+    writers.waitForFinished();
+
+    QCOMPARE(ledger.size(), kToolCount);
+    for (int tool = 0; tool < kToolCount; ++tool) {
+        const auto record = ledger.record(QStringLiteral("tool_%1").arg(tool));
+        QCOMPARE(record.success_count + record.failure_count, kIterations);
+    }
 }
 
 QTEST_GUILESS_MAIN(AiToolHealthLedgerTests)

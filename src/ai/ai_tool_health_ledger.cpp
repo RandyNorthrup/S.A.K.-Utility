@@ -120,6 +120,7 @@ AiToolHealthLedger::AiToolHealthLedger(int suppress_after_failures,
     , m_max_backoff_ms(std::max(m_base_backoff_ms, max_backoff_ms)) {}
 
 AiToolAvailability AiToolHealthLedger::check(const QString& key, QDateTime now_utc) const {
+    const QMutexLocker locker(&m_mutex);
     const QString normalized = normalizeKey(key);
     AiToolAvailability result;
     result.key = normalized;
@@ -149,6 +150,7 @@ AiToolAvailability AiToolHealthLedger::check(const QString& key, QDateTime now_u
 }
 
 void AiToolHealthLedger::recordSuccess(const QString& key, qint64 latency_ms, QDateTime now_utc) {
+    const QMutexLocker locker(&m_mutex);
     const QString normalized = normalizeKey(key);
     if (normalized.isEmpty()) {
         return;
@@ -168,6 +170,7 @@ void AiToolHealthLedger::recordFailure(const QString& key,
                                        const QString& error_message,
                                        qint64 latency_ms,
                                        QDateTime now_utc) {
+    const QMutexLocker locker(&m_mutex);
     const QString normalized = normalizeKey(key);
     if (normalized.isEmpty()) {
         return;
@@ -189,15 +192,18 @@ void AiToolHealthLedger::recordFailure(const QString& key,
 }
 
 void AiToolHealthLedger::setPersistencePath(const QString& path, int ttl_hours) {
+    const QMutexLocker locker(&m_mutex);
     m_persistence_path = path.trimmed();
     m_ttl_hours = std::max(1, ttl_hours);
 }
 
 QString AiToolHealthLedger::persistencePath() const {
+    const QMutexLocker locker(&m_mutex);
     return m_persistence_path;
 }
 
 bool AiToolHealthLedger::load(QString* error_message) {
+    const QMutexLocker locker(&m_mutex);
     if (error_message) {
         error_message->clear();
     }
@@ -224,6 +230,11 @@ bool AiToolHealthLedger::load(QString* error_message) {
 }
 
 bool AiToolHealthLedger::save(QString* error_message) const {
+    const QMutexLocker locker(&m_mutex);
+    return saveUnlocked(error_message);
+}
+
+bool AiToolHealthLedger::saveUnlocked(QString* error_message) const {
     if (error_message) {
         error_message->clear();
     }
@@ -248,7 +259,7 @@ bool AiToolHealthLedger::save(QString* error_message) const {
         }
         return false;
     }
-    file.write(QJsonDocument(snapshot()).toJson(QJsonDocument::Indented));
+    file.write(QJsonDocument(snapshotUnlocked()).toJson(QJsonDocument::Indented));
     if (!file.commit()) {
         if (error_message) {
             *error_message = QStringLiteral("Could not commit AI tool health ledger: %1")
@@ -260,6 +271,7 @@ bool AiToolHealthLedger::save(QString* error_message) const {
 }
 
 void AiToolHealthLedger::pruneExpired(QDateTime now_utc) {
+    const QMutexLocker locker(&m_mutex);
     const QDateTime now = normalizedNow(now_utc);
     for (auto it = m_records.begin(); it != m_records.end();) {
         if (recordIsFresh(it.value(), now)) {
@@ -272,10 +284,16 @@ void AiToolHealthLedger::pruneExpired(QDateTime now_utc) {
 }
 
 AiToolHealthRecord AiToolHealthLedger::record(const QString& key) const {
+    const QMutexLocker locker(&m_mutex);
     return m_records.value(normalizeKey(key));
 }
 
 QJsonObject AiToolHealthLedger::snapshot() const {
+    const QMutexLocker locker(&m_mutex);
+    return snapshotUnlocked();
+}
+
+QJsonObject AiToolHealthLedger::snapshotUnlocked() const {
     QJsonArray records;
     for (const auto& record : m_records) {
         records.append(record.toJson());
@@ -291,6 +309,7 @@ QJsonObject AiToolHealthLedger::snapshot() const {
 }
 
 int AiToolHealthLedger::size() const {
+    const QMutexLocker locker(&m_mutex);
     return m_records.size();
 }
 
@@ -354,8 +373,9 @@ bool AiToolHealthLedger::recordIsFresh(const AiToolHealthRecord& record, QDateTi
 }
 
 void AiToolHealthLedger::persistIfConfigured() const {
+    // Callers already hold m_mutex; use the unlocked save to avoid re-locking.
     if (!m_persistence_path.isEmpty()) {
-        (void)save(nullptr);
+        (void)saveUnlocked(nullptr);
     }
 }
 
