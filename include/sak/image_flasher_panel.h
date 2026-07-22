@@ -248,6 +248,11 @@ private:
     bool m_isFlashing;
     int m_currentPage;
     LogToggleSwitch* m_logToggle{nullptr};
+
+    // In-flight Windows USB creation, tracked so the destructor can cancel and
+    // wait for the worker instead of destroying a still-running QThread child.
+    QThread* m_windowsUsbThread{nullptr};
+    WindowsUSBCreator* m_windowsUsbCreator{nullptr};
 };
 
 }  // namespace sak

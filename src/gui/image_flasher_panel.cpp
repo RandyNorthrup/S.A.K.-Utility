@@ -35,6 +35,7 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QThread>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -103,6 +104,17 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
 
 ImageFlasherPanel::~ImageFlasherPanel() {
     m_driveScanner->stop();
+    // A Windows USB creation may still be running on its worker thread (a child
+    // of this panel). Destroying a running QThread aborts the process, so cancel
+    // the creator -- it polls an atomic flag -- and wait for the worker to
+    // unwind before the QObject child teardown deletes the thread.
+    if (m_windowsUsbThread && m_windowsUsbThread->isRunning()) {
+        if (m_windowsUsbCreator) {
+            m_windowsUsbCreator->cancel();
+        }
+        m_windowsUsbThread->quit();
+        m_windowsUsbThread->wait();
+    }
 }
 
 void ImageFlasherPanel::setupUi() {
@@ -1039,18 +1051,10 @@ void ImageFlasherPanel::showConfirmationDialog() {
 
 bool ImageFlasherPanel::isWindowsInstallISO(const QString& isoPath) const {
     Q_ASSERT(!isoPath.isEmpty());
-    // Check if ISO filename suggests it's a Windows ISO
-    QString fileName = QFileInfo(isoPath).fileName().toLower();
-
-    if (fileName.contains("windows") || fileName.contains("win10") || fileName.contains("win11") ||
-        fileName.contains("win_") || fileName.contains("server")) {
-        return true;
-    }
-
-    // Could also check ISO contents for sources/install.wim
-    // but that requires mounting, so filename heuristic is faster
-
-    return false;
+    // Classify from the image's own metadata (volume label / application ID via
+    // IsoAnalyzer), not the filename. The old filename heuristic matched
+    // "server" and routed Linux server ISOs into the Windows-installer path.
+    return IsoAnalyzer::isWindowsInstallMedia(IsoAnalyzer::analyze(isoPath));
 }
 
 void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creator,
@@ -1086,6 +1090,12 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
     // Clean up thread and creator when thread finishes
     connect(creator, &WindowsUSBCreator::completed, thread, &QThread::quit);
     connect(creator, &WindowsUSBCreator::failed, thread, &QThread::quit);
+    connect(thread, &QThread::finished, this, [this]() {
+        // The operation ended; forget the tracked pointers so the destructor
+        // does not touch objects that deleteLater is about to reclaim.
+        m_windowsUsbCreator = nullptr;
+        m_windowsUsbThread = nullptr;
+    });
     connect(thread, &QThread::finished, creator, &QObject::deleteLater);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 }
@@ -1112,12 +1122,16 @@ void ImageFlasherPanel::createWindowsUSB() {
         return;
     }
 
-    // For Windows USB creation, we can only handle one drive at a time
+    // Windows USB creation targets a single disk (diskpart). Extra drives were
+    // silently dropped yet reported as written; reject instead of claiming
+    // success for drives never touched.
     if (m_selectedDrives.size() > 1) {
-        sak::showInformationLogged(this,
-                                   "Multiple Drives",
-                                   "Windows USB creation will process drives one at a time.\n"
-                                   "This may take longer than raw imaging.");
+        m_isFlashing = false;
+        m_flashButton->setEnabled(true);
+        m_flashButton->setVisible(true);
+        updateNavigationButtons();
+        onFlashError("Windows USB creation writes one drive at a time; select a single drive.");
+        return;
     }
 
     // Initialize progress display
@@ -1127,6 +1141,8 @@ void ImageFlasherPanel::createWindowsUSB() {
     auto* creator = new WindowsUSBCreator();
     auto* thread = new QThread(this);
     creator->moveToThread(thread);
+    m_windowsUsbCreator = creator;
+    m_windowsUsbThread = thread;
 
     connectWindowsUSBCreatorSignals(creator, thread);
 
@@ -1141,6 +1157,8 @@ void ImageFlasherPanel::createWindowsUSB() {
         m_flashButton->setVisible(true);
         updateNavigationButtons();
         onFlashError(QString("Could not identify disk number from %1").arg(devicePath));
+        m_windowsUsbCreator = nullptr;
+        m_windowsUsbThread = nullptr;
         creator->deleteLater();
         thread->deleteLater();
         return;

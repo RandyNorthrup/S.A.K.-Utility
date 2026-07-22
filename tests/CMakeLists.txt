@@ -639,6 +639,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_properties_calc.c
     message(STATUS "Added unit test: test_file_explorer_properties_calc")
 endif()
 
+# test_iso_analyzer --- Windows-vs-Linux install-media classification (P12-09)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_iso_analyzer.cpp")
+    add_executable(test_iso_analyzer
+        unit/test_iso_analyzer.cpp
+        ../src/core/iso_analyzer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/iso_analyzer.h
+    )
+    set_target_properties(test_iso_analyzer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_iso_analyzer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_iso_analyzer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_iso_analyzer COMMAND test_iso_analyzer
+             -o test_iso_analyzer.txt,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_iso_analyzer")
+endif()
+
 # test_diagnostic_controller ??? suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller

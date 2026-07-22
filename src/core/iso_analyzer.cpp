@@ -619,6 +619,13 @@ void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
 // Windows Identification
 // ============================================================================
 
+bool IsoAnalyzer::isWindowsInstallMedia(const IsoInfo& info) {
+    // os_family and windows_editions are set only when the volume label /
+    // application ID match Windows install patterns, so this is content-metadata
+    // based, unlike a filename check that trips on Linux "server" images.
+    return info.os_family == QLatin1String("Windows") || !info.windows_editions.isEmpty();
+}
+
 void IsoAnalyzer::identifyWindows(IsoInfo& info) {
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.os_name.isEmpty());

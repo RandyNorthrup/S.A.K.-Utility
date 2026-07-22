@@ -64,6 +64,15 @@ public:
     /// @return Extracted info (check isValid())
     static IsoInfo analyze(const QString& file_path);
 
+    /// @brief Whether the analyzed image is Windows installation media
+    /// @param info Result of analyze()
+    /// @return true iff it needs the Windows install (diskpart/wim) USB path
+    ///         rather than raw imaging
+    /// @note Decides from the image's own metadata (os_family / editions from the
+    ///       volume label + application ID), never from the filename -- a Linux
+    ///       "server" ISO must not be treated as Windows media.
+    [[nodiscard]] static bool isWindowsInstallMedia(const IsoInfo& info);
+
 private:
     /// @brief Read ISO 9660 primary volume descriptor at LBA 16
     static void readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info);
