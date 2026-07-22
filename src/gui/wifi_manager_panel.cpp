@@ -1218,6 +1218,13 @@ void WifiManagerPanel::onExportWindowsScriptClicked() {
 
 void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
     const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+    if (script.isEmpty()) {
+        sak::showWarningLogged(this,
+                               "Export Error",
+                               "This SSID contains characters that cannot be safely written to a "
+                               "Windows script (a quote or a control character).");
+        return;
+    }
     const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
     const QString path = QFileDialog::getSaveFileName(
         this,
@@ -1256,6 +1263,10 @@ void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sou
             continue;
         }
         const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+        if (script.isEmpty()) {
+            ++failed;
+            continue;
+        }
         const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"),
                                                            "_");
         const QString path = outDir + "/" + safeName + "_wifi_connect.cmd";
@@ -2057,19 +2068,41 @@ QString buildWlanXmlContent(const QString& ssid,
     return xml;
 }
 
-// Escape for safe use in batch scripts -- prevent command injection
-// Batch special chars: & | > < ^ % ! ( ) " need escaping with ^
+// Escape for safe use in a batch (.cmd) file -- prevent command injection.
+// The caret metacharacters (& | > < ^ ! ( )) are neutralized with a leading ^,
+// and '%' is doubled to '%%' so an SSID like "%COMSPEC%" is not expanded as an
+// environment variable when the generated script runs. Callers must have already
+// rejected '"' and control characters (see ssidIsBatchSafe); those cannot be
+// represented safely inside the quoted `netsh wlan connect name="..."` argument
+// and reach here only through a caller bug.
 QString escapeBatchString(const QString& text) {
+    static const QString kCaretMetacharacters = QStringLiteral("&|><^!()");
     QString result;
     result.reserve(text.size() * kEscapedTextReserveMultiplier);
     for (const QChar c : text) {
-        if (c == '&' || c == '|' || c == '>' || c == '<' || c == '^' || c == '!' || c == '(' ||
-            c == ')') {
+        if (c == '%') {
+            result += QLatin1String("%%");  // literal percent in a .cmd file
+            continue;
+        }
+        if (kCaretMetacharacters.contains(c)) {
             result += '^';
         }
         result += c;
     }
     return result;
+}
+
+// A double quote breaks out of the quoted netsh argument, and control characters
+// (CR/LF/NUL and other C0 codes) break the .cmd line structure -- neither can be
+// safely embedded, so a script must not be generated for such an SSID. A crafted
+// SSID broadcast by a rogue access point can reach here via the scan-and-add flow.
+bool ssidIsBatchSafe(const QString& ssid) {
+    for (const QChar c : ssid) {
+        if (c == '"' || c.unicode() < 0x20) {
+            return false;
+        }
+    }
+    return true;
 }
 
 QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
@@ -2123,6 +2156,12 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
                                              const QString& security,
                                              bool hidden) {
     Q_ASSERT(!ssid.isEmpty());
+    // Fail closed: an SSID that cannot be safely embedded in the .cmd yields no
+    // script rather than an injectable one. Callers treat empty as an error.
+    if (!ssidIsBatchSafe(ssid)) {
+        sak::logWarning("Refusing to build WiFi script: SSID contains unsafe characters");
+        return {};
+    }
     const auto auth = resolveWlanAuth(security);
     const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
     const QString xml_base64 = QString::fromLatin1(xml.toUtf8().toBase64());

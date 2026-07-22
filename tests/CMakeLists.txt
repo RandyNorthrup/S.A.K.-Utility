@@ -562,6 +562,36 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
     message(STATUS "Added unit test: test_partition_manager_panel")
 endif()
 
+# test_wifi_manager_panel --- SSID injection safety in buildWindowsScript
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_manager_panel.cpp")
+    add_executable(test_wifi_manager_panel
+        unit/test_wifi_manager_panel.cpp
+        ../src/gui/wifi_manager_panel.cpp
+        ../src/gui/detachable_log_window.cpp
+        ../src/gui/follow_scroll_controller.cpp
+        ../src/third_party/qrcodegen/qrcodegen.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/wifi_manager_panel.h
+        ../include/sak/detachable_log_window.h
+    )
+    set_target_properties(test_wifi_manager_panel PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_wifi_manager_panel PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_wifi_manager_panel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/third_party/qrcodegen
+    )
+    add_test(NAME test_wifi_manager_panel COMMAND test_wifi_manager_panel
+             -o test_wifi_manager_panel.txt,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_wifi_manager_panel")
+endif()
+
 # test_diagnostic_controller ??? suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller

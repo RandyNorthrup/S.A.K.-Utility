@@ -51,6 +51,17 @@ public:
     /// @brief Access the log toggle switch for MainWindow log window connection
     [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
 
+    /// @brief Generate a Windows netsh .cmd script that provisions one network
+    /// @return Script text, or an empty string if the SSID cannot be embedded
+    ///         safely (contains a double quote or a control character)
+    /// @note Public + static so SSID-injection escaping can be unit tested; the
+    ///       SSID reaches escapeBatchString/ssidIsBatchSafe untrusted (a scanned
+    ///       network name may be attacker-chosen).
+    [[nodiscard]] static QString buildWindowsScript(const QString& ssid,
+                                                    const QString& password,
+                                                    const QString& security,
+                                                    bool hidden);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void logOutput(const QString& message);
@@ -224,12 +235,6 @@ private:
     // -----------------------------------------------------------------
     // Export helpers
     // -------------------------------------------------------------------------
-    /** Generate content of a Windows netsh .cmd script for a single network */
-    static QString buildWindowsScript(const QString& ssid,
-                                      const QString& password,
-                                      const QString& security,
-                                      bool hidden);
-
     /** Generate a macOS .mobileconfig plist for one or more networks */
     static QString buildMacosProfile(const QList<WifiConfig>& networks);
 
