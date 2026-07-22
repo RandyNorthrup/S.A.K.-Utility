@@ -32,47 +32,19 @@ constexpr uint64_t kPropertiesHashMaxBytes = 512ULL * 1024 * 1024;
 constexpr int kSizeWalkMaxDepth = 32;
 constexpr int kSizeWalkMaxEntriesPerDirectory = 10'000;
 
-// Recursive size of a directory tree through the bridge, so raw APFS/HFS
-// folders report sizes exactly like mounted ones.
-quint64 treeSizeBytes(const FileManagementTarget& target, const QString& path, const int depth) {
-    if (depth > kSizeWalkMaxDepth) {
-        return 0;
-    }
-    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
-        target, path, kSizeWalkMaxEntriesPerDirectory);
-    if (!listing.ok) {
-        return 0;
-    }
-    quint64 total = 0;
-    for (const FileManagementEntry& entry : listing.entries) {
-        if (entry.directory) {
-            total += treeSizeBytes(target, entry.path, depth + 1);
-        } else if (entry.regular_file) {
-            total += entry.size_bytes;
-        }
-    }
-    return total;
-}
-
-quint64 combinedSizeBytes(const FileManagementTarget& target,
-                          const QVector<FileManagementEntry>& entries) {
-    quint64 total = 0;
-    for (const FileManagementEntry& entry : entries) {
-        total += entry.directory ? treeSizeBytes(target, entry.path, 0) : entry.size_bytes;
-    }
-    return total;
-}
-
 QString crc32Hex(const QByteArray& data) {
     const auto value = static_cast<quint32>(crc32(
         0L, reinterpret_cast<const Bytef*>(data.constData()), static_cast<uInt>(data.size())));
     return QStringLiteral("%1").arg(value, 8, 16, QLatin1Char('0'));
 }
 
-// Compute the enabled digests over one bridge read of the file.
+// Compute the enabled digests over one bridge read of the file. Reads are capped
+// at kPropertiesHashMaxBytes, so a larger file is hashed from a prefix only; those
+// digests are marked so they are never taken for the whole-file hash.
 QMap<QString, QString> computeHashes(const FileManagementTarget& target,
                                      const QString& path,
-                                     const QStringList& algorithms) {
+                                     const QStringList& algorithms,
+                                     const quint64 fullSize) {
     QMap<QString, QString> hashes;
     const FileManagementReadResult read =
         FileManagementFileSystemBridge::readFile(target, path, kPropertiesHashMaxBytes);
@@ -82,6 +54,7 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
         }
         return hashes;
     }
+    const bool truncated = hashInputTruncated(fullSize, kPropertiesHashMaxBytes);
     static const QMap<QString, QCryptographicHash::Algorithm> kQtAlgorithms = {
         {QStringLiteral("MD5"), QCryptographicHash::Md5},
         {QStringLiteral("SHA-1"), QCryptographicHash::Sha1},
@@ -90,14 +63,12 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
         {QStringLiteral("SHA-512"), QCryptographicHash::Sha512},
     };
     for (const QString& algorithm : algorithms) {
-        if (algorithm == QStringLiteral("CRC32")) {
-            hashes.insert(algorithm, crc32Hex(read.data));
-            continue;
-        }
-        hashes.insert(
-            algorithm,
-            QString::fromLatin1(
-                QCryptographicHash::hash(read.data, kQtAlgorithms.value(algorithm)).toHex()));
+        const QString digest =
+            algorithm == QStringLiteral("CRC32")
+                ? crc32Hex(read.data)
+                : QString::fromLatin1(
+                      QCryptographicHash::hash(read.data, kQtAlgorithms.value(algorithm)).toHex());
+        hashes.insert(algorithm, formatHashValue(digest, truncated, kPropertiesHashMaxBytes));
     }
     return hashes;
 }
@@ -237,15 +208,26 @@ void FileExplorerPropertiesDialog::buildHashesPage() {
 }
 
 void FileExplorerPropertiesDialog::startSizeCalculation() {
-    connect(&m_size_watcher, &QFutureWatcher<quint64>::finished, this, [this]() {
-        if (m_size_label) {
-            m_size_label->setText(FileExplorerItemModel::sizeText(m_size_watcher.result()));
+    connect(&m_size_watcher, &QFutureWatcher<TreeSizeResult>::finished, this, [this]() {
+        if (!m_size_label) {
+            return;
         }
+        const TreeSizeResult result = m_size_watcher.result();
+        const QString text = FileExplorerItemModel::sizeText(result.bytes);
+        // A truncated walk under-counts, so present the figure as a lower bound
+        // rather than a wrong exact size.
+        m_size_label->setText(
+            result.complete ? text
+                            : tr("at least %1 (some folders could not be fully read)").arg(text));
     });
     const FileManagementTarget target = m_target;
     const QVector<FileManagementEntry> entries = m_entries;
-    m_size_watcher.setFuture(
-        QtConcurrent::run([target, entries]() { return combinedSizeBytes(target, entries); }));
+    m_size_watcher.setFuture(QtConcurrent::run([target, entries]() {
+        const DirectoryLister lister = [&target](const QString& path, const int max_entries) {
+            return FileManagementFileSystemBridge::listDirectory(target, path, max_entries);
+        };
+        return combinedSize(lister, entries, kSizeWalkMaxDepth, kSizeWalkMaxEntriesPerDirectory);
+    }));
 }
 
 void FileExplorerPropertiesDialog::startHashCalculation() {
@@ -265,8 +247,10 @@ void FileExplorerPropertiesDialog::startHashCalculation() {
     m_hashes_started = true;
     const FileManagementTarget target = m_target;
     const QString path = m_entries.first().path;
-    m_hash_watcher.setFuture(QtConcurrent::run(
-        [target, path, pending]() { return computeHashes(target, path, pending); }));
+    const quint64 full_size = m_entries.first().size_bytes;
+    m_hash_watcher.setFuture(QtConcurrent::run([target, path, pending, full_size]() {
+        return computeHashes(target, path, pending, full_size);
+    }));
 }
 
 void FileExplorerPropertiesDialog::applyHashes(const QMap<QString, QString>& hashes) {

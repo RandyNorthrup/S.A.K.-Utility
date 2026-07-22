@@ -348,6 +348,7 @@ set(CORE_SOURCES
     src/core/file_explorer_layout_metrics.cpp
     src/core/file_explorer_grouping.cpp
     src/core/file_explorer_group_proxy_model.cpp
+    src/core/file_explorer_properties_calc.cpp
     src/core/file_explorer_storage_history.cpp
     src/core/file_explorer_status_center.cpp
     src/core/file_explorer_transfer_worker.cpp
@@ -452,6 +453,7 @@ set(CORE_SOURCES
     include/sak/file_explorer_layout_metrics.h
     include/sak/file_explorer_grouping.h
     include/sak/file_explorer_group_proxy_model.h
+    include/sak/file_explorer_properties_calc.h
     include/sak/file_explorer_storage_history.h
     include/sak/file_explorer_status_center.h
     include/sak/file_explorer_transfer_worker.h

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/file_explorer_properties_calc.h"
 #include "sak/file_management_file_system.h"
 
 #include <QDialog>
@@ -53,7 +54,7 @@ private:
     QMap<QString, QCheckBox*> m_hash_checks;
     QMap<QString, QLabel*> m_hash_values;
     bool m_hashes_started{false};
-    QFutureWatcher<quint64> m_size_watcher;
+    QFutureWatcher<sak::TreeSizeResult> m_size_watcher;
     QFutureWatcher<QMap<QString, QString>> m_hash_watcher;
 };
 
