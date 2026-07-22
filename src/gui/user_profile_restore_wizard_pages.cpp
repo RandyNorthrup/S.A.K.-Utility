@@ -1919,10 +1919,9 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
 
     QPointer<UserProfileRestoreAppRestorePage> self(this);
     watcher->setFuture(QtConcurrent::run([self, selectedApps]() -> QPair<int, int> {
-        if (!self) {
-            return {0, selectedApps.size()};
-        }
-        return self->installAppsSequentially(selectedApps);
+        // Task is page-agnostic: it captures only a QPointer and posts UI updates
+        // through it, so a page destroyed mid-install cannot be dereferenced.
+        return installAppsSequentially(selectedApps, self);
     }));
 }
 
@@ -1946,27 +1945,32 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
 }
 
 QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
-    const QVector<RestoreAppInfo>& apps) {
+    const QVector<RestoreAppInfo>& apps, QPointer<UserProfileRestoreAppRestorePage> page) {
     auto chocoManager = std::make_shared<ChocolateyManager>();
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     chocoManager->initialize(chocoPath);
 
     int installed = 0;
     int failed = 0;
+    const int total = apps.size();
 
     for (int i = 0; i < apps.size(); ++i) {
         const auto& app = apps[i];
-        QPointer<UserProfileRestoreAppRestorePage> self(this);
-        QMetaObject::invokeMethod(
-            this,
-            [self, app, i, total = apps.size()]() {
-                if (!self) {
-                    return;
-                }
-                self->m_statusLabel->setText(
-                    self->tr("Installing %1 (%2/%3)...").arg(app.name).arg(i + 1).arg(total));
-            },
-            Qt::QueuedConnection);
+        // Post to the page only while it is alive; the inner QPointer re-check
+        // covers destruction between posting and delivery.
+        if (auto* live = page.data()) {
+            QMetaObject::invokeMethod(
+                live,
+                [page, name = app.name, index = i, total]() {
+                    if (page) {
+                        page->m_statusLabel->setText(page->tr("Installing %1 (%2/%3)...")
+                                                         .arg(name)
+                                                         .arg(index + 1)
+                                                         .arg(total));
+                    }
+                },
+                Qt::QueuedConnection);
+        }
 
         ChocolateyManager::InstallConfig config;
         config.package_name = app.choco_package;
@@ -1979,14 +1983,16 @@ QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
             failed++;
         }
 
-        QMetaObject::invokeMethod(
-            this,
-            [self, value = i + 1]() {
-                if (self) {
-                    self->m_progressBar->setValue(value);
-                }
-            },
-            Qt::QueuedConnection);
+        if (auto* live = page.data()) {
+            QMetaObject::invokeMethod(
+                live,
+                [page, value = i + 1]() {
+                    if (page) {
+                        page->m_progressBar->setValue(value);
+                    }
+                },
+                Qt::QueuedConnection);
+        }
     }
 
     return {installed, failed};

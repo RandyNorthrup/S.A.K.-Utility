@@ -11,6 +11,8 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPair>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -200,8 +202,11 @@ private:
     void updateParentCheckState(QTreeWidgetItem* parent);
     /// @brief Collect checked apps from the tree widget
     QVector<RestoreAppInfo> collectSelectedApps() const;
-    /// @brief Install apps sequentially; returns (installed, failed) counts
-    QPair<int, int> installAppsSequentially(const QVector<RestoreAppInfo>& apps);
+    /// @brief Install apps sequentially on a worker thread; returns (installed,
+    /// failed) counts. Static and page-agnostic: all UI updates are posted only
+    /// through the guarding QPointer, so the task can safely outlive the page.
+    static QPair<int, int> installAppsSequentially(const QVector<RestoreAppInfo>& apps,
+                                                   QPointer<UserProfileRestoreAppRestorePage> page);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_selectAllButton{nullptr};
