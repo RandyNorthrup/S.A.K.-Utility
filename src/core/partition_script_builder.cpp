@@ -1783,37 +1783,73 @@ QString sizeMbArg(uint64_t bytes) {
     return QString::number(std::max<uint64_t>(kMinimumDiskPartSizeMb, bytes / kCloneIoBufferBytes));
 }
 
-QString backupRestoreHelpersScript() {
+QString sakVolumeGuidFunctionScript() {
+    // Resolves any path to its underlying volume GUID (\\?\Volume{...}\) so backup-root
+    // safety checks compare volume IDENTITY instead of path text. Without this a junction,
+    // directory symlink, folder mount, or volume-GUID path on an affected volume text-differs
+    // from the source root and slips past a StartsWith prefix test -- letting the backup land on
+    // the very volume about to be reformatted. Both APIs are unprivileged.
     return QStringLiteral(
-        "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
-        "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
-        "  $code = $LASTEXITCODE\n"
-        "  if ($code -gt 7) { exit $code }\n"
-        "}\n"
-        "function Get-SakFileManifest([string]$root) {\n"
-        "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
-        "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
-        "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
-        "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
-        "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash = $hash "
-        "}\n"
-        "  } | Sort-Object RelativePath)\n"
-        "}\n"
-        "function Assert-SakBackupRoot([string]$backupRoot, [string[]]$blockedRoots) {\n"
-        "  $full = [System.IO.Path]::GetFullPath($backupRoot)\n"
-        "  if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw 'Backup directory "
-        "does not exist' }\n"
-        "  foreach ($root in $blockedRoots) { if ($root -and $full.StartsWith($root, "
-        "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must be outside "
-        "affected volumes' } }\n"
-        "  return $full\n"
-        "}\n"
-        "function Assert-SakManifestMatch($expected, $actual) {\n"
-        "  $diff = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual -Property "
-        "RelativePath,Length,Hash)\n"
-        "  if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
-        "'Restored file manifest differs from backup' }\n"
+        "function Get-SakVolumeGuid([string]$path) {\n"
+        "  if (-not ([System.Management.Automation.PSTypeName]'Sak.VolApi').Type) { Add-Type "
+        "-Namespace Sak -Name VolApi -MemberDefinition "
+        "'[System.Runtime.InteropServices.DllImport(\"kernel32.dll\", "
+        "CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)] public static "
+        "extern bool GetVolumePathName(string f, System.Text.StringBuilder v, uint c); "
+        "[System.Runtime.InteropServices.DllImport(\"kernel32.dll\", "
+        "CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)] public static "
+        "extern bool GetVolumeNameForVolumeMountPoint(string m, System.Text.StringBuilder v, uint "
+        "c);' }\n"
+        "  $full = [System.IO.Path]::GetFullPath($path)\n"
+        "  $mount = New-Object System.Text.StringBuilder 260\n"
+        "  if (-not [Sak.VolApi]::GetVolumePathName($full, $mount, 260)) { throw ('Cannot resolve "
+        "volume for {0}' -f $path) }\n"
+        "  $guid = New-Object System.Text.StringBuilder 260\n"
+        "  if (-not [Sak.VolApi]::GetVolumeNameForVolumeMountPoint($mount.ToString(), $guid, 260)) "
+        "{ throw ('Cannot resolve volume GUID for {0}' -f $path) }\n"
+        "  return $guid.ToString()\n"
         "}\n");
+}
+
+QString backupRestoreHelpersScript() {
+    return sakVolumeGuidFunctionScript() +
+           QStringLiteral(
+               "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
+               "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
+               "  $code = $LASTEXITCODE\n"
+               "  if ($code -gt 7) { exit $code }\n"
+               "}\n"
+               "function Get-SakFileManifest([string]$root) {\n"
+               "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
+               "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
+               "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
+               "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
+               "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash "
+               "= "
+               "$hash }\n"
+               "  } | Sort-Object RelativePath)\n"
+               "}\n"
+               "function Assert-SakBackupRoot([string]$backupRoot, [string[]]$blockedRoots) {\n"
+               "  $full = [System.IO.Path]::GetFullPath($backupRoot)\n"
+               "  if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw 'Backup "
+               "directory does not exist' }\n"
+               "  $backupGuid = Get-SakVolumeGuid $full\n"
+               "  foreach ($root in $blockedRoots) {\n"
+               "    if (-not $root) { continue }\n"
+               "    if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { "
+               "throw 'Backup directory must be outside affected volumes' }\n"
+               "    if ($backupGuid -eq (Get-SakVolumeGuid $root)) { throw 'Backup directory must "
+               "be outside affected volumes' }\n"
+               "  }\n"
+               "  return $full\n"
+               "}\n"
+               "function Assert-SakManifestMatch($expected, $actual) {\n"
+               "  $diff = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual "
+               "-Property "
+               "RelativePath,Length,Hash)\n"
+               "  if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
+               "'Restored file manifest differs from backup' }\n"
+               "}\n");
 }
 
 QString diskPartRunnerScript() {
@@ -2596,6 +2632,11 @@ QString allocateSetupScript(const PartitionOperation& operation,
                "on the target volume' }\n"
                "if (-not (Test-Path -LiteralPath $backupRootFull -PathType Container)) { throw "
                "'Backup directory does not exist' }\n"
+               "$backupGuid = Get-SakVolumeGuid $backupRootFull\n"
+               "if ($backupGuid -eq (Get-SakVolumeGuid $sourceRoot)) { throw 'Backup directory "
+               "must not be on the donor volume' }\n"
+               "if ($targetRoot -and ($backupGuid -eq (Get-SakVolumeGuid $targetRoot))) { throw "
+               "'Backup directory must not be on the target volume' }\n"
                "$backupPath = Join-Path $backupRootFull ('sak-allocate-backup-{0}' -f "
                "[guid]::NewGuid().ToString('N'))\n"
                "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n")
@@ -2707,6 +2748,9 @@ QString clusterSetupScript(const ClusterSizePayload& payload) {
                "on the target volume' }\n"
                "if (-not (Test-Path -LiteralPath $backupRootFull -PathType Container)) { throw "
                "'Backup directory does not exist' }\n"
+               "$backupGuid = Get-SakVolumeGuid $backupRootFull\n"
+               "if ($backupGuid -eq (Get-SakVolumeGuid $targetRoot)) { throw 'Backup directory "
+               "must not be on the target volume' }\n"
                "$backupPath = Join-Path $backupRootFull ('sak-cluster-backup-{0}' -f "
                "[guid]::NewGuid().ToString('N'))\n"
                "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n")
@@ -4362,6 +4406,7 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
                  requirePartitionIdentity(operation.target.disk_number,
                                           operation.target.partition_number,
                                           operation.target.size_bytes) +
+                 sakVolumeGuidFunctionScript() +
                  allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
                  robocopyManifestFunctionsScript() + allocateExecutionScript(operation, payload);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -4514,8 +4559,8 @@ PartitionScript PartitionScriptBuilder::buildChangeClusterSizeScript(
                  requirePartitionIdentity(operation.target.disk_number,
                                           operation.target.partition_number,
                                           operation.target.size_bytes) +
-                 clusterSetupScript(payload) + robocopyManifestFunctionsScript() +
-                 clusterExecutionScript();
+                 sakVolumeGuidFunctionScript() + clusterSetupScript(payload) +
+                 robocopyManifestFunctionsScript() + clusterExecutionScript();
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }

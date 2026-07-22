@@ -18116,6 +18116,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
     QVERIFY(script.script.contains(QStringLiteral("New-Partition -DiskNumber 2")));
     QVERIFY(script.script.contains(QStringLiteral("Compare-Object")));
     QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive")));
+    // P03-10: donor/target backup-root exclusion compares volume identity.
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $sourceRoot)")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $targetRoot)")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePayloads() {
@@ -18212,6 +18218,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScript
     QVERIFY(moveScript.script.contains(QStringLiteral("New-Partition -DiskNumber 2")));
     QVERIFY(moveScript.script.contains(QStringLiteral("-Offset $targetOffset")));
     QVERIFY(moveScript.script.contains(QStringLiteral("Assert-SakManifestMatch")));
+    // P03-10: backup-root safety compares volume identity, not path text, so a
+    // junction/mount alias on the affected volume cannot slip past a prefix test.
+    QVERIFY(moveScript.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
+    QVERIFY(
+        moveScript.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $root)")));
+    QVERIFY(moveScript.script.contains(QStringLiteral("GetVolumeNameForVolumeMountPoint")));
 
     QJsonObject primaryPayload = movePayload;
     primaryPayload[QStringLiteral("target_layout")] = QStringLiteral("logical");
@@ -18375,6 +18387,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(QStringLiteral("-AllocationUnitSize $allocationUnitBytes")));
     QVERIFY(script.script.contains(QStringLiteral("Compare-Object")));
     QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")));
+    // P03-10: target backup-root exclusion compares volume identity.
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $targetRoot)")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads() {
