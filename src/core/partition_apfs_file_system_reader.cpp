@@ -2075,6 +2075,17 @@ private:
             }
             return false;
         }
+        // Guard block * blockSize_ against uint64 wrap: a corrupt superblock with a
+        // large blockSize_ and a block index that passes the bound check above can
+        // still overflow into a small, in-device byte offset (reading the wrong data).
+        if (blockSize_ != 0 && block > std::numeric_limits<uint64_t>::max() / blockSize_) {
+            if (appendBlocker) {
+                result->blockers.append(
+                    QStringLiteral("APFS block %1 offset overflows the device address space")
+                        .arg(block));
+            }
+            return false;
+        }
         if (!readBytes(block * blockSize_, blockSize_, bytes, result, appendBlocker)) {
             return false;
         }
