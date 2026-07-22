@@ -30,7 +30,6 @@
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
-#include <QTimer>
 
 #include <algorithm>
 #include <atomic>
@@ -42,6 +41,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stop_token>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -104,19 +105,23 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
                      &sak::QuickAction::executionProgress,
                      [&progress](const QString& msg, int pct) { progress(pct, msg); });
 
-    // Check cancellation periodically via the action's own mechanism
-    QTimer cancel_timer;
-    cancel_timer.setInterval(kQuickActionCancelPollMs);
-    QObject::connect(&cancel_timer, &QTimer::timeout, [&]() {
-        if (is_cancelled()) {
-            action->cancel();
+    // The action runs synchronously on this worker thread, which has no Qt event loop, so a
+    // QTimer here would never fire. Poll cancellation on a helper thread (jthread auto-requests
+    // stop and joins on scope exit, even if execute throws) and relay it into the action so an
+    // in-flight cancel is honored.
+    std::jthread cancel_poller([&](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            if (is_cancelled()) {
+                action->cancel();
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(kQuickActionCancelPollMs));
         }
     });
-    cancel_timer.start();
 
     // Execute the action synchronously
     action->execute();
-    cancel_timer.stop();
+    cancel_poller.request_stop();
 
     sak::TaskHandlerResult result;
     auto exec_result = action->lastExecutionResult();

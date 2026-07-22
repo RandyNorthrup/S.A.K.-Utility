@@ -26,7 +26,49 @@ namespace sak {
 namespace {
 constexpr BYTE kAdministratorsSidSubAuthorityCount = 2;
 constexpr DWORD kWindowsVistaMajorVersion = 6;
+
+// Append one argument using the exact quoting rules CommandLineToArgvW reverses, so the
+// elevated relaunch receives byte-identical arguments. Backslashes that precede a quote (or
+// the closing quote) must be doubled; otherwise a trailing backslash escapes the closing quote
+// and the argument is corrupted or the next argument is absorbed. An empty argument becomes an
+// explicit empty quoted token instead of vanishing.
+void appendQuotedArg(std::wstring& out, const std::wstring& arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+        out += arg;
+        return;
+    }
+    out += L'\"';
+    for (auto it = arg.begin();; ++it) {
+        size_t slashes = 0;
+        while (it != arg.end() && *it == L'\\') {
+            ++it;
+            ++slashes;
+        }
+        if (it == arg.end()) {
+            out.append(slashes * 2, L'\\');
+            break;
+        }
+        if (*it == L'\"') {
+            out.append(slashes * 2 + 1, L'\\');
+        } else {
+            out.append(slashes, L'\\');
+        }
+        out += *it;
+    }
+    out += L'\"';
+}
 }  // namespace
+
+std::wstring ElevationManager::serializeArgsForRelaunch(int argc, wchar_t* const* argv) {
+    std::wstring args;
+    for (int i = 1; argv && i < argc; ++i) {
+        if (i > 1) {
+            args += L' ';
+        }
+        appendQuotedArg(args, std::wstring(argv[i]));
+    }
+    return args;
+}
 
 bool ElevationManager::isElevated() noexcept {
     BOOL is_admin = FALSE;
@@ -91,22 +133,7 @@ std::wstring ElevationManager::get_command_line_args() {
         return {};
     }
 
-    std::wstring args;
-    for (int i = 1; i < argc; ++i) {
-        if (i > 1) {
-            args += L" ";
-        }
-
-        std::wstring arg(argv[i]);
-
-        // Quote if contains spaces
-        if (arg.find(L' ') != std::wstring::npos) {
-            args += L"\"" + arg + L"\"";
-        } else {
-            args += arg;
-        }
-    }
-
+    std::wstring args = serializeArgsForRelaunch(argc, argv);
     LocalFree(argv);
     return args;
 }

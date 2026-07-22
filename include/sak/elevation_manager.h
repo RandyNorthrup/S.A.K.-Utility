@@ -74,6 +74,15 @@ private:
      * @return Arguments string
      */
     [[nodiscard]] static std::wstring get_command_line_args();
+
+    /**
+     * @brief Serialize argv[1..argc-1] into one command-line string using the
+     *        CommandLineToArgvW quoting rules (exposed for testing).
+     * @param argc Argument count as returned by CommandLineToArgvW
+     * @param argv Argument vector as returned by CommandLineToArgvW
+     * @return Round-trip-safe command line (argv[0] excluded)
+     */
+    [[nodiscard]] static std::wstring serializeArgsForRelaunch(int argc, wchar_t* const* argv);
 };
 
 }  // namespace sak

@@ -39,8 +39,11 @@ bool createPipeSecurityAttributes(SECURITY_ATTRIBUTES& attributes,
 
 HANDLE createServerPipe(const QString& pipe_name, SECURITY_ATTRIBUTES& attributes) {
     const std::wstring wide_name = pipe_name.toStdWString();
+    // FILE_FLAG_OVERLAPPED so ConnectNamedPipe returns ERROR_IO_PENDING and the overlapped wait
+    // (and its timeout) in waitForPipeClient can actually fire; a blocking handle would ignore
+    // the OVERLAPPED and hang forever if the parent dies before connecting.
     return CreateNamedPipeW(wide_name.c_str(),
-                            PIPE_ACCESS_DUPLEX,
+                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                             1,
                             static_cast<DWORD>(kPipeMaxPayload),
@@ -65,6 +68,10 @@ bool waitForPipeClient(HANDLE pipe_handle) {
         ok = WaitForSingleObject(ov.hEvent, kPipeConnectTimeoutMs) == WAIT_OBJECT_0;
         if (!ok) {
             sak::logError("ElevatedPipeServer: connection timed out");
+            // Cancel the still-pending connect and let it settle before the event is closed, so
+            // the OVERLAPPED/event is not freed while the kernel may still write to it.
+            CancelIoEx(pipe_handle, &ov);
+            WaitForSingleObject(ov.hEvent, INFINITE);
         }
     } else if (!ok) {
         sak::logError("ElevatedPipeServer: ConnectNamedPipe failed: {}", last_error);
@@ -72,6 +79,35 @@ bool waitForPipeClient(HANDLE pipe_handle) {
 
     CloseHandle(ov.hEvent);
     return ok;
+}
+
+// Perform one overlapped read or write with a timeout. The pipe is created OVERLAPPED, so every
+// ReadFile/WriteFile MUST supply an OVERLAPPED (passing nullptr is undefined). Returns the byte
+// count transferred, or -1 on any error/timeout (cancelling a pending op before freeing the
+// event) so callers fail closed instead of blocking or reading garbage.
+int overlappedPipeIo(HANDLE handle, bool is_write, char* buffer, DWORD size, DWORD timeout_ms) {
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) {
+        sak::logError("ElevatedPipeServer: CreateEventW failed");
+        return -1;
+    }
+    BOOL ok = is_write ? WriteFile(handle, buffer, size, nullptr, &ov)
+                       : ReadFile(handle, buffer, size, nullptr, &ov);
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(ov.hEvent, timeout_ms) == WAIT_OBJECT_0) {
+            ok = TRUE;
+        } else {
+            CancelIoEx(handle, &ov);
+            WaitForSingleObject(ov.hEvent, INFINITE);
+        }
+    }
+    DWORD transferred = 0;
+    if (ok) {
+        ok = GetOverlappedResult(handle, &ov, &transferred, FALSE);
+    }
+    CloseHandle(ov.hEvent);
+    return ok ? static_cast<int>(transferred) : -1;
 }
 }  // namespace
 #endif
@@ -222,10 +258,12 @@ bool ElevatedPipeServer::sendRaw(const QByteArray& data) {
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
-    DWORD bytes_written = 0;
-    BOOL ok = WriteFile(
-        m_pipe_handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
-    return ok && static_cast<int>(bytes_written) == data.size();
+    const int written = overlappedPipeIo(m_pipe_handle,
+                                         true,
+                                         const_cast<char*>(data.constData()),
+                                         static_cast<DWORD>(data.size()),
+                                         kPipeIoTimeoutMs);
+    return written == data.size();
 #else
     (void)data;
     return false;
@@ -255,11 +293,12 @@ bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
         }
 
         DWORD to_read = qMin(static_cast<DWORD>(size - total_read), available);
-        DWORD bytes_read = 0;
-        if (!ReadFile(m_pipe_handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
+        const int bytes_read = overlappedPipeIo(
+            m_pipe_handle, false, buffer + total_read, to_read, static_cast<DWORD>(timeout_ms));
+        if (bytes_read < 0) {
             return false;
         }
-        total_read += static_cast<int>(bytes_read);
+        total_read += bytes_read;
         elapsed = 0;
     }
 
