@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
@@ -281,6 +282,62 @@ private Q_SLOTS:
         rcfg.create_backup = false;
         QVERIFY(mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
         QVERIFY(QFileInfo::exists(QDir(restoreDir.path()).filePath("data.txt")));
+    }
+
+    // P06-24: a directory junction inside the source must NOT be followed --
+    // otherwise the recursive copy pulls in data from outside the source root
+    // (or loops forever on a junction that targets an ancestor).
+    void backupSkipsJunctionReparsePoints() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+
+        // External content the junction points at -- must never be backed up.
+        const QString external = QDir(work.path()).filePath("external");
+        QVERIFY(QDir().mkpath(external));
+        QFile ext(QDir(external).filePath("secret.txt"));
+        QVERIFY(ext.open(QIODevice::WriteOnly));
+        ext.write("EXTERNAL SECRET");
+        ext.close();
+
+        // Source tree: a real file, a real nested subdir, and a junction.
+        const QString src = makeSourceDir(work, "src", "data.txt", "payload");
+        QVERIFY(!src.isEmpty());
+        const QString real_sub = QDir(src).filePath("real");
+        QVERIFY(QDir().mkpath(real_sub));
+        QFile inner(QDir(real_sub).filePath("inner.txt"));
+        QVERIFY(inner.open(QIODevice::WriteOnly));
+        inner.write("inner");
+        inner.close();
+
+        // mklink /J creates a junction without elevation (unlike symlinks).
+        const QString junction = QDir(src).filePath("jn");
+        QProcess mklink;
+        mklink.start("cmd",
+                     {"/c",
+                      "mklink",
+                      "/J",
+                      QDir::toNativeSeparators(junction),
+                      QDir::toNativeSeparators(external)});
+        QVERIFY(mklink.waitForFinished());
+        QVERIFY2(mklink.exitCode() == 0, "junction creation failed");
+        QVERIFY(QFileInfo(junction).isDir());
+
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = false;
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+
+        const QDir root(e->backup_path);
+        // Real content copied through.
+        QVERIFY(root.exists("data.txt"));
+        QVERIFY(QFileInfo::exists(root.filePath("real/inner.txt")));
+        // Junction not followed: neither the junction dir nor its external
+        // payload is present in the backup.
+        QVERIFY(!QFileInfo::exists(root.filePath("jn")));
+        QVERIFY(!QFileInfo::exists(root.filePath("jn/secret.txt")));
     }
 };
 

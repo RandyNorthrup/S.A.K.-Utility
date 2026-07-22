@@ -22,7 +22,28 @@
 #include <algorithm>
 #include <optional>
 
+#ifdef SAK_PLATFORM_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 namespace {
+
+/// @brief True if the path is an NTFS reparse point (junction / directory symlink).
+///
+/// Recursive backup must not descend into these: a junction can point outside
+/// the source root (copying arbitrary external data into the backup) or back to
+/// an ancestor (infinite recursion). On non-Windows this maps to a symlink.
+bool isReparsePoint(const QString& path) {
+#ifdef SAK_PLATFORM_WINDOWS
+    const DWORD attrs = GetFileAttributesW(reinterpret_cast<const wchar_t*>(path.utf16()));
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    return QFileInfo(path).isSymLink();
+#endif
+}
 
 /// @brief Append paths that exist for the given name variants in a base directory.
 void appendExistingVariants(QStringList& paths,
@@ -703,6 +724,27 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
     });
 }
 
+bool UserDataManager::copyPlainFiles(const QDir& source_dir,
+                                     const QDir& dest_dir,
+                                     const QStringList& exclude_patterns) {
+    const auto files = source_dir.entryList(QDir::Files);
+    for (const auto& file : files) {
+        const QString source_file = source_dir.filePath(file);
+        if (isExcluded(source_file, exclude_patterns)) {
+            continue;
+        }
+
+        const QString dest_file = dest_dir.filePath(file);
+        if (!QFile::copy(source_file, dest_file)) {
+            // Fail closed: a partial copy must not be reported as a complete
+            // backup (callers such as the pre-restore safety copy rely on this).
+            sak::logWarning("[UserDataManager] Failed to copy {}", source_file.toStdString());
+            return false;
+        }
+    }
+    return true;
+}
+
 bool UserDataManager::copyDirectory(const QString& source,
                                     const QString& destination,
                                     const QStringList& exclude_patterns) {
@@ -718,21 +760,8 @@ bool UserDataManager::copyDirectory(const QString& source,
         return false;
     }
 
-    // Copy files
-    auto files = source_dir.entryList(QDir::Files);
-    for (const auto& file : files) {
-        QString source_file = source_dir.filePath(file);
-        if (isExcluded(source_file, exclude_patterns)) {
-            continue;
-        }
-
-        QString dest_file = dest_dir.filePath(file);
-        if (!QFile::copy(source_file, dest_file)) {
-            // Fail closed: a partial copy must not be reported as a complete
-            // backup (callers such as the pre-restore safety copy rely on this).
-            sak::logWarning("[UserDataManager] Failed to copy {}", source_file.toStdString());
-            return false;
-        }
+    if (!copyPlainFiles(source_dir, dest_dir, exclude_patterns)) {
+        return false;
     }
 
     // Copy subdirectories
@@ -740,6 +769,15 @@ bool UserDataManager::copyDirectory(const QString& source,
     for (const auto& dir : dirs) {
         QString source_subdir = source_dir.filePath(dir);
         if (isExcluded(source_subdir, exclude_patterns)) {
+            continue;
+        }
+
+        // Skip directory reparse points (junctions / symlinks). Descending into
+        // one would follow it outside the source root -- pulling in arbitrary
+        // external data -- or loop forever if it targets an ancestor.
+        if (isReparsePoint(source_subdir)) {
+            sak::logInfo("[UserDataManager] Skipping reparse point {}",
+                         source_subdir.toStdString());
             continue;
         }
 

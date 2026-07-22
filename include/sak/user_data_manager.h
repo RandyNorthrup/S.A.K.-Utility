@@ -12,6 +12,8 @@
 #include <optional>
 #include <vector>
 
+class QDir;
+
 namespace sak {
 
 inline constexpr int kDefaultBackupCompressionLevel = 6;
@@ -190,6 +192,11 @@ private:
     bool copyDirectory(const QString& source,
                        const QString& destination,
                        const QStringList& exclude_patterns);
+
+    /// @brief Copy the plain (non-directory) files of one dir; fail closed on error
+    bool copyPlainFiles(const QDir& source_dir,
+                        const QDir& dest_dir,
+                        const QStringList& exclude_patterns);
 
     /// @brief Copy all source paths into a single destination directory
     bool copySourcesToDest(const QStringList& source_paths,
