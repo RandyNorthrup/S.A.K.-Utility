@@ -129,9 +129,22 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     ConflictResolution conflictMode = wiz->conflictResolution();
     PermissionMode permMode = wiz->permissionMode();
     bool verify = wiz->verifyFiles();
+    bool createBackup = wiz->createBackup();
 
     auto worker = new UserProfileRestoreWorker(this);
+    // Track the worker so onCancelRestore() can actually reach it; a bare local
+    // left m_worker null, making Cancel a no-op.
+    m_worker = worker;
+    connectRestoreWorkerSignals(worker);
 
+    worker->startRestore(
+        backupPath, manifest, mappings, {conflictMode, permMode, verify, createBackup});
+
+    m_overallProgressBar->setRange(0, mappings.size());
+    m_currentProgressBar->setRange(0, 0);  // Indeterminate
+}
+
+void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileRestoreWorker* worker) {
     connect(worker,
             &UserProfileRestoreWorker::overallProgress,
             this,
@@ -171,13 +184,9 @@ void UserProfileRestoreExecutePage::onStartRestore() {
                 m_cancelButton->setEnabled(false);
                 m_viewLogButton->setEnabled(true);
                 Q_EMIT completeChanged();
+                m_worker = nullptr;  // Worker is finished; drop the dangling pointer.
                 worker->deleteLater();
             });
-
-    worker->startRestore(backupPath, manifest, mappings, {conflictMode, permMode, verify});
-
-    m_overallProgressBar->setRange(0, mappings.size());
-    m_currentProgressBar->setRange(0, 0);  // Indeterminate
 }
 
 void UserProfileRestoreExecutePage::onCancelRestore() {

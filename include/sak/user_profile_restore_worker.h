@@ -40,6 +40,7 @@ public:
         ConflictResolution conflict_mode;
         PermissionMode perm_mode;
         bool verify;
+        bool create_backup;  // Save a recoverable copy before overwriting an existing file
     };
 
     /**
@@ -149,6 +150,7 @@ private:
     ConflictResolution m_conflictMode{ConflictResolution::SkipDuplicate};
     PermissionMode m_permissionMode{PermissionMode::StripAll};
     bool m_verify{false};
+    bool m_createBackup{false};
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

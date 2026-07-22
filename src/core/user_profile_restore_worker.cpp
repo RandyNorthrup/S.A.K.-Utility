@@ -55,10 +55,23 @@ bool restoreEntryEscapesRoot(const QFileInfo& sourceEntry, const QString& destIt
     return isReparsePoint(sourceEntry) || isReparsePoint(QFileInfo(destItem));
 }
 
+// Save the pre-restore contents of an about-to-be-overwritten file to a
+// recoverable sidecar so the user can undo the overwrite. Returns false (fail
+// closed) if the copy fails, so the caller never destroys the original without
+// a recovery copy in hand.
+bool createRestoreRecoveryCopy(const QString& finalDestPath) {
+    const QString recoveryPath = finalDestPath + QStringLiteral(".sakbak");
+    QFile::remove(recoveryPath);  // Drop a stale copy from an earlier restore.
+    return QFile::copy(finalDestPath, recoveryPath);
+}
+
 // Replace an existing destination file only after the new copy is fully written.
 // The original is removed after a temporary sibling holds the replacement, so
-// any failure leaves the original destination intact.
-bool copyFileReplacingExisting(const QString& source, const QString& finalDestPath) {
+// any failure leaves the original destination intact. When backupExisting is
+// set, the original is preserved to a `.sakbak` recovery copy before removal.
+bool copyFileReplacingExisting(const QString& source,
+                               const QString& finalDestPath,
+                               bool backupExisting) {
     if (!QFileInfo::exists(finalDestPath)) {
         return QFile::copy(source, finalDestPath);
     }
@@ -66,6 +79,10 @@ bool copyFileReplacingExisting(const QString& source, const QString& finalDestPa
     QFile::remove(tempPath);
     if (!QFile::copy(source, tempPath)) {
         return false;
+    }
+    if (backupExisting && !createRestoreRecoveryCopy(finalDestPath)) {
+        QFile::remove(tempPath);
+        return false;  // Never overwrite without a recovery copy in place.
     }
     if (!QFile::remove(finalDestPath)) {
         QFile::remove(tempPath);
@@ -113,6 +130,7 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     m_conflictMode = config.conflict_mode;
     m_permissionMode = config.perm_mode;
     m_verify = config.verify;
+    m_createBackup = config.create_backup;
 
     m_cancelled = false;
     m_bytesRestored = 0;
@@ -224,6 +242,12 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     for (const auto& folder : sourceUser->backed_up_folders) {
         if (m_cancelled) {
             return false;
+        }
+
+        // Honor the folder-selection page: a folder the user unchecked must not
+        // be restored (its `selected` flag was persisted into the manifest).
+        if (!folder.selected) {
+            continue;
         }
 
         Q_EMIT statusUpdate(mapping.source_username, tr("Restoring: %1").arg(folder.display_name));
@@ -409,8 +433,9 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
         return false;
     }
 
-    // Copy the file (atomically replacing an existing destination, if any).
-    if (!copyFileReplacingExisting(source, finalDestPath)) {
+    // Copy the file (atomically replacing an existing destination, if any). When
+    // the safety option is on, the pre-restore file is saved to `.sakbak` first.
+    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
@@ -613,6 +638,9 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
         }
 
         for (const auto& folder : user->backed_up_folders) {
+            if (!folder.selected) {
+                continue;  // Unchecked folders are skipped during restore; exclude from totals.
+            }
             totalSize += folder.size_bytes;
             m_totalFilesToRestore += folder.file_count;
         }

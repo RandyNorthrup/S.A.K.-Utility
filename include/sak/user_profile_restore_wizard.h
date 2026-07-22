@@ -314,6 +314,8 @@ public:
 private:
     void setupUi();
     void startRestore();
+    /// @brief Wire the restore worker's progress/log/completion signals to the UI
+    void connectRestoreWorkerSignals(UserProfileRestoreWorker* worker);
 
     QLabel* m_statusLabel;
     QProgressBar* m_overallProgressBar;

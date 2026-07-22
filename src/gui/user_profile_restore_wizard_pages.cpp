@@ -6,6 +6,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/windows_user_scanner.h"
 
@@ -581,9 +582,12 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
             int row = m_folderTable->rowCount();
             m_folderTable->insertRow(row);
 
-            // Checkbox
+            // Checkbox. Stash the folder's relative path so validatePage can
+            // persist the selection back onto the manifest without depending on
+            // row order or the human-readable display name.
             auto* checkItem = new QTableWidgetItem();
-            checkItem->setCheckState(Qt::Checked);
+            checkItem->setCheckState(folder.selected ? Qt::Checked : Qt::Unchecked);
+            checkItem->setData(Qt::UserRole, folder.relative_path);
             m_folderTable->setItem(row, 0, checkItem);
 
             // User
@@ -678,7 +682,25 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
         return false;
     }
 
-    // Note: Folder selection is applied during restore worker initialization
+    // Persist the per-folder selection onto the wizard's manifest so the restore
+    // worker skips unchecked folders. Without this the selection is display-only
+    // and every backed-up folder is restored regardless of the checkboxes.
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) {
+        return false;
+    }
+    QVector<FolderRestoreChoice> choices;
+    choices.reserve(m_folderTable->rowCount());
+    for (int row = 0; row < m_folderTable->rowCount(); ++row) {
+        FolderRestoreChoice choice;
+        choice.username = m_folderTable->item(row, 1)->text();
+        choice.relative_path = m_folderTable->item(row, 0)->data(Qt::UserRole).toString();
+        choice.selected = m_folderTable->item(row, 0)->checkState() == Qt::Checked;
+        choices.append(choice);
+    }
+    BackupManifest manifest = wiz->manifest();
+    applyFolderRestoreSelections(manifest, choices);
+    wiz->setManifest(manifest);
     return true;
 }
 

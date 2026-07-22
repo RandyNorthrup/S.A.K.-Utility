@@ -663,6 +663,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_iso_analyzer.cpp")
     message(STATUS "Added unit test: test_iso_analyzer")
 endif()
 
+# test_user_profile_restore_selection --- folder selection -> manifest (P12-25)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_selection.cpp")
+    add_executable(test_user_profile_restore_selection
+        unit/test_user_profile_restore_selection.cpp
+        ../src/core/user_profile_restore_selection.cpp
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_restore_selection.h
+    )
+    set_target_properties(test_user_profile_restore_selection PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_user_profile_restore_selection PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_user_profile_restore_selection PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_user_profile_restore_selection COMMAND test_user_profile_restore_selection
+             -o test_user_profile_restore_selection.txt,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_user_profile_restore_selection")
+endif()
+
 # test_diagnostic_controller ??? suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller
