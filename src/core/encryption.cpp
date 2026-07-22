@@ -136,6 +136,59 @@ void destroy_aes_key(BCRYPT_ALG_HANDLE hAlg, BCRYPT_KEY_HANDLE hKey) {
     }
 }
 
+/// @brief Compute an HMAC-SHA256 authentication tag over a message
+QByteArray compute_hmac(const QByteArray& mac_key, const QByteArray& message) {
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    if (BCryptOpenAlgorithmProvider(
+            &hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+        sak::logError("BCrypt: Failed to open SHA-256 HMAC provider for authentication");
+        return {};
+    }
+    QByteArray tag(kEncryptionMacBytes, 0);
+    NTSTATUS status = BCryptHash(hAlg,
+                                 reinterpret_cast<PUCHAR>(const_cast<char*>(mac_key.data())),
+                                 static_cast<ULONG>(mac_key.size()),
+                                 reinterpret_cast<PUCHAR>(const_cast<char*>(message.data())),
+                                 static_cast<ULONG>(message.size()),
+                                 reinterpret_cast<PUCHAR>(tag.data()),
+                                 static_cast<ULONG>(tag.size()));
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+    if (status != 0) {
+        sak::logError("BCrypt: HMAC-SHA256 computation failed");
+        return {};
+    }
+    return tag;
+}
+
+/// @brief Constant-time byte comparison to avoid tag-verification timing leaks
+bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    unsigned char diff = 0;
+    for (int i = 0; i < a.size(); ++i) {
+        diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
+/// @brief Derive separate AES and HMAC keys from a password (encrypt-then-MAC)
+bool derive_enc_and_mac_keys(const QString& password,
+                             const QByteArray& salt,
+                             const EncryptionParams& params,
+                             QByteArray& enc_key,
+                             QByteArray& mac_key) {
+    QByteArray combined =
+        derive_key(password, salt, params.iterations, params.key_size + kEncryptionMacKeyBytes);
+    if (combined.isEmpty()) {
+        return false;
+    }
+    enc_key = combined.left(params.key_size);
+    mac_key = combined.mid(params.key_size);
+    sak::secure_wiper::wipe(combined.data(), combined.size());
+    return true;
+}
+
 /// @brief AES-256-CBC encryption
 QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const QByteArray& iv) {
     Q_ASSERT(!plaintext.isEmpty());
@@ -263,29 +316,35 @@ auto encryptData(const QByteArray& data, const QString& password, const Encrypti
         return std::unexpected(error_code::crypto_error);
     }
 
-    // Derive key from password
-    QByteArray key = derive_key(password, salt, params.iterations, params.key_size);
-    if (key.isEmpty()) {
+    // Derive separate AES and HMAC keys (encrypt-then-MAC)
+    QByteArray enc_key;
+    QByteArray mac_key;
+    if (!derive_enc_and_mac_keys(password, salt, params, enc_key, mac_key)) {
         logError("Failed to derive encryption key");
         return std::unexpected(error_code::crypto_error);
     }
 
-    // Encrypt data
-    QByteArray ciphertext = aes_encrypt(data, key, iv);
-
-    // Securely wipe key material
-    secure_wiper::wipe(key.data(), key.size());
-
+    QByteArray ciphertext = aes_encrypt(data, enc_key, iv);
+    secure_wiper::wipe(enc_key.data(), enc_key.size());
     if (ciphertext.isEmpty()) {
+        secure_wiper::wipe(mac_key.data(), mac_key.size());
         logError("AES encryption failed");
         return std::unexpected(error_code::crypto_error);
     }
 
-    // Format: [salt][IV][ciphertext]
+    // Format: [salt][IV][ciphertext][HMAC tag]
     QByteArray result;
     result.append(salt);
     result.append(iv);
     result.append(ciphertext);
+
+    QByteArray tag = compute_hmac(mac_key, result);
+    secure_wiper::wipe(mac_key.data(), mac_key.size());
+    if (tag.isEmpty()) {
+        logError("Failed to authenticate encrypted data");
+        return std::unexpected(error_code::crypto_error);
+    }
+    result.append(tag);
 
     logDebug("Encryption",
              std::format("Encrypted {} bytes to {} bytes", data.size(), result.size()));
@@ -305,29 +364,39 @@ auto decryptData(const QByteArray& encrypted_data,
     }
 
     int header_size = params.salt_size + params.iv_size;
-    if (encrypted_data.size() < header_size) {
+    if (encrypted_data.size() < header_size + kEncryptionMacBytes) {
         logError("Encrypted data too small - corrupted or invalid");
         return std::unexpected(error_code::invalid_format);
     }
 
-    // Extract salt and IV
-    QByteArray salt = encrypted_data.left(params.salt_size);
-    QByteArray iv = encrypted_data.mid(params.salt_size, params.iv_size);
-    QByteArray ciphertext = encrypted_data.mid(header_size);
+    // Split off the trailing HMAC tag; the message it authenticates is [salt][IV][ciphertext].
+    int message_size = encrypted_data.size() - kEncryptionMacBytes;
+    QByteArray message = encrypted_data.left(message_size);
+    QByteArray stored_tag = encrypted_data.mid(message_size);
 
-    // Derive key from password
-    QByteArray key = derive_key(password, salt, params.iterations, params.key_size);
-    if (key.isEmpty()) {
+    QByteArray salt = message.left(params.salt_size);
+    QByteArray iv = message.mid(params.salt_size, params.iv_size);
+    QByteArray ciphertext = message.mid(header_size);
+
+    QByteArray enc_key;
+    QByteArray mac_key;
+    if (!derive_enc_and_mac_keys(password, salt, params, enc_key, mac_key)) {
         logError("Failed to derive decryption key");
         return std::unexpected(error_code::crypto_error);
     }
 
-    // Decrypt data
-    QByteArray plaintext = aes_decrypt(ciphertext, key, iv);
+    // Verify the tag in constant time BEFORE decrypting: a tamper or wrong password fails here,
+    // never reaching BCryptDecrypt (no padding oracle).
+    QByteArray tag = compute_hmac(mac_key, message);
+    secure_wiper::wipe(mac_key.data(), mac_key.size());
+    if (tag.isEmpty() || !constant_time_equal(tag, stored_tag)) {
+        secure_wiper::wipe(enc_key.data(), enc_key.size());
+        logError("Authentication failed - data tampered or wrong password");
+        return std::unexpected(error_code::decrypt_failed);
+    }
 
-    // Securely wipe key material
-    secure_wiper::wipe(key.data(), key.size());
-
+    QByteArray plaintext = aes_decrypt(ciphertext, enc_key, iv);
+    secure_wiper::wipe(enc_key.data(), enc_key.size());
     if (plaintext.isEmpty()) {
         logError("AES decryption failed - wrong password or corrupted data");
         return std::unexpected(error_code::decrypt_failed);

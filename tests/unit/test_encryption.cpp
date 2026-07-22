@@ -24,6 +24,8 @@ private Q_SLOTS:
     void emptyPassword_rejected();
     void truncatedCiphertext_failsDecrypt();
     void corruptedCiphertext_failsDecrypt();
+    void tamperedIV_failsDecrypt();
+    void tamperedTag_failsDecrypt();
     void customParams_roundTrip();
     void differentPasswords_produceDifferentCiphertext();
     void sameInput_producesDifferentCiphertext();
@@ -173,6 +175,36 @@ void EncryptionTests::corruptedCiphertext_failsDecrypt() {
     if (decrypted.has_value()) {
         QVERIFY(decrypted.value() != original);
     }
+}
+
+void EncryptionTests::tamperedIV_failsDecrypt() {
+    const QByteArray original = "authentic secret";
+    const QString password = "iv_tamper_pw";
+
+    auto encrypted = sak::encryptData(original, password);
+    QVERIFY(encrypted.has_value());
+
+    // Flip one bit inside the IV region (right after the salt): Encrypt-then-MAC must reject it.
+    QByteArray tampered = encrypted.value();
+    tampered[sak::kEncryptionSaltBytes] = static_cast<char>(~tampered[sak::kEncryptionSaltBytes]);
+    auto decrypted = sak::decryptData(tampered, password);
+    QVERIFY(!decrypted.has_value());
+    QCOMPARE(decrypted.error(), sak::error_code::decrypt_failed);
+}
+
+void EncryptionTests::tamperedTag_failsDecrypt() {
+    const QByteArray original = "authentic secret";
+    const QString password = "tag_tamper_pw";
+
+    auto encrypted = sak::encryptData(original, password);
+    QVERIFY(encrypted.has_value());
+
+    // Flip one bit in the trailing HMAC tag: verification must fail closed.
+    QByteArray tampered = encrypted.value();
+    tampered[tampered.size() - 1] = static_cast<char>(~tampered[tampered.size() - 1]);
+    auto decrypted = sak::decryptData(tampered, password);
+    QVERIFY(!decrypted.has_value());
+    QCOMPARE(decrypted.error(), sak::error_code::decrypt_failed);
 }
 
 // ============================================================================

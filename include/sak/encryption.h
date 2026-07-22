@@ -20,6 +20,8 @@ inline constexpr int kDefaultPbkdf2Iterations = 100'000;
 inline constexpr int kAes256KeyBytes = 32;
 inline constexpr int kAesBlockBytes = 16;
 inline constexpr int kEncryptionSaltBytes = 32;
+inline constexpr int kEncryptionMacBytes = 32;     // HMAC-SHA256 tag length
+inline constexpr int kEncryptionMacKeyBytes = 32;  // HMAC-SHA256 key length
 
 /// @brief AES-256 encryption parameters
 struct EncryptionParams {
@@ -33,8 +35,8 @@ struct EncryptionParams {
 /// @param data Plain text data to encrypt
 /// @param password User password for encryption
 /// @param params Encryption parameters
-/// @return Encrypted data (salt + IV + ciphertext) or error code
-/// @note Format: [32 bytes salt][16 bytes IV][encrypted data]
+/// @return Encrypted data (salt + IV + ciphertext + auth tag) or error code
+/// @note Format: [32 bytes salt][16 bytes IV][ciphertext][32 bytes HMAC-SHA256 tag]
 [[nodiscard]] auto encryptData(const QByteArray& data,
                                const QString& password,
                                const EncryptionParams& params = EncryptionParams{})
