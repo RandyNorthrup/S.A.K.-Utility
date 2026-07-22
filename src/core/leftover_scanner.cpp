@@ -79,6 +79,30 @@ bool isSignificantParentDir(const QString& parent) {
            parent != "program files (x86)" && parent != "programdata";
 }
 
+// Directory or registry-subkey leaf names that are shared OS or vendor containers, never a
+// single product's private location. Any path ending in one of these must never be
+// auto-selected for deletion.
+const QSet<QString> kSharedRootNames = {
+    "windows",
+    "system32",
+    "syswow64",
+    "winsxs",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "common files",
+    "microsoft",
+    "microsoft shared",
+    "windowsapps",
+};
+
+bool isSharedContainerPath(const QString& path) {
+    if (path.isEmpty()) {
+        return false;
+    }
+    return kSharedRootNames.contains(QDir(path).dirName().toLower());
+}
+
 }  // namespace
 
 // Protected system paths that should NEVER be auto-selected for deletion
@@ -235,7 +259,9 @@ QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<boo
     item.path = QDir::toNativeSeparators(install_dir.absolutePath());
     item.description = "Program install directory still exists";
     item.sizeBytes = calculateSize(install_dir.absolutePath());
-    item.risk = LeftoverItem::RiskLevel::Safe;
+    // Route through classifyRisk so a shared publisher/OS install location (e.g. a program
+    // whose InstallLocation is Program Files\Common Files) is Risky, not auto-selected.
+    item.risk = classifyRisk(item.path, item.type);
 
     return {item};
 }
@@ -448,7 +474,9 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
             item.type = LeftoverItem::Type::RegistryKey;
             item.path = hiveName + "\\" + subkey;
             item.description = description;
-            item.risk = LeftoverItem::RiskLevel::Safe;
+            // Route through classifyRisk so a heuristically-guessed shared vendor subkey (e.g.
+            // SOFTWARE\Microsoft) is Risky rather than blindly Safe/auto-selected.
+            item.risk = classifyRisk(item.path, item.type);
             items.append(item);
         };
 
@@ -802,7 +830,7 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type typ
 
 LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,
                                                       LeftoverItem::Type type) const {
-    if (isProtectedPath(path)) {
+    if (isSharedContainerPath(path) || isProtectedPath(path)) {
         return LeftoverItem::RiskLevel::Risky;
     }
 

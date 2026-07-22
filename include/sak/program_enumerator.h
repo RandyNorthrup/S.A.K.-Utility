@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/process_runner.h"
 
 #include <QObject>
 #include <QVector>
@@ -64,6 +65,7 @@ Q_SIGNALS:
     void enumerationProgress(int current, int total);
     void enumerationFinished(QVector<ProgramInfo> programs);
     void enumerationFailed(const QString& error);
+    void enumerationWarning(const QString& message);
 
 private:
 #ifdef Q_OS_WIN
@@ -89,12 +91,20 @@ private:
     [[nodiscard]] static bool isSystemComponent(HKEY key);
 #endif
 
-    /// @brief Scan UWP/AppX packages via PowerShell
-    QVector<ProgramInfo> scanUwpPackages();
+    /// @brief True when an Appx/provisioned scan produced a real, parseable result. False for
+    ///        process/timeout/exit failures or unparseable output, so a failed scan is never
+    ///        mistaken for an empty success.
+    [[nodiscard]] static bool appxScanSucceeded(const ProcessResult& result);
+
+    /// @brief Scan UWP/AppX packages via PowerShell (scanOk reports scan success vs failure)
+    QVector<ProgramInfo> scanUwpPackages(bool& scanOk);
     void parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results);
 
-    /// @brief Scan provisioned (all-users) UWP packages
-    QVector<ProgramInfo> scanProvisionedPackages();
+    /// @brief Scan provisioned (all-users) UWP packages (scanOk reports success vs failure)
+    QVector<ProgramInfo> scanProvisionedPackages(bool& scanOk);
+
+    /// @brief Emit enumerationWarning when either Appx scan failed (fail-closed completeness)
+    void warnIfAppxIncomplete(bool uwpOk, bool provisionedOk);
 
     /// @brief Extract icon image from executable file
     [[nodiscard]] static QImage extractIcon(const QString& path);

@@ -26,6 +26,9 @@ private Q_SLOTS:
     // Replacement tracking
     void rewrite_tracksReplacements();
 
+    // Injection safety
+    void rewrite_filenameWithQuote_isEscaped();
+
     // File output
     void rewriteToFile_writesContent();
     void rewriteToFile_invalidPath_failsGracefully();
@@ -161,6 +164,34 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QCOMPARE(result.replacements.size(), 1);
     QCOMPARE(result.replacements.first().original_url, QString("https://example.com/tracked.exe"));
     QVERIFY(result.replacements.first().local_path.contains("tracked.exe"));
+}
+
+// ============================================================================
+// Injection Safety
+// ============================================================================
+
+void TestScriptRewriter::rewrite_filenameWithQuote_isEscaped() {
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/evil.zip'
+)";
+    auto parsed = parser.parse(script);
+
+    // A %27-decoded URL filename carrying a single quote + injection payload.
+    QHash<QString, QString> filenames;
+    filenames["https://example.com/evil.zip"] = "a';Start-Process calc;'.zip";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(result.success);
+    QCOMPARE(result.replacements.size(), 1);
+    // Every single quote is doubled so the payload stays an inert literal.
+    QCOMPARE(result.replacements.first().local_path,
+             QString("(Join-Path $toolsDir 'a'';Start-Process calc;''.zip')"));
+    QVERIFY(!result.script_content.contains("calc;'.zip')"));
 }
 
 // ============================================================================

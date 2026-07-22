@@ -151,10 +151,26 @@ QString AppScanner::readRegistryValue(void* key,
                                    &bufferSize);
 
     if (result == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ)) {
-        return QString::fromWCharArray(buffer);
+        return registryStringFromBuffer(buffer, bufferSize, kRegistryValueBufferChars);
     }
 
     return QString();
+}
+
+QString AppScanner::registryStringFromBuffer(const wchar_t* data,
+                                             unsigned long byteLength,
+                                             int capacityChars) {
+    if (data == nullptr || byteLength == 0 || capacityChars <= 0) {
+        return QString();
+    }
+    int lengthChars = static_cast<int>(byteLength / sizeof(wchar_t));
+    if (lengthChars > capacityChars) {
+        lengthChars = capacityChars;  // never read past the caller's buffer
+    }
+    while (lengthChars > 0 && data[lengthChars - 1] == L'\0') {
+        --lengthChars;  // drop terminator(s); a full buffer may carry none
+    }
+    return QString::fromWCharArray(data, lengthChars);
 }
 
 bool AppScanner::isSystemComponent(const QString& name) {

@@ -64,6 +64,12 @@ AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
             &ProgramEnumerator::enumerationFailed,
             this,
             &AdvancedUninstallController::onEnumerationFailed);
+    connect(m_enumerator.get(),
+            &ProgramEnumerator::enumerationWarning,
+            this,
+            [this](const QString& message) {
+                Q_EMIT statusMessage(message, kStatusTimeoutLongMs);
+            });
 
     loadSettings();
 }

@@ -104,6 +104,21 @@ private:
      */
     static QString readRegistryValue(void* key, const QString& valueName);
 
+    /**
+     * @brief Convert a raw REG_SZ/REG_EXPAND_SZ buffer to a QString.
+     *
+     * Bounds the read to the byte count RegQueryValueExW reported and strips any
+     * trailing NUL, so a value that fills the buffer with no terminator cannot
+     * cause an out-of-bounds read. Exposed for headless unit testing.
+     * @param data Wide-char buffer as written by RegQueryValueExW
+     * @param byteLength Byte count RegQueryValueExW returned
+     * @param capacityChars Buffer capacity in wchar_t units
+     * @return Decoded string, length-bounded and NUL-trimmed
+     */
+    static QString registryStringFromBuffer(const wchar_t* data,
+                                            unsigned long byteLength,
+                                            int capacityChars);
+
     /// @brief Check if app name indicates a system component to filter
     static bool isSystemComponent(const QString& name);
 

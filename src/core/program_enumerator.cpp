@@ -101,7 +101,8 @@ void ProgramEnumerator::enumerateAll() {
 #endif
 
         // Phase 2: UWP packages
-        auto uwp_programs = scanUwpPackages();
+        bool uwpOk = true;
+        auto uwp_programs = scanUwpPackages(uwpOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
             Q_EMIT enumerationFailed("Enumeration cancelled.");
             return;
@@ -110,13 +111,15 @@ void ProgramEnumerator::enumerateAll() {
         Q_EMIT enumerationProgress(kUwpScanProgress, kPercentMax);
 
         // Phase 3: Provisioned UWP packages
-        auto provisioned = scanProvisionedPackages();
+        bool provisionedOk = true;
+        auto provisioned = scanProvisionedPackages(provisionedOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
             Q_EMIT enumerationFailed("Enumeration cancelled.");
             return;
         }
         all_programs.append(provisioned);
         Q_EMIT enumerationProgress(kProvisionedScanProgress, kPercentMax);
+        warnIfAppxIncomplete(uwpOk, provisionedOk);
 
         // Phase 4: Deduplicate
         deduplicatePrograms(all_programs);
@@ -139,6 +142,16 @@ void ProgramEnumerator::enumerateAll() {
 
     } catch (const std::exception& e) {
         Q_EMIT enumerationFailed(QString("Enumeration error: %1").arg(e.what()));
+    }
+}
+
+void ProgramEnumerator::warnIfAppxIncomplete(bool uwpOk, bool provisionedOk) {
+    // Fail closed: a PowerShell failure/timeout/parse error in either Appx scan means the list
+    // may be incomplete. Warn (never silently claim completeness) but keep the registry list.
+    if (!uwpOk || !provisionedOk) {
+        Q_EMIT enumerationWarning(
+            QStringLiteral("Some app packages could not be enumerated; "
+                           "the installed-programs list may be incomplete."));
     }
 }
 
@@ -475,7 +488,16 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     }
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
+bool ProgramEnumerator::appxScanSucceeded(const ProcessResult& result) {
+    if (!result.succeeded()) {
+        return false;
+    }
+    QJsonParseError error;
+    QJsonDocument::fromJson(result.std_out.toUtf8(), &error);
+    return error.error == QJsonParseError::NoError;
+}
+
+QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
     const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
@@ -484,16 +506,13 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
                                          QStringLiteral("-Command"),
                                          kUwpPackagesCommand},
                                         30'000);
-    if (!result.succeeded()) {
+    scanOk = appxScanSucceeded(result);
+    if (!scanOk) {
         return results;
     }
 
     QByteArray output = result.std_out.toUtf8();
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(output, &error);
-    if (error.error != QJsonParseError::NoError) {
-        return results;
-    }
+    QJsonDocument doc = QJsonDocument::fromJson(output);
 
     const QJsonArray arr = jsonDocToArray(doc);
     for (const auto& val : arr) {
@@ -503,7 +522,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     return results;
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
+QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
     const auto result = sak::runProcess(
@@ -515,16 +534,13 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
                         "Select-Object DisplayName, PackageName, Version | "
                         "ConvertTo-Json -Compress")},
         30'000);
-    if (!result.succeeded()) {
+    scanOk = appxScanSucceeded(result);
+    if (!scanOk) {
         return results;
     }
 
     QByteArray output = result.std_out.toUtf8();
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(output, &error);
-    if (error.error != QJsonParseError::NoError) {
-        return results;
-    }
+    QJsonDocument doc = QJsonDocument::fromJson(output);
 
     QJsonArray arr;
     if (doc.isArray()) {

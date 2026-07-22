@@ -130,8 +130,12 @@ QString ScriptRewriter::replaceUrl(const QString& script,
 }
 
 QString ScriptRewriter::buildToolsPath(const QString& filename) const {
-    // Produce: (Join-Path $toolsDir 'filename.ext')
-    return QString("(Join-Path $toolsDir '%1')").arg(filename);
+    // Produce: (Join-Path $toolsDir 'filename.ext'). A single quote inside a PowerShell
+    // single-quoted string is escaped by doubling it; do so here so a quote in the filename
+    // (e.g. a %27-decoded URL name) cannot terminate the literal or inject tokens.
+    QString escaped = filename;
+    escaped.replace(QLatin1Char('\''), QLatin1String("''"));
+    return QString("(Join-Path $toolsDir '%1')").arg(escaped);
 }
 
 }  // namespace sak

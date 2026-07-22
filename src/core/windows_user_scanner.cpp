@@ -51,59 +51,45 @@ QVector<UserProfile> WindowsUserScanner::scanUsers() {
 #ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
     Q_ASSERT(profiles.isEmpty());
-    LPUSER_INFO_3 userInfo = nullptr;
-    DWORD entriesRead = 0;
-    DWORD totalEntries = 0;
+    const QString currentUserLower = getCurrentUsername().toLower();
     DWORD resumeHandle = 0;
+    NET_API_STATUS status = NERR_Success;
 
-    NET_API_STATUS status = NetUserEnum(nullptr,                // local computer
-                                        kNetUserInfoDetailedLevel,
-                                        FILTER_NORMAL_ACCOUNT,  // normal user accounts only
-                                        reinterpret_cast<LPBYTE*>(&userInfo),
-                                        MAX_PREFERRED_LENGTH,
-                                        &entriesRead,
-                                        &totalEntries,
-                                        &resumeHandle);
-
-    if (status != NERR_Success && status != ERROR_MORE_DATA) {
-        return false;
-    }
-
-    QString currentUser = getCurrentUsername();
-
-    for (DWORD i = 0; i < entriesRead; ++i) {
-        UserProfile profile;
-        profile.username = QString::fromWCharArray(userInfo[i].usri3_name);
-
-        // Get profile path
-        profile.profile_path = getProfilePath(profile.username);
-
-        // Skip if profile doesn't exist
-        if (profile.profile_path.isEmpty() || !QDir(profile.profile_path).exists()) {
-            continue;
+    // Drain every page: NetUserEnum returns ERROR_MORE_DATA (not failure) when the SAM has
+    // more normal accounts than fit one MAX_PREFERRED_LENGTH buffer. The single-call version
+    // accepted that status and scanned only the first page, silently dropping later users.
+    do {
+        LPUSER_INFO_3 userInfo = nullptr;
+        DWORD entriesRead = 0;
+        DWORD totalEntries = 0;
+        status = NetUserEnum(nullptr,                // local computer
+                             kNetUserInfoDetailedLevel,
+                             FILTER_NORMAL_ACCOUNT,  // normal user accounts only
+                             reinterpret_cast<LPBYTE*>(&userInfo),
+                             MAX_PREFERRED_LENGTH,
+                             &entriesRead,
+                             &totalEntries,
+                             &resumeHandle);
+        if (status != NERR_Success && status != ERROR_MORE_DATA) {
+            return false;
         }
-
-        // Get SID
-        profile.sid = getUserSID(profile.username);
-
-        // Check if current user - cache toLower() to avoid redundant calls
-        const QString currentUserLower = currentUser.toLower();
-        const QString usernameLower = profile.username.toLower();
-        profile.is_current_user = (usernameLower == currentUserLower);
-
-        // Quick size estimate
-        profile.total_size_estimated = estimateProfileSize(profile.profile_path);
-
-        // Populate default folder selections
-        populateFolderSelections(profile);
-
-        profiles.append(profile);
-
-        Q_EMIT userFound(profile.username);
-        Q_EMIT scanProgress(profiles.size(), totalEntries);
-    }
-
-    NetApiBufferFree(userInfo);
+        for (DWORD i = 0; i < entriesRead; ++i) {
+            UserProfile profile;
+            profile.username = QString::fromWCharArray(userInfo[i].usri3_name);
+            profile.profile_path = getProfilePath(profile.username);
+            if (profile.profile_path.isEmpty() || !QDir(profile.profile_path).exists()) {
+                continue;
+            }
+            profile.sid = getUserSID(profile.username);
+            profile.is_current_user = (profile.username.toLower() == currentUserLower);
+            profile.total_size_estimated = estimateProfileSize(profile.profile_path);
+            populateFolderSelections(profile);
+            profiles.append(profile);
+            Q_EMIT userFound(profile.username);
+            Q_EMIT scanProgress(profiles.size(), static_cast<int>(totalEntries));
+        }
+        NetApiBufferFree(userInfo);
+    } while (status == ERROR_MORE_DATA);
     return true;
 }
 #endif
