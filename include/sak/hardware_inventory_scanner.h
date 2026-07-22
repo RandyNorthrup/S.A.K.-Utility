@@ -9,6 +9,7 @@
 #include "sak/diagnostic_types.h"
 #include "sak/layout_constants.h"
 
+#include <QHash>
 #include <QObject>
 #include <QStorageInfo>
 #include <QVariant>
@@ -63,6 +64,12 @@ public:
     /// @brief Cancel a running scan
     void cancel();
 
+    /// @brief Parse the volume-to-disk JSON emitted by the internal WMI script
+    /// @param json Compact JSON: array of {Letter, DiskIndex} (or a lone object)
+    /// @return Hash of upper-case "X:" drive letter to disk index
+    /// @note Public + static for unit testing; null/non-numeric DiskIndex dropped
+    [[nodiscard]] static QHash<QString, uint32_t> parseVolumeDiskMap(const QByteArray& json);
+
 Q_SIGNALS:
     void scanStarted();
     void scanProgress(int percent, const QString& component);
@@ -88,8 +95,17 @@ private:
     /// @brief Enrich storage devices with partition/volume information
     void enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices);
 
+    /// @brief Map each mounted drive letter ("C:") to its physical disk number
+    /// @return Hash of upper-case "X:" drive letter to Win32_DiskDrive index
+    /// @note Chains Win32_LogicalDiskToPartition -> Win32_DiskPartition.DiskIndex
+    ///       via PowerShell/WMI. Empty on query failure (partitions stay unassigned).
+    QHash<QString, uint32_t> queryVolumeDiskMap();
+
     /// @brief Enrich a single storage device with volume info from mounted volumes
-    void enrichDeviceWithVolumes(StorageDeviceInfo& dev, const QList<QStorageInfo>& volumes);
+    /// @param volumeDiskMap Drive-letter -> disk-number map from queryVolumeDiskMap
+    void enrichDeviceWithVolumes(StorageDeviceInfo& dev,
+                                 const QList<QStorageInfo>& volumes,
+                                 const QHash<QString, uint32_t>& volumeDiskMap);
 
     /// @brief Enumerate GPU adapters using DXGI (Windows only)
     void enumerateDxgiAdapters(QVector<GpuInfo>& gpus);

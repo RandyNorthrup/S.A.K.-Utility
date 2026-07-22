@@ -607,6 +607,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     message(STATUS "Added unit test: test_diagnostic_controller")
 endif()
 
+# test_hardware_inventory_scanner --- WMI parsing + volume-to-disk mapping
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_hardware_inventory_scanner.cpp")
+    add_executable(test_hardware_inventory_scanner
+        unit/test_hardware_inventory_scanner.cpp
+        ../src/core/hardware_inventory_scanner.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/hardware_inventory_scanner.h
+    )
+    set_target_properties(test_hardware_inventory_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_hardware_inventory_scanner PRIVATE
+        Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_hardware_inventory_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_hardware_inventory_scanner COMMAND test_hardware_inventory_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_hardware_inventory_scanner")
+endif()
+
 # test_thermal_monitor ??? timer behavior and polling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     add_executable(test_thermal_monitor

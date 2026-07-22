@@ -469,22 +469,105 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
 
 void HardwareInventoryScanner::enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices) {
     const auto volumes = QStorageInfo::mountedVolumes();
+    const auto volume_disk_map = queryVolumeDiskMap();
+    if (volume_disk_map.isEmpty() && !devices.isEmpty()) {
+        logWarning("No volume-to-disk mapping available; partitions left unassigned");
+    }
     for (auto& dev : devices) {
-        enrichDeviceWithVolumes(dev, volumes);
+        enrichDeviceWithVolumes(dev, volumes, volume_disk_map);
     }
 }
 
-void HardwareInventoryScanner::enrichDeviceWithVolumes(StorageDeviceInfo& dev,
-                                                       const QList<QStorageInfo>& volumes) {
+QHash<QString, uint32_t> HardwareInventoryScanner::queryVolumeDiskMap() {
+    // Build "C:" -> physical disk index by chaining the two WMI association
+    // classes: Win32_LogicalDiskToPartition (letter <-> partition) and
+    // Win32_DiskPartition.DiskIndex (partition -> disk). Association-class
+    // references carry only key properties, so join by partition DeviceID.
+    const QString script = QStringLiteral(
+        "$p=@{};"
+        "Get-CimInstance Win32_DiskPartition|"
+        "ForEach-Object{$p[$_.DeviceID]=$_.DiskIndex};"
+        "Get-CimInstance Win32_LogicalDiskToPartition|"
+        "ForEach-Object{[PSCustomObject]@{"
+        "Letter=$_.Dependent.DeviceID;"
+        "DiskIndex=$p[$_.Antecedent.DeviceID]}}|"
+        "ConvertTo-Json -Compress");
+
+    const auto result =
+        sak::runProcess(QStringLiteral("powershell.exe"),
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NoLogo"),
+                         QStringLiteral("-Command"),
+                         script},
+                        kDefaultWmiQueryTimeoutMs,
+                        [this]() { return m_cancelled.load(std::memory_order_relaxed); });
+
+    if (!result.succeeded()) {
+        logWarning("Volume-to-disk mapping query failed (exit code {})", result.exit_code);
+        return {};
+    }
+
+    return parseVolumeDiskMap(result.std_out.toUtf8().trimmed());
+}
+
+QHash<QString, uint32_t> HardwareInventoryScanner::parseVolumeDiskMap(const QByteArray& json) {
+    QHash<QString, uint32_t> map;
+    if (json.isEmpty()) {
+        return map;
+    }
+
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(json, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        return map;
+    }
+
+    const auto insert_entry = [&map](const QJsonObject& obj) {
+        const QString letter = obj.value("Letter").toString().trimmed().toUpper();
+        const QJsonValue disk = obj.value("DiskIndex");
+        // DiskIndex is null when the partition had no matching disk: drop it so
+        // an unresolved volume is never attributed to disk 0 by default.
+        if (letter.isEmpty() || disk.isNull() || !disk.isDouble()) {
+            return;
+        }
+        map.insert(letter, static_cast<uint32_t>(disk.toInt()));
+    };
+
+    if (doc.isArray()) {
+        const QJsonArray arr = doc.array();
+        for (const auto& val : arr) {
+            if (val.isObject()) {
+                insert_entry(val.toObject());
+            }
+        }
+    } else if (doc.isObject()) {
+        // A single mapping comes back as an object, not an array.
+        insert_entry(doc.object());
+    }
+
+    return map;
+}
+
+void HardwareInventoryScanner::enrichDeviceWithVolumes(
+    StorageDeviceInfo& dev,
+    const QList<QStorageInfo>& volumes,
+    const QHash<QString, uint32_t>& volumeDiskMap) {
     for (const auto& vol : volumes) {
-        // Match by checking if the volume's device contains the disk number
-        // This is a best-effort match; exact mapping requires more APIs
         if (!vol.isValid() || !vol.isReady()) {
             continue;
         }
 
         const QString root = vol.rootPath();
         if (root.isEmpty()) {
+            continue;
+        }
+
+        // Exact match: attach a volume only when its drive letter resolves to
+        // THIS physical disk. Volumes with no known mapping are skipped (fail
+        // closed) rather than attributed to an arbitrary device by size.
+        const QString letter = root.left(kDriveRootPrefixLength).toUpper();
+        const auto it = volumeDiskMap.constFind(letter);
+        if (it == volumeDiskMap.constEnd() || *it != dev.disk_number) {
             continue;
         }
 
@@ -495,12 +578,7 @@ void HardwareInventoryScanner::enrichDeviceWithVolumes(StorageDeviceInfo& dev,
         part.total_bytes = static_cast<uint64_t>(vol.bytesTotal());
         part.free_bytes = static_cast<uint64_t>(vol.bytesFree());
         part.is_boot = vol.isRoot();
-
-        // Assign volumes to the first device that has capacity
-        // (simplified; exact matching requires Win32_LogicalDiskToPartition)
-        if (dev.partitions.isEmpty() || dev.size_bytes > part.total_bytes) {
-            dev.partitions.append(part);
-        }
+        dev.partitions.append(part);
     }
 }
 

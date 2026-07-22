@@ -28,6 +28,11 @@ private Q_SLOTS:
     void batteryInfo_defaults();
     void cancel_doesNotCrash();
     void scanCpu_returnsRealCpuInfo();
+    void volumeDiskMap_parsesArray();
+    void volumeDiskMap_parsesSingleObject();
+    void volumeDiskMap_dropsNullDiskIndex();
+    void volumeDiskMap_dropsEmptyLetter();
+    void volumeDiskMap_handlesMalformed();
 };
 
 void TestHardwareInventoryScanner::construction_default() {
@@ -144,6 +149,45 @@ void TestHardwareInventoryScanner::scanCpu_returnsRealCpuInfo() {
     QVERIFY(inventory.cpu.cores > 0);
     QVERIFY(inventory.cpu.threads > 0);
     QVERIFY(inventory.cpu.threads >= inventory.cpu.cores);
+}
+
+// P07-22: an array of {Letter, DiskIndex} maps each drive letter to its disk.
+void TestHardwareInventoryScanner::volumeDiskMap_parsesArray() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"D:","DiskIndex":2}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 2);
+    QCOMPARE(map.value(QStringLiteral("C:")), 0u);
+    QCOMPARE(map.value(QStringLiteral("D:")), 2u);
+}
+
+// A lone mapping is emitted by ConvertTo-Json as an object, not an array.
+void TestHardwareInventoryScanner::volumeDiskMap_parsesSingleObject() {
+    const QByteArray json = R"({"Letter":"C:","DiskIndex":0})";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QCOMPARE(map.value(QStringLiteral("C:")), 0u);
+}
+
+// A partition with no matching disk yields DiskIndex=null; it must be dropped
+// so the volume is never silently attributed to disk 0.
+void TestHardwareInventoryScanner::volumeDiskMap_dropsNullDiskIndex() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"E:","DiskIndex":null}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QVERIFY(map.contains(QStringLiteral("C:")));
+    QVERIFY(!map.contains(QStringLiteral("E:")));
+}
+
+void TestHardwareInventoryScanner::volumeDiskMap_dropsEmptyLetter() {
+    const QByteArray json = R"([{"Letter":"","DiskIndex":1}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QVERIFY(map.isEmpty());
+}
+
+void TestHardwareInventoryScanner::volumeDiskMap_handlesMalformed() {
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap(QByteArray()).isEmpty());
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("not json").isEmpty());
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("[]").isEmpty());
 }
 
 QTEST_MAIN(TestHardwareInventoryScanner)
