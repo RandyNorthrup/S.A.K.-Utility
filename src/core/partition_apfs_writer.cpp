@@ -726,6 +726,32 @@ uint64_t le64(const QByteArray& bytes, qsizetype offset) {
     return qFromLittleEndian<uint64_t>(reinterpret_cast<const uchar*>(bytes.constData() + offset));
 }
 
+// One byte at offset, 0 when out of range (mirrors le16/le32/le64). QByteArray::at is
+// Q_ASSERT-only, so a raw .at on a size derived from on-disk data is an out-of-bounds
+// read on a release build; route foreign-metadata byte reads through this instead.
+uint8_t le8(const QByteArray& bytes, qsizetype offset) {
+    if (offset < 0 || offset >= bytes.size()) {
+        return 0;
+    }
+    return static_cast<uint8_t>(bytes.at(offset));
+}
+
+// A B-tree node's key count clamped to what its table-of-contents region can physically
+// hold before the value area, so a corrupt btn_nkeys (up to 0xFFFFFFFF) cannot drive a
+// per-entry parse loop ~4 billion iterations into a memory blow-up. A valid node's real
+// nkeys is always <= this bound, so certified layouts are unaffected.
+uint32_t boundedNodeKeyCount(const QByteArray& node,
+                             qsizetype valueAreaEnd,
+                             qsizetype tocEntryBytes) {
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype tocRoom = valueAreaEnd - kApfsBtreeNodeHeaderBytes;
+    if (tocRoom <= 0 || tocEntryBytes <= 0) {
+        return 0;
+    }
+    const auto capacity = static_cast<uint64_t>(tocRoom / tocEntryBytes);
+    return static_cast<uint32_t>(std::min<uint64_t>(nkeys, capacity));
+}
+
 void writeAscii(QByteArray* bytes, qsizetype offset, const QByteArray& value, qsizetype maxBytes) {
     const qsizetype copyBytes = std::min(maxBytes, value.size());
     std::fill(bytes->begin() + offset, bytes->begin() + offset + maxBytes, '\0');
@@ -5499,13 +5525,28 @@ uint64_t liveMainFqBlockSpan(const QByteArray& checkpointMap,
 // main-fq case the emitted layout equals the historical 1:1 re-emit (same order, slots,
 // oids, sizes), so the certified path stays byte-identical.
 // Rewrite the checkpoint map's entry table in data-slot order (the map block header carries
-// forward). `slotCount` is the pre-rewrite table extent (old entries + appended main-fq
-// nodes) so a shrunk table is fully cleared, leaving no stale bytes.
-void writeReemittedCheckpointMapEntries(QByteArray* checkpointMap,
+// forward). `slotCount` is the LIVE map's entry count (its pre-rewrite table extent); the
+// clear spans max(slotCount, newEntries) so a shrunk table leaves no stale bytes. The old
+// main-fq nodes live within those `slotCount` entries, so they must NOT be added again on
+// top (that double-count pushed the clear past the 4 KiB block).
+bool writeReemittedCheckpointMapEntries(QByteArray* checkpointMap,
                                         const QVector<ApfsReemittedEntry>& newEntries,
-                                        qsizetype slotCount) {
-    const qsizetype clearBytes = std::max<qsizetype>(slotCount, newEntries.size()) *
-                                 kApfsCheckpointMapEntryBytes;
+                                        qsizetype slotCount,
+                                        QStringList* blockers) {
+    // A single checkpoint-map block holds only (blockSize - header)/40 entries. Reject an
+    // un-fittable map rather than let the clear/write loop run off the end of the block.
+    const qsizetype capacity = (checkpointMap->size() - kApfsCheckpointMapEntriesOffset) /
+                               kApfsCheckpointMapEntryBytes;
+    if (newEntries.size() > capacity) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: checkpoint map exceeds a single block's entry capacity"));
+        return false;
+    }
+    // Clear the larger of the old and new table extents (so a shrunk table leaves no stale
+    // bytes), clamped to the block's real capacity as a belt-and-braces bound.
+    const qsizetype clearSlots = std::min(std::max<qsizetype>(slotCount, newEntries.size()),
+                                          capacity);
+    const qsizetype clearBytes = clearSlots * kApfsCheckpointMapEntryBytes;
     for (qsizetype i = 0; i < clearBytes; ++i) {
         (*checkpointMap)[kApfsCheckpointMapEntriesOffset + i] = '\0';
     }
@@ -5521,6 +5562,7 @@ void writeReemittedCheckpointMapEntries(QByteArray* checkpointMap,
         writeLe64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset, e.paddr);
         entry += kApfsCheckpointMapEntryBytes;
     }
+    return true;
 }
 
 // The freshly built main free-queue node set for the re-emit: node blocks (root first, then
@@ -5618,10 +5660,8 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             ctx, {mainFqNodes, mainFqLeafOids}, dataOffset, &newEntries, blockers)) {
         return false;
     }
-    writeReemittedCheckpointMapEntries(checkpointMap,
-                                       newEntries,
-                                       static_cast<qsizetype>(count) + mainFqNodes.size());
-    return true;
+    return writeReemittedCheckpointMapEntries(
+        checkpointMap, newEntries, static_cast<qsizetype>(count), blockers);
 }
 
 void advanceNxSuperblockCheckpoint(QByteArray* nxsb,
@@ -6040,7 +6080,6 @@ uint64_t readOmapSingleEntryPaddr(const QByteArray& omapTreeNode, uint32_t block
 QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
                                                 uint32_t blockSize) {
     QVector<ApfsObjectMapEntry> entries;
-    const uint32_t nkeys = le32(omapTreeNode, kApfsBtreeNodeCountOffset);
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 448;
     // Only the ROOT node carries the 40-byte btree_info trailer; a multi-node omap's leaves
     // are non-root and pack their values up to blockSize. Deriving the value-area end from
@@ -6050,6 +6089,10 @@ QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
     const bool isRoot = (le16(omapTreeNode, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
+    // Bound the loop by the node's physical TOC capacity: a corrupt btn_nkeys must not drive
+    // billions of appends. Valid nodes' real key count is always within this bound.
+    const uint32_t nkeys =
+        boundedNodeKeyCount(omapTreeNode, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
     // Locate each record through the node's TOC (fixed {koff, voff} per entry) rather than assuming
     // the keys/values are densely packed at index*16. A S.A.K./mkapfs omap IS densely packed
     // (koff == index*16, voff == (index+1)*16), so this stays byte-identical; a real macOS omap
@@ -6077,10 +6120,11 @@ QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
 // it stays correct regardless of the fixed-KV packing.
 QVector<uint64_t> readOmapIndexChildPaddrs(const QByteArray& indexNode, uint32_t blockSize) {
     QVector<uint64_t> children;
-    const uint32_t nkeys = le32(indexNode, kApfsBtreeNodeCountOffset);
     const bool isRoot = (le16(indexNode, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
+    const uint32_t nkeys =
+        boundedNodeKeyCount(indexNode, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes;
@@ -6095,6 +6139,10 @@ QVector<uint64_t> readOmapIndexChildPaddrs(const QByteArray& indexNode, uint32_t
 struct ApfsLiveOmapWalk {
     QVector<uint64_t>* nodePaddrs{nullptr};
     QHash<uint64_t, uint64_t>* oidToPaddr{nullptr};
+    // Remaining descent budget: a corrupt index node whose child paddr points at itself (or
+    // any in-range cycle) passes readApfsRepairBlock and would recurse forever. Real omaps are
+    // a handful of levels; fail closed at 0 (mirrors ApfsFsTreeCollect::depthBudget).
+    int depthBudget{16};
 };
 
 // Descend the live physical volume object map rooted at `nodePaddr`, appending every node's
@@ -6108,6 +6156,11 @@ bool collectLiveOmapTree(QIODevice* image,
                          uint64_t nodePaddr,
                          const ApfsLiveOmapWalk& out,
                          QStringList* blockers) {
+    if (out.depthBudget <= 0) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: object map deeper than the walk budget"));
+        return false;
+    }
     QByteArray node(geometry.blockSize, '\0');
     if (!readApfsRepairBlock(image, geometry, nodePaddr, &node, blockers)) {
         return false;
@@ -6119,8 +6172,10 @@ bool collectLiveOmapTree(QIODevice* image,
         }
         return true;
     }
+    ApfsLiveOmapWalk deeper = out;
+    deeper.depthBudget = out.depthBudget - 1;
     for (const uint64_t child : readOmapIndexChildPaddrs(node, geometry.blockSize)) {
-        if (!collectLiveOmapTree(image, geometry, child, out, blockers)) {
+        if (!collectLiveOmapTree(image, geometry, child, deeper, blockers)) {
             return false;
         }
     }
@@ -7208,7 +7263,13 @@ uint64_t inodeXfieldValue(const QByteArray& value,
     qsizetype toc = base + kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
     qsizetype data = toc + static_cast<qsizetype>(xfieldCount) * kApfsXfieldTocEntryBytes;
     for (uint16_t i = 0; i < xfieldCount; ++i) {
-        const uint8_t type = static_cast<uint8_t>(value.at(toc));
+        // A corrupt/inflated xfieldCount can push toc past the 4 KiB node; stop before the
+        // TOC or value read leaves the buffer (le8/le16/le64 are individually bounds-safe,
+        // but a runaway loop would otherwise index far past `value`).
+        if (toc + kApfsXfieldTocEntryBytes > value.size() || data >= value.size()) {
+            return 0;
+        }
+        const uint8_t type = le8(value, toc);
         const uint16_t size = le16(value, toc + kApfsXfieldSizeOffset);
         if (type == fieldType) {
             return widthBytes == 4 ? le32(value, data) : le64(value, data);
@@ -17088,10 +17149,14 @@ bool collectDirectorySubtree(const ApfsTreeCollect& sink,
                 return false;
             }
         } else if (entry.regular_file) {
+            // Carry the logical length via logicalSizeOverride, NOT a zero-filled buffer:
+            // recoverPreservedFiles overwrites the extents/size from the on-disk inode and
+            // the buffer's bytes are never written, so materializing entry.size_bytes here
+            // only risked a multi-GB (or larger-than-RAM) allocation that aborts the commit.
             sink.files->append({.fileName = entry.name,
-                                .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
                                 .parentDirectoryId = dirObjectId,
-                                .fileId = entry.object_id});
+                                .fileId = entry.object_id,
+                                .logicalSizeOverride = entry.size_bytes});
         } else {
             // A non-regular entry (symlink / FIFO / socket / device): preserve it verbatim
             // with its full mode. Dropping it silently deleted the inode AND left the volume
@@ -17140,13 +17205,15 @@ bool prepareCloneSource(QVector<ApfsRootFilePayload>* existingFiles,
         if (file.parentDirectoryId != kApfsRootDirectoryId || file.fileName != sourceName) {
             continue;
         }
-        if (file.data.isEmpty()) {
+        // A preserved (collected) file carries its logical size in logicalSizeOverride with an
+        // empty `data`, so size the clone through fileLogicalSize rather than the buffer.
+        if (fileLogicalSize(file) == 0) {
             blockers->append(QStringLiteral(
                 "APFS file-clone-commit: cloning a zero-length source file is not supported"));
             return false;
         }
         file.extraInodeFlags |= kApfsInodeFlagWasEverCloned;
-        *out = {file.fileId, static_cast<uint64_t>(file.data.size())};
+        *out = {file.fileId, fileLogicalSize(file)};
         return true;
     }
     blockers->append(
@@ -19101,7 +19168,11 @@ bool createSizedApfsImage(const QString& path,
                           QFile* image,
                           QStringList* blockers) {
     image->setFileName(path);
-    if (!image->open(QIODevice::WriteOnly)) {
+    // NewOnly closes the check-then-open TOCTOU: imagePathIsSafeForCreate's QFileInfo::exists
+    // is non-atomic, so a plain WriteOnly would truncate (then failure-cleanup delete) a file
+    // raced in after the check. NewOnly fails the create atomically if the path now exists, so
+    // this handle only ever owns a file it created -- making the on-failure remove safe too.
+    if (!image->open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
         blockers->append(
             QStringLiteral("Unable to create APFS image: %1").arg(image->errorString()));
         return false;
