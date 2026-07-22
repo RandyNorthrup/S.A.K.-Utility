@@ -250,13 +250,16 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
     m_pdf_writer.reset();
     m_pst_folder_nids.clear();
 
-    // Reject the Outlook Express DBX format upfront: its writer is not
-    // spec-conformant (no OE5/6 B-tree index), so it can only produce a .dbx no
-    // reader can enumerate. Fail closed once with a clear message instead of
-    // writing per-message garbage. (PST is gated below via create().)
-    if (config.format == OstOutputFormat::Dbx) {
+    // Reject formats whose writers are not spec-conformant, upfront and once,
+    // instead of writing per-message garbage: DBX (no OE5/6 B-tree index) and MSG
+    // (broken CFB directory tree, no mini-stream). Both can only produce files no
+    // reader can open. (PST is gated below via create().)
+    if (config.format == OstOutputFormat::Dbx || config.format == OstOutputFormat::Msg) {
+        const QString label = config.format == OstOutputFormat::Dbx
+                                  ? QStringLiteral("Outlook Express DBX")
+                                  : QStringLiteral("MSG");
         const QString msg =
-            QStringLiteral("Outlook Express DBX output is not supported (no conformant writer)");
+            QStringLiteral("%1 output is not supported (no spec-conformant writer)").arg(label);
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
         return false;

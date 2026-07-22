@@ -84,36 +84,23 @@ std::expected<QString, error_code> MsgWriter::writeMessage(
     const QVector<MapiProperty>& all_properties,
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& subfolder_path) {
-    QString dir_path = m_output_dir;
-    if (m_preserve_folders && !subfolder_path.isEmpty()) {
-        dir_path += QStringLiteral("/") + subfolder_path;
-    }
-    QDir().mkpath(dir_path);
-
-    QString filename = sanitizeFilename(item.subject, item.date);
-
-    // Handle filename collisions
-    QString key = dir_path + "/" + filename;
-    if (m_filename_counters.contains(key)) {
-        int count = ++m_filename_counters[key];
-        QFileInfo fi(filename);
-        filename = fi.completeBaseName() + QStringLiteral("_%1").arg(count) +
-                   QStringLiteral(".msg");
-    } else {
-        m_filename_counters.insert(key, 1);
-    }
-
-    QString full_path = dir_path + QStringLiteral("/") + filename;
-
-    auto result = createCompoundFile(full_path, item, all_properties, attachment_data);
-    if (!result.has_value()) {
-        return std::unexpected(result.error());
-    }
-
-    QFileInfo fi(full_path);
-    m_bytes_written += fi.size();
-
-    return full_path;
+    // Fail closed: the compound-file (CFB/MS-OXMSG) writer is not spec-conformant.
+    // It stores every stream in the regular FAT (a sub-4096-byte stream MUST use
+    // the mini stream, so its start_sector is misread as a mini-sector index),
+    // its directory red-black tree links only reach the Root's first child, and
+    // the Root Entry mini stream is absent. Verified with an independent CFB
+    // reader (olefile): only 1 of 4 streams was enumerable and it read as 0 bytes.
+    // Emitting such a .msg -- which Outlook/MAPI cannot open -- is worse than
+    // refusing, so gate until a spec-conformant CFB writer exists. (EML remains
+    // the working single-message export format.)
+    Q_UNUSED(item)
+    Q_UNUSED(all_properties)
+    Q_UNUSED(attachment_data)
+    Q_UNUSED(subfolder_path)
+    logError(
+        "MsgWriter: MSG (CFB/MS-OXMSG) output is not spec-conformant (broken "
+        "directory tree, no mini-stream allocation); refusing to emit non-readable .msg");
+    return std::unexpected(error_code::not_implemented);
 }
 
 // ============================================================================
