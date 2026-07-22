@@ -66,6 +66,11 @@ private:
     void rebuildGroups();
     void resetWithGroups();
 
+    // Source re-sort (layoutChanged) handling, split so the persistent-index
+    // mapping is snapshot before the source re-sorts and remapped after.
+    void onSourceLayoutAboutToBeChanged();
+    void onSourceLayoutChanged();
+
     // Grouped-mode row map: source_row >= 0 is an item; -1 is a header whose
     // text lives in header_text.
     struct ProxyRow {
@@ -78,6 +83,13 @@ private:
     Qt::SortOrder m_direction{Qt::AscendingOrder};
     QVector<ProxyRow> m_rows;
     QVector<int> m_source_to_proxy;
+
+    // Carried from the source's layoutAboutToBeChanged to its layoutChanged so
+    // the proxy->source mapping is captured BEFORE the source re-sorts (the
+    // group rebuild afterwards would otherwise read stale rows and remap every
+    // held selection/current index to the wrong item).
+    QModelIndexList m_layout_proxy_indexes;
+    QVector<QPersistentModelIndex> m_layout_source_indexes;
 };
 
 }  // namespace sak

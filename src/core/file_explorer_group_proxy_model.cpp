@@ -73,24 +73,14 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
         rebuildGroups();
         endResetModel();
     });
-    connect(source_model, &QAbstractItemModel::layoutAboutToBeChanged, this, [this]() {
-        Q_EMIT layoutAboutToBeChanged();
-    });
-    connect(source_model, &QAbstractItemModel::layoutChanged, this, [this]() {
-        // The sort proxy re-sorted: regroup and remap the persistent indexes
-        // the views hold (selection, current index).
-        const QModelIndexList before = persistentIndexList();
-        QVector<QPersistentModelIndex> sources;
-        sources.reserve(before.size());
-        for (const QModelIndex& proxy_index : before) {
-            sources.append(QPersistentModelIndex(mapToSource(proxy_index)));
-        }
-        rebuildGroups();
-        for (int i = 0; i < before.size(); ++i) {
-            changePersistentIndex(before.at(i), mapFromSource(sources.at(i)));
-        }
-        Q_EMIT layoutChanged();
-    });
+    connect(source_model,
+            &QAbstractItemModel::layoutAboutToBeChanged,
+            this,
+            &FileExplorerGroupProxyModel::onSourceLayoutAboutToBeChanged);
+    connect(source_model,
+            &QAbstractItemModel::layoutChanged,
+            this,
+            &FileExplorerGroupProxyModel::onSourceLayoutChanged);
     connect(source_model,
             &QAbstractItemModel::dataChanged,
             this,
@@ -112,6 +102,33 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
                     }
                 }
             });
+}
+
+void FileExplorerGroupProxyModel::onSourceLayoutAboutToBeChanged() {
+    // Snapshot the proxy->source mapping NOW, while m_rows still matches the
+    // source's pre-sort order. Wrapping each source index in a persistent index
+    // lets the source track it across its own re-sort; doing this in
+    // layoutChanged instead would read stale rows and remap to wrong items.
+    m_layout_proxy_indexes = persistentIndexList();
+    m_layout_source_indexes.clear();
+    m_layout_source_indexes.reserve(m_layout_proxy_indexes.size());
+    for (const QModelIndex& proxy_index : m_layout_proxy_indexes) {
+        m_layout_source_indexes.append(QPersistentModelIndex(mapToSource(proxy_index)));
+    }
+    Q_EMIT layoutAboutToBeChanged();
+}
+
+void FileExplorerGroupProxyModel::onSourceLayoutChanged() {
+    // The sort proxy re-sorted: regroup, then remap each held persistent index
+    // (selection, current) through its now-updated source index.
+    rebuildGroups();
+    for (int i = 0; i < m_layout_proxy_indexes.size(); ++i) {
+        changePersistentIndex(m_layout_proxy_indexes.at(i),
+                              mapFromSource(m_layout_source_indexes.at(i)));
+    }
+    m_layout_proxy_indexes.clear();
+    m_layout_source_indexes.clear();
+    Q_EMIT layoutChanged();
 }
 
 void FileExplorerGroupProxyModel::setGrouping(const FileExplorerGroupOption option,

@@ -518,6 +518,48 @@ private Q_SLOTS:
                                 Qt::AscendingOrder);
         QCOMPARE(group_proxy.rowCount(), 4);
     }
+
+    // P04-22/23: a persistent index (selection / current) held across a source
+    // re-sort must still point at the SAME item. The mapping has to be snapshot
+    // in layoutAboutToBeChanged (before the source re-sorts); capturing it in
+    // layoutChanged read stale rows and silently moved the selection.
+    void groupProxyKeepsPersistentIndexAcrossResort() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("a.bin"), 20),
+                          fileEntry(QStringLiteral("b.bin"), 30),
+                          fileEntry(QStringLiteral("c.bin"), 40)});
+        sak::FileExplorerSortFilterModel sort_proxy;
+        sort_proxy.setSourceModel(&model);
+        sort_proxy.sort(Model::NameColumn, Qt::AscendingOrder);
+        sak::FileExplorerGroupProxyModel group_proxy;
+        group_proxy.setSourceModel(&sort_proxy);
+        // Group by Name: each file lands in its own A/B/C section, so a re-sort
+        // moves items to different proxy rows -- exposing a bad remap.
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::Name,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::AscendingOrder);
+
+        // Pin "a.bin" wherever it currently sits in the grouped proxy.
+        int row_a = -1;
+        for (int row = 0; row < group_proxy.rowCount(); ++row) {
+            const QModelIndex idx = group_proxy.index(row, Model::NameColumn);
+            if (idx.data(Model::EntryNameRole).toString() == QStringLiteral("a.bin")) {
+                row_a = row;
+                break;
+            }
+        }
+        QVERIFY(row_a >= 0);
+        const QPersistentModelIndex pinned(group_proxy.index(row_a, Model::NameColumn));
+        QCOMPARE(pinned.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+
+        // Re-sort the underlying model: layoutChanged ripples up to the group
+        // proxy, which must remap the pinned index to a.bin's new location.
+        sort_proxy.sort(Model::NameColumn, Qt::DescendingOrder);
+
+        QVERIFY(pinned.isValid());
+        QCOMPARE(pinned.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+    }
 };
 
 QTEST_MAIN(FileExplorerItemModelTests)
