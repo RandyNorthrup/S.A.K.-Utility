@@ -71,6 +71,15 @@ AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
                 Q_EMIT statusMessage(message, kStatusTimeoutLongMs);
             });
 
+    // Enumeration runs on a persistent worker thread. The enumerator keeps its affinity to this
+    // thread for the controller lifetime, so a Refresh only re-invokes enumerateAll via a queued
+    // call -- avoiding the per-Refresh moveToThread churn whose move-back ran on the main thread
+    // (the wrong thread) rather than the worker thread that owned the object.
+    m_enumThread = new QThread(this);
+    m_enumThread->setObjectName(QStringLiteral("sak-enum"));
+    m_enumerator->moveToThread(m_enumThread);
+    m_enumThread->start();
+
     loadSettings();
 }
 
@@ -95,18 +104,19 @@ void AdvancedUninstallController::refreshPrograms() {
     setState(State::Enumerating);
     Q_EMIT statusMessage("Enumerating installed programs...", 0);
 
-    // Run enumeration in a background thread so the GUI stays responsive
-    if (m_enumThread) {
-        m_enumThread->quit();
-        m_enumThread->wait(kThreadWaitMs);
-        m_enumThread = nullptr;  // previous thread cleans up via deleteLater
+    // Run enumeration on the persistent worker thread so the GUI stays responsive. The
+    // enumerator already lives on m_enumThread; queue the work onto that thread instead of
+    // moving the object around.
+    if (!m_enumThread || !m_enumThread->isRunning()) {
+        setState(State::Idle);
+        Q_EMIT statusMessage("Enumeration thread unavailable.", kStatusTimeoutShortMs);
+        return;
     }
-    m_enumThread = new QThread(this);
-    m_enumerator->moveToThread(m_enumThread);
     m_enumerator->resetCancel();
-    connect(m_enumThread, &QThread::started, m_enumerator.get(), &ProgramEnumerator::enumerateAll);
-    connect(m_enumThread, &QThread::finished, m_enumThread, &QObject::deleteLater);
-    m_enumThread->start();
+    QMetaObject::invokeMethod(
+        m_enumerator.get(),
+        [enumerator = m_enumerator.get()]() { enumerator->enumerateAll(); },
+        Qt::QueuedConnection);
 }
 
 QVector<ProgramInfo> AdvancedUninstallController::programs() const {
@@ -255,17 +265,10 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
 }
 
 void AdvancedUninstallController::cancelOperation() {
-    // Cancel enumeration if running
+    // Cancel enumeration if running; the persistent worker thread stays alive for reuse and is
+    // torn down only in cleanupWorkers().
     if (m_state == State::Enumerating && m_enumerator) {
         m_enumerator->requestCancel();
-        if (m_enumThread) {
-            m_enumThread->quit();
-            if (!m_enumThread->wait(kThreadWaitMs)) {
-                m_enumThread->terminate();
-                m_enumThread->wait(kThreadWaitMs);
-            }
-            m_enumThread = nullptr;
-        }
         setState(State::Idle);
     }
 
@@ -421,13 +424,7 @@ void AdvancedUninstallController::onEnumerationFinished(QVector<ProgramInfo> pro
         return;
     }
 
-    // Move enumerator back to main thread and stop the enum thread
-    m_enumerator->moveToThread(thread());
-    if (m_enumThread) {
-        m_enumThread->quit();
-        m_enumThread = nullptr;  // deleteLater handles cleanup
-    }
-
+    // The enumerator stays on its persistent worker thread; nothing to move back.
     m_programs = programs;
     setState(State::Idle);
     Q_EMIT statusMessage(QString("Found %1 installed programs.").arg(programs.size()),
@@ -441,13 +438,7 @@ void AdvancedUninstallController::onEnumerationFailed(const QString& error) {
         return;
     }
 
-    // Move enumerator back to main thread and stop the enum thread
-    m_enumerator->moveToThread(thread());
-    if (m_enumThread) {
-        m_enumThread->quit();
-        m_enumThread = nullptr;  // deleteLater handles cleanup
-    }
-
+    // The enumerator stays on its persistent worker thread; nothing to move back.
     setState(State::Idle);
     Q_EMIT statusMessage(QString("Enumeration failed: %1").arg(error), kStatusTimeoutLongMs);
     Q_EMIT enumerationFailed(error);

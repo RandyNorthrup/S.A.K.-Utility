@@ -112,9 +112,8 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
     Q_EMIT nativeUninstallerStarted(m_program.displayName);
 
     if (!runNativeUninstaller()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
+        // Return only: WorkerBase::run() emits the single terminal `failed` signal. Emitting
+        // uninstallComplete here too gave the batch orchestrator two terminal outcomes.
         return std::unexpected(sak::error_code::execution_failed);
     }
 
@@ -127,10 +126,7 @@ auto UninstallWorker::executeUwpMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
     reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Removing UWP package...");
     if (!removeUwpPackage()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return std::unexpected(sak::error_code::execution_failed);
+        return std::unexpected(sak::error_code::execution_failed);  // run() emits `failed` once
     }
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.endTime = QDateTime::currentDateTime();
@@ -144,10 +140,7 @@ auto UninstallWorker::executeRegistryMode(UninstallReport& report)
                    sak::kPercentMax,
                    "Removing orphaned registry entry...");
     if (!removeRegistryEntry()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return std::unexpected(sak::error_code::execution_failed);
+        return std::unexpected(sak::error_code::execution_failed);  // run() emits `failed` once
     }
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.registryKeysDeleted = 1;
