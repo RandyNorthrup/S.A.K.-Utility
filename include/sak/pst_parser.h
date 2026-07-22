@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -245,10 +246,26 @@ private:
     /// Read a single data block by Block ID
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlock(uint64_t bid);
 
-    /// Read a multi-block data tree (XBLOCK/XXBLOCK). @p depth bounds recursion so
-    /// a cyclic or self-referential internal block cannot overflow the stack.
+    /// Recursion guard threaded through the data-tree walk. @p depth bounds
+    /// recursion so a cyclic or self-referential internal block cannot overflow
+    /// the stack; @p visited holds every BID already expanded on this traversal so
+    /// a crafted block that lists the same child thousands of times cannot drive
+    /// exponential fan-out (each distinct BID is expanded at most once). A valid
+    /// single-stream data tree never revisits a BID, so this rejects only
+    /// malformed input.
+    struct DataTreeGuard {
+        int depth = 0;
+        QSet<uint64_t>& visited;
+    };
+
+    /// Read a multi-block data tree (XBLOCK/XXBLOCK). Public entry point: seeds a
+    /// fresh per-traversal visited-BID set and delegates to readDataTreeGuarded.
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTree(
         uint64_t bid, QVector<int>* block_offsets = nullptr, int depth = 0);
+
+    /// Recursive worker for readDataTree; see DataTreeGuard.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTreeGuarded(
+        uint64_t bid, QVector<int>* block_offsets, DataTreeGuard guard);
 
     /// Extract attachment data bytes from a resolved subnode
     [[nodiscard]] std::expected<QByteArray, sak::error_code> extractAttachmentFromSubnode(
@@ -260,7 +277,7 @@ private:
         uint8_t block_level,
         uint16_t entry_count,
         QVector<int>* block_offsets,
-        int depth);
+        DataTreeGuard guard);
 
     /// Read child blocks from an XBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXblockChildren(
@@ -268,7 +285,7 @@ private:
         uint16_t entry_count,
         QByteArray& result,
         QVector<int>* block_offsets,
-        int depth);
+        DataTreeGuard guard);
 
     /// Read child blocks from an XXBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXxblockChildren(
@@ -276,7 +293,7 @@ private:
         uint16_t entry_count,
         QByteArray& result,
         QVector<int>* block_offsets,
-        int depth);
+        DataTreeGuard guard);
 
     /// Decompress a 4K-page block if the footer indicates zlib compression
     [[nodiscard]] QByteArray decompressBlockIf4k(const QByteArray& raw,

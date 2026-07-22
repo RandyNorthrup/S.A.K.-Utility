@@ -121,8 +121,8 @@ static constexpr int kHeaderDataVersionOffset = 10;
 static constexpr int kHeaderClientVersionOffset = 12;
 static constexpr int kHeaderPlatformCreateOffset = 14;
 static constexpr int kHeaderPlatformAccessOffset = 15;
-static constexpr int kHeaderEncryptionOffset = 513;      // bCryptMethod, Unicode header
-static constexpr int kHeaderEncryptionOffsetAnsi = 465;  // bCryptMethod, ANSI header
+static constexpr int kHeaderEncryptionOffset = 513;      // bCryptMethod, Unicode header (0x201)
+static constexpr int kHeaderEncryptionOffsetAnsi = 461;  // bCryptMethod, ANSI header (0x1CD)
 static constexpr int kUnicodeRootOffset = 0xB4;
 static constexpr int kAnsiRootOffset = 0xA4;
 static constexpr int kRootFileSizeOffset = 4;
@@ -1170,10 +1170,11 @@ std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray&
 }
 
 std::expected<void, error_code> PstParser::parseHeaderEncryption(const QByteArray& data) {
-    // bCryptMethod lives at a different offset per format: 513 in the Unicode
-    // header, 465 in the 512-byte ANSI header. Reading 513 for an ANSI PST both
-    // reads past the header and misdetects the crypt method, so an encoded ANSI
-    // file decodes as garbage.
+    // bCryptMethod lives at a different offset per format: 513 (0x201) in the
+    // Unicode header, 461 (0x1CD) in the ANSI header (bSentinel@460 then
+    // bCryptMethod@461; the ANSI header has no dwAlign). Reading the Unicode
+    // offset for an ANSI PST both reads past the header and misdetects the crypt
+    // method, so an encoded ANSI file decodes as garbage.
     const int encryption_offset = m_is_unicode ? kHeaderEncryptionOffset
                                                : kHeaderEncryptionOffsetAnsi;
     if (encryption_offset >= data.size()) {
@@ -1446,12 +1447,28 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
 std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
                                                               QVector<int>* block_offsets,
                                                               int depth) {
+    QSet<uint64_t> visited;
+    return readDataTreeGuarded(bid, block_offsets, DataTreeGuard{depth, visited});
+}
+
+std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bid,
+                                                                     QVector<int>* block_offsets,
+                                                                     DataTreeGuard guard) {
     // Bound recursion: a crafted PST can build a self-referential or cyclic chain
     // of internal (XBLOCK/XXBLOCK) blocks that would otherwise recurse until the
     // native stack overflows.
-    if (depth > kMaxBTreeDepth) {
+    if (guard.depth > kMaxBTreeDepth) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
+
+    // Expand each BID at most once per traversal. A valid data tree references
+    // every block exactly once, so a repeated BID is either a cycle or a
+    // fan-out bomb (a block that lists the same child thousands of times, which
+    // without this guard expands as entry_count^depth). Fail closed on both.
+    if (guard.visited.contains(bid)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    guard.visited.insert(bid);
 
     bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
@@ -1484,22 +1501,23 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    return readInternalDataBlock(data, block_level, entry_count, block_offsets, depth);
+    return readInternalDataBlock(data, block_level, entry_count, block_offsets, guard);
 }
 
 std::expected<QByteArray, error_code> PstParser::readInternalDataBlock(const QByteArray& data,
                                                                        uint8_t block_level,
                                                                        uint16_t entry_count,
                                                                        QVector<int>* block_offsets,
-                                                                       int depth) {
+                                                                       DataTreeGuard guard) {
+    const DataTreeGuard child_guard{guard.depth + 1, guard.visited};
     QByteArray result;
     if (block_level == kDataTreeXBlockLevel) {
-        auto status = readXblockChildren(data, entry_count, result, block_offsets, depth + 1);
+        auto status = readXblockChildren(data, entry_count, result, block_offsets, child_guard);
         if (!status) {
             return std::unexpected(status.error());
         }
     } else if (block_level == kDataTreeXxBlockLevel) {
-        auto status = readXxblockChildren(data, entry_count, result, block_offsets, depth + 1);
+        auto status = readXxblockChildren(data, entry_count, result, block_offsets, child_guard);
         if (!status) {
             return std::unexpected(status.error());
         }
@@ -1513,18 +1531,20 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
                                                               uint16_t entry_count,
                                                               QByteArray& result,
                                                               QVector<int>* block_offsets,
-                                                              int depth) {
+                                                              DataTreeGuard guard) {
     int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
         int offset = kBlockTreeHeaderSize + (idx * bid_size);
         uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
                                           : readLE<uint32_t>(data, offset);
-        // Recurse through readDataTree so nested internal (XBLOCK/XXBLOCK) children
-        // are properly expanded. Required because some PST/OST files build non-spec
-        // nesting where an XBLOCK entry itself carries the internal bid flag (0x02).
+        // Recurse through readDataTreeGuarded so nested internal (XBLOCK/XXBLOCK)
+        // children are properly expanded (some PST/OST files build non-spec nesting
+        // where an XBLOCK entry itself carries the internal bid flag 0x02) while the
+        // shared visited set bounds total work.
         int base_offset = result.size();
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, block_offsets ? &child_offsets : nullptr, depth);
+        auto child_data =
+            readDataTreeGuarded(child_bid, block_offsets ? &child_offsets : nullptr, guard);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
@@ -1542,7 +1562,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
                                                                uint16_t entry_count,
                                                                QByteArray& result,
                                                                QVector<int>* block_offsets,
-                                                               int depth) {
+                                                               DataTreeGuard guard) {
     int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
         int offset = kBlockTreeHeaderSize + (idx * bid_size);
@@ -1550,7 +1570,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
                                           : readLE<uint32_t>(data, offset);
         int base_offset = result.size();
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, &child_offsets, depth);
+        auto child_data = readDataTreeGuarded(child_bid, &child_offsets, guard);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
@@ -2462,7 +2482,10 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
     }
 
     const auto& rows = *table_result;
-    int start = std::min(offset, static_cast<int>(rows.size()));
+    // Clamp the pagination offset: a negative offset (reachable when a caller's
+    // page*page_size int-multiply overflows) must not produce a negative start
+    // index and read rows[] out of bounds. Clamp to [0, rows.size()].
+    int start = std::clamp(offset, 0, static_cast<int>(rows.size()));
     int end_idx = (limit > 0) ? std::min(start + limit, static_cast<int>(rows.size()))
                               : static_cast<int>(rows.size());
 

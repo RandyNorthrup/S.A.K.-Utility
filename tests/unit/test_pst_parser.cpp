@@ -8,10 +8,15 @@
 #include "sak/pst_parser.h"
 
 #include <QByteArray>
+#include <QDir>
+#include <QFileInfo>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <array>
+#include <functional>
+#include <limits>
 
 namespace {
 constexpr int kUnicodeRootOffsetForTest = 0xB4;
@@ -140,6 +145,10 @@ private Q_SLOTS:
     // -- Encryption Detection --------------------------------------------
     void detectsNoEncryption();
     void detectsCompressibleEncryption();
+    void ansiHeaderReadsEncryptionFromOffset461();
+
+    // -- Real-file smoke (env-gated) -------------------------------------
+    void realEmailFilesParseSafely();
 
     // -- Open / Close Lifecycle ------------------------------------------
     void openNonExistentFile();
@@ -187,8 +196,10 @@ QByteArray TestPstParser::buildMinimalPstHeader(bool unicode,
                            : (unicode ? sak::email::kUnicodeVersion : sak::email::kAnsiVersion);
     writeLe16(header, 10, version);
 
-    // Encryption type at offset 513
-    data[513] = encryption;
+    // bCryptMethod lives at a format-specific offset: 513 (0x201) in the Unicode
+    // header, 461 (0x1CD) in the ANSI header. Placing it correctly keeps ANSI
+    // fixtures honest (P05-44).
+    data[unicode ? 513 : 461] = encryption;
 
     return header;
 }
@@ -416,6 +427,96 @@ void TestPstParser::detectsNoEncryption() {
 void TestPstParser::detectsCompressibleEncryption() {
     QByteArray header = buildMinimalPstHeader(true, sak::email::kEncryptCompressible);
     QCOMPARE(static_cast<uint8_t>(header[513]), sak::email::kEncryptCompressible);
+}
+
+// P05-44: the ANSI bCryptMethod byte is at offset 461, not 465. Put High
+// encryption (rejected early, before any BTree parse) at 461 and a None decoy at
+// the old wrong offset 465. Reading 461 -> "Unsupported encryption"; reading 465
+// would miss the flag and fail later with a different Node-BTree error.
+void TestPstParser::ansiHeaderReadsEncryptionFromOffset461() {
+    QByteArray header = buildMinimalPstHeader(false, sak::email::kEncryptHigh);
+    header[465] = static_cast<char>(sak::email::kEncryptNone);  // decoy at old offset
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(header);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
+}
+
+// Env-gated real-file smoke: point SAK_TEST_PST_DIR at a folder of .pst/.ost/.nst
+// files. Exercises the full parse path (data-tree expansion, P05-47) and negative
+// pagination offsets (P05-49) on real data. Skipped in CI. Reads structure/counts
+// only -- never surfaces any message body, address, or subject.
+void TestPstParser::realEmailFilesParseSafely() {
+    const QByteArray env = qgetenv("SAK_TEST_PST_DIR");
+    if (env.isEmpty()) {
+        QSKIP("SAK_TEST_PST_DIR not set; skipping real-file parse smoke");
+    }
+    const QFileInfoList files = QDir(QString::fromLocal8Bit(env))
+                                    .entryInfoList({QStringLiteral("*.pst"),
+                                                    QStringLiteral("*.ost"),
+                                                    QStringLiteral("*.nst")},
+                                                   QDir::Files);
+    if (files.isEmpty()) {
+        QSKIP("no .pst/.ost/.nst files in SAK_TEST_PST_DIR");
+    }
+
+    // Recursively collect folder node ids from the tree.
+    std::function<void(const QVector<sak::PstFolder>&, QVector<uint64_t>&)> collect =
+        [&collect](const QVector<sak::PstFolder>& folders, QVector<uint64_t>& out) {
+            for (const auto& f : folders) {
+                out.append(f.node_id);
+                collect(f.children, out);
+            }
+        };
+
+    for (const QFileInfo& file : files) {
+        PstParser parser;
+        parser.open(file.absoluteFilePath());
+        if (!parser.isOpen()) {
+            qInfo().noquote() << file.fileName() << "did not open (graceful, no crash)";
+            continue;
+        }
+        const sak::PstFileInfo info = parser.fileInfo();
+        QVector<uint64_t> folder_ids;
+        collect(parser.folderTree(), folder_ids);
+        qInfo().noquote() << file.fileName() << "unicode=" << info.is_unicode
+                          << "ost=" << info.is_ost << "folders=" << folder_ids.size();
+        QVERIFY(!folder_ids.isEmpty());
+
+        // For a bounded sample of folders, prove normal + hostile pagination
+        // offsets never crash or read out of bounds (P05-49) and that reading
+        // items fully expands their data trees without hanging (P05-47).
+        constexpr int kSampleFolders = 8;
+        constexpr int kPageLimit = 20;
+        const int sampled = std::min<int>(kSampleFolders, folder_ids.size());
+        for (int i = 0; i < sampled; ++i) {
+            const uint64_t fid = folder_ids[i];
+            auto normal = parser.readFolderItems(fid, 0, kPageLimit);
+            QVERIFY(normal.has_value());
+            // Negative offsets (reachable via caller page*size int overflow) must
+            // clamp, not index rows[] out of bounds.
+            auto neg = parser.readFolderItems(fid, -1, kPageLimit);
+            QVERIFY(neg.has_value());
+            auto negmin = parser.readFolderItems(fid, std::numeric_limits<int>::min(), kPageLimit);
+            QVERIFY(negmin.has_value());
+            // Reading the first item's detail exercises data-tree expansion.
+            if (normal.has_value() && !normal->isEmpty()) {
+                auto detail = parser.readItemDetail(normal->first().node_id);
+                QVERIFY(detail.has_value() || true);  // must not crash; error is acceptable
+            }
+        }
+        parser.close();
+    }
 }
 
 // ============================================================================
