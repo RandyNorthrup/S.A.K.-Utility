@@ -44,13 +44,20 @@ enum FolderColumn {
 }  // namespace
 
 PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWidget* parent)
-    : QDialog(parent), m_profile(profile) {
+    : QDialog(parent), m_target(profile), m_profile(profile) {
+    // The dialog edits m_profile (a copy); the caller's live profile is only
+    // updated in accept(), so Cancel discards all changes.
     setupUi();
     populateTree();
     updateSummary();
 
     setWindowTitle(QString("Customize Backup for %1").arg(profile.username));
     resize(sak::kWizardLargeWidth, sak::kWizardLargeHeight);
+}
+
+void PerUserCustomizationDialog::accept() {
+    m_target = m_profile;  // Commit the working copy only when the user clicks OK.
+    QDialog::accept();
 }
 
 void PerUserCustomizationDialog::setupUi() {
@@ -286,42 +293,49 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     folderItem->setText(FolderColFiles, QString::number(totalFiles));
 }
 
-void PerUserCustomizationDialog::onSelectAll() {
+void PerUserCustomizationDialog::setAllFolderSelected(bool selected) {
+    for (auto& sel : m_profile.folder_selections) {
+        sel.selected = selected;
+    }
+}
+
+void PerUserCustomizationDialog::applyProfileSelectionsToTree() {
+    Q_ASSERT(m_folderTree);
     m_folderTree->blockSignals(true);
-    QTreeWidgetItemIterator it(m_folderTree);
-    while (*it) {
-        (*it)->setCheckState(0, Qt::Checked);
-        ++it;
+    for (int i = 0; i < m_folderTree->topLevelItemCount(); ++i) {
+        auto* item = m_folderTree->topLevelItem(i);
+        const QString rel = item->data(0, Qt::UserRole).toString();
+        const auto it = std::find_if(m_profile.folder_selections.begin(),
+                                     m_profile.folder_selections.end(),
+                                     [&rel](const auto& s) { return s.relative_path == rel; });
+        const bool sel = (it != m_profile.folder_selections.end()) && it->selected;
+        const Qt::CheckState state = sel ? Qt::Checked : Qt::Unchecked;
+        item->setCheckState(0, state);
+        setChildrenCheckState(item, state);
     }
     m_folderTree->blockSignals(false);
+}
+
+void PerUserCustomizationDialog::onSelectAll() {
+    // Update the profile (source of truth), then reflect into the tree -- the old
+    // code only toggled checkboxes, leaving folder_selections unchanged.
+    setAllFolderSelected(true);
+    applyProfileSelectionsToTree();
     updateSummary();
 }
 
 void PerUserCustomizationDialog::onSelectNone() {
-    m_folderTree->blockSignals(true);
-    QTreeWidgetItemIterator it(m_folderTree);
-    while (*it) {
-        (*it)->setCheckState(0, Qt::Unchecked);
-        ++it;
-    }
-    m_folderTree->blockSignals(false);
+    setAllFolderSelected(false);
+    applyProfileSelectionsToTree();
     updateSummary();
 }
 
 void PerUserCustomizationDialog::onSelectRecommended() {
-    Q_ASSERT(m_folderTree);
-    // Documents, Desktop, Pictures, Downloads
-    QStringList recommended = {"Documents", "Desktop", "Pictures", "Downloads"};
-
-    m_folderTree->blockSignals(true);
-    QTreeWidgetItemIterator it(m_folderTree);
-    while (*it) {
-        QString folderName = (*it)->text(1);
-        bool shouldSelect = recommended.contains(folderName);
-        (*it)->setCheckState(0, shouldSelect ? Qt::Checked : Qt::Unchecked);
-        ++it;
+    static const QStringList recommended = {"Documents", "Desktop", "Pictures", "Downloads"};
+    for (auto& sel : m_profile.folder_selections) {
+        sel.selected = recommended.contains(sel.display_name);
     }
-    m_folderTree->blockSignals(false);
+    applyProfileSelectionsToTree();
     updateSummary();
 }
 

@@ -43,6 +43,9 @@ public:
      */
     QVector<FolderSelection> getFolderSelections() const;
 
+    /// @brief Commit the working copy to the caller's profile (OK only)
+    void accept() override;
+
 private Q_SLOTS:
     void onSelectAll();
     void onSelectNone();
@@ -81,8 +84,13 @@ private:
     void updateParentCheckState(QTreeWidgetItem* item);
     void updateFolderCheckStates(QTreeWidgetItem* item);
     qint64 calculateTotalSize() const;
+    /// @brief Set `selected` on every folder selection in the working copy
+    void setAllFolderSelected(bool selected);
+    /// @brief Reflect the working copy's folder selections into the tree
+    void applyProfileSelectionsToTree();
 
-    UserProfile& m_profile;
+    UserProfile& m_target;  // Caller's live profile; written only on accept()
+    UserProfile m_profile;  // Working copy edited by the dialog
 
     // UI Components
     QLabel* m_usernameLabel{nullptr};
