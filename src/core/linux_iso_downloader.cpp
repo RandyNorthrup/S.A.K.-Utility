@@ -90,6 +90,12 @@ LinuxISODownloader::LinuxISODownloader(QObject* parent)
 
 LinuxISODownloader::~LinuxISODownloader() {
     cancel();
+    // Join the background hash task before members are destroyed: a QtConcurrent::run future is
+    // non-cancelable and its lambda reads m_savePath, so tearing down while it runs is a UAF.
+    // Wait only here (not in cancel()) so a live-object cancel never blocks the GUI thread.
+    if (m_hashFuture.isRunning()) {
+        m_hashFuture.waitForFinished();
+    }
 }
 
 // ============================================================================
@@ -549,7 +555,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
     });
 
-    auto future = QtConcurrent::run([this, algorithm]() -> QString {
+    m_hashFuture = QtConcurrent::run([this, algorithm]() -> QString {
         QFile file(m_savePath);
         if (!file.open(QIODevice::ReadOnly)) {
             return QString();
@@ -563,7 +569,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         return hash.result().toHex().toLower();
     });
 
-    watcher->setFuture(future);
+    watcher->setFuture(m_hashFuture);
 }
 
 void LinuxISODownloader::verifyChecksum() {
@@ -589,10 +595,14 @@ void LinuxISODownloader::onChecksumVerified(bool match,
     QFileInfo fileInfo(m_savePath);
 
     if (actual.isEmpty()) {
-        sak::logWarning("Failed to compute checksum for: " + m_savePath.toStdString());
-        Q_EMIT statusMessage("Checksum verification skipped (file read error)");
-        setPhase(Phase::Completed, "Download complete");
-        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        // Fail closed: a checksum the user requested could not be computed (file
+        // unreadable/locked), so the download is NOT verified. Do not delete -- the content is
+        // unknown-good and the open failure is likely transient, so leave it for a retry.
+        const QString error = "Could not read the downloaded file to verify its checksum: " +
+                              m_savePath;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "Checksum verification failed");
+        Q_EMIT downloadError(error);
         return;
     }
 
@@ -623,7 +633,8 @@ void LinuxISODownloader::onChecksumVerified(bool match,
 // ============================================================================
 
 void LinuxISODownloader::cancel() {
-    Q_ASSERT(m_aria2cProcess);
+    // m_aria2cProcess is created lazily by startDownload; it is legitimately null when cancel()
+    // runs from the dtor of a never-started downloader. The null-guarded kill below handles it.
     Q_ASSERT(m_progressTimer);
     Q_ASSERT(m_catalog);
     m_cancelled = true;

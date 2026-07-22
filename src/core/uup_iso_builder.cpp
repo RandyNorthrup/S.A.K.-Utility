@@ -129,7 +129,8 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
 
 void UupIsoBuilder::cancel() {
     Q_ASSERT(m_progressPollTimer);
-    Q_ASSERT(!m_updateId.isEmpty());
+    // m_updateId is empty until startBuild(); cancel() runs from the dtor of a never-started
+    // builder, so asserting it non-empty is wrong. The rest of cancel() does not use m_updateId.
     m_cancelled = true;
     m_progressPollTimer->stop();
 

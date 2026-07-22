@@ -48,6 +48,11 @@ private slots:
 
     // ---- Combined multi-validation ----
     void diskValidationFiresBeforeIsoCheck();
+
+    // ---- Volume label sanitization (P07-52) ----
+    void sanitizeVolumeLabel_stripsPowerShellMetacharacters();
+    void sanitizeVolumeLabel_keepsLegitimateLabel();
+    void sanitizeVolumeLabel_capsLength();
 };
 
 // ===========================================================================
@@ -234,6 +239,31 @@ void WindowsUSBCreatorTests::diskValidationFiresBeforeIsoCheck() {
 }
 
 // ===========================================================================
+
+// P07-52: a crafted ISO volume label must not survive into the elevated Set-Volume PowerShell
+// command. sanitizeVolumeLabel allowlists to letters/digits and " _-." only.
+void WindowsUSBCreatorTests::sanitizeVolumeLabel_stripsPowerShellMetacharacters() {
+    const QString injected = QStringLiteral("W'; Start-Process calc.exe; '");
+    const QString clean = sak::sanitizeVolumeLabel(injected);
+    QVERIFY(!clean.contains('\''));
+    QVERIFY(!clean.contains(';'));
+    QVERIFY(!clean.contains('('));
+    QVERIFY(!clean.contains(')'));
+    // Only allowlisted characters remain.
+    for (const QChar c : clean) {
+        QVERIFY(c.isLetterOrNumber() || QStringLiteral(" _-.").contains(c));
+    }
+}
+
+void WindowsUSBCreatorTests::sanitizeVolumeLabel_keepsLegitimateLabel() {
+    const QString label = QStringLiteral("CCCOMA_X64FRE_EN-US_DV9");
+    QCOMPARE(sak::sanitizeVolumeLabel(label), label);
+}
+
+void WindowsUSBCreatorTests::sanitizeVolumeLabel_capsLength() {
+    const QString longLabel(100, QChar('A'));
+    QCOMPARE(sak::sanitizeVolumeLabel(longLabel).size(), 32);
+}
 
 QTEST_MAIN(WindowsUSBCreatorTests)
 #include "test_windows_usb_creator.moc"

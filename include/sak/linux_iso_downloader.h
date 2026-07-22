@@ -6,6 +6,7 @@
 #include "sak/linux_distro_catalog.h"
 
 #include <QCryptographicHash>
+#include <QFuture>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -170,5 +171,7 @@ private:
     QString m_expectedFileName;
     qint64 m_totalSize = 0;
     std::atomic<bool> m_cancelled{false};
+    QFuture<QString>
+        m_hashFuture;  // background checksum hash; joined in the dtor (see cancel note)
     LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;
 };

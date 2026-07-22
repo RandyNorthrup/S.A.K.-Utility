@@ -59,7 +59,8 @@ constexpr int kPvdCreationDateOffset = 813;
 constexpr int kElToritoBootCatalogOffset = 71;
 
 // Boot catalog entry boot media type masks
-constexpr uint8_t kBootMediaEfi = 0xEF;
+constexpr int kValidationEntryPlatformOffset = 1;  // Platform ID byte in the Validation Entry
+constexpr uint8_t kBootIndicatorBootable = 0x88;   // Initial/Default Entry Boot Indicator
 constexpr int kDefaultBootCatalogEntryOffset = 32;
 constexpr int kCatalogEntrySize = 32;
 constexpr int kFirstCatalogSectionEntry = 2;
@@ -186,8 +187,15 @@ bool readSectorAt(QIODevice& device, qint64 offset, std::array<char, kSectorSize
 }
 
 void applyDefaultBootEntry(const std::array<char, kSectorSize>& catalog, BootCatalogFlags& flags) {
-    const auto default_media = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);
-    if (default_media == kBootMediaEfi) {
+    // Offset 32 is the Initial/Default Entry's Boot Indicator (0x88 = bootable), NOT a platform ID.
+    // The platform is declared in the Validation Entry at offset 1; reading offset 32 as the media
+    // type misclassified every EFI-only default entry (0x88 != 0xEF) as legacy BIOS.
+    const auto boot_indicator = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);
+    if (boot_indicator != kBootIndicatorBootable) {
+        return;
+    }
+    const auto platform_id = static_cast<uint8_t>(catalog[kValidationEntryPlatformOffset]);
+    if (platform_id == kBootCatalogPlatformEfi) {
         flags.has_efi = true;
     } else {
         flags.has_legacy = true;
@@ -630,10 +638,6 @@ void IsoAnalyzer::identifyWindows(IsoInfo& info) {
 // ============================================================================
 // Linux Identification
 // ============================================================================
-
-QString IsoAnalyzer::detectDesktopEnvironment(const QString& label_upper) {
-    return desktopEnvironmentFromLabel(label_upper);
-}
 
 void IsoAnalyzer::identifyLinux(IsoInfo& info) {
     Q_ASSERT(info.os_family.isEmpty());

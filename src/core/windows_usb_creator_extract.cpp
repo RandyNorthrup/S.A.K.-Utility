@@ -106,6 +106,21 @@ QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
     return {};
 }
 
+QString sak::sanitizeVolumeLabel(const QString& raw) {
+    constexpr qsizetype kMaxVolumeLabelLength = 32;  // NTFS max label
+    static const QString kExtraAllowed = QStringLiteral(" _-.");
+    QString clean;
+    for (const QChar c : raw) {
+        if (clean.size() >= kMaxVolumeLabelLength) {
+            break;
+        }
+        if (c.isLetterOrNumber() || kExtraAllowed.contains(c)) {
+            clean.append(c);
+        }
+    }
+    return clean.trimmed();
+}
+
 void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
                                                    const QString& sourcePath) {
     QStringList labelArgs;
@@ -120,7 +135,9 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
             "7z label extraction failed/timed out after 10s -- will use default "
             "label");
     } else {
-        m_volumeLabel = parseVolumeLabelFromOutput(label_result.std_out);
+        // Allowlist the ISO-derived label before it is ever interpolated into a PowerShell
+        // Set-Volume command (elevated), so a crafted "Comment" cannot inject commands.
+        m_volumeLabel = sak::sanitizeVolumeLabel(parseVolumeLabelFromOutput(label_result.std_out));
     }
 
     // Default to WINDOWS if label not found
@@ -132,7 +149,7 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
 
 bool WindowsUSBCreator::copyISO_normalizeDestination(const QString& destPath, QString& cleanDest) {
     Q_ASSERT(!destPath.isEmpty());
-    Q_ASSERT(!cleanDest.isEmpty());
+    // cleanDest is a write-only out-param (empty on entry); do not assert it.
     // Normalize drive letter to full path format (e.g., "E" -> "E:\")
     cleanDest = destPath.trimmed();
 
@@ -492,8 +509,12 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
         return;
     }
 
-    QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
-                           .arg(driveLetter, m_volumeLabel);
+    // m_volumeLabel is already allowlisted; also double any single quote as defense in depth so a
+    // future allowlist relaxation cannot reopen the single-quoted-string break-out.
+    QString safeLabel = m_volumeLabel;
+    safeLabel.replace(QChar('\''), QStringLiteral("''"));
+    QString labelCmd =
+        QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'").arg(driveLetter, safeLabel);
     const auto label_result =
         sak::runPowerShell(labelCmd, sak::kTimeoutProcessMediumMs, true, false, [this]() {
             return m_cancelled.load();
@@ -624,8 +645,12 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     QString output = diskpart_result.std_out;
     sak::logInfo(QString("Diskpart detail output: %1").arg(output).toStdString());
 
-    // Check if partition is marked as Active
-    bool isActive = output.contains("Active", Qt::CaseInsensitive);
+    // Match the VALUE, not just the label: `detail partition` always prints an "Active : No/Yes"
+    // line, so a substring check for "Active" passed even for a non-bootable partition. Absent
+    // value line (GPT/localized) -> no match -> fails closed below.
+    static const QRegularExpression activeYesRe(QStringLiteral("Active\\s*:\\s*Yes"),
+                                                QRegularExpression::CaseInsensitiveOption);
+    bool isActive = activeYesRe.match(output).hasMatch();
 
     if (isActive) {
         sak::logInfo("[x] Bootable flag verified - partition is active");
@@ -668,14 +693,16 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
         });
 
     if (!disk_result.succeeded()) {
-        sak::logWarning("Could not get disk number for verification");
-        return true;  // Not critical
+        m_lastError = "VERIFICATION FAILED: Could not query partition disk number";
+        sak::logError(m_lastError.toStdString());
+        return false;  // fail closed: an unverified boot flag is not a pass
     }
 
     QString diskNumber = disk_result.std_out.trimmed();
     if (diskNumber.isEmpty()) {
-        sak::logWarning("Could not determine disk number");
-        return true;  // Not critical
+        m_lastError = "VERIFICATION FAILED: Could not determine disk number for boot-flag check";
+        sak::logError(m_lastError.toStdString());
+        return false;
     }
 
     return checkPartitionActive(diskNumber);

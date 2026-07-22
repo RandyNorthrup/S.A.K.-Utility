@@ -276,9 +276,9 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
     }
 
     QString diskpartScript = QString(
-                                 "select disk %1\\n"
-                                 "select partition 1\\n"
-                                 "active\\n")
+                                 "select disk %1\n"
+                                 "select partition 1\n"
+                                 "active\n")
                                  .arg(diskNumber);
 
     const QByteArray script_bytes = diskpartScript.toLocal8Bit();

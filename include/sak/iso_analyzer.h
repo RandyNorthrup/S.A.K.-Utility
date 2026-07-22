@@ -83,9 +83,6 @@ private:
     /// @brief Identify Linux distributions from volume label patterns
     static void identifyLinux(IsoInfo& info);
 
-    /// @brief Detect desktop environment from ISO label
-    static QString detectDesktopEnvironment(const QString& label_upper);
-
     /// @brief Parse a date-time string from ISO 9660 format (17 bytes)
     static QString parseIsoDateTime(const char* raw);
 

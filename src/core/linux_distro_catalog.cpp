@@ -441,6 +441,16 @@ QString LinuxDistroCatalog::resolveDownloadUrl(const DistroInfo& distro) const {
 }
 
 QString LinuxDistroCatalog::resolveChecksumUrl(const DistroInfo& distro) const {
+    if (distro.sourceType == SourceType::GitHubRelease) {
+        // A GitHub release's checksum sidecar is cached under "<id>_checksum" as a full
+        // browser_download_url; return it verbatim (no version substitution). Fall through when
+        // no sidecar exists so a static checksumUrl still works and no-sidecar distros are
+        // unaffected.
+        auto it = m_githubAssetUrls.find(distro.id + "_checksum");
+        if (it != m_githubAssetUrls.end()) {
+            return *it;
+        }
+    }
     if (distro.checksumUrl.isEmpty()) {
         return {};
     }

@@ -12,7 +12,12 @@
 
 namespace sak {
 struct ProcessResult;
-}
+
+/// @brief Allowlist a raw volume label (from an untrusted ISO) to letters/digits and " _-.",
+///        capped at the 32-char NTFS max and trimmed, so it can never inject PowerShell
+///        metacharacters when interpolated into a Set-Volume -NewFileSystemLabel command.
+[[nodiscard]] QString sanitizeVolumeLabel(const QString& raw);
+}  // namespace sak
 
 /**
  * @brief Creates bootable Windows USB drives from ISO files

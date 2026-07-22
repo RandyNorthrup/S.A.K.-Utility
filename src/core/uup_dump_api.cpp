@@ -401,6 +401,19 @@ void UupDumpApi::onFilesReply() {
 
 // --- Private Helpers --------------------------------------------------------
 
+bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
+    if (info.fileName.contains("..") || info.fileName.contains('/') ||
+        info.fileName.contains('\\')) {
+        return false;  // out= path confinement
+    }
+    for (const QString* field : {&info.fileName, &info.url, &info.sha1}) {
+        if (field->contains('\n') || field->contains('\r') || field->contains('\t')) {
+            return false;  // record/directive break-out
+        }
+    }
+    return true;
+}
+
 std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
     const QString& key, const QJsonObject& fileObj) {
     FileInfo info;
@@ -411,10 +424,10 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
     info.uuid = fileObj["uuid"].toString();
     info.expire = fileObj["expire"].toString();
 
-    // Sanitize filename -- reject path traversal attempts
-    if (info.fileName.contains("..") || info.fileName.contains('/') ||
-        info.fileName.contains('\\')) {
-        sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
+    // Reject entries that could inject aria2 directives or escape the download dir when
+    // serialized into the aria2 input file (traversal in fileName, CR/LF/TAB in any field).
+    if (!isSafeAria2FileEntry(info)) {
+        sak::logWarning("Rejected unsafe file entry from API: " + info.fileName.toStdString());
         return std::nullopt;
     }
 
