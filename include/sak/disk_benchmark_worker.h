@@ -69,10 +69,12 @@ private:
     void cleanupTestFile();
 
     /// @brief Run sequential read benchmark
-    void runSequentialRead();
+    /// @return Success, or an error code if the test file could not be opened/allocated
+    auto runSequentialRead() -> std::expected<void, sak::error_code>;
 
     /// @brief Run sequential write benchmark
-    void runSequentialWrite();
+    /// @return Success, or an error code if the test file could not be opened/allocated
+    auto runSequentialWrite() -> std::expected<void, sak::error_code>;
 
     /// @brief Run random 4K read benchmark at the given queue depth
     /// @param queue_depth Number of concurrent I/O operations
@@ -80,11 +82,12 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KRead(int queue_depth,
+    auto runRandom4KRead(int queue_depth,
                          double& read_mbps,
                          double& iops,
                          double& avg_latency_us,
-                         std::vector<double>* latencies_out = nullptr);
+                         std::vector<double>* latencies_out = nullptr)
+        -> std::expected<void, sak::error_code>;
 
     /// @brief Run random 4K write benchmark at the given queue depth
     /// @param queue_depth Number of concurrent I/O operations
@@ -92,11 +95,12 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KWrite(int queue_depth,
+    auto runRandom4KWrite(int queue_depth,
                           double& write_mbps,
                           double& iops,
                           double& avg_latency_us,
-                          std::vector<double>* latencies_out = nullptr);
+                          std::vector<double>* latencies_out = nullptr)
+        -> std::expected<void, sak::error_code>;
 
     /// @brief Run all benchmark phases (sequential + random I/O)
     /// @return Success or error code (cancellation)

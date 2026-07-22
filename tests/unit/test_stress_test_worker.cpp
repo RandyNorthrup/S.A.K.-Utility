@@ -25,6 +25,11 @@ private Q_SLOTS:
     void result_errors_initiallyZero();
     void result_temperatures_initiallyZero();
     void result_fieldAssignment();
+    void computeStressPassed_cleanRun_passes();
+    void computeStressPassed_diskErrors_fails();
+    void computeStressPassed_memoryErrors_fails();
+    void computeStressPassed_gpuErrors_fails();
+    void computeStressPassed_abortReason_fails();
 };
 
 void TestStressTestWorker::construction_default() {
@@ -128,6 +133,45 @@ void TestStressTestWorker::result_fieldAssignment() {
     QCOMPARE(result.avg_cpu_temp, 72.5);
     QCOMPARE(result.max_cpu_temp, 85.0);
     QVERIFY(result.abort_reason.isEmpty());
+}
+
+// P07-44: the verdict must fail closed on any per-component error, including disk_errors, which
+// are never counted into errors_detected.
+void TestStressTestWorker::computeStressPassed_cleanRun_passes() {
+    StressTestResult result;
+    result.errors_detected = 0;
+    result.disk_errors = 0;
+    result.memory_pattern_errors = 0;
+    result.gpu_errors = 0;
+    QVERIFY(StressTestWorker::computeStressPassed(result));
+}
+
+void TestStressTestWorker::computeStressPassed_diskErrors_fails() {
+    StressTestResult result;
+    result.errors_detected = 0;  // disk failures do NOT feed errors_detected
+    result.disk_errors = 5;
+    QVERIFY(!StressTestWorker::computeStressPassed(result));
+}
+
+void TestStressTestWorker::computeStressPassed_memoryErrors_fails() {
+    StressTestResult result;
+    result.errors_detected = 0;
+    result.memory_pattern_errors = 1;
+    QVERIFY(!StressTestWorker::computeStressPassed(result));
+}
+
+void TestStressTestWorker::computeStressPassed_gpuErrors_fails() {
+    StressTestResult result;
+    result.errors_detected = 0;
+    result.gpu_errors = 1;
+    QVERIFY(!StressTestWorker::computeStressPassed(result));
+}
+
+void TestStressTestWorker::computeStressPassed_abortReason_fails() {
+    StressTestResult result;
+    result.errors_detected = 0;
+    result.abort_reason = "thermal limit exceeded";
+    QVERIFY(!StressTestWorker::computeStressPassed(result));
 }
 
 QTEST_MAIN(TestStressTestWorker)

@@ -206,6 +206,12 @@ DiagnosticController::~DiagnosticController() {
 // ============================================================================
 
 void DiagnosticController::runHardwareScan() {
+    // Reassigning a running QFuture orphans it (never joined), which both races scan() on the
+    // shared scanner and leaves the orphan running past teardown -> UAF. Ignore redundant starts.
+    if (m_hw_scan_future.isRunning()) {
+        logWarning("Hardware scan already running -- ignoring request");
+        return;
+    }
     logInfo("Starting hardware inventory scan");
     // Run on a background thread to avoid blocking the UI
     m_hw_scan_future =
@@ -213,6 +219,10 @@ void DiagnosticController::runHardwareScan() {
 }
 
 void DiagnosticController::runSmartAnalysis() {
+    if (m_smart_analysis_future.isRunning()) {
+        logWarning("SMART analysis already running -- ignoring request");
+        return;
+    }
     logInfo("Starting SMART disk analysis");
     // Run on a background thread to avoid blocking the UI
     m_smart_analysis_future =
@@ -228,10 +238,14 @@ void DiagnosticController::runCpuBenchmark() {
 
 void DiagnosticController::runDiskBenchmark(const DiskBenchmarkConfig& config) {
     logInfo("Starting disk benchmark on {}", config.drive_path.toStdString());
-    m_disk_benchmark->setConfig(config);
-    if (!m_disk_benchmark->isRunning()) {
-        m_disk_benchmark->start();
+    // setConfig writes m_config (a QString) unsynchronized; the worker thread reads it during a
+    // run, so mutate it only when the worker is stopped. Ignore a duplicate start otherwise.
+    if (m_disk_benchmark->isRunning()) {
+        logWarning("Disk benchmark already running -- ignoring request");
+        return;
     }
+    m_disk_benchmark->setConfig(config);
+    m_disk_benchmark->start();
 }
 
 void DiagnosticController::runMemoryBenchmark() {
@@ -243,10 +257,13 @@ void DiagnosticController::runMemoryBenchmark() {
 
 void DiagnosticController::runStressTest(const StressTestConfig& config) {
     logInfo("Starting stress test ({} minutes)", config.duration_minutes);
-    m_stress_test->setConfig(config);
-    if (!m_stress_test->isRunning()) {
-        m_stress_test->start();
+    // Same unsynchronized-setConfig race as runDiskBenchmark: only mutate config while stopped.
+    if (m_stress_test->isRunning()) {
+        logWarning("Stress test already running -- ignoring request");
+        return;
     }
+    m_stress_test->setConfig(config);
+    m_stress_test->start();
 }
 
 // ============================================================================

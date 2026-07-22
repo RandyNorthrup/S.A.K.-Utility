@@ -102,6 +102,26 @@ void matrixSelfMultiply4x4(double mat[kMatrixElementCount]) {
     std::memcpy(mat, result, sizeof(double) * kMatrixElementCount);
 }
 
+#ifdef SAK_PLATFORM_WINDOWS
+/// @brief Atomically claim a unique disk-stress test file, failing closed if it exists.
+/// @return The claimed path, or an empty string if the exclusive create failed.
+/// @note Unique per-run name so a crashed prior run's leftover never blocks a new run, and the
+///       CREATE_NEW claim never truncates (and later deletes) a real user file.
+std::wstring claimUniqueStressFile(const QString& drive) {
+    const QString name = QString("sak_stress_test_%1_%2.tmp")
+                             .arg(GetCurrentProcessId())
+                             .arg(QDateTime::currentMSecsSinceEpoch());
+    const std::wstring wpath = QDir(drive).filePath(name).toStdWString();
+    HANDLE claim = CreateFileW(
+        wpath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (claim == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    CloseHandle(claim);
+    return wpath;
+}
+#endif
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -150,7 +170,7 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
         static_cast<int>(m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond);
     m_result.errors_detected = m_error_count.load(std::memory_order_relaxed);
     m_result.max_cpu_temp = m_max_temp.load(std::memory_order_relaxed);
-    m_result.passed = m_result.abort_reason.isEmpty() && m_result.errors_detected == 0;
+    m_result.passed = computeStressPassed(m_result);
 
     logInfo("Stress test {} -- {} seconds, {} errors",
             m_result.passed ? "PASSED" : "FAILED",
@@ -159,6 +179,14 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
 
     Q_EMIT stressTestComplete(m_result);
     return {};
+}
+
+bool StressTestWorker::computeStressPassed(const StressTestResult& result) {
+    // Disk-stress failures are recorded in disk_errors but never feed errors_detected, so a total
+    // disk-write failure previously still reported PASSED. Fail closed on any recorded error.
+    const bool component_errors = result.disk_errors > 0 || result.memory_pattern_errors > 0 ||
+                                  result.gpu_errors > 0;
+    return result.abort_reason.isEmpty() && result.errors_detected == 0 && !component_errors;
 }
 
 void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futures) {
@@ -425,8 +453,12 @@ void StressTestWorker::freeStressMemory(volatile uint64_t* data) {
 
 void StressTestWorker::runDiskStress() {
 #ifdef SAK_PLATFORM_WINDOWS
-    const QString test_path = QDir(m_config.disk_test_drive).filePath("sak_stress_test.tmp");
-    const std::wstring wpath = test_path.toStdWString();
+    const std::wstring wpath = claimUniqueStressFile(m_config.disk_test_drive);
+    if (wpath.empty()) {
+        logError("Disk stress: could not exclusively create test file -- refusing to overwrite");
+        m_result.disk_errors = 1;
+        return;
+    }
 
     constexpr size_t kBlockSize = 1024 * 1024;          // 1 MB blocks
     constexpr size_t kFileSize = 256ULL * 1024 * 1024;  // 256 MB file
@@ -435,6 +467,7 @@ void StressTestWorker::runDiskStress() {
     auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
     if (!buf) {
         logError("Disk stress: buffer allocation failed");
+        DeleteFileW(wpath.c_str());  // remove the file we just claimed
         return;
     }
 

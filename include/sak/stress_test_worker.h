@@ -60,6 +60,12 @@ public:
     /// @brief Get the result from the last completed stress test
     [[nodiscard]] const StressTestResult& result() const { return m_result; }
 
+    /// @brief Compute the pass/fail verdict for a completed stress result.
+    /// @details Fails closed on an abort reason, on aggregate errors_detected, or on ANY recorded
+    ///          per-component error (disk/memory/gpu); disk_errors in particular never feed
+    ///          errors_detected, so they must be checked here for the verdict to be authoritative.
+    [[nodiscard]] static bool computeStressPassed(const StressTestResult& result);
+
 Q_SIGNALS:
     /// @brief Emitted when the stress test completes (or is aborted)
     /// @param result Complete stress test results
