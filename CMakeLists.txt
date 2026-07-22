@@ -763,6 +763,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_provider_gateway_tool_runner.cpp
         src/ai/ai_provider_registry.cpp
         src/ai/ai_recovery_policy.cpp
+        src/ai/ai_async_tool_runner.cpp
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
         src/ai/ai_subagent_runner.cpp

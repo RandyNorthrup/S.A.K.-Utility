@@ -1501,6 +1501,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_prompt_assembler.cpp")
     message(STATUS "Added unit test: test_ai_prompt_assembler")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_async_tool_runner.cpp")
+    add_executable(test_ai_async_tool_runner
+        unit/test_ai_async_tool_runner.cpp
+        ../src/ai/ai_async_tool_runner.cpp
+        ../include/sak/ai/ai_async_tool_runner.h
+    )
+    set_target_properties(test_ai_async_tool_runner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_async_tool_runner PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Test
+    )
+    target_include_directories(test_ai_async_tool_runner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_async_tool_runner COMMAND test_ai_async_tool_runner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_async_tool_runner")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_health_ledger.cpp")
     add_executable(test_ai_tool_health_ledger
         unit/test_ai_tool_health_ledger.cpp
