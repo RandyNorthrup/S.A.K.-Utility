@@ -237,6 +237,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 Assert-CommitOk -Report (Read-Report $patchReportPath) -Label "commit-image-file-patch" -OutputImage $patchedImagePath
 
+# --- Negative: an out-of-range patch offset fails closed (P01-08) ---
+# An offset near UINT64_MAX casts to a negative qsizetype and would drive an
+# out-of-bounds heap write in applyBytePatch; it must be rejected up front.
+$overflowPatchReportPath = Join-Path $runRoot "commit-image-file-patch-overflow.json"
+& $CliPath commit-image-file-patch `
+    --target $patchedImagePath `
+    --size-bytes $sizeBytes `
+    --output-image (Join-Path $runRoot "patch-overflow.apfs") `
+    --file-name "cli-proof.bin" `
+    --payload-file $patchPayloadPath `
+    --patch-offset-bytes 18446744073709551615 `
+    --output-json $overflowPatchReportPath
+Assert-Blocked -Report (Read-Report $overflowPatchReportPath) -Label "overflow commit-image-file-patch" -ExpectSubstring "maximum supported"
+
 # --- COW root-file delete ---
 & $CliPath commit-image-file-delete `
     --target $patchedImagePath `

@@ -11892,6 +11892,18 @@ bool buildFilePatchRequest(const ApfsPatchPrep& in,
             QStringLiteral("APFS file-patch-commit: file '%1' was not found").arg(in.fileName));
         return false;
     }
+    // Bound the patch window in uint64 space before applyBytePatch casts the offset
+    // to signed qsizetype: an offset near UINT64_MAX would cast to a negative index
+    // and drive an out-of-bounds heap write. A patch may extend the file, but never
+    // past the maximum file size the writer supports.
+    const uint64_t maxFileBytes = static_cast<uint64_t>(kApfsMaximumSeedFileBytes);
+    if (in.offset > maxFileBytes ||
+        in.offset + static_cast<uint64_t>(in.patchBytes.size()) > maxFileBytes) {
+        blockers->append(QStringLiteral(
+            "APFS file-patch-commit: patch offset or size exceeds the maximum supported "
+            "file size"));
+        return false;
+    }
     *out = {.otherFiles = otherFiles,
             .fileName = in.fileName,
             .patchedData = applyBytePatch(read.data, in.offset, in.patchBytes),
