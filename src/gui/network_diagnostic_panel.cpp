@@ -4228,6 +4228,8 @@ QString protocolToString(FirewallRule::Protocol protocol) {
         return QStringLiteral("ICMPv6");
     case FirewallRule::Protocol::Any:
         return QStringLiteral("Any");
+    case FirewallRule::Protocol::Other:
+        return QStringLiteral("Other");
     }
     return QStringLiteral("Unknown");
 }

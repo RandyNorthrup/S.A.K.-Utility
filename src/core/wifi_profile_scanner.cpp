@@ -10,6 +10,10 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+
 namespace sak {
 
 namespace {
@@ -28,6 +32,43 @@ QString runNetsh(const QStringList& args, int timeout_ms, const WifiScanLogger& 
         return {};
     }
     return result.std_out;
+}
+
+/// @brief Read the single exported WLANProfile XML file from a directory (empty on any failure).
+QString readSingleXmlFromDir(const QString& dir_path) {
+    const QStringList xmls = QDir(dir_path).entryList(QStringList{"*.xml"}, QDir::Files);
+    if (xmls.isEmpty()) {
+        return {};
+    }
+    QFile file(QDir(dir_path).filePath(xmls.first()));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+/// @brief Export a WiFi profile to real re-importable WLANProfile XML via `netsh wlan export`.
+/// @note Deliberately omits `key=clear`, so the exported keyMaterial is DPAPI-protected
+///       (protected=true) rather than a plaintext PSK written to disk. Trade-off: DPAPI is
+///       machine/user-bound, so a backup restored on a DIFFERENT PC yields a profile without a
+///       usable key. Fails closed (returns empty) on any error.
+QString exportWifiProfileXml(const QString& name, int timeout_ms, const WifiScanLogger& logger) {
+    QTemporaryDir dir;
+    if (!dir.isValid()) {
+        return {};
+    }
+    const auto result =
+        sak::runProcess(QStringLiteral("netsh"),
+                        {"wlan", "export", "profile", "name=" + name, "folder=" + dir.path()},
+                        timeout_ms);
+    if (!result.succeeded()) {
+        sak::logWarning("netsh wlan export failed: {}", name.toStdString());
+        if (logger) {
+            logger(QStringLiteral("netsh export failed"));
+        }
+        return {};
+    }
+    return readSingleXmlFromDir(dir.path());
 }
 
 }  // namespace
@@ -88,11 +129,9 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
             info.security_type = parseWifiSecurityType(detail);
         }
 
-        const QString xml_output =
-            runNetsh({"wlan", "show", "profile", "name=" + name, "key=clear"},
-                     kTimeoutWifiProfileMs,
-                     logger);
-        info.xml_data = xml_output;
+        // Store real WLANProfile XML (DPAPI-protected key), NOT the `key=clear` console text --
+        // that leaked the plaintext PSK into the backup and was not re-importable anyway.
+        info.xml_data = exportWifiProfileXml(name, kTimeoutWifiProfileMs, logger);
 
         profiles.append(info);
     }

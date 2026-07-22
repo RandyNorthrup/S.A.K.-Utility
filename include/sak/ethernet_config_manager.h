@@ -100,7 +100,7 @@ private:
                                          const QString& adapterName);
 
     /// @brief Run a netsh command and return stdout
-    [[nodiscard]] QString runNetsh(const QStringList& args);
+    [[nodiscard]] QString runNetsh(const QStringList& args, bool* ok = nullptr);
 
     /// @brief Parse the output of `netsh interface ip show config` for an adapter
     [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(const QString& output,

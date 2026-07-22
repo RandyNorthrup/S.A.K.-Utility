@@ -374,7 +374,8 @@ struct FirewallRule {
         UDP,
         ICMPv4,
         ICMPv6,
-        Any
+        Any,
+        Other
     };
     Protocol protocol = Protocol::Any;
 

@@ -284,6 +284,11 @@ void BandwidthTester::startIperfServer(uint16_t port) {
                                  .arg(m_serverProcess->errorString()));
         m_serverProcess->deleteLater();
         m_serverProcess = nullptr;
+        // FailedToStart never emits finished(), so the finished-handler's cleanup never runs; tear
+        // down the inbound firewall rule here or it leaks (idempotent: delete-by-name is harmless
+        // if the add had not completed). removeFirewallRule uses its own QProcess, not
+        // m_serverProcess.
+        removeFirewallRule();
     });
 
     m_serverProcess->start();

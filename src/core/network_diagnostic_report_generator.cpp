@@ -540,8 +540,8 @@ QString NetworkDiagnosticReportGenerator::buildHtmlFooter() const {
 }
 
 void NetworkDiagnosticReportGenerator::populateRootJson(QJsonObject& root) const {
-    Q_ASSERT(!root.isEmpty());
-    Q_ASSERT(!m_sections.isEmpty());
+    // root is built up by this function, so a non-empty precondition is inverted and always fires;
+    // an empty m_sections (metadata-only report) is a legitimate, test-covered case.
     root[QStringLiteral("reportType")] = QStringLiteral("NetworkDiagnostic");
     root[QStringLiteral("generated")] = QDateTime::currentDateTime().toString(Qt::ISODate);
     root[QStringLiteral("technician")] = m_technicianName;

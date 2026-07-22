@@ -69,7 +69,13 @@ EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) 
 }
 
 bool EthernetConfigSnapshot::isValid() const {
-    return !adapterName.isEmpty() && !backupTimestamp.isEmpty();
+    if (adapterName.isEmpty() || backupTimestamp.isEmpty()) {
+        return false;
+    }
+    // Require a meaningful captured configuration so a localized/failed parse (which recognized no
+    // fields, leaving dhcpEnabled=false AND ipv4Address empty) fails closed instead of persisting
+    // or restoring an empty backup.
+    return dhcpEnabled || !ipv4Address.isEmpty();
 }
 
 // -- EthernetConfigManager ---------------------------------------------------
@@ -172,9 +178,11 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
 
 bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName) {
     Q_EMIT logOutput("Setting adapter to DHCP mode...");
+    bool ok = false;
     QString result = runNetsh(
-        {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"});
-    if (result.contains("error", Qt::CaseInsensitive)) {
+        {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"},
+        &ok);
+    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
         Q_EMIT errorOccurred(QString("Failed to set DHCP: %1").arg(result));
         return false;
     }
@@ -206,8 +214,9 @@ bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapsh
         addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
     }
 
-    QString result = runNetsh(addressArgs);
-    if (result.contains("error", Qt::CaseInsensitive)) {
+    bool ok = false;
+    QString result = runNetsh(addressArgs, &ok);
+    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
         Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
         return false;
     }
@@ -222,6 +231,7 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
 
     Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
 
+    bool ok = false;
     QString result = runNetsh({"interface",
                                "ip",
                                "set",
@@ -229,8 +239,9 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
                                QString("name=%1").arg(adapterName),
                                "source=static",
                                QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
-                               "register=primary"});
-    if (result.contains("error", Qt::CaseInsensitive)) {
+                               "register=primary"},
+                              &ok);
+    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
         Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
         return false;
     }
@@ -238,14 +249,16 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
     for (int idx = 1; idx < snapshot.ipv4DnsServers.size(); ++idx) {
         Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[idx]));
 
+        ok = false;
         result = runNetsh({"interface",
                            "ip",
                            "add",
                            "dnsservers",
                            QString("name=%1").arg(adapterName),
                            QString("addr=%1").arg(snapshot.ipv4DnsServers[idx]),
-                           QString("index=%1").arg(idx + 1)});
-        if (result.contains("error", Qt::CaseInsensitive)) {
+                           QString("index=%1").arg(idx + 1)},
+                          &ok);
+        if (!ok || result.contains("error", Qt::CaseInsensitive)) {
             Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
                                      .arg(snapshot.ipv4DnsServers[idx], result));
             return false;
@@ -326,10 +339,15 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 
 // -- Private -----------------------------------------------------------------
 
-QString EthernetConfigManager::runNetsh(const QStringList& args) {
+QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
     Q_ASSERT(!args.isEmpty());
 
     const auto result = sak::runProcess(QStringLiteral("netsh.exe"), args, 10'000);
+    // Propagate the authoritative exit status: netsh reports failures (elevation, bad adapter) on
+    // stdout with a zero-length stderr, so callers cannot rely on the "error" substring alone.
+    if (ok != nullptr) {
+        *ok = result.succeeded();
+    }
     if (result.timed_out) {
         Q_EMIT errorOccurred(QString("netsh command timed out: netsh %1").arg(args.join(' ')));
         return {};

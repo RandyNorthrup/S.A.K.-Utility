@@ -483,14 +483,18 @@ QString WiFiAnalyzer::lookupVendor(const QString& bssid) {
 
 QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
     const QVector<WiFiNetworkInfo>& networks) {
-    QHash<int, WiFiChannelUtilization> channelMap;
+    // Key by band+channel: 2.4/5/6 GHz reuse channel numbers (e.g. 6 GHz ch 1 vs 2.4 GHz ch 1),
+    // so a channel-only key merges different bands into one bogus entry. frequencyToBand only
+    // returns "2.4 GHz"/"5 GHz"/"6 GHz"/"Unknown", none containing '|', so the delimiter is safe.
+    QHash<QString, WiFiChannelUtilization> channelMap;
 
     for (const auto& net : networks) {
         if (net.channelNumber <= 0) {
             continue;
         }
 
-        auto& util = channelMap[net.channelNumber];
+        const QString key = net.band + QLatin1Char('|') + QString::number(net.channelNumber);
+        auto& util = channelMap[key];
         util.channelNumber = net.channelNumber;
         util.band = net.band;
         util.networkCount++;
@@ -515,11 +519,14 @@ QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
         result.append(util);
     }
 
-    // Sort by channel number
+    // Sort by channel number, then band so entries sharing a channel across bands are deterministic
     std::sort(result.begin(),
               result.end(),
               [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
-                  return a.channelNumber < b.channelNumber;
+                  if (a.channelNumber != b.channelNumber) {
+                      return a.channelNumber < b.channelNumber;
+                  }
+                  return a.band < b.band;
               });
 
     return result;

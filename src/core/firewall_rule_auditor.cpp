@@ -32,6 +32,7 @@ constexpr int kMaxPortValue = 65'535;
 constexpr long kProtocolTcp = 6;
 constexpr long kProtocolUdp = 17;
 constexpr long kProtocolIcmpV6 = 58;
+constexpr long kProtocolAny = 256;  // Windows firewall "Any" protocol sentinel
 constexpr int kPortRangePartCount = 2;
 constexpr int kHResultHexWidth = 8;
 constexpr uint16_t kRdpPort = 3389;
@@ -127,8 +128,12 @@ FirewallRule::Protocol protocolFromNumber(long proto) {
         return FirewallRule::Protocol::ICMPv4;
     case kProtocolIcmpV6:
         return FirewallRule::Protocol::ICMPv6;
-    default:
+    case kProtocolAny:
         return FirewallRule::Protocol::Any;
+    default:
+        // A specific but unmodeled protocol (e.g. GRE=47) is NOT "Any"; mapping it to Any made a
+        // GRE rule falsely overlap every TCP/UDP rule, producing phantom conflicts.
+        return FirewallRule::Protocol::Other;
     }
 }
 
@@ -435,6 +440,15 @@ bool protocolsOverlap(FirewallRule::Protocol proto_a, FirewallRule::Protocol pro
     return proto_a == FirewallRule::Protocol::Any || proto_b == FirewallRule::Protocol::Any;
 }
 
+bool profilesOverlap(int profiles_a, int profiles_b) {
+    // 0 means the profile mask was not read; treat as "overlaps everything" (conservative -- never
+    // hide a real conflict). Two disjoint masks (e.g. Domain=1 vs Public=4) never apply together.
+    if (profiles_a == 0 || profiles_b == 0) {
+        return true;
+    }
+    return (profiles_a & profiles_b) != 0;
+}
+
 bool applicationPathsMatch(const QString& path_a, const QString& path_b) {
     if (path_a.isEmpty() || path_b.isEmpty()) {
         return true;
@@ -447,6 +461,9 @@ bool rulesOverlap(const FirewallRule& a, const FirewallRule& b) {
         return false;
     }
     if (a.direction != b.direction || a.action == b.action) {
+        return false;
+    }
+    if (!profilesOverlap(a.profiles, b.profiles)) {
         return false;
     }
     if (!protocolsOverlap(a.protocol, b.protocol)) {
