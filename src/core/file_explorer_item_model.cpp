@@ -127,6 +127,7 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
          [](const FileManagementEntry& e) -> QVariant { return e.regular_file; }},
         {Model::EntrySymlinkRole,
          [](const FileManagementEntry& e) -> QVariant { return e.symlink; }},
+        {Model::EntryHiddenRole, [](const FileManagementEntry& e) -> QVariant { return e.hidden; }},
         {Model::EntryLinkTargetRole,
          [](const FileManagementEntry& e) -> QVariant { return e.link_target; }},
         {Model::EntryAttributeSummaryRole,

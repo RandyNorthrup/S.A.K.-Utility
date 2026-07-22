@@ -53,6 +53,7 @@ public:
         EntryModifiedTimeRole,
         EntryCreatedTimeRole,
         EntryTagsRole,
+        EntryHiddenRole,
     };
 
     /// Callback that returns the app-level tags for an entry path. Injected by the

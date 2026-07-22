@@ -291,6 +291,7 @@ FileManagementEntry fromLocalInfo(const QFileInfo& info, const QString& basePath
     entry.directory = info.isDir();
     entry.regular_file = info.isFile();
     entry.symlink = info.isSymLink();
+    entry.hidden = info.isHidden();
     entry.link_target = info.symLinkTarget();
     if (entry.name.isEmpty()) {
         entry.name = basePath;

@@ -83,6 +83,10 @@ struct FileManagementEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // Hidden by the host file system: the Windows FILE_ATTRIBUTE_HIDDEN bit (a
+    // hidden file need not be a dotfile), so the explorer's hidden-items toggle
+    // can gate it in addition to the leading-dot convention.
+    bool hidden{false};
     // File-system-specific storage detail, surfaced in the Properties pane where the
     // reader provides it. resource_fork_bytes: HFS+ resource fork size (0 = none).
     // compressed/sparse: APFS transparent compression / sparse (holes) flags.

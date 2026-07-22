@@ -239,6 +239,29 @@ private Q_SLOTS:
         QCOMPARE(proxy.rowCount(), 0);
     }
 
+    // P04-27: a file the host marks hidden (Windows FILE_ATTRIBUTE_HIDDEN) is
+    // NOT a dotfile, so the leading-dot gate alone let it leak into the listing.
+    void proxyHidesHostAttributeHiddenEntries() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        sak::FileManagementEntry visible = fileEntry(QStringLiteral("visible.txt"), 10);
+        sak::FileManagementEntry hidden = fileEntry(QStringLiteral("secret.txt"), 20);
+        hidden.hidden = true;  // hidden attribute, ordinary (non-dot) name
+        model.setEntries({visible, hidden});
+
+        sak::FileExplorerSortFilterModel proxy;
+        proxy.setSourceModel(&model);
+
+        // With hidden items off the attribute-hidden file is filtered out.
+        QCOMPARE(proxy.rowCount(), 1);
+        QCOMPARE(proxy.index(0, Model::NameColumn).data().toString(),
+                 QStringLiteral("visible.txt"));
+
+        // Turning hidden items on reveals it.
+        proxy.setShowHiddenItems(true);
+        QCOMPARE(proxy.rowCount(), 2);
+    }
+
     void proxyTagFilterRestrictsToTaggedPaths() {
         sak::FileExplorerItemModel model;
         model.setEntries({fileEntry(QStringLiteral("a.txt"), 1),

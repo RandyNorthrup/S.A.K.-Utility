@@ -154,8 +154,15 @@ bool FileExplorerSortFilterModel::filterAcceptsRow(const int source_row,
     const QModelIndex name_index =
         sourceModel()->index(source_row, FileExplorerItemModel::NameColumn, source_parent);
     const QString entry_name = name_index.data(FileExplorerItemModel::EntryNameRole).toString();
-    if (!m_show_hidden_items && entry_name.startsWith(QLatin1Char('.'))) {
-        return false;
+    if (!m_show_hidden_items) {
+        // Hidden = the leading-dot convention OR the host file system's hidden
+        // attribute (Windows FILE_ATTRIBUTE_HIDDEN files are not dotfiles and
+        // otherwise leaked into the listing with hidden items turned off).
+        const bool attribute_hidden =
+            name_index.data(FileExplorerItemModel::EntryHiddenRole).toBool();
+        if (entry_name.startsWith(QLatin1Char('.')) || attribute_hidden) {
+            return false;
+        }
     }
 
     if (m_tag_filter_active &&
