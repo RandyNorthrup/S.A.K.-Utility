@@ -66,6 +66,15 @@ public:
     BackupManifest getBackupManifest() const { return m_manifest; }
 
     /**
+     * @brief Stable accessor for the scanned/selected users.
+     *
+     * Returns the wizard-owned vector (populated by the Select Users page) so
+     * the execute page copies real data instead of an unset "scannedUsers"
+     * property, which always yielded an empty, dangling list.
+     */
+    const QVector<UserProfile>& scannedUsers() const { return m_scannedUsers; }
+
+    /**
      * @brief Get the smart filter configuration
      */
     SmartFilter getSmartFilter() const { return m_smartFilter; }
@@ -230,6 +239,8 @@ private:
     void populateTree(const QVector<AppDataSourceInfo>& sources);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();
+    /// @brief Collect checked app-data sources and commit them to the wizard
+    void commitAppDataSelection();
 
     QVector<UserProfile>& m_users;
     QTreeWidget* m_appDataTree{nullptr};
@@ -303,6 +314,9 @@ private:
     void setupUi();
     void populateTree(const QVector<WifiProfileInfo>& profiles);
     void updateNextButtonText();
+    /// @brief Collect checked rows (copying the scanned profile intact, so the
+    /// XML payload is preserved) and commit them to the wizard + summary.
+    void commitWifiSelection();
 
     QTreeWidget* m_networkTree{nullptr};
     QPushButton* m_scanButton{nullptr};
@@ -311,6 +325,7 @@ private:
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
+    QVector<WifiProfileInfo> m_scannedProfiles;  // Full payloads (incl. XML), by row
     bool m_scanned{false};
 };
 
@@ -331,11 +346,16 @@ private Q_SLOTS:
     void onScanEthernet();
     void onSelectAll();
     void onSelectNone();
+    void onEthernetItemChanged(QTableWidgetItem* item);
 
 private:
     void setupUi();
+    void setupSelectionButtons(QVBoxLayout* layout);
     void populateTable(const QVector<EthernetConfigInfo>& configs);
     void updateNextButtonText();
+    /// @brief Collect checked rows (copying the scanned config intact, so DNS and
+    /// other fields are preserved) and commit them to the wizard + summary.
+    void commitEthernetSelection();
 
     QTableWidget* m_ethernetTable{nullptr};
     QPushButton* m_scanButton{nullptr};
@@ -344,6 +364,7 @@ private:
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
+    QVector<EthernetConfigInfo> m_scannedConfigs;  // Full configs (incl. DNS), by row
     bool m_scanned{false};
 };
 
@@ -439,7 +460,7 @@ private:
                                      const QString& password);
 
     BackupManifest& m_manifest;
-    const QVector<UserProfile>& m_users;
+    QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page
     const QString& m_destinationPath;
     UserProfileBackupWorker* m_worker{nullptr};
 
@@ -485,6 +506,8 @@ private:
     void populateTree(const QVector<InstalledAppInfo>& apps);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();
+    /// @brief Collect checked apps and commit them to the wizard + summary
+    void commitAppSelection();
 
     /// @brief Categorize an application by name/publisher into a UI group
     static QString categorizeApp(const QString& name, const QString& publisher);

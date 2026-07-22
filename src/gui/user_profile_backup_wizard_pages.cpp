@@ -756,10 +756,11 @@ bool UserProfileBackupSettingsPage::validateEncryptionSettings() {
 void UserProfileBackupSettingsPage::installExecutePage() {
     auto* wizard = qobject_cast<UserProfileBackupWizard*>(this->wizard());
     if (wizard) {
-        const auto& users = wizard->property("scannedUsers").value<QVector<UserProfile>>();
-        wizard->setPage(
-            UserProfileBackupWizard::Page_Execute,
-            new UserProfileBackupExecutePage(m_manifest, users, m_destinationPath, wizard));
+        // Use the wizard's real scanned-users list; the old "scannedUsers"
+        // property was never set, so the execute page always backed up nothing.
+        wizard->setPage(UserProfileBackupWizard::Page_Execute,
+                        new UserProfileBackupExecutePage(
+                            m_manifest, wizard->scannedUsers(), m_destinationPath, wizard));
     }
 }
 
@@ -1144,7 +1145,6 @@ void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledApp
         categories[app.category].append(&app);
     }
 
-    int totalSelected = 0;
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
         auto* categoryItem = new QTreeWidgetItem(m_appTree);
         categoryItem->setText(kInstalledAppColumnName, it.key());
@@ -1158,18 +1158,15 @@ void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledApp
             appItem->setText(kInstalledAppColumnPublisher, app->publisher);
             appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
             appItem->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
-
-            if (app->selected) {
-                totalSelected++;
-            }
         }
 
         categoryItem->setExpanded(true);
     }
 
     m_appTree->blockSignals(false);
-    m_summaryLabel->setText(
-        tr("%1 application(s) selected out of %2").arg(totalSelected).arg(apps.size()));
+    // Commit the default (all-checked) selection so it is not lost if the user
+    // proceeds without toggling anything.
+    commitAppSelection();
 }
 
 void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, int column) {
@@ -1193,7 +1190,13 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
 
     m_appTree->blockSignals(false);
 
-    // Update summary and save to wizard
+    commitAppSelection();
+    updateNextButtonText();
+}
+
+void UserProfileBackupInstalledAppsPage::commitAppSelection() {
+    Q_ASSERT(m_appTree);
+    Q_ASSERT(m_summaryLabel);
     int total = 0;
     int selected = 0;
     QVector<InstalledAppInfo> selectedApps;
@@ -1204,13 +1207,9 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
     }
 
     m_summaryLabel->setText(tr("%1 application(s) selected out of %2").arg(selected).arg(total));
-
-    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (wiz) {
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setInstalledApps(selectedApps);
     }
-
-    updateNextButtonText();
 }
 
 void UserProfileBackupInstalledAppsPage::updateParentCheckState(QTreeWidgetItem* parent) {
@@ -1596,9 +1595,6 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
         categories[source.category].append(&source);
     }
 
-    int totalSelected = 0;
-    int total = 0;
-
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
         auto* categoryItem = new QTreeWidgetItem(m_appDataTree);
         categoryItem->setText(kAppDataColumnName, it.key());
@@ -1617,10 +1613,8 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
             if (source->selected) {
                 catSelected++;
             }
-            total++;
         }
 
-        totalSelected += catSelected;
         categoryItem->setCheckState(0,
                                     catSelected == it.value().size() ? Qt::Checked
                                     : catSelected > 0                ? Qt::PartiallyChecked
@@ -1629,8 +1623,41 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
     }
 
     m_appDataTree->blockSignals(false);
+    // Commit the default (all-checked) selection so it is not lost if the user
+    // proceeds without toggling anything.
+    commitAppDataSelection();
+}
+
+void UserProfileBackupAppDataPage::commitAppDataSelection() {
+    Q_ASSERT(m_appDataTree);
+    Q_ASSERT(m_summaryLabel);
+    int total = 0;
+    int selected = 0;
+    QVector<AppDataSourceInfo> selectedSources;
+
+    for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
+        auto* category = m_appDataTree->topLevelItem(i);
+        for (int j = 0; j < category->childCount(); ++j) {
+            auto* appItem = category->child(j);
+            total++;
+            if (appItem->checkState(0) != Qt::Checked) {
+                continue;
+            }
+            selected++;
+            AppDataSourceInfo info;
+            info.name = appItem->text(0);
+            info.category = category->text(0);
+            info.relative_path = appItem->text(1);
+            info.selected = true;
+            selectedSources.append(info);
+        }
+    }
+
     m_summaryLabel->setText(
-        tr("%1 of %2 application data source(s) selected").arg(totalSelected).arg(total));
+        tr("%1 of %2 application data source(s) selected").arg(selected).arg(total));
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
+        wiz->setAppDataSources(selectedSources);
+    }
 }
 
 void UserProfileBackupAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
@@ -1696,35 +1723,7 @@ void UserProfileBackupAppDataPage::onItemChanged(QTreeWidgetItem* item, int colu
 
     m_appDataTree->blockSignals(false);
 
-    // Update summary and save to wizard
-    int total = 0;
-    int selected = 0;
-    QVector<AppDataSourceInfo> selectedSources;
-
-    for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
-        auto* category = m_appDataTree->topLevelItem(i);
-        for (int j = 0; j < category->childCount(); ++j) {
-            auto* appItem = category->child(j);
-            total++;
-            if (appItem->checkState(0) == Qt::Checked) {
-                selected++;
-                AppDataSourceInfo info;
-                info.name = appItem->text(0);
-                info.category = category->text(0);
-                info.relative_path = appItem->text(1);
-                info.selected = true;
-                selectedSources.append(info);
-            }
-        }
-    }
-
-    m_summaryLabel->setText(
-        tr("%1 of %2 application data source(s) selected").arg(selected).arg(total));
-
-    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (wiz) {
-        wiz->setAppDataSources(selectedSources);
-    }
+    commitAppDataSelection();
 
     updateNextButtonText();
 }
@@ -1884,23 +1883,50 @@ void UserProfileBackupKnownNetworksPage::populateTree(const QVector<WifiProfileI
     m_networkTree->blockSignals(true);
     m_networkTree->clear();
 
-    for (const auto& profile : profiles) {
+    // Keep the full scanned profiles (incl. XML payload) so the committed
+    // selection copies them intact rather than reconstructing from columns.
+    m_scannedProfiles = profiles;
+    for (int i = 0; i < profiles.size(); ++i) {
+        const auto& profile = profiles[i];
         auto* item = new QTreeWidgetItem(m_networkTree);
         item->setText(0, profile.profile_name);
         item->setText(1, profile.security_type.isEmpty() ? tr("Unknown") : profile.security_type);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(0, profile.selected ? Qt::Checked : Qt::Unchecked);
+        item->setData(0, Qt::UserRole, i);  // Index into m_scannedProfiles
     }
 
     m_networkTree->blockSignals(false);
-    int selectedCount = 0;
-    for (int i = 0; i < m_networkTree->topLevelItemCount(); ++i) {
-        if (m_networkTree->topLevelItem(i)->checkState(0) == Qt::Checked) {
-            selectedCount++;
+    // Commit the default (all-checked) selection so it is not lost if the user
+    // proceeds without toggling anything.
+    commitWifiSelection();
+}
+
+void UserProfileBackupKnownNetworksPage::commitWifiSelection() {
+    Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_networkTree);
+    int selected = 0;
+    const int total = m_networkTree->topLevelItemCount();
+    QVector<WifiProfileInfo> selectedProfiles;
+
+    for (int i = 0; i < total; ++i) {
+        auto* treeItem = m_networkTree->topLevelItem(i);
+        if (treeItem->checkState(0) != Qt::Checked) {
+            continue;
         }
+        selected++;
+        const int idx = treeItem->data(0, Qt::UserRole).toInt();
+        WifiProfileInfo info = (idx >= 0 && idx < m_scannedProfiles.size()) ? m_scannedProfiles[idx]
+                                                                            : WifiProfileInfo{};
+        info.profile_name = treeItem->text(0);  // fall back to display text if unmapped
+        info.selected = true;
+        selectedProfiles.append(info);
     }
-    m_summaryLabel->setText(
-        tr("%1 of %2 WiFi profile(s) selected").arg(selectedCount).arg(profiles.size()));
+
+    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected").arg(selected).arg(total));
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
+        wiz->setWifiProfiles(selectedProfiles);
+    }
 }
 
 void UserProfileBackupKnownNetworksPage::updateNextButtonText() {
@@ -1927,31 +1953,8 @@ void UserProfileBackupKnownNetworksPage::onItemChanged(QTreeWidgetItem* item, in
     if (column != 0) {
         return;
     }
-
-    int selected = 0;
-    int total = m_networkTree->topLevelItemCount();
-    QVector<WifiProfileInfo> selectedProfiles;
-
-    for (int i = 0; i < total; ++i) {
-        auto* treeItem = m_networkTree->topLevelItem(i);
-        if (treeItem->checkState(0) == Qt::Checked) {
-            selected++;
-            WifiProfileInfo info;
-            info.profile_name = treeItem->text(0);
-            info.security_type = treeItem->text(1);
-            info.selected = true;
-            selectedProfiles.append(info);
-        }
-    }
-
     Q_UNUSED(item)
-    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected").arg(selected).arg(total));
-
-    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (wiz) {
-        wiz->setWifiProfiles(selectedProfiles);
-    }
-
+    commitWifiSelection();
     updateNextButtonText();
 }
 
@@ -2029,8 +2032,21 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     m_ethernetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_ethernetTable->verticalHeader()->setVisible(false);
     m_ethernetTable->setEnabled(false);
+    connect(m_ethernetTable,
+            &QTableWidget::itemChanged,
+            this,
+            &UserProfileBackupEthernetSettingsPage::onEthernetItemChanged);
     layout->addWidget(m_ethernetTable);
 
+    setupSelectionButtons(layout);
+
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setText(tr("No ethernet adapters scanned yet"));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileBackupEthernetSettingsPage::setupSelectionButtons(QVBoxLayout* layout) {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
@@ -2051,11 +2067,6 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
-
-    m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No ethernet adapters scanned yet"));
-    layout->addWidget(m_summaryLabel);
 }
 
 void UserProfileBackupEthernetSettingsPage::initializePage() {
@@ -2130,6 +2141,10 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
 
 void UserProfileBackupEthernetSettingsPage::populateTable(
     const QVector<EthernetConfigInfo>& configs) {
+    // Keep the full scanned configs (incl. DNS) so the committed selection copies
+    // them intact rather than reconstructing from the displayed columns.
+    m_scannedConfigs = configs;
+    m_ethernetTable->blockSignals(true);
     m_ethernetTable->setRowCount(0);
 
     for (const auto& config : configs) {
@@ -2138,6 +2153,7 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
 
         auto* checkItem = new QTableWidgetItem();
         checkItem->setCheckState(Qt::Checked);
+        checkItem->setData(Qt::UserRole, row);  // Index into m_scannedConfigs
         m_ethernetTable->setItem(row, kEthernetColumnSelect, checkItem);
 
         auto* nameItem = new QTableWidgetItem(config.adapter_name);
@@ -2169,8 +2185,41 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
         m_ethernetTable->setItem(row, kEthernetColumnDns, dnsItem);
     }
 
-    int total = m_ethernetTable->rowCount();
-    m_summaryLabel->setText(tr("%1 ethernet adapter(s) selected").arg(total));
+    m_ethernetTable->blockSignals(false);
+    // Commit the default (all-checked) selection so it survives a Next without
+    // any manual toggling.
+    commitEthernetSelection();
+}
+
+void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
+    Q_ASSERT(m_ethernetTable);
+    Q_ASSERT(m_summaryLabel);
+    QVector<EthernetConfigInfo> configs;
+    for (int row = 0; row < m_ethernetTable->rowCount(); ++row) {
+        auto* checkItem = m_ethernetTable->item(row, kEthernetColumnSelect);
+        if (!checkItem || checkItem->checkState() != Qt::Checked) {
+            continue;
+        }
+        const int idx = checkItem->data(Qt::UserRole).toInt();
+        EthernetConfigInfo info = (idx >= 0 && idx < m_scannedConfigs.size())
+                                      ? m_scannedConfigs[idx]
+                                      : EthernetConfigInfo{};
+        info.selected = true;
+        configs.append(info);
+    }
+
+    m_summaryLabel->setText(tr("%1 ethernet adapter(s) selected").arg(configs.size()));
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
+        wiz->setEthernetConfigs(configs);
+    }
+}
+
+void UserProfileBackupEthernetSettingsPage::onEthernetItemChanged(QTableWidgetItem* item) {
+    if (item && item->column() != kEthernetColumnSelect) {
+        return;
+    }
+    commitEthernetSelection();
+    updateNextButtonText();
 }
 
 void UserProfileBackupEthernetSettingsPage::updateNextButtonText() {
@@ -2193,45 +2242,24 @@ void UserProfileBackupEthernetSettingsPage::updateNextButtonText() {
 
 void UserProfileBackupEthernetSettingsPage::onSelectAll() {
     Q_ASSERT(m_ethernetTable);
-    Q_ASSERT(m_summaryLabel);
+    m_ethernetTable->blockSignals(true);
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
         m_ethernetTable->item(i, kEthernetColumnSelect)->setCheckState(Qt::Checked);
     }
-
-    int total = m_ethernetTable->rowCount();
-    QVector<EthernetConfigInfo> configs;
-    for (int i = 0; i < total; ++i) {
-        EthernetConfigInfo info;
-        info.adapter_name = m_ethernetTable->item(i, kEthernetColumnAdapter)->text();
-        info.dhcp_enabled = m_ethernetTable->item(i, kEthernetColumnDhcp)->text() == tr("Yes");
-        info.ip_address = m_ethernetTable->item(i, kEthernetColumnIp)->text();
-        info.subnet_mask = m_ethernetTable->item(i, kEthernetColumnSubnet)->text();
-        info.default_gateway = m_ethernetTable->item(i, kEthernetColumnGateway)->text();
-        info.selected = true;
-        configs.append(info);
-    }
-    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (wiz) {
-        wiz->setEthernetConfigs(configs);
-    }
-
-    m_summaryLabel->setText(tr("%1 ethernet adapter(s) selected").arg(total));
+    m_ethernetTable->blockSignals(false);
+    // Copy the scanned configs intact (preserving DNS and other fields).
+    commitEthernetSelection();
     updateNextButtonText();
 }
 
 void UserProfileBackupEthernetSettingsPage::onSelectNone() {
     Q_ASSERT(m_ethernetTable);
-    Q_ASSERT(m_summaryLabel);
+    m_ethernetTable->blockSignals(true);
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
         m_ethernetTable->item(i, kEthernetColumnSelect)->setCheckState(Qt::Unchecked);
     }
-
-    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (wiz) {
-        wiz->setEthernetConfigs({});
-    }
-
-    m_summaryLabel->setText(tr("0 ethernet adapter(s) selected"));
+    m_ethernetTable->blockSignals(false);
+    commitEthernetSelection();
     updateNextButtonText();
 }
 
