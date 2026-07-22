@@ -13252,6 +13252,25 @@ bool writeGrownMultiCibAllocator(ApfsFsCommitContext* ctx,
 // Set bits are the used blocks: fold the source chunk-0 bitmap (its allocations carry
 // through), clear any main-fq run reclaimed this commit, and mark the whole relocated pool
 // used. Returns the resulting used-block count (popcount) for the cib free-count.
+// A chunk-0 bitmap (one block = kApfsSpacemanBlocksPerChunk blocks) can only address blocks
+// 0..chunk-1 through its absolute paddr; a reclaimed paddr in a FAR chunk (>= one chunk) folded
+// in as `paddr/8` writes past the block and marks the wrong bitmap. Far-chunk reclaim is not
+// laid out by the grow/shrink allocator builders, so fail closed pre-publish instead (the prior
+// checkpoint stays live) -- mirroring partitionForeignReclaim's fail-closed unsupported cases.
+bool reclaimWithinChunk0(const QVector<uint64_t>& reclaimed, QStringList* blockers) {
+    for (uint64_t block : reclaimed) {
+        if (block >= kApfsSpacemanBlocksPerChunk) {
+            blockers->append(QStringLiteral(
+                "APFS grow allocator: a reclaimed block outside chunk 0 is not supported; commit "
+                "aborted"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Callers MUST reclaimWithinChunk0(reclaimed) first: this folds every reclaimed paddr into the
+// chunk-0 bitmap as paddr/8, which is out of bounds for a far-chunk (>= one chunk) paddr.
 uint64_t buildGrownChunk0Bitmap(const QByteArray& source,
                                 uint64_t poolBase,
                                 uint64_t poolBlocks,
@@ -13292,6 +13311,9 @@ bool buildGrownAllocatorSubtree(ApfsFsCommitContext* ctx,
     const uint64_t reservedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : plan.newIpBase;
     const uint64_t reservedBlocks = plan.newIpBmBase != 0 ? plan.ipBmBlocks + plan.newIpBlockCount
                                                           : plan.newIpBlockCount;
+    if (!reclaimWithinChunk0(reclaimed, blockers)) {
+        return false;
+    }
     QByteArray bitmap;
     const uint64_t used =
         buildGrownChunk0Bitmap(source, reservedBase, reservedBlocks, reclaimed, &bitmap);
@@ -13478,6 +13500,12 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
     if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
         return false;
     }
+    // A far-chunk (>= one chunk) reclaimed paddr folded into chunk 0 as b/8 writes past the
+    // 4 KiB chunk-0 bitmap and clears the wrong bitmap; fail closed (far-chunk reclaim is not
+    // laid out on this grow path) before touching the buffer.
+    if (!reclaimWithinChunk0(reclaimed, blockers)) {
+        return false;
+    }
     for (uint64_t b : reclaimed) {
         chunk0[static_cast<qsizetype>(b / 8)] &= static_cast<char>(~(1 << (b % 8)));
     }
@@ -13561,6 +13589,9 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     const uint64_t reservedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : plan.newIpBase;
     const uint64_t reservedBlocks = plan.newIpBmBase != 0 ? plan.ipBmBlocks + plan.newIpBlockCount
                                                           : plan.newIpBlockCount;
+    if (!reclaimWithinChunk0(reclaimed, blockers)) {
+        return false;
+    }
     QByteArray chunk0Bitmap;
     const uint64_t chunk0Used =
         buildGrownChunk0Bitmap(source, reservedBase, reservedBlocks, reclaimed, &chunk0Bitmap);
@@ -14285,6 +14316,9 @@ bool buildDataShrinkAllocator(ApfsFsCommitContext* ctx,
     const uint64_t reservedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : plan.newIpBase;
     const uint64_t reservedBlocks = plan.newIpBmBase != 0 ? plan.ipBmBlocks + plan.newIpBlockCount
                                                           : plan.newIpBlockCount;
+    if (!reclaimWithinChunk0(reclaimed, blockers)) {
+        return false;
+    }
     QByteArray chunk0Bitmap;
     const uint64_t chunk0Used =
         buildGrownChunk0Bitmap(source, reservedBase, reservedBlocks, reclaimed, &chunk0Bitmap);
