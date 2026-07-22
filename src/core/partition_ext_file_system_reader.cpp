@@ -100,7 +100,9 @@ constexpr qsizetype kExtentPhysicalLowOffset = 8;
 constexpr qsizetype kExtentIndexLeafLowOffset = 4;
 constexpr qsizetype kExtentIndexLeafHighOffset = 8;
 constexpr int kExtentTreeMaxDepth = 5;
-constexpr uint16_t kExtentUninitializedMask = 0x8000;
+// ext4 ee_len: values > 32768 mark an uninitialized extent whose real block
+// count is (ee_len - 32768); ee_len <= 32768 is initialized with length ee_len.
+constexpr uint16_t kExtentMaxInitializedLength = 0x8000;
 constexpr uint64_t kZeroPhysicalBlock = 0;
 constexpr int kExportNameFallbackBase = 10;
 constexpr qsizetype kExportNameMaxCharacters = 180;
@@ -858,14 +860,21 @@ private:
                           qsizetype offset,
                           QVector<ExtentRecord>* extents) const {
         const uint16_t rawLength = le16(node, offset + kExtentLengthOffset);
+        // Only ee_len STRICTLY greater than 32768 is uninitialized. ee_len == 32768
+        // is a fully-written 32768-block run; the old `& ~0x8000` decoded it as
+        // length 0 + uninitialized, so 128 MiB read back as zeros (data loss).
+        const bool uninitialized = rawLength > kExtentMaxInitializedLength;
+        const uint32_t length = uninitialized
+                                    ? static_cast<uint32_t>(rawLength - kExtentMaxInitializedLength)
+                                    : rawLength;
         const uint64_t physical = joinLowHigh32(le32(node, offset + kExtentPhysicalLowOffset),
                                                 le16(node, offset + kExtentPhysicalHighOffset),
                                                 true);
         extents->append(
             ExtentRecord{.logical_start = le32(node, offset + kExtentLogicalBlockOffset),
-                         .length = static_cast<uint32_t>(rawLength & ~kExtentUninitializedMask),
+                         .length = length,
                          .physical_start = physical,
-                         .initialized = (rawLength & kExtentUninitializedMask) == 0});
+                         .initialized = !uninitialized});
     }
 
     bool collectExtentsFromIndex(const QByteArray& node,
@@ -995,7 +1004,7 @@ void appendExtExportRequestBlockers(const QString& imagePath,
 
 class ExtDirectoryExporter {
 public:
-    ExtDirectoryExporter(QIODevice* image, PartitionExtDirectoryExportOptions options)
+    ExtDirectoryExporter(QIODevice* image, const PartitionExtDirectoryExportOptions& options)
         : image_(image), options_(options) {}
 
     PartitionExtDirectoryExportResult run(const QString& sourcePath,
