@@ -33,14 +33,14 @@ enum class ImageFormat {
  * @brief Metadata about an image file
  */
 struct ImageMetadata {
-    QString name;             // Filename
-    QString path;             // Full path
-    ImageFormat format;       // Detected format
-    qint64 size;              // File size in bytes
-    qint64 uncompressedSize;  // Size after decompression (0 if not compressed)
-    bool isCompressed;        // True if compressed format
-    QString checksum;         // SHA-512 hash (if calculated)
-    QString compressionType;  // "gzip", "bzip2", "xz", etc.
+    QString name;                               // Filename
+    QString path;                               // Full path
+    ImageFormat format = ImageFormat::Unknown;  // Detected format
+    qint64 size = 0;                            // File size in bytes
+    qint64 uncompressedSize = 0;                // Size after decompression (0 if not compressed)
+    bool isCompressed = false;                  // True if compressed format
+    QString checksum;                           // SHA-512 hash (if calculated)
+    QString compressionType;                    // "gzip", "bzip2", "xz", etc.
 
     bool isValid() const { return !path.isEmpty() && size > 0 && format != ImageFormat::Unknown; }
 };

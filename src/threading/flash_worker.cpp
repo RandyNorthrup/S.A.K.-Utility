@@ -33,6 +33,18 @@ constexpr qint64 kPaddingCapacityGrowthLimit = 2;
 constexpr qint64 kSampleSizeFractionDivisor = 10;
 constexpr qint64 kProgressThrottleMs = sak::kTimerPollingFastMs;
 constexpr qint64 kSpeedUpdateIntervalMs = sak::kMillisecondsPerSecond;
+
+// Fail closed: if fewer than the intended sample blocks were read back and compared (all reads
+// failed, a partial-read failure, or mid-loop cancellation), the flash cannot be called verified.
+void markIncompleteVerification(sak::ValidationResult& result, int verified, int expected) {
+    if (verified < expected) {
+        result.passed = false;
+        result.errors.append(
+            QString("Sample verification incomplete: only %1 of %2 blocks were read back")
+                .arg(verified)
+                .arg(expected));
+    }
+}
 }  // namespace
 
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
@@ -112,7 +124,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    Q_EMIT writeCompleted(m_bytesWritten);
+    Q_EMIT writeCompleted(m_bytesWritten.load(std::memory_order_relaxed));
 
     // Verify if enabled
     if (m_verificationEnabled && !stopRequested()) {
@@ -296,28 +308,14 @@ bool FlashWorker::writeImage() {
             return false;
         }
 
-        // Guard against qint64 -> DWORD truncation
-        if (bytesRead > static_cast<qint64>(MAXDWORD)) {
-            sak::logError("Write size exceeds DWORD range");
+        if (!writeChunk(buffer, bytesRead)) {
             return false;
         }
-
-        DWORD bytesWrittenThisTime = 0;
-        if (!WriteFile(m_deviceHandle,
-                       buffer.data(),
-                       static_cast<DWORD>(bytesRead),
-                       &bytesWrittenThisTime,
-                       nullptr)) {
-            DWORD last_error = GetLastError();
-            sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
-            return false;
-        }
-
-        m_bytesWritten += bytesWrittenThisTime;
 
         // Update progress
-        updateProgress(m_bytesWritten);
-        updateSpeed(m_bytesWritten);
+        const qint64 written_total = m_bytesWritten.load(std::memory_order_relaxed);
+        updateProgress(written_total);
+        updateSpeed(written_total);
     }
 
     // Flush buffers and check for failure to prevent silent data loss.
@@ -328,8 +326,42 @@ bool FlashWorker::writeImage() {
         return false;
     }
 
-    sak::logInfo(QString("Wrote %1 bytes").arg(m_bytesWritten).toStdString());
+    sak::logInfo(QString("Wrote %1 bytes")
+                     .arg(m_bytesWritten.load(std::memory_order_relaxed))
+                     .toStdString());
     return !stopRequested();
+}
+
+bool FlashWorker::writeChunk(const QByteArray& buffer, qint64 bytesRead) {
+    // Guard against qint64 -> DWORD truncation
+    if (bytesRead > static_cast<qint64>(MAXDWORD)) {
+        sak::logError("Write size exceeds DWORD range");
+        return false;
+    }
+
+    DWORD bytesWrittenThisTime = 0;
+    if (!WriteFile(m_deviceHandle,
+                   buffer.data(),
+                   static_cast<DWORD>(bytesRead),
+                   &bytesWrittenThisTime,
+                   nullptr)) {
+        DWORD last_error = GetLastError();
+        sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
+        return false;
+    }
+
+    // Fail closed on a short write: WriteFile can succeed yet write fewer bytes (device full,
+    // failing sector). Accepting it drops the chunk's tail and misaligns every later write.
+    if (bytesWrittenThisTime != static_cast<DWORD>(bytesRead)) {
+        sak::logError(QString("Short write: wrote %1 of %2 bytes")
+                          .arg(bytesWrittenThisTime)
+                          .arg(bytesRead)
+                          .toStdString());
+        return false;
+    }
+
+    m_bytesWritten += bytesWrittenThisTime;
+    return true;
 }
 
 sak::ValidationResult FlashWorker::verifyImage() {
@@ -442,6 +474,8 @@ sak::ValidationResult FlashWorker::verifySample() {
 
     int samplesVerified = verifySampleBlocks(
         result, {numSamples, blockSize, totalBlocks, sampleSize}, sourceBuffer, targetBuffer);
+
+    markIncompleteVerification(result, samplesVerified, numSamples);
 
     // Calculate speed
     qint64 elapsed_ms = timer.elapsed();
@@ -625,5 +659,5 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
     }
 
     m_lastSpeedUpdate = now;
-    m_lastSpeedBytes = m_bytesWritten;
+    m_lastSpeedBytes = m_bytesWritten.load(std::memory_order_relaxed);
 }

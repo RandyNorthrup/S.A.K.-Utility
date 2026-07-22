@@ -48,7 +48,7 @@ FlashCoordinator::~FlashCoordinator() {
 }
 
 bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& targetDrives) {
-    Q_ASSERT(m_imageSource);
+    // m_imageSource is null on entry and created by prepareImageSource() below; do not assert it.
     Q_ASSERT(!imagePath.isEmpty());
     if (isFlashing()) {
         sak::logError("Flash already in progress");
@@ -72,6 +72,17 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
 
     m_isCancelled = false;
     m_targetDrives = targetDrives;
+
+    // Reset per-run progress and result. The coordinator is long-lived and reused across flashes;
+    // without this a stale non-zero completedDrives/failedDrives from a prior run satisfies the
+    // finalize predicate on the first completion of the next run, aborting still-active workers.
+    m_progress.completedDrives = 0;
+    m_progress.failedDrives = 0;
+    m_progress.activeDrives = 0;
+    m_progress.bytesWritten = 0;
+    m_progress.speedMBps = 0.0;
+    m_progress.percentage = 0.0;
+    m_result = sak::FlashResult{};
 
     // Validate targets
     m_state = sak::FlashState::Validating;
@@ -118,7 +129,7 @@ bool FlashCoordinator::validateImagePath(const QString& imagePath) {
 }
 
 bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
-    Q_ASSERT(m_imageSource);
+    // m_imageSource is created here; asserting it non-null on entry is inverted (it is null).
     Q_ASSERT(!imagePath.isEmpty());
     if (CompressedImageSource::isCompressed(imagePath)) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
@@ -259,10 +270,11 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     sak::logInfo(QString("Drive completed: %1").arg(devicePath).toStdString());
 
     QMutexLocker locker(&m_mutex);
-    m_progress.completedDrives++;
     m_progress.activeDrives--;
 
-    // Check if verification passed
+    // Check if verification passed. completedDrives counts SUCCESSES only (onWorkerFailed
+    // increments failedDrives); a failed verification must not bump both counters or it would
+    // contribute 2 to the finalize sum below and tear down still-active workers early.
     if (!result.passed) {
         sak::logError(QString("Verification failed for drive: %1").arg(devicePath).toStdString());
         m_progress.failedDrives++;
@@ -271,6 +283,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
         Q_EMIT driveFailed(devicePath, errorMsg);
     } else {
+        m_progress.completedDrives++;
         m_result.successfulDrives.append(devicePath);
         Q_EMIT driveCompleted(devicePath, result.targetChecksum);
     }
@@ -436,7 +449,8 @@ void FlashCoordinator::updateProgress() {
 }
 
 void FlashCoordinator::cleanupWorkers() {
-    Q_ASSERT(m_imageSource);
+    // m_imageSource may legitimately be null (called from the dtor when no flash ran, and after a
+    // reset); the `if (m_imageSource)` guard below handles it. No entry assert.
     // Wait for all workers to finish with cooperative stop
     for (auto& worker : m_workers) {
         if (!worker->isRunning()) {

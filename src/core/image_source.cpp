@@ -41,7 +41,7 @@ FileImageSource::~FileImageSource() {
 }
 
 bool FileImageSource::open() {
-    Q_ASSERT(m_device);
+    // m_device is null until created below on the first open(); the null-guard is the real logic.
     if (m_device && m_device->isOpen()) {
         return true;
     }
@@ -245,7 +245,7 @@ CompressedImageSource::~CompressedImageSource() {
 }
 
 bool CompressedImageSource::open() {
-    Q_ASSERT(m_decompressor);
+    // m_decompressor is null until created below on the first open(); the null-guard is the logic.
     if (m_decompressor) {
         sak::logWarning("CompressedImageSource already open");
         return true;

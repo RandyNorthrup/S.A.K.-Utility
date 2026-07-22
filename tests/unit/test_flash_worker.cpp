@@ -87,6 +87,7 @@ private slots:
     void imageMetadataZeroSizeInvalid();
     void imageMetadataUnknownFormatInvalid();
     void imageMetadataValidReturnsTrue();
+    void imageMetadataDefaultScalarsZeroed();
 
     // ---- FlashWorker construction & getters ----
     void constructorStoresTargetDevice();
@@ -191,6 +192,16 @@ void FlashWorkerTests::imageMetadataValidReturnsTrue() {
     md.size = 1024;
     md.format = sak::ImageFormat::ISO;
     QVERIFY(md.isValid());
+}
+
+// P07-23: the scalar fields must be deterministically zeroed by default; a compressed source that
+// never assigns uncompressedSize previously left it indeterminate and size() returned garbage.
+void FlashWorkerTests::imageMetadataDefaultScalarsZeroed() {
+    const sak::ImageMetadata md;
+    QCOMPARE(md.size, static_cast<qint64>(0));
+    QCOMPARE(md.uncompressedSize, static_cast<qint64>(0));
+    QCOMPARE(md.isCompressed, false);
+    QVERIFY(md.format == sak::ImageFormat::Unknown);
 }
 
 // ===========================================================================

@@ -10,6 +10,8 @@
 #include <QMutex>
 #include <QString>
 
+#include <atomic>
+
 #include <windows.h>
 
 namespace sak {
@@ -98,13 +100,13 @@ public:
      * @brief Get total bytes written
      * @return Bytes written
      */
-    qint64 bytesWritten() const { return m_bytesWritten; }
+    qint64 bytesWritten() const { return m_bytesWritten.load(std::memory_order_relaxed); }
 
     /**
      * @brief Get write speed
      * @return Speed in MB/s
      */
-    double speedMBps() const { return m_speedMBps; }
+    double speedMBps() const { return m_speedMBps.load(std::memory_order_relaxed); }
 
     /**
      * @brief Enable/disable verification
@@ -171,6 +173,7 @@ private:
     bool dismountVolume();
 
     bool writeImage();
+    bool writeChunk(const QByteArray& buffer, qint64 bytesRead);
     bool prepareSourceChecksum();
     bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead);
     sak::ValidationResult verifyImage();
@@ -201,9 +204,9 @@ private:
     QString m_sourceChecksum;  // Cached source checksum
     HANDLE m_deviceHandle;
 
-    qint64 m_bytesWritten;
+    std::atomic<qint64> m_bytesWritten;
     qint64 m_totalBytes;
-    double m_speedMBps;
+    std::atomic<double> m_speedMBps;
     qint64 m_bufferSize;
     bool m_verificationEnabled;
     sak::ValidationMode m_validationMode;
