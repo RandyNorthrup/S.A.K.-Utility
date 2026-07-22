@@ -132,33 +132,19 @@ PstWriter::~PstWriter() {
 // ============================================================================
 
 std::expected<void, error_code> PstWriter::create() {
-    QDir().mkpath(QFileInfo(m_output_path).absolutePath());
-
-    m_file.setFileName(m_output_path);
-    if (!m_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        logError("PstWriter: failed to create file: {}", m_output_path.toStdString());
-        return std::unexpected(error_code::write_error);
-    }
-
-    m_is_open = true;
-    m_write_offset = 0;
-    m_next_nid = kInitialNid;
-    m_next_bid = kInitialBid;
-    m_nbt_entries.clear();
-    m_bbt_entries.clear();
-    m_folder_nids.clear();
-
-    writeHeader();
-    writeMessageStore();
-
-    // Create root folder
-    writeFolderNode(kNidRootFolder,
-                    m_display_name.isEmpty() ? QStringLiteral("Root") : m_display_name,
-                    QStringLiteral("IPF.Note"));
-
-    logInfo("PstWriter: created PST file: {}", m_output_path.toStdString());
-
-    return {};
+    // Fail closed: the native PST writer is not MS-PST spec-conformant. It emits
+    // no ROOT/BREF pointers to the NBT/BBT root pages, no PAGETRAILER/BLOCKTRAILER,
+    // and never computes dwCRCPartial/dwCRCFull, so no reader (Outlook, libpff)
+    // can mount the output. Rather than write a corrupt .pst that a user would
+    // trust as a valid Outlook store, refuse until a spec-conformant writer
+    // exists. PstSplitter::create() delegates here, so PST split output is gated
+    // by the same guard. The OST-conversion worker already checks create() and
+    // aborts cleanly (no corrupt file on disk).
+    logError(
+        "PstWriter: native PST creation is not spec-conformant (no ROOT/BREF, no "
+        "page/block trailers, no CRCs); refusing to emit {}",
+        m_output_path.toStdString());
+    return std::unexpected(error_code::not_implemented);
 }
 
 void PstWriter::setDisplayName(const QString& name) {

@@ -9,6 +9,7 @@
 #include "sak/pst_splitter.h"
 #include "sak/pst_writer.h"
 
+#include <QDir>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -21,37 +22,25 @@ class TestPstSplitter : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path — Single volume (data fits)
+    // create() delegates to PstWriter::create(), which is fail-closed gated
+    // because the native PST output is not spec-conformant (P05-52). The split
+    // path is therefore gated by the same guard and emits no volume files.
     // ====================================================================
 
-    void testSingleVolume() {
+    void createIsGatedByWriter() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
 
-        // 100 MB limit — will not split for one small message
         QString base = temp_dir.path() + "/archive.pst";
         constexpr qint64 kHundredMB = 100LL * 1024 * 1024;
         sak::PstSplitter splitter(base, kHundredMB);
 
-        QVERIFY(splitter.create().has_value());
+        auto result = splitter.create();
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::not_implemented);
 
-        auto folder = splitter.createFolder(sak::PstWriter::kNidRootFolder,
-                                            QStringLiteral("Inbox"),
-                                            QStringLiteral("IPF.Note"));
-        QVERIFY(folder.has_value());
-
-        sak::PstItemDetail item;
-        item.subject = QStringLiteral("Small Message");
-        item.sender_email = QStringLiteral("test@test.com");
-        item.body_plain = QStringLiteral("Brief.");
-        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
-
-        QVector<QPair<QString, QByteArray>> no_attachments;
-        QVERIFY(splitter.writeMessage(folder.value(), item, no_attachments).has_value());
-
-        QVERIFY(splitter.finalizeAll().has_value());
-        QCOMPARE(splitter.volumeCount(), 1);
-        QVERIFY(splitter.totalBytesWritten() > 0);
+        // No corrupt volume .pst files may be produced.
+        QVERIFY(QDir(temp_dir.path()).entryList({QStringLiteral("*.pst")}, QDir::Files).isEmpty());
     }
 
     // ====================================================================

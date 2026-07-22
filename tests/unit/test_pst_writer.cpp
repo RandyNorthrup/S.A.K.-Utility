@@ -2,27 +2,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_pst_writer.cpp
-/// @brief Unit tests for PstWriter binary PST creation
+/// @brief Unit tests for PstWriter. The native PST writer is not MS-PST
+/// spec-conformant (no ROOT/BREF, no page/block trailers, no CRCs), so it is
+/// fail-closed gated: create() refuses rather than emit a corrupt .pst that no
+/// reader can mount (P05-52). These tests assert that gate.
 
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/pst_writer.h"
 
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QTimeZone>
 
 class TestPstWriter : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
 
-    // ====================================================================
-    // Happy Path — Create empty PST and finalize
-    // ====================================================================
-
-    void testCreateEmptyPst() {
+    // create() must fail closed with not_implemented and leave no file behind.
+    void createIsGatedAndEmitsNoFile() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
 
@@ -30,158 +30,21 @@ private Q_SLOTS:
         sak::PstWriter writer(path);
 
         auto create_result = writer.create();
-        QVERIFY(create_result.has_value());
-        QVERIFY(writer.isOpen());
+        QVERIFY(!create_result.has_value());
+        QCOMPARE(create_result.error(), sak::error_code::not_implemented);
+        QVERIFY(!writer.isOpen());
 
-        auto finalize_result = writer.finalize();
-        QVERIFY(finalize_result.has_value());
-
-        QFile file(path);
-        QVERIFY(file.exists());
-        QVERIFY(file.size() > 0);
+        // No corrupt .pst may be produced by the gated writer.
+        QVERIFY(!QFile::exists(path));
+        QVERIFY(QDir(temp_dir.path()).entryList({QStringLiteral("*.pst")}, QDir::Files).isEmpty());
     }
 
-    // ====================================================================
-    // Happy Path — Write a single message
-    // ====================================================================
-
-    void testWriteSingleMessage() {
-        QTemporaryDir temp_dir;
-        QVERIFY(temp_dir.isValid());
-
-        QString path = temp_dir.path() + "/single.pst";
-        sak::PstWriter writer(path);
-
-        auto create_result = writer.create();
-        QVERIFY(create_result.has_value());
-
-        auto folder_result = writer.createFolder(sak::PstWriter::kNidRootFolder,
-                                                 QStringLiteral("Inbox"),
-                                                 QStringLiteral("IPF.Note"));
-        QVERIFY(folder_result.has_value());
-
-        sak::PstItemDetail item;
-        item.subject = QStringLiteral("Test Message");
-        item.sender_name = QStringLiteral("Sender");
-        item.sender_email = QStringLiteral("sender@example.com");
-        item.body_plain = QStringLiteral("Hello world.");
-        item.date = QDateTime(QDate(2025, 6, 15), QTime(10, 0, 0), QTimeZone::utc());
-
-        QVector<QPair<QString, QByteArray>> no_attachments;
-        auto write_result = writer.writeMessage(folder_result.value(), item, no_attachments);
-        QVERIFY(write_result.has_value());
-
-        auto finalize_result = writer.finalize();
-        QVERIFY(finalize_result.has_value());
-
-        QVERIFY(writer.currentSize() > 0);
-    }
-
-    // ====================================================================
-    // PST Magic Bytes Validation
-    // ====================================================================
-
-    void testPstMagicBytes() {
-        QTemporaryDir temp_dir;
-        QVERIFY(temp_dir.isValid());
-
-        QString path = temp_dir.path() + "/magic.pst";
-        sak::PstWriter writer(path);
-        QVERIFY(writer.create().has_value());
-        QVERIFY(writer.finalize().has_value());
-
-        QFile file(path);
-        QVERIFY(file.open(QIODevice::ReadOnly));
-        QByteArray header = file.read(4);
-        QCOMPARE(header.size(), 4);
-
-        // MS-PST magic: "!BDN" = 0x2142444E little-endian = 0x4E444221
-        uint32_t magic = 0;
-        memcpy(&magic, header.constData(), 4);
-        QCOMPARE(magic, sak::PstWriter::kPstMagic);
-    }
-
-    // ====================================================================
-    // Message with Attachments
-    // ====================================================================
-
-    void testWriteMessageWithAttachments() {
-        QTemporaryDir temp_dir;
-        QVERIFY(temp_dir.isValid());
-
-        QString path = temp_dir.path() + "/attach.pst";
-        sak::PstWriter writer(path);
-        QVERIFY(writer.create().has_value());
-
-        auto folder_result = writer.createFolder(sak::PstWriter::kNidRootFolder,
-                                                 QStringLiteral("Inbox"),
-                                                 QStringLiteral("IPF.Note"));
-        QVERIFY(folder_result.has_value());
-
-        sak::PstItemDetail item;
-        item.subject = QStringLiteral("With Attachment");
-        item.sender_email = QStringLiteral("test@example.com");
-        item.body_plain = QStringLiteral("See attached.");
-        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
-
-        QVector<QPair<QString, QByteArray>> attachments;
-        attachments.append({QStringLiteral("file.txt"), QByteArray("file content here")});
-
-        auto write_result = writer.writeMessage(folder_result.value(), item, attachments);
-        QVERIFY(write_result.has_value());
-        QVERIFY(writer.finalize().has_value());
-    }
-
-    // ====================================================================
-    // Nested Folders
-    // ====================================================================
-
-    void testNestedFolders() {
-        QTemporaryDir temp_dir;
-        QVERIFY(temp_dir.isValid());
-
-        QString path = temp_dir.path() + "/nested.pst";
-        sak::PstWriter writer(path);
-        QVERIFY(writer.create().has_value());
-
-        auto inbox = writer.createFolder(sak::PstWriter::kNidRootFolder,
-                                         QStringLiteral("Inbox"),
-                                         QStringLiteral("IPF.Note"));
-        QVERIFY(inbox.has_value());
-
-        auto sub = writer.createFolder(inbox.value(),
-                                       QStringLiteral("Projects"),
-                                       QStringLiteral("IPF.Note"));
-        QVERIFY(sub.has_value());
-        QVERIFY(sub.value() != inbox.value());
-
-        QVERIFY(writer.finalize().has_value());
-    }
-
-    // ====================================================================
-    // Display Name
-    // ====================================================================
-
-    void testSetDisplayName() {
-        QTemporaryDir temp_dir;
-        QVERIFY(temp_dir.isValid());
-
-        QString path = temp_dir.path() + "/named.pst";
-        sak::PstWriter writer(path);
-        writer.setDisplayName(QStringLiteral("My Archive"));
-        QVERIFY(writer.create().has_value());
-        QVERIFY(writer.finalize().has_value());
-        QVERIFY(QFile::exists(path));
-    }
-
-    // ====================================================================
-    // Error — Create with invalid path
-    // ====================================================================
-
-    void testCreateInvalidPath() {
+    // An unwritable path still fails closed (never a partial file).
+    void createInvalidPathAlsoFailsClosed() {
         sak::PstWriter writer(QStringLiteral("Z:/nonexistent/path/file.pst"));
         auto result = writer.create();
         QVERIFY(!result.has_value());
+        QVERIFY(!writer.isOpen());
     }
 };
 

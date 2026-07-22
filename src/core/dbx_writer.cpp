@@ -95,38 +95,18 @@ std::expected<void, error_code> DbxWriter::writeMessage(
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& folder_path) {
-    QString folder_name = folder_path.isEmpty() ? QStringLiteral("Inbox")
-                                                : sanitizeName(folder_path);
-
-    if (!m_open_files.contains(folder_name)) {
-        QDir().mkpath(m_output_dir);
-        QString file_path = m_output_dir + QStringLiteral("/") + folder_name +
-                            QStringLiteral(".dbx");
-
-        auto* file = new QFile(file_path);
-        if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            logError("DbxWriter: failed to create: {}", file_path.toStdString());
-            delete file;
-            return std::unexpected(error_code::write_error);
-        }
-
-        writeDbxHeader(*file, folder_name);
-        m_open_files.insert(folder_name, file);
-        m_message_counts.insert(folder_name, 0);
-    }
-
-    QFile* file = m_open_files.value(folder_name);
-    Q_ASSERT(file);
-
-    QByteArray entry = buildDbxMessageEntry(item, attachment_data);
-    qint64 written = file->write(entry);
-    if (written < 0) {
-        return std::unexpected(error_code::write_error);
-    }
-
-    m_bytes_written += written;
-    ++m_message_counts[folder_name];
-    return {};
+    // Fail closed: this writer emits only a simplified header plus bare
+    // length-prefixed RFC5322 blobs, not the Outlook Express OE5/6 0x24BC header
+    // tree-root and the B-tree of MessageInfo index nodes a real DBX reader needs
+    // to enumerate messages. No reader (Outlook Express, libdbx) can read the
+    // output, so refuse rather than write a corrupt .dbx a user would trust.
+    Q_UNUSED(item)
+    Q_UNUSED(attachment_data)
+    Q_UNUSED(folder_path)
+    logError(
+        "DbxWriter: Outlook Express DBX output is not implemented (no conformant "
+        "B-tree index writer); refusing to emit non-conformant .dbx");
+    return std::unexpected(error_code::not_implemented);
 }
 
 void DbxWriter::finalize() {
