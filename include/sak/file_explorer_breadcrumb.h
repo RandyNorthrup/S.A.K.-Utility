@@ -27,6 +27,18 @@ public:
     void setPath(const QString& path);
     [[nodiscard]] QString path() const;
 
+    /// One breadcrumb button: the label shown and the path activating it navigates to.
+    struct Segment {
+        QString label;
+        QString target_path;
+    };
+
+    /// Split a path into breadcrumb segments. UNC paths (\\server\share\...) keep
+    /// their \\ prefix and backslash separators so an activated segment yields a
+    /// real UNC path; drive and POSIX-rooted paths reconstruct with '/'.
+    /// @note Public + static for unit testing.
+    [[nodiscard]] static QVector<Segment> splitPathSegments(const QString& path);
+
 Q_SIGNALS:
     /// Emitted with the ancestor path when a segment is clicked.
     void segmentActivated(const QString& path);
@@ -37,16 +49,10 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
-    struct Segment {
-        QString label;
-        QString target_path;
-    };
-
     void rebuildSegments();
     void addSegmentButton(const Segment& segment, bool is_last);
     void addChevron();
     void addOverflowButton(const QVector<Segment>& collapsed);
-    [[nodiscard]] QVector<Segment> splitPathSegments() const;
 
     QHBoxLayout* m_layout{nullptr};
     QString m_path;

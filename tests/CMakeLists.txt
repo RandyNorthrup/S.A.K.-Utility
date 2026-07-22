@@ -592,6 +592,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_manager_panel.cpp")
     message(STATUS "Added unit test: test_wifi_manager_panel")
 endif()
 
+# test_file_explorer_breadcrumb --- path segmentation incl. UNC targets
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_breadcrumb.cpp")
+    add_executable(test_file_explorer_breadcrumb
+        unit/test_file_explorer_breadcrumb.cpp
+        ../src/gui/file_explorer_breadcrumb.cpp
+        ../src/gui/file_explorer_icon_registry.cpp
+        ../include/sak/file_explorer_breadcrumb.h
+    )
+    set_target_properties(test_file_explorer_breadcrumb PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_explorer_breadcrumb PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_explorer_breadcrumb PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_explorer_breadcrumb COMMAND test_file_explorer_breadcrumb
+             -o test_file_explorer_breadcrumb.txt,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_explorer_breadcrumb")
+endif()
+
 # test_diagnostic_controller ??? suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller

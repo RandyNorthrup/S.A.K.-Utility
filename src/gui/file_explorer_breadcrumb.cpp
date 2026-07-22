@@ -62,9 +62,45 @@ void FileExplorerBreadcrumb::mousePressEvent(QMouseEvent* event) {
     }
 }
 
-QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegments() const {
+namespace {
+
+// UNC (\\server\share\...): host and share are one navigable root, and the
+// reconstructed targets must keep the \\ prefix and backslashes -- otherwise a
+// segment activates \server\... on the current drive, not the network path.
+QVector<FileExplorerBreadcrumb::Segment> splitUncSegments(const QString& path) {
+    using Segment = FileExplorerBreadcrumb::Segment;
     QVector<Segment> segments;
-    const QString normalized = QString(m_path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const QString normalized = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const QStringList parts = normalized.mid(2).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (parts.isEmpty()) {
+        return segments;
+    }
+    QString accumulated = QStringLiteral("\\\\") + parts.at(0);
+    if (parts.size() == 1) {
+        // Only the host is known; the share is still required to navigate.
+        segments.append(Segment{accumulated, accumulated});
+        return segments;
+    }
+    accumulated += QLatin1Char('\\') + parts.at(1);
+    segments.append(
+        Segment{QStringLiteral("\\\\%1\\%2").arg(parts.at(0), parts.at(1)), accumulated});
+    for (int i = 2; i < parts.size(); ++i) {
+        accumulated += QLatin1Char('\\') + parts.at(i);
+        segments.append(Segment{parts.at(i), accumulated});
+    }
+    return segments;
+}
+
+}  // namespace
+
+QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegments(
+    const QString& path) {
+    if (path.startsWith(QStringLiteral("\\\\")) || path.startsWith(QStringLiteral("//"))) {
+        return splitUncSegments(path);
+    }
+
+    QVector<Segment> segments;
+    const QString normalized = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
     const bool rooted = normalized.startsWith(QLatin1Char('/'));
     QString accumulated = rooted ? QStringLiteral("/") : QString();
     if (rooted) {
@@ -83,7 +119,7 @@ QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegmen
 
 void FileExplorerBreadcrumb::rebuildSegments() {
     clearLayout(m_layout);
-    const QVector<Segment> segments = splitPathSegments();
+    const QVector<Segment> segments = splitPathSegments(m_path);
 
     QVector<Segment> collapsed;
     int first_visible = 0;
