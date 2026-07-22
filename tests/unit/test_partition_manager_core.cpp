@@ -18122,6 +18122,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
         script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $sourceRoot)")));
     QVERIFY(
         script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $targetRoot)")));
+    // P03-11: donor is backed up through a VSS shadow.
+    QVERIFY(script.script.contains(
+        QStringLiteral("Invoke-SakBackupViaShadow $sourceRoot $backupPath")));
+    QVERIFY(script.script.contains(QStringLiteral("Win32_ShadowCopy")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePayloads() {
@@ -18224,6 +18228,14 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScript
     QVERIFY(
         moveScript.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $root)")));
     QVERIFY(moveScript.script.contains(QStringLiteral("GetVolumeNameForVolumeMountPoint")));
+    // P03-11: the source is backed up through a VSS shadow (point-in-time
+    // consistent); the restore direction still writes live to the new volume.
+    QVERIFY(moveScript.script.contains(QStringLiteral("function Invoke-SakBackupViaShadow")));
+    QVERIFY(moveScript.script.contains(QStringLiteral("Win32_ShadowCopy")));
+    QVERIFY(moveScript.script.contains(
+        QStringLiteral("Invoke-SakBackupViaShadow $sourceRoot $backupPath")));
+    QVERIFY(
+        moveScript.script.contains(QStringLiteral("Invoke-SakRobocopy $backupPath $sourceRoot")));
 
     QJsonObject primaryPayload = movePayload;
     primaryPayload[QStringLiteral("target_layout")] = QStringLiteral("logical");
@@ -18391,6 +18403,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
     QVERIFY(
         script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $targetRoot)")));
+    // P03-11: target is backed up through a VSS shadow.
+    QVERIFY(script.script.contains(
+        QStringLiteral("Invoke-SakBackupViaShadow $targetRoot $backupPath")));
+    QVERIFY(script.script.contains(QStringLiteral("Win32_ShadowCopy")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads() {

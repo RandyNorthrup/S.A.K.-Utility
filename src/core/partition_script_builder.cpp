@@ -1811,8 +1811,35 @@ QString sakVolumeGuidFunctionScript() {
         "}\n");
 }
 
+QString sakShadowBackupFunctionScript() {
+    // P03-11: copy the SOURCE via a VSS shadow so the backup is point-in-time
+    // consistent even while apps hold files open. Partition ops run elevated, so
+    // NTFS sources get a real read-only snapshot; FAT/exFAT (no VSS support) and
+    // any non-elevated run fall back to a live copy with a warning -- matching the
+    // prior behaviour rather than failing a legitimate backup closed.
+    return QStringLiteral(
+        "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
+        "  $volume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n"
+        "  $shadow = $null\n"
+        "  try {\n"
+        "    $result = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments "
+        "@{ Volume = $volume; Context = 'ClientAccessible' } -ErrorAction Stop\n"
+        "    if ($result.ReturnValue -eq 0) { $shadow = Get-CimInstance Win32_ShadowCopy -Filter "
+        "(\"ID='{0}'\" -f $result.ShadowID) }\n"
+        "  } catch { $shadow = $null }\n"
+        "  if ($shadow -and $shadow.DeviceObject) {\n"
+        "    try { Invoke-SakRobocopy ($shadow.DeviceObject + '\\') $backupPath }\n"
+        "    finally { Remove-CimInstance -InputObject $shadow -ErrorAction SilentlyContinue }\n"
+        "  } else {\n"
+        "    Write-Output 'WARNING: VSS shadow copy unavailable; backing up the live volume (not "
+        "point-in-time consistent)'\n"
+        "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
+        "  }\n"
+        "}\n");
+}
+
 QString backupRestoreHelpersScript() {
-    return sakVolumeGuidFunctionScript() +
+    return sakVolumeGuidFunctionScript() + sakShadowBackupFunctionScript() +
            QStringLiteral(
                "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
                "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
@@ -2528,21 +2555,23 @@ PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
 }
 
 QString robocopyManifestFunctionsScript() {
-    return QStringLiteral(
-        "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
-        "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
-        "  $code = $LASTEXITCODE\n"
-        "  if ($code -gt 7) { exit $code }\n"
-        "}\n"
-        "function Get-SakFileManifest([string]$root) {\n"
-        "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
-        "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
-        "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
-        "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
-        "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash = "
-        "$hash }\n"
-        "  } | Sort-Object RelativePath)\n"
-        "}\n");
+    return sakShadowBackupFunctionScript() +
+           QStringLiteral(
+               "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
+               "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
+               "  $code = $LASTEXITCODE\n"
+               "  if ($code -gt 7) { exit $code }\n"
+               "}\n"
+               "function Get-SakFileManifest([string]$root) {\n"
+               "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
+               "  @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File | ForEach-Object {\n"
+               "    $relative = $_.FullName.Substring($rootFull.Length).TrimStart('\\')\n"
+               "    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash\n"
+               "    [pscustomobject]@{ RelativePath = $relative; Length = [uint64]$_.Length; Hash "
+               "= "
+               "$hash }\n"
+               "  } | Sort-Object RelativePath)\n"
+               "}\n");
 }
 
 struct AllocateFreeSpacePayload {
@@ -2657,7 +2686,7 @@ QString allocateExecutionScript(const PartitionOperation& operation,
                                 const AllocateFreeSpacePayload& payload) {
     return QStringLiteral(
                "Write-Output ('Backing up donor {0} to {1}' -f $sourceRoot, $backupPath)\n"
-               "Invoke-SakRobocopy $sourceRoot $backupPath\n"
+               "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
                "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
                "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
                "Resize-Partition -DiskNumber %1 -PartitionNumber %3 -Size $targetSizeBytes\n"
@@ -2765,7 +2794,7 @@ QString clusterSetupScript(const ClusterSizePayload& payload) {
 QString clusterExecutionScript() {
     return QStringLiteral(
         "Write-Output ('Backing up {0} to {1}' -f $targetRoot, $backupPath)\n"
-        "Invoke-SakRobocopy $targetRoot $backupPath\n"
+        "Invoke-SakBackupViaShadow $targetRoot $backupPath\n"
         "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
         "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
         "-AllocationUnitSize $allocationUnitBytes -Confirm:$false -Force\n"
@@ -4817,7 +4846,7 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                      "$backupPath = Join-Path $backupRootFull ('sak-move-backup-{0}' -f "
                      "[guid]::NewGuid().ToString('N'))\n"
                      "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-                     "Invoke-SakRobocopy $sourceRoot $backupPath\n"
+                     "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
                      "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
                      "Remove-Partition -DiskNumber %7 -PartitionNumber %8 -Confirm:$false\n"
                      "$newPartition = New-Partition -DiskNumber %7 -Size $targetSize -Offset "
@@ -4880,7 +4909,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
             "$backupPath = Join-Path $backupRootFull ('sak-primary-logical-backup-{0}' -f "
             "[guid]::NewGuid().ToString('N'))\n"
             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakRobocopy $sourceRoot $backupPath\n"
+            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
             "$lines = @('select disk %7','clean','convert mbr')\n"
             "if ($makeLogical) { $lines += ('create partition extended size={0}' -f "
@@ -4953,7 +4982,7 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
             "$backupPath = Join-Path $backupRootFull ('sak-serial-backup-{0}' -f "
             "[guid]::NewGuid().ToString('N'))\n"
             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakRobocopy $sourceRoot $backupPath\n"
+            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
             "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
             "-Confirm:$false -Force\n"
@@ -5023,7 +5052,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
             "$backupPath = Join-Path $backupRootFull ('sak-dynamic-basic-backup-{0}' -f "
             "[guid]::NewGuid().ToString('N'))\n"
             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
-            "Invoke-SakRobocopy $sourceRoot $backupPath\n"
+            "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
             "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
             "$lines = @('select volume ' + $drive,'delete volume override','select disk "
             "%6','convert basic',('create partition primary size={0}' -f $sourceSizeMb),('format "
