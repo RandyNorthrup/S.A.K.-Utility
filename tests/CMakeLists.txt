@@ -1917,6 +1917,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_session_pool.cpp")
     message(STATUS "Added unit test: test_ai_mcp_session_pool")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_registry.cpp")
+    add_executable(test_app_action_registry
+        unit/test_app_action_registry.cpp
+        ../src/core/app_action_registry.cpp
+        ../include/sak/app_action_registry.h
+    )
+    set_target_properties(test_app_action_registry PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_app_action_registry PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_app_action_registry PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_app_action_registry COMMAND test_app_action_registry
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_app_action_registry")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
     add_executable(test_ai_conversation_store
         unit/test_ai_conversation_store.cpp

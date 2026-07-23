@@ -335,6 +335,7 @@ set(CORE_SOURCES
     src/core/decompressor_factory.cpp
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
+    src/core/app_action_registry.cpp
     src/core/hardware_inventory_scanner.cpp
     src/core/smart_disk_analyzer.cpp
     src/core/cpu_benchmark_worker.cpp
