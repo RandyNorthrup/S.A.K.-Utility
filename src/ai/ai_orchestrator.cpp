@@ -535,7 +535,11 @@ AiPhaseExecution AiOrchestrator::executeDelegatePhase(const WorkflowTemplate& wo
     metadata[QStringLiteral("tokens")] = static_cast<double>(result.usage.total_tokens);
     metadata[QStringLiteral("result")] = result.toJson();
     execution.metadata = metadata;
-    execution.success = result.status == AiSubagentStatus::Complete;
+    // Degraded is an honest, non-fatal outcome (a subagent that failed silently):
+    // the phase continues on prior evidence exactly like Complete, but the status
+    // recorded above stays truthfully "degraded" rather than a fake "complete".
+    execution.success = result.status == AiSubagentStatus::Complete ||
+                        result.status == AiSubagentStatus::Degraded;
     return execution;
 }
 

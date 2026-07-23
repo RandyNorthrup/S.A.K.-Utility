@@ -143,6 +143,7 @@ private Q_SLOTS:
     void delegateSubagentReceivesResolvedWorkflowGuidance();
     void delegateSubagentHasNoGuidanceBlockWithoutResolver();
     void delegateObjectiveSubstitutesWorkflowPlaceholders();
+    void contentlessSubagentFailureIsDegradedNotComplete();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -829,6 +830,40 @@ void AiOrchestratorTests::delegateObjectiveSubstitutesWorkflowPlaceholders() {
     QCOMPARE(model.last_objective,
              QStringLiteral("Install 7-Zip because please deploy things (run sr1)"));
     QVERIFY(!model.last_objective.contains(QStringLiteral("${")));
+}
+
+void AiOrchestratorTests::contentlessSubagentFailureIsDegradedNotComplete() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    // p1's subagent reports a bare "failed" with no error/summary/findings.
+    sak::ai::IAiModelClient::Response contentless;
+    contentless.success = true;
+    contentless.text = QStringLiteral("{\"status\":\"failed\"}");
+    contentless.usage.total_tokens = 100;
+    model.response_overrides.insert(QStringLiteral("Do p1"), contentless);
+
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("degrade");
+    workflow.agents << makeAgent(QStringLiteral("a"), QStringLiteral("package_tools_only"));
+    workflow.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("a"));
+    workflow.phases << makeDelegate(QStringLiteral("p2"), QStringLiteral("a"));
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("dg1"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("dg1"), root);
+
+    // Run completes: the degraded phase is non-fatal and the next phase still runs.
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QCOMPARE(result.phases.size(), 2);
+    // Honest status: NOT laundered into Complete.
+    QCOMPARE(result.phases[0].subagent_status, sak::ai::AiSubagentStatus::Degraded);
+    QVERIFY(result.phases[0].success);  // continues like a success for control flow
+    QVERIFY(result.phases[0].ran);
+    QCOMPARE(result.phases[1].subagent_status, sak::ai::AiSubagentStatus::Complete);
+    QVERIFY(result.phases[1].ran);
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)

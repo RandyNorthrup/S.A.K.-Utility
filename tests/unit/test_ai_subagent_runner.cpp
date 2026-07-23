@@ -226,7 +226,9 @@ void AiSubagentRunnerTests::emptyFailedModelStatusContinuesDegraded() {
     sak::ai::AiSubagentRunner runner(&client);
     const auto result = runner.run(task, {});
 
-    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
+    // A contentless "failed" subagent must be reported honestly as Degraded, not
+    // laundered into Complete. It still continues (non-fatal) with a risk recorded.
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Degraded);
     QVERIFY(!result.summary.isEmpty());
     QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("failed status")));
     QVERIFY(client.last_request.context.contains(

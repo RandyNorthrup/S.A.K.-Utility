@@ -175,14 +175,19 @@ bool failedWithoutContent(const AiSubagentResult& result) {
            result.questions_for_human.isEmpty() && result.recommended_next_steps.isEmpty();
 }
 
-void acceptFailedStatusWithoutContent(AiSubagentResult* result) {
-    result->status = AiSubagentStatus::Complete;
+void treatContentlessFailureAsDegraded(AiSubagentResult* result) {
+    // A subagent that reports "failed" with no error, summary, findings, or any
+    // other content produced nothing usable. Do NOT launder it into Complete
+    // (which would report a clean success and bypass the recovery machinery).
+    // Record it honestly as Degraded: the orchestrator continues on prior
+    // workflow evidence, but the status and risk make the degradation auditable.
+    result->status = AiSubagentStatus::Degraded;
     result->summary = QStringLiteral(
-        "Subagent returned a failed status without explanation; continuing with available prior "
-        "workflow evidence.");
+        "Subagent returned a failed status without explanation or content; recording this phase "
+        "as degraded and continuing with available prior workflow evidence.");
     result->risks.append(
-        QStringLiteral("Subagent returned failed status without an error message; "
-                       "accepted as degraded output."));
+        QStringLiteral("Subagent returned a failed status without an error message or content; "
+                       "treated as degraded output, not a clean success."));
 }
 
 AiSubagentResult parseSubagentJsonResult(const AiSubagentTask& task,
@@ -204,7 +209,7 @@ AiSubagentResult parseSubagentJsonResult(const AiSubagentTask& task,
     AiSubagentResult parsed = AiSubagentResult::fromJson(payload);
     normalizeParsedSubagentResult(&parsed, task, response, payload);
     if (failedWithoutContent(parsed)) {
-        acceptFailedStatusWithoutContent(&parsed);
+        treatContentlessFailureAsDegraded(&parsed);
     }
     *retryable = false;
     return parsed;
@@ -299,6 +304,8 @@ QString subagentStatusToString(AiSubagentStatus status) {
         return QStringLiteral("cancelled");
     case AiSubagentStatus::TimedOut:
         return QStringLiteral("timed_out");
+    case AiSubagentStatus::Degraded:
+        return QStringLiteral("degraded");
     }
     return QStringLiteral("failed");
 }
@@ -316,6 +323,9 @@ AiSubagentStatus subagentStatusFromString(const QString& value) {
     }
     if (normalized == QLatin1String("timed_out")) {
         return AiSubagentStatus::TimedOut;
+    }
+    if (normalized == QLatin1String("degraded")) {
+        return AiSubagentStatus::Degraded;
     }
     return AiSubagentStatus::Failed;
 }

@@ -59,6 +59,11 @@ enum class AiSubagentStatus {
     Blocked,
     Cancelled,
     TimedOut,
+    // Ran and did not hard-fail, but the output is untrustworthy or empty (e.g. a
+    // subagent that reported "failed" with no error/content). Reported honestly as
+    // degraded instead of being laundered into Complete; the run continues on prior
+    // evidence. Appended last so existing enumerator values are unchanged.
+    Degraded,
 };
 
 [[nodiscard]] QString subagentStatusToString(AiSubagentStatus status);
