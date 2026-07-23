@@ -1938,6 +1938,40 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_registry.cpp")
     message(STATUS "Added unit test: test_app_action_registry")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_service.cpp")
+    add_executable(test_app_action_service
+        unit/test_app_action_service.cpp
+        ../src/core/app_action_bridge.cpp
+        ../src/core/app_action_registry.cpp
+        ../src/core/quick_action.cpp
+        ../src/core/quick_action_controller.cpp
+        ../src/core/app_paths.cpp
+        ../src/core/elevation_broker.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/logger.cpp
+        ../src/core/quick_action_result_io.cpp
+        ../include/sak/app_action_service.h
+        ../include/sak/app_action_registry.h
+        ../include/sak/quick_action.h
+        ../include/sak/quick_action_controller.h
+        ../include/sak/elevation_broker.h
+        ../include/sak/elevation_manager.h
+    )
+    set_target_properties(test_app_action_service PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_app_action_service PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test advapi32 shell32
+    )
+    target_include_directories(test_app_action_service PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_app_action_service COMMAND test_app_action_service
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_app_action_service")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
     add_executable(test_ai_conversation_store
         unit/test_ai_conversation_store.cpp

@@ -336,6 +336,9 @@ set(CORE_SOURCES
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
     src/core/app_action_registry.cpp
+    src/core/app_action_bridge.cpp
+    src/core/app_action_service.cpp
+    include/sak/app_action_service.h
     src/core/hardware_inventory_scanner.cpp
     src/core/smart_disk_analyzer.cpp
     src/core/cpu_benchmark_worker.cpp
