@@ -13,12 +13,18 @@ namespace {
 constexpr int kLeaseIdWidth = 4;
 }
 
+AiLeaseManager::AiLeaseManager(qint64 ttl_seconds)
+    : m_ttl_seconds(ttl_seconds > 0 ? ttl_seconds : kDefaultLeaseTtlSeconds) {}
+
 AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
                                                       const QStringList& tool_scope,
                                                       const QString& risk_level,
                                                       bool exclusive) {
     QMutexLocker lock(&m_mutex);
     AcquireResult result;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    // Clear any abandoned lease first so a lost release() cannot wedge new leases.
+    result.reclaimed_expired = reclaimExpiredLocked(now);
     if (!m_active.isEmpty()) {
         const auto existing = *m_active.constBegin();
         result.granted = false;
@@ -32,7 +38,8 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
     lease.agent_id = agent_id;
     lease.tool_scope = tool_scope;
     lease.risk_level = risk_level;
-    lease.acquired_at_utc = QDateTime::currentDateTimeUtc();
+    lease.acquired_at_utc = now;
+    lease.expires_at_utc = now.addSecs(m_ttl_seconds);
     lease.exclusive = exclusive;
     m_active.insert(lease.lease_id, lease);
     result.granted = true;
@@ -43,6 +50,26 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
 void AiLeaseManager::release(const QString& lease_id) {
     QMutexLocker lock(&m_mutex);
     m_active.remove(lease_id);
+}
+
+QStringList AiLeaseManager::reclaimExpired(const QDateTime& now_utc) {
+    QMutexLocker lock(&m_mutex);
+    return reclaimExpiredLocked(now_utc);
+}
+
+QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
+    QStringList reclaimed;
+    for (auto it = m_active.begin(); it != m_active.end();) {
+        // A null expiry (should not happen for leases minted here) is treated as
+        // non-expiring so we never reclaim a lease we cannot reason about.
+        if (it.value().expires_at_utc.isValid() && it.value().expires_at_utc <= now_utc) {
+            reclaimed.append(it.key());
+            it = m_active.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return reclaimed;
 }
 
 bool AiLeaseManager::hasActiveExclusive() const {

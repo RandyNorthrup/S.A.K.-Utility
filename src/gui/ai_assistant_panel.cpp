@@ -5773,6 +5773,19 @@ bool AiAssistantPanel::acquireCommandToolLease(const PendingToolCallContext& con
                                                  QStringList{context.call->name},
                                                  QStringLiteral("system_change"),
                                                  true);
+    if (!acquire.reclaimed_expired.isEmpty()) {
+        // An earlier mutating handler never released its lease (crash/hang/lost
+        // completion); it was reclaimed after the TTL so mutations can resume.
+        QJsonObject reclaim_metadata = context.metadata;
+        reclaim_metadata[QStringLiteral("reclaimed_leases")] =
+            acquire.reclaimed_expired.join(QLatin1Char(','));
+        traceAiEvent(QStringLiteral("tool_call"),
+                     context.call->name,
+                     QStringLiteral("lease_reclaimed"),
+                     reclaim_metadata);
+        appendLocalEvent(tr("Reclaimed %1 abandoned mutating lease(s) past TTL")
+                             .arg(acquire.reclaimed_expired.size()));
+    }
     if (acquire.granted) {
         m_currentCommandLeaseId = acquire.lease.lease_id;
         return true;

@@ -2128,6 +2128,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_policy.cpp")
     message(STATUS "Added unit test: test_ai_tool_policy")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_lease_manager.cpp")
+    add_executable(test_ai_lease_manager
+        unit/test_ai_lease_manager.cpp
+        ../src/ai/ai_lease_manager.cpp
+        ../include/sak/ai/ai_lease_manager.h
+    )
+    set_target_properties(test_ai_lease_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_lease_manager PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_lease_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_lease_manager")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_tool_planner.cpp")
     add_executable(test_ai_package_tool_planner
         unit/test_ai_package_tool_planner.cpp
