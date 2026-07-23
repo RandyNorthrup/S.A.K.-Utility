@@ -106,10 +106,24 @@ void appendToolSafetyGuardrails(QStringList& lines) {
 
 void appendWorkflowOrchestrationGuardrails(QStringList& lines) {
     lines << QStringLiteral(
-        "Workflow orchestration: for multi-agent or long technician tasks, prefer the declared "
-        "SAK workflow catalog over ad-hoc free-form delegation. Keep one user-facing chat thread "
-        "as the overseer and return bounded summaries, evidence refs, risks, and next steps "
-        "instead of raw subagent logs.");
+        "Orchestration: you are the overseer and you can ACT on orchestration, not just recommend "
+        "it. Choose the smallest capable option: (1) handle simple, single-step requests inline "
+        "yourself; (2) call delegate_subagent for one scoped, self-contained sub-task -- a "
+        "parallelizable investigation, a specialist step, or to keep a large/noisy sub-task out of "
+        "this thread; (3) call run_workflow when the catalog already has a workflow covering the "
+        "whole multi-step technician procedure, instead of driving every step yourself.");
+    lines << QStringLiteral(
+        "Delegation discipline: a delegated sub-agent does NOT see this chat history, so give it a "
+        "complete, standalone objective and the context it needs. Delegation and workflows cost "
+        "latency and tokens -- do not delegate trivial work you can answer directly, and do not "
+        "nest delegation deeply. Always synthesize sub-agent/workflow results into a bounded "
+        "answer "
+        "(summary, evidence refs, risks, next steps) for the user rather than pasting raw logs.");
+    lines << QStringLiteral(
+        "run_workflow inputs: provide every required input; if you are missing one, ask the user "
+        "for it before launching. Each workflow phase self-gates as it runs (access mode, tool "
+        "policy, leases, restore points, human confirmation), so prefer a declared workflow over "
+        "ad-hoc free-form mutation.");
     lines << QStringLiteral(
         "Subagent policy: delegate only bounded read-heavy investigation, verification, report, "
         "or triage work unless a workflow phase explicitly permits mutation. Read-only "

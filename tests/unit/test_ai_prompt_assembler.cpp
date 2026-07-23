@@ -70,8 +70,12 @@ void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
     input.assisted_full_access = true;
 
     const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
-    QVERIFY(prompt.contains(QStringLiteral("Workflow orchestration")));
-    QVERIFY(prompt.contains(QStringLiteral("declared SAK workflow catalog")));
+    QVERIFY(prompt.contains(QStringLiteral("Orchestration:")));
+    // The model is told it can ACT on orchestration via the two agency tools, and
+    // when to use each (inline vs delegate vs workflow).
+    QVERIFY(prompt.contains(QStringLiteral("delegate_subagent")));
+    QVERIFY(prompt.contains(QStringLiteral("run_workflow")));
+    QVERIFY(prompt.contains(QStringLiteral("handle simple, single-step requests inline")));
     QVERIFY(prompt.contains(QStringLiteral("Read-only subagents may run in parallel")));
     QVERIFY(prompt.contains(QStringLiteral("Subagent conflict rule")));
     QVERIFY(prompt.contains(QStringLiteral("critic/verification step")));
