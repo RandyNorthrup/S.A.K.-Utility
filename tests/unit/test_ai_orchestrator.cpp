@@ -27,6 +27,7 @@ public:
         }
         last_objective = request.objective;
         last_system_instructions = request.system_instructions;
+        last_reasoning_effort = request.reasoning_effort;
         Response response;
         if (cancel_on_invoke && token.isValid()) {
             token.cancel(QStringLiteral("test_cancelled"));
@@ -50,6 +51,7 @@ public:
     int peak_concurrent{0};
     QString last_objective;
     QString last_system_instructions;
+    QString last_reasoning_effort;
     Response default_response;
     QHash<QString, Response> response_overrides;
     bool cancel_on_invoke{false};
@@ -144,6 +146,7 @@ private Q_SLOTS:
     void delegateSubagentHasNoGuidanceBlockWithoutResolver();
     void delegateObjectiveSubstitutesWorkflowPlaceholders();
     void contentlessSubagentFailureIsDegradedNotComplete();
+    void agentModelPolicySelectsReasoningEffortTier();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -864,6 +867,55 @@ void AiOrchestratorTests::contentlessSubagentFailureIsDegradedNotComplete() {
     QVERIFY(result.phases[0].ran);
     QCOMPARE(result.phases[1].subagent_status, sak::ai::AiSubagentStatus::Complete);
     QVERIFY(result.phases[1].ran);
+}
+
+void AiOrchestratorTests::agentModelPolicySelectsReasoningEffortTier() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+
+    sak::ai::AiOrchestrationOptions options;
+    options.default_reasoning_effort = QStringLiteral("medium");
+    orchestrator.setOptions(options);
+
+    // deep_reasoning agent -> high effort, overriding the medium session default.
+    sak::ai::WorkflowAgent deep = makeAgent(QStringLiteral("deep"), QStringLiteral("read_only_pc"));
+    deep.model_policy = QStringLiteral("deep_reasoning");
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("mp_deep");
+    workflow.agents << deep;
+    workflow.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("deep"));
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("mp1"));
+    QCOMPARE(orchestrator.run(workflow, QStringLiteral("mp1"), root).status,
+             sak::ai::AiRunStatus::Completed);
+    QCOMPARE(model.last_reasoning_effort, QStringLiteral("high"));
+
+    // fast_reasoning agent -> low effort.
+    sak::ai::WorkflowAgent fast = makeAgent(QStringLiteral("fast"), QStringLiteral("read_only_pc"));
+    fast.model_policy = QStringLiteral("fast_reasoning");
+    sak::ai::WorkflowTemplate workflow2;
+    workflow2.id = QStringLiteral("mp_fast");
+    workflow2.agents << fast;
+    workflow2.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("fast"));
+    auto root2 = sak::ai::CancellationToken::createRoot(QStringLiteral("mp2"));
+    QCOMPARE(orchestrator.run(workflow2, QStringLiteral("mp2"), root2).status,
+             sak::ai::AiRunStatus::Completed);
+    QCOMPARE(model.last_reasoning_effort, QStringLiteral("low"));
+
+    // Unknown/empty model_policy falls back to the session default.
+    sak::ai::WorkflowAgent plain = makeAgent(QStringLiteral("plain"),
+                                             QStringLiteral("read_only_pc"));  // no model_policy
+    sak::ai::WorkflowTemplate workflow3;
+    workflow3.id = QStringLiteral("mp_plain");
+    workflow3.agents << plain;
+    workflow3.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("plain"));
+    auto root3 = sak::ai::CancellationToken::createRoot(QStringLiteral("mp3"));
+    QCOMPARE(orchestrator.run(workflow3, QStringLiteral("mp3"), root3).status,
+             sak::ai::AiRunStatus::Completed);
+    QCOMPARE(model.last_reasoning_effort, QStringLiteral("medium"));
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)

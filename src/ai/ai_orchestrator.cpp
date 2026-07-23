@@ -40,6 +40,29 @@ bool isDelegatePhase(const WorkflowPhase& phase) {
     return phase.type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0;
 }
 
+// Maps a workflow agent's semantic `model_policy` to a concrete reasoning-effort
+// tier. The app runs a single session model, so the policy selects how hard that
+// model thinks per agent rather than swapping model families: cheap scouts run
+// low, deliberate/critic agents run high. Unknown or empty policies fall back to
+// the session default so nothing regresses.
+QString reasoningEffortForModelPolicy(const QString& model_policy, const QString& fallback) {
+    const QString policy = model_policy.trimmed().toLower();
+    if (policy.isEmpty()) {
+        return fallback;
+    }
+    if (policy == QLatin1String("fast_reasoning")) {
+        return QStringLiteral("low");
+    }
+    if (policy == QLatin1String("deep_reasoning")) {
+        return QStringLiteral("high");
+    }
+    if (policy == QLatin1String("careful_reasoning") || policy == QLatin1String("web_research") ||
+        policy == QLatin1String("writer")) {
+        return QStringLiteral("medium");
+    }
+    return fallback;
+}
+
 bool isToolPhase(const WorkflowPhase& phase) {
     return phase.type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 ||
            phase.type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0;
@@ -496,6 +519,9 @@ AiSubagentTask AiOrchestrator::buildDelegateTask(const WorkflowTemplate& workflo
             if (agent.token_budget > 0) {
                 task.token_budget = agent.token_budget;
             }
+            // Honor the agent's model_policy by selecting its reasoning-effort tier.
+            task.reasoning_effort = reasoningEffortForModelPolicy(
+                agent.model_policy, m_options.default_reasoning_effort);
             break;
         }
     }
