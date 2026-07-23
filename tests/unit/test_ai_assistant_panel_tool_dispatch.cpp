@@ -357,6 +357,24 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(subagent_invoked.load(), 5000);
     }
 
+    // run_workflow must fail closed on a missing or unknown workflow id before it
+    // commits to any orchestration.
+    void runWorkflowToolValidatesWorkflowId() {
+        AiAssistantPanel panel;
+
+        const QJsonObject no_id = panel.runRunWorkflowTool(QJsonObject{});
+        QCOMPARE(no_id.value(QStringLiteral("success")).toBool(), false);
+        QVERIFY(no_id.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("workflow_id")));
+
+        const QJsonObject unknown = panel.runRunWorkflowTool(
+            QJsonObject{{QStringLiteral("workflow_id"), QStringLiteral("does_not_exist_xyz")}});
+        QVERIFY(unknown.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("Unknown workflow_id")));
+    }
+
     void skillToolReachesHandlerThroughRealToolLoop() {
         AiAssistantPanel panel;
         std::atomic<bool> handler_ran{false};

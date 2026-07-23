@@ -136,6 +136,9 @@ void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("delegate_subagent");
 
+    sak::ai::AiToolCallRequest workflow_request;
+    workflow_request.tool_name = QStringLiteral("run_workflow");
+
     for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
                               sak::ai::AiToolPolicy::ReadOnlyPc,
                               sak::ai::AiToolPolicy::ExclusiveMutatingExecutor}) {
@@ -143,6 +146,9 @@ void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
         QVERIFY(decision.allowed);
         QVERIFY(!decision.requires_lease);
         QVERIFY(!decision.catastrophic_change);
+        // run_workflow is allowed under every mode too; its phases self-gate.
+        const auto workflow_decision = sak::ai::evaluateToolPolicy(policy, workflow_request);
+        QVERIFY(workflow_decision.allowed);
     }
 }
 

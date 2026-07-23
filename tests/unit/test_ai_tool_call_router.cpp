@@ -53,6 +53,8 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     // it as "Unknown function" before the delegate handler runs.
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("delegate_subagent")),
              AiToolCallKind::DelegateSubagent);
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("run_workflow")),
+             AiToolCallKind::RunWorkflow);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("missing_tool")),
              AiToolCallKind::Unknown);
 
@@ -63,6 +65,8 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::Skill));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::DelegateSubagent));
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::DelegateSubagent));
+    QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::RunWorkflow));
+    QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::RunWorkflow));
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::Skill));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Shell));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Unknown));

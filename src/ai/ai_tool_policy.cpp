@@ -42,6 +42,10 @@ bool isDelegateSubagentTool(const QString& tool_name) {
     return norm(tool_name) == QLatin1String("delegate_subagent");
 }
 
+bool isRunWorkflowTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("run_workflow");
+}
+
 bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
     if (!isProviderGatewayTool(request.tool_name)) {
         return false;
@@ -318,7 +322,7 @@ bool isKnownLocalTool(const QString& tool_name) {
     return isShellTool(name) || name == QLatin1String("take_screenshot") ||
            name == QLatin1String("download_file") || isPackageTool(name) ||
            isProviderGatewayTool(name) || isSessionSearchTool(name) || isSkillTool(name) ||
-           isDelegateSubagentTool(name);
+           isDelegateSubagentTool(name) || isRunWorkflowTool(name);
 }
 
 bool isMutatingPackageOperation(const QString& operation) {
@@ -380,6 +384,12 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     // ceiling by the caller) gates whatever the sub-agent then tries to execute.
     if (isDelegateSubagentTool(request.tool_name)) {
         return allow(QStringLiteral("Sub-agent delegation allowed (sub-agent policy clamped)"));
+    }
+    // Launching a catalog workflow is allowed under every mode: each of the
+    // workflow's phases is independently policy/lease/human-gated as it runs, so
+    // the launch itself grants no capability beyond the session.
+    if (isRunWorkflowTool(request.tool_name)) {
+        return allow(QStringLiteral("Workflow launch allowed (per-phase gates apply)"));
     }
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =

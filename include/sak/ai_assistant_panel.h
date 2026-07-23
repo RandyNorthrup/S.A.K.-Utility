@@ -733,6 +733,24 @@ private:
     // sub-agent (policy clamped to the session ceiling), runs it off the GUI
     // thread, and returns its structured result to the overseer chat model.
     [[nodiscard]] QJsonObject runDelegateSubagentTool(const QJsonObject& args);
+    // Handles the model's run_workflow tool: validates the workflow id + required
+    // inputs, then runs the named catalog workflow as an isolated blocking
+    // orchestration (per-phase policy/lease/human gates still apply) and returns
+    // its result. Does NOT touch the user-facing workflow run-state machine.
+    [[nodiscard]] QJsonObject runRunWorkflowTool(const QJsonObject& args);
+    struct WorkflowRunToolContext {
+        ai::WorkflowTemplate workflow;
+        bool found{false};
+        QStringList missing_inputs;
+        QString api_key;
+        QString model;
+        QString reasoning;
+        ai::CancellationToken token;
+    };
+    // Reads session state and resolves + validates the requested workflow on the
+    // GUI thread (called from the run_workflow async handler).
+    [[nodiscard]] WorkflowRunToolContext resolveWorkflowRunContext(const QString& workflow_id,
+                                                                   const QJsonObject& input_values);
     // Builds the RawDispatch that routes a sub-agent tool call back through the
     // guarded panel to the real policy/lease/health dispatcher. Shared by workflow
     // delegate phases and the delegate_subagent tool so both gate identically.
@@ -772,6 +790,10 @@ private:
         QJsonObject resume_state;
         QString user_message;
         PanelToolExecutor* executor{nullptr};
+        // When false (the model's run_workflow tool path) the orchestrator runs
+        // WITHOUT wiring the panel's workflow-run UI callbacks, so a tool-invoked
+        // workflow does not disturb the user-facing workflow run-state machine.
+        bool wire_callbacks{true};
     };
 
     void beginWorkflowRunUiState(const ai::WorkflowTemplate& workflow,

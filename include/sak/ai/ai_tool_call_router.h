@@ -22,6 +22,7 @@ enum class AiToolCallKind {
     SessionSearch,
     Skill,
     DelegateSubagent,
+    RunWorkflow,
 };
 
 class AiToolCallRouter {

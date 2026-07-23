@@ -590,6 +590,29 @@ QJsonObject delegateSubagentTool() {
                    QStringLiteral("expected_output")});
 }
 
+QJsonObject runWorkflowTool() {
+    QJsonObject properties;
+    properties[QStringLiteral("workflow_id")] = stringParameter(QStringLiteral(
+        "The id of a workflow from the workflow catalog shown in your context (the value in "
+        "brackets, e.g. \"browser_issue_cleanup\")."));
+    properties[QStringLiteral("input_values")] = stringParameter(QStringLiteral(
+        "A JSON object, encoded as a string, mapping each of the workflow's required input ids to "
+        "its value, e.g. {\"app_name\":\"Chrome\"}. Use \"{}\" if it needs none. If you are "
+        "missing "
+        "a required input, ask the user for it before calling this."));
+
+    return functionTool(
+        QStringLiteral("run_workflow"),
+        QStringLiteral(
+            "Run a declared multi-step S.A.K. Utility workflow from the catalog end-to-end and get "
+            "its structured result back. Use this for a full technician procedure that the catalog "
+            "already covers (multi-phase diagnose/repair/verify with its own agents and gates) "
+            "instead of driving each step yourself. Each phase is independently gated as it runs. "
+            "Provide all required inputs; for a single scoped step prefer delegate_subagent."),
+        properties,
+        QJsonArray{QStringLiteral("workflow_id"), QStringLiteral("input_values")});
+}
+
 QJsonArray localToolDefinitions() {
     QJsonArray tools;
     tools.append(shellTool(
@@ -617,6 +640,7 @@ QJsonArray localToolDefinitions() {
     tools.append(sessionSearchTool());
     tools.append(skillTool());
     tools.append(delegateSubagentTool());
+    tools.append(runWorkflowTool());
     return tools;
 }
 

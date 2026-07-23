@@ -1506,6 +1506,28 @@ bool workflowRequirementAvailable(const ai::WorkflowRequirement& requirement) {
 // they are safe on the workflow worker thread); shell/process command tools and
 // GUI-affine capture are intentionally excluded. Per-call policy, lease, and
 // health gates still apply on top of this allowlist.
+// Parses the run_workflow tool's input_values, which the strict function schema
+// carries as a JSON string (an already-parsed object is accepted too). Empty ->
+// {}. Returns false with an error message when a non-empty value is not a JSON
+// object.
+bool parseWorkflowToolInputValues(const QJsonValue& raw, QJsonObject* out, QString* error) {
+    if (raw.isObject()) {
+        *out = raw.toObject();
+        return true;
+    }
+    const QString text = raw.toString().trimmed();
+    if (text.isEmpty()) {
+        return true;
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
+    if (!doc.isObject()) {
+        *error = QStringLiteral("run_workflow 'input_values' must be a JSON object string");
+        return false;
+    }
+    *out = doc.object();
+    return true;
+}
+
 QSet<QString> subagentAllowedToolNames() {
     return {
         QStringLiteral("sak_session_search"),
@@ -5452,7 +5474,7 @@ bool AiAssistantPanel::isAsyncBuiltInKind(ai::AiToolCallKind kind) {
     return kind == ai::AiToolCallKind::Download || kind == ai::AiToolCallKind::PackageManager ||
            kind == ai::AiToolCallKind::OfflineDownloader ||
            kind == ai::AiToolCallKind::ProviderGateway ||
-           kind == ai::AiToolCallKind::DelegateSubagent;
+           kind == ai::AiToolCallKind::DelegateSubagent || kind == ai::AiToolCallKind::RunWorkflow;
 }
 
 QString AiAssistantPanel::builtInToolStatus(const ai::AiToolDispatcher::DispatchOutcome& outcome) {
@@ -8663,6 +8685,11 @@ void AiAssistantPanel::registerToolHandlers() {
                                              const ai::AiToolPolicyDecision&) {
                                           return runDelegateSubagentTool(args);
                                       });
+    m_toolDispatcher->registerHandler(QStringLiteral("run_workflow"),
+                                      [this](const QJsonObject& args,
+                                             const ai::AiToolPolicyDecision&) {
+                                          return runRunWorkflowTool(args);
+                                      });
 }
 
 const ai::WorkflowTemplate* AiAssistantPanel::attachedWorkflow() const {
@@ -9714,10 +9741,87 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
     orchestrator.setGuidanceResolver(&readAiGuidanceResource);
     orchestrator.setSoftwareResolver(&workflowRequirementAvailable);
-    connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
+    if (launch.wire_callbacks) {
+        connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
+    }
     const auto result = orchestrator.run(launch.workflow, launch.run_id, launch.token);
     delete launch.executor;
     return result;
+}
+
+AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunContext(
+    const QString& workflow_id, const QJsonObject& input_values) {
+    WorkflowRunToolContext ctx;
+    invokeOnGuiThreadBlocking([&]() {
+        ctx.api_key = apiKey();
+        ctx.model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
+        ctx.reasoning = m_reasoningEffortCombo
+                            ? m_reasoningEffortCombo->currentText().trimmed().toLower()
+                            : QString();
+        ctx.token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
+        const ai::WorkflowTemplate* workflow =
+            m_workflowStore ? m_workflowStore->workflowById(workflow_id) : nullptr;
+        if (workflow == nullptr) {
+            return;
+        }
+        ctx.workflow = *workflow;
+        ctx.found = true;
+        for (const auto& input : workflow->required_inputs) {
+            if (input.required && !input_values.contains(input.id)) {
+                ctx.missing_inputs << input.id;
+            }
+        }
+    });
+    return ctx;
+}
+
+QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
+    const QString workflow_id = args.value(QStringLiteral("workflow_id")).toString().trimmed();
+    if (workflow_id.isEmpty()) {
+        return toolError(QStringLiteral("run_workflow requires a 'workflow_id' from the catalog"));
+    }
+    QJsonObject input_values;
+    QString parse_error;
+    if (!parseWorkflowToolInputValues(
+            args.value(QStringLiteral("input_values")), &input_values, &parse_error)) {
+        return toolError(parse_error);
+    }
+
+    const WorkflowRunToolContext ctx = resolveWorkflowRunContext(workflow_id, input_values);
+    if (!ctx.found) {
+        return toolError(
+            QStringLiteral("Unknown workflow_id '%1' (not in the catalog)").arg(workflow_id));
+    }
+    if (!ctx.missing_inputs.isEmpty()) {
+        QJsonObject error =
+            toolError(QStringLiteral("Workflow '%1' is missing required inputs: %2")
+                          .arg(workflow_id, ctx.missing_inputs.join(QStringLiteral(", "))));
+        error[QStringLiteral("missing_inputs")] = QJsonArray::fromStringList(ctx.missing_inputs);
+        return error;
+    }
+
+    // Run as an isolated blocking orchestration: per-phase policy/lease/human gates
+    // still fire, but the user-facing workflow run-state UI is left untouched
+    // (wire_callbacks = false). The overseer chat model receives the full result.
+    WorkflowRunLaunch launch;
+    launch.panel_guard = QPointer<AiAssistantPanel>(this);
+    launch.workflow = ctx.workflow;
+    launch.run_id =
+        QStringLiteral("toolwf_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    launch.token = ctx.token;
+    launch.api_key = ctx.api_key;
+    launch.model = ctx.model;
+    launch.reasoning = ctx.reasoning;
+    launch.input_values = input_values;
+    launch.user_message = args.value(QStringLiteral("objective")).toString();
+    launch.executor = new PanelToolExecutor(this);
+    launch.wire_callbacks = false;
+
+    const ai::AiOrchestratorResult result = executeWorkflowRun(launch);
+    QJsonObject out = result.toJson();
+    out[QStringLiteral("success")] = (result.status == ai::AiRunStatus::Completed);
+    out[QStringLiteral("workflow_id")] = workflow_id;
+    return out;
 }
 
 void AiAssistantPanel::configureWorkflowRunner(ai::AiSubagentRunner* runner) {
