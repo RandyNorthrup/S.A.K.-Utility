@@ -31,8 +31,15 @@ public:
     [[nodiscard]] bool enableWebSearch() const { return m_enable_web_search; }
 
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
+    [[nodiscard]] Response continueWithToolOutputs(const Request& request,
+                                                   const QString& response_id,
+                                                   const QVector<AiSubagentToolOutput>& outputs,
+                                                   const CancellationToken& token) override;
 
 private:
+    [[nodiscard]] Response runResponseRequest(const OpenAIResponseRequest& request,
+                                              const CancellationToken& token) const;
+
     bool m_enable_web_search{false};
 };
 

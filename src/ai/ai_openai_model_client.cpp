@@ -52,7 +52,9 @@ OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Reques
     req.reasoning_effort = request.reasoning_effort;
     req.safety_identifier = request.safety_identifier;
     req.enable_web_search = enable_web_search;
-    req.enable_local_tools = false;
+    // Local tools are only offered when the subagent opted in (an executor is
+    // wired and its policy permits execution); the runner sets this per task.
+    req.enable_local_tools = request.enable_local_tools;
     return req;
 }
 
@@ -67,6 +69,11 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
         response.success = true;
         response.text = state.result.output_text;
         response.usage = state.result.usage;
+        response.response_id = state.result.id;
+        response.tool_calls.reserve(state.result.function_calls.size());
+        for (const auto& call : state.result.function_calls) {
+            response.tool_calls.append({call.call_id, call.name, call.arguments_json});
+        }
         return response;
     }
     if (state.got_failure) {
@@ -92,15 +99,14 @@ void OpenAIResponsesModelClient::setEnableWebSearch(bool enabled) {
     m_enable_web_search = enabled;
 }
 
-IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& request,
-                                                            const CancellationToken& token) {
+IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
+    const OpenAIResponseRequest& req, const CancellationToken& token) const {
     if (tokenCancelled(token)) {
         Response response;
         response.error_message = token.cancelReason();
         return response;
     }
 
-    const OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
     ModelInvokeState state;
     QSemaphore done;
     QThread network_thread;
@@ -159,6 +165,28 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
     network_thread.wait();
 
     return modelResponseFromState(state, token);
+}
+
+IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& request,
+                                                            const CancellationToken& token) {
+    return runResponseRequest(openAiRequestFromModelRequest(request, m_enable_web_search), token);
+}
+
+IAiModelClient::Response OpenAIResponsesModelClient::continueWithToolOutputs(
+    const Request& request,
+    const QString& response_id,
+    const QVector<AiSubagentToolOutput>& outputs,
+    const CancellationToken& token) {
+    // Resume the same server-side turn: reference the prior response and submit
+    // the executed tool outputs, without re-sending the original input.
+    OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
+    req.input.clear();
+    req.previous_response_id = response_id;
+    req.function_outputs.reserve(outputs.size());
+    for (const auto& output : outputs) {
+        req.function_outputs.append({output.call_id, output.output_json});
+    }
+    return runResponseRequest(req, token);
 }
 
 }  // namespace sak::ai
