@@ -3551,6 +3551,10 @@ void AiAssistantPanel::drainWorkflowRun() {
 }
 
 AiAssistantPanel::~AiAssistantPanel() {
+    // Mark teardown BEFORE draining: drainWorkflowRun pumps the event loop, and a
+    // worker blocked marshaling a per-phase approval modal must be declined (not
+    // shown) so the drain pump never blocks on a modal exec() with no user.
+    m_shuttingDown = true;
     cancelRunningWorkOnDestroy();
     drainAndStopAsyncTool();
     drainWorkflowRun();
@@ -5959,6 +5963,11 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
             return confirmCommandWithUser(shell, preview, risky_change, catastrophic);
         });
     }
+    // Teardown in progress: never open a modal the drain pump would block on with
+    // no user to answer. Decline so the phase fails closed and the worker unwinds.
+    if (m_shuttingDown) {
+        return false;
+    }
     const QString pending_call_id = currentPendingToolCallId();
     bool resumed_approval_result = false;
     if (consumeResumedCommandApproval(
@@ -6118,6 +6127,11 @@ bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview,
         return runOnGuiThread([this, preview, risky_change, catastrophic]() {
             return offerRestorePointIfNeeded(preview, risky_change, catastrophic);
         });
+    }
+    // Teardown in progress: never open a modal the drain pump would block on with
+    // no user to answer. Decline so the phase fails closed and the worker unwinds.
+    if (m_shuttingDown) {
+        return false;
     }
     if (consumeResumedRestoreDecision(preview, risky_change)) {
         return true;

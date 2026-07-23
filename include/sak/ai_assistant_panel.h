@@ -952,6 +952,12 @@ private:
     QString m_workflowDetailsCurrentId;
     QFutureWatcher<ai::AiOrchestratorResult>* m_workflowRunWatcher{nullptr};
     bool m_workflowRunActive{false};
+    // Set at the very start of teardown (before drainWorkflowRun pumps the event
+    // loop). A workflow worker that is blocked marshaling a per-phase approval
+    // modal onto the GUI thread would otherwise have that modal shown by the drain
+    // pump and block on exec() forever -- there is no user to answer during
+    // teardown. When set, the modal gate methods decline immediately instead.
+    bool m_shuttingDown{false};
     QTimer* m_activityTimer{nullptr};
     QTimer* m_contextTokenTimer{nullptr};
     QString m_contextTokenRequestId;

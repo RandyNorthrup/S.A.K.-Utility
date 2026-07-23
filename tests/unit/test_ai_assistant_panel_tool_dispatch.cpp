@@ -277,6 +277,24 @@ private Q_SLOTS:
         QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
     }
 
+    // Teardown safety: once shutdown has begun, the per-phase modal gates must
+    // decline immediately WITHOUT showing a modal. Otherwise a workflow worker
+    // blocked marshaling an approval onto the GUI thread would have that modal
+    // shown by drainWorkflowRun's event-loop pump and block on exec() forever
+    // (no user answers during teardown). The approval hook stands in for the
+    // modal, so a zero hook count proves no modal was ever opened.
+    void shutdownDeclinesPerPhaseModalWithoutShowingIt() {
+        AiAssistantPanel panel;
+        QStringList titles;
+        installApprovalHook(&titles);
+        panel.m_shuttingDown = true;
+
+        QVERIFY(!panel.confirmCommandWithUser(
+            QStringLiteral("PowerShell"), QStringLiteral("format c: /y"), true, true));
+        QVERIFY(!panel.offerRestorePointIfNeeded(QStringLiteral("format c: /y"), true, true));
+        QCOMPARE(titles.size(), 0);
+    }
+
     // Wave 2: repeated executor faults (hangs) trip the health circuit breaker for
     // a command tool, and the raw-command health gate then suppresses new calls
     // instead of launching into a known-bad executor.
