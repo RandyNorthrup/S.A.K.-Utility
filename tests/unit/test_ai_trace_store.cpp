@@ -21,6 +21,8 @@ private Q_SLOTS:
     void activityEvent_roundTripsContractFields();
     void appendReplayEvent_writesCompactReplayJsonl();
     void traceAndActivityMetadata_isRedacted();
+    void appendEvent_rotatesInsteadOfDroppingAtCap();
+    void rotation_keepsBoundedRingAndNewestLive();
 };
 
 void AiTraceStoreTests::appendEvent_writesTraceJsonl() {
@@ -268,6 +270,61 @@ void AiTraceStoreTests::traceAndActivityMetadata_isRedacted() {
     QFile file(store.tracePath());
     QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
     QVERIFY(!QString::fromUtf8(file.readAll()).contains(secret));
+}
+
+void AiTraceStoreTests::appendEvent_rotatesInsteadOfDroppingAtCap() {
+    // At the size cap the trail must roll, not stop: every append still succeeds
+    // and a rolled file appears alongside the (fresh) live file.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::TraceStore store(temp.path());
+    store.setMaxJsonlBytes(200);  // each event line exceeds this, so appends roll
+    QCOMPARE(store.maxJsonlBytes(), static_cast<qint64>(200));
+
+    QString error;
+    for (int i = 0; i < 4; ++i) {
+        auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
+                                                 QStringLiteral("phase"),
+                                                 QStringLiteral("diagnose"),
+                                                 QStringLiteral("started")});
+        QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
+    }
+
+    QVERIFY(QFile::exists(store.tracePath()));
+    QVERIFY(QFile::exists(store.tracePath() + QStringLiteral(".1")));
+}
+
+void AiTraceStoreTests::rotation_keepsBoundedRingAndNewestLive() {
+    // Many appends past the cap keep only a bounded ring of rolled files, and the
+    // live file always holds the newest event.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::TraceStore store(temp.path());
+    store.setMaxJsonlBytes(200);
+
+    QString error;
+    constexpr int kEvents = 8;
+    for (int i = 0; i < kEvents; ++i) {
+        auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
+                                                 QStringLiteral("phase"),
+                                                 QStringLiteral("diagnose"),
+                                                 QStringLiteral("started")});
+        QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
+    }
+
+    // Ring is bounded: .1..3 may exist, .4 never does.
+    QVERIFY(QFile::exists(store.tracePath() + QStringLiteral(".3")));
+    QVERIFY(!QFile::exists(store.tracePath() + QStringLiteral(".4")));
+
+    // The live file holds the newest event.
+    QFile live(store.tracePath());
+    QVERIFY(live.open(QIODevice::ReadOnly | QIODevice::Text));
+    const auto doc = QJsonDocument::fromJson(live.readLine().trimmed());
+    QVERIFY(doc.isObject());
+    QCOMPARE(doc.object().value(QStringLiteral("run_id")).toString(),
+             QStringLiteral("run_%1").arg(kEvents - 1));
 }
 
 QTEST_GUILESS_MAIN(AiTraceStoreTests)

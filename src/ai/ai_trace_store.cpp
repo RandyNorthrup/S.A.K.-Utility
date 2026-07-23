@@ -26,6 +26,10 @@ constexpr int kTraceSchemaVersion = 1;
 constexpr qint64 kMaxTraceJsonlBytes = 32LL * 1024LL * 1024LL;
 constexpr qint64 kMaxActivityJsonlBytes = 32LL * 1024LL * 1024LL;
 constexpr qint64 kMaxReplayJsonlBytes = 20LL * 1024LL * 1024LL;
+// When a JSONL stream reaches its cap it is rolled (path -> path.1 -> path.2 ...)
+// rather than dropped, so the audit trail never silently stops. The ring is
+// bounded, so total on-disk size stays at about cap * (kMaxRolledJsonlFiles + 1).
+constexpr int kMaxRolledJsonlFiles = 3;
 constexpr qsizetype kMaxReplayMetadataStringChars = 4096;
 constexpr qint64 kMaxReplayMetadataBytes = 64LL * 1024LL;
 constexpr int kMaxRedactedArrayItems = 200;
@@ -186,9 +190,42 @@ bool writeAppendPayload(QFile& file,
     return false;
 }
 
+QString rolledJsonlPath(const QString& path, int index) {
+    return QStringLiteral("%1.%2").arg(path).arg(index);
+}
+
+// Rolls a full JSONL file out of the way so appends can continue on a fresh file:
+// drops the oldest rolled file, shifts path.(n-1) -> path.n down the ring, then
+// moves the live file to path.1. Returns false only if a filesystem op fails, in
+// which case the caller must NOT write (fail safe -- never clobber the trail).
+bool rotateJsonl(const QString& path, const QString& label, QString* error_message) {
+    const auto fail = [&](const QString& detail) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("Could not rotate %1 audit file: %2").arg(label, detail);
+        }
+        return false;
+    };
+    const QString oldest = rolledJsonlPath(path, kMaxRolledJsonlFiles);
+    if (QFile::exists(oldest) && !QFile::remove(oldest)) {
+        return fail(oldest);
+    }
+    for (int i = kMaxRolledJsonlFiles - 1; i >= 1; --i) {
+        const QString from = rolledJsonlPath(path, i);
+        if (QFile::exists(from) && !QFile::rename(from, rolledJsonlPath(path, i + 1))) {
+            return fail(from);
+        }
+    }
+    if (QFile::exists(path) && !QFile::rename(path, rolledJsonlPath(path, 1))) {
+        return fail(path);
+    }
+    return true;
+}
+
 bool appendJsonLine(const QString& path,
                     const QJsonObject& object,
                     const QString& label,
+                    qint64 cap_override,
                     QString* error_message) {
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath())) {
@@ -198,14 +235,9 @@ bool appendJsonLine(const QString& path,
         }
         return false;
     }
-    const qint64 cap = jsonlSizeCapForLabel(label);
-    if (info.exists() && info.size() >= cap) {
-        if (error_message) {
-            *error_message = QStringLiteral("%1 artifact exceeded max size cap (%2 bytes): %3")
-                                 .arg(label)
-                                 .arg(cap)
-                                 .arg(path);
-        }
+    const qint64 cap = cap_override > 0 ? cap_override : jsonlSizeCapForLabel(label);
+    if (info.exists() && info.size() >= cap && !rotateJsonl(path, label, error_message)) {
+        // Rotation failed: fail safe rather than risk clobbering the audit trail.
         return false;
     }
     QFile file(path);
@@ -318,6 +350,14 @@ void TraceStore::setSessionDirectory(const QString& session_dir) {
     m_session_dir = session_dir;
 }
 
+void TraceStore::setMaxJsonlBytes(qint64 max_bytes) {
+    m_max_jsonl_bytes = max_bytes > 0 ? max_bytes : 0;
+}
+
+qint64 TraceStore::maxJsonlBytes() const {
+    return m_max_jsonl_bytes;
+}
+
 QString TraceStore::sessionDirectory() const {
     return m_session_dir;
 }
@@ -360,7 +400,8 @@ bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
             QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
 
-    return appendJsonLine(tracePath(), event.toJson(), QStringLiteral("trace"), error_message);
+    return appendJsonLine(
+        tracePath(), event.toJson(), QStringLiteral("trace"), m_max_jsonl_bytes, error_message);
 }
 
 QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
@@ -401,8 +442,11 @@ bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_messa
         event.activity_id = QStringLiteral("act_%1").arg(
             QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
-    return appendJsonLine(
-        activityPath(), event.toJson(), QStringLiteral("activity"), error_message);
+    return appendJsonLine(activityPath(),
+                          event.toJson(),
+                          QStringLiteral("activity"),
+                          m_max_jsonl_bytes,
+                          error_message);
 }
 
 QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) const {
@@ -460,7 +504,8 @@ bool TraceStore::appendReplayEvent(const QString& run_id,
         object[QStringLiteral("tool_name")] = tool_name;
     }
     object[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
-    return appendJsonLine(replayPath(), object, QStringLiteral("turn replay"), error_message);
+    return appendJsonLine(
+        replayPath(), object, QStringLiteral("turn replay"), m_max_jsonl_bytes, error_message);
 }
 
 AiTraceEvent TraceStore::event(const AiTraceEventSeed& seed) {

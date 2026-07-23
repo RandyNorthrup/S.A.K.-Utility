@@ -79,6 +79,12 @@ public:
 
     void setSessionDirectory(const QString& session_dir);
     [[nodiscard]] QString sessionDirectory() const;
+
+    // Overrides the per-stream size cap at which a JSONL file is rolled. Pass 0 to
+    // restore the built-in defaults. Primarily an operator/retention tuning knob;
+    // also lets tests exercise rotation without writing tens of megabytes.
+    void setMaxJsonlBytes(qint64 max_bytes);
+    [[nodiscard]] qint64 maxJsonlBytes() const;
     [[nodiscard]] QString tracePath() const;
     [[nodiscard]] QString activityPath() const;
     [[nodiscard]] QString replayPath() const;
@@ -100,6 +106,8 @@ public:
 
 private:
     QString m_session_dir;
+    // 0 => use the per-stream built-in cap; > 0 => operator/test override.
+    qint64 m_max_jsonl_bytes{0};
 };
 
 }  // namespace sak::ai
