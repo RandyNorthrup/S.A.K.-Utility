@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/ai/ai_mcp_session_pool.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
 #include "sak/ai/ai_subagent_tool_executor.h"
@@ -897,6 +898,9 @@ private:
     std::unique_ptr<ai::AiToolHealthLedger> m_toolHealthLedger;
     std::unique_ptr<ai::AiToolDispatcher> m_toolDispatcher;
     std::unique_ptr<ai::AiAsyncToolRunner> m_asyncToolRunner;
+    // Persistent MCP stdio sessions, reused across provider-gateway win32 MCP tool
+    // calls. Closed (worker threads joined) when the panel is destroyed.
+    ai::AiMcpSessionPool m_mcpSessionPool;
     bool m_asyncToolInFlight{false};
     // Copy of m_runToken taken (on the GUI thread) when an async built-in tool
     // starts, so its worker can poll cancellation lock-free (the token shares

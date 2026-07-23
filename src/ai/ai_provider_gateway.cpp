@@ -4,6 +4,7 @@
 #include "sak/ai/ai_provider_gateway.h"
 
 #include "sak/ai/ai_mcp_http_client.h"
+#include "sak/ai/ai_mcp_session_pool.h"
 #include "sak/ai/ai_mcp_stdio_client.h"
 
 #include <QJsonArray>
@@ -555,13 +556,17 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
         return {};
     }
 
-    const QJsonObject message = AiMcpStdioClient::callTool(
-        {.command = plan.provider.value(QStringLiteral("resolved_command")).toString(),
-         .tool_name = plan.tool_name,
-         .arguments = plan.tool_arguments,
-         .environment = win32McpEnvironment(plan.security_profile, plan.provider),
-         .timeout_ms = plan.timeout_ms},
-        error_message);
+    const AiMcpStdioCallRequest request{
+        .command = plan.provider.value(QStringLiteral("resolved_command")).toString(),
+        .tool_name = plan.tool_name,
+        .arguments = plan.tool_arguments,
+        .environment = win32McpEnvironment(plan.security_profile, plan.provider),
+        .timeout_ms = plan.timeout_ms};
+    // With a pool, the server process is reused across calls (keyed on command +
+    // the full launch environment, so security profiles never share a process);
+    // without one, fall back to a fresh process per call.
+    const QJsonObject message = m_mcp_pool ? m_mcp_pool->callTool(request, error_message)
+                                           : AiMcpStdioClient::callTool(request, error_message);
     if (message.isEmpty()) {
         return {};
     }

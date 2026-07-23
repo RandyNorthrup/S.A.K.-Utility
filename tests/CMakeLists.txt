@@ -1888,6 +1888,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_stdio_session.cpp")
     message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_session_pool.cpp")
+    add_executable(test_ai_mcp_session_pool
+        unit/test_ai_mcp_session_pool.cpp
+        ../src/ai/ai_mcp_session_pool.cpp
+        ../src/ai/ai_mcp_stdio_session.cpp
+        ../include/sak/ai/ai_mcp_session_pool.h
+        ../include/sak/ai/ai_mcp_stdio_session.h
+    )
+    set_target_properties(test_ai_mcp_session_pool PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_mcp_session_pool PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_mcp_session_pool PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_mcp_session_pool")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
     add_executable(test_ai_conversation_store
         unit/test_ai_conversation_store.cpp

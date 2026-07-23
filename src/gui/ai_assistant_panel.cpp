@@ -6748,6 +6748,10 @@ QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
 
 QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     ai::AiProviderGateway gateway;
+    // Reuse persistent MCP server processes across win32 MCP tool calls instead of
+    // respawning one per call. The pool outlives this per-call gateway (panel
+    // member) and is thread-safe, so the provider-gateway worker thread may use it.
+    gateway.setMcpSessionPool(&m_mcpSessionPool);
     ai::AiProviderGatewayToolAccess access = ai::AiProviderGatewayToolAccess::ChatAndResearch;
     if (currentAccessMode() == AccessMode::AssistedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::AssistedFullAccess;

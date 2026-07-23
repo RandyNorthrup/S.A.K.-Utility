@@ -13,6 +13,8 @@ namespace sak::ai {
 
 inline constexpr int kDefaultProviderGatewayTimeoutMs = 20'000;
 
+class AiMcpSessionPool;
+
 class AiProviderGateway {
 public:
     struct Win32McpCallPlan {
@@ -27,6 +29,12 @@ public:
     };
 
     explicit AiProviderGateway(AiProviderRegistry registry = AiProviderRegistry{});
+
+    /// Inject a persistent MCP session pool (owned by the caller). When set,
+    /// callWin32Mcp routes through it so the server process is reused across calls;
+    /// when null, callWin32Mcp falls back to the one-shot AiMcpStdioClient (a fresh
+    /// process per call). Not owned; must outlive this gateway.
+    void setMcpSessionPool(AiMcpSessionPool* pool) { m_mcp_pool = pool; }
 
     [[nodiscard]] QJsonObject providers(QString* error_message = nullptr) const;
     [[nodiscard]] QJsonObject providerStatuses(QString* error_message = nullptr) const;
@@ -59,6 +67,7 @@ public:
 
 private:
     AiProviderRegistry m_registry;
+    AiMcpSessionPool* m_mcp_pool{nullptr};  // not owned; see setMcpSessionPool
 };
 
 }  // namespace sak::ai
