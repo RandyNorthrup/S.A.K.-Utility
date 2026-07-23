@@ -228,6 +228,31 @@ void recordExecutedTools(AiSubagentResult* result, const QStringList& executed_t
     }
 }
 
+// Sums a turn's usage into a running accumulator so an acting subagent reports
+// tokens across ALL of its model<->tool round trips, not just the last turn.
+void addUsage(TokenUsage* accumulated, const TokenUsage& turn) {
+    accumulated->input_tokens += turn.input_tokens;
+    accumulated->cached_input_tokens += turn.cached_input_tokens;
+    accumulated->output_tokens += turn.output_tokens;
+    accumulated->reasoning_tokens += turn.reasoning_tokens;
+    accumulated->total_tokens += turn.total_tokens;
+}
+
+// Honest terminal result when the wall-clock deadline expires mid tool-loop.
+// TimedOut (not the Degraded cap result) so a real timeout is not mislabeled as
+// an iteration-cap stop and is not silently continued as a success.
+AiSubagentResult toolLoopTimeoutResult(const AiSubagentTask& task,
+                                       const QStringList& executed_tools,
+                                       const TokenUsage& usage) {
+    AiSubagentResult result =
+        baseResult(task,
+                   AiSubagentStatus::TimedOut,
+                   QStringLiteral("Subagent wall-clock timeout expired during tool execution"));
+    result.usage = usage;
+    recordExecutedTools(&result, executed_tools);
+    return result;
+}
+
 // Honest terminal result when a subagent keeps requesting tools past its cap.
 // Degraded (not Complete/Failed) so the run continues non-fatally while the
 // unfinished work is auditable (mirrors the W4c contentless-failure handling).
@@ -287,23 +312,31 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
     const AiSubagentTask& task = *ctx.task;
     ActingLoopOutcome outcome;
     outcome.response = std::move(initial_response);
+    TokenUsage accumulated = outcome.response.usage;
     int iterations = 0;
     while (outcome.response.success && !outcome.response.tool_calls.isEmpty() &&
            ctx.tools.executor != nullptr) {
         if (tokenCancelled(agent_token)) {
             AiSubagentResult cancelled =
                 baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
-            cancelled.usage = outcome.response.usage;
+            cancelled.usage = accumulated;
+            recordExecutedTools(&cancelled, outcome.executed_tools);
             outcome.early_return = true;
             outcome.early_attempt = {cancelled, false};
             return outcome;
         }
-        if (iterations >= ctx.tools.max_iterations || deadline.hasExpired()) {
+        if (deadline.hasExpired()) {
+            outcome.early_return = true;
+            outcome.early_attempt = {
+                toolLoopTimeoutResult(task, outcome.executed_tools, accumulated), false};
+            return outcome;
+        }
+        if (iterations >= ctx.tools.max_iterations) {
             outcome.early_return = true;
             outcome.early_attempt = {toolIterationCapResult(task,
                                                             ctx.tools.max_iterations,
                                                             outcome.executed_tools,
-                                                            outcome.response.usage),
+                                                            accumulated),
                                      false};
             return outcome;
         }
@@ -315,8 +348,12 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
         }
         outcome.response = ctx.model_client->continueWithToolOutputs(
             *ctx.request, outcome.response.response_id, outputs, agent_token);
+        addUsage(&accumulated, outcome.response.usage);
         ++iterations;
     }
+    // The final turn carries the usage summed across every round trip so callers
+    // (budget checks, telemetry) see the whole cost, not just the last turn.
+    outcome.response.usage = accumulated;
     return outcome;
 }
 
@@ -334,6 +371,7 @@ SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
         AiSubagentResult cancelled =
             baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
         cancelled.usage = response.usage;
+        recordExecutedTools(&cancelled, loop.executed_tools);
         return {cancelled, false};
     }
     if (!response.success) {
@@ -343,6 +381,7 @@ SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
                                                  ? QStringLiteral("Model invocation failed")
                                                  : response.error_message);
         failed.usage = response.usage;
+        recordExecutedTools(&failed, loop.executed_tools);
         return {failed, true};
     }
     bool retryable = false;

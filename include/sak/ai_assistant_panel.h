@@ -720,6 +720,14 @@ private:
     [[nodiscard]] QJsonObject dispatchWorkflowToolPhase(const ai::WorkflowPhase& phase,
                                                         ai::AiToolPolicy policy,
                                                         const ai::AiWorkflowPhaseContext& context);
+    // Runs one acting-subagent tool call through the same policy/lease/health
+    // dispatcher as workflow tool phases. Invoked on the workflow worker thread
+    // via the injected AiSubagentToolExecutor (which already gated it by allowlist
+    // + parsed its arguments).
+    [[nodiscard]] QJsonObject dispatchSubagentToolCall(ai::AiToolPolicy policy,
+                                                       const ai::AiToolCallRequest& request,
+                                                       const QJsonObject& arguments,
+                                                       const QString& agent_id);
     [[nodiscard]] WorkflowToolDispatchPlan workflowToolDispatchPlan(
         const ai::WorkflowPhase& phase,
         ai::AiToolPolicy policy,

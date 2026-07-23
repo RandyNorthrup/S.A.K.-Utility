@@ -26,6 +26,7 @@
 #include "sak/ai/ai_run_state_store.h"
 #include "sak/ai/ai_skill_store.h"
 #include "sak/ai/ai_subagent_runner.h"
+#include "sak/ai/ai_subagent_tool_executor.h"
 #include "sak/ai/ai_token_usage_tracker.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_health_ledger.h"
@@ -1498,6 +1499,21 @@ bool workflowRequirementAvailable(const ai::WorkflowRequirement& requirement) {
         return true;
     }
     return ai::AiToolCallRouter::kindForName(requirement.id) != ai::AiToolCallKind::Unknown;
+}
+
+// Tools an acting subagent may invoke. Restricted to the non-command built-in
+// tools the AiToolDispatcher handles (each self-marshals its GUI/store work, so
+// they are safe on the workflow worker thread); shell/process command tools and
+// GUI-affine capture are intentionally excluded. Per-call policy, lease, and
+// health gates still apply on top of this allowlist.
+QSet<QString> subagentAllowedToolNames() {
+    return {
+        QStringLiteral("sak_session_search"),
+        QStringLiteral("sak_skill"),
+        QStringLiteral("sak_package_manager"),
+        QStringLiteral("sak_offline_downloader"),
+        QStringLiteral("sak_provider_gateway"),
+    };
 }
 
 QJsonObject toolError(const QString& message) {
@@ -8902,6 +8918,26 @@ QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase&
     return outcome.result;
 }
 
+QJsonObject AiAssistantPanel::dispatchSubagentToolCall(ai::AiToolPolicy policy,
+                                                       const ai::AiToolCallRequest& request,
+                                                       const QJsonObject& arguments,
+                                                       const QString& agent_id) {
+    if (!m_toolDispatcher) {
+        return toolError(QStringLiteral("No tool dispatcher"));
+    }
+    // Defense in depth: the subagent path deliberately skips the human/catastrophic
+    // confirmation gate that interactive command tools go through, so shell/process
+    // tools must never run here -- refuse them structurally, independent of the
+    // executor allowlist, so a future allowlist change can't silently expose an
+    // ungated PowerShell/process handler to a subagent.
+    if (ai::AiToolCallRouter::isCommandTool(ai::AiToolCallRouter::kindForName(request.tool_name))) {
+        return toolError(QStringLiteral("Command tools are not available to subagents"));
+    }
+    const auto outcome = m_toolDispatcher->dispatch(
+        policy, request, arguments, agent_id.isEmpty() ? QStringLiteral("subagent") : agent_id);
+    return outcome.result;
+}
+
 AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatchPlan(
     const ai::WorkflowPhase& phase,
     ai::AiToolPolicy policy,
@@ -9564,6 +9600,38 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
         return client;
     });
     configureWorkflowRunner(&runner);
+
+    // Let acting subagents run allowlisted tools through the panel's gate chain.
+    // Routes on the workflow worker thread via the panel guard (same lifetime
+    // contract as PanelToolExecutor: the destructor drains the run first). Gating
+    // is layered: command tools refused + allowlist here, then policy/lease/health
+    // inside the dispatcher.
+    // CONCURRENCY: unlike tool_action phases (always serial), up to
+    // kWorkflowMaxParallelSubagents delegate phases run at once, so dispatch() and
+    // the built-in tool handlers may be called concurrently. This is safe only
+    // because parallel phase groups are restricted to read-only policies (no
+    // leases; the read-only handlers only read immutable stores). Do NOT allowlist
+    // a mutating/stateful handler without making it concurrency-safe.
+    const QPointer<AiAssistantPanel> guard = launch.panel_guard;
+    ai::AiSubagentToolExecutor subagent_tool_executor(
+        [guard](ai::AiToolPolicy policy,
+                const ai::AiToolCallRequest& request,
+                const QJsonObject& arguments,
+                const QString& agent_id,
+                const ai::CancellationToken& token) -> QJsonObject {
+            if (!guard) {
+                return toolError(QStringLiteral("Panel gone"));
+            }
+            if (token.isValid() && token.isCancellationRequested()) {
+                QJsonObject cancelled = toolError(token.cancelReason());
+                cancelled[QStringLiteral("cancelled")] = true;
+                return cancelled;
+            }
+            return guard->dispatchSubagentToolCall(policy, request, arguments, agent_id);
+        });
+    subagent_tool_executor.setAllowedTools(subagentAllowedToolNames());
+    runner.setToolExecutor(&subagent_tool_executor);
+
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
     orchestrator.setGuidanceResolver(&readAiGuidanceResource);

@@ -139,6 +139,8 @@ private Q_SLOTS:
     void actingSubagentExecutesToolCallsThenCompletes();
     void toolLoopStopsAtIterationCapWithDegraded();
     void noLocalExecutionPolicyStaysSingleShot();
+    void usageAccumulatesAcrossToolRoundTrips();
+    void executedToolsRecordedWhenContinuationFails();
 };
 
 void AiSubagentRunnerTests::completeRoundTripPopulatesFields() {
@@ -556,6 +558,55 @@ void AiSubagentRunnerTests::noLocalExecutionPolicyStaysSingleShot() {
     // The tool-call-only response has no final JSON, so it surfaces as a failure
     // rather than being silently accepted.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
+}
+
+void AiSubagentRunnerTests::usageAccumulatesAcrossToolRoundTrips() {
+    FakeModelClient client;
+    auto tool_turn = makeToolCallResponse(QStringLiteral("run_powershell"),
+                                          QStringLiteral("c1"),
+                                          QStringLiteral("r1"));
+    tool_turn.usage.total_tokens = 100;
+    auto final_turn = makeCompleteResponse(QStringLiteral("done"));
+    final_turn.usage.total_tokens = 50;
+    client.scripted_responses.append(tool_turn);
+    client.scripted_responses.append(final_turn);
+
+    RecordingToolExecutor executor;
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+    sak::ai::AiSubagentTask task;
+    task.tool_policy = sak::ai::AiToolPolicy::ReadOnlyPc;
+
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
+    // Both the tool turn (100) and the final turn (50) are counted, not just one.
+    QCOMPARE(result.usage.total_tokens, static_cast<qint64>(150));
+}
+
+void AiSubagentRunnerTests::executedToolsRecordedWhenContinuationFails() {
+    FakeModelClient client;
+    client.scripted_responses.append(makeToolCallResponse(
+        QStringLiteral("run_powershell"), QStringLiteral("c1"), QStringLiteral("r1")));
+    sak::ai::IAiModelClient::Response failed_continuation;
+    failed_continuation.success = false;
+    failed_continuation.error_message = QStringLiteral("boom");
+    client.scripted_responses.append(failed_continuation);
+
+    RecordingToolExecutor executor;
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+    sak::ai::AiSubagentTask task;
+    task.tool_policy = sak::ai::AiToolPolicy::ReadOnlyPc;
+
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    // The turn failed, but the tool that DID run must still be recorded so the
+    // ground-truth "what did it do" survives on the failure path.
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
+    QVERIFY(result.actions_taken.contains(QStringLiteral("executed tool: run_powershell")));
 }
 
 QTEST_GUILESS_MAIN(AiSubagentRunnerTests)
