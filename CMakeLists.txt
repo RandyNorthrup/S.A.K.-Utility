@@ -752,6 +752,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_lease_manager.cpp
         src/ai/ai_mcp_http_client.cpp
         src/ai/ai_mcp_stdio_client.cpp
+        src/ai/ai_mcp_stdio_session.cpp
         src/ai/ai_openai_model_client.cpp
         src/ai/ai_orchestrator.cpp
         src/ai/ai_offline_downloader_tool_runner.cpp
@@ -799,7 +800,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_human_gate_store.h
         include/sak/ai/ai_lease_manager.h
         include/sak/ai/ai_mcp_http_client.h
+        include/sak/ai/ai_mcp_jsonrpc.h
         include/sak/ai/ai_mcp_stdio_client.h
+        include/sak/ai/ai_mcp_stdio_session.h
         include/sak/ai/ai_openai_model_client.h
         include/sak/ai/ai_orchestrator.h
         include/sak/ai/ai_offline_downloader_tool_runner.h

@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_mcp_stdio_client.h"
 
+#include "sak/ai/ai_mcp_jsonrpc.h"
 #include "sak/layout_constants.h"
 
 #include <QFileInfo>
@@ -35,63 +36,6 @@ constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 constexpr qint64 kMaxStdioReadBufferBytes = 8 * 1024 * 1024;  // 8 MiB
 // Only the tail of stderr is retained for the error preview; drop the rest.
 constexpr qsizetype kMaxStderrTailBytes = 64 * 1024;  // 64 KiB
-
-[[nodiscard]] QJsonObject initializePayload() {
-    return QJsonObject{
-        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-        {QStringLiteral("id"), kInitializeId},
-        {QStringLiteral("method"), QStringLiteral("initialize")},
-        {QStringLiteral("params"),
-         QJsonObject{
-             {QStringLiteral("protocolVersion"), QStringLiteral("2024-11-05")},
-             {QStringLiteral("capabilities"), QJsonObject{}},
-             {QStringLiteral("clientInfo"),
-              QJsonObject{{QStringLiteral("name"), QStringLiteral("sak-utility")},
-                          {QStringLiteral("version"), QStringLiteral("1")}}},
-         }},
-    };
-}
-
-[[nodiscard]] QJsonObject initializedNotification() {
-    return QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-                       {QStringLiteral("method"), QStringLiteral("notifications/initialized")},
-                       {QStringLiteral("params"), QJsonObject{}}};
-}
-
-[[nodiscard]] QJsonObject toolCallPayload(int id,
-                                          const QString& tool_name,
-                                          const QJsonObject& arguments) {
-    return QJsonObject{
-        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-        {QStringLiteral("id"), id},
-        {QStringLiteral("method"), QStringLiteral("tools/call")},
-        {QStringLiteral("params"),
-         QJsonObject{{QStringLiteral("name"), tool_name},
-                     {QStringLiteral("arguments"), arguments}}},
-    };
-}
-
-[[nodiscard]] QByteArray jsonLine(const QJsonObject& object) {
-    QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
-    bytes.append('\n');
-    return bytes;
-}
-
-[[nodiscard]] QJsonObject parseJsonLine(const QByteArray& line, QString* error_message) {
-    QJsonParseError parse_error;
-    const QJsonDocument doc = QJsonDocument::fromJson(line.trimmed(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Invalid MCP stdio JSON response: %1")
-                                 .arg(parse_error.errorString());
-        }
-        return {};
-    }
-    if (error_message) {
-        error_message->clear();
-    }
-    return doc.object();
-}
 
 enum class StdioPhase {
     Starting,
@@ -211,7 +155,7 @@ private:
 
     void onStarted() {
         m_phase = StdioPhase::AwaitInitialize;
-        (void)write(initializePayload());
+        (void)write(mcp::initializePayload(kInitializeId));
     }
 
     void handleReadyRead() {
@@ -233,7 +177,7 @@ private:
             return true;
         }
         QString parse_error;
-        const QJsonObject message = parseJsonLine(line, &parse_error);
+        const QJsonObject message = mcp::parseJsonLine(line, &parse_error);
         if (message.isEmpty()) {
             fail(parse_error);
             return false;
@@ -264,14 +208,14 @@ private:
 
     bool sendToolCall() {
         m_phase = StdioPhase::AwaitTool;
-        if (!write(initializedNotification())) {
+        if (!write(mcp::initializedNotification())) {
             return false;
         }
-        return write(toolCallPayload(kToolCallId, m_request.tool_name, m_request.arguments));
+        return write(mcp::toolCallPayload(kToolCallId, m_request.tool_name, m_request.arguments));
     }
 
     bool write(const QJsonObject& object) {
-        const QByteArray bytes = jsonLine(object);
+        const QByteArray bytes = mcp::jsonLine(object);
         if (m_process->write(bytes) == bytes.size()) {
             return true;
         }
@@ -373,13 +317,13 @@ QJsonObject AiMcpStdioClient::callTool(const AiMcpStdioCallRequest& request,
 }
 
 QJsonObject AiMcpStdioClient::initializePayloadForTesting() {
-    return initializePayload();
+    return mcp::initializePayload(kInitializeId);
 }
 
 QJsonObject AiMcpStdioClient::toolCallPayloadForTesting(int id,
                                                         const QString& tool_name,
                                                         const QJsonObject& arguments) {
-    return toolCallPayload(id, tool_name, arguments);
+    return mcp::toolCallPayload(id, tool_name, arguments);
 }
 
 }  // namespace sak::ai
