@@ -16,6 +16,7 @@
 #include "sak/ai/ai_skill_store.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_health_ledger.h"
+#include "sak/ai/ai_tool_loop_detector.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
@@ -431,7 +432,111 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(handler_ran.load(), 5000);
     }
 
+    // Wave 5: the loop guard breaks a stuck model that re-emits the SAME tool with
+    // byte-identical arguments. With the default threshold of 4, the first three
+    // identical calls dispatch to the handler; the fourth is refused (handler not
+    // invoked) and a corrective output is fed back instead -- long before the flat
+    // per-message turn cap would burn the whole budget.
+    void loopGuardRefusesIdenticalRepeatedToolCall() {
+        AiAssistantPanel panel;
+        std::atomic<int> handler_calls{0};
+        panel.m_toolDispatcher->registerHandler(
+            QStringLiteral("sak_skill"),
+            [&handler_calls](const QJsonObject&, const ai::AiToolPolicyDecision&) {
+                handler_calls.fetch_add(1);
+                return QJsonObject{{QStringLiteral("success"), true}};
+            });
+        allowLocalToolsAndValidRun(panel);
+
+        // One response carrying four identical sak_skill calls; the loop is
+        // processed inline because sak_skill is a synchronous built-in.
+        panel.beginToolTurn(repeatedSkillResponse(4, /*identical=*/true));
+
+        QCOMPARE(handler_calls.load(), 3);  // 4th refused before dispatch
+        QVERIFY(panel.m_toolLoopDetector.isLooping());
+        QCOMPARE(panel.m_toolLoopDetector.maxRepeatCount(),
+                 ai::AiToolLoopDetector::kDefaultRepeatThreshold);
+    }
+
+    // The guard keys on tool name PLUS arguments: distinct arguments are distinct
+    // work and must never be mistaken for a loop, even well past the threshold.
+    void loopGuardAllowsDistinctArgumentsPastThreshold() {
+        AiAssistantPanel panel;
+        std::atomic<int> handler_calls{0};
+        panel.m_toolDispatcher->registerHandler(
+            QStringLiteral("sak_skill"),
+            [&handler_calls](const QJsonObject&, const ai::AiToolPolicyDecision&) {
+                handler_calls.fetch_add(1);
+                return QJsonObject{{QStringLiteral("success"), true}};
+            });
+        allowLocalToolsAndValidRun(panel);
+
+        panel.beginToolTurn(repeatedSkillResponse(6, /*identical=*/false));
+
+        QCOMPARE(handler_calls.load(), 6);  // every distinct call dispatched
+        QVERIFY(!panel.m_toolLoopDetector.isLooping());
+    }
+
+    // Regression (adversarial-review finding): an identical repeat of an
+    // UNRECOGNIZED tool name is the most wasteful loop (no useful work at all), so
+    // the guard must observe it too rather than letting the "Unknown function"
+    // path run all the way to the 12-turn hard cap. The detector must therefore
+    // trip even though the tool is never dispatched.
+    void loopGuardCountsUnrecognizedRepeatedToolCall() {
+        AiAssistantPanel panel;
+        allowLocalToolsAndValidRun(panel);
+
+        // "no_such_tool" maps to AiToolCallKind::Unknown, so every call takes the
+        // unrecognized path; the loop guard sits ahead of that split now.
+        panel.beginToolTurn(repeatedNamedResponse(QStringLiteral("no_such_tool"),
+                                                  4,
+                                                  /*identical=*/true));
+
+        QVERIFY(panel.m_toolLoopDetector.isLooping());
+        QCOMPARE(panel.m_toolLoopDetector.maxRepeatCount(),
+                 ai::AiToolLoopDetector::kDefaultRepeatThreshold);
+    }
+
 private:
+    // A single response carrying `count` calls of an arbitrary tool `name`. When
+    // `identical`, every call has byte-identical arguments (trips the loop guard);
+    // otherwise each carries a distinct index so no two signatures match.
+    static ai::OpenAIResponseResult repeatedNamedResponse(const QString& name,
+                                                          int count,
+                                                          bool identical) {
+        ai::OpenAIResponseResult response;
+        response.id = QStringLiteral("resp_named_1");
+        for (int i = 0; i < count; ++i) {
+            ai::OpenAIFunctionCall call;
+            call.call_id = QStringLiteral("call_named_%1").arg(i);
+            call.name = name;
+            const QString value = identical ? QStringLiteral("same")
+                                            : QStringLiteral("v_%1").arg(i);
+            call.arguments_json = QStringLiteral("{\"x\":\"%1\"}").arg(value);
+            response.function_calls.append(call);
+        }
+        return response;
+    }
+
+    // A single response carrying `count` sak_skill calls. When `identical`, every
+    // call has byte-identical arguments (trips the loop guard); otherwise each
+    // carries a distinct skill_id so no two signatures match.
+    static ai::OpenAIResponseResult repeatedSkillResponse(int count, bool identical) {
+        ai::OpenAIResponseResult response;
+        response.id = QStringLiteral("resp_loop_1");
+        for (int i = 0; i < count; ++i) {
+            ai::OpenAIFunctionCall call;
+            call.call_id = QStringLiteral("call_loop_%1").arg(i);
+            call.name = QStringLiteral("sak_skill");
+            const QString skill_id = identical ? QStringLiteral("same")
+                                               : QStringLiteral("id_%1").arg(i);
+            call.arguments_json =
+                QStringLiteral("{\"operation\":\"load\",\"skill_id\":\"%1\"}").arg(skill_id);
+            response.function_calls.append(call);
+        }
+        return response;
+    }
+
     // Give the panel a fresh, non-persistent health ledger so a prior run's
     // persisted circuit state (test-mode data dir) cannot leak into these breaker
     // assertions. applyCommandHealthGate/recordCommandHealth use m_toolHealthLedger.

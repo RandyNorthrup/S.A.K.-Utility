@@ -5415,6 +5415,17 @@ void AiAssistantPanel::dispatchNextToolCall() {
     finishToolTurnAndContinue();
 }
 
+ai::CancellationToken AiAssistantPanel::makePendingCallToken(const ai::OpenAIFunctionCall& call) {
+    const QString suffix = QStringLiteral("call_%1").arg(call.call_id.left(kTraceTokenIdChars));
+    if (m_pendingTurnToken.isValid()) {
+        return m_pendingTurnToken.createChild(suffix);
+    }
+    if (m_runToken.isValid()) {
+        return m_runToken.createChild(suffix);
+    }
+    return ai::CancellationToken{};
+}
+
 bool AiAssistantPanel::preparePendingToolCall(const ai::OpenAIFunctionCall& call,
                                               PendingToolCallContext* context,
                                               ai::OpenAIFunctionOutput* output) {
@@ -5431,18 +5442,37 @@ bool AiAssistantPanel::preparePendingToolCall(const ai::OpenAIFunctionCall& call
         QStringLiteral("tool_call"), call.name, QStringLiteral("started"), context->metadata);
     recordToolLoopObservation(call.name);
 
-    m_pendingCallToken = m_pendingTurnToken.isValid()
-                             ? m_pendingTurnToken.createChild(QStringLiteral("call_%1").arg(
-                                   call.call_id.left(kTraceTokenIdChars)))
-                         : m_runToken.isValid()
-                             ? m_runToken.createChild(QStringLiteral("call_%1").arg(
-                                   call.call_id.left(kTraceTokenIdChars)))
-                             : ai::CancellationToken{};
+    m_pendingCallToken = makePendingCallToken(call);
     if ((m_runToken.isValid() && m_runToken.isCancellationRequested()) ||
         (m_pendingCallToken.isValid() && m_pendingCallToken.isCancellationRequested())) {
         *output = ai::AiToolCallRouter::cancelledOutput(call);
         traceAiEvent(
             QStringLiteral("tool_call"), call.name, QStringLiteral("cancelled"), context->metadata);
+        appendToolOutputAndContinue(std::move(*output));
+        return false;
+    }
+    // Loop guard runs BEFORE the recognized/unknown split: an identical repeat of
+    // an UNRECOGNIZED tool name is the most wasteful loop (no useful work at all),
+    // so it must trip the soft refuse too instead of running to the turn cap. The
+    // cancellation check above still wins -- a cancelled call is not a loop.
+    if (m_toolLoopDetector.observe(call.name, call.arguments_json)) {
+        // Same tool + byte-identical arguments repeated to the loop threshold.
+        // Refuse to execute it again and feed the model a corrective output so it
+        // can change approach; the per-message turn cap stays the hard backstop.
+        const int repeats = m_toolLoopDetector.repeatCountFor(call.name, call.arguments_json);
+        *output = ai::AiToolCallRouter::errorOutput(
+            call,
+            tr("Loop guard: this tool was called %1 times with identical arguments and was not "
+               "executed again. Change your approach or answer the user directly.")
+                .arg(repeats),
+            QJsonObject{{QStringLiteral("loop_halted"), true},
+                        {QStringLiteral("repeat_count"), repeats}});
+        traceAiEvent(QStringLiteral("tool_call"),
+                     call.name,
+                     QStringLiteral("loop_halted"),
+                     context->metadata);
+        appendLocalEvent(
+            tr("Loop guard refused repeated call: %1").arg(m_toolLoopDetector.loopingSummary()));
         appendToolOutputAndContinue(std::move(*output));
         return false;
     }
@@ -10672,6 +10702,7 @@ void AiAssistantPanel::onNewSessionClicked() {
     m_toolTurnIterations = 0;
     m_toolNamesThisMessage.clear();
     m_toolFailureClassesThisMessage.clear();
+    m_toolLoopDetector.reset();
     m_runToken = {};
     m_runState = {};
     m_taskStatus = tr("Idle");
@@ -10823,6 +10854,7 @@ void AiAssistantPanel::onSendClicked() {
     m_toolTurnIterations = 0;
     m_toolNamesThisMessage.clear();
     m_toolFailureClassesThisMessage.clear();
+    m_toolLoopDetector.reset();
     updateSessionRoleForPrompt(message);
 
     if (startAttachedWorkflowFromPrompt(message) == WorkflowSendResult::Handled) {

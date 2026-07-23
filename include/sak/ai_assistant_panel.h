@@ -10,6 +10,7 @@
 #include "sak/ai/ai_subagent_tool_executor.h"
 #include "sak/ai/ai_tool_call_router.h"
 #include "sak/ai/ai_tool_dispatcher.h"
+#include "sak/ai/ai_tool_loop_detector.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/ai_tool_turn.h"
 #include "sak/ai/ai_trace_store.h"
@@ -342,6 +343,7 @@ private:
     [[nodiscard]] bool preparePendingToolCall(const ai::OpenAIFunctionCall& call,
                                               PendingToolCallContext* context,
                                               ai::OpenAIFunctionOutput* output);
+    [[nodiscard]] ai::CancellationToken makePendingCallToken(const ai::OpenAIFunctionCall& call);
     [[nodiscard]] bool dispatchBuiltInToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output);
@@ -969,6 +971,9 @@ private:
     int m_toolCallsThisSession{0};
     QHash<QString, int> m_toolNamesThisMessage;
     QHash<QString, int> m_toolFailureClassesThisMessage;
+    // Breaks a stuck loop of identical (name + arguments) tool calls before the
+    // flat per-message turn cap burns the whole budget. Reset per user message.
+    ai::AiToolLoopDetector m_toolLoopDetector;
 
     static constexpr int kMaxToolTurnsPerUserMessage = 12;
 };
