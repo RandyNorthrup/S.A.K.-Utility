@@ -769,6 +769,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
         src/ai/ai_subagent_runner.cpp
+        src/ai/ai_subagent_tool_executor.cpp
         src/ai/ai_token_usage_tracker.cpp
         src/ai/ai_tool_call_router.cpp
         src/ai/ai_tool_dispatcher.cpp
@@ -814,6 +815,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_run_state.h
         include/sak/ai/ai_run_state_store.h
         include/sak/ai/ai_subagent_runner.h
+        include/sak/ai/ai_subagent_tool_executor.h
         include/sak/ai/ai_token_usage_tracker.h
         include/sak/ai/ai_tool_call_router.h
         include/sak/ai/ai_tool_dispatcher.h

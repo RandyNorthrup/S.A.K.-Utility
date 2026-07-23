@@ -2176,6 +2176,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_lease_manager.cpp")
     message(STATUS "Added unit test: test_ai_lease_manager")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_tool_executor.cpp")
+    add_executable(test_ai_subagent_tool_executor
+        unit/test_ai_subagent_tool_executor.cpp
+        ../src/ai/ai_subagent_tool_executor.cpp
+        ../src/ai/ai_cancellation_token.cpp
+        ../include/sak/ai/ai_subagent_tool_executor.h
+        ../include/sak/ai/ai_subagent_runner.h
+    )
+    set_target_properties(test_ai_subagent_tool_executor PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_subagent_tool_executor PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_subagent_tool_executor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_subagent_tool_executor COMMAND test_ai_subagent_tool_executor
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_subagent_tool_executor")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_tool_planner.cpp")
     add_executable(test_ai_package_tool_planner
         unit/test_ai_package_tool_planner.cpp
