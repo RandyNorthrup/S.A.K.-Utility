@@ -11,6 +11,9 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
+#include <vector>
 
 class AiConversationStoreTests : public QObject {
     Q_OBJECT
@@ -32,6 +35,7 @@ private Q_SLOTS:
     void memoryFile_trimPreservesStructuredSections();
     void searchSessions_findsTranscriptAndCommandIndex();
     void appendCommand_redactsSecretsInPersistedRecord();
+    void concurrentReadersAndWriterDoNotDeadlockOrCorrupt();
 };
 
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
@@ -430,6 +434,65 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
     QFile commands(store.currentSessionInfo().path + QStringLiteral("/commands.jsonl"));
     QVERIFY(commands.open(QIODevice::ReadOnly | QIODevice::Text));
     QVERIFY(!QString::fromUtf8(commands.readAll()).contains(secret));
+}
+
+void AiConversationStoreTests::concurrentReadersAndWriterDoNotDeadlockOrCorrupt() {
+    // ConversationStore is reached from more than one thread: acting subagents run
+    // allowlisted store-backed tools (session_search, artifact/download paths) on a
+    // workflow WORKER thread while the GUI thread appends transcripts and mutates
+    // the current-session record. Its recursive read/write lock must (a) never
+    // deadlock -- including the nested-read chains artifactPath -> artifactSubdir ->
+    // artifactRootDirectory -- and (b) keep every m_current_session read internally
+    // consistent (no torn id/title/path). This test hangs on a locking bug and the
+    // suite times out, which is the deadlock signal.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Concurrent"), &error));
+    const QString session_id = store.currentSessionId();
+    QVERIFY(!session_id.isEmpty());
+
+    constexpr int kIterations = 300;
+    std::atomic<bool> torn_read{false};
+
+    auto reader = [&store, &session_id, &torn_read]() {
+        for (int i = 0; i < kIterations; ++i) {
+            const sak::ai::AiSessionInfo info = store.currentSessionInfo();
+            // The session is never cleared or renamed here, so a snapshot must be
+            // internally consistent: a torn read could pair a stale id with a fresh
+            // path, or an empty id with a non-empty path.
+            if (info.id != session_id || info.path.isEmpty()) {
+                torn_read = true;
+            }
+            QString err;
+            (void)store.artifactRootDirectory(&err);  // nested-read chain
+            (void)store.artifactPath(QStringLiteral("downloads"), QStringLiteral("f.bin"), &err);
+            (void)store.currentSessionId();
+            (void)store.searchSessions(QStringLiteral("disk"), 10, &err);
+        }
+    };
+
+    std::vector<std::thread> readers;
+    readers.reserve(4);
+    for (int t = 0; t < 4; ++t) {
+        readers.emplace_back(reader);
+    }
+    // Writer on this thread mirrors the GUI thread appending transcripts/commands.
+    for (int i = 0; i < kIterations; ++i) {
+        QString err;
+        (void)store.appendTranscript(
+            QStringLiteral("You"), QStringLiteral("disk check %1").arg(i), {}, &err);
+    }
+    for (auto& th : readers) {
+        th.join();
+    }
+
+    QVERIFY(!torn_read.load());
+    // The store is still consistent and usable after the hammering.
+    QCOMPARE(store.currentSessionId(), session_id);
+    const QString root = store.artifactRootDirectory(&error);
+    QVERIFY2(!root.isEmpty(), qPrintable(error));
 }
 
 QTEST_GUILESS_MAIN(AiConversationStoreTests)

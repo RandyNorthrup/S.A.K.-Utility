@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QReadWriteLock>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QUuid>
@@ -636,10 +637,12 @@ QString ConversationStore::rootDirectory() const {
 }
 
 QString ConversationStore::currentSessionId() const {
+    QReadLocker locker(&m_lock);
     return m_current_session.id;
 }
 
 AiSessionInfo ConversationStore::currentSessionInfo() const {
+    QReadLocker locker(&m_lock);
     return m_current_session;
 }
 
@@ -813,6 +816,7 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
 }
 
 bool ConversationStore::startSession(const QString& title, QString* error_message) {
+    QWriteLocker locker(&m_lock);
     if (!ensureRoot(error_message)) {
         return false;
     }
@@ -838,6 +842,7 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
 }
 
 bool ConversationStore::openSession(const QString& session_id, QString* error_message) {
+    QWriteLocker locker(&m_lock);
     const QString path = sessionPath(session_id);
     if (!QFileInfo::exists(QDir(path).filePath(QString::fromLatin1(kManifestFile)))) {
         if (error_message) {
@@ -858,10 +863,12 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
 }
 
 void ConversationStore::clearCurrentSession() {
+    QWriteLocker locker(&m_lock);
     m_current_session = {};
 }
 
 bool ConversationStore::renameCurrentSession(const QString& title, QString* error_message) {
+    QWriteLocker locker(&m_lock);
     const QString trimmed = fallbackTitle(title);
     if (m_current_session.id.isEmpty()) {
         if (error_message) {
@@ -916,6 +923,7 @@ bool ConversationStore::appendTranscript(const QString& role,
                                          const QString& text,
                                          const QJsonObject& metadata,
                                          QString* error_message) {
+    QWriteLocker locker(&m_lock);
     QJsonObject obj;
     obj[QStringLiteral("role")] = role;
     obj[QStringLiteral("text")] = text;
@@ -935,6 +943,7 @@ bool ConversationStore::appendTranscript(const QString& role,
 bool ConversationStore::appendCommand(const QString& command,
                                       const QJsonObject& result,
                                       QString* error_message) {
+    QWriteLocker locker(&m_lock);
     // Redact at the persistence boundary: some callers (tool-result recorder,
     // workflow PowerShell runner) pass the raw command/preview, which can contain
     // passwords or API keys. This is the single point every command record and its
@@ -958,6 +967,7 @@ bool ConversationStore::appendCommand(const QString& command,
 QString ConversationStore::commandLogPath(const QString& command_id,
                                           const QString& suffix,
                                           QString* error_message) const {
+    QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("No active AI session");
@@ -985,6 +995,7 @@ QString ConversationStore::commandLogPath(const QString& command_id,
 }
 
 QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_message) const {
+    QReadLocker locker(&m_lock);
     const QString trimmed_subdir = subdir.trimmed();
     if (trimmed_subdir.isEmpty()) {
         if (error_message) {
@@ -1007,6 +1018,7 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
 }
 
 QString ConversationStore::artifactRootDirectory(QString* error_message) const {
+    QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("No active AI session");
@@ -1028,6 +1040,7 @@ QString ConversationStore::artifactRootDirectory(QString* error_message) const {
 QString ConversationStore::artifactPath(const QString& subdir,
                                         const QString& filename,
                                         QString* error_message) const {
+    QReadLocker locker(&m_lock);
     const QString dir = artifactSubdir(subdir, error_message);
     if (dir.isEmpty()) {
         return {};
@@ -1052,6 +1065,7 @@ bool ConversationStore::appendContext(const QString& kind,
                                       const QString& path,
                                       qint64 size_bytes,
                                       QString* error_message) {
+    QWriteLocker locker(&m_lock);
     QJsonObject obj;
     obj[QStringLiteral("kind")] = kind;
     obj[QStringLiteral("label")] = label;
@@ -1065,6 +1079,7 @@ bool ConversationStore::appendContext(const QString& kind,
 }
 
 QString ConversationStore::memoryText(int max_chars, QString* error_message) const {
+    QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("No active AI session");
@@ -1093,6 +1108,7 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
                                           const QString& title,
                                           const QString& text,
                                           QString* error_message) {
+    QWriteLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("No active AI session");
@@ -1131,6 +1147,7 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
 bool ConversationStore::writeUsage(const TokenUsage& turn,
                                    const TokenUsage& session_total,
                                    QString* error_message) {
+    QWriteLocker locker(&m_lock);
     if (m_current_session.id.isEmpty() && !startSession({}, error_message)) {
         return false;
     }

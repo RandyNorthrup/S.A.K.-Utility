@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QJsonObject>
+#include <QReadWriteLock>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -121,6 +122,15 @@ private:
 
     QString m_root_dir;
     AiSessionInfo m_current_session;
+    // Guards m_current_session against concurrent access: acting subagents run
+    // allowlisted store-backed tools (session_search, artifact/download paths) on
+    // a workflow WORKER thread while the GUI thread appends transcripts/commands
+    // and mutates the current-session record. Recursive so public methods that
+    // call other public methods (artifactPath -> artifactSubdir; writeUsage ->
+    // startSession) do not self-deadlock. Readers share; writers are exclusive.
+    // m_root_dir is set once in the constructor and never reassigned, so it is
+    // read lock-free.
+    mutable QReadWriteLock m_lock{QReadWriteLock::Recursive};
 };
 
 }  // namespace sak::ai
