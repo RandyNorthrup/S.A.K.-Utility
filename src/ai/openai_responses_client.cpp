@@ -680,11 +680,19 @@ QJsonArray enabledToolDefinitions(const OpenAIResponseRequest& request) {
 void appendResponseOptionalFields(QJsonObject* root, const OpenAIResponseRequest& request) {
     const QString previous_response_id = request.previous_response_id.trimmed();
     const QString safety_identifier = request.safety_identifier.trimmed();
+    const QString truncation = request.truncation.trimmed();
+    const QString prompt_cache_key = request.prompt_cache_key.trimmed();
     if (!previous_response_id.isEmpty()) {
         root->insert(QStringLiteral("previous_response_id"), previous_response_id);
     }
     if (!safety_identifier.isEmpty()) {
         root->insert(QStringLiteral("safety_identifier"), safety_identifier);
+    }
+    if (!truncation.isEmpty()) {
+        root->insert(QStringLiteral("truncation"), truncation);
+    }
+    if (!prompt_cache_key.isEmpty()) {
+        root->insert(QStringLiteral("prompt_cache_key"), prompt_cache_key);
     }
     const QJsonObject reasoning = reasoningObject(request);
     if (!reasoning.isEmpty()) {
@@ -758,6 +766,12 @@ void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& reques
                                         request.api_key);
     auto count_request = request;
     count_request.safety_identifier.clear();
+    // Strip generation-only policy fields the count does not depend on: truncation is
+    // applied server-side during generation, and prompt_cache_key only affects cache
+    // routing. Keeping the /v1/responses/input_tokens payload minimal avoids any
+    // endpoint field-compat risk for what is purely a telemetry count.
+    count_request.truncation.clear();
+    count_request.prompt_cache_key.clear();
     const QByteArray payload = buildResponsePayload(count_request);
     auto* reply = m_network_manager.post(network_request, payload);
     m_input_tokens_reply = reply;

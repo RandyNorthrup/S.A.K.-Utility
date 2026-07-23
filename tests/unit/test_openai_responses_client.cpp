@@ -28,6 +28,8 @@ private Q_SLOTS:
     void buildPayload_chatModeOmitsLocalTools();
     void buildPayload_assistedOrUnattendedAdvertisesLocalTools();
     void buildPayload_includesSafetyIdentifierWhenProvided();
+    void buildPayload_includesTruncationAndPromptCacheKeyWhenProvided();
+    void buildPayload_omitsTruncationAndPromptCacheKeyWhenEmpty();
     void buildPayload_functionToolsUseStrictSchemas();
     void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
@@ -418,6 +420,9 @@ void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsErro
     QVERIFY(!error.isEmpty());
     QVERIFY(error.contains(QStringLiteral("incomplete")));
     QVERIFY(error.contains(QStringLiteral("max_output_tokens")));
+    // Fail closed: an incomplete response must surface no usable assistant output that
+    // a caller could mistake for a complete answer.
+    QVERIFY(result.output_text.isEmpty());
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {
@@ -630,6 +635,31 @@ void OpenAIResponsesClientTests::buildPayload_includesSafetyIdentifierWhenProvid
 
     QCOMPARE(root.value(QStringLiteral("safety_identifier")).toString(),
              QStringLiteral("sak-session-0123456789abcdef"));
+}
+
+void OpenAIResponsesClientTests::buildPayload_includesTruncationAndPromptCacheKeyWhenProvided() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("keep going on the long conversation");
+    request.truncation = QStringLiteral("auto");
+    request.prompt_cache_key = QStringLiteral("sak-session-abc123");
+
+    const QJsonObject root = payloadObject(request);
+
+    QCOMPARE(root.value(QStringLiteral("truncation")).toString(), QStringLiteral("auto"));
+    QCOMPARE(root.value(QStringLiteral("prompt_cache_key")).toString(),
+             QStringLiteral("sak-session-abc123"));
+}
+
+void OpenAIResponsesClientTests::buildPayload_omitsTruncationAndPromptCacheKeyWhenEmpty() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("first message");
+
+    const QJsonObject root = payloadObject(request);
+
+    QVERIFY(!root.contains(QStringLiteral("truncation")));
+    QVERIFY(!root.contains(QStringLiteral("prompt_cache_key")));
 }
 
 void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {

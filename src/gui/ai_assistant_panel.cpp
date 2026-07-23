@@ -4660,14 +4660,21 @@ void AiAssistantPanel::updateAgentActivityLabel() {
     }
 }
 
+double AiAssistantPanel::currentContextUsageRatio() const {
+    const qint64 used = exactContextUsageTokens();
+    const qint64 limit = currentContextWindowTokens();
+    if (!currentContextWindowIsDocumented() || limit <= 0 || used < 0) {
+        return 0.0;
+    }
+    return static_cast<double>(used) / static_cast<double>(limit);
+}
+
 void AiAssistantPanel::updateContextWindowUsageLabel() {
     if (m_contextWindowLabel) {
         const qint64 used = exactContextUsageTokens();
         const qint64 limit = currentContextWindowTokens();
         const bool documented_limit = currentContextWindowIsDocumented();
-        const double ratio = documented_limit && limit > 0 && used >= 0
-                                 ? static_cast<double>(used) / static_cast<double>(limit)
-                                 : 0.0;
+        const double ratio = currentContextUsageRatio();
         const char* color = contextUsageStatusColor(ratio);
         m_contextWindowLabel->setText(tr("Ctx: %1").arg(contextWindowStatusText()));
         const QString usage = used >= 0 ? QLocale().toString(used) : m_contextTokenStatus.trimmed();
@@ -7818,6 +7825,7 @@ void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& re
         request.safety_identifier =
             safetyIdentifierFromSeed(m_conversationStore->currentSessionId());
     }
+    applyContextWindowPolicy(request);
     request.enable_web_search = true;
     request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
     QJsonObject metadata;
@@ -10652,6 +10660,7 @@ void AiAssistantPanel::onSessionSelected(int index) {
     // point already offered in the previous session must not suppress the offer here).
     m_restorePointOfferedThisSession = false;
     m_previousResponseId.clear();
+    m_contextPressureLevel = 0;
     if (m_tokenTracker) {
         m_tokenTracker->reset();
         updateTokenLabels();
@@ -10702,6 +10711,7 @@ void AiAssistantPanel::onNewSessionClicked() {
     }
     const QString title = tr("AI Session");
     m_previousResponseId.clear();
+    m_contextPressureLevel = 0;
     m_currentRunId.clear();
     m_pendingWorkflowRunId.clear();
     resetSessionRole();
@@ -10991,9 +11001,25 @@ ai::OpenAIResponseRequest AiAssistantPanel::buildChatRequest(const QString& mess
         request.safety_identifier =
             safetyIdentifierFromSeed(m_conversationStore->currentSessionId());
     }
+    applyContextWindowPolicy(request);
     request.enable_web_search = true;
     request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
     return request;
+}
+
+void AiAssistantPanel::applyContextWindowPolicy(ai::OpenAIResponseRequest& request) const {
+    // "auto" lets the Responses API drop middle-of-conversation items to fit the
+    // model window rather than hard-failing a long previous_response_id chain with a
+    // context-length 400. A degraded-but-served answer beats a dead turn.
+    request.truncation = QStringLiteral("auto");
+    // Route this session's large, near-constant instructions/tools prefix to the same
+    // prompt cache every turn. Stable within a session, distinct across sessions.
+    if (m_conversationStore) {
+        const QString session_id = m_conversationStore->currentSessionId().trimmed();
+        if (!session_id.isEmpty()) {
+            request.prompt_cache_key = QStringLiteral("sak-%1").arg(session_id);
+        }
+    }
 }
 
 void AiAssistantPanel::startChatRequest(const QString& message) {
@@ -11399,6 +11425,40 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     Q_EMIT statusMessage(tr("OpenAI key valid; models loaded"), sak::kTimerStatusDefaultMs);
 }
 
+void AiAssistantPanel::notifyContextPressureIfCrossed() {
+    const double ratio = currentContextUsageRatio();
+    int level = 0;
+    if (ratio >= kContextUsageErrorRatio) {
+        level = 2;
+    } else if (ratio >= kContextUsageWarningRatio) {
+        level = 1;
+    }
+    // High-water mark: only announce a NEW, higher band, and never lower the stored
+    // level here. The counted total includes the live composer draft, so editing it
+    // makes the ratio dance across a threshold; re-arming on every dip would re-emit
+    // the same notice repeatedly. A genuine fresh start resets the level to 0 at the
+    // session-boundary sites instead.
+    if (level <= m_contextPressureLevel) {
+        return;
+    }
+    m_contextPressureLevel = level;
+
+    const QString used = QLocale().toString(exactContextUsageTokens());
+    const QString limit = QLocale().toString(currentContextWindowTokens());
+    const int percent = static_cast<int>(ratio * 100.0);
+    const QString message =
+        level >= 2
+            ? tr("Context window ~%1% full (%2 of %3 tokens). The server is now auto-truncating "
+                 "older turns to fit; start a fresh chat to keep full fidelity.")
+                  .arg(percent)
+                  .arg(used, limit)
+            : tr("Context window ~%1% full (%2 of %3 tokens). Consider compacting or starting a "
+                 "fresh chat soon.")
+                  .arg(percent)
+                  .arg(used, limit);
+    appendLocalEvent(message);
+}
+
 void AiAssistantPanel::onInputTokenCountReady(const QString& request_id, qint64 input_tokens) {
     if (request_id != m_contextTokenRequestId) {
         return;
@@ -11407,6 +11467,7 @@ void AiAssistantPanel::onInputTokenCountReady(const QString& request_id, qint64 
     m_contextTokenStatus = tr("exact");
     m_contextTokenRequestId.clear();
     updateRunTelemetryLabels();
+    notifyContextPressureIfCrossed();
     emitStatusDetails();
 }
 

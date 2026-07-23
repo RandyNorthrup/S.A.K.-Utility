@@ -54,6 +54,14 @@ struct OpenAIResponseRequest {
     QString reasoning_effort;
     QString previous_response_id;
     QString safety_identifier;
+    // Server-side context-window policy. "auto" lets the Responses API drop
+    // middle-of-conversation items to fit the model window instead of hard-failing
+    // a long previous_response_id chain with a 400 context-length error. Empty means
+    // omit the field (Responses API default is "disabled").
+    QString truncation;
+    // Stable per-session key so the Responses API routes our large, mostly-constant
+    // instructions/tools prefix to the same prompt cache across turns. Empty omits it.
+    QString prompt_cache_key;
     bool enable_web_search{false};
     bool enable_local_tools{false};
 };

@@ -280,6 +280,13 @@ private:
     [[nodiscard]] qint64 currentContextWindowTokens() const;
     [[nodiscard]] bool currentContextWindowIsDocumented() const;
     [[nodiscard]] QString contextWindowStatusText() const;
+    // 0.0 when the window is undocumented or the exact count is unavailable; else
+    // used/limit. Shared by the usage label and the pressure notifier so both agree.
+    [[nodiscard]] double currentContextUsageRatio() const;
+    // Emit a one-time transcript notice when exact context usage crosses into the
+    // warning (>=80%) or critical (>=95%) band, so the user is told to compact even
+    // though the server now auto-truncates. Fires only on an upward level change.
+    void notifyContextPressureIfCrossed();
     void setApiKeyStatus(const QString& text,
                          const char* color,
                          const QString& marker,
@@ -826,6 +833,10 @@ private:
                         const QString& workflow_id = {},
                         const QJsonObject& workflow_inputs = {});
     [[nodiscard]] ai::OpenAIResponseRequest buildChatRequest(const QString& message) const;
+    // Set the server-side context-window policy (auto truncation) and the stable
+    // per-session prompt-cache key on every Responses request, so both the first
+    // turn and tool-continuation turns manage a growing context identically.
+    void applyContextWindowPolicy(ai::OpenAIResponseRequest& request) const;
     void startChatRequest(const QString& message);
     void cancelActiveRunToken();
     void cancelLocalAiWork();
@@ -967,6 +978,9 @@ private:
     QString m_contextTokenRequestId;
     QString m_contextTokenStatus;
     qint64 m_contextInputTokens{-1};
+    // Last context-pressure band reported to the transcript: 0 normal, 1 warning
+    // (>=80%), 2 critical (>=95%). Prevents re-warning every telemetry refresh.
+    int m_contextPressureLevel{0};
     int m_nextContextTokenRequestSequence{1};
     QString m_currentCommandId;
     QString m_currentCommandLeaseId;
