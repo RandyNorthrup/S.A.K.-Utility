@@ -167,6 +167,7 @@ struct ToolPolicyContext {
     bool provider_gateway{false};
     bool mutating_package{false};
     bool risky{false};
+    bool catastrophic{false};
 };
 
 ToolPolicyContext policyContext(const AiToolCallRequest& request) {
@@ -176,6 +177,7 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     context.provider_gateway = isReadOnlyProviderOperation(request);
     context.mutating_package = context.package_tool &&
                                isMutatingPackageOperation(request.operation);
+    context.catastrophic = context.shell && commandLooksCatastrophic(request.command_preview);
     context.risky = request.requires_admin ||
                     (context.shell && commandLooksRiskyChange(request.command_preview)) ||
                     context.mutating_package || isMutatingProviderOperation(request);
@@ -317,16 +319,41 @@ bool isMutatingPackageOperation(const QString& operation) {
            op == QLatin1String("install_bundle");
 }
 
+bool commandLooksObfuscated(const QString& preview) {
+    // Encoded/indirection shapes that hide the real command from the risk regex.
+    // PowerShell -EncodedCommand/-enc, base64 decode, Invoke-Expression, in-memory
+    // remote download-and-run (Net.WebClient / Invoke-WebRequest piped to iex),
+    // and LOLBin decoders (certutil -decode/-urlcache).
+    static const QRegularExpression obfuscated(
+        QStringLiteral(
+            R"((\s-enc(odedcommand)?\b|\s-e\s+[A-Za-z0-9+/]{24,}={0,2}|\bfrombase64string\b|\b(iex|invoke-expression)\b|\bdownloadstring\b|\bdownloadfile\b|\b(new-object\s+)?net\.webclient\b|\binvoke-webrequest\b.*\|\s*(iex|invoke-expression)\b|\bcertutil\b.*\s-(decode|urlcache|f)\b|\bconvert\]::frombase64))"),
+        QRegularExpression::CaseInsensitiveOption);
+    return obfuscated.match(preview).hasMatch();
+}
+
+bool commandLooksCatastrophic(const QString& preview) {
+    // Irreversible, system/data-destroying operations. These must never run
+    // ungated; callers force an explicit human confirmation even in unattended
+    // mode. Kept tight to avoid false positives on ordinary mutating commands.
+    static const QRegularExpression catastrophic(
+        QStringLiteral(
+            R"((\bformat\b\s+[a-z]:|\bformat-volume\b|\bdiskpart\b|\bclear-disk\b|\bremove-partition\b|\bclear-volume\b|\breset-physicaldisk\b|\binitialize-disk\b|\bbcdedit\b|\bvssadmin\b\s+delete|\bwbadmin\b\s+delete|\bwevtutil\b\s+cl\b|\bcipher\b\s+/w|\breg\b\s+delete\s+hk|\bremove-item\b[^\n]*\bhk(lm|cu|cr|u):|\bset-executionpolicy\b\s+\S*(unrestricted|bypass)|\bremove-item\b(?=[^\n]*-recurse)(?=[^\n]*(\$env:systemroot|\$env:windir|c:\\windows|c:\\program files))|\b(rd|rmdir)\b\s+/s\b(?=[^\n]*(c:\\windows|c:\\program files|%systemroot%|%windir%))|\bmkfs\b|\bdd\b\s+if=))"),
+        QRegularExpression::CaseInsensitiveOption);
+    return catastrophic.match(preview).hasMatch();
+}
+
 bool commandLooksRiskyChange(const QString& preview) {
     // A blacklist is fail-open, so it must at least cover the common mutating
     // cmdlets/commands. Earlier revisions omitted rename/move/copy/content-writing
     // verbs, so Rename-Item / Move-Item / Copy-Item / Add-Content / Out-File and
-    // the cmd.exe equivalents executed under the read-only lease.
+    // the cmd.exe equivalents executed under the read-only lease. Obfuscated and
+    // catastrophic shapes also count as risky so they never slip through as safe.
     static const QRegularExpression risky(
         QStringLiteral(
             R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b))"),
         QRegularExpression::CaseInsensitiveOption);
-    return risky.match(preview).hasMatch();
+    return risky.match(preview).hasMatch() || commandLooksObfuscated(preview) ||
+           commandLooksCatastrophic(preview);
 }
 
 AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {
@@ -350,7 +377,17 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
         return decision;
     }
 
-    return evaluateKnownPolicy(policy, request, policyContext(request));
+    const ToolPolicyContext context = policyContext(request);
+    AiToolPolicyDecision decision = evaluateKnownPolicy(policy, request, context);
+    if (context.catastrophic && decision.allowed) {
+        // Force the full mutating treatment regardless of which policy allowed it;
+        // the panel additionally requires an explicit human gate for these.
+        decision.catastrophic_change = true;
+        decision.risky_change = true;
+        decision.requires_lease = true;
+        decision.restore_point_recommended = true;
+    }
+    return decision;
 }
 
 }  // namespace sak::ai

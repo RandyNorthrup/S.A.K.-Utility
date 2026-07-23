@@ -30,6 +30,12 @@ struct AiToolPolicyDecision {
     bool requires_lease{false};
     bool requires_exclusive_lease{false};
     bool restore_point_recommended{false};
+    // Set when the command matches a catastrophic/irreversible operation (disk
+    // format, partition wipe, boot-config edit, shadow-copy/backup deletion,
+    // registry-hive delete, execution-policy bypass, recursive system-dir wipe).
+    // Callers must require an explicit human confirmation for these even in
+    // unattended mode -- they can destroy the system or data irreversibly.
+    bool catastrophic_change{false};
     QString reason;
 };
 
@@ -38,6 +44,12 @@ struct AiToolPolicyDecision {
 [[nodiscard]] bool isKnownLocalTool(const QString& tool_name);
 [[nodiscard]] bool isMutatingPackageOperation(const QString& operation);
 [[nodiscard]] bool commandLooksRiskyChange(const QString& preview);
+// Obfuscated command shapes (encoded/base64/iex/remote-download-and-run) that
+// hide their true action from the risk classifier. Treated as risky so they get
+// the lease/restore-point/approval path instead of slipping through fail-open.
+[[nodiscard]] bool commandLooksObfuscated(const QString& preview);
+// Catastrophic/irreversible operations (see AiToolPolicyDecision::catastrophic).
+[[nodiscard]] bool commandLooksCatastrophic(const QString& preview);
 [[nodiscard]] AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy,
                                                       const AiToolCallRequest& request);
 
