@@ -779,6 +779,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_trace_store.cpp
         src/ai/ai_workflow_powershell_tool_runner.cpp
         src/ai/ai_workflow_clarifier.cpp
+        src/ai/ai_workflow_placeholders.cpp
         src/ai/ai_workflow_store.cpp
         src/ai/ai_workflow_template.cpp
         src/ai/openai_responses_client.cpp
@@ -821,6 +822,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_tool_result_recorder.h
         include/sak/ai/ai_tool_turn.h
         include/sak/ai/ai_trace_store.h
+        include/sak/ai/ai_workflow_placeholders.h
         include/sak/ai/ai_workflow_powershell_tool_runner.h
         include/sak/ai/ai_workflow_store.h
         include/sak/ai/ai_workflow_template.h

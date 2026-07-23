@@ -142,6 +142,7 @@ private Q_SLOTS:
     void emitsPhaseStartedBeforeCompletion();
     void delegateSubagentReceivesResolvedWorkflowGuidance();
     void delegateSubagentHasNoGuidanceBlockWithoutResolver();
+    void delegateObjectiveSubstitutesWorkflowPlaceholders();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -799,6 +800,35 @@ void AiOrchestratorTests::delegateSubagentHasNoGuidanceBlockWithoutResolver() {
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
     QVERIFY(
         !model.last_system_instructions.contains(QStringLiteral("Workflow guidance to follow")));
+}
+
+void AiOrchestratorTests::delegateObjectiveSubstitutesWorkflowPlaceholders() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+
+    sak::ai::AiOrchestrationOptions options;
+    options.user_message = QStringLiteral("please deploy things");
+    options.input_values = QJsonObject{{QStringLiteral("app_name"), QStringLiteral("7-Zip")}};
+    orchestrator.setOptions(options);
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("subst");
+    workflow.agents << makeAgent(QStringLiteral("a"), QStringLiteral("package_tools_only"));
+    sak::ai::WorkflowPhase phase = makeDelegate(QStringLiteral("p1"), QStringLiteral("a"));
+    phase.prompt = QStringLiteral("Install ${app_name} because ${user_message} (run ${run_id})");
+    workflow.phases << phase;
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("sr1"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("sr1"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    // The subagent must receive the resolved objective, never the literal tokens.
+    QCOMPARE(model.last_objective,
+             QStringLiteral("Install 7-Zip because please deploy things (run sr1)"));
+    QVERIFY(!model.last_objective.contains(QStringLiteral("${")));
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)

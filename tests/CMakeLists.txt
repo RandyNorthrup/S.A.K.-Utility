@@ -2394,6 +2394,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ../src/ai/ai_subagent_runner.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../src/ai/ai_tool_policy.cpp
+        ../src/ai/ai_workflow_placeholders.cpp
         ../src/ai/ai_workflow_template.cpp
         ../include/sak/ai/ai_cancellation_token.h
         ../include/sak/ai/ai_human_gate.h
@@ -2403,6 +2404,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ../include/sak/ai/ai_subagent_runner.h
         ../include/sak/ai/ai_token_usage_tracker.h
         ../include/sak/ai/ai_tool_policy.h
+        ../include/sak/ai/ai_workflow_placeholders.h
         ../include/sak/ai/ai_workflow_template.h
     )
 
@@ -2416,6 +2418,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ../src/ai/ai_subagent_runner.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../src/ai/ai_tool_policy.cpp
+        ../src/ai/ai_workflow_placeholders.cpp
         ../src/ai/ai_workflow_template.cpp
         ../include/sak/ai/ai_cancellation_token.h
         ../include/sak/ai/ai_human_gate.h
@@ -2425,6 +2428,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ../include/sak/ai/ai_subagent_runner.h
         ../include/sak/ai/ai_token_usage_tracker.h
         ../include/sak/ai/ai_tool_policy.h
+        ../include/sak/ai/ai_workflow_placeholders.h
         ../include/sak/ai/ai_workflow_template.h
     )
     set_target_properties(test_ai_workflow_evals PROPERTIES

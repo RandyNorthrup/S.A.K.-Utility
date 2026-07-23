@@ -4,6 +4,7 @@
 #include "sak/ai/ai_orchestrator.h"
 
 #include "sak/ai/ai_recovery_policy.h"
+#include "sak/ai/ai_workflow_placeholders.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -467,7 +468,7 @@ AiSubagentTask AiOrchestrator::buildDelegateTask(const WorkflowTemplate& workflo
     task.workflow_id = workflow.id;
     task.phase_id = phase.id;
     task.agent_id = phase.agent;
-    task.objective = phase.prompt;
+    task.objective = substituteWorkflowPlaceholders(phase.prompt, context);
     task.tool_policy = policyForAgent(workflow, phase.agent);
     task.expected_output_schema = phase.expected_output;
     task.model = m_options.default_model;
