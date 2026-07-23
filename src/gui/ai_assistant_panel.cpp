@@ -1461,6 +1461,31 @@ QString skillCatalogInstructions(const ai::SkillStore* store) {
     return lines.join(QLatin1Char('\n'));
 }
 
+// Reads a workflow instruction/skill reference (e.g. "skills/package-selection.md")
+// from the bundled Qt resources and returns its text, truncated to the context
+// preview cap. Resource reads are thread-safe, so this is safe as the orchestrator's
+// guidance resolver on the workflow worker thread.
+QString readAiGuidanceResource(const QString& ref) {
+    QString path = ref.trimmed();
+    if (path.isEmpty()) {
+        return {};
+    }
+    if (!path.startsWith(QStringLiteral(":/"))) {
+        path = QStringLiteral(":/ai/%1").arg(path);
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    const QByteArray bytes = file.readAll();
+    QString text = QString::fromUtf8(bytes.left(kContextTextPreviewBytes)).trimmed();
+    if (bytes.size() > kContextTextPreviewBytes) {
+        text +=
+            QStringLiteral("\n...[guidance truncated to %1 bytes]").arg(kContextTextPreviewBytes);
+    }
+    return text;
+}
+
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
@@ -9669,6 +9694,7 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     configureWorkflowRunner(&runner);
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
+    orchestrator.setGuidanceResolver(&readAiGuidanceResource);
     connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
     const auto result = orchestrator.run(launch.workflow, launch.run_id, launch.token);
     delete launch.executor;

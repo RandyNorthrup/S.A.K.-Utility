@@ -99,6 +99,12 @@ using PhaseCompletedCallback = std::function<void(const AiPhaseExecution& execut
 /// UI callers should marshal to the main thread inside the callback.
 using PhaseStartedCallback = std::function<void(const WorkflowPhase& phase)>;
 
+/// @brief Resolves a workflow instruction/skill reference (e.g.
+/// "skills/package-selection.md") to its full guidance text. Injected so the
+/// orchestrator stays I/O-free and testable; the panel wires it to the bundled
+/// resources / skill store. Returns empty when the reference cannot be resolved.
+using WorkflowGuidanceResolver = std::function<QString(const QString& ref)>;
+
 /// @brief Runs a workflow's phases end-to-end. Sequential by default;
 /// consecutive `delegate` phases whose agent tool_policy is read-only are
 /// grouped into a single parallel batch up to `max_parallel_subagents`.
@@ -114,6 +120,7 @@ public:
     void setOverseerHandler(OverseerPhaseHandler handler);
     void setPhaseStartedCallback(PhaseStartedCallback callback);
     void setPhaseCompletedCallback(PhaseCompletedCallback callback);
+    void setGuidanceResolver(WorkflowGuidanceResolver resolver);
 
     [[nodiscard]] AiOrchestratorResult run(const WorkflowTemplate& workflow,
                                            const QString& run_id,
@@ -231,6 +238,10 @@ private:
         const QString& run_id,
         const AiWorkflowPhaseContext& context,
         const CancellationToken& parent_token) const;
+    [[nodiscard]] AiSubagentTask buildDelegateTask(const WorkflowTemplate& workflow,
+                                                   const WorkflowPhase& phase,
+                                                   const QString& run_id,
+                                                   const AiWorkflowPhaseContext& context) const;
     [[nodiscard]] AiPhaseExecution executeToolPhase(const WorkflowPhase& phase,
                                                     AiToolPolicy policy,
                                                     const AiWorkflowPhaseContext& context,
@@ -239,6 +250,10 @@ private:
         const WorkflowPhase& phase, const CancellationToken& parent_token) const;
     [[nodiscard]] AiToolPolicy policyForAgent(const WorkflowTemplate& workflow,
                                               const QString& agent_id) const;
+    // Concatenates the resolved bodies of the workflow's instruction and skill
+    // references into a single guidance block for the subagent. Empty when no
+    // resolver is set or nothing resolves.
+    [[nodiscard]] QString resolveWorkflowGuidance(const WorkflowTemplate& workflow) const;
 
     AiSubagentRunner* m_subagent_runner{nullptr};
     IAiToolExecutor* m_tool_executor{nullptr};
@@ -246,6 +261,7 @@ private:
     OverseerPhaseHandler m_overseer_handler;
     PhaseStartedCallback m_phase_started_callback;
     PhaseCompletedCallback m_phase_completed_callback;
+    WorkflowGuidanceResolver m_guidance_resolver;
 };
 
 }  // namespace sak::ai

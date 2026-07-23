@@ -26,6 +26,7 @@ public:
             peak_concurrent = concurrent_in_flight;
         }
         last_objective = request.objective;
+        last_system_instructions = request.system_instructions;
         Response response;
         if (cancel_on_invoke && token.isValid()) {
             token.cancel(QStringLiteral("test_cancelled"));
@@ -48,6 +49,7 @@ public:
     int concurrent_in_flight{0};
     int peak_concurrent{0};
     QString last_objective;
+    QString last_system_instructions;
     Response default_response;
     QHash<QString, Response> response_overrides;
     bool cancel_on_invoke{false};
@@ -138,6 +140,8 @@ private Q_SLOTS:
     void resumesAfterHumanGateWithoutRerunningPriorPhase();
     void reassignsCriticFailureToOverseer();
     void emitsPhaseStartedBeforeCompletion();
+    void delegateSubagentReceivesResolvedWorkflowGuidance();
+    void delegateSubagentHasNoGuidanceBlockWithoutResolver();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -740,6 +744,61 @@ void AiOrchestratorTests::emitsPhaseStartedBeforeCompletion() {
     QCOMPARE(events.at(1), QStringLiteral("done:inspect"));
     QCOMPARE(events.at(2), QStringLiteral("start:collect_logs"));
     QCOMPARE(events.at(3), QStringLiteral("done:collect_logs"));
+}
+
+void AiOrchestratorTests::delegateSubagentReceivesResolvedWorkflowGuidance() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    orchestrator.setGuidanceResolver([](const QString& ref) -> QString {
+        if (ref == QStringLiteral("skills/package-selection.md")) {
+            return QStringLiteral("SKILL_BODY prefer exact vendor IDs");
+        }
+        if (ref == QStringLiteral("instructions/base.md")) {
+            return QStringLiteral("INSTRUCTION_BODY be careful");
+        }
+        return {};
+    });
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("guided");
+    workflow.instructions << QStringLiteral("instructions/base.md");
+    workflow.skills << QStringLiteral("skills/package-selection.md");
+    workflow.agents << makeAgent(QStringLiteral("package_agent"),
+                                 QStringLiteral("package_tools_only"));
+    workflow.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("package_agent"));
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("gr1"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("gr1"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QVERIFY(model.last_system_instructions.contains(
+        QStringLiteral("SKILL_BODY prefer exact vendor IDs")));
+    QVERIFY(model.last_system_instructions.contains(QStringLiteral("INSTRUCTION_BODY be careful")));
+}
+
+void AiOrchestratorTests::delegateSubagentHasNoGuidanceBlockWithoutResolver() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);  // no guidance resolver set
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("unguided");
+    workflow.skills << QStringLiteral("skills/package-selection.md");
+    workflow.agents << makeAgent(QStringLiteral("package_agent"),
+                                 QStringLiteral("package_tools_only"));
+    workflow.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("package_agent"));
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("gr2"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("gr2"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QVERIFY(
+        !model.last_system_instructions.contains(QStringLiteral("Workflow guidance to follow")));
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)

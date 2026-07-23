@@ -312,6 +312,34 @@ void AiOrchestrator::setPhaseCompletedCallback(PhaseCompletedCallback callback) 
     m_phase_completed_callback = std::move(callback);
 }
 
+void AiOrchestrator::setGuidanceResolver(WorkflowGuidanceResolver resolver) {
+    m_guidance_resolver = std::move(resolver);
+}
+
+QString AiOrchestrator::resolveWorkflowGuidance(const WorkflowTemplate& workflow) const {
+    if (!m_guidance_resolver) {
+        return {};
+    }
+    QStringList blocks;
+    const auto append_ref = [&](const QString& ref, const QString& kind) {
+        const QString trimmed_ref = ref.trimmed();
+        if (trimmed_ref.isEmpty()) {
+            return;
+        }
+        const QString body = m_guidance_resolver(trimmed_ref).trimmed();
+        if (!body.isEmpty()) {
+            blocks << QStringLiteral("--- %1: %2 ---\n%3").arg(kind, trimmed_ref, body);
+        }
+    };
+    for (const auto& ref : workflow.instructions) {
+        append_ref(ref, QStringLiteral("Instruction"));
+    }
+    for (const auto& ref : workflow.skills) {
+        append_ref(ref, QStringLiteral("Skill"));
+    }
+    return blocks.join(QStringLiteral("\n\n"));
+}
+
 bool AiOrchestrator::isReadOnlyPolicy(AiToolPolicy policy) {
     return policy == AiToolPolicy::NoLocalExecution || policy == AiToolPolicy::ReadOnlyPc;
 }
@@ -429,6 +457,50 @@ AiPhaseExecution AiOrchestrator::executeToolPhase(const WorkflowPhase& phase,
     return execution;
 }
 
+AiSubagentTask AiOrchestrator::buildDelegateTask(const WorkflowTemplate& workflow,
+                                                 const WorkflowPhase& phase,
+                                                 const QString& run_id,
+                                                 const AiWorkflowPhaseContext& context) const {
+    AiSubagentTask task;
+    task.task_id = QStringLiteral("task_%1").arg(phase.id);
+    task.run_id = run_id;
+    task.workflow_id = workflow.id;
+    task.phase_id = phase.id;
+    task.agent_id = phase.agent;
+    task.objective = phase.prompt;
+    task.tool_policy = policyForAgent(workflow, phase.agent);
+    task.expected_output_schema = phase.expected_output;
+    task.model = m_options.default_model;
+    task.reasoning_effort = m_options.default_reasoning_effort;
+    task.api_key = m_options.api_key;
+    task.instructions_refs = workflow.instructions;
+    task.system_instructions =
+        QStringLiteral(
+            "You are a SAK Utility workflow subagent. Use the workflow context JSON "
+            "below as shared working memory, including prior tool outputs, artifacts, "
+            "flags, and human inputs. Do not claim evidence you cannot see. Return "
+            "only the requested JSON object. Keep summary/findings concise; do not "
+            "copy full command output.\n\nWorkflow context JSON:\n%1")
+            .arg(workflowContextForDelegate(context));
+    // Inject the workflow's instruction/skill guidance bodies so the subagent
+    // actually follows them, instead of only receiving a list of reference names.
+    const QString guidance = resolveWorkflowGuidance(workflow);
+    if (!guidance.isEmpty()) {
+        task.system_instructions +=
+            QStringLiteral("\n\nWorkflow guidance to follow (skills and instructions):\n%1")
+                .arg(guidance);
+    }
+    for (const auto& agent : workflow.agents) {
+        if (agent.id == phase.agent) {
+            if (agent.token_budget > 0) {
+                task.token_budget = agent.token_budget;
+            }
+            break;
+        }
+    }
+    return task;
+}
+
 AiPhaseExecution AiOrchestrator::executeDelegatePhase(const WorkflowTemplate& workflow,
                                                       const WorkflowPhase& phase,
                                                       const QString& run_id,
@@ -446,34 +518,7 @@ AiPhaseExecution AiOrchestrator::executeDelegatePhase(const WorkflowTemplate& wo
         return execution;
     }
 
-    AiSubagentTask task;
-    task.task_id = QStringLiteral("task_%1").arg(phase.id);
-    task.run_id = run_id;
-    task.workflow_id = workflow.id;
-    task.phase_id = phase.id;
-    task.agent_id = phase.agent;
-    task.objective = phase.prompt;
-    task.tool_policy = policyForAgent(workflow, phase.agent);
-    task.expected_output_schema = phase.expected_output;
-    task.model = m_options.default_model;
-    task.reasoning_effort = m_options.default_reasoning_effort;
-    task.api_key = m_options.api_key;
-    task.system_instructions =
-        QStringLiteral(
-            "You are a SAK Utility workflow subagent. Use the workflow context JSON "
-            "below as shared working memory, including prior tool outputs, artifacts, "
-            "flags, and human inputs. Do not claim evidence you cannot see. Return "
-            "only the requested JSON object. Keep summary/findings concise; do not "
-            "copy full command output.\n\nWorkflow context JSON:\n%1")
-            .arg(workflowContextForDelegate(context));
-    for (const auto& agent : workflow.agents) {
-        if (agent.id == phase.agent) {
-            if (agent.token_budget > 0) {
-                task.token_budget = agent.token_budget;
-            }
-            break;
-        }
-    }
+    const AiSubagentTask task = buildDelegateTask(workflow, phase, run_id, context);
 
     QElapsedTimer timer;
     timer.start();
