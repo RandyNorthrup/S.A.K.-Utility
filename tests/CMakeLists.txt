@@ -2199,6 +2199,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_tool_executor.cpp")
     message(STATUS "Added unit test: test_ai_subagent_tool_executor")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_loop_detector.cpp")
+    add_executable(test_ai_tool_loop_detector
+        unit/test_ai_tool_loop_detector.cpp
+        ../src/ai/ai_tool_loop_detector.cpp
+        ../include/sak/ai/ai_tool_loop_detector.h
+    )
+    set_target_properties(test_ai_tool_loop_detector PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_tool_loop_detector PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_tool_loop_detector PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_tool_loop_detector COMMAND test_ai_tool_loop_detector
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_tool_loop_detector")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_tool_planner.cpp")
     add_executable(test_ai_package_tool_planner
         unit/test_ai_package_tool_planner.cpp
