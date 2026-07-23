@@ -6,6 +6,7 @@
 
 #include "sak/ai_assistant_panel.h"
 
+#include "sak/ai/ai_async_tool_runner.h"
 #include "sak/ai/ai_chat_title.h"
 #include "sak/ai/ai_command_guard.h"
 #include "sak/ai/ai_command_tool_planner.h"
@@ -63,6 +64,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -272,6 +274,7 @@ constexpr int kSessionMemoryMaxChars = 12'000;
 constexpr int kTraceTokenIdChars = 12;
 constexpr int kShortTraceTokenIdChars = 8;
 constexpr int kMetadataPreviewMaxChars = 1000;
+constexpr int kAsyncToolDrainSliceMs = 20;
 constexpr int kPackageResultOutputMaxChars = 8000;
 constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
@@ -2016,12 +2019,21 @@ QString safeDownloadFileName(const QUrl& url, const QString& filename) {
 // Hard ceiling on a single AI-tool download so a server that streams a multi-gigabyte
 // (or unbounded chunked) body cannot buffer the whole response into RAM and OOM the app.
 constexpr qint64 kMaxDownloadBytes = 512LL * 1024 * 1024;  // 512 MiB
+constexpr int kDownloadCancelPollMs = 200;
 
 struct DownloadState {
     QByteArray payload;
     QString error;
     bool ok{false};
     bool timed_out{false};
+};
+
+// Plumbing shared between downloadUrlBytes and its worker: where to store the
+// outcome and how to signal the caller that the network thread is finished.
+struct DownloadWorkerContext {
+    DownloadState* state{nullptr};
+    QSemaphore* done{nullptr};
+    QThread* network_thread{nullptr};
 };
 
 using DownloadFinish = std::function<void(bool timed_out, const QString& cap_error)>;
@@ -2068,11 +2080,31 @@ void connectDownloadCaps(QNetworkReply* reply,
     });
 }
 
+// Abort the reply promptly when the caller signals cancellation. Polled locally
+// on the worker thread (the predicate is a lock-free atomic read), so it works
+// during app shutdown when the GUI event loop is no longer running.
+void connectDownloadCancelPolling(QObject* worker,
+                                  QNetworkReply* reply,
+                                  const DownloadFinish& finish,
+                                  const std::function<bool()>& cancel_requested) {
+    if (!cancel_requested) {
+        return;
+    }
+    auto* poll = new QTimer(worker);
+    poll->setInterval(kDownloadCancelPollMs);
+    QObject::connect(poll, &QTimer::timeout, worker, [reply, finish, cancel_requested]() {
+        if (cancel_requested()) {
+            reply->abort();
+            finish(false, QStringLiteral("Download cancelled"));
+        }
+    });
+    poll->start();
+}
+
 void startDownloadOnWorker(QObject* worker,
                            const QUrl& url,
-                           DownloadState* state,
-                           QSemaphore* done,
-                           QThread* network_thread) {
+                           const DownloadWorkerContext& ctx,
+                           const std::function<bool()>& cancel_requested) {
     auto* nam = new QNetworkAccessManager(worker);
     nam->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkRequest request(url);
@@ -2082,8 +2114,8 @@ void startDownloadOnWorker(QObject* worker,
     auto* timeout_timer = new QTimer(worker);
     timeout_timer->setSingleShot(true);
     const auto completed = std::make_shared<std::atomic_bool>(false);
-    const DownloadFinish finish = [state, done, network_thread, reply, timeout_timer, completed](
-                                      bool timed_out, const QString& cap_error) {
+    const DownloadFinish finish = [ctx, reply, timeout_timer, completed](bool timed_out,
+                                                                         const QString& cap_error) {
         bool expected = false;
         if (!completed->compare_exchange_strong(expected, true)) {
             return;
@@ -2091,12 +2123,13 @@ void startDownloadOnWorker(QObject* worker,
         if (timeout_timer->isActive()) {
             timeout_timer->stop();
         }
-        applyDownloadOutcome(state, reply, timed_out, cap_error);
+        applyDownloadOutcome(ctx.state, reply, timed_out, cap_error);
         reply->deleteLater();
-        done->release();
-        network_thread->quit();
+        ctx.done->release();
+        ctx.network_thread->quit();
     };
-    connectDownloadCaps(reply, worker, state, finish);
+    connectDownloadCaps(reply, worker, ctx.state, finish);
+    connectDownloadCancelPolling(worker, reply, finish, cancel_requested);
     QObject::connect(reply, &QNetworkReply::finished, worker, [finish]() {
         finish(false, QString());
     });
@@ -2108,7 +2141,10 @@ void startDownloadOnWorker(QObject* worker,
     timeout_timer->start(kDownloadTimeoutMs);
 }
 
-bool downloadUrlBytes(const QUrl& url, QByteArray* bytes, QString* error_message) {
+bool downloadUrlBytes(const QUrl& url,
+                      QByteArray* bytes,
+                      QString* error_message,
+                      const std::function<bool()>& cancel_requested = {}) {
     DownloadState state;
     QSemaphore done;
     QThread network_thread;
@@ -2116,7 +2152,8 @@ bool downloadUrlBytes(const QUrl& url, QByteArray* bytes, QString* error_message
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [&, worker]() {
-        startDownloadOnWorker(worker, url, &state, &done, &network_thread);
+        const DownloadWorkerContext ctx{&state, &done, &network_thread};
+        startDownloadOnWorker(worker, url, ctx, cancel_requested);
     });
     network_thread.start();
     done.acquire();
@@ -3376,11 +3413,16 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_leaseManager(std::make_unique<ai::AiLeaseManager>())
     , m_toolHealthLedger(std::make_unique<ai::AiToolHealthLedger>())
     , m_toolDispatcher(std::make_unique<ai::AiToolDispatcher>())
+    , m_asyncToolRunner(std::make_unique<ai::AiAsyncToolRunner>(this))
     , m_workflowStore(std::make_unique<ai::WorkflowStore>())
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
     , m_packageListManager(std::make_unique<PackageListManager>())
     , m_offlineWorker(std::make_unique<OfflineDeploymentWorker>(this)) {
     configureExecutionBrokers();
+    connect(m_asyncToolRunner.get(),
+            &ai::AiAsyncToolRunner::finished,
+            this,
+            &AiAssistantPanel::finishAsyncBuiltInToolCall);
     m_taskStatus = tr("Idle");
     if (initializeAccessibilityAuditUi()) {
         return;
@@ -3469,7 +3511,7 @@ void AiAssistantPanel::initializePackageManager() {
     }
 }
 
-AiAssistantPanel::~AiAssistantPanel() {
+void AiAssistantPanel::cancelRunningWorkOnDestroy() {
     if (m_runToken.isValid()) {
         m_runToken.cancel(QStringLiteral("panel_destroyed"));
     }
@@ -3482,6 +3524,29 @@ AiAssistantPanel::~AiAssistantPanel() {
     if (m_client) {
         m_client->cancel();
     }
+}
+
+void AiAssistantPanel::drainAndStopAsyncTool() {
+    // Drop the in-flight async built-in tool result so it cannot resume a
+    // half-destroyed panel, and abort its download via the shared token.
+    if (m_activeToolRunToken.isValid()) {
+        m_activeToolRunToken.cancel(QStringLiteral("panel_destroyed"));
+    }
+    if (!m_asyncToolRunner) {
+        return;
+    }
+    m_asyncToolRunner->detach();
+    // The worker captured `this` and returns promptly now its inner op is
+    // cancelled; pump the event loop while it drains so its marshaled UI calls
+    // complete instead of dead-locking the runner's join in member destruction.
+    while (m_asyncToolRunner->isRunning()) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
+    }
+}
+
+AiAssistantPanel::~AiAssistantPanel() {
+    cancelRunningWorkOnDestroy();
+    drainAndStopAsyncTool();
     if (!m_currentCommandLeaseId.isEmpty() && m_leaseManager) {
         m_leaseManager->release(m_currentCommandLeaseId);
         m_currentCommandLeaseId.clear();
@@ -5387,6 +5452,67 @@ bool AiAssistantPanel::preparePendingToolCall(const ai::OpenAIFunctionCall& call
     return true;
 }
 
+bool AiAssistantPanel::isOnGuiThread() const {
+    return QThread::currentThread() == thread();
+}
+
+void AiAssistantPanel::invokeOnGuiThreadBlocking(const std::function<void()>& func) const {
+    if (isOnGuiThread()) {
+        func();
+        return;
+    }
+    // The worker blocks until the functor runs on the GUI thread, so the by-ref
+    // capture stays alive. The same-thread guard above avoids self-deadlock.
+    QMetaObject::invokeMethod(
+        const_cast<AiAssistantPanel*>(this), [&func]() { func(); }, Qt::BlockingQueuedConnection);
+}
+
+bool AiAssistantPanel::isAsyncBuiltInKind(ai::AiToolCallKind kind) {
+    return kind == ai::AiToolCallKind::Download || kind == ai::AiToolCallKind::PackageManager ||
+           kind == ai::AiToolCallKind::OfflineDownloader ||
+           kind == ai::AiToolCallKind::ProviderGateway;
+}
+
+QString AiAssistantPanel::builtInToolStatus(const ai::AiToolDispatcher::DispatchOutcome& outcome) {
+    if (!outcome.dispatched) {
+        if (outcome.health_suppressed) {
+            return QStringLiteral("health_suppressed");
+        }
+        if (outcome.availability_denied) {
+            return QStringLiteral("availability_denied");
+        }
+        if (outcome.handler_missing) {
+            return QStringLiteral("handler_missing");
+        }
+        return QStringLiteral("policy_denied");
+    }
+    return outcome.result.value(QStringLiteral("success")).toBool(false)
+               ? QStringLiteral("completed")
+               : QStringLiteral("failed");
+}
+
+QJsonObject AiAssistantPanel::buildBuiltInToolMetadata(
+    QJsonObject base, const ai::AiToolDispatcher::DispatchOutcome& outcome) {
+    const QJsonObject& result = outcome.result;
+    base[QStringLiteral("policy_allowed")] = outcome.policy_decision.allowed;
+    base[QStringLiteral("requires_lease")] = outcome.policy_decision.requires_lease;
+    base[QStringLiteral("risky_change")] = outcome.policy_decision.risky_change;
+    base[QStringLiteral("availability_denied")] = outcome.availability_denied;
+    base[QStringLiteral("health_suppressed")] = outcome.health_suppressed;
+    base[QStringLiteral("health_key")] = outcome.health_key;
+    base[QStringLiteral("latency_ms")] = static_cast<double>(outcome.latency_ms);
+    base[QStringLiteral("result_success")] = result.value(QStringLiteral("success")).toBool(false);
+    const QString result_error = result.value(QStringLiteral("error_message")).toString();
+    if (!result_error.isEmpty()) {
+        base[QStringLiteral("result_error_message")] = result_error.left(kMetadataPreviewMaxChars);
+    }
+    // Record the result under the key the report reader inspects (tool_result), so a
+    // built-in tool failure (success:false) surfaces as a report finding rather than
+    // vanishing. Persisted metadata is redacted by the trace store on write.
+    base[QStringLiteral("tool_result")] = result;
+    return base;
+}
+
 bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output) {
@@ -5416,42 +5542,78 @@ bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& con
         return true;
     }
 
+    // Blocking handlers (download/package/offline/provider gateway) execute on a
+    // worker thread so the GUI event loop stays live -- repaints and Stop keep
+    // working during a multi-minute call (P10-04). Quick handlers stay inline.
+    if (isAsyncBuiltInKind(context.kind)) {
+        return startAsyncBuiltInToolCall(context, policy_request, args);
+    }
+
     const auto outcome =
         m_toolDispatcher->dispatch(currentAccessToolPolicy(), policy_request, args);
-    const QJsonObject& result = outcome.result;
-    recordToolLoopObservation(context.call->name, result);
-    output->output = QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
-
-    QJsonObject metadata = context.metadata;
-    metadata[QStringLiteral("policy_allowed")] = outcome.policy_decision.allowed;
-    metadata[QStringLiteral("requires_lease")] = outcome.policy_decision.requires_lease;
-    metadata[QStringLiteral("risky_change")] = outcome.policy_decision.risky_change;
-    metadata[QStringLiteral("availability_denied")] = outcome.availability_denied;
-    metadata[QStringLiteral("health_suppressed")] = outcome.health_suppressed;
-    metadata[QStringLiteral("health_key")] = outcome.health_key;
-    metadata[QStringLiteral("latency_ms")] = static_cast<double>(outcome.latency_ms);
-    metadata[QStringLiteral("result_success")] =
-        result.value(QStringLiteral("success")).toBool(false);
-    const QString result_error = result.value(QStringLiteral("error_message")).toString();
-    if (!result_error.isEmpty()) {
-        metadata[QStringLiteral("result_error_message")] =
-            result_error.left(kMetadataPreviewMaxChars);
-    }
-    // Record the result under the key the report reader inspects (tool_result), so a
-    // built-in tool failure (success:false) surfaces as a report finding rather than
-    // vanishing. Persisted metadata is redacted by the trace store on write.
-    metadata[QStringLiteral("tool_result")] = result;
-    const QString status = outcome.dispatched
-                               ? (result.value(QStringLiteral("success")).toBool(false)
-                                      ? QStringLiteral("completed")
-                                      : QStringLiteral("failed"))
-                           : outcome.health_suppressed   ? QStringLiteral("health_suppressed")
-                           : outcome.availability_denied ? QStringLiteral("availability_denied")
-                           : outcome.handler_missing     ? QStringLiteral("handler_missing")
-                                                         : QStringLiteral("policy_denied");
-    traceAiEvent(QStringLiteral("tool_call"), context.call->name, status, metadata);
+    recordToolLoopObservation(context.call->name, outcome.result);
+    output->output =
+        QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
+    traceAiEvent(QStringLiteral("tool_call"),
+                 context.call->name,
+                 builtInToolStatus(outcome),
+                 buildBuiltInToolMetadata(context.metadata, outcome));
     appendToolOutputAndContinue(std::move(*output));
     return true;
+}
+
+bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& context,
+                                                 const ai::AiToolCallRequest& policy_request,
+                                                 const QJsonObject& args) {
+    // Read the widget-backed policy on the GUI thread before going async; the
+    // worker must never touch the access-mode combo directly.
+    const ai::AiToolPolicy policy = currentAccessToolPolicy();
+    // Share the run token with the worker so a long download can be aborted
+    // (lock-free poll); cancelling m_runToken cancels this copy too.
+    m_activeToolRunToken = m_runToken;
+    const QJsonObject base_metadata = context.metadata;
+    const QString call_id = context.call->call_id;
+    const QString name = context.call->name;
+
+    auto work = [this, policy, policy_request, args, base_metadata, call_id, name]() {
+        const auto outcome = m_toolDispatcher->dispatch(policy, policy_request, args);
+        QJsonObject bundle;
+        bundle[QStringLiteral("call_id")] = call_id;
+        bundle[QStringLiteral("name")] = name;
+        bundle[QStringLiteral("output")] =
+            QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
+        bundle[QStringLiteral("result")] = outcome.result;
+        bundle[QStringLiteral("status")] = builtInToolStatus(outcome);
+        bundle[QStringLiteral("metadata")] = buildBuiltInToolMetadata(base_metadata, outcome);
+        return bundle;
+    };
+
+    if (!m_asyncToolRunner || !m_asyncToolRunner->start(std::move(work))) {
+        const QJsonObject result =
+            toolError(QStringLiteral("AI tool runner is busy or unavailable"));
+        ai::OpenAIFunctionOutput output;
+        output.call_id = call_id;
+        output.output = QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
+        traceAiEvent(QStringLiteral("tool_call"), name, QStringLiteral("failed"), base_metadata);
+        appendToolOutputAndContinue(std::move(output));
+        return true;
+    }
+    m_asyncToolInFlight = true;
+    return true;
+}
+
+void AiAssistantPanel::finishAsyncBuiltInToolCall(const QJsonObject& bundle) {
+    m_asyncToolInFlight = false;
+    const QString name = bundle.value(QStringLiteral("name")).toString();
+    recordToolLoopObservation(name, bundle.value(QStringLiteral("result")).toObject());
+    traceAiEvent(QStringLiteral("tool_call"),
+                 name,
+                 bundle.value(QStringLiteral("status")).toString(),
+                 bundle.value(QStringLiteral("metadata")).toObject());
+    ai::OpenAIFunctionOutput output;
+    output.call_id = bundle.value(QStringLiteral("call_id")).toString();
+    output.output = bundle.value(QStringLiteral("output")).toString();
+    appendToolOutputAndContinue(std::move(output));
 }
 
 void AiAssistantPanel::recordToolLoopObservation(const QString& tool_name,
@@ -5643,6 +5805,11 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
 }
 
 QString AiAssistantPanel::allocateCommandId() {
+    // Mutates a shared counter; keep it single-threaded on the GUI thread when an
+    // async tool handler (e.g. provider gateway) allocates from a worker.
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this]() { return allocateCommandId(); });
+    }
     return QStringLiteral("cmd_%1").arg(
         m_nextCommandSequence++, kCommandIdWidth, kCommandIdBase, QLatin1Char('0'));
 }
@@ -5650,6 +5817,13 @@ QString AiAssistantPanel::allocateCommandId() {
 bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
                                               const QString& preview,
                                               bool risky_change) {
+    // Shows a modal approval dialog and mutates run/gate state; the whole call
+    // must run on the GUI thread. Marshal when an async tool handler needs it.
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this, shell, preview, risky_change]() {
+            return confirmCommandWithUser(shell, preview, risky_change);
+        });
+    }
     const QString pending_call_id = currentPendingToolCallId();
     bool resumed_approval_result = false;
     if (consumeResumedCommandApproval(
@@ -5801,6 +5975,13 @@ void AiAssistantPanel::acceptCommandApproval(const QString& gate_id,
 }
 
 bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview, bool risky_change) {
+    // May show a modal restore-point dialog and mutates session/gate state; run
+    // the whole call on the GUI thread, marshaling from async tool handlers.
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this, preview, risky_change]() {
+            return offerRestorePointIfNeeded(preview, risky_change);
+        });
+    }
     if (consumeResumedRestoreDecision(preview, risky_change)) {
         return true;
     }
@@ -6177,15 +6358,22 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
     }
     const QString safe_name = safeDownloadFileName(url, filename);
     QString error;
-    const QString destination =
-        m_conversationStore->artifactPath(QStringLiteral("downloads"), safe_name, &error);
+    // download_file runs on a worker thread; resolve the artifact path (which
+    // touches the conversation store) on the GUI thread.
+    const QString destination = runOnGuiThread([this, &safe_name, &error]() {
+        return m_conversationStore->artifactPath(QStringLiteral("downloads"), safe_name, &error);
+    });
     if (destination.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
 
     QByteArray bytes;
-    if (!downloadUrlBytes(url, &bytes, &error) || !writeDownloadBytes(destination, bytes, &error)) {
+    const auto cancel_requested = [this]() {
+        return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
+    };
+    if (!downloadUrlBytes(url, &bytes, &error, cancel_requested) ||
+        !writeDownloadBytes(destination, bytes, &error)) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
@@ -6434,15 +6622,19 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
         Q_EMIT logOutput(line);
     };
     callbacks.record_command = [this](const QString& preview, const QJsonObject& result) {
-        if (!m_conversationStore) {
-            return;
-        }
-        QString error;
-        (void)m_conversationStore->appendCommand(preview, result, &error);
-        if (!error.isEmpty()) {
-            appendLocalEvent(tr("App action command record failed: %1").arg(error));
-        }
-        reloadSessionPicker();
+        // Store write + session-picker rebuild belong on the GUI thread; this
+        // callback fires from the provider-gateway worker thread.
+        runOnGuiThread([this, &preview, &result]() {
+            if (!m_conversationStore) {
+                return;
+            }
+            QString error;
+            (void)m_conversationStore->appendCommand(preview, result, &error);
+            if (!error.isEmpty()) {
+                appendLocalEvent(tr("App action command record failed: %1").arg(error));
+            }
+            reloadSessionPicker();
+        });
     };
     callbacks.append_session_memory =
         [this](const QString& role, const QString& title, const QString& body) {
@@ -6845,7 +7037,11 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
     const QString subdir = operation == QLatin1String("direct_download")
                                ? QStringLiteral("downloads/offline_installers_%1").arg(stamp)
                                : QStringLiteral("downloads/offline_bundle_%1").arg(stamp);
-    return m_conversationStore->artifactSubdir(subdir, error_message);
+    // sak_offline_downloader runs on a worker thread; the conversation store
+    // access that creates the artifact subdir belongs on the GUI thread.
+    return runOnGuiThread([this, &subdir, error_message]() {
+        return m_conversationStore->artifactSubdir(subdir, error_message);
+    });
 }
 
 bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
@@ -7021,6 +7217,12 @@ QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operatio
     return result;
 }
 void AiAssistantPanel::appendArtifactRow(const QString& path, const QString& kind) {
+    // Refreshes widgets; marshal when an async tool handler reports an artifact
+    // from a worker thread.
+    if (!isOnGuiThread()) {
+        runOnGuiThread([this, path, kind]() { appendArtifactRow(path, kind); });
+        return;
+    }
     Q_UNUSED(kind);
     if (path.isEmpty()) {
         return;
@@ -7441,6 +7643,11 @@ void AiAssistantPanel::finishToolTurnAndContinue() {
 }
 
 AiAssistantPanel::AccessMode AiAssistantPanel::currentAccessMode() const {
+    // Reads the access-mode combo (a widget); marshal when a tool handler calls
+    // it from a worker thread. currentAccessToolPolicy() routes through here too.
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this]() { return currentAccessMode(); });
+    }
     if (!m_accessModeCombo) {
         return AccessMode::AssistedFullAccess;
     }
@@ -7610,6 +7817,12 @@ AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
 }
 
 void AiAssistantPanel::reloadSessionPicker() {
+    // Rebuilds the session combo (a widget); marshal when an async tool handler
+    // records a command from a worker thread.
+    if (!isOnGuiThread()) {
+        runOnGuiThread([this]() { reloadSessionPicker(); });
+        return;
+    }
     if (!m_sessionCombo || !m_conversationStore) {
         return;
     }
@@ -7896,6 +8109,12 @@ void AiAssistantPanel::appendLocalEvent(const QString& message) {
 void AiAssistantPanel::appendSessionMemory(const QString& kind,
                                            const QString& title,
                                            const QString& text) {
+    // Writes the conversation store; marshal off async tool worker threads so the
+    // store is only touched on the GUI thread.
+    if (!isOnGuiThread()) {
+        runOnGuiThread([this, &kind, &title, &text]() { appendSessionMemory(kind, title, text); });
+        return;
+    }
     if (!m_conversationStore || m_conversationStore->currentSessionId().isEmpty() ||
         text.trimmed().isEmpty()) {
         return;
@@ -10372,6 +10591,13 @@ void AiAssistantPanel::cancelLocalAiWork() {
     }
     if (m_offlineWorker && m_offlineWorker->isRunning()) {
         m_offlineWorker->cancel();
+    }
+    // Drop the result of an in-flight async built-in tool call so it does not
+    // resume the (now torn-down) tool turn; the inner worker is cancelled above
+    // (offline/broker) and drains in the background.
+    if (m_asyncToolRunner && m_asyncToolInFlight) {
+        m_asyncToolRunner->detach();
+        m_asyncToolInFlight = false;
     }
     m_client->cancel();
     if (m_toolTurn.active()) {

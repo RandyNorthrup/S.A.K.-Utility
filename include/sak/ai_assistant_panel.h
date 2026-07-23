@@ -8,6 +8,7 @@
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
 #include "sak/ai/ai_tool_call_router.h"
+#include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/ai_tool_turn.h"
 #include "sak/ai/ai_trace_store.h"
@@ -25,7 +26,9 @@
 #include <QVector>
 #include <QWidget>
 
+#include <functional>
 #include <memory>
+#include <type_traits>
 
 class QComboBox;
 class QEvent;
@@ -69,6 +72,7 @@ class AiRunStateStore;
 class AiToolDispatcher;
 class AiToolHealthLedger;
 class AiLeaseManager;
+class AiAsyncToolRunner;
 }  // namespace ai
 
 /// @brief UI shell for the SAK AI Assistant panel.
@@ -327,6 +331,44 @@ private:
     [[nodiscard]] bool dispatchBuiltInToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output);
+    // Built-in tools whose handlers block for minutes (download/package/offline/
+    // provider gateway) run their dispatch on a worker thread so the GUI thread
+    // stays live; the quick tools (screenshot/session search) stay synchronous.
+    [[nodiscard]] static bool isAsyncBuiltInKind(ai::AiToolCallKind kind);
+    [[nodiscard]] bool startAsyncBuiltInToolCall(const PendingToolCallContext& context,
+                                                 const ai::AiToolCallRequest& policy_request,
+                                                 const QJsonObject& args);
+    void finishAsyncBuiltInToolCall(const QJsonObject& bundle);
+    // Destructor helpers: stop any running local work, then wait out the async
+    // tool worker (which captured `this`) before members are destroyed.
+    void cancelRunningWorkOnDestroy();
+    void drainAndStopAsyncTool();
+    // Pure result-shaping shared by the sync and async built-in paths (safe to
+    // call off the GUI thread: no widget or shared-state access).
+    [[nodiscard]] static QJsonObject buildBuiltInToolMetadata(
+        QJsonObject base, const ai::AiToolDispatcher::DispatchOutcome& outcome);
+    [[nodiscard]] static QString builtInToolStatus(
+        const ai::AiToolDispatcher::DispatchOutcome& outcome);
+    // Marshals @p func onto the GUI thread and returns its result. A no-op
+    // detour when already on the GUI thread; otherwise a blocking queued call
+    // (used by tool handlers that run on a worker thread but must touch widgets
+    // or the approval dialogs).
+    [[nodiscard]] bool isOnGuiThread() const;
+    void invokeOnGuiThreadBlocking(const std::function<void()>& func) const;
+    template <typename Func>
+    auto runOnGuiThread(Func&& func) const {
+        using Result = std::invoke_result_t<Func>;
+        if (isOnGuiThread()) {
+            return func();
+        }
+        if constexpr (std::is_void_v<Result>) {
+            invokeOnGuiThreadBlocking([&]() { func(); });
+        } else {
+            Result result{};
+            invokeOnGuiThreadBlocking([&]() { result = func(); });
+            return result;
+        }
+    }
     [[nodiscard]] bool authorizeCommandToolCall(const PendingToolCallContext& context,
                                                 const ai::AiCommandToolPlan& plan,
                                                 ai::OpenAIFunctionOutput* output);
@@ -771,6 +813,12 @@ private:
     std::unique_ptr<ai::AiLeaseManager> m_leaseManager;
     std::unique_ptr<ai::AiToolHealthLedger> m_toolHealthLedger;
     std::unique_ptr<ai::AiToolDispatcher> m_toolDispatcher;
+    std::unique_ptr<ai::AiAsyncToolRunner> m_asyncToolRunner;
+    bool m_asyncToolInFlight{false};
+    // Copy of m_runToken taken (on the GUI thread) when an async built-in tool
+    // starts, so its worker can poll cancellation lock-free (the token shares
+    // state with m_runToken) without touching GUI-thread members.
+    ai::CancellationToken m_activeToolRunToken;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
     std::unique_ptr<PackageListManager> m_packageListManager;

@@ -782,6 +782,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/openai_responses_client.cpp
         src/gui/ai_transcript_view.cpp
         include/sak/ai/ai_app_action_planner.h
+        include/sak/ai/ai_async_tool_runner.h
         include/sak/ai/ai_credential_store.h
         include/sak/ai/ai_cancellation_token.h
         include/sak/ai/ai_command_guard.h
