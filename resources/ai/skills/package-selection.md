@@ -1,3 +1,8 @@
+---
+id: package-selection
+description: Map product names to exact vendor/product package IDs and pick the best candidate by confidence.
+when_to_use: choosing which package to install; ambiguous product name; multiple package candidates
+---
 # Package Selection Skill
 
 When mapping product names to packages:

@@ -13,6 +13,7 @@ private Q_SLOTS:
     void readOnlyPolicyBlocksMutatingFileCmdlets();
     void readOnlyPolicyAllowsProviderGatewayStatus();
     void readOnlyPolicyAllowsSessionSearch();
+    void skillToolAllowedUnderEveryPolicy();
     void packagePolicyRequiresLeaseForInstall();
     void packageMutationBlockedWhenUserAskedForScan();
     void packageMutationRequiresExplicitIntent_data();
@@ -107,6 +108,24 @@ void AiToolPolicyTests::readOnlyPolicyAllowsSessionSearch() {
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(decision.allowed);
     QVERIFY(!decision.risky_change);
+}
+
+void AiToolPolicyTests::skillToolAllowedUnderEveryPolicy() {
+    // sak_skill is a pure text lookup (no PC/disk/network), so it is allowed even
+    // under no-local-execution and read-only, and never needs a lease.
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("sak_skill");
+    request.operation = QStringLiteral("load");
+
+    for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
+                              sak::ai::AiToolPolicy::ReadOnlyPc,
+                              sak::ai::AiToolPolicy::MutatingRequiresLease}) {
+        const auto decision = sak::ai::evaluateToolPolicy(policy, request);
+        QVERIFY(decision.allowed);
+        QVERIFY(!decision.risky_change);
+        QVERIFY(!decision.requires_lease);
+        QVERIFY(!decision.catastrophic_change);
+    }
 }
 
 void AiToolPolicyTests::packagePolicyRequiresLeaseForInstall() {

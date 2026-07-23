@@ -530,6 +530,30 @@ QJsonObject sessionSearchTool() {
                         QJsonArray{QStringLiteral("query"), QStringLiteral("max_results")});
 }
 
+QJsonObject skillTool() {
+    QJsonObject operation = stringParameter(
+        QStringLiteral("Which action to take: \"list\" returns the skill catalog (id, title, "
+                       "description, when-to-use); \"load\" returns the full guidance body for one "
+                       "skill_id."));
+    operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("list"), QStringLiteral("load")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("operation")] = operation;
+    properties[QStringLiteral("skill_id")] = stringParameter(
+        QStringLiteral("Skill id to load when operation is \"load\" (taken from the catalog). Pass "
+                       "an empty string when operation is \"list\"."));
+
+    return functionTool(
+        QStringLiteral("sak_skill"),
+        QStringLiteral(
+            "List and load reusable task-guidance skills. Call operation=\"list\" to discover "
+            "available skills (id, description, when to use), then operation=\"load\" with a "
+            "skill_id to read the full guidance before performing a matching task. Read-only "
+            "guidance lookup with no PC, disk, or network access."),
+        properties,
+        QJsonArray{QStringLiteral("operation"), QStringLiteral("skill_id")});
+}
+
 QJsonArray localToolDefinitions() {
     QJsonArray tools;
     tools.append(shellTool(
@@ -555,6 +579,7 @@ QJsonArray localToolDefinitions() {
     tools.append(offlineTool());
     tools.append(providerGatewayTool());
     tools.append(sessionSearchTool());
+    tools.append(skillTool());
     return tools;
 }
 

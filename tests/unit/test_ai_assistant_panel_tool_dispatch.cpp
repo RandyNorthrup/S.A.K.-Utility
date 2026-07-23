@@ -12,6 +12,8 @@
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/ai/ai_skill.h"
+#include "sak/ai/ai_skill_store.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_policy.h"
@@ -19,6 +21,7 @@
 #include "sak/ai_assistant_panel.h"
 
 #include <QComboBox>
+#include <QJsonArray>
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -206,6 +209,7 @@ private Q_SLOTS:
     // instead of launching into a known-bad executor.
     void healthCircuitBreakerSuppressesCommandTool() {
         AiAssistantPanel panel;
+        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_powershell"));
         panel.m_currentCommandHealthKey = key;
 
@@ -238,6 +242,7 @@ private Q_SLOTS:
     // itself exited nonzero -- that must not trip the breaker.
     void nonZeroExitKeepsCommandToolHealthy() {
         AiAssistantPanel panel;
+        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
         panel.m_currentCommandHealthKey = key;
 
@@ -253,6 +258,7 @@ private Q_SLOTS:
     // A user Stop is not an executor-health signal; cancels never trip the breaker.
     void cancelledCommandDoesNotTripBreaker() {
         AiAssistantPanel panel;
+        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
         panel.m_currentCommandHealthKey = key;
 
@@ -265,7 +271,78 @@ private Q_SLOTS:
         QVERIFY(panel.m_toolHealthLedger->check(key).available);
     }
 
+    // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
+    // on demand by id, and reports an error for an unknown id.
+    void skillToolListsLoadsAndRejectsUnknown() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_skillStore != nullptr);
+        const ai::Skill skill = ai::Skill::fromMarkdown(
+            QByteArray("---\nid: cert-skill\ndescription: cert desc.\nwhen_to_use: x\n---\n"
+                       "# Cert Skill\nthe full guidance body\n"),
+            QStringLiteral("/x/cert-skill.md"));
+        QVERIFY(panel.m_skillStore->addSkill(skill));
+
+        const QJsonObject list =
+            panel.runSkillTool(QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
+                                           {QStringLiteral("skill_id"), QString()}});
+        QVERIFY(list.value(QStringLiteral("success")).toBool());
+        const QJsonArray catalog = list.value(QStringLiteral("skills")).toArray();
+        bool found = false;
+        for (const auto& entry : catalog) {
+            const QJsonObject obj = entry.toObject();
+            if (obj.value(QStringLiteral("id")).toString() == QLatin1String("cert-skill")) {
+                found = true;
+                QVERIFY(!obj.contains(QStringLiteral("body")));  // list never leaks bodies
+            }
+        }
+        QVERIFY(found);
+
+        const QJsonObject loaded = panel.runSkillTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("load")},
+                        {QStringLiteral("skill_id"), QStringLiteral("cert-skill")}});
+        QVERIFY(loaded.value(QStringLiteral("success")).toBool());
+        QVERIFY(loaded.value(QStringLiteral("body"))
+                    .toString()
+                    .contains(QStringLiteral("the full guidance body")));
+
+        const QJsonObject unknown = panel.runSkillTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("load")},
+                        {QStringLiteral("skill_id"), QStringLiteral("does-not-exist")}});
+        QVERIFY(!unknown.value(QStringLiteral("success")).toBool());
+    }
+
+    // End-to-end regression: a model-issued sak_skill call must travel the real
+    // chat tool loop (router classify -> dispatchBuiltInToolCall -> dispatcher ->
+    // handler). If the router misclassifies sak_skill as Unknown, the loop answers
+    // "Unknown function" and the handler never runs -- so asserting the handler
+    // fired proves the whole chain is wired, which the direct-call test cannot.
+    void skillToolReachesHandlerThroughRealToolLoop() {
+        AiAssistantPanel panel;
+        std::atomic<bool> handler_ran{false};
+        panel.m_toolDispatcher->registerHandler(
+            QStringLiteral("sak_skill"),
+            [&handler_ran](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
+                handler_ran = true;
+                return QJsonObject{{QStringLiteral("success"), true},
+                                   {QStringLiteral("operation"),
+                                    args.value(QStringLiteral("operation")).toString()}};
+            });
+        allowLocalToolsAndValidRun(panel);
+
+        panel.beginToolTurn(skillResponse());
+
+        // sak_skill is a synchronous built-in, dispatched inline in the tool loop.
+        QTRY_VERIFY_WITH_TIMEOUT(handler_ran.load(), 5000);
+    }
+
 private:
+    // Give the panel a fresh, non-persistent health ledger so a prior run's
+    // persisted circuit state (test-mode data dir) cannot leak into these breaker
+    // assertions. applyCommandHealthGate/recordCommandHealth use m_toolHealthLedger.
+    static void resetHealthLedger(AiAssistantPanel& panel) {
+        panel.m_toolHealthLedger = std::make_unique<ai::AiToolHealthLedger>();
+    }
+
     // Unattended Full Access (combo index 2) -- the mode where risky commands run
     // without a per-command confirm unless the new catastrophic gate fires.
     static void setUnattended(AiAssistantPanel& panel) {
@@ -319,6 +396,17 @@ private:
             QStringLiteral("{\"url\":\"https://example.com/f\",\"filename\":\"f\"}");
         ai::OpenAIResponseResult response;
         response.id = QStringLiteral("resp_1");
+        response.function_calls.append(call);
+        return response;
+    }
+
+    static ai::OpenAIResponseResult skillResponse() {
+        ai::OpenAIFunctionCall call;
+        call.call_id = QStringLiteral("call_skill_1");
+        call.name = QStringLiteral("sak_skill");
+        call.arguments_json = QStringLiteral("{\"operation\":\"list\",\"skill_id\":\"\"}");
+        ai::OpenAIResponseResult response;
+        response.id = QStringLiteral("resp_skill_1");
         response.function_calls.append(call);
         return response;
     }

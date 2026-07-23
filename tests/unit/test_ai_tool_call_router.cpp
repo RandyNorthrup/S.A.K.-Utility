@@ -19,6 +19,7 @@ class AiToolCallRouterTests : public QObject {
 
 private Q_SLOTS:
     void kindForNameMapsKnownTools();
+    void prepareRecognizesSkillToolAsBuiltIn();
     void prepareBuildsMetadataAndUnknownError();
     void parseArgumentsAcceptsObject();
     void parseArgumentsRejectsInvalidJson();
@@ -45,6 +46,9 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
              AiToolCallKind::ProviderGateway);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("sak_session_search")),
              AiToolCallKind::SessionSearch);
+    // sak_skill must be classified as a built-in tool, or the chat tool loop
+    // rejects it as "Unknown function" before it reaches the handler.
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("sak_skill")), AiToolCallKind::Skill);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("missing_tool")),
              AiToolCallKind::Unknown);
 
@@ -52,8 +56,24 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     QVERIFY(AiToolCallRouter::isCommandTool(AiToolCallKind::Process));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::ProviderGateway));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::SessionSearch));
+    QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::Skill));
+    QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::Skill));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Shell));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Unknown));
+}
+
+void AiToolCallRouterTests::prepareRecognizesSkillToolAsBuiltIn() {
+    sak::ai::OpenAIFunctionCall call;
+    call.call_id = QStringLiteral("call_skill");
+    call.name = QStringLiteral("sak_skill");
+
+    const auto prepared = sak::ai::AiToolCallRouter::prepare(call, 0);
+
+    QVERIFY(prepared.recognized);
+    QCOMPARE(prepared.kind, sak::ai::AiToolCallKind::Skill);
+    QVERIFY(sak::ai::AiToolCallRouter::isBuiltInTool(prepared.kind));
+    // Recognized calls carry no pre-baked error output (that is the Unknown path).
+    QVERIFY(prepared.output.output.isEmpty());
 }
 
 void AiToolCallRouterTests::prepareBuildsMetadataAndUnknownError() {

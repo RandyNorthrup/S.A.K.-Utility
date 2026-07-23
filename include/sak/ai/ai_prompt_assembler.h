@@ -12,6 +12,7 @@ struct AiPromptAssemblyInput {
     QString access_mode_label;
     QString agent_profile;
     QString workflow_catalog;
+    QString skill_catalog;
     QString context_notes;
     QString session_memory;
     QStringList pending_steering_messages;

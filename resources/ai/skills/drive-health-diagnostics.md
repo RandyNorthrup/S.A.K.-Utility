@@ -1,3 +1,8 @@
+---
+id: drive-health-diagnostics
+description: Collect read-only SMART, disk, and volume evidence before any repair or partition change.
+when_to_use: drive health checks; SMART or disk errors; slow or failing storage; before chkdsk/format
+---
 # Drive Health Diagnostics Skill
 
 Collect read-only evidence first:

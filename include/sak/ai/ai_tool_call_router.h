@@ -20,6 +20,7 @@ enum class AiToolCallKind {
     OfflineDownloader,
     ProviderGateway,
     SessionSearch,
+    Skill,
 };
 
 class AiToolCallRouter {

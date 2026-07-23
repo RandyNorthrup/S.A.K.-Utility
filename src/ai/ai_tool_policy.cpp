@@ -34,6 +34,10 @@ bool isSessionSearchTool(const QString& tool_name) {
     return norm(tool_name) == QLatin1String("sak_session_search");
 }
 
+bool isSkillTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("sak_skill");
+}
+
 bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
     if (!isProviderGatewayTool(request.tool_name)) {
         return false;
@@ -309,7 +313,7 @@ bool isKnownLocalTool(const QString& tool_name) {
     const QString name = norm(tool_name);
     return isShellTool(name) || name == QLatin1String("take_screenshot") ||
            name == QLatin1String("download_file") || isPackageTool(name) ||
-           isProviderGatewayTool(name) || isSessionSearchTool(name);
+           isProviderGatewayTool(name) || isSessionSearchTool(name) || isSkillTool(name);
 }
 
 bool isMutatingPackageOperation(const QString& operation) {
@@ -359,6 +363,12 @@ bool commandLooksRiskyChange(const QString& preview) {
 AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {
     if (!isKnownLocalTool(request.tool_name)) {
         return block(QStringLiteral("Unknown local tool"));
+    }
+    // Reading bundled/user skill guidance is a pure text lookup with no PC, disk,
+    // or network access, so it is allowed under every policy (including read-only
+    // and no-local-execution) and never needs a lease or restore point.
+    if (isSkillTool(request.tool_name)) {
+        return allow(QStringLiteral("Skill guidance lookup allowed"));
     }
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =

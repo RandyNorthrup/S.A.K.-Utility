@@ -21,4 +21,8 @@ QString workflowLibraryDirectory() {
     return QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/workflows"));
 }
 
+QString skillLibraryDirectory() {
+    return QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/skills"));
+}
+
 }  // namespace sak::ai

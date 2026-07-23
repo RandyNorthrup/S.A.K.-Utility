@@ -1,3 +1,8 @@
+---
+id: cleanup-after-job
+description: Keep requested artifacts and safely remove temp folders at job end without deleting rollback evidence.
+when_to_use: finishing a job or workflow; deciding which temp files are safe to remove
+---
 # Cleanup After Job Skill
 
 At workflow end:

@@ -764,6 +764,8 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_provider_registry.cpp
         src/ai/ai_recovery_policy.cpp
         src/ai/ai_async_tool_runner.cpp
+        src/ai/ai_skill.cpp
+        src/ai/ai_skill_store.cpp
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
         src/ai/ai_subagent_runner.cpp
@@ -806,6 +808,8 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_provider_gateway_tool_runner.h
         include/sak/ai/ai_provider_registry.h
         include/sak/ai/ai_recovery_policy.h
+        include/sak/ai/ai_skill.h
+        include/sak/ai/ai_skill_store.h
         include/sak/ai/ai_run_state.h
         include/sak/ai/ai_run_state_store.h
         include/sak/ai/ai_subagent_runner.h

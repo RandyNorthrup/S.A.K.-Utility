@@ -167,13 +167,18 @@ QStringList AiPromptAssembler::baseGuardrails() {
     return lines;
 }
 
-QString AiPromptAssembler::assemble(const AiPromptAssemblyInput& input) {
-    QStringList lines = baseGuardrails();
-    lines << QStringLiteral("Access mode selected by user: %1.").arg(input.access_mode_label);
-    lines << QStringLiteral("Session role: %1.").arg(input.agent_profile);
+namespace {
 
+void appendContextSections(QStringList& lines, const AiPromptAssemblyInput& input) {
     if (!input.workflow_catalog.trimmed().isEmpty()) {
         lines << input.workflow_catalog.trimmed();
+    }
+    // The skill catalog instructs the model to load bodies via the sak_skill tool,
+    // which is only advertised when local tools are enabled. Only surface the
+    // catalog when that tool will actually be available, or the prompt would tell
+    // the model to call a tool that is absent (self-contradiction in chat mode).
+    if (input.local_execution_enabled && !input.skill_catalog.trimmed().isEmpty()) {
+        lines << input.skill_catalog.trimmed();
     }
     if (!input.context_notes.trimmed().isEmpty()) {
         lines << input.context_notes.trimmed();
@@ -190,22 +195,38 @@ QString AiPromptAssembler::assemble(const AiPromptAssemblyInput& input) {
             lines << QStringLiteral("- %1").arg(steering);
         }
     }
+}
 
+void appendAccessModeGuidance(QStringList& lines, const AiPromptAssemblyInput& input) {
     if (!input.local_execution_enabled) {
         lines << QStringLiteral(
             "Local execution is disabled for this session. Do not call local tools or imply that "
             "local changes were made; provide research, recommendations, and safe next steps.");
-    } else if (input.assisted_full_access) {
+        return;
+    }
+    if (input.assisted_full_access) {
         lines << QStringLiteral(
             "Run read-only diagnostic commands through tools. For risky changes, explain the "
             "evidence, exact target, rollback/restore-point option, and approval need before "
             "proposing or running the action.");
-    } else if (input.unattended_full_access) {
+        return;
+    }
+    if (input.unattended_full_access) {
         lines << QStringLiteral(
             "Unattended full access is selected. You may run local commands through tools without "
             "per-command confirmation, but destructive or privacy-sensitive changes still need "
             "clear user intent, exact target, evidence, and verification.");
     }
+}
+
+}  // namespace
+
+QString AiPromptAssembler::assemble(const AiPromptAssemblyInput& input) {
+    QStringList lines = baseGuardrails();
+    lines << QStringLiteral("Access mode selected by user: %1.").arg(input.access_mode_label);
+    lines << QStringLiteral("Session role: %1.").arg(input.agent_profile);
+    appendContextSections(lines, input);
+    appendAccessModeGuidance(lines, input);
     return lines.join(QLatin1Char('\n'));
 }
 

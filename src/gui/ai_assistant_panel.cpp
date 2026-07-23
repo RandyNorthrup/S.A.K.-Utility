@@ -24,6 +24,7 @@
 #include "sak/ai/ai_provider_gateway.h"
 #include "sak/ai/ai_provider_gateway_tool_runner.h"
 #include "sak/ai/ai_run_state_store.h"
+#include "sak/ai/ai_skill_store.h"
 #include "sak/ai/ai_subagent_runner.h"
 #include "sak/ai/ai_token_usage_tracker.h"
 #include "sak/ai/ai_tool_dispatcher.h"
@@ -1430,6 +1431,33 @@ QString workflowCatalogInstructions(const ai::WorkflowStore* store) {
         "When describing workflows, be plain-language and technician-oriented. Include what "
         "evidence gets collected, what changes may occur, what approval is needed, what success "
         "means, and what report/artifacts will exist.");
+    return lines.join(QLatin1Char('\n'));
+}
+
+// Advertises the skill catalog cheaply (id + description + when-to-use only). The
+// full body is loaded on demand via the sak_skill tool, so the prompt is not
+// paying for every skill body every turn -- progressive disclosure.
+QString skillCatalogInstructions(const ai::SkillStore* store) {
+    if (store == nullptr) {
+        return {};
+    }
+    const auto skills = store->skills();
+    if (skills.isEmpty()) {
+        return {};
+    }
+
+    QStringList lines;
+    lines << QStringLiteral(
+        "Available skills (reusable task guidance). Before performing a task that matches one, "
+        "call the sak_skill tool with operation=\"load\" and the skill id to read its full "
+        "guidance:");
+    for (const auto& skill : skills) {
+        QString line = QStringLiteral("- %1: %2").arg(skill.id, skill.description);
+        if (!skill.triggers.isEmpty()) {
+            line += QStringLiteral(" (when: %1)").arg(skill.triggers.join(QStringLiteral("; ")));
+        }
+        lines << line;
+    }
     return lines.join(QLatin1Char('\n'));
 }
 
@@ -3425,6 +3453,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_toolDispatcher(std::make_unique<ai::AiToolDispatcher>())
     , m_asyncToolRunner(std::make_unique<ai::AiAsyncToolRunner>(this))
     , m_workflowStore(std::make_unique<ai::WorkflowStore>())
+    , m_skillStore(std::make_unique<ai::SkillStore>())
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
     , m_packageListManager(std::make_unique<PackageListManager>())
     , m_offlineWorker(std::make_unique<OfflineDeploymentWorker>(this)) {
@@ -3440,6 +3469,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
 
     QStringList workflow_errors;
     const bool workflows_loaded = loadWorkflowDefaults(&workflow_errors);
+    loadSkillDefaults();
     const QString health_ledger_error = initializeToolHealthLedger();
     registerToolDispatcherHandlers();
     initializeStandardPanel(workflows_loaded, workflow_errors, health_ledger_error);
@@ -3473,6 +3503,18 @@ bool AiAssistantPanel::initializeAccessibilityAuditUi() {
 
 bool AiAssistantPanel::loadWorkflowDefaults(QStringList* workflow_errors) {
     return m_workflowStore && m_workflowStore->loadDefaults(workflow_errors);
+}
+
+void AiAssistantPanel::loadSkillDefaults() {
+    if (!m_skillStore) {
+        return;
+    }
+    QStringList skill_errors;
+    // Best-effort: a malformed skill file must not block panel startup; log and go.
+    (void)m_skillStore->loadDefaults(&skill_errors);
+    for (const auto& error : skill_errors) {
+        logWarning("Skill load: {}", error.toStdString());
+    }
 }
 
 QString AiAssistantPanel::initializeToolHealthLedger() {
@@ -5313,6 +5355,7 @@ QString AiAssistantPanel::buildInstructions() const {
     input.access_mode_label = currentAccessModeLabel();
     input.agent_profile = currentWorkflowRole();
     input.workflow_catalog = workflowCatalogInstructions(m_workflowStore.get());
+    input.skill_catalog = skillCatalogInstructions(m_skillStore.get());
     input.context_notes = contextInstructions();
     input.pending_steering_messages = m_pendingSteeringMessages;
     input.local_execution_enabled = currentAccessMode() != AccessMode::ChatAndResearch;
@@ -6818,6 +6861,49 @@ QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) cons
     result[QStringLiteral("query")] = query;
     result[QStringLiteral("result_count")] = hits.size();
     result[QStringLiteral("results")] = results;
+    return result;
+}
+
+QJsonObject AiAssistantPanel::runSkillTool(const QJsonObject& args) const {
+    if (!m_skillStore) {
+        return toolError(tr("Skill store is not available"));
+    }
+    const QString operation =
+        args.value(QStringLiteral("operation")).toString().trimmed().toLower();
+
+    if (operation.isEmpty() || operation == QLatin1String("list")) {
+        QJsonArray catalog;
+        for (const auto& skill : m_skillStore->skills()) {
+            catalog.append(skill.toCatalogJson());
+        }
+        QJsonObject result;
+        result[QStringLiteral("success")] = true;
+        result[QStringLiteral("operation")] = QStringLiteral("list");
+        result[QStringLiteral("skill_count")] = catalog.size();
+        result[QStringLiteral("skills")] = catalog;
+        return result;
+    }
+
+    if (operation == QLatin1String("load")) {
+        const QString id = args.value(QStringLiteral("skill_id")).toString().trimmed();
+        const ai::Skill* skill = m_skillStore->skillById(id);
+        if (skill == nullptr) {
+            QJsonObject result = toolError(tr("Unknown skill id: %1").arg(id));
+            result[QStringLiteral("failure_class")] = QStringLiteral("skill_not_found");
+            return result;
+        }
+        QJsonObject result;
+        result[QStringLiteral("success")] = true;
+        result[QStringLiteral("operation")] = QStringLiteral("load");
+        result[QStringLiteral("id")] = skill->id;
+        result[QStringLiteral("title")] = skill->title;
+        result[QStringLiteral("description")] = skill->description;
+        result[QStringLiteral("body")] = skill->body;
+        return result;
+    }
+
+    QJsonObject result = toolError(tr("Unknown sak_skill operation: %1").arg(operation));
+    result[QStringLiteral("failure_class")] = QStringLiteral("invalid_operation");
     return result;
 }
 
@@ -8651,6 +8737,11 @@ void AiAssistantPanel::registerToolHandlers() {
                                       [this](const QJsonObject& args,
                                              const ai::AiToolPolicyDecision&) {
                                           return runSessionSearchTool(args);
+                                      });
+    m_toolDispatcher->registerHandler(QStringLiteral("sak_skill"),
+                                      [this](const QJsonObject& args,
+                                             const ai::AiToolPolicyDecision&) {
+                                          return runSkillTool(args);
                                       });
 }
 

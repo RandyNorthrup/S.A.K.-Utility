@@ -68,6 +68,7 @@ class AiHumanGateStore;
 class TokenUsageTracker;
 class TraceStore;
 class WorkflowStore;
+class SkillStore;
 class AiRunStateStore;
 class AiToolDispatcher;
 class AiToolHealthLedger;
@@ -227,6 +228,7 @@ private:
     void configureExecutionBrokers();
     [[nodiscard]] bool initializeAccessibilityAuditUi();
     [[nodiscard]] bool loadWorkflowDefaults(QStringList* workflow_errors);
+    void loadSkillDefaults();
     [[nodiscard]] QString initializeToolHealthLedger();
     void initializeStandardPanel(bool workflows_loaded,
                                  const QStringList& workflow_errors,
@@ -489,6 +491,9 @@ private:
     [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
+    // sak_skill handler: operation "list" returns the skill catalog, "load"
+    // returns the full guidance body for a skill_id. Read-only resource lookup.
+    [[nodiscard]] QJsonObject runSkillTool(const QJsonObject& args) const;
     [[nodiscard]] QJsonObject packageManagerQueryOperation(const QJsonObject& args,
                                                            const QString& operation,
                                                            const QString& query);
@@ -855,6 +860,7 @@ private:
     // state with m_runToken) without touching GUI-thread members.
     ai::CancellationToken m_activeToolRunToken;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
+    std::unique_ptr<ai::SkillStore> m_skillStore;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
     std::unique_ptr<PackageListManager> m_packageListManager;
     std::unique_ptr<OfflineDeploymentWorker> m_offlineWorker;
