@@ -82,6 +82,10 @@ class AiAsyncToolRunner;
 class AiAssistantPanel : public QWidget {
     Q_OBJECT
 
+    // Certification test for the off-GUI-thread built-in tool dispatch (P10-04):
+    // drives beginToolTurn/dispatch and inspects the private async state.
+    friend class AiAssistantPanelToolDispatchTest;
+
 public:
     explicit AiAssistantPanel(QWidget* parent = nullptr);
     ~AiAssistantPanel() override;
@@ -340,9 +344,11 @@ private:
                                                  const QJsonObject& args);
     void finishAsyncBuiltInToolCall(const QJsonObject& bundle);
     // Destructor helpers: stop any running local work, then wait out the async
-    // tool worker (which captured `this`) before members are destroyed.
+    // tool worker and the workflow run (both may deref the panel from a worker
+    // thread) before members are destroyed.
     void cancelRunningWorkOnDestroy();
     void drainAndStopAsyncTool();
+    void drainWorkflowRun();
     // Pure result-shaping shared by the sync and async built-in paths (safe to
     // call off the GUI thread: no widget or shared-state access).
     [[nodiscard]] static QJsonObject buildBuiltInToolMetadata(

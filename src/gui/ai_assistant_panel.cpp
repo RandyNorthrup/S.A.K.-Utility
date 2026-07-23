@@ -3544,17 +3544,31 @@ void AiAssistantPanel::drainAndStopAsyncTool() {
     }
 }
 
+void AiAssistantPanel::drainWorkflowRun() {
+    if (!m_workflowRunWatcher) {
+        return;
+    }
+    // Detach first so onWorkflowRunFinished does not fire mid-teardown. The run
+    // token was cancelled by cancelRunningWorkOnDestroy, so the orchestrator
+    // unwinds promptly; the workflow worker dereferences the panel (runToolPhase
+    // -> dispatchWorkflowToolPhase), so it MUST finish before members are
+    // destroyed. Pump the event loop while it drains so any self-marshaled GUI
+    // call from the worker completes instead of dead-locking the join.
+    m_workflowRunWatcher->disconnect(this);
+    while (m_workflowRunWatcher->isRunning()) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
+    }
+    m_workflowRunWatcher->deleteLater();
+    m_workflowRunWatcher = nullptr;
+}
+
 AiAssistantPanel::~AiAssistantPanel() {
     cancelRunningWorkOnDestroy();
     drainAndStopAsyncTool();
+    drainWorkflowRun();
     if (!m_currentCommandLeaseId.isEmpty() && m_leaseManager) {
         m_leaseManager->release(m_currentCommandLeaseId);
         m_currentCommandLeaseId.clear();
-    }
-    if (m_workflowRunWatcher) {
-        m_workflowRunWatcher->disconnect(this);
-        m_workflowRunWatcher->deleteLater();
-        m_workflowRunWatcher = nullptr;
     }
 }
 
@@ -8996,25 +9010,12 @@ public:
             err[QStringLiteral("error_message")] = token.cancelReason();
             return err;
         }
-        QJsonObject result;
-        if (QThread::currentThread() == panel->thread()) {
-            result = panel->dispatchWorkflowToolPhase(phase, policy, context);
-            return result;
-        }
-        const bool invoked = QMetaObject::invokeMethod(
-            panel.data(),
-            [panel, phase, policy, context, &result]() {
-                if (!panel) {
-                    result = toolError(QStringLiteral("Panel gone"));
-                    return;
-                }
-                result = panel->dispatchWorkflowToolPhase(phase, policy, context);
-            },
-            Qt::BlockingQueuedConnection);
-        if (!invoked) {
-            return toolError(QStringLiteral("Could not marshal workflow tool phase to UI thread"));
-        }
-        return result;
+        // Run the dispatch on the workflow worker thread so a blocking tool phase
+        // (PowerShell/package/offline) does not freeze the GUI (P10-04). The
+        // handlers marshal their own GUI/store touchpoints back to the GUI thread
+        // (runOnGuiThread), and the panel destructor joins this run before members
+        // are destroyed (drainWorkflowRun), so dereferencing the panel is safe.
+        return panel->dispatchWorkflowToolPhase(phase, policy, context);
     }
 
 private:

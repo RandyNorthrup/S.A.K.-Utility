@@ -1501,6 +1501,79 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_prompt_assembler.cpp")
     message(STATUS "Added unit test: test_ai_prompt_assembler")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatch.cpp"
+   AND SAK_ENABLE_AI_ASSISTANT)
+    # The panel's off-GUI-thread tool dispatch is certified against the real
+    # AiAssistantPanel, which pulls in the whole AI subsystem plus a few core/gui
+    # utilities. Reuse the app's AI source group (absolutized -- the group paths
+    # are root-relative) and add the panel's non-AI dependencies explicitly, so
+    # this target stays in lock-step with the app without dragging in main_window
+    # and the storage drivers.
+    set(_panel_dispatch_test_srcs "")
+    foreach(_s IN LISTS AI_SOURCES)
+        list(APPEND _panel_dispatch_test_srcs "${CMAKE_SOURCE_DIR}/${_s}")
+    endforeach()
+    add_executable(test_ai_assistant_panel_tool_dispatch
+        unit/test_ai_assistant_panel_tool_dispatch.cpp
+        ${_panel_dispatch_test_srcs}
+        ${CMAKE_SOURCE_DIR}/src/core/app_paths.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/chocolatey_manager.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/package_list_manager.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/offline_deployment_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/package_internalization_engine.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/install_script_parser.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/script_rewriter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/network_transfer_runner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/process_runner.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/detachable_log_window.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/follow_scroll_controller.cpp
+        # Q_OBJECT headers listed explicitly for AUTOMOC (this project moc's
+        # headers by listing, not by basename discovery).
+        ${CMAKE_SOURCE_DIR}/include/sak/ai_assistant_panel.h
+        ${CMAKE_SOURCE_DIR}/include/sak/ai_transcript_view.h
+        ${CMAKE_SOURCE_DIR}/include/sak/chocolatey_manager.h
+        ${CMAKE_SOURCE_DIR}/include/sak/detachable_log_window.h
+        ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/offline_deployment_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/package_internalization_engine.h
+    )
+    set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
+        AUTOMOC ON
+        AUTOUIC ON
+        AUTORCC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
+        SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
+    )
+    target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
+        Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse
+        ${PLATFORM_LIBS}
+    )
+    if(MSVC)
+        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _panel_test_crt_dll_pos)
+        if(_panel_test_crt_dll_pos EQUAL -1)
+            target_link_options(test_ai_assistant_panel_tool_dispatch PRIVATE
+                /NODEFAULTLIB:MSVCRT /NODEFAULTLIB:MSVCRTD)
+        else()
+            target_link_options(test_ai_assistant_panel_tool_dispatch PRIVATE
+                /NODEFAULTLIB:LIBCMT /NODEFAULTLIB:LIBCMTD)
+        endif()
+    endif()
+    target_include_directories(test_ai_assistant_panel_tool_dispatch PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_BINARY_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src/third_party/qrcodegen
+    )
+    add_test(NAME test_ai_assistant_panel_tool_dispatch
+             COMMAND test_ai_assistant_panel_tool_dispatch
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_assistant_panel_tool_dispatch")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_async_tool_runner.cpp")
     add_executable(test_ai_async_tool_runner
         unit/test_ai_async_tool_runner.cpp
@@ -2185,10 +2258,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_result_recorder.cpp")
     add_executable(test_ai_tool_result_recorder
         unit/test_ai_tool_result_recorder.cpp
         ../src/ai/ai_conversation_store.cpp
+        ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
         ../src/ai/ai_tool_result_recorder.cpp
         ../src/core/app_paths.cpp
         ../include/sak/ai/ai_conversation_store.h
+        ../include/sak/ai/ai_credential_store.h
         ../include/sak/ai/ai_paths.h
         ../include/sak/ai/ai_tool_result_recorder.h
         ../include/sak/app_paths.h
@@ -2198,7 +2273,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_result_recorder.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ai_tool_result_recorder PRIVATE
-        Qt6::Core Qt6::Test
+        Qt6::Core Qt6::Test crypt32
     )
     target_include_directories(test_ai_tool_result_recorder PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
