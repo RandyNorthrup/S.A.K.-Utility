@@ -132,6 +132,13 @@
 
 namespace sak {
 
+AiApprovalPromptTestHook& aiApprovalPromptTestHook() {
+    // Function-local static so the seam has a single definition and is safe to
+    // set/clear from certification tests. Never set in production code paths.
+    static AiApprovalPromptTestHook hook;
+    return hook;
+}
+
 namespace {
 
 constexpr int kDefaultCommandTimeoutSec = 120;
@@ -1096,6 +1103,9 @@ void addApprovalButtons(QVBoxLayout* layout,
 }
 
 ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
+    if (auto& hook = aiApprovalPromptTestHook(); hook) {
+        return static_cast<ApprovalPromptChoice>(hook(spec.window_title, spec.command_text));
+    }
     QDialog dialog(spec.parent);
     configureApprovalDialog(&dialog, spec.window_title);
     dialog.setModal(true);
@@ -5706,29 +5716,51 @@ bool AiAssistantPanel::authorizeCommandToolCall(const PendingToolCallContext& co
         }
         return true;
     }
-    if (currentAccessMode() == AccessMode::AssistedFullAccess &&
-        !confirmCommandWithUser(plan.shell_label, plan.preview, plan.risky_change)) {
-        output->output = QStringLiteral("{\"error\":\"User declined command\"}");
-        traceAiEvent(QStringLiteral("tool_call"),
-                     context.call->name,
-                     QStringLiteral("rejected"),
-                     context.metadata);
-        appendLocalEvent(tr("User declined %1 command").arg(plan.shell_label));
-        appendToolOutputAndContinue(std::move(*output));
-        return false;
+    return authorizeCommandForAccessMode(context, plan, output);
+}
+
+bool AiAssistantPanel::authorizeCommandForAccessMode(const PendingToolCallContext& context,
+                                                     const ai::AiCommandToolPlan& plan,
+                                                     ai::OpenAIFunctionOutput* output) {
+    // Catastrophic/irreversible commands (disk format, partition wipe, boot-config
+    // edit, backup/shadow-copy deletion, hive delete) ALWAYS require an explicit
+    // human confirmation -- even Unattended mode cannot auto-run them. Assisted mode
+    // confirms every command as before.
+    const bool catastrophic = plan.policy_decision.catastrophic_change;
+    const AccessMode mode = currentAccessMode();
+    if (catastrophic || mode == AccessMode::AssistedFullAccess) {
+        if (!confirmCommandWithUser(
+                plan.shell_label, plan.preview, plan.risky_change || catastrophic, catastrophic)) {
+            return rejectCommandBeforeRun(context,
+                                          output,
+                                          QStringLiteral("{\"error\":\"User declined command\"}"),
+                                          QStringLiteral("rejected"),
+                                          tr("User declined %1 command").arg(plan.shell_label));
+        }
+        return true;
     }
-    if (currentAccessMode() == AccessMode::UnattendedFullAccess &&
-        !offerRestorePointIfNeeded(plan.preview, plan.risky_change)) {
-        output->output = QStringLiteral("{\"error\":\"User cancelled before risky command\"}");
-        traceAiEvent(QStringLiteral("tool_call"),
-                     context.call->name,
-                     QStringLiteral("cancelled"),
-                     context.metadata);
-        appendLocalEvent(tr("User cancelled before risky %1 command").arg(plan.shell_label));
-        appendToolOutputAndContinue(std::move(*output));
-        return false;
+    if (mode == AccessMode::UnattendedFullAccess &&
+        !offerRestorePointIfNeeded(plan.preview, plan.risky_change, catastrophic)) {
+        return rejectCommandBeforeRun(
+            context,
+            output,
+            QStringLiteral("{\"error\":\"User cancelled before risky command\"}"),
+            QStringLiteral("cancelled"),
+            tr("User cancelled before risky %1 command").arg(plan.shell_label));
     }
     return true;
+}
+
+bool AiAssistantPanel::rejectCommandBeforeRun(const PendingToolCallContext& context,
+                                              ai::OpenAIFunctionOutput* output,
+                                              const QString& output_json,
+                                              const QString& trace_outcome,
+                                              const QString& local_event) {
+    output->output = output_json;
+    traceAiEvent(QStringLiteral("tool_call"), context.call->name, trace_outcome, context.metadata);
+    appendLocalEvent(local_event);
+    appendToolOutputAndContinue(std::move(*output));
+    return false;
 }
 
 bool AiAssistantPanel::acquireCommandToolLease(const PendingToolCallContext& context,
@@ -5830,12 +5862,13 @@ QString AiAssistantPanel::allocateCommandId() {
 
 bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
                                               const QString& preview,
-                                              bool risky_change) {
+                                              bool risky_change,
+                                              bool catastrophic) {
     // Shows a modal approval dialog and mutates run/gate state; the whole call
     // must run on the GUI thread. Marshal when an async tool handler needs it.
     if (!isOnGuiThread()) {
-        return runOnGuiThread([this, shell, preview, risky_change]() {
-            return confirmCommandWithUser(shell, preview, risky_change);
+        return runOnGuiThread([this, shell, preview, risky_change, catastrophic]() {
+            return confirmCommandWithUser(shell, preview, risky_change, catastrophic);
         });
     }
     const QString pending_call_id = currentPendingToolCallId();
@@ -5853,7 +5886,7 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
     }
     acceptCommandApproval(gate_id, metadata, shell, previous_status);
 
-    const bool restore_ok = offerRestorePointIfNeeded(preview, risky_change);
+    const bool restore_ok = offerRestorePointIfNeeded(preview, risky_change, catastrophic);
     m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
                                                                  : ai::AiRunStatus::Running;
     saveRunStateSnapshot();
@@ -5988,18 +6021,23 @@ void AiAssistantPanel::acceptCommandApproval(const QString& gate_id,
     emitStatusDetails();
 }
 
-bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview, bool risky_change) {
+bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview,
+                                                 bool risky_change,
+                                                 bool catastrophic) {
     // May show a modal restore-point dialog and mutates session/gate state; run
     // the whole call on the GUI thread, marshaling from async tool handlers.
     if (!isOnGuiThread()) {
-        return runOnGuiThread([this, preview, risky_change]() {
-            return offerRestorePointIfNeeded(preview, risky_change);
+        return runOnGuiThread([this, preview, risky_change, catastrophic]() {
+            return offerRestorePointIfNeeded(preview, risky_change, catastrophic);
         });
     }
     if (consumeResumedRestoreDecision(preview, risky_change)) {
         return true;
     }
-    if (!risky_change || m_restorePointOfferedThisSession) {
+    // Non-catastrophic risky commands offer a restore point once per session to
+    // avoid modal storms. Catastrophic/irreversible commands re-offer every time --
+    // a single early restore point must not leave later disk wipes unprotected.
+    if (!risky_change || (m_restorePointOfferedThisSession && !catastrophic)) {
         return true;
     }
 

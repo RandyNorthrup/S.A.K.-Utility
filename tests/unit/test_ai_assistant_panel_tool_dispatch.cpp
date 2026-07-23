@@ -10,6 +10,7 @@
 
 #include "sak/ai/ai_async_tool_runner.h"
 #include "sak/ai/ai_cancellation_token.h"
+#include "sak/ai/ai_command_tool_planner.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/openai_response_types.h"
@@ -19,6 +20,7 @@
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QThread>
 #include <QtTest/QtTest>
 
@@ -128,7 +130,121 @@ private Q_SLOTS:
         QVERIFY(true);
     }
 
+    void cleanup() {
+        // Never leave the approval seam installed for the next case or production.
+        aiApprovalPromptTestHook() = nullptr;
+    }
+
+    // Wave 1b: a catastrophic/irreversible command must get an explicit human
+    // confirmation gate even in Unattended mode -- it cannot silently auto-run.
+    void catastrophicCommandForcesConfirmEvenInUnattended() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        ai::OpenAIFunctionCall call;
+        call.name = QStringLiteral("run_powershell");
+        AiAssistantPanel::PendingToolCallContext ctx;
+        ctx.call = &call;
+        ai::OpenAIFunctionOutput output;
+        const bool proceeded =
+            panel.authorizeCommandForAccessMode(ctx, makePlan(true, true), &output);
+
+        QVERIFY(proceeded);
+        QVERIFY(countTitles(titles, QStringLiteral("Approve AI Command")) == 1);
+        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) == 1);
+    }
+
+    // A merely-risky (non-catastrophic) command in Unattended mode keeps the
+    // low-friction behavior: no mandatory confirm, and the restore point is
+    // offered only once per session.
+    void nonCatastrophicRiskyInUnattendedSkipsConfirmAndOffersOnce() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        ai::OpenAIFunctionCall call;
+        call.name = QStringLiteral("run_powershell");
+        AiAssistantPanel::PendingToolCallContext ctx;
+        ctx.call = &call;
+        ai::OpenAIFunctionOutput output;
+        QVERIFY(panel.authorizeCommandForAccessMode(ctx, makePlan(true, false), &output));
+        QVERIFY(panel.authorizeCommandForAccessMode(ctx, makePlan(true, false), &output));
+
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 0);
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
+    }
+
+    // The once-per-session restore-point dedup must NOT suppress the offer for
+    // catastrophic commands: a single early restore point cannot be allowed to
+    // leave later disk wipes unprotected.
+    void catastrophicCommandReOffersRestorePointDespiteSessionFlag() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        panel.m_restorePointOfferedThisSession = true;  // an earlier op already offered
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        ai::OpenAIFunctionCall call;
+        call.name = QStringLiteral("run_powershell");
+        AiAssistantPanel::PendingToolCallContext ctx;
+        ctx.call = &call;
+        ai::OpenAIFunctionOutput output;
+        QVERIFY(panel.authorizeCommandForAccessMode(ctx, makePlan(true, true), &output));
+        QVERIFY(panel.authorizeCommandForAccessMode(ctx, makePlan(true, true), &output));
+
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 2);
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 2);
+    }
+
 private:
+    // Unattended Full Access (combo index 2) -- the mode where risky commands run
+    // without a per-command confirm unless the new catastrophic gate fires.
+    static void setUnattended(AiAssistantPanel& panel) {
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(2);
+    }
+
+    static ai::AiCommandToolPlan makePlan(bool risky, bool catastrophic) {
+        ai::AiCommandToolPlan plan;
+        plan.shell_label = QStringLiteral("PowerShell");
+        plan.preview = catastrophic ? QStringLiteral("format C: /y")
+                                    : QStringLiteral("choco upgrade all -y");
+        plan.risky_change = risky;
+        plan.policy_decision.allowed = true;
+        plan.policy_decision.risky_change = risky;
+        plan.policy_decision.catastrophic_change = catastrophic;
+        return plan;
+    }
+
+    // Scripts the modal approval seam: approve command confirmations, and choose
+    // "Proceed Without" for restore-point offers (records the title, never creates
+    // a real restore point). Records every prompt title it is shown.
+    static void installApprovalHook(QStringList* titles) {
+        aiApprovalPromptTestHook() = [titles](const QString& title, const QString&) -> int {
+            titles->append(title);
+            if (title.contains(QStringLiteral("Approve AI Command"))) {
+                return 0;  // ApprovalPromptChoice::Accept
+            }
+            if (title.contains(QStringLiteral("Create Restore Point"))) {
+                return 1;  // ApprovalPromptChoice::Secondary (Proceed Without)
+            }
+            return 3;      // ApprovalPromptChoice::Cancel
+        };
+    }
+
+    static int countTitles(const QStringList& titles, const QString& needle) {
+        int count = 0;
+        for (const auto& title : titles) {
+            if (title.contains(needle)) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     static ai::OpenAIResponseResult downloadResponse() {
         ai::OpenAIFunctionCall call;
         call.call_id = QStringLiteral("call_1");

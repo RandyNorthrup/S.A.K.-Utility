@@ -75,6 +75,13 @@ class AiLeaseManager;
 class AiAsyncToolRunner;
 }  // namespace ai
 
+// Test-only seam: when installed, replaces the modal approval / restore-point
+// dialog so headless certification can script human decisions deterministically.
+// The callback receives the prompt window title and command text and returns the
+// chosen ApprovalPromptChoice as an int. Empty (unused) in production builds.
+using AiApprovalPromptTestHook = std::function<int(const QString&, const QString&)>;
+[[nodiscard]] AiApprovalPromptTestHook& aiApprovalPromptTestHook();
+
 /// @brief UI shell for the SAK AI Assistant panel.
 ///
 /// Provides the AI Assistant chat panel, workflow runner, local tool gateway,
@@ -378,6 +385,14 @@ private:
     [[nodiscard]] bool authorizeCommandToolCall(const PendingToolCallContext& context,
                                                 const ai::AiCommandToolPlan& plan,
                                                 ai::OpenAIFunctionOutput* output);
+    [[nodiscard]] bool authorizeCommandForAccessMode(const PendingToolCallContext& context,
+                                                     const ai::AiCommandToolPlan& plan,
+                                                     ai::OpenAIFunctionOutput* output);
+    [[nodiscard]] bool rejectCommandBeforeRun(const PendingToolCallContext& context,
+                                              ai::OpenAIFunctionOutput* output,
+                                              const QString& output_json,
+                                              const QString& trace_outcome,
+                                              const QString& local_event);
     [[nodiscard]] bool acquireCommandToolLease(const PendingToolCallContext& context,
                                                const ai::AiCommandToolPlan& plan,
                                                ai::OpenAIFunctionOutput* output);
@@ -397,7 +412,8 @@ private:
                                                          const QJsonObject& output_json);
     [[nodiscard]] bool confirmCommandWithUser(const QString& shell,
                                               const QString& preview,
-                                              bool risky_change);
+                                              bool risky_change,
+                                              bool catastrophic = false);
     [[nodiscard]] bool consumeResumedCommandApproval(const QString& shell,
                                                      const QString& preview,
                                                      bool risky_change,
@@ -416,7 +432,9 @@ private:
                                QJsonObject metadata,
                                const QString& shell,
                                ai::AiRunStatus previous_status);
-    [[nodiscard]] bool offerRestorePointIfNeeded(const QString& preview, bool risky_change);
+    [[nodiscard]] bool offerRestorePointIfNeeded(const QString& preview,
+                                                 bool risky_change,
+                                                 bool catastrophic = false);
     [[nodiscard]] bool consumeResumedRestoreDecision(const QString& preview, bool risky_change);
     [[nodiscard]] QJsonObject restorePointOfferMetadata(const QString& preview,
                                                         bool risky_change) const;
