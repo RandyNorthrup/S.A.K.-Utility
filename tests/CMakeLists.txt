@@ -1464,9 +1464,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_registry.cpp")
         unit/test_ai_provider_registry.cpp
         ../src/ai/ai_provider_registry.cpp
         ../include/sak/ai/ai_provider_registry.h
+        ../resources/ai.qrc
     )
     set_target_properties(test_ai_provider_registry PROPERTIES
         AUTOMOC ON
+        AUTORCC ON
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ai_provider_registry PRIVATE
@@ -1689,11 +1691,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_gateway.cpp")
         ../src/ai/ai_provider_gateway.cpp
         ../src/ai/ai_provider_registry.cpp
         ../src/ai/ai_mcp_http_client.cpp
+        ../src/ai/ai_mcp_session_pool.cpp
         ../src/ai/ai_mcp_stdio_client.cpp
+        ../src/ai/ai_mcp_stdio_session.cpp
         ../include/sak/ai/ai_provider_gateway.h
         ../include/sak/ai/ai_provider_registry.h
         ../include/sak/ai/ai_mcp_http_client.h
+        ../include/sak/ai/ai_mcp_session_pool.h
         ../include/sak/ai/ai_mcp_stdio_client.h
+        ../include/sak/ai/ai_mcp_stdio_session.h
     )
     set_target_properties(test_ai_provider_gateway PROPERTIES
         AUTOMOC ON
