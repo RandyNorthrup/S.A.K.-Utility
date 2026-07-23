@@ -38,6 +38,10 @@ bool isSkillTool(const QString& tool_name) {
     return norm(tool_name) == QLatin1String("sak_skill");
 }
 
+bool isDelegateSubagentTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("delegate_subagent");
+}
+
 bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
     if (!isProviderGatewayTool(request.tool_name)) {
         return false;
@@ -313,7 +317,8 @@ bool isKnownLocalTool(const QString& tool_name) {
     const QString name = norm(tool_name);
     return isShellTool(name) || name == QLatin1String("take_screenshot") ||
            name == QLatin1String("download_file") || isPackageTool(name) ||
-           isProviderGatewayTool(name) || isSessionSearchTool(name) || isSkillTool(name);
+           isProviderGatewayTool(name) || isSessionSearchTool(name) || isSkillTool(name) ||
+           isDelegateSubagentTool(name);
 }
 
 bool isMutatingPackageOperation(const QString& operation) {
@@ -370,6 +375,12 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     if (isSkillTool(request.tool_name)) {
         return allow(QStringLiteral("Skill guidance lookup allowed"));
     }
+    // Delegating to a sub-agent is itself allowed under every mode: it only spawns
+    // a scoped reasoner. The sub-agent's OWN tool policy (clamped to this session's
+    // ceiling by the caller) gates whatever the sub-agent then tries to execute.
+    if (isDelegateSubagentTool(request.tool_name)) {
+        return allow(QStringLiteral("Sub-agent delegation allowed (sub-agent policy clamped)"));
+    }
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =
             block(QStringLiteral("Package install/upgrade/uninstall blocked because the user asked "
@@ -398,6 +409,31 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
         decision.restore_point_recommended = true;
     }
     return decision;
+}
+
+int toolPolicyRank(AiToolPolicy policy) {
+    switch (policy) {
+    case AiToolPolicy::NoLocalExecution:
+        return 0;
+    case AiToolPolicy::ReadOnlyPc:
+        return 1;
+    case AiToolPolicy::DownloadOnly:
+    case AiToolPolicy::PackageToolsOnly:
+        return 2;
+    case AiToolPolicy::MutatingRequiresLease:
+        return 3;
+    case AiToolPolicy::ExclusiveMutatingExecutor:
+        return 4;
+    }
+    return 0;
+}
+
+AiToolPolicy clampToolPolicy(AiToolPolicy requested, AiToolPolicy ceiling) {
+    // A strictly-more-restrictive request is honored; otherwise fall back to the
+    // session ceiling. Equal-rank-but-different-axis (e.g. DownloadOnly vs
+    // PackageToolsOnly) resolves to the ceiling so a sub-agent never gains a
+    // capability the session itself was not granted.
+    return toolPolicyRank(requested) < toolPolicyRank(ceiling) ? requested : ceiling;
 }
 
 }  // namespace sak::ai

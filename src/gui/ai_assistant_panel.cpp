@@ -1516,6 +1516,7 @@ QSet<QString> subagentAllowedToolNames() {
     };
 }
 
+
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
@@ -5450,7 +5451,8 @@ void AiAssistantPanel::invokeOnGuiThreadBlocking(const std::function<void()>& fu
 bool AiAssistantPanel::isAsyncBuiltInKind(ai::AiToolCallKind kind) {
     return kind == ai::AiToolCallKind::Download || kind == ai::AiToolCallKind::PackageManager ||
            kind == ai::AiToolCallKind::OfflineDownloader ||
-           kind == ai::AiToolCallKind::ProviderGateway;
+           kind == ai::AiToolCallKind::ProviderGateway ||
+           kind == ai::AiToolCallKind::DelegateSubagent;
 }
 
 QString AiAssistantPanel::builtInToolStatus(const ai::AiToolDispatcher::DispatchOutcome& outcome) {
@@ -8656,6 +8658,11 @@ void AiAssistantPanel::registerToolHandlers() {
                                              const ai::AiToolPolicyDecision&) {
                                           return runSkillTool(args);
                                       });
+    m_toolDispatcher->registerHandler(QStringLiteral("delegate_subagent"),
+                                      [this](const QJsonObject& args,
+                                             const ai::AiToolPolicyDecision&) {
+                                          return runDelegateSubagentTool(args);
+                                      });
 }
 
 const ai::WorkflowTemplate* AiAssistantPanel::attachedWorkflow() const {
@@ -8936,6 +8943,93 @@ QJsonObject AiAssistantPanel::dispatchSubagentToolCall(ai::AiToolPolicy policy,
     const auto outcome = m_toolDispatcher->dispatch(
         policy, request, arguments, agent_id.isEmpty() ? QStringLiteral("subagent") : agent_id);
     return outcome.result;
+}
+
+ai::AiSubagentToolExecutor::RawDispatch AiAssistantPanel::makeSubagentToolDispatch(
+    QPointer<AiAssistantPanel> guard) {
+    return [guard](ai::AiToolPolicy policy,
+                   const ai::AiToolCallRequest& request,
+                   const QJsonObject& arguments,
+                   const QString& agent_id,
+                   const ai::CancellationToken& token) -> QJsonObject {
+        if (!guard) {
+            return toolError(QStringLiteral("Panel gone"));
+        }
+        if (token.isValid() && token.isCancellationRequested()) {
+            QJsonObject cancelled = toolError(token.cancelReason());
+            cancelled[QStringLiteral("cancelled")] = true;
+            return cancelled;
+        }
+        return guard->dispatchSubagentToolCall(policy, request, arguments, agent_id);
+    };
+}
+
+QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
+    const QString objective = args.value(QStringLiteral("objective")).toString().trimmed();
+    if (objective.isEmpty()) {
+        return toolError(QStringLiteral("delegate_subagent requires a non-empty 'objective'"));
+    }
+
+    // Read session-scoped, GUI-affine state on the GUI thread before running the
+    // sub-agent off-thread (this handler already runs on the async worker).
+    QString api_key;
+    QString model;
+    ai::AiToolPolicy session_policy = ai::AiToolPolicy::NoLocalExecution;
+    ai::CancellationToken token;
+    ai::AiModelClientFactory factory_override;
+    invokeOnGuiThreadBlocking([&]() {
+        api_key = apiKey();
+        model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
+        session_policy = currentAccessToolPolicy();
+        token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
+        factory_override = m_delegateSubagentModelFactoryOverride;
+    });
+
+    const ai::AiToolPolicy requested =
+        ai::toolPolicyFromString(args.value(QStringLiteral("tool_policy")).toString());
+    const ai::AiToolPolicy effective = ai::clampToolPolicy(requested, session_policy);
+
+    ai::AiSubagentTask task;
+    task.task_id =
+        QStringLiteral("delegate_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    task.run_id = task.task_id;
+    task.agent_id = QStringLiteral("delegate");
+    task.objective = objective;
+    task.tool_policy = effective;
+    task.expected_output_schema = args.value(QStringLiteral("expected_output")).toString();
+    task.model = model;
+    task.api_key = api_key;
+    task.system_instructions = QStringLiteral(
+        "You are a focused S.A.K. Utility sub-agent spawned by the overseer to complete ONE scoped "
+        "objective. You do NOT see the chat history; rely only on the objective and whatever tools "
+        "you are permitted to use. Return only the requested structured JSON result.");
+
+    ai::AiSubagentRunner runner(nullptr);
+    if (factory_override) {
+        runner.setModelClientFactory(factory_override);
+    } else {
+        runner.setModelClientFactory([]() {
+            auto client = std::make_unique<ai::OpenAIResponsesModelClient>();
+            client->setEnableWebSearch(true);
+            return client;
+        });
+    }
+    ai::AiSubagentRunnerOptions opts;
+    opts.wall_clock_timeout_ms = kWorkflowWallClockTimeoutMs;
+    runner.setOptions(opts);
+
+    ai::AiSubagentToolExecutor tool_executor(
+        makeSubagentToolDispatch(QPointer<AiAssistantPanel>(this)));
+    tool_executor.setAllowedTools(subagentAllowedToolNames());
+    runner.setToolExecutor(&tool_executor);
+
+    const ai::AiSubagentResult result = runner.run(task, token);
+    QJsonObject out = result.toJson();
+    out[QStringLiteral("success")] = (result.status == ai::AiSubagentStatus::Complete ||
+                                      result.status == ai::AiSubagentStatus::Degraded);
+    out[QStringLiteral("delegated_objective")] = objective;
+    out[QStringLiteral("effective_tool_policy")] = ai::toolPolicyToString(effective);
+    return out;
 }
 
 AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatchPlan(
@@ -9612,23 +9706,7 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     // because parallel phase groups are restricted to read-only policies (no
     // leases; the read-only handlers only read immutable stores). Do NOT allowlist
     // a mutating/stateful handler without making it concurrency-safe.
-    const QPointer<AiAssistantPanel> guard = launch.panel_guard;
-    ai::AiSubagentToolExecutor subagent_tool_executor(
-        [guard](ai::AiToolPolicy policy,
-                const ai::AiToolCallRequest& request,
-                const QJsonObject& arguments,
-                const QString& agent_id,
-                const ai::CancellationToken& token) -> QJsonObject {
-            if (!guard) {
-                return toolError(QStringLiteral("Panel gone"));
-            }
-            if (token.isValid() && token.isCancellationRequested()) {
-                QJsonObject cancelled = toolError(token.cancelReason());
-                cancelled[QStringLiteral("cancelled")] = true;
-                return cancelled;
-            }
-            return guard->dispatchSubagentToolCall(policy, request, arguments, agent_id);
-        });
+    ai::AiSubagentToolExecutor subagent_tool_executor(makeSubagentToolDispatch(launch.panel_guard));
     subagent_tool_executor.setAllowedTools(subagentAllowedToolNames());
     runner.setToolExecutor(&subagent_tool_executor);
 

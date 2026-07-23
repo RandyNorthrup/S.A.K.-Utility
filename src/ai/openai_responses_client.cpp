@@ -554,6 +554,42 @@ QJsonObject skillTool() {
         QJsonArray{QStringLiteral("operation"), QStringLiteral("skill_id")});
 }
 
+QJsonObject delegateSubagentTool() {
+    QJsonObject tool_policy = stringParameter(QStringLiteral(
+        "Optional capability ceiling for the sub-agent, clamped to this session's access mode (the "
+        "sub-agent can never be more permissive than the session). Omit or use "
+        "\"read_only_pc\" for a read/diagnose sub-agent."));
+    tool_policy[QStringLiteral("enum")] = QJsonArray{QStringLiteral("no_local_execution"),
+                                                     QStringLiteral("read_only_pc"),
+                                                     QStringLiteral("download_only"),
+                                                     QStringLiteral("package_tools_only"),
+                                                     QStringLiteral("mutating_requires_lease"),
+                                                     QStringLiteral("exclusive_mutating_executor")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("objective")] = stringParameter(QStringLiteral(
+        "The single, self-contained task for the sub-agent, written as a complete instruction. "
+        "Include the context it needs; the sub-agent does not see the chat history."));
+    properties[QStringLiteral("tool_policy")] = tool_policy;
+    properties[QStringLiteral("expected_output")] = stringParameter(QStringLiteral(
+        "Short description of the result you want back (e.g. \"root-cause summary + fix steps\"). "
+        "The sub-agent returns a structured JSON result you then use."));
+
+    return functionTool(
+        QStringLiteral("delegate_subagent"),
+        QStringLiteral(
+            "Delegate one scoped sub-task to a focused sub-agent and get its structured result "
+            "back. Use this to parallelize independent investigation, isolate a noisy/large "
+            "sub-task from the main thread, or run a specialist step (diagnose, research, verify) "
+            "without cluttering this conversation. You remain the overseer: delegate concrete, "
+            "self-contained objectives, then synthesize the sub-agent's result. For a large "
+            "multi-step technician procedure, prefer a declared workflow instead."),
+        properties,
+        QJsonArray{QStringLiteral("objective"),
+                   QStringLiteral("tool_policy"),
+                   QStringLiteral("expected_output")});
+}
+
 QJsonArray localToolDefinitions() {
     QJsonArray tools;
     tools.append(shellTool(
@@ -580,6 +616,7 @@ QJsonArray localToolDefinitions() {
     tools.append(providerGatewayTool());
     tools.append(sessionSearchTool());
     tools.append(skillTool());
+    tools.append(delegateSubagentTool());
     return tools;
 }
 

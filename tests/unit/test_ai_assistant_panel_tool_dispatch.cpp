@@ -34,6 +34,29 @@
 
 namespace sak {
 
+// Deterministic stand-in for the delegate sub-agent's model client. Records that
+// it was invoked (on the async worker) and returns a complete result, so the
+// delegate_subagent cert never touches the network.
+class FakeSubagentModelClient : public ai::IAiModelClient {
+public:
+    explicit FakeSubagentModelClient(std::atomic<bool>* invoked) : m_invoked(invoked) {}
+
+    Response invoke(const Request& /*request*/, const ai::CancellationToken& /*token*/) override {
+        if (m_invoked != nullptr) {
+            m_invoked->store(true);
+        }
+        Response response;
+        response.success = true;
+        response.text =
+            QStringLiteral("{\"status\":\"complete\",\"summary\":\"delegated task done\"}");
+        response.usage.total_tokens = 10;
+        return response;
+    }
+
+private:
+    std::atomic<bool>* m_invoked{nullptr};
+};
+
 // Friend of AiAssistantPanel: reaches the private tool dispatcher, run token, and
 // async-in-flight state so the certification can drive and observe the real loop.
 class AiAssistantPanelToolDispatchTest : public QObject {
@@ -316,6 +339,24 @@ private Q_SLOTS:
     // handler). If the router misclassifies sak_skill as Unknown, the loop answers
     // "Unknown function" and the handler never runs -- so asserting the handler
     // fired proves the whole chain is wired, which the direct-call test cannot.
+    // The model's delegate_subagent tool must route through the real chat tool
+    // loop (router -> dispatcher -> handler) and actually run a scoped sub-agent.
+    // Uses an injected fake model client so no network is touched.
+    void delegateSubagentToolSpawnsScopedSubagentThroughRealLoop() {
+        std::atomic<bool> subagent_invoked{false};
+        AiAssistantPanel panel;
+        panel.m_delegateSubagentModelFactoryOverride = [&subagent_invoked]() {
+            return std::make_unique<FakeSubagentModelClient>(&subagent_invoked);
+        };
+        allowLocalToolsAndValidRun(panel);
+
+        panel.beginToolTurn(delegateResponse());
+
+        // delegate_subagent is an async built-in: it dispatched off the GUI thread,
+        // ran the sub-agent runner, and invoked the sub-agent's (fake) model client.
+        QTRY_VERIFY_WITH_TIMEOUT(subagent_invoked.load(), 5000);
+    }
+
     void skillToolReachesHandlerThroughRealToolLoop() {
         AiAssistantPanel panel;
         std::atomic<bool> handler_ran{false};
@@ -407,6 +448,19 @@ private:
         call.arguments_json = QStringLiteral("{\"operation\":\"list\",\"skill_id\":\"\"}");
         ai::OpenAIResponseResult response;
         response.id = QStringLiteral("resp_skill_1");
+        response.function_calls.append(call);
+        return response;
+    }
+
+    static ai::OpenAIResponseResult delegateResponse() {
+        ai::OpenAIFunctionCall call;
+        call.call_id = QStringLiteral("call_delegate_1");
+        call.name = QStringLiteral("delegate_subagent");
+        call.arguments_json = QStringLiteral(
+            "{\"objective\":\"check disk space\",\"tool_policy\":\"read_only_pc\","
+            "\"expected_output\":\"summary\"}");
+        ai::OpenAIResponseResult response;
+        response.id = QStringLiteral("resp_delegate_1");
         response.function_calls.append(call);
         return response;
     }

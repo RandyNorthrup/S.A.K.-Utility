@@ -49,6 +49,10 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     // sak_skill must be classified as a built-in tool, or the chat tool loop
     // rejects it as "Unknown function" before it reaches the handler.
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("sak_skill")), AiToolCallKind::Skill);
+    // delegate_subagent must be a built-in tool too, or the chat tool loop rejects
+    // it as "Unknown function" before the delegate handler runs.
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("delegate_subagent")),
+             AiToolCallKind::DelegateSubagent);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("missing_tool")),
              AiToolCallKind::Unknown);
 
@@ -57,6 +61,8 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::ProviderGateway));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::SessionSearch));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::Skill));
+    QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::DelegateSubagent));
+    QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::DelegateSubagent));
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::Skill));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Shell));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Unknown));

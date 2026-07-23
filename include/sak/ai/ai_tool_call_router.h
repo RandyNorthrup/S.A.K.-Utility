@@ -21,6 +21,7 @@ enum class AiToolCallKind {
     ProviderGateway,
     SessionSearch,
     Skill,
+    DelegateSubagent,
 };
 
 class AiToolCallRouter {

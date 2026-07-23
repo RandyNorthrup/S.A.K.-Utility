@@ -53,4 +53,12 @@ struct AiToolPolicyDecision {
 [[nodiscard]] AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy,
                                                       const AiToolCallRequest& request);
 
+// Restrictiveness rank (0 = most restrictive). Used to clamp a delegated
+// sub-agent so it can never be more permissive than the session that spawned it.
+[[nodiscard]] int toolPolicyRank(AiToolPolicy policy);
+
+// Returns whichever of @p requested / @p ceiling is MORE restrictive, so a
+// caller can bound a requested sub-agent policy to the session's ceiling.
+[[nodiscard]] AiToolPolicy clampToolPolicy(AiToolPolicy requested, AiToolPolicy ceiling);
+
 }  // namespace sak::ai

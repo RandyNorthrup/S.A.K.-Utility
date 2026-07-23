@@ -7,6 +7,7 @@
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
+#include "sak/ai/ai_subagent_tool_executor.h"
 #include "sak/ai/ai_tool_call_router.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_policy.h"
@@ -728,6 +729,15 @@ private:
                                                        const ai::AiToolCallRequest& request,
                                                        const QJsonObject& arguments,
                                                        const QString& agent_id);
+    // Handles the model's delegate_subagent tool: spawns one scoped acting
+    // sub-agent (policy clamped to the session ceiling), runs it off the GUI
+    // thread, and returns its structured result to the overseer chat model.
+    [[nodiscard]] QJsonObject runDelegateSubagentTool(const QJsonObject& args);
+    // Builds the RawDispatch that routes a sub-agent tool call back through the
+    // guarded panel to the real policy/lease/health dispatcher. Shared by workflow
+    // delegate phases and the delegate_subagent tool so both gate identically.
+    [[nodiscard]] static ai::AiSubagentToolExecutor::RawDispatch makeSubagentToolDispatch(
+        QPointer<AiAssistantPanel> guard);
     [[nodiscard]] WorkflowToolDispatchPlan workflowToolDispatchPlan(
         const ai::WorkflowPhase& phase,
         ai::AiToolPolicy policy,
@@ -869,6 +879,9 @@ private:
     ai::CancellationToken m_activeToolRunToken;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
     std::unique_ptr<ai::SkillStore> m_skillStore;
+    // Test seam: when set, delegate_subagent uses this instead of the real OpenAI
+    // model client factory, so the tool can be certified deterministically offline.
+    ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
     std::unique_ptr<PackageListManager> m_packageListManager;
     std::unique_ptr<OfflineDeploymentWorker> m_offlineWorker;

@@ -14,6 +14,8 @@ private Q_SLOTS:
     void readOnlyPolicyAllowsProviderGatewayStatus();
     void readOnlyPolicyAllowsSessionSearch();
     void skillToolAllowedUnderEveryPolicy();
+    void delegateSubagentAllowedUnderEveryPolicy();
+    void clampToolPolicyBoundsToCeiling();
     void packagePolicyRequiresLeaseForInstall();
     void packageMutationBlockedWhenUserAskedForScan();
     void packageMutationRequiresExplicitIntent_data();
@@ -126,6 +128,41 @@ void AiToolPolicyTests::skillToolAllowedUnderEveryPolicy() {
         QVERIFY(!decision.requires_lease);
         QVERIFY(!decision.catastrophic_change);
     }
+}
+
+void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
+    // Spawning a sub-agent is allowed under every mode; the sub-agent's own
+    // (clamped) policy gates whatever it then executes.
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("delegate_subagent");
+
+    for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
+                              sak::ai::AiToolPolicy::ReadOnlyPc,
+                              sak::ai::AiToolPolicy::ExclusiveMutatingExecutor}) {
+        const auto decision = sak::ai::evaluateToolPolicy(policy, request);
+        QVERIFY(decision.allowed);
+        QVERIFY(!decision.requires_lease);
+        QVERIFY(!decision.catastrophic_change);
+    }
+}
+
+void AiToolPolicyTests::clampToolPolicyBoundsToCeiling() {
+    using sak::ai::AiToolPolicy;
+    using sak::ai::clampToolPolicy;
+    // A more-permissive request is clamped down to the session ceiling.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ExclusiveMutatingExecutor, AiToolPolicy::ReadOnlyPc),
+             AiToolPolicy::ReadOnlyPc);
+    QCOMPARE(clampToolPolicy(AiToolPolicy::MutatingRequiresLease, AiToolPolicy::NoLocalExecution),
+             AiToolPolicy::NoLocalExecution);
+    // A more-restrictive request is honored (the model may self-limit).
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ReadOnlyPc, AiToolPolicy::MutatingRequiresLease),
+             AiToolPolicy::ReadOnlyPc);
+    // Equal rank but different capability axis resolves to the ceiling (no new axis).
+    QCOMPARE(clampToolPolicy(AiToolPolicy::DownloadOnly, AiToolPolicy::PackageToolsOnly),
+             AiToolPolicy::PackageToolsOnly);
+    // Same policy passes through.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ReadOnlyPc, AiToolPolicy::ReadOnlyPc),
+             AiToolPolicy::ReadOnlyPc);
 }
 
 void AiToolPolicyTests::packagePolicyRequiresLeaseForInstall() {
