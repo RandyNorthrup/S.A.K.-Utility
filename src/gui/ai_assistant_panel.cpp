@@ -5808,6 +5808,7 @@ void AiAssistantPanel::startCommandToolCall(const PendingToolCallContext& contex
                                             const ai::AiCommandToolPlan& plan) {
     m_currentCommandId = allocateCommandId();
     m_currentCommandPreview = plan.preview;
+    m_currentCommandHealthKey = commandHealthKey(context.call->name);
     m_currentStdoutBuffer.clear();
     m_currentStderrBuffer.clear();
     const QString admin_suffix = plan.request.requires_admin ? QStringLiteral(" *ADMIN*")
@@ -5853,6 +5854,9 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
         appendToolOutputAndContinue(std::move(*output));
         return true;
     }
+    if (!applyCommandHealthGate(context, plan, output)) {
+        return true;
+    }
     if (!authorizeCommandToolCall(context, plan, output)) {
         return true;
     }
@@ -5861,6 +5865,67 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
     }
     startCommandToolCall(context, plan);
     return true;
+}
+
+QString AiAssistantPanel::commandHealthKey(const QString& tool_name) {
+    return tool_name.trimmed().toLower();
+}
+
+bool AiAssistantPanel::applyCommandHealthGate(const PendingToolCallContext& context,
+                                              const ai::AiCommandToolPlan& plan,
+                                              ai::OpenAIFunctionOutput* output) {
+    if (!m_toolHealthLedger) {
+        return true;
+    }
+    const QString key = commandHealthKey(context.call->name);
+    const ai::AiToolAvailability availability = m_toolHealthLedger->check(key);
+    if (availability.available) {
+        return true;
+    }
+    const QJsonObject suppressed = ai::AiToolDispatcher::healthSuppressedResult(plan.policy_request,
+                                                                                availability);
+    output->output = QString::fromUtf8(QJsonDocument(suppressed).toJson(QJsonDocument::Compact));
+    QJsonObject metadata = context.metadata;
+    metadata[QStringLiteral("health_suppressed")] = true;
+    metadata[QStringLiteral("health_key")] = key;
+    metadata[QStringLiteral("reason")] = availability.reason;
+    traceAiEvent(QStringLiteral("tool_call"),
+                 context.call->name,
+                 QStringLiteral("health_suppressed"),
+                 metadata);
+    appendLocalEvent(tr("Command tool %1 suppressed by health circuit breaker: %2")
+                         .arg(context.call->name, availability.reason));
+    appendToolOutputAndContinue(std::move(*output));
+    return false;
+}
+
+void AiAssistantPanel::recordCommandHealth(const ai::AiCommandResult& result) {
+    if (!m_toolHealthLedger || m_currentCommandHealthKey.isEmpty()) {
+        return;
+    }
+    // A user Stop is not a tool-health signal; ignore it so cancels never trip the
+    // breaker. Only executor faults (hung -> timed_out, could not launch ->
+    // !started) count as failures. A command that ran to completion is a success
+    // regardless of its exit code -- a nonzero exit is a healthy tool reporting a
+    // failed command, not an unhealthy executor.
+    if (result.cancelled) {
+        return;
+    }
+    if (result.timed_out) {
+        m_toolHealthLedger->recordFailure(m_currentCommandHealthKey,
+                                          QStringLiteral("timed_out"),
+                                          result.error_message,
+                                          result.duration_ms);
+        return;
+    }
+    if (!result.started) {
+        m_toolHealthLedger->recordFailure(m_currentCommandHealthKey,
+                                          QStringLiteral("start_failed"),
+                                          result.error_message,
+                                          result.duration_ms);
+        return;
+    }
+    m_toolHealthLedger->recordSuccess(m_currentCommandHealthKey, result.duration_ms);
 }
 
 QString AiAssistantPanel::allocateCommandId() {
@@ -10728,6 +10793,8 @@ void AiAssistantPanel::onBrokerFinished(const QString& command_id,
                  trace_metadata);
     m_currentStdoutBuffer.clear();
     m_currentStderrBuffer.clear();
+    recordCommandHealth(result);
+    m_currentCommandHealthKey.clear();
     recordBrokerResult(command_id, result, result_json);
     appendBrokerResultToTranscript(result_json, trace_metadata);
     appendSessionMemory(QStringLiteral("Tool"),

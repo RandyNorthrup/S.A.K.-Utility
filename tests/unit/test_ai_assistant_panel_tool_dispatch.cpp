@@ -11,7 +11,9 @@
 #include "sak/ai/ai_async_tool_runner.h"
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
+#include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_tool_dispatcher.h"
+#include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
@@ -197,6 +199,70 @@ private Q_SLOTS:
 
         QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 2);
         QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 2);
+    }
+
+    // Wave 2: repeated executor faults (hangs) trip the health circuit breaker for
+    // a command tool, and the raw-command health gate then suppresses new calls
+    // instead of launching into a known-bad executor.
+    void healthCircuitBreakerSuppressesCommandTool() {
+        AiAssistantPanel panel;
+        const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_powershell"));
+        panel.m_currentCommandHealthKey = key;
+
+        ai::OpenAIFunctionCall call;
+        call.name = QStringLiteral("run_powershell");
+        AiAssistantPanel::PendingToolCallContext ctx;
+        ctx.call = &call;
+        ai::AiCommandToolPlan plan;
+        plan.policy_request.tool_name = QStringLiteral("run_powershell");
+
+        // Healthy to start: the gate lets the command through.
+        ai::OpenAIFunctionOutput allow_output;
+        QVERIFY(panel.applyCommandHealthGate(ctx, plan, &allow_output));
+
+        // Three executor hangs trip the breaker...
+        ai::AiCommandResult timed_out;
+        timed_out.started = true;
+        timed_out.timed_out = true;
+        for (int i = 0; i < 3; ++i) {
+            panel.recordCommandHealth(timed_out);
+        }
+        QVERIFY(!panel.m_toolHealthLedger->check(key).available);
+
+        // ...and the gate now suppresses new calls (returns false).
+        ai::OpenAIFunctionOutput deny_output;
+        QVERIFY(!panel.applyCommandHealthGate(ctx, plan, &deny_output));
+    }
+
+    // A command that ran to completion is a healthy executor even if the command
+    // itself exited nonzero -- that must not trip the breaker.
+    void nonZeroExitKeepsCommandToolHealthy() {
+        AiAssistantPanel panel;
+        const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
+        panel.m_currentCommandHealthKey = key;
+
+        ai::AiCommandResult ran;
+        ran.started = true;
+        ran.exit_code = 1;
+        for (int i = 0; i < 5; ++i) {
+            panel.recordCommandHealth(ran);
+        }
+        QVERIFY(panel.m_toolHealthLedger->check(key).available);
+    }
+
+    // A user Stop is not an executor-health signal; cancels never trip the breaker.
+    void cancelledCommandDoesNotTripBreaker() {
+        AiAssistantPanel panel;
+        const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
+        panel.m_currentCommandHealthKey = key;
+
+        ai::AiCommandResult cancelled;
+        cancelled.started = true;
+        cancelled.cancelled = true;
+        for (int i = 0; i < 5; ++i) {
+            panel.recordCommandHealth(cancelled);
+        }
+        QVERIFY(panel.m_toolHealthLedger->check(key).available);
     }
 
 private:

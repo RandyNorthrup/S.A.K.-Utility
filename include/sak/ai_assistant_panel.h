@@ -396,6 +396,17 @@ private:
     [[nodiscard]] bool acquireCommandToolLease(const PendingToolCallContext& context,
                                                const ai::AiCommandToolPlan& plan,
                                                ai::OpenAIFunctionOutput* output);
+    // Circuit-breaker gate for the raw command path: if the executor for this
+    // command tool has been failing (hangs / launch failures), deny with a
+    // health-suppressed result before running, mirroring AiToolDispatcher.
+    [[nodiscard]] bool applyCommandHealthGate(const PendingToolCallContext& context,
+                                              const ai::AiCommandToolPlan& plan,
+                                              ai::OpenAIFunctionOutput* output);
+    // Feeds the executor outcome back to the health ledger so the breaker learns.
+    // Only executor health counts: a timeout or launch failure is a failure; a
+    // command that ran to any exit code is a success; a user cancel is ignored.
+    void recordCommandHealth(const ai::AiCommandResult& result);
+    [[nodiscard]] static QString commandHealthKey(const QString& tool_name);
     void startCommandToolCall(const PendingToolCallContext& context,
                               const ai::AiCommandToolPlan& plan);
     [[nodiscard]] bool dispatchCommandToolCall(const PendingToolCallContext& context,
@@ -898,6 +909,9 @@ private:
     QString m_currentCommandId;
     QString m_currentCommandLeaseId;
     QString m_currentCommandPreview;
+    // Health-ledger key for the in-flight command tool, so its completion outcome
+    // is recorded against the same key the pre-run health gate checked.
+    QString m_currentCommandHealthKey;
     QString m_currentStdoutBuffer;
     QString m_currentStderrBuffer;
     int m_nextCommandSequence{1};
