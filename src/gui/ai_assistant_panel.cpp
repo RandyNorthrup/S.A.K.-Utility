@@ -1487,6 +1487,19 @@ QString readAiGuidanceResource(const QString& ref) {
     return text;
 }
 
+// Software-availability resolver for the orchestrator preflight. Only SAK-provided
+// tools can be verified against the built-in tool registry; other requirement
+// kinds (OS components, bundled/system tools) are declared present by their
+// install_policy and cannot be cheaply probed on the worker thread, so treat them
+// as available. A required sak_tool the router does not recognize fails the run
+// closed before any phase mutates the machine.
+bool workflowRequirementAvailable(const ai::WorkflowRequirement& requirement) {
+    if (requirement.kind.compare(QStringLiteral("sak_tool"), Qt::CaseInsensitive) != 0) {
+        return true;
+    }
+    return ai::AiToolCallRouter::kindForName(requirement.id) != ai::AiToolCallKind::Unknown;
+}
+
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
@@ -9554,6 +9567,7 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
     orchestrator.setGuidanceResolver(&readAiGuidanceResource);
+    orchestrator.setSoftwareResolver(&workflowRequirementAvailable);
     connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
     const auto result = orchestrator.run(launch.workflow, launch.run_id, launch.token);
     delete launch.executor;

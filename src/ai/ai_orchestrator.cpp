@@ -340,6 +340,22 @@ void AiOrchestrator::setGuidanceResolver(WorkflowGuidanceResolver resolver) {
     m_guidance_resolver = std::move(resolver);
 }
 
+void AiOrchestrator::setSoftwareResolver(SoftwareAvailabilityResolver resolver) {
+    m_software_resolver = std::move(resolver);
+}
+
+QString AiOrchestrator::missingRequiredSoftware(const WorkflowTemplate& workflow) const {
+    if (!m_software_resolver) {
+        return {};
+    }
+    for (const auto& requirement : workflow.required_software) {
+        if (requirement.required && !m_software_resolver(requirement)) {
+            return requirement.id.isEmpty() ? requirement.kind : requirement.id;
+        }
+    }
+    return {};
+}
+
 QString AiOrchestrator::resolveWorkflowGuidance(const WorkflowTemplate& workflow) const {
     if (!m_guidance_resolver) {
         return {};
@@ -1019,6 +1035,17 @@ AiOrchestratorResult AiOrchestrator::run(const WorkflowTemplate& workflow,
     if (workflow.phases.isEmpty()) {
         state.result.status = AiRunStatus::Failed;
         state.result.error_message = QStringLiteral("Workflow has no phases");
+        return state.result;
+    }
+
+    // Fail closed if a declared required-software dependency is unavailable, before
+    // any phase runs (so a workflow that needs run_powershell can't half-execute
+    // and mutate the machine when the tool is missing).
+    const QString missing_software = missingRequiredSoftware(workflow);
+    if (!missing_software.isEmpty()) {
+        state.result.status = AiRunStatus::Failed;
+        state.result.error_message =
+            QStringLiteral("Required software unavailable: %1").arg(missing_software);
         return state.result;
     }
 

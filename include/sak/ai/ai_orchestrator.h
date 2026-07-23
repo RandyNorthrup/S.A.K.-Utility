@@ -105,6 +105,14 @@ using PhaseStartedCallback = std::function<void(const WorkflowPhase& phase)>;
 /// resources / skill store. Returns empty when the reference cannot be resolved.
 using WorkflowGuidanceResolver = std::function<QString(const QString& ref)>;
 
+/// @brief Reports whether a workflow's declared required-software entry is
+/// actually available in the current environment. Injected so the orchestrator
+/// stays I/O-free; the panel wires it to the real tool registry / system probe.
+/// Return true when available. When no resolver is set the preflight is skipped
+/// (nothing regresses); when set, a required-and-unavailable entry fails the run
+/// closed before any phase executes.
+using SoftwareAvailabilityResolver = std::function<bool(const WorkflowRequirement& requirement)>;
+
 /// @brief Runs a workflow's phases end-to-end. Sequential by default;
 /// consecutive `delegate` phases whose agent tool_policy is read-only are
 /// grouped into a single parallel batch up to `max_parallel_subagents`.
@@ -121,6 +129,7 @@ public:
     void setPhaseStartedCallback(PhaseStartedCallback callback);
     void setPhaseCompletedCallback(PhaseCompletedCallback callback);
     void setGuidanceResolver(WorkflowGuidanceResolver resolver);
+    void setSoftwareResolver(SoftwareAvailabilityResolver resolver);
 
     [[nodiscard]] AiOrchestratorResult run(const WorkflowTemplate& workflow,
                                            const QString& run_id,
@@ -254,6 +263,9 @@ private:
     // references into a single guidance block for the subagent. Empty when no
     // resolver is set or nothing resolves.
     [[nodiscard]] QString resolveWorkflowGuidance(const WorkflowTemplate& workflow) const;
+    // Returns the id (or kind) of the first required-and-unavailable software
+    // entry, or empty when everything required is available / no resolver is set.
+    [[nodiscard]] QString missingRequiredSoftware(const WorkflowTemplate& workflow) const;
 
     AiSubagentRunner* m_subagent_runner{nullptr};
     IAiToolExecutor* m_tool_executor{nullptr};
@@ -262,6 +274,7 @@ private:
     PhaseStartedCallback m_phase_started_callback;
     PhaseCompletedCallback m_phase_completed_callback;
     WorkflowGuidanceResolver m_guidance_resolver;
+    SoftwareAvailabilityResolver m_software_resolver;
 };
 
 }  // namespace sak::ai

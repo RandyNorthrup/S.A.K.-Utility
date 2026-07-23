@@ -147,6 +147,7 @@ private Q_SLOTS:
     void delegateObjectiveSubstitutesWorkflowPlaceholders();
     void contentlessSubagentFailureIsDegradedNotComplete();
     void agentModelPolicySelectsReasoningEffortTier();
+    void preflightFailsClosedWhenRequiredSoftwareMissing();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -916,6 +917,53 @@ void AiOrchestratorTests::agentModelPolicySelectsReasoningEffortTier() {
     QCOMPARE(orchestrator.run(workflow3, QStringLiteral("mp3"), root3).status,
              sak::ai::AiRunStatus::Completed);
     QCOMPARE(model.last_reasoning_effort, QStringLiteral("medium"));
+}
+
+void AiOrchestratorTests::preflightFailsClosedWhenRequiredSoftwareMissing() {
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+
+    sak::ai::WorkflowRequirement required_ps;
+    required_ps.id = QStringLiteral("run_powershell");
+    required_ps.kind = QStringLiteral("sak_tool");
+    required_ps.required = true;
+    sak::ai::WorkflowRequirement optional_tool;
+    optional_tool.id = QStringLiteral("sak_offline_downloader");
+    optional_tool.kind = QStringLiteral("sak_tool");
+    optional_tool.required = false;
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("needs_ps");
+    workflow.required_software << required_ps << optional_tool;
+    workflow.agents << makeAgent(QStringLiteral("a"), QStringLiteral("read_only_pc"));
+    workflow.phases << makeDelegate(QStringLiteral("p1"), QStringLiteral("a"));
+
+    // Resolver reports run_powershell unavailable -> run must fail closed, no phase runs.
+    orchestrator.setSoftwareResolver([](const sak::ai::WorkflowRequirement& req) {
+        return req.id != QStringLiteral("run_powershell");
+    });
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("pf1"));
+    const auto blocked = orchestrator.run(workflow, QStringLiteral("pf1"), root);
+    QCOMPARE(blocked.status, sak::ai::AiRunStatus::Failed);
+    QVERIFY(blocked.error_message.contains(QStringLiteral("run_powershell")));
+    QVERIFY(blocked.phases.isEmpty());
+    QCOMPARE(model.last_objective, QString());  // subagent never invoked
+
+    // Resolver reports everything available -> run proceeds normally.
+    orchestrator.setSoftwareResolver([](const sak::ai::WorkflowRequirement&) { return true; });
+    auto root2 = sak::ai::CancellationToken::createRoot(QStringLiteral("pf2"));
+    const auto ok = orchestrator.run(workflow, QStringLiteral("pf2"), root2);
+    QCOMPARE(ok.status, sak::ai::AiRunStatus::Completed);
+    QCOMPARE(ok.phases.size(), 1);
+
+    // No resolver set -> preflight is skipped (no regression), run proceeds.
+    sak::ai::AiOrchestrator unresolved(&runner, &tool);
+    auto root3 = sak::ai::CancellationToken::createRoot(QStringLiteral("pf3"));
+    QCOMPARE(unresolved.run(workflow, QStringLiteral("pf3"), root3).status,
+             sak::ai::AiRunStatus::Completed);
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)
