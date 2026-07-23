@@ -9280,19 +9280,28 @@ bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase
 bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
                                                   const WorkflowToolDispatchPlan& plan) {
     const auto decision = ai::evaluateToolPolicy(plan.policy, plan.request);
+    // A catastrophic/irreversible workflow phase (disk format, partition wipe,
+    // boot-config edit, backup/shadow-copy deletion) must gate even if it is not
+    // otherwise flagged risky/admin, and must ALWAYS require an explicit human
+    // confirmation -- Unattended cannot auto-run it. This mirrors the command-tool
+    // catastrophic gate in authorizeCommandForAccessMode (Wave 1b); previously a
+    // catastrophic phase in Unattended got only a skippable restore-point offer.
+    const bool catastrophic = decision.catastrophic_change;
     const bool needs_gate = decision.allowed && (plan.phase_risky || plan.request.requires_admin ||
-                                                 decision.risky_change);
+                                                 decision.risky_change || catastrophic);
     if (!needs_gate) {
         return true;
     }
     const QString label = phase.tool == QLatin1String("run_powershell")
                               ? QStringLiteral("workflow PowerShell")
                               : QStringLiteral("workflow %1").arg(phase.tool);
-    if (currentAccessMode() == AccessMode::AssistedFullAccess) {
-        return confirmCommandWithUser(label, plan.request.command_preview, true);
+    if (catastrophic || currentAccessMode() == AccessMode::AssistedFullAccess) {
+        // confirmCommandWithUser also offers the restore point (re-offered for a
+        // catastrophic phase even if one was already offered this session).
+        return confirmCommandWithUser(label, plan.request.command_preview, true, catastrophic);
     }
     if (currentAccessMode() == AccessMode::UnattendedFullAccess) {
-        return offerRestorePointIfNeeded(plan.request.command_preview, true);
+        return offerRestorePointIfNeeded(plan.request.command_preview, true, catastrophic);
     }
     return true;
 }

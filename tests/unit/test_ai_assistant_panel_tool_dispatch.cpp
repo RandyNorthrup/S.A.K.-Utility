@@ -228,6 +228,55 @@ private Q_SLOTS:
         QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 2);
     }
 
+    // The catastrophic gate must also cover WORKFLOW tool phases: a catastrophic
+    // phase (disk format) requires an explicit human confirm even in Unattended,
+    // mirroring the command-tool gate. Previously authorizeWorkflowToolPhase
+    // ignored catastrophic_change, so such a phase got only a skippable restore
+    // point offer in Unattended.
+    void catastrophicWorkflowPhaseForcesConfirmEvenInUnattended() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p1");
+        phase.tool = QStringLiteral("run_powershell");
+        AiAssistantPanel::WorkflowToolDispatchPlan plan;
+        plan.policy = ai::AiToolPolicy::MutatingRequiresLease;
+        plan.request.tool_name = QStringLiteral("run_powershell");
+        // Classified catastrophic by the policy regex (disk format), so
+        // evaluateToolPolicy sets decision.catastrophic_change.
+        plan.request.command_preview = QStringLiteral("format c: /y");
+        plan.ok = true;
+
+        QVERIFY(panel.authorizeWorkflowToolPhase(phase, plan));
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 1);
+    }
+
+    // A merely-risky (non-catastrophic) workflow phase in Unattended keeps the
+    // low-friction path: no mandatory confirm, just the restore-point offer.
+    void nonCatastrophicRiskyWorkflowPhaseInUnattendedSkipsConfirm() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p2");
+        phase.tool = QStringLiteral("run_powershell");
+        AiAssistantPanel::WorkflowToolDispatchPlan plan;
+        plan.policy = ai::AiToolPolicy::MutatingRequiresLease;
+        plan.request.tool_name = QStringLiteral("run_powershell");
+        plan.request.command_preview = QStringLiteral("Restart-Service Spooler");
+        plan.phase_risky = true;  // gate is needed, but the command is not catastrophic
+        plan.ok = true;
+
+        QVERIFY(panel.authorizeWorkflowToolPhase(phase, plan));
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 0);
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
+    }
+
     // Wave 2: repeated executor faults (hangs) trip the health circuit breaker for
     // a command tool, and the raw-command health gate then suppresses new calls
     // instead of launching into a known-bad executor.
