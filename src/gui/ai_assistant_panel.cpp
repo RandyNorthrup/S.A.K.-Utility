@@ -8936,6 +8936,15 @@ QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase&
     if (!m_toolDispatcher) {
         return toolError(QStringLiteral("No tool dispatcher"));
     }
+    // A workflow phase must not itself delegate or launch another workflow: that
+    // would let an authored template recurse orchestration unboundedly. Refuse it
+    // structurally (the same backstop sub-agents get).
+    const ai::AiToolCallKind phase_kind = ai::AiToolCallRouter::kindForName(phase.tool);
+    if (phase_kind == ai::AiToolCallKind::DelegateSubagent ||
+        phase_kind == ai::AiToolCallKind::RunWorkflow) {
+        return toolError(
+            QStringLiteral("Workflow phases may not use delegate_subagent or run_workflow"));
+    }
     WorkflowToolDispatchPlan plan = workflowToolDispatchPlan(phase, policy, context);
     if (!plan.ok) {
         return plan.error;
@@ -8964,8 +8973,16 @@ QJsonObject AiAssistantPanel::dispatchSubagentToolCall(ai::AiToolPolicy policy,
     // tools must never run here -- refuse them structurally, independent of the
     // executor allowlist, so a future allowlist change can't silently expose an
     // ungated PowerShell/process handler to a subagent.
-    if (ai::AiToolCallRouter::isCommandTool(ai::AiToolCallRouter::kindForName(request.tool_name))) {
+    const ai::AiToolCallKind kind = ai::AiToolCallRouter::kindForName(request.tool_name);
+    if (ai::AiToolCallRouter::isCommandTool(kind)) {
         return toolError(QStringLiteral("Command tools are not available to subagents"));
+    }
+    // A second structural backstop (beyond the executor allowlist): a sub-agent may
+    // never delegate to another sub-agent or launch a workflow, so orchestration
+    // can never recurse even if the allowlist is later broadened.
+    if (kind == ai::AiToolCallKind::DelegateSubagent || kind == ai::AiToolCallKind::RunWorkflow) {
+        return toolError(
+            QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
     }
     const auto outcome = m_toolDispatcher->dispatch(
         policy, request, arguments, agent_id.isEmpty() ? QStringLiteral("subagent") : agent_id);
@@ -9737,6 +9754,9 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     subagent_tool_executor.setAllowedTools(subagentAllowedToolNames());
     runner.setToolExecutor(&subagent_tool_executor);
 
+    // Own the executor via RAII so it is freed on every exit path, including if
+    // orchestrator.run() throws.
+    std::unique_ptr<PanelToolExecutor> executor_owner(launch.executor);
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
     orchestrator.setGuidanceResolver(&readAiGuidanceResource);
@@ -9744,9 +9764,7 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     if (launch.wire_callbacks) {
         connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
     }
-    const auto result = orchestrator.run(launch.workflow, launch.run_id, launch.token);
-    delete launch.executor;
-    return result;
+    return orchestrator.run(launch.workflow, launch.run_id, launch.token);
 }
 
 AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunContext(
@@ -9800,9 +9818,11 @@ QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
         return error;
     }
 
-    // Run as an isolated blocking orchestration: per-phase policy/lease/human gates
-    // still fire, but the user-facing workflow run-state UI is left untouched
-    // (wire_callbacks = false). The overseer chat model receives the full result.
+    // Run as a blocking orchestration with the workflow-run WATCHER/progress UI
+    // left untouched (wire_callbacks = false); the overseer chat model receives the
+    // full result. NOTE: per-phase human gates still run and DO share the human-gate
+    // / run-status machinery with the chat turn, so risky phases surface their
+    // normal confirmation modals.
     WorkflowRunLaunch launch;
     launch.panel_guard = QPointer<AiAssistantPanel>(this);
     launch.workflow = ctx.workflow;

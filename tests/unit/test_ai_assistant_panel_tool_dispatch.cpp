@@ -375,6 +375,43 @@ private Q_SLOTS:
                     .contains(QStringLiteral("Unknown workflow_id")));
     }
 
+    // A sub-agent must never be able to delegate to another sub-agent or launch a
+    // workflow -- a structural backstop beyond the executor allowlist, so
+    // orchestration can never recurse.
+    void subagentCannotDelegateOrRunWorkflow() {
+        AiAssistantPanel panel;
+        ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("delegate_subagent");
+        const QJsonObject delegated = panel.dispatchSubagentToolCall(
+            ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
+        QVERIFY(delegated.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("may not delegate")));
+
+        request.tool_name = QStringLiteral("run_workflow");
+        const QJsonObject workflowed = panel.dispatchSubagentToolCall(
+            ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
+        QVERIFY(workflowed.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("may not delegate")));
+    }
+
+    // A workflow phase likewise may not use the orchestration tools (an authored
+    // template could otherwise recurse unboundedly).
+    void workflowPhaseCannotUseOrchestrationTools() {
+        AiAssistantPanel panel;
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p1");
+        phase.type = QStringLiteral("tool_action");
+        phase.tool = QStringLiteral("run_workflow");
+        ai::AiWorkflowPhaseContext context;
+        const QJsonObject result =
+            panel.dispatchWorkflowToolPhase(phase, ai::AiToolPolicy::ReadOnlyPc, context);
+        QVERIFY(result.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("may not use")));
+    }
+
     void skillToolReachesHandlerThroughRealToolLoop() {
         AiAssistantPanel panel;
         std::atomic<bool> handler_ran{false};

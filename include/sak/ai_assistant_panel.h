@@ -734,9 +734,10 @@ private:
     // thread, and returns its structured result to the overseer chat model.
     [[nodiscard]] QJsonObject runDelegateSubagentTool(const QJsonObject& args);
     // Handles the model's run_workflow tool: validates the workflow id + required
-    // inputs, then runs the named catalog workflow as an isolated blocking
-    // orchestration (per-phase policy/lease/human gates still apply) and returns
-    // its result. Does NOT touch the user-facing workflow run-state machine.
+    // inputs, then runs the named catalog workflow as a blocking orchestration
+    // (per-phase policy/lease/human gates still apply) and returns its result. The
+    // workflow-run watcher/progress UI is left untouched; per-phase human gates do
+    // still share the run-status/human-gate machinery.
     [[nodiscard]] QJsonObject runRunWorkflowTool(const QJsonObject& args);
     struct WorkflowRunToolContext {
         ai::WorkflowTemplate workflow;
