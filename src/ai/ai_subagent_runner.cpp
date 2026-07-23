@@ -220,11 +220,116 @@ struct SubagentAttempt {
     bool retryable{false};
 };
 
-SubagentAttempt invokeSubagentAttempt(IAiModelClient* model_client,
-                                      const AiSubagentTask& task,
-                                      const IAiModelClient::Request& request,
-                                      const CancellationToken& agent_token) {
-    const auto response = model_client->invoke(request, agent_token);
+// Records the tools the runner ACTUALLY executed, distinct from the model's
+// self-reported actions_taken, so the result reflects ground truth.
+void recordExecutedTools(AiSubagentResult* result, const QStringList& executed_tools) {
+    for (const auto& tool : executed_tools) {
+        result->actions_taken.append(QStringLiteral("executed tool: %1").arg(tool));
+    }
+}
+
+// Honest terminal result when a subagent keeps requesting tools past its cap.
+// Degraded (not Complete/Failed) so the run continues non-fatally while the
+// unfinished work is auditable (mirrors the W4c contentless-failure handling).
+AiSubagentResult toolIterationCapResult(const AiSubagentTask& task,
+                                        int cap,
+                                        const QStringList& executed_tools,
+                                        const TokenUsage& usage) {
+    AiSubagentResult result = baseResult(
+        task,
+        AiSubagentStatus::Degraded,
+        QStringLiteral("Subagent reached its tool-call iteration cap (%1) before returning a final "
+                       "answer")
+            .arg(cap));
+    result.usage = usage;
+    result.summary =
+        QStringLiteral(
+            "Subagent stopped after %1 tool iterations without a final answer; returning "
+            "a degraded partial result.")
+            .arg(cap);
+    result.risks.append(
+        QStringLiteral("Tool-call iteration cap (%1) reached; the subagent may not have completed "
+                       "its work.")
+            .arg(cap));
+    recordExecutedTools(&result, executed_tools);
+    return result;
+}
+
+struct ToolExecutionContext {
+    IAiSubagentToolExecutor* executor{nullptr};
+    int max_iterations{kDefaultSubagentToolIterationCap};
+};
+
+// Immutable per-attempt inputs, bundled to keep the acting-loop helpers within
+// the argument-count budget.
+struct AttemptContext {
+    IAiModelClient* model_client{nullptr};
+    const AiSubagentTask* task{nullptr};
+    const IAiModelClient::Request* request{nullptr};
+    ToolExecutionContext tools;
+};
+
+struct ActingLoopOutcome {
+    IAiModelClient::Response response;
+    QStringList executed_tools;
+    bool early_return{false};       ///< Set when the loop terminated with a final attempt.
+    SubagentAttempt early_attempt;  ///< Valid only when early_return is true.
+};
+
+// Drives model<->tool round trips: while the model keeps requesting tool calls,
+// execute them through the injected executor and continue the turn, until the
+// model returns a final answer or the iteration cap / deadline / cancellation
+// stops it. When no executor is set the loop is a no-op (single-shot behavior).
+ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
+                                  const CancellationToken& agent_token,
+                                  const QDeadlineTimer& deadline,
+                                  IAiModelClient::Response initial_response) {
+    const AiSubagentTask& task = *ctx.task;
+    ActingLoopOutcome outcome;
+    outcome.response = std::move(initial_response);
+    int iterations = 0;
+    while (outcome.response.success && !outcome.response.tool_calls.isEmpty() &&
+           ctx.tools.executor != nullptr) {
+        if (tokenCancelled(agent_token)) {
+            AiSubagentResult cancelled =
+                baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
+            cancelled.usage = outcome.response.usage;
+            outcome.early_return = true;
+            outcome.early_attempt = {cancelled, false};
+            return outcome;
+        }
+        if (iterations >= ctx.tools.max_iterations || deadline.hasExpired()) {
+            outcome.early_return = true;
+            outcome.early_attempt = {toolIterationCapResult(task,
+                                                            ctx.tools.max_iterations,
+                                                            outcome.executed_tools,
+                                                            outcome.response.usage),
+                                     false};
+            return outcome;
+        }
+        QVector<AiSubagentToolOutput> outputs;
+        outputs.reserve(outcome.response.tool_calls.size());
+        for (const auto& call : outcome.response.tool_calls) {
+            outcome.executed_tools << call.name;
+            outputs.append(ctx.tools.executor->executeToolCall(task, call, agent_token));
+        }
+        outcome.response = ctx.model_client->continueWithToolOutputs(
+            *ctx.request, outcome.response.response_id, outputs, agent_token);
+        ++iterations;
+    }
+    return outcome;
+}
+
+SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
+                                      const CancellationToken& agent_token,
+                                      const QDeadlineTimer& deadline) {
+    const AiSubagentTask& task = *ctx.task;
+    const ActingLoopOutcome loop = runToolCallLoop(
+        ctx, agent_token, deadline, ctx.model_client->invoke(*ctx.request, agent_token));
+    if (loop.early_return) {
+        return loop.early_attempt;
+    }
+    const IAiModelClient::Response& response = loop.response;
     if (tokenCancelled(agent_token)) {
         AiSubagentResult cancelled =
             baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
@@ -241,7 +346,9 @@ SubagentAttempt invokeSubagentAttempt(IAiModelClient* model_client,
         return {failed, true};
     }
     bool retryable = false;
-    return {parseSubagentJsonResult(task, response, &retryable), retryable};
+    AiSubagentResult parsed = parseSubagentJsonResult(task, response, &retryable);
+    recordExecutedTools(&parsed, loop.executed_tools);
+    return {parsed, retryable};
 }
 
 void sleepBeforeRetry(int retry_delay_ms) {
@@ -257,11 +364,10 @@ AiSubagentResult timeoutResult(const AiSubagentTask& task, int wall_clock_timeou
         QStringLiteral("Subagent wall-clock timeout exceeded (%1 ms)").arg(wall_clock_timeout_ms));
 }
 
-AiSubagentResult runSubagentAttempts(IAiModelClient* model_client,
-                                     const AiSubagentTask& task,
+AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
                                      const AiSubagentRunnerOptions& options,
-                                     const CancellationToken& agent_token,
-                                     const IAiModelClient::Request& request) {
+                                     const CancellationToken& agent_token) {
+    const AiSubagentTask& task = *ctx.task;
     const int max_attempts = std::max(1, options.max_retries + 1);
     const QDeadlineTimer deadline = options.wall_clock_timeout_ms > 0
                                         ? QDeadlineTimer(options.wall_clock_timeout_ms)
@@ -276,8 +382,7 @@ AiSubagentResult runSubagentAttempts(IAiModelClient* model_client,
             return baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
         }
 
-        const SubagentAttempt current =
-            invokeSubagentAttempt(model_client, task, request, agent_token);
+        const SubagentAttempt current = invokeSubagentAttempt(ctx, agent_token, deadline);
         last_attempt = current.result;
         if (!current.retryable || attempt >= max_attempts || deadline.hasExpired()) {
             break;
@@ -291,6 +396,17 @@ AiSubagentResult runSubagentAttempts(IAiModelClient* model_client,
 }
 
 }  // namespace
+
+IAiModelClient::Response IAiModelClient::continueWithToolOutputs(
+    const Request& /*request*/,
+    const QString& /*response_id*/,
+    const QVector<AiSubagentToolOutput>& /*outputs*/,
+    const CancellationToken& /*token*/) {
+    Response response;
+    response.error_message =
+        QStringLiteral("This model client does not support tool-call continuation");
+    return response;
+}
 
 QString subagentStatusToString(AiSubagentStatus status) {
     switch (status) {
@@ -469,10 +585,17 @@ void AiSubagentRunner::setOptions(const AiSubagentRunnerOptions& options) {
     if (m_options.wall_clock_timeout_ms < 0) {
         m_options.wall_clock_timeout_ms = 0;
     }
+    if (m_options.max_tool_iterations < 0) {
+        m_options.max_tool_iterations = kDefaultSubagentToolIterationCap;
+    }
 }
 
 void AiSubagentRunner::setModelClientFactory(AiModelClientFactory factory) {
     m_model_client_factory = std::move(factory);
+}
+
+void AiSubagentRunner::setToolExecutor(IAiSubagentToolExecutor* executor) {
+    m_tool_executor = executor;
 }
 
 AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
@@ -495,8 +618,20 @@ AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
     }
 
     const CancellationToken agent_token = agentTokenForTask(task, parent_token);
-    const IAiModelClient::Request request = modelRequestForTask(task);
-    return runSubagentAttempts(model_client, task, m_options, agent_token, request);
+    IAiModelClient::Request request = modelRequestForTask(task);
+    // Fail closed: tools are only offered/executed when an executor is wired AND
+    // the task's policy permits any local execution. A NoLocalExecution subagent
+    // stays single-shot even if a global executor is present.
+    const bool tools_allowed = (m_tool_executor != nullptr) &&
+                               (task.tool_policy != AiToolPolicy::NoLocalExecution);
+    request.enable_local_tools = tools_allowed;
+    AttemptContext ctx;
+    ctx.model_client = model_client;
+    ctx.task = &task;
+    ctx.request = &request;
+    ctx.tools.executor = tools_allowed ? m_tool_executor : nullptr;
+    ctx.tools.max_iterations = m_options.max_tool_iterations;
+    return runSubagentAttempts(ctx, m_options, agent_token);
 }
 
 }  // namespace sak::ai

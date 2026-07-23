@@ -26,12 +26,71 @@ public:
         return next_response;
     }
 
+    Response continueWithToolOutputs(const Request& request,
+                                     const QString& response_id,
+                                     const QVector<sak::ai::AiSubagentToolOutput>& outputs,
+                                     const sak::ai::CancellationToken&) override {
+        last_request = request;
+        last_continuation_response_id = response_id;
+        received_outputs.append(outputs);
+        ++continuation_count;
+        if (!scripted_responses.isEmpty()) {
+            return scripted_responses.takeFirst();
+        }
+        return next_response;
+    }
+
     Request last_request;
     Response next_response;
     QList<Response> scripted_responses;
     bool cancel_before_response{false};
     int invocation_count{0};
+    int continuation_count{0};
+    QString last_continuation_response_id;
+    QVector<sak::ai::AiSubagentToolOutput> received_outputs;
 };
+
+// Records every tool call it is asked to run and returns a fixed JSON output.
+class RecordingToolExecutor : public sak::ai::IAiSubagentToolExecutor {
+public:
+    sak::ai::AiSubagentToolOutput executeToolCall(const sak::ai::AiSubagentTask& task,
+                                                  const sak::ai::AiSubagentToolCall& call,
+                                                  const sak::ai::CancellationToken&) override {
+        executed_calls.append(call.name);
+        last_policy = task.tool_policy;
+        sak::ai::AiSubagentToolOutput out;
+        out.call_id = call.call_id;
+        out.output_json = QStringLiteral("{\"ok\":true}");
+        return out;
+    }
+
+    QStringList executed_calls;
+    sak::ai::AiToolPolicy last_policy{sak::ai::AiToolPolicy::NoLocalExecution};
+};
+
+sak::ai::IAiModelClient::Response makeToolCallResponse(const QString& tool_name,
+                                                       const QString& call_id,
+                                                       const QString& response_id) {
+    sak::ai::IAiModelClient::Response response;
+    response.success = true;
+    response.response_id = response_id;
+    sak::ai::AiSubagentToolCall call;
+    call.call_id = call_id;
+    call.name = tool_name;
+    call.arguments_json = QStringLiteral("{}");
+    response.tool_calls.append(call);
+    return response;
+}
+
+sak::ai::IAiModelClient::Response makeCompleteResponse(const QString& summary) {
+    sak::ai::IAiModelClient::Response response;
+    response.success = true;
+    QJsonObject payload;
+    payload[QStringLiteral("status")] = QStringLiteral("complete");
+    payload[QStringLiteral("summary")] = summary;
+    response.text = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    return response;
+}
 
 class FactoryCountingModelClient : public sak::ai::IAiModelClient {
 public:
@@ -77,6 +136,9 @@ private Q_SLOTS:
     void wallClockTimeoutMarksTimedOut();
     void factoryCreatesFreshClientPerRun();
     void cancelledParentDoesNotCreateFactoryClient();
+    void actingSubagentExecutesToolCallsThenCompletes();
+    void toolLoopStopsAtIterationCapWithDegraded();
+    void noLocalExecutionPolicyStaysSingleShot();
 };
 
 void AiSubagentRunnerTests::completeRoundTripPopulatesFields() {
@@ -406,6 +468,94 @@ void AiSubagentRunnerTests::cancelledParentDoesNotCreateFactoryClient() {
     QCOMPARE(created, 0);
     QCOMPARE(invocations, 0);
     QCOMPARE(live, 0);
+}
+
+void AiSubagentRunnerTests::actingSubagentExecutesToolCallsThenCompletes() {
+    FakeModelClient client;
+    // Turn 1: model asks to run a tool. Turn 2 (continuation): final answer.
+    client.scripted_responses.append(makeToolCallResponse(
+        QStringLiteral("run_powershell"), QStringLiteral("call_1"), QStringLiteral("resp_1")));
+    client.scripted_responses.append(makeCompleteResponse(QStringLiteral("Did the work")));
+
+    RecordingToolExecutor executor;
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("act_1");
+    task.agent_id = QStringLiteral("repair_agent");
+    task.tool_policy = sak::ai::AiToolPolicy::ReadOnlyPc;  // != NoLocalExecution -> tools allowed
+
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
+    // The tool was actually executed under the task's policy.
+    QCOMPARE(executor.executed_calls, QStringList{QStringLiteral("run_powershell")});
+    QCOMPARE(executor.last_policy, sak::ai::AiToolPolicy::ReadOnlyPc);
+    // The continuation carried the tool output back keyed to the model's response_id.
+    QCOMPARE(client.continuation_count, 1);
+    QCOMPARE(client.last_continuation_response_id, QStringLiteral("resp_1"));
+    QCOMPARE(client.received_outputs.size(), 1);
+    QCOMPARE(client.received_outputs.first().call_id, QStringLiteral("call_1"));
+    // actions_taken reflects the REAL executed tool, not just a model claim.
+    QVERIFY(result.actions_taken.contains(QStringLiteral("executed tool: run_powershell")));
+    // Tools were offered to the model because the policy permits local execution.
+    QVERIFY(client.last_request.enable_local_tools);
+}
+
+void AiSubagentRunnerTests::toolLoopStopsAtIterationCapWithDegraded() {
+    FakeModelClient client;
+    // Model never stops asking for tools; every response requests another call.
+    client.next_response = makeToolCallResponse(QStringLiteral("run_powershell"),
+                                                QStringLiteral("loop_call"),
+                                                QStringLiteral("resp_loop"));
+
+    RecordingToolExecutor executor;
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+    sak::ai::AiSubagentRunnerOptions options;
+    options.max_tool_iterations = 2;
+    runner.setOptions(options);
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("act_cap");
+    task.tool_policy = sak::ai::AiToolPolicy::ReadOnlyPc;
+
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    // Hitting the cap yields an honest Degraded status, not a fake Complete.
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Degraded);
+    QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("iteration cap")));
+    // Exactly the cap number of tool round trips ran before stopping.
+    QCOMPARE(executor.executed_calls.size(), 2);
+}
+
+void AiSubagentRunnerTests::noLocalExecutionPolicyStaysSingleShot() {
+    FakeModelClient client;
+    // The model requests a tool, but the task policy forbids local execution.
+    client.next_response = makeToolCallResponse(QStringLiteral("run_powershell"),
+                                                QStringLiteral("call_x"),
+                                                QStringLiteral("resp_x"));
+
+    RecordingToolExecutor executor;
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("no_exec");
+    task.tool_policy = sak::ai::AiToolPolicy::NoLocalExecution;  // fail closed
+
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    // The executor is never invoked and tools are not offered to the model.
+    QVERIFY(executor.executed_calls.isEmpty());
+    QVERIFY(!client.last_request.enable_local_tools);
+    QCOMPARE(client.continuation_count, 0);
+    // The tool-call-only response has no final JSON, so it surfaces as a failure
+    // rather than being silently accepted.
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
 }
 
 QTEST_GUILESS_MAIN(AiSubagentRunnerTests)
