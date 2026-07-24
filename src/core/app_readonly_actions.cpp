@@ -13,8 +13,10 @@
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
 #include "sak/diagnostic_types.h"
+#include "sak/error_codes.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
+#include "sak/mbox_parser.h"
 #include "sak/partition_manager_types.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
@@ -45,6 +47,14 @@ constexpr int kMaxReportedMatches = 500;
 constexpr int kMaxMatchLineChars = 400;
 constexpr int kDefaultSearchMaxResults = 1000;
 constexpr int kSearchMaxResultsCeiling = 5000;
+constexpr int kDefaultMboxLimit = 200;
+constexpr int kMboxLimitCeiling = 1000;
+constexpr int kMaxHeaderChars = 1000;
+// Cap the MBOX size a headless read will index: readMessages() builds an offset
+// for EVERY "From " line across the whole file regardless of limit, so an
+// adversarially dense multi-GB file (prompt-injected path) could OOM the process.
+// Real single-folder mailboxes fit well under this; larger ones use the GUI panel.
+constexpr qint64 kMaxMboxBytes = 512LL * 1024 * 1024;
 
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
@@ -502,6 +512,77 @@ AppActionResult smartScan(const QJsonObject&) {
     return {true, QStringLiteral("Analyzed SMART data for %1 drive(s)").arg(drives.size()), data};
 }
 
+QString clampHeader(const QString& value) {
+    if (value.size() <= kMaxHeaderChars) {
+        return value;
+    }
+    return value.left(kMaxHeaderChars) + QStringLiteral("...");
+}
+
+QJsonObject serializeMboxMessage(const MboxMessage& message) {
+    // Header fields are clamped: a crafted message can carry a header folded up to
+    // the per-message size cap, which must not become a giant JSON string.
+    return QJsonObject{{QStringLiteral("index"), message.message_index},
+                       {QStringLiteral("subject"), clampHeader(message.subject)},
+                       {QStringLiteral("from"), clampHeader(message.from)},
+                       {QStringLiteral("to"), clampHeader(message.to)},
+                       {QStringLiteral("cc"), clampHeader(message.cc)},
+                       {QStringLiteral("date"), message.date.toString(Qt::ISODate)},
+                       {QStringLiteral("size_bytes"), static_cast<double>(message.message_size)},
+                       {QStringLiteral("has_attachments"), message.has_attachments}};
+}
+
+AppActionResult readMbox(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("read_mbox requires a 'path' argument"), {}};
+    }
+    if (isNetworkOrDevicePath(path)) {
+        return {false, QStringLiteral("read_mbox does not allow network/UNC or device paths"), {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such MBOX file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxMboxBytes) {
+        return {false,
+                QStringLiteral("MBOX file is too large for a headless read (%1 bytes > %2 limit)")
+                    .arg(info.size())
+                    .arg(kMaxMboxBytes),
+                {}};
+    }
+    const int offset = std::max(0, args.value(QStringLiteral("offset")).toInt(0));
+    const int requested = args.value(QStringLiteral("limit")).toInt(kDefaultMboxLimit);
+    const int limit =
+        std::clamp(requested > 0 ? requested : kDefaultMboxLimit, 1, kMboxLimitCeiling);
+
+    // MboxParser opens the file READ-ONLY and its readMessages() is a synchronous
+    // worker-thread API (lazily builds the message index), so this runs inline with
+    // no event loop and no controller.
+    MboxParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false, QStringLiteral("Not a valid MBOX file: %1").arg(path), {}};
+    }
+    const auto result = parser.readMessages(offset, limit);
+    if (!result.has_value()) {
+        return {false, QStringLiteral("Failed to read MBOX messages from %1").arg(path), {}};
+    }
+
+    QJsonArray messages;
+    for (const MboxMessage& message : *result) {
+        messages.append(serializeMboxMessage(message));
+    }
+    const int total = parser.messageCount();
+    QJsonObject data{{QStringLiteral("message_count"), total},
+                     {QStringLiteral("offset"), offset},
+                     {QStringLiteral("returned"), messages.size()},
+                     {QStringLiteral("messages"), messages}};
+    const QString summary =
+        QStringLiteral("Returned %1 of %2 message(s)").arg(messages.size()).arg(total);
+    return {true, summary, data};
+}
+
 AppActionDescriptor makeDescriptor(const QString& id,
                                    const QString& title,
                                    const QString& description,
@@ -569,6 +650,23 @@ QJsonObject searchParamsSchema() {
                        {QStringLiteral("properties"), properties},
                        {QStringLiteral("required"),
                         QJsonArray{QStringLiteral("root_path"), QStringLiteral("pattern")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject intProp(const QString& description) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                       {QStringLiteral("description"), description}};
+}
+
+QJsonObject readMboxParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the MBOX file"))},
+        {QStringLiteral("offset"),
+         intProp(QStringLiteral("First message index to return (0-based)"))},
+        {QStringLiteral("limit"), intProp(QStringLiteral("Max messages to return (default 200)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
 
@@ -644,6 +742,13 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        QStringLiteral("diagnostics"),
                        noParamsSchema()),
         smartScan);
+
+    add(makeDescriptor(QStringLiteral("email.read_mbox"),
+                       QStringLiteral("Read an MBOX mailbox"),
+                       QStringLiteral("List messages (headers) from an MBOX email file"),
+                       QStringLiteral("email"),
+                       readMboxParamsSchema()),
+        readMbox);
 
     return registered;
 }

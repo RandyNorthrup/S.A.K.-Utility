@@ -253,6 +253,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
     }
 
     // W1a: identify_image drives the app's FileImageSource detection on a real
@@ -400,6 +401,76 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("root_path")));
+    }
+
+    // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to
+    // end and deterministically -- a temp mailbox with two messages yields exactly
+    // those two, with parsed headers.
+    void readMboxListsMessages() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("sample.mbox"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            const QByteArray mbox =
+                "From alice@example.com Mon Jan  1 00:00:00 2024\n"
+                "From: alice@example.com\n"
+                "To: bob@example.com\n"
+                "Subject: First message\n"
+                "Date: Mon, 1 Jan 2024 00:00:00 +0000\n"
+                "\n"
+                "Body one.\n"
+                "\n"
+                "From carol@example.com Mon Jan  1 00:01:00 2024\n"
+                "From: carol@example.com\n"
+                "Subject: Second message\n"
+                "\n"
+                "Body two.\n";
+            QCOMPARE(file.write(mbox), static_cast<qint64>(mbox.size()));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("message_count")).toInt(), 2);
+        const QJsonArray messages = data.value(QStringLiteral("messages")).toArray();
+        QCOMPARE(messages.size(), 2);
+        QCOMPARE(messages.at(0).toObject().value(QStringLiteral("subject")).toString(),
+                 QStringLiteral("First message"));
+        QCOMPARE(messages.at(0).toObject().value(QStringLiteral("from")).toString(),
+                 QStringLiteral("alice@example.com"));
+    }
+
+    // W1c: read_mbox on a non-MBOX file fails cleanly (never crashes).
+    void readMboxRejectsNonMbox() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("notes.txt"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("just some text, not a mailbox\n"), static_cast<qint64>(30));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
     }
 
     void cleanup() {

@@ -1565,6 +1565,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/hardware_inventory_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/smart_disk_analyzer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/bundled_tools_manager.cpp
+        # W1c email.read_mbox: the MBOX parser (synchronous read API) is driven directly.
+        ${CMAKE_SOURCE_DIR}/src/core/mbox_parser.cpp
         # Stub the raw/image-filesystem bridge (search never uses it) so the whole
         # APFS/HFS+/ext driver stays out of this test link.
         ${CMAKE_CURRENT_SOURCE_DIR}/stubs/file_management_bridge_search_stub.cpp
@@ -1600,6 +1602,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/worker_base.h
         ${CMAKE_SOURCE_DIR}/include/sak/hardware_inventory_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/smart_disk_analyzer.h
+        ${CMAKE_SOURCE_DIR}/include/sak/mbox_parser.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
