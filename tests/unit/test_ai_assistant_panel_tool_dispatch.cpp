@@ -24,6 +24,7 @@
 #include <QComboBox>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSemaphore>
 #include <QSet>
 #include <QSignalSpy>
@@ -315,6 +316,87 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("path")));
+    }
+
+    // W1b: search.find_in_files drives the real AdvancedSearchController + worker
+    // (async, on its own thread) through the AsyncActionInvocation bridge, end to
+    // end and deterministically: a temp tree with a known token yields exactly the
+    // expected matches, proving completion is delivered onto the worker thread and
+    // drained by the local loop.
+    void searchFindsMatchesInTempDir() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto write = [&](const QString& name, const QByteArray& content) {
+            QFile file(dir.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(content), static_cast<qint64>(content.size()));
+        };
+        write(QStringLiteral("a.txt"), "hello NEEDLE world\nsecond line\n");
+        write(QStringLiteral("b.txt"), "no match here\nanother NEEDLE token\n");
+        write(QStringLiteral("c.txt"), "totally unrelated content\n");
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QStringLiteral("{\"root_path\":\"%1\",\"pattern\":\"NEEDLE\"}").arg(dir.path());
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("total_matches")).toInt(), 2);
+        const QJsonArray matches = data.value(QStringLiteral("matches")).toArray();
+        QCOMPARE(matches.size(), 2);
+        for (const auto& value : matches) {
+            QVERIFY(value.toObject()
+                        .value(QStringLiteral("line_content"))
+                        .toString()
+                        .contains(QStringLiteral("NEEDLE")));
+        }
+    }
+
+    // W1b: an ungated read-only search must refuse UNC/network roots, so prompt
+    // injection cannot steer it into an SMB/NTLM handshake with an attacker host.
+    void searchRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        // Windows treats ANY two leading separators as a UNC/device root: cover
+        // homogeneous (\\, //) and mixed (\/, /\) forms -- all must be refused.
+        const QStringList roots = {QStringLiteral("\\\\attacker.example.com\\share"),
+                                   QStringLiteral("\\/attacker.example.com\\share"),
+                                   QStringLiteral("/\\attacker.example.com/share"),
+                                   QStringLiteral("//attacker.example.com/share")};
+        for (const QString& root : roots) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("root_path"), root},
+                                          {QStringLiteral("pattern"), QStringLiteral("x")}})
+                    .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
+                            {QStringLiteral("arguments"), args}});
+            QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(root));
+            QVERIFY2(result.value(QStringLiteral("message"))
+                         .toString()
+                         .contains(QStringLiteral("network")),
+                     qPrintable(root));
+        }
+    }
+
+    // W1b: a search missing a required argument fails cleanly (never starts a worker).
+    void searchMissingArgsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"pattern\":\"x\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("root_path")));
     }
 
     void cleanup() {

@@ -7,17 +7,59 @@
 #include "sak/quick_action_controller.h"
 
 #include <QJsonObject>
+#include <QTimer>
 #include <QtTest/QtTest>
+#include <QVector>
 
 #include <atomic>
+#include <memory>
 
 using sak::AppActionDescriptor;
 using sak::AppActionRegistry;
 using sak::AppActionResult;
+using sak::AsyncActionInvocation;
 using sak::QuickAction;
 using sak::QuickActionController;
 using sak::registerQuickActionsInto;
 using sak::runQuickActionSync;
+
+namespace {
+
+// Fake signal-completed op for exercising AsyncActionInvocation deterministically.
+// Terminal signals are emitted via a timer so the bridge's local event loop is
+// genuinely entered before completion, as with a real worker.
+class FakeAsyncOp : public QObject {
+    Q_OBJECT
+
+public:
+    void scheduleDone(int delay_ms, int value) {
+        QTimer::singleShot(delay_ms, this, [this, value]() { Q_EMIT done(value); });
+    }
+    void scheduleFail(int delay_ms, const QString& error) {
+        QTimer::singleShot(delay_ms, this, [this, error]() { Q_EMIT failed(error); });
+    }
+    // Emit both terminal signals back-to-back to prove finish() is first-wins.
+    void scheduleDoneThenFail(int delay_ms, int value, const QString& error) {
+        QTimer::singleShot(delay_ms, this, [this, value, error]() {
+            Q_EMIT done(value);
+            Q_EMIT failed(error);
+        });
+    }
+    void scheduleBatchesThenDone(int delay_ms) {
+        QTimer::singleShot(delay_ms, this, [this]() {
+            Q_EMIT batch(10);
+            Q_EMIT batch(20);
+            Q_EMIT done(2);
+        });
+    }
+
+Q_SIGNALS:
+    void done(int value);
+    void failed(const QString& error);
+    void batch(int value);
+};
+
+}  // namespace
 
 namespace {
 
@@ -73,6 +115,12 @@ private slots:
     void runQuickActionSync_timesOutWhenActionStalls();
     void resultFromExecution_mapsFieldsIntoData();
     void registerQuickActionsInto_buildsSluggedDescriptorsWithAdminFlags();
+
+    void asyncInvocation_deliversCompletion();
+    void asyncInvocation_deliversFailure();
+    void asyncInvocation_timesOut();
+    void asyncInvocation_firstWins();
+    void asyncInvocation_accumulatesBatchesThenFinishes();
 };
 
 void AppActionServiceTests::runQuickActionSync_returnsResultSynchronously() {
@@ -157,6 +205,74 @@ void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWit
     const auto power = registry.descriptor(QStringLiteral("action.optimize_power_settings"));
     QVERIFY(power.has_value());
     QVERIFY(!power->requires_admin);
+}
+
+void AppActionServiceTests::asyncInvocation_deliversCompletion() {
+    FakeAsyncOp op;
+    AsyncActionInvocation inv(5000);
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv](int value) {
+        inv.finish({true, QStringLiteral("ok"), QJsonObject{{QStringLiteral("value"), value}}});
+    });
+    const AppActionResult result = inv.run([&op]() { op.scheduleDone(1, 42); });
+    QVERIFY(result.success);
+    QCOMPARE(result.data.value(QStringLiteral("value")).toInt(), 42);
+}
+
+void AppActionServiceTests::asyncInvocation_deliversFailure() {
+    FakeAsyncOp op;
+    AsyncActionInvocation inv(5000);
+    QObject::connect(&op, &FakeAsyncOp::failed, inv.context(), [&inv](const QString& error) {
+        inv.finish({false, error, {}});
+    });
+    const AppActionResult result = inv.run([&op]() { op.scheduleFail(1, QStringLiteral("boom")); });
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("boom"));
+}
+
+void AppActionServiceTests::asyncInvocation_timesOut() {
+    FakeAsyncOp op;  // never emits
+    AsyncActionInvocation inv(30);
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv](int) {
+        inv.finish({true, QStringLiteral("ok"), {}});
+    });
+    const AppActionResult result = inv.run([]() {});
+    QVERIFY(!result.success);
+    QVERIFY(result.message.contains(QStringLiteral("timed out")));
+}
+
+void AppActionServiceTests::asyncInvocation_firstWins() {
+    FakeAsyncOp op;
+    AsyncActionInvocation inv(5000);
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv](int) {
+        inv.finish({true, QStringLiteral("completed"), {}});
+    });
+    QObject::connect(&op, &FakeAsyncOp::failed, inv.context(), [&inv](const QString& error) {
+        inv.finish({false, error, {}});
+    });
+    // done is emitted first, so the failure that follows must be ignored.
+    const AppActionResult result =
+        inv.run([&op]() { op.scheduleDoneThenFail(1, 1, QStringLiteral("late failure")); });
+    QVERIFY(result.success);
+    QCOMPARE(result.message, QStringLiteral("completed"));
+}
+
+void AppActionServiceTests::asyncInvocation_accumulatesBatchesThenFinishes() {
+    FakeAsyncOp op;
+    AsyncActionInvocation inv(5000);
+    auto total = std::make_shared<int>(0);
+    QObject::connect(&op, &FakeAsyncOp::batch, inv.context(), [total](int value) {
+        *total += value;
+    });
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv, total](int count) {
+        inv.finish(
+            {true,
+             QStringLiteral("done"),
+             QJsonObject{{QStringLiteral("count"), count}, {QStringLiteral("sum"), *total}}});
+    });
+    const AppActionResult result = inv.run([&op]() { op.scheduleBatchesThenDone(1); });
+    QVERIFY(result.success);
+    QCOMPARE(result.data.value(QStringLiteral("count")).toInt(), 2);
+    QCOMPARE(result.data.value(QStringLiteral("sum")).toInt(), 30);
 }
 
 QTEST_MAIN(AppActionServiceTests)

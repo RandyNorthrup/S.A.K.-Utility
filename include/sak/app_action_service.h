@@ -5,9 +5,11 @@
 
 #include "sak/app_action_registry.h"
 
+#include <QEventLoop>
 #include <QObject>
 #include <QString>
 
+#include <functional>
 #include <memory>
 
 /// @file app_action_service.h
@@ -75,6 +77,60 @@ public:
 private:
     std::unique_ptr<QuickActionController> m_controller;
     QString m_backup_dir;
+};
+
+/// Generous default for a signal-driven read-only op (some file searches / scans
+/// legitimately run for minutes). The assistant tool layer applies its own outer
+/// timeout too.
+inline constexpr int kDefaultAsyncActionTimeoutMs = 5 * 60 * 1000;
+
+/// Runs an asynchronous, signal-completed app operation to completion
+/// SYNCHRONOUSLY from a non-GUI worker thread, WITHOUT a GUI thread in the loop.
+///
+/// Usage (all on the same worker thread):
+///   AsyncActionInvocation inv(timeout_ms);
+///   QObject::connect(controller, &C::doneSignal, inv.context(),
+///                    [&inv](Payload p){ inv.finish({true, "...", serialize(p)}); });
+///   QObject::connect(controller, &C::failSignal, inv.context(),
+///                    [&inv](QString e){ inv.finish({false, e, {}}); });
+///   return inv.run([controller]{ controller->start(); });
+///
+/// context() is a QObject with the CALLER thread's affinity: connecting a
+/// controller's completion signals to it means the slots are delivered (queued)
+/// onto the caller thread and drained by the local event loop, no matter which
+/// thread the controller emits from. finish() is idempotent and first-wins, so
+/// the completion, error, and timeout paths race safely. run() installs the
+/// timeout, invokes @p start, and pumps a local event loop until the first
+/// finish(); it returns the recorded result. The controller must be created on
+/// (and owned by) the caller thread and outlive the call -- on timeout it should
+/// be destroyed after run() returns so its destructor can drain its worker.
+class AsyncActionInvocation {
+public:
+    explicit AsyncActionInvocation(int timeout_ms = kDefaultAsyncActionTimeoutMs);
+
+    AsyncActionInvocation(const AsyncActionInvocation&) = delete;
+    AsyncActionInvocation& operator=(const AsyncActionInvocation&) = delete;
+    AsyncActionInvocation(AsyncActionInvocation&&) = delete;
+    AsyncActionInvocation& operator=(AsyncActionInvocation&&) = delete;
+
+    /// Receiver context for signal connections (caller-thread affinity).
+    [[nodiscard]] QObject* context();
+
+    /// Record the outcome and stop the loop. Idempotent: only the first call wins.
+    void finish(const AppActionResult& result);
+
+    /// Whether a terminal outcome has already been recorded.
+    [[nodiscard]] bool isDone() const;
+
+    /// Install the timeout, run @p start, pump the local loop until finish().
+    [[nodiscard]] AppActionResult run(const std::function<void()>& start);
+
+private:
+    QEventLoop m_loop;
+    QObject m_ctx;
+    AppActionResult m_result{false, QStringLiteral("Action did not complete"), {}};
+    bool m_done{false};
+    int m_timeout_ms;
 };
 
 /// A QuickAction::ExecutionResult flattened to primitives, so the mapping to an

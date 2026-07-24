@@ -60,6 +60,43 @@ AppActionResult resultFromAction(const QuickAction* action) {
 
 }  // namespace
 
+AsyncActionInvocation::AsyncActionInvocation(int timeout_ms) : m_timeout_ms(timeout_ms) {}
+
+QObject* AsyncActionInvocation::context() {
+    return &m_ctx;
+}
+
+void AsyncActionInvocation::finish(const AppActionResult& result) {
+    if (m_done) {
+        return;
+    }
+    m_done = true;
+    m_result = result;
+    m_loop.quit();
+}
+
+bool AsyncActionInvocation::isDone() const {
+    return m_done;
+}
+
+AppActionResult AsyncActionInvocation::run(const std::function<void()>& start) {
+    // Timer is owned by m_ctx (caller-thread affinity), so it fires on this thread
+    // via the local loop even though the controller emits from a worker thread.
+    QTimer::singleShot(m_timeout_ms, &m_ctx, [this]() {
+        finish({false, QStringLiteral("Action timed out after %1 ms").arg(m_timeout_ms), {}});
+    });
+    if (start) {
+        start();
+    }
+    // A well-behaved async op completes later; but if start() finished (or failed)
+    // synchronously, m_done is already set and we must not enter a loop that would
+    // never be quit again.
+    if (!m_done) {
+        m_loop.exec();
+    }
+    return m_result;
+}
+
 AppActionResult appActionResultFromExecution(const AppActionExecutionFields& fields) {
     QJsonObject data{{QStringLiteral("bytes_processed"), static_cast<double>(fields.bytes)},
                      {QStringLiteral("files_processed"), static_cast<double>(fields.files)},

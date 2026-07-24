@@ -8,17 +8,25 @@
 
 #include "sak/app_readonly_actions.h"
 
+#include "sak/advanced_search_types.h"
+#include "sak/advanced_search_worker.h"
 #include "sak/app_action_registry.h"
+#include "sak/app_action_service.h"
 #include "sak/image_source.h"
 #include "sak/partition_manager_types.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
+#include "sak/worker_base.h"
 
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
+
+#include <algorithm>
+#include <memory>
 
 namespace sak {
 
@@ -30,6 +38,10 @@ namespace {
 constexpr int kMaxListedPrograms = 500;
 constexpr int kMaxReportedFindings = 200;
 constexpr int kMaxInventoryWarnings = 200;
+constexpr int kMaxReportedMatches = 500;
+constexpr int kMaxMatchLineChars = 400;
+constexpr int kDefaultSearchMaxResults = 1000;
+constexpr int kSearchMaxResultsCeiling = 5000;
 
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
@@ -221,6 +233,130 @@ AppActionResult identifyImage(const QJsonObject& args) {
     return {true, message, data};
 }
 
+QString clampLine(const QString& line) {
+    if (line.size() <= kMaxMatchLineChars) {
+        return line;
+    }
+    return line.left(kMaxMatchLineChars) + QStringLiteral("...");
+}
+
+QJsonObject serializeMatch(const SearchMatch& match) {
+    return QJsonObject{{QStringLiteral("file_path"), match.file_path},
+                       {QStringLiteral("line_number"), match.line_number},
+                       {QStringLiteral("line_content"), clampLine(match.line_content)},
+                       {QStringLiteral("match_start"), match.match_start},
+                       {QStringLiteral("match_end"), match.match_end}};
+}
+
+bool isNetworkOrDevicePath(const QString& path) {
+    // Reject UNC (\\server\share) and Win32 device namespaces (\\.\, \\?\). An
+    // ungated read-only op must not be steerable (prompt injection) into opening an
+    // SMB connection to an attacker host -- QFileInfo::exists() alone would trigger
+    // NTLM auth and leak the user's hash. Windows treats ANY two leading separators
+    // as a UNC/device root, including mixed forms (\/, /\), and Qt normalizes '/' to
+    // '\\', so reject any pair of leading separators regardless of type.
+    const auto isSeparator = [](QChar ch) {
+        return ch == QLatin1Char('\\') || ch == QLatin1Char('/');
+    };
+    return path.size() >= 2 && isSeparator(path.at(0)) && isSeparator(path.at(1));
+}
+
+SearchConfig searchConfigFromArgs(const QJsonObject& args,
+                                  const QString& root,
+                                  const QString& pattern) {
+    SearchConfig config;
+    config.root_path = root;
+    config.pattern = pattern;
+    config.case_sensitive = args.value(QStringLiteral("case_sensitive")).toBool(false);
+    config.use_regex = args.value(QStringLiteral("use_regex")).toBool(false);
+    config.whole_word = args.value(QStringLiteral("whole_word")).toBool(false);
+    const int requested = args.value(QStringLiteral("max_results")).toInt(kDefaultSearchMaxResults);
+    // Clamp to a server ceiling so a model-supplied max_results cannot force
+    // unbounded in-memory accumulation.
+    config.max_results = std::clamp(requested > 0 ? requested : kDefaultSearchMaxResults,
+                                    1,
+                                    kSearchMaxResultsCeiling);
+    const QJsonArray exts = args.value(QStringLiteral("file_extensions")).toArray();
+    for (const QJsonValue& ext : exts) {
+        const QString value = ext.toString().trimmed();
+        if (!value.isEmpty()) {
+            config.file_extensions.append(value);
+        }
+    }
+    return config;
+}
+
+QJsonObject serializeSearch(const QVector<SearchMatch>& matches, int total_files, int max_results) {
+    QJsonArray listed;
+    for (const SearchMatch& match : matches) {
+        if (listed.size() >= kMaxReportedMatches) {
+            break;
+        }
+        listed.append(serializeMatch(match));
+    }
+    const int total_matches = matches.size();
+    return QJsonObject{{QStringLiteral("total_matches"), total_matches},
+                       {QStringLiteral("total_files"), total_files},
+                       {QStringLiteral("reported_matches"), listed.size()},
+                       {QStringLiteral("report_truncated"), listed.size() < total_matches},
+                       // The search itself stopped at max_results, so more matches
+                       // may exist beyond what was counted.
+                       {QStringLiteral("search_capped"), total_matches >= max_results},
+                       {QStringLiteral("matches"), listed}};
+}
+
+AppActionResult searchFiles(const QJsonObject& args) {
+    const QString root = args.value(QStringLiteral("root_path")).toString().trimmed();
+    const QString pattern = args.value(QStringLiteral("pattern")).toString();
+    if (root.isEmpty() || pattern.isEmpty()) {
+        return {false, QStringLiteral("search requires 'root_path' and 'pattern'"), {}};
+    }
+    if (isNetworkOrDevicePath(root)) {
+        return {false, QStringLiteral("search does not allow network/UNC or device paths"), {}};
+    }
+    if (!QFileInfo(root).exists()) {
+        return {false, QStringLiteral("root_path does not exist: %1").arg(root), {}};
+    }
+    const SearchConfig config = searchConfigFromArgs(args, root, pattern);
+    const int cap = config.max_results;
+
+    // Drive the search ENGINE (worker) directly, not AdvancedSearchController: the
+    // controller loads/persists shared preferences and prepends the pattern to the
+    // user's on-disk search history, which would (a) be a write from a "read-only"
+    // op and (b) race the unlocked ConfigManager singleton off the GUI thread. The
+    // worker touches neither. It runs on its own thread and posts results back,
+    // drained by the local event loop; the worker (destroyed last) stops+joins its
+    // thread on teardown, so a timed-out search is reaped, never leaked.
+    AdvancedSearchWorker worker(config);
+    AsyncActionInvocation inv;
+    auto matches = std::make_shared<QVector<SearchMatch>>();
+    auto file_count = std::make_shared<int>(0);
+
+    QObject::connect(&worker,
+                     &AdvancedSearchWorker::resultsReady,
+                     inv.context(),
+                     [matches](const QVector<SearchMatch>& batch) { *matches += batch; });
+    QObject::connect(&worker,
+                     &AdvancedSearchWorker::fileSearched,
+                     inv.context(),
+                     [file_count](const QString&, int) { ++(*file_count); });
+    QObject::connect(
+        &worker, &WorkerBase::finished, inv.context(), [&inv, matches, file_count, cap]() {
+            const QString message = QStringLiteral("%1 match(es) across %2 file(s)")
+                                        .arg(matches->size())
+                                        .arg(*file_count);
+            inv.finish({true, message, serializeSearch(*matches, *file_count, cap)});
+        });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
 AppActionDescriptor makeDescriptor(const QString& id,
                                    const QString& title,
                                    const QString& description,
@@ -258,6 +394,36 @@ QJsonObject scanParamsSchema() {
          boolProp(QStringLiteral("Broaden the NVD keyword scan (slower, sends program names)"))}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"), properties},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject stringProp(const QString& description) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                       {QStringLiteral("description"), description}};
+}
+
+QJsonObject searchParamsSchema() {
+    QJsonObject ext_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Restrict to these file extensions (no dot); empty = all files")}};
+    QJsonObject max_prop{{QStringLiteral("type"), QStringLiteral("integer")},
+                         {QStringLiteral("description"),
+                          QStringLiteral("Cap total matches (default 1000)")}};
+    QJsonObject properties{
+        {QStringLiteral("root_path"),
+         stringProp(QStringLiteral("Directory or file to search (absolute path)"))},
+        {QStringLiteral("pattern"), stringProp(QStringLiteral("Text or regex to find"))},
+        {QStringLiteral("case_sensitive"), boolProp(QStringLiteral("Case-sensitive match"))},
+        {QStringLiteral("use_regex"), boolProp(QStringLiteral("Treat pattern as a regex"))},
+        {QStringLiteral("whole_word"), boolProp(QStringLiteral("Match whole words only"))},
+        {QStringLiteral("max_results"), max_prop},
+        {QStringLiteral("file_extensions"), ext_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("root_path"), QStringLiteral("pattern")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
 
@@ -311,6 +477,13 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        QStringLiteral("imaging"),
                        identifyParamsSchema()),
         identifyImage);
+
+    add(makeDescriptor(QStringLiteral("search.find_in_files"),
+                       QStringLiteral("Search files"),
+                       QStringLiteral("Search a directory tree for text/regex matches in files"),
+                       QStringLiteral("search"),
+                       searchParamsSchema()),
+        searchFiles);
 
     return registered;
 }

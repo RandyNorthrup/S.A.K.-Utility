@@ -1557,6 +1557,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/gzip_decompressor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/bzip2_decompressor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/xz_decompressor.cpp
+        # W1b async read-only op: the search ENGINE (worker) is driven directly, so
+        # the controller/regex-library/config-manager are intentionally not linked.
+        ${CMAKE_SOURCE_DIR}/src/core/advanced_search_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/threading/worker_base.cpp
+        # Stub the raw/image-filesystem bridge (search never uses it) so the whole
+        # APFS/HFS+/ext driver stays out of this test link.
+        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/file_management_bridge_search_stub.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/detachable_log_window.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/follow_scroll_controller.cpp
         # Q_OBJECT headers listed explicitly for AUTOMOC (this project moc's
@@ -1585,6 +1592,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/gzip_decompressor.h
         ${CMAKE_SOURCE_DIR}/include/sak/bzip2_decompressor.h
         ${CMAKE_SOURCE_DIR}/include/sak/xz_decompressor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/advanced_search_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/worker_base.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
