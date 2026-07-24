@@ -53,6 +53,16 @@ public:
      */
     explicit OrganizerWorker(const Config& config, QObject* parent = nullptr);
 
+    /**
+     * @brief Number of files actually relocated by the last run
+     *
+     * Counts only real moves (a skipped-collision file that stays in place is not
+     * counted). Written on the worker thread before finished() is emitted, so it is
+     * safe to read from a slot connected to finished().
+     * @return Count of files moved
+     */
+    [[nodiscard]] int movedCount() const noexcept { return m_moved_count; }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when file processing progresses
@@ -123,4 +133,5 @@ private:
 
     Config m_config;
     std::vector<MoveOperation> m_planned_operations;
+    int m_moved_count{0};  ///< Files actually relocated by the current run
 };

@@ -11,15 +11,20 @@
 
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
+#include "sak/app_action_service.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/mbox_parser.h"
+#include "sak/organizer_worker.h"
+#include "sak/worker_base.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QString>
+#include <QStringList>
 
 #include <algorithm>
 #include <optional>
@@ -275,6 +280,196 @@ QJsonObject exportMboxParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// ---------------------------------------------------------------------------
+// organizer.organize_directory
+// ---------------------------------------------------------------------------
+
+// Convert the model-facing {category: [ext, ...]} object into the worker's
+// QMap<category, extensions>. Non-string / empty extensions are dropped; a category
+// with no usable extensions is dropped. Returns empty if nothing usable was given.
+QMap<QString, QStringList> categoryMappingFromArgs(const QJsonObject& mapping) {
+    QMap<QString, QStringList> result;
+    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
+        if (it.key().isEmpty() || !it.value().isArray()) {
+            continue;
+        }
+        QStringList extensions;
+        for (const QJsonValue& ext : it.value().toArray()) {
+            QString value = ext.toString().trimmed();
+            if (value.startsWith(QLatin1Char('.'))) {
+                value = value.mid(1);
+            }
+            if (!value.isEmpty()) {
+                extensions.append(value);
+            }
+        }
+        if (!extensions.isEmpty()) {
+            result.insert(it.key(), extensions);
+        }
+    }
+    return result;
+}
+
+// A category name becomes a SINGLE subdirectory component under the target
+// (planMove: target_dir / category). Reject anything that is not a plain component
+// so it cannot escape the target: a separator would make it multi-component or
+// (with std::filesystem operator/) an absolute path that REPLACES the target; a
+// colon is a Windows drive / alternate-data-stream; "." / ".." are traversal. This
+// is the containment guard for a prompt-injected category_mapping.
+bool isSafeCategoryName(const QString& name) {
+    if (name == QLatin1String(".") || name == QLatin1String("..")) {
+        return false;
+    }
+    for (const QChar ch : name) {
+        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Returns the first category key that is not a safe subdirectory name, or empty if
+// all are safe.
+QString firstUnsafeCategory(const QMap<QString, QStringList>& mapping) {
+    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
+        if (!isSafeCategoryName(it.key())) {
+            return it.key();
+        }
+    }
+    return QString();
+}
+
+// Validate the target directory + collision strategy. Returns an error result to
+// short-circuit on, or nullopt when the inputs are acceptable.
+std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
+                                                      const QString& collision_strategy,
+                                                      const QMap<QString, QStringList>& mapping) {
+    if (target.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("organize_directory requires a 'target_directory'"),
+                               {}};
+    }
+    if (isNetworkOrDevicePath(target)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "organize_directory does not allow network/UNC or device paths"),
+                               {}};
+    }
+    const QFileInfo info(target);
+    if (!info.exists() || !info.isDir()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("target_directory is not an existing directory: %1").arg(target),
+            {}};
+    }
+    if (mapping.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "organize_directory requires a non-empty 'category_mapping' of "
+                                   "category -> file extensions"),
+                               {}};
+    }
+    if (const QString unsafe = firstUnsafeCategory(mapping); !unsafe.isEmpty()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("category name '%1' is not a valid subfolder name (no path separators, "
+                           "':', '.' or '..'): it must not escape the target directory")
+                .arg(unsafe),
+            {}};
+    }
+    // "overwrite" would let the move silently replace an existing file in the target
+    // category folder (data loss). A headless run only ever relocates or renames, so
+    // the destructive-but-recoverable classification stays honest.
+    if (collision_strategy != QLatin1String("rename") &&
+        collision_strategy != QLatin1String("skip")) {
+        return AppActionResult{
+            false,
+            QStringLiteral("collision_strategy must be 'rename' or 'skip' (got '%1'); 'overwrite' "
+                           "is not allowed for a headless organize")
+                .arg(collision_strategy),
+            {}};
+    }
+    return std::nullopt;
+}
+
+AppActionResult organizeDirectory(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target_directory")).toString().trimmed();
+    const QString collision_strategy =
+        args.value(QStringLiteral("collision_strategy")).toString().trimmed().isEmpty()
+            ? QStringLiteral("rename")
+            : args.value(QStringLiteral("collision_strategy")).toString().trimmed().toLower();
+    const QMap<QString, QStringList> mapping =
+        categoryMappingFromArgs(args.value(QStringLiteral("category_mapping")).toObject());
+    if (const std::optional<AppActionResult> error =
+            validateOrganizeInputs(target, collision_strategy, mapping)) {
+        return *error;
+    }
+
+    OrganizerWorker::Config config;
+    config.target_directory = target;
+    config.category_mapping = mapping;
+    config.preview_mode = false;
+    config.create_subdirectories = args.value(QStringLiteral("create_subdirectories")).toBool(true);
+    config.collision_strategy = collision_strategy;
+
+    // Drive the worker (a QThread) directly through the async->sync bridge, like the
+    // read-only search. Declared before the invocation so it is destroyed LAST: on a
+    // timeout its ~WorkerBase requests stop and joins the thread after run() returns,
+    // so a still-running organize is reaped, never leaked into a destroyed context.
+    OrganizerWorker worker(config);
+    AsyncActionInvocation inv;
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
+        const int moved = worker.movedCount();
+        QJsonObject data{{QStringLiteral("target_directory"), target},
+                         {QStringLiteral("files_moved"), moved}};
+        inv.finish(
+            {true, QStringLiteral("Organized %1 (%2 file(s) moved)").arg(target).arg(moved), data});
+    });
+    QObject::connect(
+        &worker, &WorkerBase::failed, inv.context(), [&inv](int, const QString& error) {
+            inv.finish({false, error.isEmpty() ? QStringLiteral("Organize failed") : error, {}});
+        });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+QJsonObject organizeParamsSchema() {
+    QJsonObject mapping_prop{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("additionalProperties"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                     {QStringLiteral("items"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Map of category name -> list of file extensions (no dot); files are "
+                        "moved into a same-named subfolder of the target")}};
+    QJsonObject collision_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("enum"), QJsonArray{QStringLiteral("rename"), QStringLiteral("skip")}},
+        {QStringLiteral("description"),
+         QStringLiteral("On name collision: 'rename' (append a counter) or 'skip' (leave in "
+                        "place). Default rename. 'overwrite' is not allowed.")}};
+    QJsonObject subdirs_prop{
+        {QStringLiteral("type"), QStringLiteral("boolean")},
+        {QStringLiteral("description"),
+         QStringLiteral("Create the category subfolders if missing (default true)")}};
+    QJsonObject properties{
+        {QStringLiteral("target_directory"),
+         stringProp(QStringLiteral("Absolute path to the directory whose top-level files to "
+                                   "organize (not recursive)"))},
+        {QStringLiteral("category_mapping"), mapping_prop},
+        {QStringLiteral("collision_strategy"), collision_prop},
+        {QStringLiteral("create_subdirectories"), subdirs_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("target_directory"),
+                                   QStringLiteral("category_mapping")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 // Base descriptor for a mutating op: read_only=false, mutating=true, and both
 // destructive and requires_admin default false. A caller sets params_schema and,
 // for a destructive or admin op, flips those flags on the returned descriptor.
@@ -313,6 +508,18 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
         QStringLiteral("email"));
     export_mbox.params_schema = exportMboxParamsSchema();
     add(export_mbox, exportMbox);
+
+    // organizer.organize_directory: relocates existing user files into category
+    // subfolders (a bulk, not-trivially-undoable filesystem change) -> destructive.
+    // "overwrite" is refused so it never replaces a file; no elevation needed.
+    AppActionDescriptor organize = mutatingDescriptor(
+        QStringLiteral("organizer.organize_directory"),
+        QStringLiteral("Organize a directory"),
+        QStringLiteral("Move a directory's top-level files into category subfolders by extension"),
+        QStringLiteral("organizer"));
+    organize.params_schema = organizeParamsSchema();
+    organize.destructive = true;
+    add(organize, organizeDirectory);
 
     return registered;
 }

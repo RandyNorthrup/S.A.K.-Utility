@@ -28,6 +28,7 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
 
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
+    m_moved_count = 0;
 
     // Validate target directory path
     sak::path_validation_config dir_cfg;
@@ -201,14 +202,23 @@ auto OrganizerWorker::executeMove(const MoveOperation& operation)
             std::filesystem::create_directories(operation.destination.parent_path());
         }
 
-        // Handle collision
+        // Handle collision. Re-check existence at EXECUTE time, not just the plan-time
+        // would_overwrite flag: a file may have appeared at the destination between
+        // planning and this move, and a plain std::filesystem::rename silently REPLACES
+        // an existing destination (on Windows, MOVEFILE_REPLACE_EXISTING). Re-checking
+        // here closes that TOCTOU so a "rename"/"skip" run can never clobber a file.
         std::filesystem::path final_dest = operation.destination;
-        if (operation.would_overwrite) {
+        std::error_code exists_ec;
+        if (std::filesystem::exists(operation.destination, exists_ec)) {
             final_dest = handleCollision(operation);
         }
 
-        // Move file
+        // Move file. A "skip" collision resolves final_dest back to the source, which
+        // is a rename-to-self (no relocation) -- do not count it as moved.
         std::filesystem::rename(operation.source, final_dest);
+        if (final_dest != operation.source) {
+            ++m_moved_count;
+        }
         sak::logInfo("Moved: {} -> {}", operation.source.string(), final_dest.string());
 
         return {};

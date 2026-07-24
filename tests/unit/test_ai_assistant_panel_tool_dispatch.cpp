@@ -687,6 +687,210 @@ private Q_SLOTS:
         QCOMPARE(produced.size(), 0);
     }
 
+    // ------------------------------------------------------------------
+    // W2b: organizer.organize_directory -- a DESTRUCTIVE mutating op (relocates
+    // existing user files). Proves the destructive flag + restore-point path and
+    // that the op refuses the data-loss "overwrite" collision strategy.
+    // ------------------------------------------------------------------
+
+    static QString organizeArgs(const QString& target,
+                                const QJsonObject& mapping,
+                                const QString& collision = QString()) {
+        QJsonObject obj{{QStringLiteral("target_directory"), target},
+                        {QStringLiteral("category_mapping"), mapping}};
+        if (!collision.isEmpty()) {
+            obj.insert(QStringLiteral("collision_strategy"), collision);
+        }
+        return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    }
+
+    // W2b(1): registered mutating AND destructive, so the gate offers a restore point
+    // / forces a confirm rather than skipping.
+    void organizeListedAsMutatingDestructive() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("organizer.organize_directory")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W2b(2): blocked in a chat/research session; the source file is not moved.
+    void organizeBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(QStringLiteral("note.txt"));
+        {
+            QFile f(file);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("x");
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+            {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        QVERIFY(QFile::exists(file));  // untouched
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("Docs"))).exists());
+    }
+
+    // W2b(3): in Unattended, the gate offers a restore point and the REAL organize
+    // runs -- two files land in their category subfolders, movedCount is exact.
+    void organizeMovesFilesWhenGated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto write = [&](const QString& name) {
+            QFile f(dir.filePath(name));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("data");
+        };
+        write(QStringLiteral("report.txt"));
+        write(QStringLiteral("photo.jpg"));
+        write(QStringLiteral("misc.zzz"));  // no category -> stays put
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}},
+                                  {QStringLiteral("Images"), QJsonArray{QStringLiteral("jpg")}}};
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+            {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("data"))
+                     .toObject()
+                     .value(QStringLiteral("files_moved"))
+                     .toInt(),
+                 2);
+        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+        QVERIFY(QFile::exists(dir.filePath(QStringLiteral("Docs/report.txt"))));
+        QVERIFY(QFile::exists(dir.filePath(QStringLiteral("Images/photo.jpg"))));
+        QVERIFY(QFile::exists(dir.filePath(QStringLiteral("misc.zzz"))));     // uncategorized stays
+        QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("report.txt"))));  // moved out
+    }
+
+    // W2b(4): the data-loss "overwrite" collision strategy is refused outright.
+    void organizeRejectsOverwriteStrategy() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+            {QStringLiteral("arguments"),
+             organizeArgs(dir.path(), mapping, QStringLiteral("overwrite"))}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("overwrite")));
+    }
+
+    // W2b(5): UNC/device target is refused before any filesystem work.
+    void organizeRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+            {QStringLiteral("arguments"),
+             organizeArgs(QStringLiteral("\\\\attacker\\share"), mapping)}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // W2b(7): a category name that would escape the target directory (path
+    // separator / drive / "..") is refused, so a prompt-injected mapping cannot
+    // relocate files outside the target. A sibling file outside stays untouched.
+    void organizeRejectsEscapingCategoryName() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString target = dir.filePath(QStringLiteral("box"));
+        QVERIFY(QDir().mkpath(target));
+        {
+            QFile f(target + QStringLiteral("/doc.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("x");
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QStringList evil = {QStringLiteral(".."),
+                                  QStringLiteral("..\\..\\loot"),
+                                  QStringLiteral("sub/dir")};
+        for (const QString& category : evil) {
+            const QJsonObject mapping{{category, QJsonArray{QStringLiteral("txt")}}};
+            const QJsonObject result = panel.runAppActionTool(QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+                {QStringLiteral("arguments"), organizeArgs(target, mapping)}});
+            QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(category));
+            QVERIFY2(result.value(QStringLiteral("message"))
+                         .toString()
+                         .contains(QStringLiteral("category name")),
+                     qPrintable(category));
+        }
+        // The file never moved anywhere.
+        QVERIFY(QFile::exists(target + QStringLiteral("/doc.txt")));
+    }
+
+    // W2b(6): a missing category_mapping fails cleanly (nothing is moved).
+    void organizeMissingMappingFails() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("target_directory"), dir.path()}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("category_mapping")));
+    }
+
     void cleanup() {
         // Never leave the approval seam installed for the next case or production.
         aiApprovalPromptTestHook() = nullptr;
