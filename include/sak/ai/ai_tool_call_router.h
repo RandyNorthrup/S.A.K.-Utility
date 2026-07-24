@@ -23,6 +23,7 @@ enum class AiToolCallKind {
     Skill,
     DelegateSubagent,
     RunWorkflow,
+    AppAction,
 };
 
 class AiToolCallRouter {

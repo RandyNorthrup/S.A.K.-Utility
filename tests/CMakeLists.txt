@@ -1527,8 +1527,23 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/script_rewriter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/network_transfer_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/elevation_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
         ${CMAKE_SOURCE_DIR}/src/core/process_runner.cpp
+        # Headless app-action surface (sak_app_action tool) + the QuickActions it seeds.
+        ${CMAKE_SOURCE_DIR}/src/core/app_action_registry.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/app_action_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/app_action_service.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/quick_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/quick_action_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/quick_action_result_io.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/verify_system_files_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/check_disk_errors_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/reset_network_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/optimize_power_settings_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/generate_system_report_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/screenshot_settings_action.cpp
+        ${CMAKE_SOURCE_DIR}/src/actions/backup_bitlocker_keys_action.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/detachable_log_window.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/follow_scroll_controller.cpp
         # Q_OBJECT headers listed explicitly for AUTOMOC (this project moc's
@@ -1538,8 +1553,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/chocolatey_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/detachable_log_window.h
         ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/elevation_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/offline_deployment_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/package_internalization_engine.h
+        ${CMAKE_SOURCE_DIR}/include/sak/app_action_service.h
+        ${CMAKE_SOURCE_DIR}/include/sak/quick_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/quick_action_controller.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/verify_system_files_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/check_disk_errors_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/reset_network_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/optimize_power_settings_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/generate_system_report_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/screenshot_settings_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/actions/backup_bitlocker_keys_action.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

@@ -35,6 +35,7 @@ AiToolCallKind AiToolCallRouter::kindForName(const QString& name) {
         {QStringLiteral("sak_skill"), AiToolCallKind::Skill},
         {QStringLiteral("delegate_subagent"), AiToolCallKind::DelegateSubagent},
         {QStringLiteral("run_workflow"), AiToolCallKind::RunWorkflow},
+        {QStringLiteral("sak_app_action"), AiToolCallKind::AppAction},
     };
     return kByName.value(normalizedToolName(name), AiToolCallKind::Unknown);
 }

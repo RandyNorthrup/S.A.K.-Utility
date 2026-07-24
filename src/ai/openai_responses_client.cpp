@@ -613,6 +613,38 @@ QJsonObject runWorkflowTool() {
         QJsonArray{QStringLiteral("workflow_id"), QStringLiteral("input_values")});
 }
 
+QJsonObject appActionTool() {
+    QJsonObject operation = stringParameter(QStringLiteral(
+        "\"list\" enumerates S.A.K. Utility's own built-in technician actions (id, title, "
+        "description, category, and risk flags: read_only/mutating/destructive/requires_admin); "
+        "\"run\" executes one action by id."));
+    operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("list"), QStringLiteral("run")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("operation")] = operation;
+    properties[QStringLiteral("action_id")] = stringParameter(QStringLiteral(
+        "Action id to run when operation is \"run\" (taken from the list). Empty string for "
+        "\"list\"."));
+    properties[QStringLiteral("arguments")] = stringParameter(QStringLiteral(
+        "JSON object of arguments for the action, passed as a string (e.g. \"{}\"). Most actions "
+        "take none; pass \"{}\"."));
+
+    return functionTool(
+        QStringLiteral("sak_app_action"),
+        QStringLiteral(
+            "Enumerate and run S.A.K. Utility's OWN built-in technician actions headless -- the "
+            "same operations the app's panels perform (system file repair, disk checks, network "
+            "reset, power optimization, reports, backups, and more). Call operation=\"list\" first "
+            "to discover actions and their risk flags, then operation=\"run\" with an action_id. "
+            "PREFER these app actions over raw run_powershell when an action already covers the "
+            "task. Mutating or admin actions are gated with a confirmation and, when destructive, "
+            "a "
+            "restore point."),
+        properties,
+        QJsonArray{
+            QStringLiteral("operation"), QStringLiteral("action_id"), QStringLiteral("arguments")});
+}
+
 QJsonArray localToolDefinitions() {
     QJsonArray tools;
     tools.append(shellTool(
@@ -641,6 +673,7 @@ QJsonArray localToolDefinitions() {
     tools.append(skillTool());
     tools.append(delegateSubagentTool());
     tools.append(runWorkflowTool());
+    tools.append(appActionTool());
     return tools;
 }
 

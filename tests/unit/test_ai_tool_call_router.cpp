@@ -55,6 +55,10 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
              AiToolCallKind::DelegateSubagent);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("run_workflow")),
              AiToolCallKind::RunWorkflow);
+    // sak_app_action must be a recognized built-in, or the tool loop rejects it as
+    // "Unknown function" before the app-action handler runs.
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("sak_app_action")),
+             AiToolCallKind::AppAction);
     QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("missing_tool")),
              AiToolCallKind::Unknown);
 
@@ -67,6 +71,8 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::DelegateSubagent));
     QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::RunWorkflow));
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::RunWorkflow));
+    QVERIFY(AiToolCallRouter::isBuiltInTool(AiToolCallKind::AppAction));
+    QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::AppAction));
     QVERIFY(!AiToolCallRouter::isCommandTool(AiToolCallKind::Skill));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Shell));
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Unknown));

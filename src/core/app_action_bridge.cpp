@@ -145,6 +145,12 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         descriptor.title = name;
         descriptor.description = action->description();
         descriptor.category = categoryToString(action->category());
+        // Every QuickAction performs a system change, so all are mutating (this alone
+        // forces the per-action human gate). `destructive` stays false: none of the
+        // built-in QuickActions are irreversible data-loss, and QuickAction exposes no
+        // destructive flag today. If an irreversible action is ever added, give
+        // QuickAction an isDestructive() and map it here so Unattended mode forces a
+        // fresh restore point per invocation instead of the once-per-session offer.
         descriptor.mutating = true;
         descriptor.requires_admin = action->requiresAdmin();
 

@@ -46,6 +46,10 @@ bool isRunWorkflowTool(const QString& tool_name) {
     return norm(tool_name) == QLatin1String("run_workflow");
 }
 
+bool isAppActionTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("sak_app_action");
+}
+
 bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
     if (!isProviderGatewayTool(request.tool_name)) {
         return false;
@@ -322,7 +326,7 @@ bool isKnownLocalTool(const QString& tool_name) {
     return isShellTool(name) || name == QLatin1String("take_screenshot") ||
            name == QLatin1String("download_file") || isPackageTool(name) ||
            isProviderGatewayTool(name) || isSessionSearchTool(name) || isSkillTool(name) ||
-           isDelegateSubagentTool(name) || isRunWorkflowTool(name);
+           isDelegateSubagentTool(name) || isRunWorkflowTool(name) || isAppActionTool(name);
 }
 
 bool isMutatingPackageOperation(const QString& operation) {
@@ -390,6 +394,13 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     // the launch itself grants no capability beyond the session.
     if (isRunWorkflowTool(request.tool_name)) {
         return allow(QStringLiteral("Workflow launch allowed (per-phase gates apply)"));
+    }
+    // Enumerating and running the app's own technician actions is allowed under every
+    // mode at the policy layer: listing is read-only, and the run handler enforces a
+    // per-action human gate + restore point for mutating/destructive/admin actions
+    // (using the resolved action descriptor), mirroring app_run_action.
+    if (isAppActionTool(request.tool_name)) {
+        return allow(QStringLiteral("App action tool allowed (per-action gate in handler)"));
     }
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =

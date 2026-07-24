@@ -159,6 +159,66 @@ private Q_SLOTS:
         QVERIFY(true);
     }
 
+    // sak_app_action "list" returns the seeded built-in action catalog with risk
+    // flags, so the assistant can enumerate the app's OWN technician actions headless.
+    void appActionListReturnsSeededCatalogWithRiskFlags() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
+                        {QStringLiteral("action_id"), QString()},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("list"));
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 7);
+
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found_verify = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QStringLiteral("action.verify_system_files")) {
+                found_verify = true;
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found_verify);
+    }
+
+    // Running a mutating app action in a chat/research (no-execution) session is
+    // refused by the per-action gate before the controller is ever touched.
+    void appActionRunBlockedInChatResearchSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("action.verify_system_files")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // An unknown app action id is reported cleanly, never dispatched.
+    void appActionRunRejectsUnknownId() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("action.does_not_exist")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("app_action_not_found"));
+    }
+
     void cleanup() {
         // Never leave the approval seam installed for the next case or production.
         aiApprovalPromptTestHook() = nullptr;

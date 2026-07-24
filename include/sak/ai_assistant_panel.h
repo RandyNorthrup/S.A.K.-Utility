@@ -16,6 +16,7 @@
 #include "sak/ai/ai_tool_turn.h"
 #include "sak/ai/ai_trace_store.h"
 #include "sak/ai/openai_responses_client.h"
+#include "sak/app_action_registry.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/widget_helpers.h"
 
@@ -52,6 +53,7 @@ class QVBoxLayout;
 
 namespace sak {
 
+class AppActionService;
 class ChocolateyManager;
 class ElevationBroker;
 class AiTranscriptView;
@@ -505,6 +507,20 @@ private:
     // sak_skill handler: operation "list" returns the skill catalog, "load"
     // returns the full guidance body for a skill_id. Read-only resource lookup.
     [[nodiscard]] QJsonObject runSkillTool(const QJsonObject& args) const;
+    // sak_app_action handler: "list" returns the app-action catalog (read-only);
+    // "run" executes one action by id headless, applying a human gate + restore
+    // point for mutating/destructive/admin actions before invoking.
+    [[nodiscard]] QJsonObject runAppActionTool(const QJsonObject& args);
+    [[nodiscard]] QJsonObject runAppActionRun(const QString& action_id,
+                                              const QJsonObject& action_args);
+    // Access-mode gate for a mutating/destructive/admin app action: returns an error
+    // object to abort (blocked/declined), or std::nullopt to proceed. Read-only
+    // actions and non-execution sessions are handled by the caller/policy.
+    [[nodiscard]] std::optional<QJsonObject> appActionRunGate(
+        const AppActionDescriptor& descriptor);
+    // Build the app-scoped AppActionService (on the GUI thread) and seed its actions
+    // into m_appActionRegistry exactly once. Idempotent.
+    void ensureAppActionService();
     [[nodiscard]] QJsonObject packageManagerQueryOperation(const QJsonObject& args,
                                                            const QString& operation,
                                                            const QString& query);
@@ -655,6 +671,7 @@ private:
     void registerOfflineDownloaderAvailabilityChecker();
     void registerProviderGatewayAvailabilityChecker();
     void registerSessionSearchAvailabilityChecker();
+    void registerAppActionAvailabilityChecker();
     void registerToolHandlers();
     void rebuildWorkflowDetailsView();
     [[nodiscard]] QString runDetailsText() const;
@@ -919,6 +936,11 @@ private:
     ai::CancellationToken m_activeToolRunToken;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
     std::unique_ptr<ai::SkillStore> m_skillStore;
+    // Headless command of the app's own technician actions: the registry is the
+    // enumerable/invokable surface the assistant's sak_app_action tool drives; the
+    // service owns the app-scoped QuickActionController that backs the seeded actions.
+    AppActionRegistry m_appActionRegistry;
+    std::unique_ptr<AppActionService> m_appActionService;
     // Test seam: when set, delegate_subagent uses this instead of the real OpenAI
     // model client factory, so the tool can be certified deterministically offline.
     ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;

@@ -15,6 +15,7 @@ private Q_SLOTS:
     void readOnlyPolicyAllowsSessionSearch();
     void skillToolAllowedUnderEveryPolicy();
     void delegateSubagentAllowedUnderEveryPolicy();
+    void appActionToolAllowedAtPolicyLayer();
     void clampToolPolicyBoundsToCeiling();
     void packagePolicyRequiresLeaseForInstall();
     void packageMutationBlockedWhenUserAskedForScan();
@@ -149,6 +150,23 @@ void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
         // run_workflow is allowed under every mode too; its phases self-gate.
         const auto workflow_decision = sak::ai::evaluateToolPolicy(policy, workflow_request);
         QVERIFY(workflow_decision.allowed);
+    }
+}
+
+void AiToolPolicyTests::appActionToolAllowedAtPolicyLayer() {
+    // sak_app_action is a known local tool, allowed at the policy layer under every
+    // mode; the per-action human gate + restore point live in the run handler (which
+    // reads the resolved action descriptor), mirroring app_run_action. This test only
+    // asserts the tool is recognized and not blocked as an unknown tool.
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("sak_app_action");
+    request.operation = QStringLiteral("list");
+
+    for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
+                              sak::ai::AiToolPolicy::ReadOnlyPc,
+                              sak::ai::AiToolPolicy::MutatingRequiresLease}) {
+        const auto decision = sak::ai::evaluateToolPolicy(policy, request);
+        QVERIFY(decision.allowed);
     }
 }
 

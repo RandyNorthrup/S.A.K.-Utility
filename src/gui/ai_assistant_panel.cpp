@@ -39,6 +39,7 @@
 #include "sak/ai/ai_workflow_store.h"
 #include "sak/ai/openai_responses_client.h"
 #include "sak/ai_transcript_view.h"
+#include "sak/app_action_service.h"
 #include "sak/app_paths.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
@@ -110,6 +111,7 @@
 #include <QSize>
 #include <QSizePolicy>
 #include <QSplitter>
+#include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QTextBrowser>
 #include <QTextCursor>
@@ -5515,7 +5517,8 @@ bool AiAssistantPanel::isAsyncBuiltInKind(ai::AiToolCallKind kind) {
     return kind == ai::AiToolCallKind::Download || kind == ai::AiToolCallKind::PackageManager ||
            kind == ai::AiToolCallKind::OfflineDownloader ||
            kind == ai::AiToolCallKind::ProviderGateway ||
-           kind == ai::AiToolCallKind::DelegateSubagent || kind == ai::AiToolCallKind::RunWorkflow;
+           kind == ai::AiToolCallKind::DelegateSubagent ||
+           kind == ai::AiToolCallKind::RunWorkflow || kind == ai::AiToolCallKind::AppAction;
 }
 
 QString AiAssistantPanel::builtInToolStatus(const ai::AiToolDispatcher::DispatchOutcome& outcome) {
@@ -6896,6 +6899,114 @@ QJsonObject AiAssistantPanel::runSkillTool(const QJsonObject& args) const {
 
     QJsonObject result = toolError(tr("Unknown sak_skill operation: %1").arg(operation));
     result[QStringLiteral("failure_class")] = QStringLiteral("invalid_operation");
+    return result;
+}
+
+QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
+    if (!m_appActionService) {
+        return toolError(tr("App action service is not available"));
+    }
+    const QString operation =
+        args.value(QStringLiteral("operation")).toString().trimmed().toLower();
+
+    if (operation.isEmpty() || operation == QLatin1String("list")) {
+        const QJsonArray catalog = m_appActionRegistry.toJsonCatalog();
+        QJsonObject result;
+        result[QStringLiteral("success")] = true;
+        result[QStringLiteral("operation")] = QStringLiteral("list");
+        result[QStringLiteral("action_count")] = catalog.size();
+        result[QStringLiteral("actions")] = catalog;
+        return result;
+    }
+
+    if (operation == QLatin1String("run")) {
+        const QString action_id = args.value(QStringLiteral("action_id")).toString().trimmed();
+        QJsonObject action_args;
+        const QString args_text = args.value(QStringLiteral("arguments")).toString().trimmed();
+        if (!args_text.isEmpty() && args_text != QLatin1String("{}")) {
+            QJsonParseError parse_error;
+            const QJsonDocument doc = QJsonDocument::fromJson(args_text.toUtf8(), &parse_error);
+            if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+                QJsonObject result = toolError(
+                    tr("sak_app_action arguments must be a JSON object string, e.g. \"{}\""));
+                result[QStringLiteral("failure_class")] = QStringLiteral("invalid_request");
+                return result;
+            }
+            action_args = doc.object();
+        }
+        return runAppActionRun(action_id, action_args);
+    }
+
+    QJsonObject result = toolError(tr("Unknown sak_app_action operation: %1").arg(operation));
+    result[QStringLiteral("failure_class")] = QStringLiteral("invalid_operation");
+    return result;
+}
+
+std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(
+    const AppActionDescriptor& descriptor) {
+    // Only actions that change the system are gated; a pure read-only action runs
+    // straight through.
+    if (!descriptor.mutating && !descriptor.destructive && !descriptor.requires_admin) {
+        return std::nullopt;
+    }
+    const QString preview = tr("Run app action '%1'%2")
+                                .arg(descriptor.title,
+                                     descriptor.requires_admin ? tr(" (requires administrator)")
+                                                               : QString());
+    // Mirror the command path's access-mode behavior: read-only session refuses;
+    // Assisted requires an explicit confirmation; Unattended offers a restore point.
+    const AccessMode mode = currentAccessMode();
+    if (mode == AccessMode::ChatAndResearch) {
+        QJsonObject result = toolError(
+            tr("App action '%1' changes the system and is blocked in a chat/research session")
+                .arg(descriptor.title));
+        result[QStringLiteral("failure_class")] = QStringLiteral("policy_blocked");
+        return result;
+    }
+    if (mode == AccessMode::AssistedFullAccess) {
+        if (!confirmCommandWithUser(tr("app action"), preview, true, false)) {
+            QJsonObject result =
+                toolError(tr("App action '%1' was declined").arg(descriptor.title));
+            result[QStringLiteral("failure_class")] = QStringLiteral("user_declined");
+            return result;
+        }
+        return std::nullopt;
+    }
+    if (!offerRestorePointIfNeeded(preview, true, descriptor.destructive)) {
+        QJsonObject result =
+            toolError(tr("App action '%1' aborted before a restore point could be made")
+                          .arg(descriptor.title));
+        result[QStringLiteral("failure_class")] = QStringLiteral("restore_point_declined");
+        return result;
+    }
+    return std::nullopt;
+}
+
+QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
+                                              const QJsonObject& action_args) {
+    const std::optional<AppActionDescriptor> descriptor = m_appActionRegistry.descriptor(action_id);
+    if (!descriptor.has_value()) {
+        QJsonObject result = toolError(tr("Unknown app action: %1").arg(action_id));
+        result[QStringLiteral("failure_class")] = QStringLiteral("app_action_not_found");
+        return result;
+    }
+
+    if (const std::optional<QJsonObject> blocked = appActionRunGate(*descriptor)) {
+        return *blocked;
+    }
+
+    appendLocalEvent(tr("Running app action: %1").arg(descriptor->title));
+    QString error;
+    const AppActionResult run = m_appActionRegistry.invoke(action_id, action_args, &error);
+    QJsonObject result;
+    result[QStringLiteral("success")] = run.success;
+    result[QStringLiteral("operation")] = QStringLiteral("run");
+    result[QStringLiteral("action_id")] = action_id;
+    result[QStringLiteral("message")] = run.message;
+    result[QStringLiteral("data")] = run.data;
+    if (!run.success && !error.isEmpty()) {
+        result[QStringLiteral("error")] = error;
+    }
     return result;
 }
 
@@ -8580,8 +8691,29 @@ void AiAssistantPanel::registerToolDispatcherHandlers() {
     m_toolDispatcher->clearHandlers();
     m_toolDispatcher->setLeaseManager(m_leaseManager.get());
     m_toolDispatcher->setHealthLedger(m_toolHealthLedger.get());
+    ensureAppActionService();
     registerToolAvailabilityCheckers();
     registerToolHandlers();
+}
+
+void AiAssistantPanel::ensureAppActionService() {
+    if (m_appActionService) {
+        return;
+    }
+    // Backup/output location for the file-writing actions (report/screenshots/keys):
+    // prefer the AI session artifact root, fall back to a writable app-data subdir.
+    QString backup_dir;
+    if (m_conversationStore) {
+        QString error;
+        backup_dir = m_conversationStore->artifactRootDirectory(&error).trimmed();
+    }
+    if (backup_dir.isEmpty()) {
+        backup_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                     QStringLiteral("/app_actions");
+    }
+    m_appActionService = std::make_unique<AppActionService>(backup_dir);
+    const int seeded = m_appActionService->registerInto(m_appActionRegistry);
+    appendLocalEvent(tr("Assistant app-action surface ready: %1 built-in actions").arg(seeded));
 }
 
 bool AiAssistantPanel::ensureToolDispatcherReady() {
@@ -8606,6 +8738,29 @@ void AiAssistantPanel::registerToolAvailabilityCheckers() {
     registerOfflineDownloaderAvailabilityChecker();
     registerProviderGatewayAvailabilityChecker();
     registerSessionSearchAvailabilityChecker();
+    registerAppActionAvailabilityChecker();
+}
+
+void AiAssistantPanel::registerAppActionAvailabilityChecker() {
+    m_toolDispatcher->registerAvailabilityChecker(
+        QStringLiteral("sak_app_action"),
+        [this](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
+            if (!m_appActionService) {
+                QJsonObject result =
+                    toolError(QStringLiteral("App action service is not available"));
+                result[QStringLiteral("failure_class")] = QStringLiteral("app_action_unavailable");
+                return result;
+            }
+            const QString op =
+                args.value(QStringLiteral("operation")).toString().trimmed().toLower();
+            if (op != QLatin1String("list") && op != QLatin1String("run")) {
+                QJsonObject result = toolError(
+                    QStringLiteral("sak_app_action operation must be \"list\" or \"run\""));
+                result[QStringLiteral("failure_class")] = QStringLiteral("invalid_request");
+                return result;
+            }
+            return QJsonObject{{QStringLiteral("success"), true}};
+        });
 }
 
 void AiAssistantPanel::registerDownloadFileAvailabilityChecker() {
@@ -8745,6 +8900,11 @@ void AiAssistantPanel::registerToolHandlers() {
                                       [this](const QJsonObject& args,
                                              const ai::AiToolPolicyDecision&) {
                                           return runRunWorkflowTool(args);
+                                      });
+    m_toolDispatcher->registerHandler(QStringLiteral("sak_app_action"),
+                                      [this](const QJsonObject& args,
+                                             const ai::AiToolPolicyDecision&) {
+                                          return runAppActionTool(args);
                                       });
 }
 
