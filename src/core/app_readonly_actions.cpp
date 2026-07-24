@@ -12,8 +12,11 @@
 #include "sak/advanced_search_worker.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
+#include "sak/diagnostic_types.h"
+#include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/partition_manager_types.h"
+#include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/worker_base.h"
@@ -357,6 +360,148 @@ AppActionResult searchFiles(const QJsonObject& args) {
     return result;
 }
 
+QJsonObject serializeCpu(const CpuInfo& cpu) {
+    return QJsonObject{{QStringLiteral("name"), cpu.name},
+                       {QStringLiteral("manufacturer"), cpu.manufacturer},
+                       {QStringLiteral("cores"), static_cast<int>(cpu.cores)},
+                       {QStringLiteral("threads"), static_cast<int>(cpu.threads)},
+                       {QStringLiteral("base_clock_mhz"), static_cast<int>(cpu.base_clock_mhz)},
+                       {QStringLiteral("max_clock_mhz"), static_cast<int>(cpu.max_clock_mhz)}};
+}
+
+QJsonObject serializeMemory(const MemorySummary& memory) {
+    return QJsonObject{{QStringLiteral("total_bytes"), static_cast<double>(memory.total_bytes)},
+                       {QStringLiteral("available_bytes"),
+                        static_cast<double>(memory.available_bytes)},
+                       {QStringLiteral("slots_used"), static_cast<int>(memory.slots_used)},
+                       {QStringLiteral("slots_total"), static_cast<int>(memory.slots_total)},
+                       {QStringLiteral("module_count"), memory.modules.size()}};
+}
+
+QJsonObject serializeStorageDevice(const StorageDeviceInfo& device) {
+    return QJsonObject{{QStringLiteral("model"), device.model},
+                       {QStringLiteral("size_bytes"), static_cast<double>(device.size_bytes)},
+                       {QStringLiteral("interface_type"), device.interface_type},
+                       {QStringLiteral("media_type"), device.media_type},
+                       {QStringLiteral("temperature_celsius"), device.temperature},
+                       {QStringLiteral("disk_number"), static_cast<int>(device.disk_number)}};
+}
+
+QJsonObject serializeGpu(const GpuInfo& gpu) {
+    return QJsonObject{{QStringLiteral("name"), gpu.name},
+                       {QStringLiteral("manufacturer"), gpu.manufacturer},
+                       {QStringLiteral("vram_bytes"), static_cast<double>(gpu.vram_bytes)},
+                       {QStringLiteral("driver_version"), gpu.driver_version}};
+}
+
+QJsonObject serializeHardwareInventory(const HardwareInventory& inventory) {
+    QJsonArray storage;
+    for (const StorageDeviceInfo& device : inventory.storage) {
+        storage.append(serializeStorageDevice(device));
+    }
+    QJsonArray gpus;
+    for (const GpuInfo& gpu : inventory.gpus) {
+        gpus.append(serializeGpu(gpu));
+    }
+    return QJsonObject{
+        {QStringLiteral("cpu"), serializeCpu(inventory.cpu)},
+        {QStringLiteral("memory"), serializeMemory(inventory.memory)},
+        {QStringLiteral("storage"), storage},
+        {QStringLiteral("gpus"), gpus},
+        {QStringLiteral("motherboard"),
+         QJsonObject{{QStringLiteral("manufacturer"), inventory.motherboard.manufacturer},
+                     {QStringLiteral("product"), inventory.motherboard.product},
+                     {QStringLiteral("bios_version"), inventory.motherboard.bios_version}}},
+        {QStringLiteral("battery"),
+         QJsonObject{{QStringLiteral("present"), inventory.battery.present},
+                     {QStringLiteral("health_percent"), inventory.battery.health_percent},
+                     {QStringLiteral("status"), inventory.battery.status}}},
+        {QStringLiteral("os_name"), inventory.os_name},
+        {QStringLiteral("os_version"), inventory.os_version},
+        {QStringLiteral("os_build"), inventory.os_build},
+        {QStringLiteral("os_architecture"), inventory.os_architecture},
+        {QStringLiteral("uptime_seconds"), static_cast<double>(inventory.uptime_seconds)}};
+}
+
+AppActionResult hardwareScan(const QJsonObject&) {
+    // scan() blocks and emits scanComplete inline on THIS thread, so a direct
+    // connection captures the result without any event loop.
+    HardwareInventoryScanner scanner;
+    HardwareInventory inventory;
+    bool captured = false;
+    QObject::connect(&scanner,
+                     &HardwareInventoryScanner::scanComplete,
+                     &scanner,
+                     [&inventory, &captured](const HardwareInventory& result) {
+                         inventory = result;
+                         captured = true;
+                     });
+    scanner.scan();
+    if (!captured) {
+        return {false, QStringLiteral("Hardware scan did not complete"), {}};
+    }
+    return {true,
+            QStringLiteral("Hardware inventory collected"),
+            serializeHardwareInventory(inventory)};
+}
+
+QString smartHealthToString(SmartHealthStatus status) {
+    switch (status) {
+    case SmartHealthStatus::Healthy:
+        return QStringLiteral("healthy");
+    case SmartHealthStatus::Warning:
+        return QStringLiteral("warning");
+    case SmartHealthStatus::Critical:
+        return QStringLiteral("critical");
+    case SmartHealthStatus::Unknown:
+        break;
+    }
+    return QStringLiteral("unknown");
+}
+
+QJsonObject serializeSmartReport(const SmartReport& report) {
+    QJsonArray warnings;
+    for (const QString& warning : report.warnings) {
+        warnings.append(warning);
+    }
+    QJsonArray recommendations;
+    for (const QString& rec : report.recommendations) {
+        recommendations.append(rec);
+    }
+    return QJsonObject{
+        {QStringLiteral("device_path"), report.device_path},
+        {QStringLiteral("model"), report.model},
+        {QStringLiteral("serial_number"), report.serial_number},
+        {QStringLiteral("size_bytes"), static_cast<double>(report.size_bytes)},
+        {QStringLiteral("interface_type"), report.interface_type},
+        {QStringLiteral("overall_health"), smartHealthToString(report.overall_health)},
+        {QStringLiteral("smart_status"), report.smart_status},
+        {QStringLiteral("power_on_hours"), static_cast<double>(report.power_on_hours)},
+        {QStringLiteral("temperature_celsius"), report.temperature_celsius},
+        {QStringLiteral("reallocated_sectors"), static_cast<double>(report.reallocated_sectors)},
+        {QStringLiteral("pending_sectors"), static_cast<double>(report.pending_sectors)},
+        {QStringLiteral("wear_level_percent"), report.wear_level_percent},
+        {QStringLiteral("warnings"), warnings},
+        {QStringLiteral("recommendations"), recommendations}};
+}
+
+AppActionResult smartScan(const QJsonObject&) {
+    // analyzeAll() blocks (runs bundled smartctl per drive) and populates reports().
+    // Requires admin for full raw-disk data; without it a drive whose smartctl read
+    // fails is dropped (drive_count shrinks), so smartctl_available conveys the
+    // degraded state. It degrades gracefully -- it never prompts for elevation.
+    SmartDiskAnalyzer analyzer;
+    analyzer.analyzeAll();
+    QJsonArray drives;
+    for (const SmartReport& report : analyzer.reports()) {
+        drives.append(serializeSmartReport(report));
+    }
+    QJsonObject data{{QStringLiteral("drive_count"), drives.size()},
+                     {QStringLiteral("smartctl_available"), analyzer.isSmartctlAvailable()},
+                     {QStringLiteral("drives"), drives}};
+    return {true, QStringLiteral("Analyzed SMART data for %1 drive(s)").arg(drives.size()), data};
+}
+
 AppActionDescriptor makeDescriptor(const QString& id,
                                    const QString& title,
                                    const QString& description,
@@ -484,6 +629,21 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        QStringLiteral("search"),
                        searchParamsSchema()),
         searchFiles);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.hardware_scan"),
+                       QStringLiteral("Scan hardware inventory"),
+                       QStringLiteral("Enumerate CPU/memory/storage/GPU/motherboard/battery/OS"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        hardwareScan);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.smart_scan"),
+                       QStringLiteral("Scan drive SMART health"),
+                       QStringLiteral(
+                           "Read SMART health for each drive (needs admin for full data)"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        smartScan);
 
     return registered;
 }

@@ -81,8 +81,10 @@ SmartDiskAnalyzer::SmartDiskAnalyzer(QObject* parent) : QObject(parent) {}
 // ============================================================================
 
 void SmartDiskAnalyzer::analyzeAll() {
-    Q_ASSERT(!m_reports.empty());
-    Q_ASSERT(!m_reports.isEmpty());
+    // NOTE: m_reports is (re)built by this call and is legitimately empty on a fresh
+    // analyzer, so it must NOT be asserted non-empty here -- the prior asserts were
+    // an inverted precondition that crashed debug builds the first time a
+    // standalone analyzer ran (e.g. the headless diagnostics.smart_scan op).
     m_cancelled.store(false, std::memory_order_relaxed);
     m_reports.clear();
 
@@ -294,7 +296,9 @@ SmartReport SmartDiskAnalyzer::parseSmartctlOutput(const QByteArray& json_data,
 }
 
 void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, SmartReport& report) {
-    Q_ASSERT(!ata_smart_obj.isEmpty());
+    // An empty/absent object is valid (a drive may expose no SATA table): the loop
+    // below simply produces no attributes. Do not assert non-empty -- malformed or
+    // minimal smartctl output must degrade, not crash a debug build.
     const QJsonArray table = ata_smart_obj.value("table").toArray();
 
     report.attributes.reserve(table.size());
@@ -339,7 +343,9 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 }
 
 void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport& report) {
-    Q_ASSERT(!nvme_obj.isEmpty());
+    // An empty/absent object is valid (a non-NVMe or minimal drive): every field
+    // below falls back to its default. Do not assert non-empty (debug-crash on
+    // malformed input); degrade gracefully instead.
     NvmeHealthInfo nvme;
 
     nvme.percentage_used = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());

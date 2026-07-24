@@ -250,6 +250,9 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
     }
 
     // W1a: identify_image drives the app's FileImageSource detection on a real
