@@ -1567,6 +1567,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/bundled_tools_manager.cpp
         # W1c email.read_mbox: the MBOX parser (synchronous read API) is driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/mbox_parser.cpp
+        # W2a email.export_mbox: the export worker (synchronous, signal-completes inline)
+        # is driven directly. Its writer/parser chain must link even though the MBOX-EML
+        # test path only exercises the EmlWriter.
+        ${CMAKE_SOURCE_DIR}/src/core/app_mutating_actions.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/pdf_email_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/pst_parser.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/email_attachment_saver.cpp
         # Stub the raw/image-filesystem bridge (search never uses it) so the whole
         # APFS/HFS+/ext driver stays out of this test link.
         ${CMAKE_CURRENT_SOURCE_DIR}/stubs/file_management_bridge_search_stub.cpp
@@ -1603,6 +1613,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/hardware_inventory_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/smart_disk_analyzer.h
         ${CMAKE_SOURCE_DIR}/include/sak/mbox_parser.h
+        ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

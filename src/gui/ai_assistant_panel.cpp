@@ -40,6 +40,7 @@
 #include "sak/ai/openai_responses_client.h"
 #include "sak/ai_transcript_view.h"
 #include "sak/app_action_service.h"
+#include "sak/app_mutating_actions.h"
 #include "sak/app_paths.h"
 #include "sak/app_readonly_actions.h"
 #include "sak/chocolatey_manager.h"
@@ -8718,9 +8719,13 @@ void AiAssistantPanel::ensureAppActionService() {
     m_appActionService = std::make_unique<AppActionService>(backup_dir);
     const int seeded = m_appActionService->registerInto(m_appActionRegistry);
     const int read_only = registerReadOnlyAppActionsInto(m_appActionRegistry);
-    appendLocalEvent(tr("Assistant app-action surface ready: %1 built-in actions, %2 read-only ops")
-                         .arg(seeded)
-                         .arg(read_only));
+    const int mutating = registerMutatingAppActionsInto(m_appActionRegistry);
+    appendLocalEvent(
+        tr("Assistant app-action surface ready: %1 built-in actions, %2 read-only ops, %3 "
+           "mutating ops")
+            .arg(seeded)
+            .arg(read_only)
+            .arg(mutating));
 }
 
 bool AiAssistantPanel::ensureToolDispatcherReady() {

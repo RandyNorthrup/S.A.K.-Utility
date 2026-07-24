@@ -473,6 +473,220 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
     }
 
+    // ------------------------------------------------------------------
+    // W2a: email.export_mbox -- the first MUTATING app action. The critical new
+    // proofs are (1) it is listed as mutating (so the gate WILL fire), (2) a
+    // chat/research session refuses it, (3) when gated + approved it actually runs
+    // the real export and writes files, and (4)/(5) its guards fail closed.
+    // ------------------------------------------------------------------
+
+    // Writes the same deterministic two-message mailbox the read_mbox test uses.
+    static void writeSampleMbox(const QString& path) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray mbox =
+            "From alice@example.com Mon Jan  1 00:00:00 2024\n"
+            "From: alice@example.com\n"
+            "To: bob@example.com\n"
+            "Subject: First message\n"
+            "Date: Mon, 1 Jan 2024 00:00:00 +0000\n"
+            "\n"
+            "Body one.\n"
+            "\n"
+            "From carol@example.com Mon Jan  1 00:01:00 2024\n"
+            "From: carol@example.com\n"
+            "Subject: Second message\n"
+            "\n"
+            "Body two.\n";
+        QCOMPARE(file.write(mbox), static_cast<qint64>(mbox.size()));
+    }
+
+    // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate
+    // enforces the human-gate/restore path rather than skipping it.
+    void exportMboxListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("email.export_mbox")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W2a(2): a chat/research session refuses the mutating op (policy_blocked). This
+    // is the core guarantee -- a mutating app action cannot run read-only.
+    void exportMboxBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeSampleMbox(path);
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("path"), path},
+                            {QStringLiteral("output_path"), dir.filePath(QStringLiteral("out"))}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        // Nothing was written: the output directory must not even exist.
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("out"))).exists());
+    }
+
+    // W2a(3): in Unattended, the gate offers a restore point (the hook proceeds) and
+    // the REAL export runs end to end -- two .eml files land on disk. Proves the gate
+    // was actually traversed (restore-point prompt recorded), not bypassed.
+    void exportMboxRunsWhenGatedInUnattended() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeSampleMbox(path);
+        const QString out_dir = dir.filePath(QStringLiteral("exported"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_path"), out_dir},
+                                      {QStringLiteral("format"), QStringLiteral("eml")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("items_exported")).toInt(), 2);
+        // The gate was traversed, not skipped.
+        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+        // Two message files actually written to disk.
+        const QStringList eml = QDir(out_dir).entryList(QStringList{QStringLiteral("*.eml")},
+                                                        QDir::Files);
+        QCOMPARE(eml.size(), 2);
+    }
+
+    // W2a(4): both source and destination reject UNC/network/device paths, so prompt
+    // injection cannot steer the export into an SMB handshake or a write to a share.
+    void exportMboxRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QString unc = QStringLiteral("\\\\attacker.example.com\\share\\x.mbox");
+        const QString unc_out = QStringLiteral("//attacker.example.com/share/out");
+        struct Case {
+            QString path;
+            QString output_path;
+        };
+        const QVector<Case> cases = {{unc, QStringLiteral("C:/tmp/out")},
+                                     {QStringLiteral("C:/tmp/in.mbox"), unc_out}};
+        for (const Case& c : cases) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("path"), c.path},
+                                          {QStringLiteral("output_path"), c.output_path}})
+                    .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
+                            {QStringLiteral("arguments"), args}});
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("network")));
+        }
+    }
+
+    // W2a(5): missing required args fail cleanly (never opens a parser or writes).
+    void exportMboxMissingArgsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"x.mbox\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("output_path")));
+    }
+
+    // W2a(6): the export refuses a NON-EMPTY output directory, so it can never
+    // overwrite a pre-existing file (the html/pdf writers do not exists-check). This
+    // is what keeps the op honestly non-destructive. Proves the existing file is
+    // left byte-for-byte intact and nothing was written.
+    void exportMboxRefusesNonEmptyOutputDir() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeSampleMbox(path);
+        const QString out_dir = dir.filePath(QStringLiteral("dest"));
+        QVERIFY(QDir().mkpath(out_dir));
+        const QString existing = out_dir + QStringLiteral("/keepme.txt");
+        {
+            QFile file(existing);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("precious\n"), static_cast<qint64>(9));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("output_path"), out_dir}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("directory")));
+        // Pre-existing file untouched, and no message files were written.
+        QFile check(existing);
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("precious\n"));
+        const QStringList produced = QDir(out_dir).entryList(
+            QStringList{QStringLiteral("*.eml"), QStringLiteral("*.html"), QStringLiteral("*.pdf")},
+            QDir::Files);
+        QCOMPARE(produced.size(), 0);
+    }
+
     void cleanup() {
         // Never leave the approval seam installed for the next case or production.
         aiApprovalPromptTestHook() = nullptr;

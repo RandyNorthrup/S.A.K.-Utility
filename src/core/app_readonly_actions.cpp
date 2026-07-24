@@ -10,6 +10,7 @@
 
 #include "sak/advanced_search_types.h"
 #include "sak/advanced_search_worker.h"
+#include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
 #include "sak/diagnostic_types.h"
@@ -50,11 +51,6 @@ constexpr int kSearchMaxResultsCeiling = 5000;
 constexpr int kDefaultMboxLimit = 200;
 constexpr int kMboxLimitCeiling = 1000;
 constexpr int kMaxHeaderChars = 1000;
-// Cap the MBOX size a headless read will index: readMessages() builds an offset
-// for EVERY "From " line across the whole file regardless of limit, so an
-// adversarially dense multi-GB file (prompt-injected path) could OOM the process.
-// Real single-folder mailboxes fit well under this; larger ones use the GUI panel.
-constexpr qint64 kMaxMboxBytes = 512LL * 1024 * 1024;
 
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
@@ -259,19 +255,6 @@ QJsonObject serializeMatch(const SearchMatch& match) {
                        {QStringLiteral("line_content"), clampLine(match.line_content)},
                        {QStringLiteral("match_start"), match.match_start},
                        {QStringLiteral("match_end"), match.match_end}};
-}
-
-bool isNetworkOrDevicePath(const QString& path) {
-    // Reject UNC (\\server\share) and Win32 device namespaces (\\.\, \\?\). An
-    // ungated read-only op must not be steerable (prompt injection) into opening an
-    // SMB connection to an attacker host -- QFileInfo::exists() alone would trigger
-    // NTLM auth and leak the user's hash. Windows treats ANY two leading separators
-    // as a UNC/device root, including mixed forms (\/, /\), and Qt normalizes '/' to
-    // '\\', so reject any pair of leading separators regardless of type.
-    const auto isSeparator = [](QChar ch) {
-        return ch == QLatin1Char('\\') || ch == QLatin1Char('/');
-    };
-    return path.size() >= 2 && isSeparator(path.at(0)) && isSeparator(path.at(1));
 }
 
 SearchConfig searchConfigFromArgs(const QJsonObject& args,
