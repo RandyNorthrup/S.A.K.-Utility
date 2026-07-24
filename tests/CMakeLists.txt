@@ -1544,6 +1544,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/actions/generate_system_report_action.cpp
         ${CMAKE_SOURCE_DIR}/src/actions/screenshot_settings_action.cpp
         ${CMAKE_SOURCE_DIR}/src/actions/backup_bitlocker_keys_action.cpp
+        # W1a read-only app ops + the headless services they drive.
+        ${CMAKE_SOURCE_DIR}/src/core/app_readonly_actions.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/vulnerability_scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/image_source.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/decompressor_factory.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/streaming_decompressor.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/file_hash.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/gzip_decompressor.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/bzip2_decompressor.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/xz_decompressor.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/detachable_log_window.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/follow_scroll_controller.cpp
         # Q_OBJECT headers listed explicitly for AUTOMOC (this project moc's
@@ -1566,6 +1579,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/actions/generate_system_report_action.h
         ${CMAKE_SOURCE_DIR}/include/sak/actions/screenshot_settings_action.h
         ${CMAKE_SOURCE_DIR}/include/sak/actions/backup_bitlocker_keys_action.h
+        ${CMAKE_SOURCE_DIR}/include/sak/storage_inventory_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/image_source.h
+        ${CMAKE_SOURCE_DIR}/include/sak/streaming_decompressor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/gzip_decompressor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/bzip2_decompressor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/xz_decompressor.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

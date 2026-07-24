@@ -408,16 +408,21 @@ void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
     }
 }
 
-void applyRawFileSystemDetection(PartitionInventory* inventory) {
+void applyRawFileSystemDetection(PartitionInventory* inventory, bool allow_elevation) {
     if (!inventory) {
         return;
     }
 
     std::unique_ptr<ElevationBroker> elevatedBroker;
+    // When elevation is not permitted the broker is never created: the raw probe
+    // still runs both local (unprivileged) reads, but the elevated fallback is a
+    // cheap no-op ("broker unavailable"), so a foreign partition whose local read
+    // is denied keeps an empty file_system + a warning instead of triggering a
+    // UAC prompt / elevated helper.
     bool elevatedProbeUnavailable = false;
     for (auto& disk : inventory->disks) {
         for (auto& partition : disk.partitions) {
-            if (!elevatedBroker && needsRawFileSystemDetection(partition)) {
+            if (allow_elevation && !elevatedBroker && needsRawFileSystemDetection(partition)) {
                 elevatedBroker = std::make_unique<ElevationBroker>();
             }
             applyRawFileSystemDetectionToPartition(
@@ -487,7 +492,7 @@ PartitionInventory StorageInventoryWorker::scan() {
     return inventory;
 }
 
-PartitionInventory StorageInventoryWorker::scanCurrentSystem() {
+PartitionInventory StorageInventoryWorker::scanCurrentSystem(bool allow_elevation) {
     const auto result =
         runPowerShell(inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true);
     if (!result.succeeded()) {
@@ -500,7 +505,7 @@ PartitionInventory StorageInventoryWorker::scanCurrentSystem() {
     }
 
     auto inventory = parseInventoryJson(result.std_out.toUtf8());
-    applyRawFileSystemDetection(&inventory);
+    applyRawFileSystemDetection(&inventory, allow_elevation);
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }

@@ -41,6 +41,7 @@
 #include "sak/ai_transcript_view.h"
 #include "sak/app_action_service.h"
 #include "sak/app_paths.h"
+#include "sak/app_readonly_actions.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/elevation_broker.h"
@@ -6944,9 +6945,12 @@ QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
 
 std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(
     const AppActionDescriptor& descriptor) {
-    // Only actions that change the system are gated; a pure read-only action runs
-    // straight through.
-    if (!descriptor.mutating && !descriptor.destructive && !descriptor.requires_admin) {
+    // Only an explicitly read-only action with no risk flags runs straight through.
+    // Requiring read_only==true (not merely the absence of risk flags) is
+    // fail-closed: a future action left all-false but NOT marked read_only still
+    // hits the gate instead of silently skipping it.
+    if (descriptor.read_only && !descriptor.mutating && !descriptor.destructive &&
+        !descriptor.requires_admin) {
         return std::nullopt;
     }
     const QString preview = tr("Run app action '%1'%2")
@@ -8713,7 +8717,10 @@ void AiAssistantPanel::ensureAppActionService() {
     }
     m_appActionService = std::make_unique<AppActionService>(backup_dir);
     const int seeded = m_appActionService->registerInto(m_appActionRegistry);
-    appendLocalEvent(tr("Assistant app-action surface ready: %1 built-in actions").arg(seeded));
+    const int read_only = registerReadOnlyAppActionsInto(m_appActionRegistry);
+    appendLocalEvent(tr("Assistant app-action surface ready: %1 built-in actions, %2 read-only ops")
+                         .arg(seeded)
+                         .arg(read_only));
 }
 
 bool AiAssistantPanel::ensureToolDispatcherReady() {

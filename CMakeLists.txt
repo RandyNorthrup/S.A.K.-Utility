@@ -338,6 +338,7 @@ set(CORE_SOURCES
     src/core/app_action_registry.cpp
     src/core/app_action_bridge.cpp
     src/core/app_action_service.cpp
+    src/core/app_readonly_actions.cpp
     include/sak/app_action_service.h
     src/core/hardware_inventory_scanner.cpp
     src/core/smart_disk_analyzer.cpp

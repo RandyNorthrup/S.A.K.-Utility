@@ -19,7 +19,14 @@ public:
     explicit StorageInventoryWorker(QObject* parent = nullptr);
 
     [[nodiscard]] PartitionInventory scan();
-    [[nodiscard]] static PartitionInventory scanCurrentSystem();
+
+    /// Scan disks/partitions/volumes on this machine.
+    /// @param allow_elevation when false, raw file-system probing of foreign
+    /// partitions never escalates via the elevation broker (no UAC prompt, no
+    /// elevated helper): such partitions simply keep an empty file_system and a
+    /// warning. Headless/read-only callers (e.g. the AI assistant) pass false so
+    /// a "read-only" inventory can never silently trigger a privilege escalation.
+    [[nodiscard]] static PartitionInventory scanCurrentSystem(bool allow_elevation = true);
     [[nodiscard]] static PartitionInventory parseInventoryJson(const QByteArray& json_data);
     [[nodiscard]] static QString inventoryPowerShellScript();
 

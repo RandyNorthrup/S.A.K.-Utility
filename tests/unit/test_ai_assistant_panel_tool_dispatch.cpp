@@ -22,11 +22,14 @@
 #include "sak/ai_assistant_panel.h"
 
 #include <QComboBox>
+#include <QFile>
 #include <QJsonArray>
 #include <QSemaphore>
+#include <QSet>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
 
@@ -217,6 +220,101 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("app_action_not_found"));
+    }
+
+    // W1a: the read-only technician ops are listed alongside the QuickActions with
+    // read_only=true and mutating=false, so the per-action human gate is skipped.
+    void readOnlyOpsAreListedAsReadOnly() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
+                        {QStringLiteral("action_id"), QString()},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        // 7 built-in QuickActions + 4 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 11);
+
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        QSet<QString> read_only_ids;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("read_only")).toBool()) {
+                QVERIFY(!action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                read_only_ids.insert(action.value(QStringLiteral("id")).toString());
+            }
+        }
+        QVERIFY(read_only_ids.contains(QStringLiteral("partition.list_inventory")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
+    }
+
+    // W1a: identify_image drives the app's FileImageSource detection on a real
+    // file -- deterministic, reads no system or network state.
+    void identifyImageDetectsGzip() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("sample.img.gz"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            const QByteArray gz = QByteArray::fromHex("1f8b0800000000000003") +
+                                  QByteArray(64, '\0');
+            QCOMPARE(file.write(gz), static_cast<qint64>(gz.size()));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("format")).toString(), QStringLiteral("gzip"));
+        QVERIFY(data.value(QStringLiteral("is_compressed")).toBool());
+        QVERIFY(data.value(QStringLiteral("extension_recognized")).toBool());
+        QCOMPARE(data.value(QStringLiteral("detection")).toString(), QStringLiteral("extension"));
+        QCOMPARE(static_cast<qint64>(data.value(QStringLiteral("size_bytes")).toDouble()),
+                 static_cast<qint64>(74));
+    }
+
+    // W1a: a read-only op runs even in a chat/research session -- the per-action
+    // gate is skipped because it changes nothing (never policy_blocked).
+    void readOnlyOpRunsInChatResearchSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("blank.img"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(QByteArray(512, '\0')), static_cast<qint64>(512));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));
+    }
+
+    // W1a: identify_image with no path fails cleanly (never dereferences).
+    void identifyImageMissingPathFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("path")));
     }
 
     void cleanup() {
