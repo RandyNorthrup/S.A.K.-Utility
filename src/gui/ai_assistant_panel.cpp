@@ -6944,22 +6944,32 @@ QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
     return result;
 }
 
+namespace {
+// An action runs straight through the gate only if it is explicitly read-only AND
+// carries no risk flag. Requiring read_only==true (not merely the absence of risk
+// flags) is fail-closed: a future action left all-false but NOT marked read_only
+// still hits the gate instead of silently skipping it.
+bool isUngatedReadOnlyAction(const AppActionDescriptor& descriptor) {
+    return descriptor.read_only && !descriptor.mutating && !descriptor.destructive &&
+           !descriptor.requires_admin && !descriptor.catastrophic;
+}
+}  // namespace
+
 std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(
     const AppActionDescriptor& descriptor) {
-    // Only an explicitly read-only action with no risk flags runs straight through.
-    // Requiring read_only==true (not merely the absence of risk flags) is
-    // fail-closed: a future action left all-false but NOT marked read_only still
-    // hits the gate instead of silently skipping it.
-    if (descriptor.read_only && !descriptor.mutating && !descriptor.destructive &&
-        !descriptor.requires_admin) {
+    if (isUngatedReadOnlyAction(descriptor)) {
         return std::nullopt;
     }
     const QString preview = tr("Run app action '%1'%2")
                                 .arg(descriptor.title,
                                      descriptor.requires_admin ? tr(" (requires administrator)")
                                                                : QString());
-    // Mirror the command path's access-mode behavior: read-only session refuses;
-    // Assisted requires an explicit confirmation; Unattended offers a restore point.
+    // Mirror the command path's access-mode behavior: a read-only session refuses any
+    // change; Assisted confirms every action; Unattended offers a restore point for a
+    // destructive action -- EXCEPT a catastrophic action (disk wipe, partition apply,
+    // image flash), which ALWAYS requires an explicit human confirm even in Unattended
+    // (a restore point cannot undo a flashed/repartitioned disk).
+    const bool catastrophic = descriptor.catastrophic;
     const AccessMode mode = currentAccessMode();
     if (mode == AccessMode::ChatAndResearch) {
         QJsonObject result = toolError(
@@ -6968,8 +6978,8 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(
         result[QStringLiteral("failure_class")] = QStringLiteral("policy_blocked");
         return result;
     }
-    if (mode == AccessMode::AssistedFullAccess) {
-        if (!confirmCommandWithUser(tr("app action"), preview, true, false)) {
+    if (catastrophic || mode == AccessMode::AssistedFullAccess) {
+        if (!confirmCommandWithUser(tr("app action"), preview, true, catastrophic)) {
             QJsonObject result =
                 toolError(tr("App action '%1' was declined").arg(descriptor.title));
             result[QStringLiteral("failure_class")] = QStringLiteral("user_declined");

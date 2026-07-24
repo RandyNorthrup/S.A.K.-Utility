@@ -45,6 +45,9 @@ struct AppActionDescriptor {
     bool mutating{false};        // changes system state or files
     bool destructive{false};     // potential data loss / irreversible
     bool requires_admin{false};  // needs elevation
+    bool catastrophic{false};    // irreversible + high-blast-radius (disk wipe,
+                                 // partition apply, image flash); ALWAYS forces an
+                                 // explicit human confirm, even in Unattended
 };
 
 /// Invoke thunk: validated arguments in, structured result out. The thunk runs the

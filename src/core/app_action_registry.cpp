@@ -16,6 +16,7 @@ QJsonObject appActionDescriptorToJson(const AppActionDescriptor& descriptor) {
         {QStringLiteral("mutating"), descriptor.mutating},
         {QStringLiteral("destructive"), descriptor.destructive},
         {QStringLiteral("requires_admin"), descriptor.requires_admin},
+        {QStringLiteral("catastrophic"), descriptor.catastrophic},
     };
 }
 

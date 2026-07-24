@@ -891,6 +891,87 @@ private Q_SLOTS:
                     .contains(QStringLiteral("category_mapping")));
     }
 
+    // ------------------------------------------------------------------
+    // W2c: the CATASTROPHIC gate tier for app actions. A catastrophic action
+    // (disk wipe / partition apply / image flash) must ALWAYS force an explicit
+    // human confirm -- even in Unattended, where a merely-destructive action only
+    // gets a restore-point offer. Exercised directly against appActionRunGate with
+    // synthetic descriptors (no catastrophic op is registered yet).
+    // ------------------------------------------------------------------
+
+    static AppActionDescriptor riskyDescriptor(bool destructive, bool catastrophic) {
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.risky");
+        descriptor.title = QStringLiteral("Test risky action");
+        descriptor.category = QStringLiteral("test");
+        descriptor.read_only = false;
+        descriptor.mutating = true;
+        descriptor.destructive = destructive;
+        descriptor.requires_admin = false;
+        descriptor.catastrophic = catastrophic;
+        return descriptor;
+    }
+
+    // W2c(1): a catastrophic action in Unattended forces a confirm (not just a
+    // restore-point offer); approving it lets the action proceed.
+    void catastrophicAppActionForcesConfirmEvenInUnattended() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // approves "Approve AI Command"
+        const std::optional<QJsonObject> blocked =
+            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
+        QVERIFY(!blocked.has_value());  // allowed after the forced confirm
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 1);
+    }
+
+    // W2c(2): a merely-destructive (non-catastrophic) action in Unattended keeps the
+    // low-friction path -- a restore-point offer, no mandatory confirm.
+    void destructiveNonCatastrophicUnattendedOffersRestoreNotConfirm() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const std::optional<QJsonObject> blocked =
+            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/false));
+        QVERIFY(!blocked.has_value());
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 0);
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
+    }
+
+    // W2c(3): declining the forced confirm on a catastrophic action blocks it
+    // (user_declined), even in Unattended.
+    void catastrophicAppActionDeclinedBlocks() {
+        AiAssistantPanel panel;
+        setUnattended(panel);
+        QStringList titles;
+        // Decline every prompt (Cancel) so the forced confirm is refused.
+        aiApprovalPromptTestHook() = [&titles](const QString& title, const QString&) -> int {
+            titles.append(title);
+            return 3;  // ApprovalPromptChoice::Cancel
+        };
+        const std::optional<QJsonObject> blocked =
+            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
+        QVERIFY(blocked.has_value());
+        QCOMPARE(blocked->value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("user_declined"));
+        QVERIFY(countTitles(titles, QStringLiteral("Approve AI Command")) >= 1);
+    }
+
+    // W2c(4): the catastrophic flag is surfaced in the catalog so the model can see it.
+    void catalogExposesCatastrophicFlag() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        QVERIFY(!actions.isEmpty());
+        // Every catalog entry carries the (default-false) catastrophic field.
+        for (const auto& value : actions) {
+            QVERIFY(value.toObject().contains(QStringLiteral("catastrophic")));
+        }
+    }
+
     void cleanup() {
         // Never leave the approval seam installed for the next case or production.
         aiApprovalPromptTestHook() = nullptr;
