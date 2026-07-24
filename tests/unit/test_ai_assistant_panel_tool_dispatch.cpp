@@ -234,8 +234,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 4 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 11);
+        // 7 built-in QuickActions + 9 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 12);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -248,6 +248,7 @@ private Q_SLOTS:
             }
         }
         QVERIFY(read_only_ids.contains(QStringLiteral("partition.list_inventory")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("partition.preview_operation")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
@@ -1144,6 +1145,111 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("image_path")));
+    }
+
+    // W2e: preview_operation with no 'operation' fails cleanly (never plans).
+    void previewOperationMissingOperationFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"disk_number\":0}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("operation")));
+    }
+
+    // W2e: an unsupported operation name is refused with the supported list, never
+    // mapped to an enum by accident.
+    void previewOperationRejectsUnsupportedType() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"operation\":\"frobnicate\",\"disk_number\":0}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("Unsupported")));
+    }
+
+    // W2e: a valid operation type with no disk_number fails cleanly.
+    void previewOperationMissingDiskNumberFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"operation\":\"delete\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("disk_number")));
+    }
+
+    // W2e: preview drives the app's real PartitionOperationPlanner + safety
+    // validator over a fresh no-elevation inventory. It is read-only and ungated,
+    // so it runs even in a chat/research session, and a nonexistent target disk is
+    // reported as BLOCKED (can_apply=false) -- a successful preview whose answer is
+    // "not allowed", never a dispatch of any mutation.
+    void previewOperationBlocksNonexistentDiskUngated() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"operation\":\"delete\",\"disk_number\":99999,"
+                            "\"partition_number\":1}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("can_apply")).toBool());
+        QVERIFY(data.value(QStringLiteral("blocker_count")).toInt() >= 1);
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("BLOCKED")));
+    }
+
+    // W2e: a partition-scoped op (format) is validated on the PARTITION path even
+    // when partition_number is omitted -- so it is BLOCKED (partition/disk not
+    // found), never falsely reported ALLOWED via the rule-less whole-disk path.
+    // Deterministic on any machine: with disk 0 present the block is
+    // "partition not found"; without it, "disk not found". Either way can_apply
+    // must be false -- the old arg-inference bug reported can_apply=true here.
+    void previewPartitionScopedOpWithoutPartitionIsBlocked() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"operation\":\"format\",\"disk_number\":0}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("can_apply")).toBool());
+        QVERIFY(data.value(QStringLiteral("blocker_count")).toInt() >= 1);
+    }
+
+    // W2e: a negative size/offset is a malformed request, refused before any UB
+    // floating-to-unsigned cast (never silently coerced to a huge value).
+    void previewOperationRejectsNegativeByteCount() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"operation\":\"create\",\"disk_number\":0,\"size_bytes\":-1}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("size_bytes")));
     }
 
     void cleanup() {

@@ -19,6 +19,7 @@
 #include "sak/image_source.h"
 #include "sak/mbox_parser.h"
 #include "sak/partition_manager_types.h"
+#include "sak/partition_operation_planner.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
@@ -32,7 +33,10 @@
 #include <QVector>
 
 #include <algorithm>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 
 namespace sak {
 
@@ -44,6 +48,7 @@ namespace {
 constexpr int kMaxListedPrograms = 500;
 constexpr int kMaxReportedFindings = 200;
 constexpr int kMaxInventoryWarnings = 200;
+constexpr int kMaxPreviewMessages = 200;
 constexpr int kMaxReportedMatches = 500;
 constexpr int kMaxMatchLineChars = 400;
 constexpr int kDefaultSearchMaxResults = 1000;
@@ -139,6 +144,211 @@ AppActionResult listInventory(const QJsonObject&) {
                      {QStringLiteral("warning_count"), inventory.warnings.size()},
                      {QStringLiteral("warnings"), warnings}};
     return {true, QStringLiteral("Enumerated %1 disk(s)").arg(disks.size()), data};
+}
+
+// A parsed preview op: its enum type plus the target KIND the safety validator
+// expects for it. Kind is fixed by the operation, never inferred from which args
+// the model supplied -- a partition-scoped op (format/delete/resize/...) must be
+// validated on the partition path even when partition_number is omitted, so that a
+// missing/invalid partition surfaces as a BLOCKER, never a false "ALLOWED" from the
+// rule-less whole-disk path.
+struct ParsedPartitionOp {
+    PartitionOperationType type;
+    PartitionTargetKind kind;
+};
+
+// Canonical snake_case name -> (operation type, required target kind). Deliberately
+// a CURATED subset of PartitionOperationType: the disk/partition layout ops a
+// technician assistant reasons about. The APFS/HFS foreign-file-surgery, imaging,
+// and BitLocker/defrag types are a different domain and are omitted -- this op
+// previews "what would a partition-layout change do", nothing else.
+std::optional<ParsedPartitionOp> parsePartitionOpType(const QString& name) {
+    struct Entry {
+        const char* name;
+        PartitionOperationType type;
+        PartitionTargetKind kind;
+    };
+    constexpr PartitionTargetKind kDisk = PartitionTargetKind::Disk;
+    constexpr PartitionTargetKind kPart = PartitionTargetKind::Partition;
+    constexpr PartitionTargetKind kFree = PartitionTargetKind::Unallocated;
+    static constexpr Entry kMap[] = {
+        // Unallocated-scoped (the only op the validator accepts for free space).
+        {"create", PartitionOperationType::Create, kFree},
+        // Partition-scoped.
+        {"delete", PartitionOperationType::Delete, kPart},
+        {"format", PartitionOperationType::Format, kPart},
+        {"resize", PartitionOperationType::Resize, kPart},
+        {"allocate_free_space", PartitionOperationType::AllocateFreeSpace, kPart},
+        {"set_drive_letter", PartitionOperationType::SetDriveLetter, kPart},
+        {"set_partition_label", PartitionOperationType::SetPartitionLabel, kPart},
+        {"set_partition_active", PartitionOperationType::SetPartitionActive, kPart},
+        {"set_partition_hidden", PartitionOperationType::SetPartitionHidden, kPart},
+        {"set_partition_type_id", PartitionOperationType::SetPartitionTypeId, kPart},
+        {"check_file_system", PartitionOperationType::CheckFileSystem, kPart},
+        {"merge", PartitionOperationType::Merge, kPart},
+        {"split", PartitionOperationType::Split, kPart},
+        {"move_partition", PartitionOperationType::MovePartition, kPart},
+        {"clone_partition", PartitionOperationType::ClonePartition, kPart},
+        {"wipe_partition", PartitionOperationType::WipePartition, kPart},
+        {"wipe_free_space", PartitionOperationType::WipeFreeSpace, kPart},
+        // Disk-scoped.
+        {"convert_partition_style", PartitionOperationType::ConvertPartitionStyle, kDisk},
+        {"initialize_disk", PartitionOperationType::InitializeDisk, kDisk},
+        {"delete_all_partitions", PartitionOperationType::DeleteAllPartitions, kDisk},
+        {"clone_disk", PartitionOperationType::CloneDisk, kDisk},
+        {"wipe_disk", PartitionOperationType::WipeDisk, kDisk},
+    };
+    for (const Entry& entry : kMap) {
+        if (name == QLatin1String(entry.name)) {
+            return ParsedPartitionOp{entry.type, entry.kind};
+        }
+    }
+    return std::nullopt;
+}
+
+// Convert an untrusted JSON byte-count double to uint64_t with no UB: a negative,
+// NaN, or out-of-range magnitude never reaches a floating-to-unsigned cast that
+// [conv.fpint] leaves undefined. Callers reject negatives up front; this is the
+// belt-and-suspenders clamp.
+uint64_t safeByteCount(double value) {
+    if (!(value > 0.0)) {  // <= 0 or NaN
+        return 0;
+    }
+    constexpr double kUint64Ceiling = 18446744073709551616.0;  // 2^64
+    if (value >= kUint64Ceiling) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return static_cast<uint64_t>(value);
+}
+
+QString supportedPartitionOpTypes() {
+    return QStringLiteral(
+        "create, delete, format, resize, allocate_free_space, set_drive_letter, "
+        "set_partition_label, set_partition_active, set_partition_hidden, "
+        "set_partition_type_id, check_file_system, convert_partition_style, merge, split, "
+        "move_partition, initialize_disk, delete_all_partitions, clone_disk, clone_partition, "
+        "wipe_partition, wipe_disk, wipe_free_space");
+}
+
+// Build the validator target. The KIND is fixed by the operation (passed in), not
+// inferred from which args are present, so a partition-scoped op with no/invalid
+// partition_number is still validated on the partition path. offset/size can exceed
+// 2^31, so read them as double (exact for ints < 2^53) and convert without UB.
+PartitionTarget buildPreviewTarget(const QJsonObject& args,
+                                   uint32_t disk_number,
+                                   PartitionTargetKind kind) {
+    PartitionTarget target;
+    target.kind = kind;
+    target.disk_number = disk_number;
+    target.partition_number =
+        static_cast<uint32_t>(args.value(QStringLiteral("partition_number")).toInt(0));
+    target.offset_bytes = safeByteCount(args.value(QStringLiteral("offset_bytes")).toDouble(0.0));
+    target.size_bytes = safeByteCount(args.value(QStringLiteral("size_bytes")).toDouble(0.0));
+    return target;
+}
+
+QJsonArray cappedMessages(const QStringList& messages) {
+    QJsonArray out;
+    for (const QString& message : messages) {
+        if (out.size() >= kMaxPreviewMessages) {
+            break;
+        }
+        out.append(message);
+    }
+    return out;
+}
+
+// Validate the numeric preview args up front. Returns an error result to return
+// verbatim, or nullopt when disk_number/partition_number/offset/size are all
+// well-formed (present-and-non-negative). Split out to keep previewPartitionOperation
+// within the cyclomatic-complexity budget.
+std::optional<AppActionResult> validatePreviewNumericArgs(const QJsonObject& args) {
+    if (!args.contains(QStringLiteral("disk_number"))) {
+        return AppActionResult{
+            false, QStringLiteral("preview_operation requires a 'disk_number' argument"), {}};
+    }
+    if (args.value(QStringLiteral("disk_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("disk_number must be a non-negative integer"),
+                               {}};
+    }
+    if (args.contains(QStringLiteral("partition_number")) &&
+        args.value(QStringLiteral("partition_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("partition_number must be a non-negative integer"),
+                               {}};
+    }
+    for (const char* key : {"offset_bytes", "size_bytes"}) {
+        const QString name = QString::fromLatin1(key);
+        if (args.contains(name) && args.value(name).toDouble(0.0) < 0.0) {
+            return AppActionResult{false,
+                                   QStringLiteral("%1 must be a non-negative number").arg(name),
+                                   {}};
+        }
+    }
+    return std::nullopt;
+}
+
+QJsonObject serializePreviewOperation(const PartitionOperation& operation) {
+    return QJsonObject{{QStringLiteral("type"), toDisplayString(operation.type)},
+                       {QStringLiteral("risk"), toDisplayString(operation.risk)},
+                       {QStringLiteral("summary"), operation.summary},
+                       {QStringLiteral("warnings"), cappedMessages(operation.warnings)},
+                       {QStringLiteral("blockers"), cappedMessages(operation.blockers)}};
+}
+
+// Plan (never execute) a single partition-layout operation and report whether the
+// safety validator would allow it, with the blockers/warnings it raises. Purely
+// read-only: PartitionOperationPlanner::previewOperation runs the same validator the
+// GUI uses over a fresh no-elevation inventory and touches no disk. A BLOCKED
+// operation is a successful preview whose answer is "not allowed" (like a dry run),
+// so success stays true; only a malformed request fails.
+AppActionResult previewPartitionOperation(const QJsonObject& args) {
+    const QString type_name = args.value(QStringLiteral("operation")).toString().trimmed();
+    if (type_name.isEmpty()) {
+        return {false, QStringLiteral("preview_operation requires an 'operation' argument"), {}};
+    }
+    const std::optional<ParsedPartitionOp> parsed = parsePartitionOpType(type_name);
+    if (!parsed) {
+        return {false,
+                QStringLiteral("Unsupported operation '%1'. Supported: %2")
+                    .arg(type_name, supportedPartitionOpTypes()),
+                {}};
+    }
+    if (const std::optional<AppActionResult> error = validatePreviewNumericArgs(args)) {
+        return *error;
+    }
+    const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
+
+    const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+    const PartitionTarget target =
+        buildPreviewTarget(args, static_cast<uint32_t>(disk_number), parsed->kind);
+    const QJsonObject payload = args.value(QStringLiteral("payload")).toObject();
+    const PartitionOperation operation =
+        PartitionOperationPlanner::makeOperation(parsed->type, target, payload);
+
+    PartitionOperationPlanner planner;
+    const OperationPreview preview = planner.previewOperation(inventory, operation);
+
+    QJsonArray operations;
+    for (const PartitionOperation& op : preview.operations) {
+        operations.append(serializePreviewOperation(op));
+    }
+    QJsonObject data{{QStringLiteral("can_apply"), preview.canApply()},
+                     {QStringLiteral("before_layout_hash"), preview.before_layout_hash},
+                     {QStringLiteral("after_layout_description"), preview.after_layout_description},
+                     {QStringLiteral("blocker_count"), preview.blockers.size()},
+                     {QStringLiteral("warning_count"), preview.warnings.size()},
+                     {QStringLiteral("blockers"), cappedMessages(preview.blockers)},
+                     {QStringLiteral("warnings"), cappedMessages(preview.warnings)},
+                     {QStringLiteral("operations"), operations}};
+    const QString message =
+        preview.canApply()
+            ? QStringLiteral("Operation ALLOWED (%1 warning(s))").arg(preview.warnings.size())
+            : QStringLiteral("Operation BLOCKED: %1")
+                  .arg(preview.blockers.isEmpty() ? QStringLiteral("(no reason given)")
+                                                  : preview.blockers.first());
+    return {true, message, data};
 }
 
 QJsonObject serializeProgram(const ProgramInfo& program) {
@@ -664,6 +874,56 @@ QJsonObject identifyParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject previewParamsSchema() {
+    QJsonObject payload_prop{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("description"),
+         QStringLiteral("Operation-specific fields (e.g. file_system, label, drive_letter)")},
+        {QStringLiteral("additionalProperties"), true}};
+    QJsonObject properties{
+        {QStringLiteral("operation"),
+         stringProp(QStringLiteral("Operation to preview (one of: ") + supportedPartitionOpTypes() +
+                    QStringLiteral(")"))},
+        {QStringLiteral("disk_number"),
+         intProp(QStringLiteral("Target disk number (0-based, from list_inventory)"))},
+        {QStringLiteral("partition_number"),
+         intProp(QStringLiteral("Target partition number (1-based) for a partition-scoped op "
+                                "(delete/format/resize/set_*/merge/split/move/wipe_partition)"))},
+        {QStringLiteral("offset_bytes"),
+         intProp(QStringLiteral("Byte offset of the unallocated region for a create"))},
+        {QStringLiteral("size_bytes"),
+         intProp(QStringLiteral("Size in bytes (for create/resize/allocate)"))},
+        {QStringLiteral("payload"), payload_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("operation"), QStringLiteral("disk_number")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+using AddActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
+
+// Register the read-only partition ops. Split out of registerReadOnlyAppActionsInto
+// to keep that function within the length budget as the op set grows.
+void registerPartitionReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("partition.list_inventory"),
+                       QStringLiteral("List storage inventory"),
+                       QStringLiteral("Enumerate disks, partitions, and volumes on this system"),
+                       QStringLiteral("partition"),
+                       noParamsSchema()),
+        listInventory);
+
+    add(makeDescriptor(
+            QStringLiteral("partition.preview_operation"),
+            QStringLiteral("Preview a partition operation"),
+            QStringLiteral(
+                "Plan (never execute) a disk/partition-layout operation and report "
+                "whether it is allowed, with blockers/warnings from the safety validator"),
+            QStringLiteral("partition"),
+            previewParamsSchema()),
+        previewPartitionOperation);
+}
+
 }  // namespace
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
@@ -674,12 +934,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
         }
     };
 
-    add(makeDescriptor(QStringLiteral("partition.list_inventory"),
-                       QStringLiteral("List storage inventory"),
-                       QStringLiteral("Enumerate disks, partitions, and volumes on this system"),
-                       QStringLiteral("partition"),
-                       noParamsSchema()),
-        listInventory);
+    registerPartitionReadOnlyOps(add);
 
     add(makeDescriptor(QStringLiteral("security.list_installed_programs"),
                        QStringLiteral("List installed programs"),

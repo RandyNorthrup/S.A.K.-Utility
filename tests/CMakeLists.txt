@@ -1549,6 +1549,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
+        # W2e partition.preview_operation: the planner + safety validator + type
+        # helpers are driven directly (pure, no disk I/O); no controller/executor.
+        ${CMAKE_SOURCE_DIR}/src/core/partition_operation_planner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_safety_validator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_manager_types.cpp
         ${CMAKE_SOURCE_DIR}/src/core/vulnerability_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/image_source.cpp
         ${CMAKE_SOURCE_DIR}/src/core/decompressor_factory.cpp
