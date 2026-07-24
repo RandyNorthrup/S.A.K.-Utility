@@ -83,6 +83,7 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     m_progress.speedMBps = 0.0;
     m_progress.percentage = 0.0;
     m_result = sak::FlashResult{};
+    m_reportedWorkers.clear();
 
     // Validate targets
     m_state = sak::FlashState::Validating;
@@ -174,28 +175,8 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
         auto worker = std::make_unique<FlashWorker>(std::move(workerSource), drive);
         worker->setVerificationEnabled(m_verificationEnabled);
         worker->setBufferSize(m_bufferSize);
-
-        connect(
-            worker.get(), &FlashWorker::progressUpdated, this, &FlashCoordinator::onWorkerProgress);
-        connect(worker.get(),
-                &FlashWorker::verificationCompleted,
-                this,
-                &FlashCoordinator::onWorkerCompleted);
-        connect(worker.get(), &FlashWorker::error, this, &FlashCoordinator::onWorkerFailed);
-
-        // When verification is disabled, verificationCompleted never fires.
-        // Use writeCompleted as the completion signal in that case.
-        if (!m_verificationEnabled) {
-            connect(
-                worker.get(), &FlashWorker::writeCompleted, this, [this](qint64 /*bytesWritten*/) {
-                    sak::ValidationResult result;
-                    result.passed = true;
-                    onWorkerCompleted(result);
-                });
-        }
-
+        connectWorkerSignals(worker.get());
         worker->start();
-
         m_workers.push_back(std::move(worker));
     }
 
@@ -259,6 +240,37 @@ void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) 
     updateProgress();
 }
 
+void FlashCoordinator::connectWorkerSignals(FlashWorker* worker) {
+    connect(worker, &FlashWorker::progressUpdated, this, &FlashCoordinator::onWorkerProgress);
+    connect(
+        worker, &FlashWorker::verificationCompleted, this, &FlashCoordinator::onWorkerCompleted);
+    connect(worker, &FlashWorker::error, this, &FlashCoordinator::onWorkerFailed);
+
+    // Safety net: an exception inside FlashWorker::execute() (e.g. std::bad_alloc)
+    // surfaces ONLY as WorkerBase::failed/cancelled, which none of the FlashWorker
+    // signals above cover. Without this the run would never finalize and the caller
+    // would block until its timeout. Deduped by onWorkerFailedFor so a normal handled
+    // error (which emits BOTH FlashWorker::error AND WorkerBase::failed) is not counted
+    // twice.
+    connect(worker, &WorkerBase::failed, this, [this, worker](int, const QString& msg) {
+        onWorkerFailedFor(worker,
+                          msg.isEmpty() ? QStringLiteral("Worker aborted unexpectedly") : msg);
+    });
+    connect(worker, &WorkerBase::cancelled, this, [this, worker]() {
+        onWorkerFailedFor(worker, QStringLiteral("Worker cancelled before completion"));
+    });
+
+    // When verification is disabled, verificationCompleted never fires. Use
+    // writeCompleted as the completion signal in that case.
+    if (!m_verificationEnabled) {
+        connect(worker, &FlashWorker::writeCompleted, this, [this](qint64 /*bytesWritten*/) {
+            sak::ValidationResult result;
+            result.passed = true;
+            onWorkerCompleted(result);
+        });
+    }
+}
+
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     Q_ASSERT(!m_targetDrives.isEmpty());
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
@@ -270,6 +282,9 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     sak::logInfo(QString("Drive completed: %1").arg(devicePath).toStdString());
 
     QMutexLocker locker(&m_mutex);
+    // Mark this worker as having reported a terminal outcome so a later WorkerBase
+    // failed()/cancelled() for the same drive is not double-counted as a failure.
+    m_reportedWorkers.insert(worker);
     m_progress.activeDrives--;
 
     // Check if verification passed. completedDrives counts SUCCESSES only (onWorkerFailed
@@ -311,11 +326,29 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
     if (!worker) {
         return;
     }
+    onWorkerFailedFor(worker, error);
+}
+
+void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QString& error) {
+    Q_ASSERT(!m_targetDrives.isEmpty());
+    if (!worker) {
+        return;
+    }
+
+    QMutexLocker locker(&m_mutex);
+    // Dedup BEFORE dereferencing the worker. A normal handled error emits BOTH
+    // FlashWorker::error and (as execute() returns unexpected) WorkerBase::failed; the
+    // first finalizes the run and cleanupWorkers() DESTROYS the worker, so by the time
+    // the second (deduped) call arrives the captured pointer may dangle. contains()
+    // only compares the pointer value (no deref), so it safely rejects the stale
+    // pointer here; calling worker->targetDevice() before this check would be a UAF.
+    if (m_reportedWorkers.contains(worker)) {
+        return;
+    }
+    m_reportedWorkers.insert(worker);
 
     QString devicePath = worker->targetDevice();
     sak::logError(QString("Drive failed: %1 - %2").arg(devicePath, error).toStdString());
-
-    QMutexLocker locker(&m_mutex);
     m_progress.failedDrives++;
     m_progress.activeDrives--;
 

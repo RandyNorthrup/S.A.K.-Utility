@@ -515,9 +515,12 @@ private:
                                               const QJsonObject& action_args);
     // Access-mode gate for a mutating/destructive/admin app action: returns an error
     // object to abort (blocked/declined), or std::nullopt to proceed. Read-only
-    // actions and non-execution sessions are handled by the caller/policy.
-    [[nodiscard]] std::optional<QJsonObject> appActionRunGate(
-        const AppActionDescriptor& descriptor);
+    // actions and non-execution sessions are handled by the caller/policy. @p detail
+    // is a short, model-supplied argument summary (e.g. the target disk) appended to
+    // the confirm/restore preview so the human sees WHAT is being run, not just the
+    // action title -- critical for a catastrophic op whose target matters.
+    [[nodiscard]] std::optional<QJsonObject> appActionRunGate(const AppActionDescriptor& descriptor,
+                                                              const QString& detail = QString());
     // Build the app-scoped AppActionService (on the GUI thread) and seed its actions
     // into m_appActionRegistry exactly once. Idempotent.
     void ensureAppActionService();

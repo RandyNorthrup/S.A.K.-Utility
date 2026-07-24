@@ -327,7 +327,13 @@ bool FlashWorker::writeImage() {
         return false;
     }
 
-    QByteArray buffer(m_bufferSize, 0);
+    QByteArray buffer;
+    try {
+        buffer.resize(m_bufferSize);
+    } catch (const std::bad_alloc&) {
+        sak::logError("Failed to allocate write buffer - out of memory");
+        return false;
+    }
     m_bytesWritten = 0;
 
     QElapsedTimer speedTimer;
@@ -610,7 +616,13 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
     QCryptographicHash hash(QCryptographicHash::Sha512);
 
     const qint64 bufferSize = kFlashBufferSize;
-    QByteArray buffer(bufferSize, 0);
+    QByteArray buffer;
+    try {
+        buffer.resize(bufferSize);
+    } catch (const std::bad_alloc&) {
+        sak::logError("Failed to allocate verify buffer - out of memory");
+        return QString();
+    }
     qint64 totalRead = 0;
     m_lastVerifyUpdate = 0;
 

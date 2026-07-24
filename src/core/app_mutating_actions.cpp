@@ -14,8 +14,11 @@
 #include "sak/app_action_service.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
+#include "sak/flash_coordinator.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
+#include "sak/partition_manager_types.h"
+#include "sak/storage_inventory_worker.h"
 #include "sak/worker_base.h"
 
 #include <QDir>
@@ -470,6 +473,165 @@ QJsonObject organizeParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// ---------------------------------------------------------------------------
+// imaging.flash_image (CATASTROPHIC)
+// ---------------------------------------------------------------------------
+
+// Flashing a disk can legitimately run for many minutes; give the bridge a generous
+// ceiling (the assistant tool layer applies its own outer timeout too).
+constexpr int kFlashTimeoutMs = 60 * 60 * 1000;
+
+QString flashTargetDescription(int disk_number, const PartitionDiskInfo& disk) {
+    const QString model = disk.model.isEmpty() ? QStringLiteral("unknown model") : disk.model;
+    const QString bus = disk.bus_type.isEmpty() ? QStringLiteral("?") : disk.bus_type;
+    const QString removable = disk.is_removable ? QStringLiteral(", removable") : QString();
+    return QStringLiteral("disk %1: %2 (%3, %4 bytes%5)")
+        .arg(disk_number)
+        .arg(model, bus)
+        .arg(static_cast<double>(disk.size_bytes))
+        .arg(removable);
+}
+
+// Leading letter of the running OS drive (e.g. "C"). Read from %SystemDrive%; this
+// is a Get-Disk-INDEPENDENT signal, so it still identifies the OS disk even if
+// Get-Disk's IsSystem/IsBoot came back null (coerced to false).
+QString systemDriveLetter() {
+    const QString drive = qEnvironmentVariable("SystemDrive");  // "C:" on a normal install
+    return drive.isEmpty() ? QStringLiteral("C") : drive.left(1).toUpper();
+}
+
+// True if any partition on @p disk is an OS boot/system/EFI partition, or hosts the
+// running system volume (%SystemDrive%). Uses per-partition data + drive letters,
+// which do not all silently degrade to "safe" the way a single disk-level bool can.
+bool diskHostsSystemVolume(const PartitionDiskInfo& disk, const QString& system_letter) {
+    for (const PartitionInfoEx& part : disk.partitions) {
+        if (part.is_boot || part.is_system || part.is_efi) {
+            return true;
+        }
+        if (part.hasVolume() && part.volume->hasDriveLetter() &&
+            part.volume->drive_letter.left(1).toUpper() == system_letter) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Reason a disk must NOT be flashed, or empty if it is a safe target. Fail CLOSED
+// with several INDEPENDENT signals so no single null-coerced Get-Disk flag can
+// expose the OS disk, and refuse whole-pool/mirror members (dynamic / Storage
+// Spaces) whose loss cascades beyond the one disk.
+QString unsafeFlashReason(const PartitionDiskInfo& disk, const QString& system_letter) {
+    if (disk.is_system || disk.is_boot) {
+        return QStringLiteral("it is the system/boot disk");
+    }
+    if (disk.is_dynamic || disk.is_storage_spaces) {
+        return QStringLiteral(
+            "it is a dynamic / Storage Spaces disk (flashing it would destroy "
+            "the whole volume set or pool)");
+    }
+    if (disk.is_read_only) {
+        return QStringLiteral("it is read-only/write-protected");
+    }
+    if (diskHostsSystemVolume(disk, system_letter)) {
+        return QStringLiteral("it hosts a system/boot/EFI partition or the running OS volume");
+    }
+    return QString();
+}
+
+QJsonObject serializeFlashResult(const sak::FlashResult& result, const QString& device_path) {
+    QJsonArray errors;
+    for (const QString& error : result.errorMessages) {
+        errors.append(error);
+    }
+    return QJsonObject{
+        {QStringLiteral("device_path"), device_path},
+        {QStringLiteral("bytes_written"), static_cast<double>(result.bytesWritten)},
+        {QStringLiteral("elapsed_seconds"), result.elapsedSeconds},
+        {QStringLiteral("source_checksum"), result.sourceChecksum},
+        {QStringLiteral("successful_drives"), QJsonArray::fromStringList(result.successfulDrives)},
+        {QStringLiteral("failed_drives"), QJsonArray::fromStringList(result.failedDrives)},
+        {QStringLiteral("errors"), errors}};
+}
+
+// Run the flash to completion synchronously via the async->sync bridge. The
+// coordinator is declared before the invocation so it is destroyed LAST (its dtor
+// cancels + joins the flash workers); on timeout the invocation returns and cancel()
+// stops the in-flight write.
+AppActionResult runFlash(const QString& image_path, const FlashTargetResolution& target) {
+    FlashCoordinator coordinator;
+    AsyncActionInvocation inv(kFlashTimeoutMs);
+    const QString device_path = target.device_path;
+    QObject::connect(&coordinator,
+                     &FlashCoordinator::flashCompleted,
+                     inv.context(),
+                     [&inv, device_path](const sak::FlashResult& result) {
+                         const bool ok = result.success && !result.hasErrors();
+                         const QString message =
+                             ok ? QStringLiteral("Flashed image to %1").arg(device_path)
+                                : QStringLiteral("Flash to %1 failed").arg(device_path);
+                         inv.finish({ok, message, serializeFlashResult(result, device_path)});
+                     });
+    QObject::connect(&coordinator,
+                     &FlashCoordinator::flashError,
+                     inv.context(),
+                     [&inv](const QString& error) { inv.finish({false, error, {}}); });
+
+    const AppActionResult result = inv.run([&coordinator, &inv, image_path, device_path]() {
+        // startFlash emits flashError synchronously (same-thread, direct) on an early
+        // failure, which finishes the invocation; only synthesize an error if it
+        // returned false without doing so.
+        if (!coordinator.startFlash(image_path, QStringList{device_path}) && !inv.isDone()) {
+            inv.finish({false, QStringLiteral("Flash failed to start"), {}});
+        }
+    });
+    coordinator.cancel();  // stop any in-flight write before teardown (no-op if done)
+    return result;
+}
+
+AppActionResult flashImage(const QJsonObject& args) {
+    const QString image_path = args.value(QStringLiteral("image_path")).toString().trimmed();
+    if (image_path.isEmpty() || !args.value(QStringLiteral("disk_number")).isDouble()) {
+        return {false,
+                QStringLiteral("flash_image requires 'image_path' and a numeric 'disk_number'"),
+                {}};
+    }
+    if (isNetworkOrDevicePath(image_path)) {
+        return {false, QStringLiteral("flash_image does not allow a network/UNC image path"), {}};
+    }
+    const QFileInfo info(image_path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such image file: %1").arg(image_path), {}};
+    }
+    const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
+
+    // Resolve + SAFETY-validate the target against the authoritative synchronous
+    // inventory (no elevation) BEFORE touching any device. The gate has already shown
+    // the disk to the human and forced a confirm; this refuses the OS/read-only disk.
+    const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+    const FlashTargetResolution target = resolveFlashTarget(inventory, disk_number);
+    if (!target.ok) {
+        return target.error;
+    }
+    return runFlash(image_path, target);
+}
+
+QJsonObject flashParamsSchema() {
+    QJsonObject disk_prop{
+        {QStringLiteral("type"), QStringLiteral("integer")},
+        {QStringLiteral("description"),
+         QStringLiteral("Physical disk number to OVERWRITE (from partition.list_inventory). The "
+                        "system/boot disk and read-only disks are always refused.")}};
+    QJsonObject properties{
+        {QStringLiteral("image_path"),
+         stringProp(QStringLiteral("Absolute path to the local disk-image file to write"))},
+        {QStringLiteral("disk_number"), disk_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("image_path"), QStringLiteral("disk_number")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 // Base descriptor for a mutating op: read_only=false, mutating=true, and both
 // destructive and requires_admin default false. A caller sets params_schema and,
 // for a destructive or admin op, flips those flags on the returned descriptor.
@@ -490,6 +652,46 @@ AppActionDescriptor mutatingDescriptor(const QString& id,
 }
 
 }  // namespace
+
+FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
+    const auto refuse = [](const QString& message) {
+        FlashTargetResolution resolution;
+        resolution.ok = false;
+        resolution.error = {false, message, {}};
+        return resolution;
+    };
+    if (disk_number < 0) {
+        return refuse(QStringLiteral("flash_image requires a non-negative disk_number"));
+    }
+    // A degraded/partial inventory scan cannot be trusted to have populated the safety
+    // flags (Get-Disk IsSystem/IsBoot coerce null -> false), so refuse rather than risk
+    // flashing the OS disk on a scan that half-failed.
+    if (!inventory.warnings.isEmpty()) {
+        return refuse(
+            QStringLiteral("Refusing to flash: the disk inventory scan reported "
+                           "warnings and cannot be trusted to identify the system disk"));
+    }
+    const PartitionDiskInfo* target = nullptr;
+    for (const PartitionDiskInfo& disk : inventory.disks) {
+        if (static_cast<int>(disk.disk_number) == disk_number) {
+            target = &disk;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        return refuse(QStringLiteral("No physical disk with number %1 was found").arg(disk_number));
+    }
+    if (const QString reason = unsafeFlashReason(*target, systemDriveLetter()); !reason.isEmpty()) {
+        return refuse(QStringLiteral("Refusing to flash disk %1 (%2): %3")
+                          .arg(disk_number)
+                          .arg(target->model, reason));
+    }
+    FlashTargetResolution resolution;
+    resolution.ok = true;
+    resolution.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk_number);
+    resolution.description = flashTargetDescription(disk_number, *target);
+    return resolution;
+}
 
 int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
@@ -520,6 +722,21 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     organize.params_schema = organizeParamsSchema();
     organize.destructive = true;
     add(organize, organizeDirectory);
+
+    // imaging.flash_image: OVERWRITES an entire physical disk with a disk image ->
+    // destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
+    // requires_admin (raw disk write). The system/boot disk and read-only disks are
+    // refused by resolveFlashTarget before any device is touched.
+    AppActionDescriptor flash = mutatingDescriptor(
+        QStringLiteral("imaging.flash_image"),
+        QStringLiteral("Flash a disk image"),
+        QStringLiteral("Write a disk image to a physical drive, ERASING all data on it"),
+        QStringLiteral("imaging"));
+    flash.params_schema = flashParamsSchema();
+    flash.destructive = true;
+    flash.catastrophic = true;
+    flash.requires_admin = true;
+    add(flash, flashImage);
 
     return registered;
 }

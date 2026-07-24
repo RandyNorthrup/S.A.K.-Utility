@@ -6955,15 +6955,16 @@ bool isUngatedReadOnlyAction(const AppActionDescriptor& descriptor) {
 }
 }  // namespace
 
-std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(
-    const AppActionDescriptor& descriptor) {
+std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDescriptor& descriptor,
+                                                              const QString& detail) {
     if (isUngatedReadOnlyAction(descriptor)) {
         return std::nullopt;
     }
-    const QString preview = tr("Run app action '%1'%2")
-                                .arg(descriptor.title,
-                                     descriptor.requires_admin ? tr(" (requires administrator)")
-                                                               : QString());
+    const QString admin_suffix = descriptor.requires_admin ? tr(" (requires administrator)")
+                                                           : QString();
+    const QString detail_suffix = detail.isEmpty() ? QString() : QStringLiteral(" -- ") + detail;
+    const QString preview =
+        tr("Run app action '%1'%2%3").arg(descriptor.title, admin_suffix, detail_suffix);
     // Mirror the command path's access-mode behavior: a read-only session refuses any
     // change; Assisted confirms every action; Unattended offers a restore point for a
     // destructive action -- EXCEPT a catastrophic action (disk wipe, partition apply,
@@ -7006,7 +7007,17 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
         return result;
     }
 
-    if (const std::optional<QJsonObject> blocked = appActionRunGate(*descriptor)) {
+    // Give the human gate a compact argument summary so a confirm/restore prompt for
+    // a mutating (esp. catastrophic) action shows WHAT it will run, not just the title.
+    QString detail;
+    if (!action_args.isEmpty()) {
+        detail = QString::fromUtf8(QJsonDocument(action_args).toJson(QJsonDocument::Compact));
+        constexpr int kMaxDetailChars = 200;
+        if (detail.size() > kMaxDetailChars) {
+            detail = detail.left(kMaxDetailChars) + QStringLiteral("...");
+        }
+    }
+    if (const std::optional<QJsonObject> blocked = appActionRunGate(*descriptor, detail)) {
         return *blocked;
     }
 

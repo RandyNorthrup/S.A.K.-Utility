@@ -10,6 +10,7 @@
 
 #include <QMutex>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -242,14 +243,24 @@ private:
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();
     void cleanupWorkers();
+    /// Wire one worker's progress/completion/error/abort signals to the coordinator.
+    void connectWorkerSignals(FlashWorker* worker);
+    /// Record a drive failure and finalize the run if all drives are done. Deduped by
+    /// @p worker so a drive that already reported a terminal outcome (FlashWorker::error
+    /// or verificationCompleted) is not double-counted when its WorkerBase-level
+    /// failed()/cancelled() also fires. Shared by onWorkerFailed and the WorkerBase
+    /// terminal handlers (the latter catch an execute() exception that surfaces ONLY as
+    /// WorkerBase::failed, which would otherwise never finalize -> hang).
+    void onWorkerFailedFor(const FlashWorker* worker, const QString& error);
 
     std::unique_ptr<ImageSource> m_imageSource;
     std::vector<std::unique_ptr<FlashWorker>> m_workers;
 
-    mutable QMutex m_mutex;         ///< Guards m_state, m_progress, m_result
-    sak::FlashState m_state;        // Protected by m_mutex
-    sak::FlashProgress m_progress;  // Protected by m_mutex
-    sak::FlashResult m_result;      // Protected by m_mutex
+    mutable QMutex m_mutex;                  ///< Guards m_state, m_progress, m_result
+    sak::FlashState m_state;                 // Protected by m_mutex
+    sak::FlashProgress m_progress;           // Protected by m_mutex
+    sak::FlashResult m_result;               // Protected by m_mutex
+    QSet<const QObject*> m_reportedWorkers;  ///< Workers that reported a terminal (m_mutex)
 
     bool m_verificationEnabled;
     qint64 m_bufferSize;

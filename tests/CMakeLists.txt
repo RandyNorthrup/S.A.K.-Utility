@@ -1581,6 +1581,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # through the AsyncActionInvocation bridge, like the read-only search.
         ${CMAKE_SOURCE_DIR}/src/threading/organizer_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/input_validator.cpp
+        # W2d imaging.flash_image: FlashCoordinator + its worker chain must link (the
+        # flash EXECUTION is not unit-tested -- needs a real disk -- but the safety
+        # guard resolveFlashTarget is tested pure).
+        ${CMAKE_SOURCE_DIR}/src/core/flash_coordinator.cpp
+        ${CMAKE_SOURCE_DIR}/src/threading/flash_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/drive_unmounter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/keep_awake.cpp
         # Stub the raw/image-filesystem bridge (search never uses it) so the whole
         # APFS/HFS+/ext driver stays out of this test link.
         ${CMAKE_CURRENT_SOURCE_DIR}/stubs/file_management_bridge_search_stub.cpp
@@ -1620,6 +1627,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
         ${CMAKE_SOURCE_DIR}/include/sak/organizer_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h
+        ${CMAKE_SOURCE_DIR}/include/sak/flash_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

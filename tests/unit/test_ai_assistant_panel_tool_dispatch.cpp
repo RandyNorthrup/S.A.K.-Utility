@@ -20,6 +20,7 @@
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
+#include "sak/app_mutating_actions.h"
 
 #include <QComboBox>
 #include <QFile>
@@ -970,6 +971,179 @@ private Q_SLOTS:
         for (const auto& value : actions) {
             QVERIFY(value.toObject().contains(QStringLiteral("catastrophic")));
         }
+    }
+
+    // ------------------------------------------------------------------
+    // W2d: imaging.flash_image -- the first CATASTROPHIC op (overwrites a whole
+    // physical disk). The flash EXECUTION cannot be unit-tested (needs a real
+    // disk), so the SAFETY guard resolveFlashTarget is certified directly with
+    // synthetic inventories, plus the descriptor flags + gating + arg guards.
+    // ------------------------------------------------------------------
+
+    static PartitionInventory inventoryWithDisk(uint32_t number,
+                                                bool is_system,
+                                                bool is_boot,
+                                                bool is_read_only) {
+        PartitionDiskInfo disk;
+        disk.disk_number = number;
+        disk.model = QStringLiteral("Test Disk");
+        disk.bus_type = QStringLiteral("USB");
+        disk.size_bytes = 8'000'000'000ULL;
+        disk.is_removable = true;
+        disk.is_system = is_system;
+        disk.is_boot = is_boot;
+        disk.is_read_only = is_read_only;
+        PartitionInventory inventory;
+        inventory.disks.append(disk);
+        return inventory;
+    }
+
+    // W2d(1): the guard REFUSES the system disk, the boot disk, and a read-only disk,
+    // and refuses a disk number that is not present -- fail closed.
+    void resolveFlashTargetRefusesUnsafeDisks() {
+        // System disk.
+        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, true, false, false), 0).ok);
+        // Boot disk.
+        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, false, true, false), 0).ok);
+        // Read-only disk.
+        QVERIFY(!resolveFlashTarget(inventoryWithDisk(3, false, false, true), 3).ok);
+        // Missing disk number.
+        const FlashTargetResolution missing =
+            resolveFlashTarget(inventoryWithDisk(1, false, false, false), 7);
+        QVERIFY(!missing.ok);
+        QVERIFY(missing.error.message.contains(QStringLiteral("No physical disk")));
+        // Negative disk number.
+        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, false, false, false), -1).ok);
+    }
+
+    // W2d(1b): fail CLOSED against the OS disk hiding behind degraded/absent Get-Disk
+    // flags -- a warnings-tainted scan, a dynamic / Storage Spaces disk, or a disk
+    // carrying an EFI/boot/system partition are all refused even when the disk-level
+    // is_system/is_boot came back false.
+    void resolveFlashTargetRefusesHiddenOsSignals() {
+        // Degraded scan (warnings present) -> refuse regardless of the disk flags.
+        {
+            PartitionInventory inv = inventoryWithDisk(2, false, false, false);
+            inv.warnings.append(QStringLiteral("enumeration degraded"));
+            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+        }
+        // Dynamic disk.
+        {
+            PartitionInventory inv = inventoryWithDisk(2, false, false, false);
+            inv.disks[0].is_dynamic = true;
+            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+        }
+        // Storage Spaces disk.
+        {
+            PartitionInventory inv = inventoryWithDisk(2, false, false, false);
+            inv.disks[0].is_storage_spaces = true;
+            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+        }
+        // Disk carries an EFI system partition (disk-level flags both false).
+        {
+            PartitionInventory inv = inventoryWithDisk(2, false, false, false);
+            PartitionInfoEx efi;
+            efi.is_efi = true;
+            inv.disks[0].partitions.append(efi);
+            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+        }
+        // Disk carries a partition flagged as the boot partition.
+        {
+            PartitionInventory inv = inventoryWithDisk(2, false, false, false);
+            PartitionInfoEx boot;
+            boot.is_boot = true;
+            inv.disks[0].partitions.append(boot);
+            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+        }
+    }
+
+    // W2d(2): the guard ACCEPTS a present, non-system, non-boot, writable disk and
+    // returns the exact device path + a human description.
+    void resolveFlashTargetAcceptsSafeDisk() {
+        const FlashTargetResolution resolved =
+            resolveFlashTarget(inventoryWithDisk(2, false, false, false), 2);
+        QVERIFY(resolved.ok);
+        QCOMPARE(resolved.device_path, QStringLiteral("\\\\.\\PhysicalDrive2"));
+        QVERIFY(resolved.description.contains(QStringLiteral("disk 2")));
+    }
+
+    // W2d(3): the descriptor is registered destructive + CATASTROPHIC + requires_admin
+    // so the gate forces a human confirm even in Unattended.
+    void flashImageListedCatastrophic() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("imaging.flash_image")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W2d(4): blocked in a chat/research session (never reaches the disk enumeration).
+    void flashImageBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), QStringLiteral("C:/x.img")},
+                                      {QStringLiteral("disk_number"), 3}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W2d(5): a UNC/network image path is refused (guarded before any disk work).
+    void flashImageRejectsNetworkImagePath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // approve the forced catastrophic confirm
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("image_path"),
+                                                         QStringLiteral("\\\\host\\share\\x.img")},
+                                                        {QStringLiteral("disk_number"), 3}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // W2d(6): missing args fail cleanly (no disk enumeration, no flash).
+    void flashImageMissingArgsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"disk_number\":3}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("image_path")));
     }
 
     void cleanup() {
