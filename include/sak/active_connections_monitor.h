@@ -8,10 +8,12 @@
 
 #include "sak/network_diagnostic_types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QTimer>
 
 #include <atomic>
+#include <cstdint>
 #include <type_traits>
 
 namespace sak {
@@ -55,6 +57,13 @@ public:
     /// @brief Get the latest connection snapshot
     [[nodiscard]] QVector<ConnectionInfo> getCurrentConnections() const;
 
+    /// @brief True if the most recent refresh hit a kernel table-read error (a requested
+    /// TCP/UDP table returned other than NO_ERROR). Distinguishes a genuine "no connections"
+    /// (NO_ERROR, zero entries) from a failed read (e.g. ERROR_NOT_SUPPORTED) so a caller can
+    /// report the failure honestly instead of a misleading empty success. Additive; the GUI
+    /// path ignores it and is unaffected.
+    [[nodiscard]] bool lastRefreshHadError() const noexcept { return m_lastRefreshError; }
+
 Q_SIGNALS:
     void connectionsUpdated(QVector<sak::ConnectionInfo> connections);
     void newConnectionDetected(sak::ConnectionInfo connection);
@@ -66,10 +75,17 @@ private:
     QVector<ConnectionInfo> m_lastConnections;
     MonitorConfig m_config;
     std::atomic<bool> m_monitoring{false};
+    bool m_lastRefreshError = false;
 
-    [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections();
-    [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners();
-    [[nodiscard]] static QString getProcessName(uint32_t pid);
+    [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections(
+        const QHash<uint32_t, QString>& processNames, bool& readError);
+    [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners(
+        const QHash<uint32_t, QString>& processNames, bool& readError);
+    /// Build a PID -> process-name map from ONE Toolhelp snapshot, so a refresh pays a single
+    /// snapshot instead of one per connection (was O(connections * processes)).
+    [[nodiscard]] static QHash<uint32_t, QString> snapshotProcessNames();
+    [[nodiscard]] static QString lookupProcessName(uint32_t pid,
+                                                   const QHash<uint32_t, QString>& processNames);
     [[nodiscard]] static QString getProcessPath(uint32_t pid);
     [[nodiscard]] static QString resolveHostname(const QString& ip);
 

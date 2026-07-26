@@ -1556,6 +1556,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/connectivity_tester.cpp
         ${CMAKE_SOURCE_DIR}/src/core/port_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/threading/network_probe_worker.cpp
+        # network.list_connections: active TCP/UDP enumeration + PID->process mapping
+        # (GetExtendedTcpTable/UdpTable, iphlpapi -- already linked above).
+        ${CMAKE_SOURCE_DIR}/src/core/active_connections_monitor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
@@ -1673,6 +1676,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/connectivity_tester.h
         ${CMAKE_SOURCE_DIR}/include/sak/port_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/network_probe_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/active_connections_monitor.h
         ${CMAKE_SOURCE_DIR}/include/sak/program_enumerator.h
         ${CMAKE_SOURCE_DIR}/include/sak/uninstall_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h

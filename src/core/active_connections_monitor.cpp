@@ -100,12 +100,21 @@ void ActiveConnectionsMonitor::stopMonitoring() {
 void ActiveConnectionsMonitor::refreshNow() {
     QVector<ConnectionInfo> connections;
 
+    // Resolve every PID to a name from a SINGLE process snapshot for this whole refresh, rather
+    // than snapshotting once per connection (was O(connections * processes) -- a real cost on a
+    // high-socket host and on every periodic GUI refresh). Paths are still resolved per-PID.
+    const QHash<uint32_t, QString> processNames =
+        m_config.resolveProcessNames ? snapshotProcessNames() : QHash<uint32_t, QString>{};
+
+    bool tcpError = false;
+    bool udpError = false;
     if (m_config.showTcp) {
-        connections.append(enumerateTcpConnections());
+        connections.append(enumerateTcpConnections(processNames, tcpError));
     }
     if (m_config.showUdp) {
-        connections.append(enumerateUdpListeners());
+        connections.append(enumerateUdpListeners(processNames, udpError));
     }
+    m_lastRefreshError = tcpError || udpError;
 
     applyFilters(connections);
     detectChanges(connections);
@@ -118,7 +127,8 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::getCurrentConnections() const 
     return m_lastConnections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections(
+    const QHash<uint32_t, QString>& processNames, bool& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -134,6 +144,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     }
 
     if (result != NO_ERROR) {
+        readError = true;
         return connections;
     }
 
@@ -152,7 +163,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
         info.processId = row.dwOwningPid;
 
         if (m_config.resolveProcessNames) {
-            info.processName = getProcessName(row.dwOwningPid);
+            info.processName = lookupProcessName(row.dwOwningPid, processNames);
             info.processPath = getProcessPath(row.dwOwningPid);
         }
 
@@ -167,7 +178,8 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     return connections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners(
+    const QHash<uint32_t, QString>& processNames, bool& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -183,6 +195,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
     }
 
     if (result != NO_ERROR) {
+        readError = true;
         return connections;
     }
 
@@ -199,7 +212,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
         info.processId = row.dwOwningPid;
 
         if (m_config.resolveProcessNames) {
-            info.processName = getProcessName(row.dwOwningPid);
+            info.processName = lookupProcessName(row.dwOwningPid, processNames);
             info.processPath = getProcessPath(row.dwOwningPid);
         }
 
@@ -209,35 +222,36 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
     return connections;
 }
 
-QString ActiveConnectionsMonitor::getProcessName(uint32_t pid) {
+QHash<uint32_t, QString> ActiveConnectionsMonitor::snapshotProcessNames() {
+    QHash<uint32_t, QString> names;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return names;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            names.insert(entry.th32ProcessID, QString::fromWCharArray(entry.szExeFile));
+        } while (Process32NextW(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return names;
+}
+
+QString ActiveConnectionsMonitor::lookupProcessName(uint32_t pid,
+                                                    const QHash<uint32_t, QString>& processNames) {
     if (pid == 0) {
         return QStringLiteral("System Idle");
     }
     if (pid == kWindowsSystemProcessId) {
         return QStringLiteral("System");
     }
-
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return QStringLiteral("[PID %1]").arg(pid);
-    }
-
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-
-    QString name = QStringLiteral("[PID %1]").arg(pid);
-
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (entry.th32ProcessID == pid) {
-                name = QString::fromWCharArray(entry.szExeFile);
-                break;
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-
-    CloseHandle(snapshot);
-    return name;
+    return processNames.value(pid, QStringLiteral("[PID %1]").arg(pid));
 }
 
 QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {

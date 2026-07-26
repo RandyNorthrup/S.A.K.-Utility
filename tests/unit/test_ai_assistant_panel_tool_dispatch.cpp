@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 15 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 18);
+        // 7 built-in QuickActions + 16 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 19);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -257,6 +257,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("partition.preview_operation")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_adapters")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.list_connections")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
@@ -1739,6 +1740,58 @@ private Q_SLOTS:
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("success")).toBool());
+    }
+
+    // Wave 1 (network): list_connections enumerates the active TCP/UDP tables. The op always
+    // completes (a machine may have any number of sockets, including zero after filtering), so
+    // this asserts the structural invariant count == tcp_count + udp_count rather than a fixed
+    // number. Local table read, no admin, no network -- deterministic completion.
+    void listConnectionsSucceeds() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.contains(QStringLiteral("connections")));
+        const int count = data.value(QStringLiteral("count")).toInt();
+        const int tcp = data.value(QStringLiteral("tcp_count")).toInt();
+        const int udp = data.value(QStringLiteral("udp_count")).toInt();
+        QCOMPARE(count, tcp + udp);
+    }
+
+    // Wave 1 (network): with both TCP and UDP suppressed the enumeration returns nothing --
+    // a deterministic zero-connection success (proves the show_tcp/show_udp config threads
+    // through startMonitoring to the engine's refreshNow).
+    void listConnectionsTcpUdpOffReturnsEmpty() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"show_tcp\":false,\"show_udp\":false}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("count")).toInt(), 0);
+        QVERIFY(data.value(QStringLiteral("connections")).toArray().isEmpty());
+    }
+
+    // Wave 1 (network): list_connections runs UNGATED in a Chat & Research session (read-only,
+    // local enumeration mutating nothing), like list_adapters/dns_query.
+    void listConnectionsRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
     // Wave 1 (network probes): ping with no target fails cleanly (never sends).

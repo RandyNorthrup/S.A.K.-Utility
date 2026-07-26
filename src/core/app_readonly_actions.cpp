@@ -8,6 +8,7 @@
 
 #include "sak/app_readonly_actions.h"
 
+#include "sak/active_connections_monitor.h"
 #include "sak/advanced_search_types.h"
 #include "sak/advanced_search_worker.h"
 #include "sak/app_action_guards.h"
@@ -58,6 +59,7 @@ constexpr int kMaxReportedFindings = 200;
 constexpr int kMaxInventoryWarnings = 200;
 constexpr int kMaxPreviewMessages = 200;
 constexpr int kMaxAdapters = 100;
+constexpr int kMaxConnections = 500;
 constexpr int kMaxDnsAnswers = 100;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
@@ -763,6 +765,83 @@ AppActionResult listAdapters(const QJsonObject&) {
     return {true, QStringLiteral("Enumerated %1 network adapter(s)").arg(adapters.size()), data};
 }
 
+QJsonObject serializeConnection(const ConnectionInfo& c) {
+    return QJsonObject{{QStringLiteral("protocol"),
+                        c.protocol == ConnectionInfo::Protocol::TCP ? QStringLiteral("TCP")
+                                                                    : QStringLiteral("UDP")},
+                       {QStringLiteral("local_address"), c.localAddress},
+                       {QStringLiteral("local_port"), static_cast<int>(c.localPort)},
+                       {QStringLiteral("remote_address"), c.remoteAddress},
+                       {QStringLiteral("remote_port"), static_cast<int>(c.remotePort)},
+                       {QStringLiteral("state"), c.state},
+                       {QStringLiteral("pid"), static_cast<int>(c.processId)},
+                       {QStringLiteral("process_name"), c.processName},
+                       {QStringLiteral("process_path"), c.processPath},
+                       {QStringLiteral("service"), c.serviceName}};
+}
+
+// Enumerate active TCP connections + UDP listeners via ActiveConnectionsMonitor
+// (GetExtendedTcpTable/GetExtendedUdpTable + PID->process mapping: local, no admin, no
+// network traffic). Reverse-DNS is FORCED off (resolveHostnames=false) so the enumeration
+// is pure local table reads with no blocking lookup -- the model can dns_query a remote
+// address separately. startMonitoring() sets the config and does one blocking refresh inline,
+// then stopMonitoring() kills the just-created timer (which never fires -- no event loop pumps
+// this thread); the snapshot is read back directly. Read-only.
+AppActionResult listConnections(const QJsonObject& args) {
+    ActiveConnectionsMonitor monitor;
+    ActiveConnectionsMonitor::MonitorConfig config;
+    config.resolveHostnames = false;
+    config.resolveProcessNames = true;
+    config.showTcp = args.value(QStringLiteral("show_tcp")).toBool(true);
+    config.showUdp = args.value(QStringLiteral("show_udp")).toBool(true);
+    config.filterProcessName = args.value(QStringLiteral("filter_process")).toString().trimmed();
+    // (clampArgInt is defined later in this TU; a filter port is a simple in-range check.)
+    const int filter_port = args.value(QStringLiteral("filter_port")).toInt(0);
+    config.filterPort =
+        static_cast<uint16_t>((filter_port >= 1 && filter_port <= 65'535) ? filter_port : 0);
+    monitor.startMonitoring(config);
+    monitor.stopMonitoring();
+    const QVector<ConnectionInfo> connections = monitor.getCurrentConnections();
+
+    // A kernel table read that FAILED (e.g. ERROR_NOT_SUPPORTED on a degraded/IPv6-only host)
+    // returns an empty set that is otherwise indistinguishable from "genuinely no connections".
+    // If a requested table errored AND nothing was read, report an honest failure rather than a
+    // misleading "0 connections" success (mirrors the port_scan all-unreachable guard). A partial
+    // read (some rows present) is still reported as success.
+    if (monitor.lastRefreshHadError() && connections.isEmpty()) {
+        return {false,
+                QStringLiteral("Connection-table read failed (the TCP/UDP table could not be "
+                               "queried on this host)"),
+                {}};
+    }
+
+    QJsonArray listed;
+    int tcp = 0;
+    int udp = 0;
+    for (const ConnectionInfo& c : connections) {
+        if (c.protocol == ConnectionInfo::Protocol::TCP) {
+            ++tcp;
+        } else {
+            ++udp;
+        }
+        if (listed.size() < kMaxConnections) {
+            listed.append(serializeConnection(c));
+        }
+    }
+    QJsonObject data{{QStringLiteral("count"), connections.size()},
+                     {QStringLiteral("tcp_count"), tcp},
+                     {QStringLiteral("udp_count"), udp},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), connections.size() > listed.size()},
+                     {QStringLiteral("connections"), listed}};
+    return {true,
+            QStringLiteral("Enumerated %1 connection(s): %2 TCP, %3 UDP")
+                .arg(connections.size())
+                .arg(tcp)
+                .arg(udp),
+            data};
+}
+
 QJsonObject serializeDnsResult(const DnsQueryResult& result) {
     QJsonArray answers;
     for (const QString& answer : result.answers) {
@@ -1407,6 +1486,23 @@ QJsonObject dnsParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject connectionsParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("show_tcp"),
+         boolProp(QStringLiteral("Include TCP connections (default true)"))},
+        {QStringLiteral("show_udp"),
+         boolProp(QStringLiteral("Include UDP listeners (default true)"))},
+        {QStringLiteral("filter_process"),
+         stringProp(QStringLiteral("Only connections whose process name contains this (substring, "
+                                   "case-insensitive)"))},
+        {QStringLiteral("filter_port"),
+         intProp(
+             QStringLiteral("Only connections whose local OR remote port equals this (1-65535)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject pingParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("target"), stringProp(QStringLiteral("Hostname or IP to ping"))},
@@ -1498,6 +1594,14 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        dnsParamsSchema()),
         dnsQuery);
+
+    add(makeDescriptor(QStringLiteral("network.list_connections"),
+                       QStringLiteral("List active connections"),
+                       QStringLiteral("Enumerate active TCP connections and UDP listeners with "
+                                      "owning process (PID/name/path) and state"),
+                       QStringLiteral("network"),
+                       connectionsParamsSchema()),
+        listConnections);
 
     add(makeDescriptor(QStringLiteral("network.ping"),
                        QStringLiteral("Ping a host"),
