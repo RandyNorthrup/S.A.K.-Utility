@@ -21,6 +21,7 @@
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_mutating_actions.h"
+#include "sak/storage_inventory_worker.h"
 
 #include <QComboBox>
 #include <QFile>
@@ -1487,6 +1488,43 @@ private Q_SLOTS:
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("success")).toBool());
+    }
+
+    // REAL-HARDWARE guard probe (opt-in: set SAK_LIVE_DISK_PROBE). Runs the actual
+    // no-elevation inventory scan and prints what resolveFlashTarget /
+    // resolvePartitionApplyTarget decide for EVERY physical disk on this machine, then
+    // asserts the running OS/system disk is REFUSED by both. Skipped by default so CI
+    // and normal runs stay deterministic and touch no hardware.
+    void liveGuardProbeAgainstRealDisks() {
+        if (!qEnvironmentVariableIsSet("SAK_LIVE_DISK_PROBE")) {
+            QSKIP("Set SAK_LIVE_DISK_PROBE to run the real-hardware guard probe");
+        }
+        const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+        qInfo("=== LIVE guard probe: %lld disk(s), layout_hash=%s, warnings=%lld ===",
+              static_cast<long long>(inventory.disks.size()),
+              qUtf8Printable(inventory.layout_hash),
+              static_cast<long long>(inventory.warnings.size()));
+        for (const PartitionDiskInfo& disk : inventory.disks) {
+            const int number = static_cast<int>(disk.disk_number);
+            const FlashTargetResolution flash = resolveFlashTarget(inventory, number);
+            const PartitionApplyResolution apply =
+                resolvePartitionApplyTarget(inventory, number, inventory.layout_hash);
+            qInfo("disk %d [%s] sys=%d boot=%d ro=%d parts=%lld | flash=%s (%s) | apply=%s (%s)",
+                  number,
+                  qUtf8Printable(disk.model),
+                  disk.is_system,
+                  disk.is_boot,
+                  disk.is_read_only,
+                  static_cast<long long>(disk.partitions.size()),
+                  flash.ok ? "ACCEPT" : "REFUSE",
+                  qUtf8Printable(flash.ok ? flash.device_path : flash.error.message),
+                  apply.ok ? "ACCEPT" : "REFUSE",
+                  qUtf8Printable(apply.ok ? apply.device_path : apply.error.message));
+            if (disk.is_system || disk.is_boot) {
+                QVERIFY2(!flash.ok, "flash guard must REFUSE the OS/system disk");
+                QVERIFY2(!apply.ok, "apply guard must REFUSE the OS/system disk");
+            }
+        }
     }
 
     void cleanup() {
