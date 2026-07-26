@@ -22,6 +22,8 @@
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_mutating_actions.h"
 #include "sak/flash_coordinator.h"
+#include "sak/partition_apply_worker.h"
+#include "sak/partition_operation_planner.h"
 #include "sak/storage_inventory_worker.h"
 
 #include <QComboBox>
@@ -1582,6 +1584,60 @@ private Q_SLOTS:
               qUtf8Printable(detail));
         QVERIFY2(ok,
                  qUtf8Printable(QStringLiteral("flash failed/verify mismatch: %1").arg(detail)));
+    }
+
+    // REAL apply-execution cert (opt-in + DESTRUCTIVE): set SAK_LIVE_APPLY_DISK=<number>
+    // of a DISPOSABLE disk the guard accepts. Resolves the target the same way the op does,
+    // then drives the REAL PartitionApplyWorker (worker thread -> PartitionExecutor ->
+    // elevated diskpart) with an initialize_disk operation. Must run ELEVATED. QSKIP by
+    // default; this WRITES a GPT to the target disk, so it is never run in CI.
+    void liveApplyCertToDisposableDisk() {
+        if (!qEnvironmentVariableIsSet("SAK_LIVE_APPLY_DISK")) {
+            QSKIP("Set SAK_LIVE_APPLY_DISK=<n> to run the live apply cert (DESTRUCTIVE)");
+        }
+        const int disk_number = qEnvironmentVariable("SAK_LIVE_APPLY_DISK").toInt();
+        const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+        const PartitionApplyResolution target =
+            resolvePartitionApplyTarget(inventory, disk_number, inventory.layout_hash);
+        QVERIFY2(target.ok,
+                 qUtf8Printable(QStringLiteral("guard refused disk %1: %2")
+                                    .arg(disk_number)
+                                    .arg(target.error.message)));
+        qInfo("=== LIVE apply: initialize_disk on %s ===", qUtf8Printable(target.description));
+
+        PartitionTarget pt;
+        pt.kind = PartitionTargetKind::Disk;
+        pt.disk_number = static_cast<uint32_t>(disk_number);
+        const PartitionOperation op = PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::InitializeDisk, pt, QJsonObject{});
+
+        PartitionApplyWorker worker(QVector<PartitionOperation>{op},
+                                    /*dry_run=*/false,
+                                    /*use_elevation=*/true);
+        bool done = false;
+        bool ok = false;
+        QString detail;
+        QObject::connect(&worker, &WorkerBase::finished, &worker, [&]() {
+            const PartitionExecutionResult& result = worker.result();
+            ok = result.success;
+            detail = result.message;
+            if (!result.steps.isEmpty()) {
+                detail += QStringLiteral(" | ") + result.steps.first().error_message;
+            }
+            done = true;
+        });
+        QObject::connect(&worker, &WorkerBase::failed, &worker, [&](int, const QString& error) {
+            detail = error;
+            done = true;
+        });
+        QObject::connect(&worker, &WorkerBase::cancelled, &worker, [&]() {
+            detail = QStringLiteral("cancelled");
+            done = true;
+        });
+        worker.start();
+        QTRY_VERIFY_WITH_TIMEOUT(done, 600'000);  // up to 10 min
+        qInfo("=== apply result: ok=%d detail=%s ===", ok, qUtf8Printable(detail));
+        QVERIFY2(ok, qUtf8Printable(QStringLiteral("live apply failed: %1").arg(detail)));
     }
 
     void cleanup() {
