@@ -50,6 +50,12 @@ public:
     ///        false "no packages installed".
     [[nodiscard]] QVector<ProgramInfo> enumerateUwpPackagesSync(bool& scanOk);
 
+    /// @brief Synchronously enumerate ONLY Win32 registry programs (HKLM / HKCU / WOW64) --
+    ///        no UWP scan and no icon/size enrichment. For a headless caller that needs the
+    ///        authoritative Win32 program list (with uninstall strings) FAST. Reads the
+    ///        registry directly (no external process), deduped across hives.
+    [[nodiscard]] QVector<ProgramInfo> enumerateRegistryProgramsSync();
+
     /// @brief Request cancellation of an in-progress enumeration
     void requestCancel();
 

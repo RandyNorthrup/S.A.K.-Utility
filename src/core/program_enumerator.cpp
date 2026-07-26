@@ -168,6 +168,20 @@ QVector<ProgramInfo> ProgramEnumerator::enumerateUwpPackagesSync(bool& scanOk) {
     return packages;
 }
 
+QVector<ProgramInfo> ProgramEnumerator::enumerateRegistryProgramsSync() {
+#ifdef Q_OS_WIN
+    // Reuse the exact registry scanner enumerateAll uses -- just the Win32 phase, with no
+    // UWP/orphan/bloatware/icon/dir-size work. Intentionally NOT deduped: the dedup key
+    // (displayName|publisher) can merge two genuinely-distinct same-name programs, which would
+    // hide an ambiguous match from a headless resolver. Callers that need the authoritative
+    // single match must disambiguate themselves (e.g. by the actual uninstall command). The
+    // registry read has no external process to fail (unlike the Appx scans), so no scanOk here.
+    return scanRegistryPrograms();
+#else
+    return {};
+#endif
+}
+
 void ProgramEnumerator::warnIfAppxIncomplete(bool uwpOk, bool provisionedOk) {
     // Fail closed: a PowerShell failure/timeout/parse error in either Appx scan means the list
     // may be incomplete. Warn (never silently claim completeness) but keep the registry list.

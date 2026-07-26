@@ -8,6 +8,7 @@
 /// tool loop with an injected blocking handler and inspects the private async
 /// state via a friend seam.
 
+#include "sak/advanced_uninstall_types.h"
 #include "sak/ai/ai_async_tool_runner.h"
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
@@ -25,6 +26,7 @@
 #include "sak/partition_apply_worker.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/storage_inventory_worker.h"
+#include "sak/uninstall_worker.h"
 
 #include <QComboBox>
 #include <QFile>
@@ -1542,6 +1544,152 @@ private Q_SLOTS:
         QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app`whoami`")));
         QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app$(calc)")));
         QVERIFY(!sak::isSafePackageFullName(QStringLiteral("safepart\ninjected")));  // trailing NL
+    }
+
+    // W-uninstall (Win32): software.uninstall_program is listed mutating + destructive +
+    // requires_admin and NOT catastrophic and NOT read_only.
+    void uninstallProgramListedMutatingDestructiveAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("software.uninstall_program")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-uninstall (Win32): missing program_name fails cleanly (never enumerates or removes).
+    void uninstallProgramMissingNameFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("program_name")));
+    }
+
+    // W-uninstall (Win32): refused in a chat/research session (mutating; never enumerates).
+    void uninstallProgramBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"program_name\":\"Whatever\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-uninstall (Win32): a name matching no installed Win32 program fails cleanly after a REAL
+    // registry enumeration. Deterministic: this bogus name is never installed.
+    void uninstallProgramNonexistentFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"program_name\":\"SAK No Such Win32 Program ZZZ 9f3c\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("No installed")));
+    }
+
+    // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless
+    // uninstall from launching an interactive uninstaller. It accepts a publisher quiet command
+    // and an MSI (building a /qn removal), and REFUSES a bare interactive uninstallString.
+    void silentUninstallCommandBuilder() {
+        QString cmd;
+
+        sak::ProgramInfo quiet;
+        quiet.quietUninstallString = QStringLiteral("\"C:\\App\\unins000.exe\" /SILENT");
+        QVERIFY(sak::UninstallWorker::buildSilentUninstallCommand(quiet, cmd));
+        QCOMPARE(cmd, QStringLiteral("\"C:\\App\\unins000.exe\" /SILENT"));
+
+        sak::ProgramInfo msi;
+        msi.uninstallString =
+            QStringLiteral("MsiExec.exe /X{12345678-90AB-CDEF-1234-567890ABCDEF}");
+        cmd.clear();
+        QVERIFY(sak::UninstallWorker::buildSilentUninstallCommand(msi, cmd));
+        QVERIFY(cmd.contains(QStringLiteral("/qn")));
+        QVERIFY(cmd.contains(QStringLiteral("{12345678-90AB-CDEF-1234-567890ABCDEF}")));
+
+        sak::ProgramInfo interactive;
+        interactive.uninstallString = QStringLiteral("\"C:\\App\\setup.exe\" /uninstall");
+        cmd.clear();
+        QVERIFY(!sak::UninstallWorker::buildSilentUninstallCommand(interactive, cmd));
+    }
+
+    // W-uninstall (Win32): the pure resolution core over a raw (non-deduped) list. Certifies the
+    // two safety guards the adversarial review added -- a system component is refused, and two
+    // genuinely-distinct same-name programs are refused as ambiguous (never a wrong removal) --
+    // plus the happy path (a name double-registered across hives with the SAME command resolves
+    // to one) and the interactive/not-found refusals.
+    void win32ResolutionCoreGuards() {
+        auto msi = [](const QString& name, const QString& guid, bool system) {
+            sak::ProgramInfo p;
+            p.displayName = name;
+            p.uninstallString = QStringLiteral("MsiExec.exe /X") + guid;
+            p.isSystemComponent = system;
+            return p;
+        };
+        const QString guid_a = QStringLiteral("{11111111-1111-1111-1111-111111111111}");
+        const QString guid_b = QStringLiteral("{22222222-2222-2222-2222-222222222222}");
+        sak::ProgramInfo out;
+
+        // System component -> refused (never silently removed headless).
+        QVERIFY(sak::resolveWin32ProgramFromList({msi(QStringLiteral("VC Runtime"), guid_a, true)},
+                                                 QStringLiteral("VC Runtime"),
+                                                 out)
+                    .has_value());
+
+        // Two distinct programs sharing a name (different GUIDs -> different commands) ->
+        // ambiguous.
+        const QVector<sak::ProgramInfo> distinct{msi(QStringLiteral("Updater"), guid_a, false),
+                                                 msi(QStringLiteral("Updater"), guid_b, false)};
+        const auto ambiguous =
+            sak::resolveWin32ProgramFromList(distinct, QStringLiteral("Updater"), out);
+        QVERIFY(ambiguous.has_value());
+        QVERIFY(ambiguous->message.contains(QStringLiteral("distinct")));
+
+        // Same program double-registered across hives (same GUID -> same command) -> resolves to
+        // one.
+        const QVector<sak::ProgramInfo> dup{msi(QStringLiteral("App"), guid_a, false),
+                                            msi(QStringLiteral("App"), guid_a, false)};
+        QVERIFY(!sak::resolveWin32ProgramFromList(dup, QStringLiteral("App"), out).has_value());
+
+        // Interactive-only (no silent command) -> refused; missing name -> refused.
+        sak::ProgramInfo interactive;
+        interactive.displayName = QStringLiteral("Setupy");
+        interactive.uninstallString = QStringLiteral("\"C:\\App\\setup.exe\" /uninstall");
+        QVERIFY(sak::resolveWin32ProgramFromList({interactive}, QStringLiteral("Setupy"), out)
+                    .has_value());
+        QVERIFY(sak::resolveWin32ProgramFromList({}, QStringLiteral("Nope"), out).has_value());
     }
 
     // Wave 1 (network): list_adapters drives NetworkAdapterInspector (GetAdaptersAddresses:

@@ -36,6 +36,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QRegularExpression>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -908,24 +909,67 @@ QJsonObject applyParamsSchema() {
 }
 
 // ---------------------------------------------------------------------------
-// software.uninstall_uwp_app: remove an installed Store/UWP app (silent).
+// software.uninstall_uwp_app / software.uninstall_program: remove an installed
+// Store/UWP app or a Win32 program, silently.
 // ---------------------------------------------------------------------------
 
-// Outer bridge ceiling. removeUwpPackage has its own 60s PowerShell timeout; this only fires
-// if that fails to bound the run.
-constexpr int kUninstallTimeoutMs = 3 * 60 * 1000;
+// Outer bridge ceilings. Each is above the worker's own internal ceiling (UWP: a 60s
+// PowerShell removal; Win32: a 20-min silent native uninstall + a fast leftover scan), so it
+// only fires if the worker itself fails to bound the run.
+constexpr int kUwpUninstallTimeoutMs = 3 * 60 * 1000;
+constexpr int kWin32UninstallTimeoutMs = 22 * 60 * 1000;
 
-QJsonObject uninstallUwpParamsSchema() {
+QJsonObject uninstallProgramParamsSchema(const QString& name_description) {
     QJsonObject name_prop{{QStringLiteral("type"), QStringLiteral("string")},
-                          {QStringLiteral("description"),
-                           QStringLiteral(
-                               "Exact display name of the installed Store/UWP app to remove "
-                               "(as shown by security.list_installed_programs)")}};
+                          {QStringLiteral("description"), name_description}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"),
                         QJsonObject{{QStringLiteral("program_name"), name_prop}}},
                        {QStringLiteral("required"), QJsonArray{QStringLiteral("program_name")}},
                        {QStringLiteral("additionalProperties"), false}};
+}
+
+// Drive a prepared UninstallWorker to completion with a hard timeout and a real cancel, then
+// map the terminal signal to a tool result. On success executeXxxMode emits uninstallComplete
+// (checked ==Success); a failed removal returns unexpected -> WorkerBase::failed; a stop ->
+// cancelled. The worker is FULLY JOINED before return: ~UninstallWorker is =default, so
+// ~WorkerBase (which joins) would otherwise run AFTER the derived members execute() reads are
+// destroyed = a UAF on the timeout path.
+AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& name, int timeout_ms) {
+    AsyncActionInvocation inv(timeout_ms);
+    QObject::connect(
+        &worker,
+        &UninstallWorker::uninstallComplete,
+        inv.context(),
+        [&inv, name](const UninstallReport& report) {
+            const bool ok = report.uninstallResult == UninstallReport::UninstallResult::Success;
+            QJsonObject data{{QStringLiteral("program"), name},
+                             {QStringLiteral("result"),
+                              ok ? QStringLiteral("success") : QStringLiteral("failed")},
+                             {QStringLiteral("leftovers_found"), report.foundLeftovers.size()}};
+            inv.finish({ok,
+                        ok ? QStringLiteral("Uninstalled '%1'").arg(name)
+                           : QStringLiteral("Uninstall of '%1' failed").arg(name),
+                        data});
+        });
+    QObject::connect(
+        &worker, &WorkerBase::failed, inv.context(), [&inv, name](int, const QString& error) {
+            inv.finish(
+                {false,
+                 error.isEmpty() ? QStringLiteral("Uninstall of '%1' failed").arg(name) : error,
+                 {}});
+        });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("Uninstall was cancelled"), {}});
+    });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();
+    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
+        worker.terminate();
+        worker.wait(sak::kTimeoutThreadTerminateMs);
+    }
+    return result;
 }
 
 // Match the model-supplied display name against the SYSTEM's UWP package list and return the
@@ -950,8 +994,8 @@ std::optional<AppActionResult> resolveUwpProgram(const QString& name, ProgramInf
     }
     if (matches.isEmpty()) {
         return AppActionResult{false,
-                               QStringLiteral("No installed Store/UWP app named '%1' (Win32 "
-                                              "programs cannot be uninstalled here yet)")
+                               QStringLiteral("No installed Store/UWP app named '%1' (for a Win32 "
+                                              "program use software.uninstall_program)")
                                    .arg(name),
                                {}};
     }
@@ -973,6 +1017,45 @@ std::optional<AppActionResult> resolveUwpProgram(const QString& name, ProgramInf
     return std::nullopt;
 }
 
+// The name-matches from a raw registry list, reduced to what resolution needs: the set of
+// DISTINCT silent uninstall commands (same-name entries double-registered across hives collapse
+// here; genuinely different programs do not), a representative program, and whether the name hit
+// a system component or existed at all.
+struct Win32MatchSummary {
+    QSet<QString> distinct_commands;
+    ProgramInfo representative;
+    bool saw_name = false;
+    bool saw_system_component = false;
+};
+
+Win32MatchSummary collectWin32Matches(const QVector<ProgramInfo>& programs, const QString& name) {
+    Win32MatchSummary summary;
+    for (const ProgramInfo& program : programs) {
+        if (program.displayName.compare(name, Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        summary.saw_name = true;
+        if (program.isSystemComponent) {
+            summary.saw_system_component = true;  // hidden runtime/driver -- never silent-removed
+            continue;
+        }
+        QString cmd;
+        if (UninstallWorker::buildSilentUninstallCommand(program, cmd)) {
+            summary.distinct_commands.insert(cmd);
+            summary.representative = program;
+        }
+    }
+    return summary;
+}
+
+// Resolve @p name against the SYSTEM's Win32 registry list. Enumerate + delegate to the pure
+// core so the safety logic (system-component refusal, distinct-program ambiguity, interactive
+// refusal) is unit-testable without a live registry.
+std::optional<AppActionResult> resolveWin32Program(const QString& name, ProgramInfo& out) {
+    ProgramEnumerator enumerator;
+    return resolveWin32ProgramFromList(enumerator.enumerateRegistryProgramsSync(), name, out);
+}
+
 AppActionResult uninstallUwpApp(const QJsonObject& args) {
     const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
     if (name.isEmpty()) {
@@ -982,49 +1065,37 @@ AppActionResult uninstallUwpApp(const QJsonObject& args) {
     if (const std::optional<AppActionResult> error = resolveUwpProgram(name, program)) {
         return *error;
     }
-
-    // Drive the app's UninstallWorker in UwpRemove mode: Remove-AppxPackage / -Provisioned is
-    // silent, bounded (60s), and cancellable, and the mode early-returns BEFORE the leftover
-    // scan, so this ONLY removes the package (no file/registry cleanup). createRestorePoint
-    // false: a Store app is reinstallable, and a restore point needs admin + time.
+    // UwpRemove mode: Remove-AppxPackage / -Provisioned is silent, bounded (60s), cancellable,
+    // and early-returns BEFORE the leftover scan, so this ONLY removes the package (no cleanup).
+    // createRestorePoint false: a Store app is reinstallable and a restore point needs admin.
     UninstallWorker worker(program, UninstallWorker::Mode::UwpRemove, ScanLevel::Safe, false);
-    AsyncActionInvocation inv(kUninstallTimeoutMs);
-    QObject::connect(
-        &worker,
-        &UninstallWorker::uninstallComplete,
-        inv.context(),
-        [&inv, name](const UninstallReport& report) {
-            const bool ok = report.uninstallResult == UninstallReport::UninstallResult::Success;
-            QJsonObject data{{QStringLiteral("program"), name},
-                             {QStringLiteral("result"),
-                              ok ? QStringLiteral("success") : QStringLiteral("failed")}};
-            inv.finish({ok,
-                        ok ? QStringLiteral("Uninstalled '%1'").arg(name)
-                           : QStringLiteral("Uninstall of '%1' failed").arg(name),
-                        data});
-        });
-    QObject::connect(
-        &worker, &WorkerBase::failed, inv.context(), [&inv, name](int, const QString& error) {
-            inv.finish(
-                {false,
-                 error.isEmpty() ? QStringLiteral("Uninstall of '%1' failed").arg(name) : error,
-                 {}});
-        });
-    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
-        inv.finish({false, QStringLiteral("Uninstall was cancelled"), {}});
-    });
+    return driveUninstallWorker(worker, name, kUwpUninstallTimeoutMs);
+}
 
-    const AppActionResult result = inv.run([&worker]() { worker.start(); });
-    // Fully join HERE, while every UninstallWorker member is alive. Its dtor is =default, so
-    // ~WorkerBase (which joins) would otherwise run AFTER the derived members execute() reads
-    // (m_program, m_scanStopFlag) are destroyed = a UAF on the timeout path. Joining before
-    // the return guarantees the thread has stopped before any member is torn down.
-    worker.requestStop();
-    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
-        worker.terminate();
-        worker.wait(sak::kTimeoutThreadTerminateMs);
+AppActionResult uninstallWin32Program(const QJsonObject& args) {
+    const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
+    if (name.isEmpty()) {
+        return {false, QStringLiteral("uninstall_program requires a 'program_name' argument"), {}};
     }
-    return result;
+    ProgramInfo program;
+    if (const std::optional<AppActionResult> error = resolveWin32Program(name, program)) {
+        return *error;
+    }
+    // Standard mode + setHeadlessSilent: run the SILENT native uninstaller (quietUninstallString
+    // or msiexec /qn, hard 20-min cap; interactive-only was already refused in resolve) then a
+    // fast, REPORT-ONLY leftover scan (ScanLevel::Safe -- it never deletes; cleanup is a separate
+    // step). createRestorePoint false: the gate offers a restore point (a worker one needs admin).
+    //
+    // ACCEPTED RESIDUALS (adversarial review, all bounded, none corrupting): (a) a publisher that
+    // mislabels QuietUninstallString with an interactive command slips past the silent check and
+    // pops UI until the 20-min cap kills its tree; (b) an MSI removal's real work runs in the
+    // Installer service, so a timeout-kill of the msiexec client may report failure while the
+    // service completes the removal; (c) exit code 3010 (reboot-required) is reported as success
+    // without a reboot notice (the worker does not surface nativeExitCode). Interactive hang and
+    // wrong-program/system-component removal are PREVENTED (resolve refuses them up front).
+    UninstallWorker worker(program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
+    worker.setHeadlessSilent(true);
+    return driveUninstallWorker(worker, name, kWin32UninstallTimeoutMs);
 }
 
 using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
@@ -1035,18 +1106,37 @@ void registerSoftwareOps(const AddMutatingActionFn& add) {
     // software.uninstall_uwp_app: removes an installed Store/UWP app via UninstallWorker
     // (Remove-AppxPackage: silent, bounded, cancellable; early-returns before any leftover
     // cleanup). Removing an app + its per-user data is destructive; provisioned (all-users)
-    // removal needs admin. NOT catastrophic (reinstallable, no disk wipe). Only silent UWP
-    // removal is offered -- interactive Win32 uninstallers (which would hang headless) come later.
+    // removal needs admin. NOT catastrophic (reinstallable, no disk wipe).
     AppActionDescriptor uninstall_uwp = mutatingDescriptor(
         QStringLiteral("software.uninstall_uwp_app"),
         QStringLiteral("Uninstall a Store/UWP app"),
-        QStringLiteral("Remove an installed Microsoft Store / UWP app by name (silent; Win32 "
-                       "programs are not supported yet)"),
+        QStringLiteral("Remove an installed Microsoft Store / UWP app by name (silent)"),
         QStringLiteral("software"));
-    uninstall_uwp.params_schema = uninstallUwpParamsSchema();
+    uninstall_uwp.params_schema = uninstallProgramParamsSchema(
+        QStringLiteral("Exact display name of the installed Store/UWP app to remove "
+                       "(as shown by security.list_installed_programs)"));
     uninstall_uwp.destructive = true;
     uninstall_uwp.requires_admin = true;
     add(uninstall_uwp, uninstallUwpApp);
+
+    // software.uninstall_program: removes an installed Win32 program via UninstallWorker in
+    // Standard + headless-silent mode -- only a SILENT command (quietUninstallString or
+    // msiexec /qn) with a hard timeout; a program whose uninstaller is interactive-only is
+    // refused (it would hang a headless run). Then a fast, REPORT-ONLY leftover scan. Removing
+    // a program is destructive + needs admin; NOT catastrophic (no disk wipe).
+    AppActionDescriptor uninstall_win32 = mutatingDescriptor(
+        QStringLiteral("software.uninstall_program"),
+        QStringLiteral("Uninstall a Win32 program"),
+        QStringLiteral("Silently uninstall an installed Win32 (desktop) program by name. Only "
+                       "programs with a silent/quiet uninstaller are supported; interactive-only "
+                       "uninstallers are refused. Also reports leftover files/keys (no delete)."),
+        QStringLiteral("software"));
+    uninstall_win32.params_schema = uninstallProgramParamsSchema(
+        QStringLiteral("Exact display name of the installed Win32 program to remove "
+                       "(as shown by security.list_installed_programs)"));
+    uninstall_win32.destructive = true;
+    uninstall_win32.requires_admin = true;
+    add(uninstall_win32, uninstallWin32Program);
 }
 
 }  // namespace
@@ -1099,6 +1189,45 @@ bool isSafePackageFullName(const QString& name) {
     // argument.
     static const QRegularExpression kPackageRe(QStringLiteral("\\A[A-Za-z0-9][A-Za-z0-9._~-]*\\z"));
     return !name.isEmpty() && name.size() <= 256 && kPackageRe.match(name).hasMatch();
+}
+
+std::optional<AppActionResult> resolveWin32ProgramFromList(const QVector<ProgramInfo>& programs,
+                                                           const QString& name,
+                                                           ProgramInfo& out) {
+    const Win32MatchSummary summary = collectWin32Matches(programs, name);
+    if (summary.distinct_commands.size() == 1) {
+        out = summary.representative;
+        return std::nullopt;
+    }
+    if (summary.distinct_commands.size() > 1) {
+        // Two genuinely different programs share this display name (e.g. an x86/x64 pair or two
+        // "Updater"s): refuse rather than silently remove the wrong one.
+        return AppActionResult{false,
+                               QStringLiteral("'%1' matches %2 distinct installed programs; use a "
+                                              "more specific name or the GUI uninstall panel")
+                                   .arg(name)
+                                   .arg(summary.distinct_commands.size()),
+                               {}};
+    }
+    // No silently-uninstallable match. Distinguish the reasons for an actionable message.
+    if (summary.saw_system_component) {
+        return AppActionResult{false,
+                               QStringLiteral("'%1' is a protected Windows system component; "
+                                              "uninstall it from the GUI panel, not headless")
+                                   .arg(name),
+                               {}};
+    }
+    if (!summary.saw_name) {
+        return AppActionResult{false,
+                               QStringLiteral("No installed Win32 program named '%1'").arg(name),
+                               {}};
+    }
+    return AppActionResult{false,
+                           QStringLiteral("'%1' has no silent uninstall command (its uninstaller "
+                                          "is interactive and cannot run headless); use the GUI "
+                                          "uninstall panel")
+                               .arg(name),
+                           {}};
 }
 
 PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& inventory,

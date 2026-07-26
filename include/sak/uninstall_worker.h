@@ -45,6 +45,21 @@ public:
     UninstallWorker(UninstallWorker&&) = delete;
     UninstallWorker& operator=(UninstallWorker&&) = delete;
 
+    /// @brief Run the native uninstaller in SILENT, BOUNDED mode (headless). When set, the
+    /// Standard-mode native step uses only a fully-silent command (quietUninstallString, or a
+    /// built `msiexec /x {GUID} /qn /norestart`) and a hard timeout, and REFUSES to launch a
+    /// program that has no silent command -- a bare interactive uninstaller would hang a run
+    /// with no user to click through it. Default (false) preserves the GUI behavior exactly:
+    /// the registered uninstallString is launched and waited on indefinitely.
+    void setHeadlessSilent(bool silent) { m_headlessSilent = silent; }
+
+    /// @brief Build the fully-silent uninstall command for @p program into @p cmdOut. Returns
+    /// false if none exists (no quietUninstallString and not an MSI with a product GUID) -- the
+    /// signal to REFUSE a headless uninstall rather than launch an interactive one. Static so
+    /// the caller can pre-check without constructing a worker. Exposed for unit testing.
+    [[nodiscard]] static bool buildSilentUninstallCommand(const ProgramInfo& program,
+                                                          QString& cmdOut);
+
 Q_SIGNALS:
     /// @brief Native uninstaller has been launched
     void nativeUninstallerStarted(const QString& programName);
@@ -78,6 +93,7 @@ private:
     Mode m_mode;
     ScanLevel m_scanLevel;
     bool m_createRestorePoint{true};
+    bool m_headlessSilent{false};
 
     // Pipeline stages
     [[nodiscard]] bool createRestorePoint();

@@ -29,6 +29,10 @@ constexpr int kProgressRegistryRemoval = 50;
 constexpr int kRestorePointProgramNameMaxChars = 40;
 constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kUwpRemovalTimeoutMs = 60'000;
+// Headless silent uninstall: a hard ceiling so a /qn uninstaller that still stalls cannot hang
+// the run forever (the GUI path waits indefinitely because a human is watching). Generous so a
+// legitimately long silent uninstall of a large product is not killed mid-removal.
+constexpr int kHeadlessUninstallTimeoutMs = 20 * 60 * 1000;
 constexpr int kMsiRebootRequiredCode = 3010;
 constexpr int kQuotedCaptureGroup = 1;
 constexpr int kUnquotedCaptureGroup = 2;
@@ -225,15 +229,41 @@ bool UninstallWorker::captureRegistrySnapshot() {
     return !m_registrySnapshotBefore.isEmpty();
 }
 
-bool UninstallWorker::runNativeUninstaller() {
-    QString cmd = m_program.uninstallString;
-    if (cmd.isEmpty()) {
-        return false;
+bool UninstallWorker::buildSilentUninstallCommand(const ProgramInfo& program, QString& cmdOut) {
+    // Prefer the publisher-provided silent command.
+    if (!program.quietUninstallString.isEmpty()) {
+        cmdOut = program.quietUninstallString;
+        return true;
     }
+    // MSI: build a fully-silent removal from the product GUID (/qn = no UI, /norestart).
+    if (program.uninstallString.toLower().contains(QLatin1String("msiexec"))) {
+        static const QRegularExpression guid_re(QStringLiteral(R"(\{[0-9A-Fa-f\-]{36}\})"));
+        const auto match = guid_re.match(program.uninstallString);
+        if (match.hasMatch()) {
+            cmdOut = QStringLiteral("msiexec.exe /x %1 /qn /norestart").arg(match.captured(0));
+            return true;
+        }
+    }
+    // No reliable silent path: a bare interactive uninstallString would hang a headless run.
+    return false;
+}
 
-    // Check for MSI installer
-    if (isMsiInstaller()) {
-        cmd = buildMsiUninstallCommand();
+bool UninstallWorker::runNativeUninstaller() {
+    QString cmd;
+    int timeout_ms = 0;  // GUI: wait indefinitely -- a user may interact with the uninstaller.
+    if (m_headlessSilent) {
+        if (!buildSilentUninstallCommand(m_program, cmd)) {
+            return false;  // refuse: no silent command, never launch an interactive uninstaller
+        }
+        timeout_ms = kHeadlessUninstallTimeoutMs;
+    } else {
+        cmd = m_program.uninstallString;
+        if (cmd.isEmpty()) {
+            return false;
+        }
+        if (isMsiInstaller()) {
+            cmd = buildMsiUninstallCommand();
+        }
     }
 
     const auto parsed = parseUninstallCommand(cmd);
@@ -241,9 +271,8 @@ bool UninstallWorker::runNativeUninstaller() {
         return false;
     }
 
-    // Wait indefinitely for uninstaller -- user may need to interact with it.
     const auto result =
-        sak::runProcess(parsed.exe, parsed.args, 0, [this]() { return stopRequested(); });
+        sak::runProcess(parsed.exe, parsed.args, timeout_ms, [this]() { return stopRequested(); });
 
     return !result.cancelled && result.exit_status == 0 &&
            (result.exit_code == 0 || result.exit_code == kMsiRebootRequiredCode);

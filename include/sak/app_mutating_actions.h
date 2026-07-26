@@ -1,10 +1,14 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/advanced_uninstall_types.h"
 #include "sak/app_action_registry.h"
 #include "sak/partition_manager_types.h"
 
 #include <QString>
+#include <QVector>
+
+#include <optional>
 
 /// @file app_mutating_actions.h
 /// @brief Registers the app's MUTATING technician operations into an
@@ -33,6 +37,7 @@ class AppActionRegistry;
 ///   imaging.flash_image          -- write a disk image to a physical drive (catastrophic)
 ///   partition.apply_operation    -- apply one partition-layout op to a disk (catastrophic)
 ///   software.uninstall_uwp_app   -- remove an installed Store/UWP app (silent, per-name)
+///   software.uninstall_program   -- silently remove an installed Win32 program (per-name)
 [[nodiscard]] int registerMutatingAppActionsInto(AppActionRegistry& registry);
 
 /// True if @p name is a UWP PackageFullName safe to interpolate into the single-quoted
@@ -42,6 +47,17 @@ class AppActionRegistry;
 /// defense-in-depth guard against a malformed/hostile name breaking out of the quotes.
 /// Exposed (not anonymous) for unit testing.
 [[nodiscard]] bool isSafePackageFullName(const QString& name);
+
+/// Pure resolution core for software.uninstall_program (exposed for unit testing): from a RAW
+/// (non-deduped) registry program list, find the single silently-uninstallable match for
+/// @p name (exact, case-insensitive) and set @p out. Returns an error result -- never a wrong
+/// match -- when: the name matches a SystemComponent (a hidden runtime/driver -- refused, never
+/// silently removed headless); no program matches; a match has no silent uninstall command (its
+/// uninstaller is interactive); or two matches resolve to DIFFERENT silent commands (genuinely
+/// distinct programs -> ambiguous). A name double-registered across hives yields the SAME
+/// command and resolves to one. Side-effect-free for deterministic certification.
+[[nodiscard]] std::optional<AppActionResult> resolveWin32ProgramFromList(
+    const QVector<ProgramInfo>& programs, const QString& name, ProgramInfo& out);
 
 /// Result of resolving + safety-validating a flash target disk. Exposed (not in an
 /// anonymous namespace) so the SAFETY logic can be unit-tested with synthetic
