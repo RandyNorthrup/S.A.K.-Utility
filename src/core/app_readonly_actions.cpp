@@ -32,6 +32,7 @@
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
+#include "sak/wifi_analyzer.h"
 #include "sak/worker_base.h"
 
 #include <QFileInfo>
@@ -65,6 +66,8 @@ constexpr int kMaxFirewallRules = 600;
 constexpr int kMaxFirewallConflicts = 200;
 constexpr int kMaxFirewallGaps = 100;
 constexpr int kMaxDnsAnswers = 100;
+constexpr int kMaxWifiNetworks = 200;
+constexpr int kMaxWifiChannels = 100;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
 // + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
@@ -844,6 +847,91 @@ AppActionResult listConnections(const QJsonObject& args) {
                 .arg(tcp)
                 .arg(udp),
             data};
+}
+
+QJsonObject serializeWifiNetwork(const WiFiNetworkInfo& net) {
+    return QJsonObject{{QStringLiteral("ssid"), clampLine(net.ssid)},
+                       {QStringLiteral("bssid"), net.bssid},
+                       {QStringLiteral("signal_quality"), net.signalQuality},
+                       {QStringLiteral("rssi_dbm"), net.rssiDbm},
+                       {QStringLiteral("channel"), net.channelNumber},
+                       {QStringLiteral("band"), net.band},
+                       {QStringLiteral("channel_width_mhz"), net.channelWidthMHz},
+                       {QStringLiteral("authentication"), net.authentication},
+                       {QStringLiteral("encryption"), net.encryption},
+                       {QStringLiteral("secure"), net.isSecure},
+                       {QStringLiteral("connected"), net.isConnected},
+                       {QStringLiteral("vendor"), clampLine(net.apVendor)}};
+}
+
+QJsonObject serializeWifiChannel(const WiFiChannelUtilization& ch) {
+    return QJsonObject{{QStringLiteral("channel"), ch.channelNumber},
+                       {QStringLiteral("band"), ch.band},
+                       {QStringLiteral("network_count"), ch.networkCount},
+                       {QStringLiteral("avg_signal_dbm"), ch.averageSignalDbm},
+                       {QStringLiteral("interference_score"), ch.interferenceScore}};
+}
+
+// Scan for nearby WiFi networks via WiFiAnalyzer (Windows Native WiFi / wlanapi: passive
+// listen + a single WlanScan trigger, no target host, no packets to any peer). scan() BLOCKS
+// for a fixed ~500ms scan settle plus the local BSS-list read and emits scanComplete inline on
+// this thread (captured by a direct connection, no event loop) -- the hardware_scan pattern.
+// On a host with no WiFi radio -- or a driver/radio failure that yields no data (radio off) --
+// the engine emits errorOccurred, which maps to an honest op failure (fail-closed, not a
+// misleading "0 networks" success). Read-only. Also derives channel utilization from the scan.
+//
+// Privacy note (conscious acceptance, adversarial review): the result exposes nearby BSSIDs (AP
+// MAC addresses), which are geolocatable via wardriving databases -- a physical-location axis the
+// other network ops lack. Accepted as a standard no-admin diagnostic (equivalent to
+// `netsh wlan show networks mode=bssid`), consistent with list_connections already exposing
+// remote endpoints and user-profile process paths.
+AppActionResult wifiScan(const QJsonObject&) {
+    WiFiAnalyzer analyzer;
+    QVector<WiFiNetworkInfo> networks;
+    bool captured = false;
+    QString hard_error;
+    QObject::connect(&analyzer,
+                     &WiFiAnalyzer::scanComplete,
+                     &analyzer,
+                     [&networks, &captured](const QVector<WiFiNetworkInfo>& result) {
+                         networks = result;
+                         captured = true;
+                     });
+    QObject::connect(&analyzer,
+                     &WiFiAnalyzer::errorOccurred,
+                     &analyzer,
+                     [&hard_error](const QString& error) { hard_error = error; });
+    analyzer.scan();
+
+    if (!captured || !hard_error.isEmpty()) {
+        return {false,
+                hard_error.isEmpty() ? QStringLiteral("WiFi scan did not complete") : hard_error,
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const WiFiNetworkInfo& net : networks) {
+        if (listed.size() >= kMaxWifiNetworks) {
+            break;
+        }
+        listed.append(serializeWifiNetwork(net));
+    }
+    const QVector<WiFiChannelUtilization> utilization =
+        WiFiAnalyzer::calculateChannelUtilization(networks);
+    QJsonArray channels;
+    for (const WiFiChannelUtilization& ch : utilization) {
+        if (channels.size() >= kMaxWifiChannels) {
+            break;
+        }
+        channels.append(serializeWifiChannel(ch));
+    }
+    QJsonObject data{{QStringLiteral("network_count"), networks.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), networks.size() > listed.size()},
+                     {QStringLiteral("networks"), listed},
+                     {QStringLiteral("channels"), channels},
+                     {QStringLiteral("channels_truncated"), utilization.size() > channels.size()}};
+    return {true, QStringLiteral("WiFi scan: %1 network(s) found").arg(networks.size()), data};
 }
 
 QString fwDirectionToString(FirewallRule::Direction d) {
@@ -1825,6 +1913,14 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        firewallParamsSchema()),
         auditFirewall);
+
+    add(makeDescriptor(QStringLiteral("network.wifi_scan"),
+                       QStringLiteral("Scan WiFi networks"),
+                       QStringLiteral("Scan for nearby WiFi networks with signal/channel/security "
+                                      "details and channel-utilization analysis"),
+                       QStringLiteral("network"),
+                       noParamsSchema()),
+        wifiScan);
 
     add(makeDescriptor(QStringLiteral("network.ping"),
                        QStringLiteral("Ping a host"),

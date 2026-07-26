@@ -1562,6 +1562,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # network.audit_firewall: INetFwPolicy2 COM enumeration + conflict/gap analysis
         # (ole32/oleaut32 auto-link via #pragma comment in the cpp).
         ${CMAKE_SOURCE_DIR}/src/core/firewall_rule_auditor.cpp
+        # network.wifi_scan: Windows Native WiFi scan (wlanapi auto-link via #pragma comment).
+        ${CMAKE_SOURCE_DIR}/src/core/wifi_analyzer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
@@ -1681,6 +1683,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/network_probe_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/active_connections_monitor.h
         ${CMAKE_SOURCE_DIR}/include/sak/firewall_rule_auditor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/wifi_analyzer.h
         ${CMAKE_SOURCE_DIR}/include/sak/program_enumerator.h
         ${CMAKE_SOURCE_DIR}/include/sak/uninstall_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h

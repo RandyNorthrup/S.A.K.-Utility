@@ -211,14 +211,21 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
     }
 }
 
+// Scan one interface. @p readOk is set true if AT LEAST ONE of the two list reads succeeded
+// (so an empty result is a genuine "no networks"); it stays false only when BOTH reads errored
+// -- e.g. the radio is powered off (ERROR_NDIS_DOT11_POWER_STATE_INVALID) -- which the caller
+// surfaces as an honest scan failure rather than a misleading empty success.
 void scanInterface(HANDLE handle,
                    const WLAN_INTERFACE_INFO& ifInfo,
                    bool triggerScan,
-                   QVector<WiFiNetworkInfo>& networks) {
+                   QVector<WiFiNetworkInfo>& networks,
+                   bool& readOk) {
     if (triggerScan) {
         WlanScan(handle, &ifInfo.InterfaceGuid, nullptr, nullptr, nullptr);
         QThread::msleep(kForcedScanDelayMs);
     }
+
+    readOk = false;
 
     PWLAN_BSS_LIST rawBssList = nullptr;
     DWORD result = WlanGetNetworkBssList(
@@ -227,6 +234,7 @@ void scanInterface(HANDLE handle,
     WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
     if (result == ERROR_SUCCESS && bssList != nullptr) {
         appendBssNetworks(*bssList, networks);
+        readOk = true;
     }
 
     PWLAN_AVAILABLE_NETWORK_LIST rawNetList = nullptr;
@@ -235,6 +243,7 @@ void scanInterface(HANDLE handle,
 
     if (result == ERROR_SUCCESS && netList != nullptr) {
         applyAvailableNetworkList(*netList, networks);
+        readOk = true;
     }
 }
 
@@ -350,8 +359,20 @@ void WiFiAnalyzer::scan() {
         return;
     }
 
-    auto networks = performWlanScan();
+    bool scanError = false;
+    auto networks = performWlanScan(true, scanError);
     m_lastScan = networks;
+
+    // Fail CLOSED: a driver/radio failure that yields NO data (e.g. the radio is off) is reported
+    // honestly via errorOccurred rather than as a misleading "0 networks" success. A partial scan
+    // (some interface produced data) is still a success.
+    if (scanError && networks.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "WiFi scan failed (no data from the adapter -- the radio may be off or there is no "
+            "wireless interface)"));
+        Q_EMIT scanComplete(networks);
+        return;
+    }
 
     Q_EMIT scanComplete(networks);
 
@@ -373,7 +394,8 @@ void WiFiAnalyzer::startContinuousScan(int intervalMs) {
         if (!m_wlanInitialized.load()) {
             return;
         }
-        auto networks = performWlanScan(false);
+        bool scanError = false;  // background refresh: a transient read error just yields no update
+        auto networks = performWlanScan(false, scanError);
         m_lastScan = networks;
         Q_EMIT scanComplete(networks);
         auto channels = calculateChannelUtilization(networks);
@@ -397,10 +419,12 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::getLastScanResults() const {
     return m_lastScan;
 }
 
-QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan) {
+QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan, bool& scanError) {
+    scanError = false;
     QVector<WiFiNetworkInfo> networks;
 
     if (m_wlanHandle == nullptr) {
+        scanError = true;
         return networks;
     }
 
@@ -409,13 +433,20 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan) {
     PWLAN_INTERFACE_INFO_LIST rawIfList = nullptr;
     const DWORD result = WlanEnumInterfaces(handle, nullptr, &rawIfList);
     WlanPtr<WLAN_INTERFACE_INFO_LIST> ifList(rawIfList, &wlanFreeMemory);
-    if (result != ERROR_SUCCESS || ifList == nullptr) {
+    if (result != ERROR_SUCCESS || ifList == nullptr || ifList->dwNumberOfItems == 0) {
+        scanError = true;  // no wireless interface to scan (enum failed or zero adapters)
         return networks;
     }
 
+    bool anyInterfaceOk = false;
     for (DWORD i = 0; i < ifList->dwNumberOfItems; ++i) {
-        scanInterface(handle, ifList->InterfaceInfo[i], triggerScan, networks);
+        bool interfaceOk = false;
+        scanInterface(handle, ifList->InterfaceInfo[i], triggerScan, networks, interfaceOk);
+        anyInterfaceOk = anyInterfaceOk || interfaceOk;
     }
+    // Every interface's list reads errored (e.g. radio off) -> the scan FAILED; distinguish that
+    // from a genuine empty result (a read succeeded with zero networks).
+    scanError = !anyInterfaceOk;
     return networks;
 }
 

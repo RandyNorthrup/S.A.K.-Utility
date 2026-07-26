@@ -77,7 +77,11 @@ private:
 
     bool initializeWlan();
     void cleanupWlan();
-    [[nodiscard]] QVector<WiFiNetworkInfo> performWlanScan(bool triggerScan = true);
+    /// Run one scan pass. @p scanError is set true when the scan FAILED at the driver (no WLAN
+    /// interface, or every interface's list read errored -- e.g. the radio is off) as opposed to
+    /// a genuine empty result (reads succeeded with zero networks). Lets scan() report a failed
+    /// scan honestly via errorOccurred rather than a misleading "0 networks" success.
+    [[nodiscard]] QVector<WiFiNetworkInfo> performWlanScan(bool triggerScan, bool& scanError);
 
     /// @brief Format MAC address bytes to colon-separated string
     [[nodiscard]] static QString formatMacAddress(const unsigned char* addr, int length);

@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 17 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 20);
+        // 7 built-in QuickActions + 18 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 21);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -259,6 +259,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_connections")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.audit_firewall")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.wifi_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
@@ -1845,6 +1846,46 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Wave 1 (network): wifi_scan. The result is HARDWARE-dependent (a host with no WiFi radio,
+    // like a CI runner or a desktop, has no networks and may report the adapter unavailable), so
+    // this certifies the dispatch + result SHAPE + honest failure classification rather than a
+    // fixed network count. Either a success with a well-formed networks array, or an honest
+    // failure whose message names the WiFi adapter -- never a malformed result or a crash.
+    void wifiScanReturnsWellFormedResult() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("networks")));
+            QVERIFY(data.value(QStringLiteral("network_count")).toInt() >= 0);
+            QVERIFY(data.contains(QStringLiteral("channels")));
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("WiFi"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Wave 1 (network): wifi_scan is read-only, so it runs UNGATED in a Chat & Research session
+    // -- it must never be POLICY-blocked (no failure_class), regardless of whether the scan
+    // itself succeeds or reports the adapter unavailable (an operational failure, not a gate).
+    void wifiScanRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
