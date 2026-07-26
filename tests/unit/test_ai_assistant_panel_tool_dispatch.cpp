@@ -1068,6 +1068,193 @@ private Q_SLOTS:
         QVERIFY(resolved.description.contains(QStringLiteral("disk 2")));
     }
 
+    // ------------------------------------------------------------------
+    // W2f: partition.apply_operation. The APPLY execution is never unit-tested (needs
+    // a real disk + admin diskpart), so the pure guard resolvePartitionApplyTarget is
+    // certified directly with synthetic inventories, plus descriptor flags + gating +
+    // arg guards.
+    // ------------------------------------------------------------------
+
+    // W2f(1): the guard refuses the same OS-disk denylist as flash (system/boot,
+    // read-only, dynamic/Storage-Spaces, EFI-partition), plus missing/negative.
+    void resolvePartitionApplyRefusesUnsafeDisks() {
+        const QString hash = QStringLiteral("layout-abc");
+        const auto inv = [&](uint32_t n, bool sys, bool boot, bool ro) {
+            PartitionInventory i = inventoryWithDisk(n, sys, boot, ro);
+            i.layout_hash = hash;
+            return i;
+        };
+        QVERIFY(!resolvePartitionApplyTarget(inv(0, true, false, false), 0, hash).ok);  // system
+        QVERIFY(!resolvePartitionApplyTarget(inv(0, false, true, false), 0, hash).ok);  // boot
+        QVERIFY(!resolvePartitionApplyTarget(inv(3, false, false, true), 3, hash).ok);  // read-only
+        QVERIFY(!resolvePartitionApplyTarget(inv(1, false, false, false), 7, hash).ok);  // missing
+        QVERIFY(
+            !resolvePartitionApplyTarget(inv(0, false, false, false), -1, hash).ok);     // negative
+        {
+            PartitionInventory i = inv(2, false, false, false);
+            i.disks[0].is_dynamic = true;
+            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+        }
+        {
+            PartitionInventory i = inv(2, false, false, false);
+            i.disks[0].is_storage_spaces = true;
+            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+        }
+        {
+            PartitionInventory i = inv(2, false, false, false);
+            PartitionInfoEx efi;
+            efi.is_efi = true;
+            i.disks[0].partitions.append(efi);
+            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+        }
+    }
+
+    // W2f(2): refuse a drifted layout (confirm hash != current) and a degraded scan.
+    void resolvePartitionApplyRefusesDriftAndDegraded() {
+        PartitionInventory current = inventoryWithDisk(2, false, false, false);
+        current.layout_hash = QStringLiteral("current-hash");
+        const PartitionApplyResolution drift =
+            resolvePartitionApplyTarget(current, 2, QStringLiteral("stale-hash"));
+        QVERIFY(!drift.ok);
+        QVERIFY(drift.error.message.contains(QStringLiteral("changed since")));
+
+        PartitionInventory degraded = inventoryWithDisk(2, false, false, false);
+        degraded.layout_hash = QStringLiteral("h");
+        degraded.warnings.append(QStringLiteral("enumeration degraded"));
+        QVERIFY(!resolvePartitionApplyTarget(degraded, 2, QStringLiteral("h")).ok);
+    }
+
+    // W2f(3): accept a present, non-system, writable data disk when the layout hash
+    // the model confirmed still matches the current inventory.
+    void resolvePartitionApplyAcceptsSafeDisk() {
+        PartitionInventory i = inventoryWithDisk(2, false, false, false);
+        i.layout_hash = QStringLiteral("match");
+        const PartitionApplyResolution r =
+            resolvePartitionApplyTarget(i, 2, QStringLiteral("match"));
+        QVERIFY(r.ok);
+        QCOMPARE(r.device_path, QStringLiteral("\\\\.\\PhysicalDrive2"));
+        QVERIFY(r.description.contains(QStringLiteral("disk 2")));
+    }
+
+    // W2f(4): registered destructive + CATASTROPHIC + requires_admin so the gate
+    // forces a human confirm even in Unattended.
+    void applyOperationListedCatastrophic() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("partition.apply_operation")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W2f(5): blocked in a chat/research session (never reaches the executor).
+    void applyOperationBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"delete\",\"disk_number\":9,"
+                                        "\"confirm_layout_hash\":\"h\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W2f(6): once past the forced confirm, a missing confirm_layout_hash fails cleanly
+    // (before any inventory scan) -- the drift guard cannot be skipped.
+    void applyOperationMissingConfirmHashFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // approve the forced catastrophic confirm
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"delete\",\"disk_number\":9}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("confirm_layout_hash")));
+    }
+
+    // W2f(7): an unsupported operation is refused before any disk work.
+    void applyOperationRejectsUnsupportedType() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"frobnicate\",\"disk_number\":9,"
+                                        "\"confirm_layout_hash\":\"h\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("Unsupported")));
+    }
+
+    // W2f(8): a LIVE apply (dry_run false/omitted) is refused -- only dry_run is
+    // supported until the elevated executor is wired to the panel cancel/run-token, so
+    // an un-cancellable elevated op can never run on the assistant thread.
+    void applyOperationRefusesLiveApply() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // approve the forced catastrophic confirm
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"delete\",\"disk_number\":9,"
+                                        "\"confirm_layout_hash\":\"h\",\"dry_run\":false}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("not yet available")));
+    }
+
+    // W2f(9): dry_run must be a real boolean -- a non-boolean value is rejected, never
+    // coerced to false (which would silently select the live/destructive path).
+    void applyOperationRejectsNonBooleanDryRun() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"delete\",\"disk_number\":9,"
+                                        "\"confirm_layout_hash\":\"h\",\"dry_run\":\"true\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dry_run must be a boolean")));
+    }
+
     // W2d(3): the descriptor is registered destructive + CATASTROPHIC + requires_admin
     // so the gate forces a human confirm even in Unattended.
     void flashImageListedCatastrophic() {

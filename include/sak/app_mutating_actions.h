@@ -28,9 +28,10 @@ class AppActionRegistry;
 
 /// Register the mutating technician ops into @p registry. Returns the number
 /// registered. Ids are stable and namespaced by area:
-///   email.export_mbox           -- export messages from an MBOX file
+///   email.export_mbox            -- export messages from an MBOX file
 ///   organizer.organize_directory -- move files into category subfolders
 ///   imaging.flash_image          -- write a disk image to a physical drive (catastrophic)
+///   partition.apply_operation    -- apply one partition-layout op to a disk (catastrophic)
 [[nodiscard]] int registerMutatingAppActionsInto(AppActionRegistry& registry);
 
 /// Result of resolving + safety-validating a flash target disk. Exposed (not in an
@@ -50,5 +51,24 @@ struct FlashTargetResolution {
 /// is rejected. Pure and side-effect-free for deterministic certification.
 [[nodiscard]] FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory,
                                                        int disk_number);
+
+/// Result of resolving + safety-gating a partition.apply_operation target disk.
+/// Exposed (not anonymous) so the guard can be unit-tested with synthetic
+/// inventories -- a real disk is never needed to certify it.
+struct PartitionApplyResolution {
+    bool ok{false};         ///< true only if the disk is a safe, applyable target
+    QString device_path;    ///< "\\.\PhysicalDrive<N>" when ok
+    QString description;    ///< short human/model description of the target when ok
+    AppActionResult error;  ///< populated (ok=false) when refused
+};
+
+/// Resolve physical @p disk_number against @p inventory and REFUSE it if the scan is
+/// degraded (warnings), the observed layout drifted since preview
+/// (@p confirm_layout_hash != inventory.layout_hash), the disk is missing, or it is
+/// the OS/system/boot disk, a dynamic/Storage-Spaces disk, or read-only. Partition
+/// apply on the running OS disk is always refused (envelope: any non-system disk);
+/// use the GUI panel for OS-disk surgery. Fails CLOSED; pure and side-effect-free.
+[[nodiscard]] PartitionApplyResolution resolvePartitionApplyTarget(
+    const PartitionInventory& inventory, int disk_number, const QString& confirm_layout_hash);
 
 }  // namespace sak

@@ -12,12 +12,16 @@
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
+#include "sak/app_partition_op_parse.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/flash_coordinator.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
+#include "sak/partition_executor.h"
 #include "sak/partition_manager_types.h"
+#include "sak/partition_operation_planner.h"
+#include "sak/partition_safety_validator.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/worker_base.h"
 
@@ -651,6 +655,225 @@ AppActionDescriptor mutatingDescriptor(const QString& id,
     return descriptor;
 }
 
+// ---------------------------------------------------------------------------
+// partition.apply_operation: apply ONE partition-layout operation to a disk.
+// ---------------------------------------------------------------------------
+
+QJsonObject serializeApplyStep(const PartitionExecutionStep& step) {
+    QJsonObject obj{{QStringLiteral("summary"), step.summary},
+                    {QStringLiteral("success"), step.success},
+                    {QStringLiteral("skipped"), step.skipped}};
+    if (!step.error_message.isEmpty()) {
+        obj.insert(QStringLiteral("error"), step.error_message);
+    }
+    // A dry run performs no I/O; it puts the script it WOULD run into stdout_text.
+    // Surface that (capped) so the model can inspect the plan.
+    if (step.skipped && !step.stdout_text.isEmpty()) {
+        QString preview = step.stdout_text;
+        if (preview.size() > kPartitionReportOutputPreviewChars) {
+            preview = preview.left(kPartitionReportOutputPreviewChars) + QStringLiteral("...");
+        }
+        obj.insert(QStringLiteral("script_preview"), preview);
+    }
+    return obj;
+}
+
+QJsonObject serializeApplyResult(const PartitionExecutionResult& result) {
+    QJsonArray steps;
+    for (const PartitionExecutionStep& step : result.steps) {
+        steps.append(serializeApplyStep(step));
+    }
+    return QJsonObject{{QStringLiteral("success"), result.success},
+                       {QStringLiteral("dry_run"), result.dry_run},
+                       {QStringLiteral("cancelled"), result.cancelled},
+                       {QStringLiteral("message"), result.message},
+                       {QStringLiteral("steps"), steps}};
+}
+
+// Validate the numeric args + require confirm_layout_hash. Returns an error result to
+// return verbatim, or nullopt when everything is well-formed. Split out to keep
+// applyPartitionOperation within the cyclomatic-complexity budget.
+std::optional<AppActionResult> nonNegativeByteArgsError(const QJsonObject& args) {
+    for (const char* key : {"offset_bytes", "size_bytes"}) {
+        const QString name = QString::fromLatin1(key);
+        if (args.contains(name) && args.value(name).toDouble(0.0) < 0.0) {
+            return AppActionResult{false,
+                                   QStringLiteral("%1 must be a non-negative number").arg(name),
+                                   {}};
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<AppActionResult> validateApplyArgs(const QJsonObject& args) {
+    if (!args.value(QStringLiteral("disk_number")).isDouble()) {
+        return AppActionResult{false,
+                               QStringLiteral("apply_operation requires a numeric 'disk_number'"),
+                               {}};
+    }
+    if (args.value(QStringLiteral("disk_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("disk_number must be a non-negative integer"),
+                               {}};
+    }
+    if (args.contains(QStringLiteral("partition_number")) &&
+        args.value(QStringLiteral("partition_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("partition_number must be a non-negative integer"),
+                               {}};
+    }
+    if (std::optional<AppActionResult> byte_error = nonNegativeByteArgsError(args)) {
+        return byte_error;
+    }
+    if (args.value(QStringLiteral("confirm_layout_hash")).toString().trimmed().isEmpty()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("apply_operation requires 'confirm_layout_hash' (the layout_hash from a "
+                           "prior list_inventory/preview_operation, to detect layout drift)"),
+            {}};
+    }
+    // dry_run is the single most safety-relevant argument, so it must be a real
+    // boolean -- never coerced. A present-but-non-boolean value (e.g. the string
+    // "true") would otherwise silently read as false via toBool(false).
+    if (args.contains(QStringLiteral("dry_run")) &&
+        !args.value(QStringLiteral("dry_run")).isBool()) {
+        return AppActionResult{false,
+                               QStringLiteral("dry_run must be a boolean (true or false)"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+// Validate the op against the safety validator, then (if allowed) drive
+// PartitionExecutor::execute SYNCHRONOUSLY on this worker thread. execute() is a
+// blocking call that does not need the caller's event loop (ElevationBroker reads its
+// pipe synchronously), so no AsyncActionInvocation bridge is required. use_elevation
+// is true only for a real apply (raw diskpart needs admin); a dry run performs no I/O.
+AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
+                                  const QJsonObject& args,
+                                  const PartitionApplyResolution& target,
+                                  const PartitionInventory& inventory,
+                                  bool dry_run) {
+    const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
+    const PartitionTarget pt =
+        buildPartitionOpTarget(args, static_cast<uint32_t>(disk_number), parsed.kind);
+    const QJsonObject payload = args.value(QStringLiteral("payload")).toObject();
+    const PartitionOperation op =
+        PartitionOperationPlanner::makeOperation(parsed.type, pt, payload);
+
+    // Independent of the OS-disk guard: refuse an op the safety validator blocks (the
+    // same rules preview_operation reports), so a knowingly-invalid or
+    // protected-partition op never reaches the executor.
+    PartitionSafetyValidator validator;
+    const PartitionValidationResult validation = validator.validate(inventory, op);
+    if (!validation.allowed()) {
+        return {false,
+                QStringLiteral("Operation is blocked by the safety validator: %1")
+                    .arg(validation.blockers.join(QStringLiteral("; "))),
+                {}};
+    }
+
+    PartitionExecutor executor;
+    const PartitionExecutionResult result =
+        executor.execute(QVector<PartitionOperation>{op}, dry_run, /*use_elevation=*/!dry_run);
+    const QString verb = dry_run ? QStringLiteral("Dry-run") : QStringLiteral("Apply");
+    const QString message = QStringLiteral("%1 of %2 on %3: %4")
+                                .arg(verb)
+                                .arg(toDisplayString(parsed.type))
+                                .arg(target.description)
+                                .arg(result.success ? QStringLiteral("OK")
+                                                    : QStringLiteral("FAILED"));
+    return {result.success, message, serializeApplyResult(result)};
+}
+
+AppActionResult applyPartitionOperation(const QJsonObject& args) {
+    const QString type_name = args.value(QStringLiteral("operation")).toString().trimmed();
+    const std::optional<ParsedPartitionOp> parsed = parsePartitionOpType(type_name);
+    if (!parsed) {
+        return {false,
+                QStringLiteral("Unsupported or missing operation '%1'. Supported: %2")
+                    .arg(type_name, supportedPartitionOpTypes()),
+                {}};
+    }
+    if (const std::optional<AppActionResult> error = validateApplyArgs(args)) {
+        return *error;
+    }
+    const bool dry_run = args.value(QStringLiteral("dry_run")).toBool(false);
+    // LIVE apply is intentionally refused for now. A real apply drives the blocking,
+    // ELEVATED PartitionExecutor (ShellExecuteEx runas) synchronously on the AI worker
+    // thread; that UAC launch cannot be interrupted and the executor is not yet wired to
+    // the panel's cancel/run-token, so a live run could leave the Stop button inert and
+    // wedge teardown until the elevated op finishes. Until that cancel-lifetime is built,
+    // only dry_run is supported: it returns the exact script WITHOUT elevating or writing.
+    if (!dry_run) {
+        return {false,
+                QStringLiteral(
+                    "Live headless partition apply is not yet available (it would run an "
+                    "un-cancellable elevated operation on the assistant thread). Call again with "
+                    "\"dry_run\": true to get the exact script this operation would run, then "
+                    "apply it from the Partition Manager panel."),
+                {}};
+    }
+    const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
+    const QString confirm_hash =
+        args.value(QStringLiteral("confirm_layout_hash")).toString().trimmed();
+
+    // Authoritative synchronous inventory (no elevation). The guard refuses a degraded
+    // scan, a drifted layout, a missing disk, and the OS/dynamic/read-only disk BEFORE
+    // anything is written. The catastrophic gate has already forced a human confirm.
+    const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+    const PartitionApplyResolution target =
+        resolvePartitionApplyTarget(inventory, disk_number, confirm_hash);
+    if (!target.ok) {
+        return target.error;
+    }
+    return runApplyOperation(*parsed, args, target, inventory, dry_run);
+}
+
+QJsonObject applyParamsSchema() {
+    const auto intProp = [](const QString& description) {
+        return QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                           {QStringLiteral("description"), description}};
+    };
+    QJsonObject payload_prop{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("description"),
+         QStringLiteral("Operation-specific fields (e.g. file_system, label, target_size_bytes)")},
+        {QStringLiteral("additionalProperties"), true}};
+    QJsonObject dry_prop{
+        {QStringLiteral("type"), QStringLiteral("boolean")},
+        {QStringLiteral("description"),
+         QStringLiteral("Must be true: return the exact script this operation WOULD run, writing "
+                        "nothing (no elevation, no disk I/O). Live headless apply is not yet "
+                        "supported; apply the returned plan from the Partition Manager panel.")}};
+    QJsonObject properties{
+        {QStringLiteral("operation"),
+         stringProp(QStringLiteral("Operation to apply (one of: ") + supportedPartitionOpTypes() +
+                    QStringLiteral(")"))},
+        {QStringLiteral("disk_number"),
+         intProp(
+             QStringLiteral("Target disk number (from list_inventory). The OS/system, "
+                            "dynamic/Storage-Spaces, and read-only disks are always refused."))},
+        {QStringLiteral("partition_number"),
+         intProp(QStringLiteral("Target partition number (1-based) for a partition-scoped op"))},
+        {QStringLiteral("offset_bytes"),
+         intProp(QStringLiteral("Byte offset of the unallocated region for a create"))},
+        {QStringLiteral("size_bytes"), intProp(QStringLiteral("Size in bytes where applicable"))},
+        {QStringLiteral("payload"), payload_prop},
+        {QStringLiteral("confirm_layout_hash"),
+         stringProp(QStringLiteral("The layout_hash observed from a prior list_inventory or "
+                                   "preview_operation; the apply is REFUSED if the disk layout "
+                                   "changed since (drift guard)"))},
+        {QStringLiteral("dry_run"), dry_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("operation"),
+                                   QStringLiteral("disk_number"),
+                                   QStringLiteral("confirm_layout_hash")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 }  // namespace
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
@@ -687,6 +910,59 @@ FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, in
                           .arg(target->model, reason));
     }
     FlashTargetResolution resolution;
+    resolution.ok = true;
+    resolution.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk_number);
+    resolution.description = flashTargetDescription(disk_number, *target);
+    return resolution;
+}
+
+PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& inventory,
+                                                     int disk_number,
+                                                     const QString& confirm_layout_hash) {
+    const auto refuse = [](const QString& message) {
+        PartitionApplyResolution resolution;
+        resolution.ok = false;
+        resolution.error = {false, message, {}};
+        return resolution;
+    };
+    if (disk_number < 0) {
+        return refuse(QStringLiteral("apply_operation requires a non-negative disk_number"));
+    }
+    // A degraded/partial scan cannot be trusted to have set the safety flags (Get-Disk
+    // IsSystem/IsBoot coerce null -> false), so refuse rather than risk the OS disk.
+    if (!inventory.warnings.isEmpty()) {
+        return refuse(
+            QStringLiteral("Refusing to apply: the disk inventory scan reported warnings and "
+                           "cannot be trusted to identify the system disk"));
+    }
+    // Drift guard (mirrors PartitionOperationQueue::canApply): the layout the model
+    // reasoned about must still be the current one, or a stale disk_number could target
+    // a different disk than was previewed.
+    if (confirm_layout_hash != inventory.layout_hash) {
+        return refuse(
+            QStringLiteral("Refusing to apply: the disk layout changed since it was previewed "
+                           "(confirm_layout_hash does not match the current inventory); re-run "
+                           "preview_operation and retry"));
+    }
+    const PartitionDiskInfo* target = nullptr;
+    for (const PartitionDiskInfo& disk : inventory.disks) {
+        if (static_cast<int>(disk.disk_number) == disk_number) {
+            target = &disk;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        return refuse(QStringLiteral("No physical disk with number %1 was found").arg(disk_number));
+    }
+    // Reuse the flash OS-disk denylist: refuse the system/boot disk, dynamic / Storage
+    // Spaces members, read-only disks, and any disk hosting a system/boot/EFI partition
+    // or the running OS volume. Envelope: any non-system disk (use the GUI for the OS disk).
+    if (const QString reason = unsafeFlashReason(*target, systemDriveLetter()); !reason.isEmpty()) {
+        return refuse(QStringLiteral("Refusing to apply to disk %1 (%2): %3")
+                          .arg(disk_number)
+                          .arg(target->model, reason));
+    }
+    PartitionApplyResolution resolution;
     resolution.ok = true;
     resolution.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk_number);
     resolution.description = flashTargetDescription(disk_number, *target);
@@ -737,6 +1013,28 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     flash.catastrophic = true;
     flash.requires_admin = true;
     add(flash, flashImage);
+
+    // partition.apply_operation: plans ONE partition-layout op (diskpart/format/etc.) for
+    // a disk -> destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
+    // requires_admin (raw disk write is its purpose). resolvePartitionApplyTarget refuses
+    // the OS/dynamic/read-only disk + a drifted/degraded scan; the safety validator +
+    // script builder + the generated script's own IsSystem/IsBoot guard are further
+    // independent layers. Currently DRY-RUN ONLY: it returns the exact script without
+    // elevating or writing. Live headless apply is deferred until the executor is wired to
+    // the panel cancel/run-token (an elevated ShellExecuteEx run cannot be interrupted and
+    // must not be able to wedge Stop / teardown); until then a live call is refused.
+    AppActionDescriptor apply = mutatingDescriptor(
+        QStringLiteral("partition.apply_operation"),
+        QStringLiteral("Apply a partition operation (dry-run)"),
+        QStringLiteral("Plan one disk/partition-layout operation (create/delete/format/resize/"
+                       "wipe/...) for a NON-system disk and return the exact script it would run "
+                       "(dry_run only for now). Refused on the OS disk."),
+        QStringLiteral("partition"));
+    apply.params_schema = applyParamsSchema();
+    apply.destructive = true;
+    apply.catastrophic = true;
+    apply.requires_admin = true;
+    add(apply, applyPartitionOperation);
 
     return registered;
 }

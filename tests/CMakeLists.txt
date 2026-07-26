@@ -1554,6 +1554,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/partition_operation_planner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_safety_validator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_manager_types.cpp
+        # W2f partition.apply_operation: the executor + script builder + tool runner +
+        # elevation broker are link-only (the apply EXECUTION is not unit-tested -- needs
+        # a real disk + admin; the pure guard resolvePartitionApplyTarget IS tested). The
+        # script builder pulls only the tool runner, not the APFS/HFS writer libs.
+        ${CMAKE_SOURCE_DIR}/src/core/partition_executor.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_script_builder.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_runner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_manifest.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/process_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/vulnerability_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/image_source.cpp
         ${CMAKE_SOURCE_DIR}/src/core/decompressor_factory.cpp
@@ -1635,6 +1645,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h
+        ${CMAKE_SOURCE_DIR}/include/sak/partition_executor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
