@@ -29,6 +29,7 @@
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/port_scanner.h"
+#include "sak/restore_point_manager.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
@@ -68,6 +69,7 @@ constexpr int kMaxFirewallGaps = 100;
 constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
+constexpr int kMaxRestorePoints = 200;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
 // + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
@@ -641,6 +643,62 @@ AppActionResult smartScan(const QJsonObject&) {
                      {QStringLiteral("smartctl_available"), analyzer.isSmartctlAvailable()},
                      {QStringLiteral("drives"), drives}};
     return {true, QStringLiteral("Analyzed SMART data for %1 drive(s)").arg(drives.size()), data};
+}
+
+// List existing System Restore points via RestorePointManager (Get-ComputerRestorePoint through
+// runProcess = a no-shell QProcess with a fixed literal command + a hard 10s timeout; no model
+// input reaches the command, so no injection surface). Read-only: it queries state, never
+// creates or reverts a restore point. isSystemRestoreEnabled() reports whether protection is on;
+// listRestorePoints() returns (date, description) pairs. Reading restore points typically needs
+// elevation, so the process's own elevation state is surfaced and, when NOT elevated and the
+// list came back empty, the message says the list may be incomplete -- an empty result then does
+// not masquerade as a definitive "no restore points".
+AppActionResult listRestorePoints(const QJsonObject&) {
+    RestorePointManager manager;
+    const bool enabled = manager.isSystemRestoreEnabled();
+    const bool elevated = RestorePointManager::isElevated();
+    bool query_ok = false;
+    const QVector<QPair<QDateTime, QString>> points = manager.listRestorePoints(query_ok);
+
+    // Fail CLOSED: if the restore-point query itself failed (non-zero exit / timeout / malformed
+    // output) do NOT report a definitive "0 restore points" -- that would masquerade a failed
+    // read as "none exist" (the same fail-open honesty hole as the connections/firewall/wifi
+    // engines). A genuine empty result has query_ok == true.
+    if (!query_ok) {
+        return {false,
+                QStringLiteral(
+                    "Could not read System Restore points (the query failed or timed out%1)")
+                    .arg(elevated ? QString()
+                                  : QStringLiteral("; reading them may require "
+                                                   "elevation")),
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const QPair<QDateTime, QString>& point : points) {
+        if (listed.size() >= kMaxRestorePoints) {
+            break;
+        }
+        listed.append(QJsonObject{{QStringLiteral("date"), point.first.toString(Qt::ISODate)},
+                                  {QStringLiteral("description"), clampLine(point.second)}});
+    }
+    QJsonObject data{{QStringLiteral("system_restore_enabled"), enabled},
+                     {QStringLiteral("elevated"), elevated},
+                     {QStringLiteral("count"), points.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), points.size() > listed.size()},
+                     {QStringLiteral("restore_points"), listed}};
+
+    QString message;
+    if (!enabled) {
+        message = QStringLiteral("System Restore is disabled on the system drive");
+    } else {
+        message = QStringLiteral("System Restore enabled: %1 restore point(s)").arg(points.size());
+        if (!elevated && points.isEmpty()) {
+            message += QStringLiteral(" (run elevated to read the full list)");
+        }
+    }
+    return {true, message, data};
 }
 
 QString clampHeader(const QString& value) {
@@ -1953,6 +2011,33 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
         portScan);
 }
 
+// Register the read-only diagnostics ops (hardware inventory, SMART health, restore points).
+// Split out to keep registerReadOnlyAppActionsInto within the length budget as the set grows.
+void registerDiagnosticsReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("diagnostics.hardware_scan"),
+                       QStringLiteral("Scan hardware inventory"),
+                       QStringLiteral("Enumerate CPU/memory/storage/GPU/motherboard/battery/OS"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        hardwareScan);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.smart_scan"),
+                       QStringLiteral("Scan drive SMART health"),
+                       QStringLiteral(
+                           "Read SMART health for each drive (needs admin for full data)"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        smartScan);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.list_restore_points"),
+                       QStringLiteral("List system restore points"),
+                       QStringLiteral("List existing Windows System Restore points and whether "
+                                      "System Restore is enabled"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        listRestorePoints);
+}
+
 }  // namespace
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
@@ -1996,20 +2081,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        searchParamsSchema()),
         searchFiles);
 
-    add(makeDescriptor(QStringLiteral("diagnostics.hardware_scan"),
-                       QStringLiteral("Scan hardware inventory"),
-                       QStringLiteral("Enumerate CPU/memory/storage/GPU/motherboard/battery/OS"),
-                       QStringLiteral("diagnostics"),
-                       noParamsSchema()),
-        hardwareScan);
-
-    add(makeDescriptor(QStringLiteral("diagnostics.smart_scan"),
-                       QStringLiteral("Scan drive SMART health"),
-                       QStringLiteral(
-                           "Read SMART health for each drive (needs admin for full data)"),
-                       QStringLiteral("diagnostics"),
-                       noParamsSchema()),
-        smartScan);
+    registerDiagnosticsReadOnlyOps(add);
 
     add(makeDescriptor(QStringLiteral("email.read_mbox"),
                        QStringLiteral("Read an MBOX mailbox"),

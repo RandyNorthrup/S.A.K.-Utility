@@ -44,6 +44,14 @@ public:
     /// @brief Get list of existing restore points
     [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints() const;
 
+    /// @brief Get list of existing restore points, reporting whether the query SUCCEEDED.
+    /// @param queryOk set true only when the underlying Get-ComputerRestorePoint call ran to
+    /// completion (a genuine empty result -> queryOk=true, empty); set false when the query
+    /// FAILED (non-zero exit, timeout, or malformed output). Lets a caller distinguish "no
+    /// restore points" from "could not read restore points" instead of reporting a failed read
+    /// as a definitive zero. The no-argument overload above discards this signal (GUI use).
+    [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints(bool& queryOk) const;
+
     /// @brief Check if the current process has administrative privileges
     [[nodiscard]] static bool isElevated();
 

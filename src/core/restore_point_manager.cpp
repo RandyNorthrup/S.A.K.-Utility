@@ -124,6 +124,12 @@ QDateTime parseRestorePointDate(const QString& date_str) {
 }  // namespace
 
 QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() const {
+    bool ignored = false;
+    return listRestorePoints(ignored);
+}
+
+QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& queryOk) const {
+    queryOk = false;
     QVector<QPair<QDateTime, QString>> points;
 
     const auto result = sak::runProcess(
@@ -139,14 +145,22 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
         kCheckTimeoutMs);
 
     if (!result.succeeded()) {
+        return points;  // query FAILED (non-zero exit / timeout) -> queryOk stays false
+    }
+
+    // A successful run with no restore points emits empty (or "null") output: that is a genuine
+    // zero, not a failure -> queryOk true, empty list. Only a non-empty-but-unparseable payload
+    // is treated as a failed query.
+    const QByteArray output = result.std_out.trimmed().toUtf8();
+    if (output.isEmpty() || output == "null") {
+        queryOk = true;
         return points;
     }
 
-    QByteArray output = result.std_out.toUtf8();
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(output, &error);
     if (error.error != QJsonParseError::NoError) {
-        return points;
+        return points;  // succeeded but malformed -> treat as a failed query (queryOk false)
     }
 
     QJsonArray arr;
@@ -164,6 +178,7 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
         }
     }
 
+    queryOk = true;
     return points;
 }
 

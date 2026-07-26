@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 18 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 21);
+        // 7 built-in QuickActions + 19 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 22);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -270,6 +270,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
     }
 
@@ -1886,6 +1887,50 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Diagnostics: list_restore_points drives RestorePointManager (Get-ComputerRestorePoint via a
+    // no-shell bounded process). The outcome is ENVIRONMENT/elevation-dependent: a non-elevated
+    // process (like the test runner) may not be able to read the restore-point store, in which
+    // case the op reports an HONEST failure (fail-closed) rather than a misleading "0 restore
+    // points" success. So this certifies the dispatch + SHAPE + honesty: either a success with
+    // the state fields (system_restore_enabled/elevated/count/restore_points), or a failure whose
+    // message names restore points -- never a malformed result, and never a confident empty from
+    // a failed query.
+    void listRestorePointsReturnsWellFormed() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("system_restore_enabled")));
+            QVERIFY(data.contains(QStringLiteral("elevated")));
+            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
+            QVERIFY(data.contains(QStringLiteral("restore_points")));
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("restore points"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Diagnostics: list_restore_points is read-only, so it runs UNGATED in a Chat & Research
+    // session -- never POLICY-blocked (no failure_class), whether or not the query itself
+    // succeeds (an unreadable store is an operational failure, not a gate).
+    void listRestorePointsRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
