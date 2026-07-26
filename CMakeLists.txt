@@ -620,11 +620,13 @@ set(THREADING_SOURCES
     src/threading/duplicate_finder_worker.cpp
     src/threading/flash_worker.cpp
     src/threading/partition_apply_worker.cpp
+    src/threading/network_probe_worker.cpp
     include/sak/worker_base.h
     include/sak/organizer_worker.h
     include/sak/duplicate_finder_worker.h
     include/sak/flash_worker.h
     include/sak/partition_apply_worker.h
+    include/sak/network_probe_worker.h
 )
 
 # GUI sources

@@ -14,6 +14,7 @@
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
 #include "sak/app_partition_op_parse.h"
+#include "sak/connectivity_tester.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/error_codes.h"
@@ -22,14 +23,17 @@
 #include "sak/mbox_parser.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/network_probe_worker.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
+#include "sak/port_scanner.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/worker_base.h"
 
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -55,6 +59,16 @@ constexpr int kMaxInventoryWarnings = 200;
 constexpr int kMaxPreviewMessages = 200;
 constexpr int kMaxAdapters = 100;
 constexpr int kMaxDnsAnswers = 100;
+// A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
+// legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
+// + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
+// reverse-DNS is ~480s. The ceiling sits above both so a slow-but-real scan returns its
+// results instead of a spurious timeout; cancel/terminate bound it regardless.
+constexpr int kNetworkProbeTimeoutMs = 10 * 60 * 1000;
+constexpr int kMaxPingReplies = 64;
+constexpr int kMaxTracerouteHops = 64;
+constexpr int kMaxScanPorts = 128;
+constexpr int kMaxScanResults = 256;
 constexpr int kMaxReportedMatches = 500;
 constexpr int kMaxMatchLineChars = 400;
 constexpr int kDefaultSearchMaxResults = 1000;
@@ -809,6 +823,348 @@ AppActionResult dnsQuery(const QJsonObject& args) {
     return {true, message, serializeDnsResult(result)};
 }
 
+// -- Active network probes (ping / traceroute / port scan) ------------------
+//
+// Unlike the adapter/DNS ops above (fast, blocking-inline), these engine calls can block
+// for their full config-bounded duration against an unreachable target, so each runs on a
+// NetworkProbeWorker thread driven by AsyncActionInvocation: a hard wall-time ceiling plus
+// a real cancel (WorkerBase stop + engine cancel()), the same pattern as find_in_files and
+// partition.apply_operation. Still read-only: they send diagnostic traffic only and mutate
+// no local state (parity with the network-diagnostics panel, which drives the SAME engines).
+
+int clampArgInt(const QJsonObject& args, const char* key, int lo, int hi, int def) {
+    const int value = args.value(QString::fromLatin1(key)).toInt(def);
+    return std::clamp(value, lo, hi);
+}
+
+ConnectivityTester::PingConfig pingConfigFromArgs(const QString& target, const QJsonObject& args) {
+    ConnectivityTester::PingConfig config;
+    config.target = target;
+    config.count = clampArgInt(args, "count", 1, 10, 4);
+    config.timeoutMs = clampArgInt(args, "timeout_ms", 200, 4000, 2000);
+    config.intervalMs = clampArgInt(args, "interval_ms", 0, 2000, 500);
+    config.resolveHostnames = args.value(QStringLiteral("resolve_hostnames")).toBool(true);
+    return config;
+}
+
+ConnectivityTester::TracerouteConfig tracerouteConfigFromArgs(const QString& target,
+                                                              const QJsonObject& args) {
+    ConnectivityTester::TracerouteConfig config;
+    config.target = target;
+    config.maxHops = clampArgInt(args, "max_hops", 1, 30, 30);
+    config.timeoutMs = clampArgInt(args, "timeout_ms", 500, 3000, 2000);
+    config.probesPerHop = clampArgInt(args, "probes_per_hop", 1, 3, 3);
+    config.resolveHostnames = args.value(QStringLiteral("resolve_hostnames")).toBool(true);
+    return config;
+}
+
+void appendPortIfValid(QVector<uint16_t>& out, int port) {
+    if (port < 1 || port > 65'535) {
+        return;
+    }
+    const auto value = static_cast<uint16_t>(port);
+    if (!out.contains(value)) {
+        out.append(value);
+    }
+}
+
+// Restrict the assistant's port scanner to LOCAL/PRIVATE targets. Unlike a human at the
+// panel, the model is prompt-injectable, and an active TCP scan of an arbitrary public host
+// is externally indistinguishable from attack reconnaissance sourced from the operator's IP
+// (IDS trips, cloud-AUP strikes, blocklisting). A hostname is refused (it could resolve
+// anywhere) -- callers pass a private IP literal or "localhost". ping/traceroute stay
+// unrestricted: a single ICMP echo / TTL probe is a routine, low-blast-radius diagnostic.
+bool isLocalScanTarget(const QString& target) {
+    const QString trimmed = target.trimmed();
+    if (trimmed.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    const QHostAddress addr(trimmed);
+    if (addr.isNull()) {
+        return false;  // a hostname could resolve to a public host -- require a local IP literal
+    }
+    if (addr.isLoopback() || addr.isLinkLocal()) {
+        return true;
+    }
+    static const struct {
+        const char* net;
+        int bits;
+    } kPrivate[] = {{"10.0.0.0", 8}, {"172.16.0.0", 12}, {"192.168.0.0", 16}, {"fc00::", 7}};
+    for (const auto& range : kPrivate) {
+        if (addr.isInSubnet(QHostAddress(QString::fromLatin1(range.net)), range.bits)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Collect the ports to scan from an explicit "ports" array and/or a
+// "port_range_start"/"port_range_end" range, deduped and hard-capped (the engine scans
+// sequentially, so an unbounded port list is an unbounded wall time). Returns an error
+// result to return verbatim when none are valid or the cap is exceeded. Both inputs are
+// bounded BEFORE the work: the explicit array is rejected up front if oversized, and the
+// range loop's upper bound is clamped to the valid port space so a start > 65535 (which
+// appends nothing, leaving the size-guard untripped) can never spin -- or overflow -- an
+// int counter toward INT_MAX.
+std::optional<AppActionResult> collectScanPorts(const QJsonObject& args, QVector<uint16_t>& out) {
+    const QJsonArray explicit_ports = args.value(QStringLiteral("ports")).toArray();
+    if (explicit_ports.size() > kMaxScanPorts) {
+        return AppActionResult{false,
+                               QStringLiteral("port_scan is limited to %1 ports per call "
+                                              "(requested %2)")
+                                   .arg(kMaxScanPorts)
+                                   .arg(explicit_ports.size()),
+                               {}};
+    }
+    for (const QJsonValue& value : explicit_ports) {
+        appendPortIfValid(out, value.toInt(-1));
+    }
+    const int range_start = args.value(QStringLiteral("port_range_start")).toInt(0);
+    const int range_end = args.value(QStringLiteral("port_range_end")).toInt(0);
+    if (range_start >= 1 && range_start <= 65'535 && range_end >= range_start) {
+        const int last = std::min(range_end, 65'535);
+        for (int port = range_start; port <= last && out.size() <= kMaxScanPorts; ++port) {
+            appendPortIfValid(out, port);
+        }
+    }
+    if (out.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "port_scan requires 'ports' and/or a valid 'port_range_start'/"
+                                   "'port_range_end'"),
+                               {}};
+    }
+    if (out.size() > kMaxScanPorts) {
+        return AppActionResult{false,
+                               QStringLiteral("port_scan is limited to %1 ports per call "
+                                              "(requested %2)")
+                                   .arg(kMaxScanPorts)
+                                   .arg(out.size()),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+PortScanner::ScanConfig scanConfigFromArgs(const QString& target,
+                                           QVector<uint16_t> ports,
+                                           const QJsonObject& args) {
+    PortScanner::ScanConfig config;
+    config.target = target;
+    config.ports = std::move(ports);
+    config.timeoutMs = clampArgInt(args, "timeout_ms", 200, 3000, 1000);
+    config.grabBanners = args.value(QStringLiteral("grab_banners")).toBool(true);
+    return config;
+}
+
+QJsonObject serializePingReply(const PingReply& reply) {
+    return QJsonObject{{QStringLiteral("sequence"), reply.sequenceNumber},
+                       {QStringLiteral("success"), reply.success},
+                       {QStringLiteral("rtt_ms"), reply.rttMs},
+                       {QStringLiteral("ttl"), reply.ttl},
+                       {QStringLiteral("reply_from"), reply.replyFrom},
+                       {QStringLiteral("error"), reply.errorMessage}};
+}
+
+QJsonObject serializePingResult(const PingResult& result) {
+    QJsonArray replies;
+    for (const PingReply& reply : result.replies) {
+        if (replies.size() >= kMaxPingReplies) {
+            break;
+        }
+        replies.append(serializePingReply(reply));
+    }
+    return QJsonObject{{QStringLiteral("target"), result.target},
+                       {QStringLiteral("resolved_ip"), result.resolvedIP},
+                       {QStringLiteral("sent"), result.sent},
+                       {QStringLiteral("received"), result.received},
+                       {QStringLiteral("lost"), result.lost},
+                       {QStringLiteral("loss_percent"), result.lossPercent},
+                       {QStringLiteral("min_rtt_ms"), result.minRtt},
+                       {QStringLiteral("max_rtt_ms"), result.maxRtt},
+                       {QStringLiteral("avg_rtt_ms"), result.avgRtt},
+                       {QStringLiteral("jitter_ms"), result.jitter},
+                       {QStringLiteral("replies"), replies}};
+}
+
+QJsonObject serializeTracerouteHop(const TracerouteHop& hop) {
+    return QJsonObject{{QStringLiteral("hop"), hop.hopNumber},
+                       {QStringLiteral("ip"), hop.ipAddress},
+                       {QStringLiteral("hostname"), hop.hostname},
+                       {QStringLiteral("rtt1_ms"), hop.rtt1Ms},
+                       {QStringLiteral("rtt2_ms"), hop.rtt2Ms},
+                       {QStringLiteral("rtt3_ms"), hop.rtt3Ms},
+                       {QStringLiteral("avg_rtt_ms"), hop.avgRttMs},
+                       {QStringLiteral("timed_out"), hop.timedOut}};
+}
+
+QJsonObject serializeTracerouteResult(const TracerouteResult& result) {
+    QJsonArray hops;
+    for (const TracerouteHop& hop : result.hops) {
+        if (hops.size() >= kMaxTracerouteHops) {
+            break;
+        }
+        hops.append(serializeTracerouteHop(hop));
+    }
+    return QJsonObject{{QStringLiteral("target"), result.target},
+                       {QStringLiteral("resolved_ip"), result.resolvedIP},
+                       {QStringLiteral("reached_target"), result.reachedTarget},
+                       {QStringLiteral("total_hops"), result.totalHops},
+                       {QStringLiteral("hops"), hops}};
+}
+
+QString portStateToString(PortScanResult::State state) {
+    switch (state) {
+    case PortScanResult::State::Open:
+        return QStringLiteral("open");
+    case PortScanResult::State::Closed:
+        return QStringLiteral("closed");
+    case PortScanResult::State::Filtered:
+        return QStringLiteral("filtered");
+    case PortScanResult::State::Error:
+        break;
+    }
+    return QStringLiteral("error");
+}
+
+QJsonObject serializePortResult(const PortScanResult& result) {
+    return QJsonObject{{QStringLiteral("port"), static_cast<int>(result.port)},
+                       {QStringLiteral("state"), portStateToString(result.state)},
+                       {QStringLiteral("service"), result.serviceName},
+                       {QStringLiteral("response_time_ms"), result.responseTimeMs},
+                       {QStringLiteral("banner"), clampLine(result.banner)},
+                       {QStringLiteral("error"), result.errorMessage}};
+}
+
+QJsonObject serializePortScan(const QString& target, const QVector<PortScanResult>& results) {
+    QJsonArray listed;
+    int open = 0;
+    for (const PortScanResult& result : results) {
+        if (result.state == PortScanResult::State::Open) {
+            ++open;
+        }
+        if (listed.size() < kMaxScanResults) {
+            listed.append(serializePortResult(result));
+        }
+    }
+    return QJsonObject{{QStringLiteral("target"), target},
+                       {QStringLiteral("scanned_count"), results.size()},
+                       {QStringLiteral("open_count"), open},
+                       {QStringLiteral("reported_count"), listed.size()},
+                       {QStringLiteral("truncated"), results.size() > listed.size()},
+                       {QStringLiteral("results"), listed}};
+}
+
+// Drive one NetworkProbeWorker to completion with a hard timeout and a real cancel, then
+// map the outcome. A captured run with an empty error() is a success (its data may still
+// show 100% loss / target-not-reached / all-filtered -- like a failed DNS lookup); a
+// non-empty error() (e.g. a resolve failure, which also emits *Complete) is a failure.
+AppActionResult driveNetworkProbe(NetworkProbeWorker& worker,
+                                  const std::function<AppActionResult()>& on_captured) {
+    AsyncActionInvocation inv(kNetworkProbeTimeoutMs);
+    QObject::connect(
+        &worker, &WorkerBase::finished, inv.context(), [&inv, &worker, &on_captured]() {
+            if (worker.captured() && worker.error().isEmpty()) {
+                inv.finish(on_captured());
+                return;
+            }
+            inv.finish({false,
+                        worker.error().isEmpty() ? QStringLiteral("Network probe did not complete")
+                                                 : worker.error(),
+                        {}});
+        });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("Network probe was cancelled"), {}});
+    });
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.cancelExecution();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+AppActionResult pingHost(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target")).toString().trimmed();
+    if (target.isEmpty()) {
+        return {false, QStringLiteral("ping requires a 'target' argument"), {}};
+    }
+    NetworkProbeWorker worker(pingConfigFromArgs(target, args));
+    return driveNetworkProbe(worker, [&worker, target]() {
+        const PingResult& r = worker.pingResult();
+        // QString::arg is not printf: it does not collapse "%%". "%4% loss" fills %4 with
+        // the number and leaves the trailing "% loss" literal.
+        const QString message = QStringLiteral("%1: %2/%3 replies, %4% loss, avg %5 ms")
+                                    .arg(target)
+                                    .arg(r.received)
+                                    .arg(r.sent)
+                                    .arg(r.lossPercent, 0, 'f', 1)
+                                    .arg(r.avgRtt, 0, 'f', 1);
+        return AppActionResult{true, message, serializePingResult(r)};
+    });
+}
+
+AppActionResult tracerouteHost(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target")).toString().trimmed();
+    if (target.isEmpty()) {
+        return {false, QStringLiteral("traceroute requires a 'target' argument"), {}};
+    }
+    NetworkProbeWorker worker(tracerouteConfigFromArgs(target, args));
+    return driveNetworkProbe(worker, [&worker, target]() {
+        const TracerouteResult& r = worker.tracerouteResult();
+        const QString message =
+            r.reachedTarget
+                ? QStringLiteral("%1: reached in %2 hop(s)").arg(target).arg(r.totalHops)
+                : QStringLiteral("%1: %2 hop(s), target not reached").arg(target).arg(r.totalHops);
+        return AppActionResult{true, message, serializeTracerouteResult(r)};
+    });
+}
+
+AppActionResult portScan(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target")).toString().trimmed();
+    if (target.isEmpty()) {
+        return {false, QStringLiteral("port_scan requires a 'target' argument"), {}};
+    }
+    if (!isLocalScanTarget(target)) {
+        return {false,
+                QStringLiteral("port_scan is limited to local/private targets (loopback, 10/8, "
+                               "172.16/12, 192.168/16, link-local, or 'localhost'); scanning "
+                               "public or remote hosts is disabled for the assistant -- pass a "
+                               "private IP literal"),
+                {}};
+    }
+    QVector<uint16_t> ports;
+    if (const std::optional<AppActionResult> error = collectScanPorts(args, ports)) {
+        return *error;
+    }
+    NetworkProbeWorker worker(scanConfigFromArgs(target, std::move(ports), args));
+    return driveNetworkProbe(worker, [&worker, target]() {
+        const QVector<PortScanResult>& r = worker.portScanResult();
+        int open = 0;
+        int errored = 0;
+        for (const PortScanResult& result : r) {
+            if (result.state == PortScanResult::State::Open) {
+                ++open;
+            } else if (result.state == PortScanResult::State::Error) {
+                ++errored;
+            }
+        }
+        // Every port a socket-level Error (not a clean open/closed/filtered) means the host
+        // never answered at the TCP layer -- unreachable/offline. Report that honestly as a
+        // failure rather than a misleading "0 open of N scanned" that reads as "host up".
+        if (!r.isEmpty() && errored == r.size()) {
+            return AppActionResult{
+                false,
+                QStringLiteral("%1: target unreachable -- no port produced a TCP-level response")
+                    .arg(target),
+                serializePortScan(target, r)};
+        }
+        const QString message =
+            QStringLiteral("%1: %2 open of %3 scanned").arg(target).arg(open).arg(r.size());
+        return AppActionResult{true, message, serializePortScan(target, r)};
+    });
+}
+
 AppActionDescriptor makeDescriptor(const QString& id,
                                    const QString& title,
                                    const QString& description,
@@ -970,8 +1326,65 @@ QJsonObject dnsParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
-// Register the read-only network ops (adapter enumeration + DNS lookup). Split out to
-// keep registerReadOnlyAppActionsInto within the length budget as the op set grows.
+QJsonObject pingParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("target"), stringProp(QStringLiteral("Hostname or IP to ping"))},
+        {QStringLiteral("count"),
+         intProp(QStringLiteral("Echo requests to send (1-10, default 4)"))},
+        {QStringLiteral("timeout_ms"),
+         intProp(QStringLiteral("Per-echo timeout in ms (200-4000, default 2000)"))},
+        {QStringLiteral("interval_ms"),
+         intProp(QStringLiteral("Delay between echoes in ms (0-2000, default 500)"))},
+        {QStringLiteral("resolve_hostnames"),
+         boolProp(QStringLiteral("Reverse-resolve reply addresses"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("target")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject tracerouteParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("target"), stringProp(QStringLiteral("Hostname or IP to trace"))},
+        {QStringLiteral("max_hops"),
+         intProp(QStringLiteral("Max hops to probe (1-30, default 30)"))},
+        {QStringLiteral("timeout_ms"),
+         intProp(QStringLiteral("Per-probe timeout in ms (500-3000, default 2000)"))},
+        {QStringLiteral("probes_per_hop"),
+         intProp(QStringLiteral("Probes per hop (1-3, default 3)"))},
+        {QStringLiteral("resolve_hostnames"),
+         boolProp(QStringLiteral("Reverse-resolve hop addresses"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("target")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject portScanParamsSchema() {
+    QJsonObject ports_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}},
+        {QStringLiteral("description"), QStringLiteral("Explicit ports to scan (1-65535)")}};
+    QJsonObject properties{
+        {QStringLiteral("target"), stringProp(QStringLiteral("Hostname or IP to scan"))},
+        {QStringLiteral("ports"), ports_prop},
+        {QStringLiteral("port_range_start"),
+         intProp(QStringLiteral("Start of an inclusive port range (with port_range_end)"))},
+        {QStringLiteral("port_range_end"),
+         intProp(QStringLiteral("End of an inclusive port range"))},
+        {QStringLiteral("timeout_ms"),
+         intProp(QStringLiteral("Per-port connect timeout in ms (200-3000, default 1000)"))},
+        {QStringLiteral("grab_banners"),
+         boolProp(QStringLiteral("Read a service banner from open ports"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("target")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Register the read-only network ops (adapter enumeration, DNS lookup, and the active
+// ping/traceroute/port_scan probes). Split out to keep registerReadOnlyAppActionsInto
+// within the length budget as the op set grows.
 void registerNetworkReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("network.list_adapters"),
                        QStringLiteral("List network adapters"),
@@ -986,6 +1399,28 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        dnsParamsSchema()),
         dnsQuery);
+
+    add(makeDescriptor(QStringLiteral("network.ping"),
+                       QStringLiteral("Ping a host"),
+                       QStringLiteral("Send ICMP echo requests and report loss/latency/jitter"),
+                       QStringLiteral("network"),
+                       pingParamsSchema()),
+        pingHost);
+
+    add(makeDescriptor(QStringLiteral("network.traceroute"),
+                       QStringLiteral("Traceroute to a host"),
+                       QStringLiteral("Trace the network path to a host hop by hop (ICMP TTL)"),
+                       QStringLiteral("network"),
+                       tracerouteParamsSchema()),
+        tracerouteHost);
+
+    add(makeDescriptor(QStringLiteral("network.port_scan"),
+                       QStringLiteral("Scan TCP ports"),
+                       QStringLiteral(
+                           "TCP-connect scan a host's ports with service/banner detection"),
+                       QStringLiteral("network"),
+                       portScanParamsSchema()),
+        portScan);
 }
 
 }  // namespace

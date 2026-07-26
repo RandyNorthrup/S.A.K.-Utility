@@ -238,8 +238,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 11 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 14);
+        // 7 built-in QuickActions + 14 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 17);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -255,6 +255,9 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("partition.preview_operation")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_adapters")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.port_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
@@ -1492,6 +1495,174 @@ private Q_SLOTS:
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("success")).toBool());
+    }
+
+    // Wave 1 (network probes): ping with no target fails cleanly (never sends).
+    void pingMissingTargetFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.ping")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("target")));
+    }
+
+    // Wave 1 (network probes): ping the loopback (127.0.0.1 -- always reachable, no external
+    // network, no admin). The op succeeds AND every echo is received (0% loss). Drives the
+    // real NetworkProbeWorker -> ConnectivityTester through AsyncActionInvocation, so this
+    // also exercises the worker-thread + timeout + cancel plumbing. Deterministic on Windows.
+    void pingLoopbackSucceeds() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.ping")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"127.0.0.1\",\"count\":2,\"interval_ms\":0,"
+                                        "\"timeout_ms\":1000}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("sent")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("received")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("loss_percent")).toDouble(), 0.0);
+    }
+
+    // Wave 1 (network probes): ping runs UNGATED in a Chat & Research session (read-only),
+    // exactly like dns_query -- it must never be policy-blocked or gated.
+    void pingRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.ping")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"target\":\"127.0.0.1\",\"count\":1,\"interval_ms\":0}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Wave 1 (network probes): traceroute with no target fails cleanly.
+    void tracerouteMissingTargetFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.traceroute")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("target")));
+    }
+
+    // Wave 1 (network probes): traceroute to the loopback reaches the target in the first
+    // hop (ttl=1 echo to 127.0.0.1 replies from 127.0.0.1). Deterministic, no network.
+    void tracerouteLoopbackReachesTarget() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.traceroute")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"target\":\"127.0.0.1\",\"max_hops\":5,\"probes_per_hop\":1,"
+                            "\"timeout_ms\":1000,\"resolve_hostnames\":false}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("reached_target")).toBool());
+    }
+
+    // Wave 1 (network probes): port_scan with no target fails cleanly.
+    void portScanMissingTargetFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("target")));
+    }
+
+    // Wave 1 (network probes): port_scan with a target but NO ports (neither an explicit
+    // list nor a valid range) fails before touching the network.
+    void portScanRequiresPorts() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"target\":\"127.0.0.1\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("ports")));
+    }
+
+    // Wave 1 (network probes): the assistant's port scanner is restricted to local/private
+    // targets. A public IP is refused before any connection attempt -- an active scan of an
+    // arbitrary third-party host is exactly the prompt-injection abuse vector we bound out.
+    void portScanRefusesPublicTarget() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"8.8.8.8\",\"ports\":[443]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("local")));
+    }
+
+    // Wave 1 (network probes): a hostname (which could resolve anywhere) is refused too --
+    // the scanner requires a private IP literal or "localhost".
+    void portScanRefusesHostnameTarget() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"example.com\",\"ports\":[80]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+    }
+
+    // Wave 1 (network probes): the sequential scan is hard-capped so an unbounded port range
+    // cannot become an unbounded wall time. A 1-200 range exceeds the 128-port cap and is
+    // refused before any connection attempt.
+    void portScanRejectsTooManyPorts() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"127.0.0.1\",\"port_range_start\":1,"
+                                        "\"port_range_end\":200}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("128")));
+    }
+
+    // Wave 1 (network probes): scanning one closed loopback port succeeds as an OP (the
+    // port's state is closed/filtered, but a completed scan is a successful op like a failed
+    // DNS lookup) and reports exactly one scanned port. No external network. Small timeout.
+    void portScanLoopbackReportsResult() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"target\":\"127.0.0.1\",\"ports\":[1],\"timeout_ms\":500,"
+                            "\"grab_banners\":false}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("scanned_count")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("results")).toArray().size(), 1);
     }
 
     // REAL-HARDWARE guard probe (opt-in: set SAK_LIVE_DISK_PROBE). Runs the actual

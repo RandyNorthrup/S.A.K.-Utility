@@ -1550,6 +1550,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # emit inline). GetAdaptersAddresses / DnsQuery_W -> need iphlpapi + dnsapi.
         ${CMAKE_SOURCE_DIR}/src/core/network_adapter_inspector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/dns_diagnostic_tool.cpp
+        # Wave-1 active network probes: ping/traceroute (ConnectivityTester, ICMP) and TCP
+        # port scan (PortScanner, QTcpSocket) driven through NetworkProbeWorker (a QThread)
+        # via AsyncActionInvocation. iphlpapi/ws2_32 auto-link via #pragma comment in the cpp.
+        ${CMAKE_SOURCE_DIR}/src/core/connectivity_tester.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/port_scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/threading/network_probe_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
@@ -1655,6 +1661,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
         ${CMAKE_SOURCE_DIR}/include/sak/network_adapter_inspector.h
         ${CMAKE_SOURCE_DIR}/include/sak/dns_diagnostic_tool.h
+        ${CMAKE_SOURCE_DIR}/include/sak/connectivity_tester.h
+        ${CMAKE_SOURCE_DIR}/include/sak/port_scanner.h
+        ${CMAKE_SOURCE_DIR}/include/sak/network_probe_worker.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
