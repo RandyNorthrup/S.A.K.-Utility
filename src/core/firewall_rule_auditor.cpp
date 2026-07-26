@@ -387,8 +387,15 @@ std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& c
     }
 
     ComPtr<IUnknown> pEnumerator;
-    pRules->get__NewEnum(pEnumerator.put());
-    if (!pEnumerator) {
+    hr = pRules->get__NewEnum(pEnumerator.put());
+    if (FAILED(hr) || !pEnumerator) {
+        // Fail CLOSED: set error_out so enumerateViaCOM emits errorOccurred. Reporting an
+        // empty rule set as a successful "clean" audit here would be a dangerous fail-open for
+        // a security audit (mirrors the CoCreateInstance/get_Rules failures above, which also
+        // set error_out).
+        error_out =
+            QStringLiteral("Failed to acquire firewall rule enumerator (HRESULT 0x%1)")
+                .arg(static_cast<unsigned long>(hr), kHResultHexWidth, kHexBase, QLatin1Char('0'));
         return std::nullopt;
     }
 
@@ -396,6 +403,9 @@ std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& c
     hr = pEnumerator->QueryInterface(__uuidof(IEnumVARIANT),
                                      reinterpret_cast<void**>(pVariant.put()));
     if (FAILED(hr) || !pVariant) {
+        error_out =
+            QStringLiteral("Failed to acquire firewall rule iterator (HRESULT 0x%1)")
+                .arg(static_cast<unsigned long>(hr), kHResultHexWidth, kHexBase, QLatin1Char('0'));
         return std::nullopt;
     }
     return pVariant;
@@ -418,7 +428,8 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
 
     ULONG fetched = 0;
     VariantHolder var;
-    while (SUCCEEDED((*enumerator)->Next(1, &var.var, &fetched)) && fetched > 0) {
+    HRESULT next_hr = (*enumerator)->Next(1, &var.var, &fetched);
+    while (SUCCEEDED(next_hr) && fetched > 0) {
         if (m_cancelled.load()) {
             break;
         }
@@ -428,6 +439,21 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
             rules.append(rule);
         }
         var.reset();
+        next_hr = (*enumerator)->Next(1, &var.var, &fetched);
+    }
+
+    // A clean end is SUCCEEDED (S_OK/S_FALSE) with fetched == 0. A FAILED Next means the
+    // enumeration broke partway: fail CLOSED (emit + return empty) rather than silently
+    // reporting a TRUNCATED rule set as a complete audit. A cooperative cancel leaves next_hr
+    // SUCCEEDED and is handled by fullAudit's separate m_cancelled check.
+    if (FAILED(next_hr)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Firewall rule enumeration failed partway (HRESULT 0x%1)")
+                .arg(static_cast<unsigned long>(next_hr),
+                     kHResultHexWidth,
+                     kHexBase,
+                     QLatin1Char('0')));
+        return {};
     }
 
     return rules;

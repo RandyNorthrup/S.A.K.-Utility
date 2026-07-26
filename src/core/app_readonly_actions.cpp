@@ -19,6 +19,7 @@
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/error_codes.h"
+#include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/mbox_parser.h"
@@ -60,6 +61,9 @@ constexpr int kMaxInventoryWarnings = 200;
 constexpr int kMaxPreviewMessages = 200;
 constexpr int kMaxAdapters = 100;
 constexpr int kMaxConnections = 500;
+constexpr int kMaxFirewallRules = 600;
+constexpr int kMaxFirewallConflicts = 200;
+constexpr int kMaxFirewallGaps = 100;
 constexpr int kMaxDnsAnswers = 100;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
@@ -842,6 +846,205 @@ AppActionResult listConnections(const QJsonObject& args) {
             data};
 }
 
+QString fwDirectionToString(FirewallRule::Direction d) {
+    return d == FirewallRule::Direction::Inbound ? QStringLiteral("inbound")
+                                                 : QStringLiteral("outbound");
+}
+
+QString fwActionToString(FirewallRule::Action a) {
+    return a == FirewallRule::Action::Allow ? QStringLiteral("allow") : QStringLiteral("block");
+}
+
+QString fwProtocolToString(FirewallRule::Protocol p) {
+    switch (p) {
+    case FirewallRule::Protocol::TCP:
+        return QStringLiteral("TCP");
+    case FirewallRule::Protocol::UDP:
+        return QStringLiteral("UDP");
+    case FirewallRule::Protocol::ICMPv4:
+        return QStringLiteral("ICMPv4");
+    case FirewallRule::Protocol::ICMPv6:
+        return QStringLiteral("ICMPv6");
+    case FirewallRule::Protocol::Any:
+        return QStringLiteral("Any");
+    case FirewallRule::Protocol::Other:
+        break;
+    }
+    return QStringLiteral("Other");
+}
+
+QJsonArray fwProfilesToJson(int profiles) {
+    QJsonArray out;
+    if ((profiles & static_cast<int>(FirewallRule::Profile::Domain)) != 0) {
+        out.append(QStringLiteral("Domain"));
+    }
+    if ((profiles & static_cast<int>(FirewallRule::Profile::Private)) != 0) {
+        out.append(QStringLiteral("Private"));
+    }
+    if ((profiles & static_cast<int>(FirewallRule::Profile::Public)) != 0) {
+        out.append(QStringLiteral("Public"));
+    }
+    return out;
+}
+
+QString fwSeverityToString(int severity) {
+    // FirewallConflict::Severity {Info=0, Warning=1, Critical=2}; FirewallGap::Severity
+    // {Info=0, Warning=1} share the low values, so one mapping serves both.
+    switch (severity) {
+    case 1:
+        return QStringLiteral("warning");
+    case 2:
+        return QStringLiteral("critical");
+    default:
+        return QStringLiteral("info");
+    }
+}
+
+QJsonObject serializeFirewallRule(const FirewallRule& rule) {
+    return QJsonObject{{QStringLiteral("name"), clampLine(rule.name)},
+                       {QStringLiteral("enabled"), rule.enabled},
+                       {QStringLiteral("direction"), fwDirectionToString(rule.direction)},
+                       {QStringLiteral("action"), fwActionToString(rule.action)},
+                       {QStringLiteral("protocol"), fwProtocolToString(rule.protocol)},
+                       {QStringLiteral("local_ports"), clampLine(rule.localPorts)},
+                       {QStringLiteral("remote_ports"), clampLine(rule.remotePorts)},
+                       {QStringLiteral("local_addresses"), clampLine(rule.localAddresses)},
+                       {QStringLiteral("remote_addresses"), clampLine(rule.remoteAddresses)},
+                       {QStringLiteral("application_path"), clampLine(rule.applicationPath)},
+                       {QStringLiteral("service_name"), clampLine(rule.serviceName)},
+                       {QStringLiteral("profiles"), fwProfilesToJson(rule.profiles)},
+                       {QStringLiteral("grouping"), clampLine(rule.grouping)}};
+}
+
+QJsonObject serializeFirewallConflict(const FirewallConflict& c) {
+    return QJsonObject{{QStringLiteral("rule_a"), clampLine(c.ruleA.name)},
+                       {QStringLiteral("rule_b"), clampLine(c.ruleB.name)},
+                       {QStringLiteral("description"), clampLine(c.conflictDescription)},
+                       {QStringLiteral("severity"),
+                        fwSeverityToString(static_cast<int>(c.severity))}};
+}
+
+QJsonObject serializeFirewallGap(const FirewallGap& g) {
+    return QJsonObject{{QStringLiteral("description"), clampLine(g.description)},
+                       {QStringLiteral("recommendation"), clampLine(g.recommendation)},
+                       {QStringLiteral("severity"),
+                        fwSeverityToString(static_cast<int>(g.severity))}};
+}
+
+// True if @p rule passes the optional name-substring / enabled-only filter. Filters only trim
+// the returned rules array for readability; the conflict/gap analysis always runs over the FULL
+// rule set (a coverage gap is a property of the whole policy, not the filtered view).
+bool firewallRuleMatchesFilter(const FirewallRule& rule,
+                               const QString& name_filter,
+                               bool enabled_only) {
+    if (enabled_only && !rule.enabled) {
+        return false;
+    }
+    return name_filter.isEmpty() || rule.name.contains(name_filter, Qt::CaseInsensitive);
+}
+
+// Build the audit result payload: the returned rules array is filtered + capped, while the
+// conflict/gap analysis (computed by the engine over the FULL rule set) is serialized whole and
+// capped. Split out of auditFirewall to keep that function within the complexity/length budget.
+QJsonObject serializeFirewallAudit(const QVector<FirewallRule>& rules,
+                                   const QVector<FirewallConflict>& conflicts,
+                                   const QVector<FirewallGap>& gaps,
+                                   const QString& name_filter,
+                                   bool enabled_only) {
+    QJsonArray listed_rules;
+    int matched = 0;
+    for (const FirewallRule& rule : rules) {
+        if (!firewallRuleMatchesFilter(rule, name_filter, enabled_only)) {
+            continue;
+        }
+        ++matched;
+        if (listed_rules.size() < kMaxFirewallRules) {
+            listed_rules.append(serializeFirewallRule(rule));
+        }
+    }
+    QJsonArray listed_conflicts;
+    for (const FirewallConflict& c : conflicts) {
+        if (listed_conflicts.size() >= kMaxFirewallConflicts) {
+            break;
+        }
+        listed_conflicts.append(serializeFirewallConflict(c));
+    }
+    QJsonArray listed_gaps;
+    for (const FirewallGap& g : gaps) {
+        if (listed_gaps.size() >= kMaxFirewallGaps) {
+            break;
+        }
+        listed_gaps.append(serializeFirewallGap(g));
+    }
+    return QJsonObject{{QStringLiteral("total_rules"), rules.size()},
+                       {QStringLiteral("matched_rules"), matched},
+                       {QStringLiteral("reported_rules"), listed_rules.size()},
+                       {QStringLiteral("conflict_count"), conflicts.size()},
+                       {QStringLiteral("gap_count"), gaps.size()},
+                       {QStringLiteral("rules"), listed_rules},
+                       {QStringLiteral("conflicts"), listed_conflicts},
+                       {QStringLiteral("gaps"), listed_gaps}};
+}
+
+// Audit the Windows Firewall via FirewallRuleAuditor (INetFwPolicy2 COM: local, no network).
+// fullAudit() BLOCKS and emits auditComplete (rules + conflicts + gaps) inline on this thread --
+// captured by a direct connection, no event loop -- with the engine self-initialising COM
+// (ComInitializer) so it is thread-safe on the AI worker thread. Any COM failure (init /
+// CoCreateInstance / get_Rules / enumerator-acquisition / a mid-enumeration Next failure) emits
+// errorOccurred and yields an empty result, which maps to an honest op failure (fail-closed).
+// Read-only.
+//
+// ACCEPTED LOW residual (adversarial review): the engine's conflict scan is O(rules^2) and
+// parsePorts expands a numeric port range into one element per port, so a firewall deliberately
+// populated with many rule pairs holding huge disjoint numeric ranges (e.g. 1-30000 vs
+// 30001-60000) could be pathologically slow -- and this op cannot cancel the stack-local
+// auditor. Not reachable via model input (creating such rules needs admin) and sub-second on
+// real hosts (rules short-circuit on '*'/direction/action), so it is left as-is like the other
+// inline read-only enumerations rather than moved onto a ceiling-guarded worker.
+AppActionResult auditFirewall(const QJsonObject& args) {
+    const QString name_filter = args.value(QStringLiteral("name_filter")).toString().trimmed();
+    const bool enabled_only = args.value(QStringLiteral("enabled_only")).toBool(false);
+
+    FirewallRuleAuditor auditor;
+    QVector<FirewallRule> rules;
+    QVector<FirewallConflict> conflicts;
+    QVector<FirewallGap> gaps;
+    bool captured = false;
+    QString hard_error;
+    QObject::connect(&auditor,
+                     &FirewallRuleAuditor::auditComplete,
+                     &auditor,
+                     [&](const QVector<FirewallRule>& r,
+                         const QVector<FirewallConflict>& c,
+                         const QVector<FirewallGap>& g) {
+                         rules = r;
+                         conflicts = c;
+                         gaps = g;
+                         captured = true;
+                     });
+    QObject::connect(&auditor,
+                     &FirewallRuleAuditor::errorOccurred,
+                     &auditor,
+                     [&hard_error](const QString& error) { hard_error = error; });
+    auditor.fullAudit();
+
+    if (!captured || !hard_error.isEmpty()) {
+        return {false,
+                hard_error.isEmpty() ? QStringLiteral("Firewall audit did not complete")
+                                     : hard_error,
+                {}};
+    }
+
+    const QJsonObject data =
+        serializeFirewallAudit(rules, conflicts, gaps, name_filter, enabled_only);
+    return {true,
+            QStringLiteral("Firewall: %1 rule(s), %2 conflict(s), %3 coverage gap(s)")
+                .arg(rules.size())
+                .arg(conflicts.size())
+                .arg(gaps.size()),
+            data};
+}
+
 QJsonObject serializeDnsResult(const DnsQueryResult& result) {
     QJsonArray answers;
     for (const QString& answer : result.answers) {
@@ -1486,6 +1689,18 @@ QJsonObject dnsParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject firewallParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("name_filter"),
+         stringProp(QStringLiteral("Only return rules whose name contains this (substring, "
+                                   "case-insensitive); conflicts/gaps still cover all rules"))},
+        {QStringLiteral("enabled_only"),
+         boolProp(QStringLiteral("Only return enabled rules (default false)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject connectionsParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("show_tcp"),
@@ -1602,6 +1817,14 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        connectionsParamsSchema()),
         listConnections);
+
+    add(makeDescriptor(QStringLiteral("network.audit_firewall"),
+                       QStringLiteral("Audit firewall rules"),
+                       QStringLiteral("Enumerate Windows Firewall rules and report rule conflicts "
+                                      "and coverage gaps"),
+                       QStringLiteral("network"),
+                       firewallParamsSchema()),
+        auditFirewall);
 
     add(makeDescriptor(QStringLiteral("network.ping"),
                        QStringLiteral("Ping a host"),

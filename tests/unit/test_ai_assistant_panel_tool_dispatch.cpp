@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 16 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 19);
+        // 7 built-in QuickActions + 17 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 20);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -258,6 +258,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_adapters")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_connections")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.audit_firewall")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
@@ -1789,6 +1790,59 @@ private Q_SLOTS:
         const QJsonObject result = panel.runAppActionTool(
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Wave 1 (network): audit_firewall enumerates Windows Firewall rules via INetFwPolicy2 COM
+    // (the engine self-initialises COM, so it works on any thread) and runs conflict + gap
+    // analysis. Every Windows host ships default rules, so this asserts >=1 rule AND the
+    // no-filter invariant matched_rules == total_rules (every rule passes an empty filter).
+    void auditFirewallSucceeds() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("total_rules")).toInt() >= 1);
+        QCOMPARE(data.value(QStringLiteral("matched_rules")).toInt(),
+                 data.value(QStringLiteral("total_rules")).toInt());
+        QVERIFY(data.contains(QStringLiteral("conflicts")));
+        QVERIFY(data.contains(QStringLiteral("gaps")));
+    }
+
+    // Wave 1 (network): a name_filter that matches nothing returns zero rules WITHOUT hiding
+    // the fact that the host has rules (total_rules stays >=1) -- proves the filter trims only
+    // the returned array, while conflict/gap analysis still runs over the full policy.
+    void auditFirewallNameFilterTrimsRulesOnly() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"name_filter\":\"zzz_no_such_rule_zzz_9137\"}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("matched_rules")).toInt(), 0);
+        QVERIFY(data.value(QStringLiteral("rules")).toArray().isEmpty());
+        QVERIFY(data.value(QStringLiteral("total_rules")).toInt() >= 1);
+    }
+
+    // Wave 1 (network): audit_firewall runs UNGATED in a Chat & Research session (read-only COM
+    // enumeration, mutates nothing), like the sibling network read ops.
+    void auditFirewallRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
