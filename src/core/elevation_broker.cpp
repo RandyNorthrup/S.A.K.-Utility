@@ -405,9 +405,18 @@ bool ElevationBroker::isHelperAlive() const {
 
 void ElevationBroker::cleanup() {
 #ifdef _WIN32
-    if (m_pipe_handle != INVALID_HANDLE_VALUE) {
-        CloseHandle(m_pipe_handle);
-        m_pipe_handle = INVALID_HANDLE_VALUE;
+    {
+        // Close the pipe handle under the SAME lock sendRaw() holds. cancelCurrentTask()
+        // can drive sendRaw() from a different thread (the GUI/AI thread) than the one
+        // running the task loop that calls cleanup() on a lost connection; without this
+        // lock CloseHandle could land between sendRaw's INVALID_HANDLE_VALUE check and its
+        // WriteFile, writing to a closed (possibly reused) handle -- a data race on a
+        // non-atomic HANDLE. Holding m_send_mutex serializes the close against any write.
+        std::lock_guard<std::mutex> lock(m_send_mutex);
+        if (m_pipe_handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(m_pipe_handle);
+            m_pipe_handle = INVALID_HANDLE_VALUE;
+        }
     }
     if (m_helper_process) {
         // Give the helper a moment to exit cleanly

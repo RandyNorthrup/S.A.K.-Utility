@@ -1563,6 +1563,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # a real disk + admin; the pure guard resolvePartitionApplyTarget IS tested). The
         # script builder pulls only the tool runner, not the APFS/HFS writer libs.
         ${CMAKE_SOURCE_DIR}/src/core/partition_executor.cpp
+        ${CMAKE_SOURCE_DIR}/src/threading/partition_apply_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_script_builder.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_manifest.cpp
@@ -1650,6 +1651,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/flash_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h
         ${CMAKE_SOURCE_DIR}/include/sak/partition_executor.h
+        ${CMAKE_SOURCE_DIR}/include/sak/partition_apply_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
         ${CMAKE_SOURCE_DIR}/include/sak/network_adapter_inspector.h
         ${CMAKE_SOURCE_DIR}/include/sak/dns_diagnostic_tool.h

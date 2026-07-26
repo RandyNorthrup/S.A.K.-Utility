@@ -18,6 +18,7 @@
 #include "sak/flash_coordinator.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
+#include "sak/partition_apply_worker.h"
 #include "sak/partition_executor.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
@@ -659,6 +660,12 @@ AppActionDescriptor mutatingDescriptor(const QString& id,
 // partition.apply_operation: apply ONE partition-layout operation to a disk.
 // ---------------------------------------------------------------------------
 
+// A partition op can legitimately run for up to the executor's own per-op ceiling
+// (kPartitionLongTaskTimeoutSeconds == 3600s). Set the outer bridge timeout just above
+// that so it never preempts a legitimate long op -- the executor's own timeout ends the
+// op first; this only fires if the executor itself wedges.
+constexpr int kApplyTimeoutMs = 65 * 60 * 1000;
+
 QJsonObject serializeApplyStep(const PartitionExecutionStep& step) {
     QJsonObject obj{{QStringLiteral("summary"), step.summary},
                     {QStringLiteral("success"), step.success},
@@ -744,11 +751,26 @@ std::optional<AppActionResult> validateApplyArgs(const QJsonObject& args) {
     return std::nullopt;
 }
 
-// Validate the op against the safety validator, then (if allowed) drive
-// PartitionExecutor::execute SYNCHRONOUSLY on this worker thread. execute() is a
-// blocking call that does not need the caller's event loop (ElevationBroker reads its
-// pipe synchronously), so no AsyncActionInvocation bridge is required. use_elevation
-// is true only for a real apply (raw diskpart needs admin); a dry run performs no I/O.
+AppActionResult applyResultFromExecution(const PartitionExecutionResult& result,
+                                         PartitionOperationType type,
+                                         const QString& description,
+                                         bool dry_run) {
+    const QString verb = dry_run ? QStringLiteral("Dry-run") : QStringLiteral("Apply");
+    const QString message = QStringLiteral("%1 of %2 on %3: %4")
+                                .arg(verb)
+                                .arg(toDisplayString(type))
+                                .arg(description)
+                                .arg(result.success ? QStringLiteral("OK")
+                                                    : QStringLiteral("FAILED"));
+    return {result.success, message, serializeApplyResult(result)};
+}
+
+// Validate the op against the safety validator, then run it on a WORKER THREAD via the
+// AsyncActionInvocation bridge (the certified flash-path lifetime). Running the blocking,
+// possibly-ELEVATED PartitionExecutor off the tool worker thread keeps it cancellable
+// (worker.cancelExecution -> PartitionExecutor::cancel) and bounds teardown (the
+// PartitionApplyWorker destructor cooperatively cancels then wait/terminate-joins). A dry
+// run performs no I/O and never elevates; use_elevation is true only for a real apply.
 AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
                                   const QJsonObject& args,
                                   const PartitionApplyResolution& target,
@@ -773,17 +795,37 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
                 {}};
     }
 
-    PartitionExecutor executor;
-    const PartitionExecutionResult result =
-        executor.execute(QVector<PartitionOperation>{op}, dry_run, /*use_elevation=*/!dry_run);
-    const QString verb = dry_run ? QStringLiteral("Dry-run") : QStringLiteral("Apply");
-    const QString message = QStringLiteral("%1 of %2 on %3: %4")
-                                .arg(verb)
-                                .arg(toDisplayString(parsed.type))
-                                .arg(target.description)
-                                .arg(result.success ? QStringLiteral("OK")
-                                                    : QStringLiteral("FAILED"));
-    return {result.success, message, serializeApplyResult(result)};
+    // worker declared BEFORE inv so it is destroyed AFTER inv: by the time the worker
+    // destructor joins the thread, inv.context() is already gone, so a late finished()
+    // is dropped rather than delivered to a dangling bridge.
+    const PartitionOperationType type = parsed.type;
+    const QString description = target.description;
+    PartitionApplyWorker worker(QVector<PartitionOperation>{op},
+                                dry_run,
+                                /*use_elevation=*/!dry_run);
+    AsyncActionInvocation inv(kApplyTimeoutMs);
+    QObject::connect(&worker,
+                     &WorkerBase::finished,
+                     inv.context(),
+                     [&inv, &worker, type, description, dry_run]() {
+                         inv.finish(
+                             applyResultFromExecution(worker.result(), type, description, dry_run));
+                     });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("Partition apply was cancelled"), {}});
+    });
+
+    // worker.start() (QThread::start) returns void; an OS thread-creation failure only logs
+    // and never runs execute(), so no signal fires and inv.run() falls back to its timeout.
+    // Accepted (matches the organizer/search worker path): a launch failure needs thread
+    // exhaustion and merely delays the failure result rather than misreporting it.
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.cancelExecution();  // cooperative cancel on timeout/teardown before the dtor joins
+    return result;
 }
 
 AppActionResult applyPartitionOperation(const QJsonObject& args) {
@@ -799,21 +841,6 @@ AppActionResult applyPartitionOperation(const QJsonObject& args) {
         return *error;
     }
     const bool dry_run = args.value(QStringLiteral("dry_run")).toBool(false);
-    // LIVE apply is intentionally refused for now. A real apply drives the blocking,
-    // ELEVATED PartitionExecutor (ShellExecuteEx runas) synchronously on the AI worker
-    // thread; that UAC launch cannot be interrupted and the executor is not yet wired to
-    // the panel's cancel/run-token, so a live run could leave the Stop button inert and
-    // wedge teardown until the elevated op finishes. Until that cancel-lifetime is built,
-    // only dry_run is supported: it returns the exact script WITHOUT elevating or writing.
-    if (!dry_run) {
-        return {false,
-                QStringLiteral(
-                    "Live headless partition apply is not yet available (it would run an "
-                    "un-cancellable elevated operation on the assistant thread). Call again with "
-                    "\"dry_run\": true to get the exact script this operation would run, then "
-                    "apply it from the Partition Manager panel."),
-                {}};
-    }
     const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
     const QString confirm_hash =
         args.value(QStringLiteral("confirm_layout_hash")).toString().trimmed();
@@ -843,9 +870,9 @@ QJsonObject applyParamsSchema() {
     QJsonObject dry_prop{
         {QStringLiteral("type"), QStringLiteral("boolean")},
         {QStringLiteral("description"),
-         QStringLiteral("Must be true: return the exact script this operation WOULD run, writing "
-                        "nothing (no elevation, no disk I/O). Live headless apply is not yet "
-                        "supported; apply the returned plan from the Partition Manager panel.")}};
+         QStringLiteral("If true, return the exact script this operation WOULD run WITHOUT "
+                        "elevating or writing (plan only). If false (default), apply it for real "
+                        "(elevated, ERASES data) once the human confirm is granted.")}};
     QJsonObject properties{
         {QStringLiteral("operation"),
          stringProp(QStringLiteral("Operation to apply (one of: ") + supportedPartitionOpTypes() +
@@ -1014,21 +1041,19 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     flash.requires_admin = true;
     add(flash, flashImage);
 
-    // partition.apply_operation: plans ONE partition-layout op (diskpart/format/etc.) for
+    // partition.apply_operation: applies ONE partition-layout op (diskpart/format/etc.) to
     // a disk -> destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
-    // requires_admin (raw disk write is its purpose). resolvePartitionApplyTarget refuses
-    // the OS/dynamic/read-only disk + a drifted/degraded scan; the safety validator +
-    // script builder + the generated script's own IsSystem/IsBoot guard are further
-    // independent layers. Currently DRY-RUN ONLY: it returns the exact script without
-    // elevating or writing. Live headless apply is deferred until the executor is wired to
-    // the panel cancel/run-token (an elevated ShellExecuteEx run cannot be interrupted and
-    // must not be able to wedge Stop / teardown); until then a live call is refused.
+    // requires_admin (raw disk write). resolvePartitionApplyTarget refuses the
+    // OS/dynamic/read-only disk + a drifted/degraded scan; the safety validator + script
+    // builder + the generated script's own IsSystem/IsBoot guard are further independent
+    // layers. The op runs on a PartitionApplyWorker thread (cancellable, bounded teardown);
+    // dry_run=true returns the script without elevating or writing.
     AppActionDescriptor apply = mutatingDescriptor(
         QStringLiteral("partition.apply_operation"),
-        QStringLiteral("Apply a partition operation (dry-run)"),
-        QStringLiteral("Plan one disk/partition-layout operation (create/delete/format/resize/"
-                       "wipe/...) for a NON-system disk and return the exact script it would run "
-                       "(dry_run only for now). Refused on the OS disk."),
+        QStringLiteral("Apply a partition operation"),
+        QStringLiteral("Apply one disk/partition-layout operation (create/delete/format/resize/"
+                       "wipe/...) to a NON-system disk; ERASES data. Refused on the OS disk. Pass "
+                       "dry_run=true to get the exact script without running it."),
         QStringLiteral("partition"));
     apply.params_schema = applyParamsSchema();
     apply.destructive = true;

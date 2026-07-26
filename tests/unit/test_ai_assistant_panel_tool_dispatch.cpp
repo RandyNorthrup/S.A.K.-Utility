@@ -1218,10 +1218,11 @@ private Q_SLOTS:
                     .contains(QStringLiteral("Unsupported")));
     }
 
-    // W2f(8): a LIVE apply (dry_run false/omitted) is refused -- only dry_run is
-    // supported until the elevated executor is wired to the panel cancel/run-token, so
-    // an un-cancellable elevated op can never run on the assistant thread.
-    void applyOperationRefusesLiveApply() {
+    // W2g: a LIVE apply (dry_run false) is no longer blanket-refused -- it runs through
+    // the same guard, which here rejects it (a bogus confirm_layout_hash trips the drift
+    // guard before any disk is touched). The point: the guard is reached, not a blanket
+    // "not yet available" refusal, and nothing is executed.
+    void applyOperationLiveRunsThroughGuard() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         setUnattended(panel);
@@ -1232,11 +1233,11 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
                          QStringLiteral("{\"operation\":\"delete\",\"disk_number\":9,"
-                                        "\"confirm_layout_hash\":\"h\",\"dry_run\":false}")}});
+                                        "\"confirm_layout_hash\":\"bogus\",\"dry_run\":false}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
-        QVERIFY(result.value(QStringLiteral("message"))
-                    .toString()
-                    .contains(QStringLiteral("not yet available")));
+        const QString message = result.value(QStringLiteral("message")).toString();
+        QVERIFY(!message.contains(QStringLiteral("not yet available")));
+        QVERIFY(message.contains(QStringLiteral("Refusing to apply")));
     }
 
     // W2f(9): dry_run must be a real boolean -- a non-boolean value is rejected, never
