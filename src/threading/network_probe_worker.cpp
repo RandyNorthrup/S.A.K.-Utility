@@ -21,6 +21,9 @@ NetworkProbeWorker::NetworkProbeWorker(ConnectivityTester::TracerouteConfig conf
 NetworkProbeWorker::NetworkProbeWorker(PortScanner::ScanConfig config, QObject* parent)
     : WorkerBase(parent), m_kind(Kind::PortScan), m_scanConfig(std::move(config)) {}
 
+NetworkProbeWorker::NetworkProbeWorker(ConnectivityTester::MtrConfig config, QObject* parent)
+    : WorkerBase(parent), m_kind(Kind::Mtr), m_mtrConfig(std::move(config)) {}
+
 NetworkProbeWorker::~NetworkProbeWorker() {
     // Join the thread HERE, while m_tester/m_scanner are still alive. WorkerBase's own
     // destructor runs AFTER this body and AFTER the engine members are destroyed, so if the
@@ -64,6 +67,9 @@ auto NetworkProbeWorker::execute() -> std::expected<void, sak::error_code> {
         break;
     case Kind::PortScan:
         runPortScan();
+        break;
+    case Kind::Mtr:
+        runMtr();
         break;
     }
     return {};
@@ -126,6 +132,29 @@ void NetworkProbeWorker::runPortScan() {
         [this](const QString& e) { m_error = e; },
         Qt::DirectConnection);
     m_scanner.scan(m_scanConfig);
+}
+
+void NetworkProbeWorker::runMtr() {
+    // mtr() polls the same cancel atomic between every hop, so cancelExecution()/teardown
+    // return within ~one timeout (plus at most one inter-cycle sleep) of the request. Its
+    // continuous nature is bounded upstream by hard-clamped cycles/maxHops/timeoutMs so the
+    // engine cannot run past the driveNetworkProbe wall-time ceiling.
+    QObject::connect(
+        &m_tester,
+        &ConnectivityTester::mtrComplete,
+        &m_tester,
+        [this](const MtrResult& r) {
+            m_mtr = r;
+            m_captured = true;
+        },
+        Qt::DirectConnection);
+    QObject::connect(
+        &m_tester,
+        &ConnectivityTester::errorOccurred,
+        &m_tester,
+        [this](const QString& e) { m_error = e; },
+        Qt::DirectConnection);
+    m_tester.mtr(m_mtrConfig);
 }
 
 }  // namespace sak

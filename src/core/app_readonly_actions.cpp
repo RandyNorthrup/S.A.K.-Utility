@@ -67,6 +67,11 @@ constexpr int kMaxDnsAnswers = 100;
 constexpr int kNetworkProbeTimeoutMs = 10 * 60 * 1000;
 constexpr int kMaxPingReplies = 64;
 constexpr int kMaxTracerouteHops = 64;
+// mtr is continuous by nature; headless it must be BOUNDED. cycles*maxHops*timeoutMs is the
+// worst-case wall time (a target never reached, every hop timing out every cycle). The clamps
+// below cap it at 10*30*1500 = 450s, comfortably under the kNetworkProbeTimeoutMs ceiling, so a
+// legit slow run returns its stats instead of a spurious timeout; cancel bounds it regardless.
+constexpr int kMaxMtrCycles = 10;
 constexpr int kMaxScanPorts = 128;
 constexpr int kMaxScanResults = 256;
 constexpr int kMaxReportedMatches = 500;
@@ -858,6 +863,19 @@ ConnectivityTester::TracerouteConfig tracerouteConfigFromArgs(const QString& tar
     return config;
 }
 
+ConnectivityTester::MtrConfig mtrConfigFromArgs(const QString& target, const QJsonObject& args) {
+    ConnectivityTester::MtrConfig config;
+    config.target = target;
+    // Hard-clamped so worst-case cycles*maxHops*timeoutMs stays under the wall-time ceiling
+    // (see kMaxMtrCycles). Defaults favour a short, useful sample over the engine's 100-cycle GUI
+    // default, which would run for many minutes headless.
+    config.cycles = clampArgInt(args, "cycles", 1, kMaxMtrCycles, 3);
+    config.maxHops = clampArgInt(args, "max_hops", 1, 30, 30);
+    config.timeoutMs = clampArgInt(args, "timeout_ms", 500, 1500, 1000);
+    config.intervalMs = clampArgInt(args, "interval_ms", 0, 2000, 500);
+    return config;
+}
+
 void appendPortIfValid(QVector<uint16_t>& out, int port) {
     if (port < 1 || port > 65'535) {
         return;
@@ -1012,6 +1030,34 @@ QJsonObject serializeTracerouteResult(const TracerouteResult& result) {
                        {QStringLiteral("hops"), hops}};
 }
 
+QJsonObject serializeMtrHop(const MtrHopStats& hop) {
+    return QJsonObject{{QStringLiteral("hop"), hop.hopNumber},
+                       {QStringLiteral("ip"), hop.ipAddress},
+                       {QStringLiteral("hostname"), hop.hostname},
+                       {QStringLiteral("sent"), hop.sent},
+                       {QStringLiteral("received"), hop.received},
+                       {QStringLiteral("loss_percent"), hop.lossPercent},
+                       {QStringLiteral("last_rtt_ms"), hop.lastRttMs},
+                       {QStringLiteral("avg_rtt_ms"), hop.avgRttMs},
+                       {QStringLiteral("best_rtt_ms"), hop.bestRttMs},
+                       {QStringLiteral("worst_rtt_ms"), hop.worstRttMs},
+                       {QStringLiteral("jitter_ms"), hop.jitterMs}};
+}
+
+QJsonObject serializeMtrResult(const MtrResult& result) {
+    QJsonArray hops;
+    for (const MtrHopStats& hop : result.hops) {
+        if (hops.size() >= kMaxTracerouteHops) {
+            break;
+        }
+        hops.append(serializeMtrHop(hop));
+    }
+    return QJsonObject{{QStringLiteral("target"), result.target},
+                       {QStringLiteral("total_cycles"), result.totalCycles},
+                       {QStringLiteral("hop_count"), result.hops.size()},
+                       {QStringLiteral("hops"), hops}};
+}
+
 QString portStateToString(PortScanResult::State state) {
     switch (state) {
     case PortScanResult::State::Open:
@@ -1117,6 +1163,41 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
                 ? QStringLiteral("%1: reached in %2 hop(s)").arg(target).arg(r.totalHops)
                 : QStringLiteral("%1: %2 hop(s), target not reached").arg(target).arg(r.totalHops);
         return AppActionResult{true, message, serializeTracerouteResult(r)};
+    });
+}
+
+AppActionResult mtrHost(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target")).toString().trimmed();
+    if (target.isEmpty()) {
+        return {false, QStringLiteral("mtr requires a 'target' argument"), {}};
+    }
+    NetworkProbeWorker worker(mtrConfigFromArgs(target, args));
+    return driveNetworkProbe(worker, [&worker, target]() {
+        const MtrResult& r = worker.mtrResult();
+        // A resolvable target where NO hop at any TTL ever answers (offline, ICMP-filtered,
+        // or an unroutable literal) leaves the hop list empty and totalCycles 0. The engine
+        // emits no errorOccurred for this, so without a guard it would map to an affirmative
+        // "0 cycle(s), 0 hop(s), worst-hop loss 0.0%" success that reads as healthy
+        // connectivity. Report it honestly as a failure, mirroring the port_scan
+        // all-unreachable guard. A non-empty hop list always has >=1 responder, so its
+        // per-hop loss (up to 100% on a dead final hop) is reported truthfully below.
+        if (r.hops.isEmpty()) {
+            return AppActionResult{false,
+                                   QStringLiteral(
+                                       "%1: target unreachable -- no hop produced an ICMP response")
+                                       .arg(target),
+                                   serializeMtrResult(r)};
+        }
+        double worst_loss = 0.0;
+        for (const MtrHopStats& hop : r.hops) {
+            worst_loss = std::max(worst_loss, hop.lossPercent);
+        }
+        const QString message = QStringLiteral("%1: %2 cycle(s), %3 hop(s), worst-hop loss %4%")
+                                    .arg(target)
+                                    .arg(r.totalCycles)
+                                    .arg(r.hops.size())
+                                    .arg(worst_loss, 0, 'f', 1);
+        return AppActionResult{true, message, serializeMtrResult(r)};
     });
 }
 
@@ -1360,6 +1441,24 @@ QJsonObject tracerouteParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject mtrParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("target"),
+         stringProp(QStringLiteral("Hostname or IP to trace continuously"))},
+        {QStringLiteral("cycles"),
+         intProp(QStringLiteral("Ping+trace cycles to run (1-10, default 3)"))},
+        {QStringLiteral("max_hops"),
+         intProp(QStringLiteral("Max hops to probe (1-30, default 30)"))},
+        {QStringLiteral("timeout_ms"),
+         intProp(QStringLiteral("Per-probe timeout in ms (500-1500, default 1000)"))},
+        {QStringLiteral("interval_ms"),
+         intProp(QStringLiteral("Delay between cycles in ms (0-2000, default 500)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("target")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject portScanParamsSchema() {
     QJsonObject ports_prop{
         {QStringLiteral("type"), QStringLiteral("array")},
@@ -1413,6 +1512,14 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        tracerouteParamsSchema()),
         tracerouteHost);
+
+    add(makeDescriptor(QStringLiteral("network.mtr"),
+                       QStringLiteral("MTR (my traceroute)"),
+                       QStringLiteral("Continuous ping+traceroute: per-hop loss/latency over "
+                                      "several cycles"),
+                       QStringLiteral("network"),
+                       mtrParamsSchema()),
+        mtrHost);
 
     add(makeDescriptor(QStringLiteral("network.port_scan"),
                        QStringLiteral("Scan TCP ports"),

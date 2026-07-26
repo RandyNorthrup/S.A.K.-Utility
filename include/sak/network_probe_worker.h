@@ -39,13 +39,15 @@ public:
     enum class Kind {
         Ping,
         Traceroute,
-        PortScan
+        PortScan,
+        Mtr
     };
 
     explicit NetworkProbeWorker(ConnectivityTester::PingConfig config, QObject* parent = nullptr);
     explicit NetworkProbeWorker(ConnectivityTester::TracerouteConfig config,
                                 QObject* parent = nullptr);
     explicit NetworkProbeWorker(PortScanner::ScanConfig config, QObject* parent = nullptr);
+    explicit NetworkProbeWorker(ConnectivityTester::MtrConfig config, QObject* parent = nullptr);
     ~NetworkProbeWorker() override;
 
     /// Cooperatively cancel an in-flight run: requests WorkerBase stop AND forwards to the
@@ -63,6 +65,7 @@ public:
     [[nodiscard]] const PingResult& pingResult() const noexcept { return m_ping; }
     [[nodiscard]] const TracerouteResult& tracerouteResult() const noexcept { return m_trace; }
     [[nodiscard]] const QVector<PortScanResult>& portScanResult() const noexcept { return m_ports; }
+    [[nodiscard]] const MtrResult& mtrResult() const noexcept { return m_mtr; }
 
 protected:
     auto execute() -> std::expected<void, sak::error_code> override;
@@ -71,6 +74,7 @@ private:
     void runPing();
     void runTraceroute();
     void runPortScan();
+    void runMtr();
 
     Kind m_kind;
     ConnectivityTester m_tester;
@@ -78,12 +82,14 @@ private:
     ConnectivityTester::PingConfig m_pingConfig;
     ConnectivityTester::TracerouteConfig m_traceConfig;
     PortScanner::ScanConfig m_scanConfig;
+    ConnectivityTester::MtrConfig m_mtrConfig;
 
     bool m_captured = false;
     QString m_error;
     PingResult m_ping;
     TracerouteResult m_trace;
     QVector<PortScanResult> m_ports;
+    MtrResult m_mtr;
 };
 
 }  // namespace sak

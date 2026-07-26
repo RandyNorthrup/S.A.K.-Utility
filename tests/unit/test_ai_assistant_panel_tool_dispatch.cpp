@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 14 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 17);
+        // 7 built-in QuickActions + 15 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 18);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -259,6 +259,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.port_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
@@ -1816,6 +1817,78 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("reached_target")).toBool());
+    }
+
+    // Wave 1 (network probes): mtr with no target fails cleanly.
+    void mtrMissingTargetFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("target")));
+    }
+
+    // Wave 1 (network probes): mtr against the loopback runs the requested cycles and reports
+    // hop 1 (127.0.0.1) with 0% loss. total_cycles == the requested cycle count because each
+    // cycle sends exactly one echo to the first (and only) hop. Deterministic, no network, no
+    // admin -- also exercises the continuous-run worker path through AsyncActionInvocation.
+    void mtrLoopbackSucceeds() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"127.0.0.1\",\"cycles\":2,\"max_hops\":5,"
+                                        "\"timeout_ms\":1000,\"interval_ms\":0}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("total_cycles")).toInt(), 2);
+        QVERIFY(data.value(QStringLiteral("hop_count")).toInt() >= 1);
+        const QJsonArray hops = data.value(QStringLiteral("hops")).toArray();
+        QVERIFY(!hops.isEmpty());
+        QCOMPARE(hops.first().toObject().value(QStringLiteral("loss_percent")).toDouble(), 0.0);
+    }
+
+    // Wave 1 (network probes): mtr against a resolvable-but-unreachable literal reports an
+    // HONEST failure, not a cheerful "0 hops, 0.0% loss" success. 0.0.0.0 resolves locally
+    // (numeric literal) but IcmpSendEcho rejects the unspecified destination immediately, so
+    // no hop is ever discovered -> empty hop list -> the unreachable guard fires. Deterministic
+    // and instant (no timeout wait, no real network). Regression guard for the honesty fix.
+    void mtrUnreachableTargetReportsFailure() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"0.0.0.0\",\"cycles\":1,\"max_hops\":2,"
+                                        "\"timeout_ms\":500,\"interval_ms\":0}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("unreachable")));
+    }
+
+    // Wave 1 (network probes): mtr runs UNGATED in a Chat & Research session (read-only), like
+    // ping/traceroute -- it must never be policy-blocked or gated.
+    void mtrRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"127.0.0.1\",\"cycles\":1,\"max_hops\":3,"
+                                        "\"timeout_ms\":1000,\"interval_ms\":0}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
     // Wave 1 (network probes): port_scan with no target fails cleanly.
