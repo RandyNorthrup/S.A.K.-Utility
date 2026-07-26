@@ -234,8 +234,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 9 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 12);
+        // 7 built-in QuickActions + 11 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 14);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -249,6 +249,8 @@ private Q_SLOTS:
         }
         QVERIFY(read_only_ids.contains(QStringLiteral("partition.list_inventory")));
         QVERIFY(read_only_ids.contains(QStringLiteral("partition.preview_operation")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.list_adapters")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.dns_query")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
@@ -1437,6 +1439,54 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("size_bytes")));
+    }
+
+    // Wave 1 (network): list_adapters drives NetworkAdapterInspector (GetAdaptersAddresses:
+    // local, no admin/network) and returns at least the loopback adapter -- deterministic
+    // on any Windows host. Read-only, runs ungated.
+    void listAdaptersReturnsAdapters() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_adapters")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("adapter_count")).toInt() >= 1);
+        QVERIFY(!data.value(QStringLiteral("adapters")).toArray().isEmpty());
+    }
+
+    // Wave 1 (network): dns_query with no hostname fails cleanly (never queries).
+    void dnsQueryMissingHostnameFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.dns_query")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("hostname")));
+    }
+
+    // Wave 1 (network): dns_query resolves "localhost" (served by the Windows resolver
+    // from the hosts file / built-in, so no external network) -- the op succeeds and the
+    // lookup itself succeeds. Runs ungated in a chat/research session.
+    void dnsQueryResolvesLocalhost() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.dns_query")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"hostname\":\"localhost\"}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("success")).toBool());
     }
 
     void cleanup() {

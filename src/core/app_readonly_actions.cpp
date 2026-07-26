@@ -15,10 +15,13 @@
 #include "sak/app_action_service.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/diagnostic_types.h"
+#include "sak/dns_diagnostic_tool.h"
 #include "sak/error_codes.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/mbox_parser.h"
+#include "sak/network_adapter_inspector.h"
+#include "sak/network_diagnostic_types.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/smart_disk_analyzer.h"
@@ -50,6 +53,8 @@ constexpr int kMaxListedPrograms = 500;
 constexpr int kMaxReportedFindings = 200;
 constexpr int kMaxInventoryWarnings = 200;
 constexpr int kMaxPreviewMessages = 200;
+constexpr int kMaxAdapters = 100;
+constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxReportedMatches = 500;
 constexpr int kMaxMatchLineChars = 400;
 constexpr int kDefaultSearchMaxResults = 1000;
@@ -681,6 +686,129 @@ AppActionResult readMbox(const QJsonObject& args) {
     return {true, summary, data};
 }
 
+QJsonArray jsonStrings(const QVector<QString>& values) {
+    QJsonArray out;
+    for (const QString& value : values) {
+        out.append(value);
+    }
+    return out;
+}
+
+QJsonObject serializeAdapter(const NetworkAdapterInfo& adapter) {
+    return QJsonObject{
+        {QStringLiteral("name"), adapter.name},
+        {QStringLiteral("description"), adapter.description},
+        {QStringLiteral("type"), adapter.adapterType},
+        {QStringLiteral("mac"), adapter.macAddress},
+        {QStringLiteral("interface_index"), static_cast<int>(adapter.interfaceIndex)},
+        {QStringLiteral("connected"), adapter.isConnected},
+        {QStringLiteral("link_speed_bps"), static_cast<double>(adapter.linkSpeedBps)},
+        {QStringLiteral("media_state"), adapter.mediaState},
+        {QStringLiteral("ipv4"), jsonStrings(adapter.ipv4Addresses)},
+        {QStringLiteral("ipv4_gateway"), adapter.ipv4Gateway},
+        {QStringLiteral("ipv4_dns"), jsonStrings(adapter.ipv4DnsServers)},
+        {QStringLiteral("dhcp_enabled"), adapter.dhcpEnabled},
+        {QStringLiteral("dhcp_server"), adapter.dhcpServer},
+        {QStringLiteral("ipv6"), jsonStrings(adapter.ipv6Addresses)}};
+}
+
+// Enumerate network adapters via NetworkAdapterInspector (GetAdaptersAddresses:
+// local, no admin, no network traffic). scan() BLOCKS and emits scanComplete inline
+// on this thread, so a direct connection captures the result with no event loop --
+// the same synchronous pattern as hardware_scan.
+AppActionResult listAdapters(const QJsonObject&) {
+    NetworkAdapterInspector inspector;
+    QVector<NetworkAdapterInfo> adapters;
+    bool captured = false;
+    QObject::connect(&inspector,
+                     &NetworkAdapterInspector::scanComplete,
+                     &inspector,
+                     [&adapters, &captured](const QVector<NetworkAdapterInfo>& result) {
+                         adapters = result;
+                         captured = true;
+                     });
+    inspector.scan();
+    if (!captured) {
+        return {false, QStringLiteral("Network adapter scan did not complete"), {}};
+    }
+    QJsonArray listed;
+    for (const NetworkAdapterInfo& adapter : adapters) {
+        if (listed.size() >= kMaxAdapters) {
+            break;
+        }
+        listed.append(serializeAdapter(adapter));
+    }
+    QJsonObject data{{QStringLiteral("adapter_count"), adapters.size()},
+                     {QStringLiteral("truncated"), adapters.size() > listed.size()},
+                     {QStringLiteral("adapters"), listed}};
+    return {true, QStringLiteral("Enumerated %1 network adapter(s)").arg(adapters.size()), data};
+}
+
+QJsonObject serializeDnsResult(const DnsQueryResult& result) {
+    QJsonArray answers;
+    for (const QString& answer : result.answers) {
+        if (answers.size() >= kMaxDnsAnswers) {
+            break;
+        }
+        answers.append(answer);
+    }
+    return QJsonObject{{QStringLiteral("query_name"), result.queryName},
+                       {QStringLiteral("record_type"), result.recordType},
+                       {QStringLiteral("dns_server"), result.dnsServer},
+                       {QStringLiteral("success"), result.success},
+                       {QStringLiteral("response_time_ms"), result.responseTimeMs},
+                       {QStringLiteral("ttl_seconds"), result.ttlSeconds},
+                       {QStringLiteral("answer_count"), result.answers.size()},
+                       {QStringLiteral("answers"), answers},
+                       {QStringLiteral("error"), result.errorMessage}};
+}
+
+// Resolve a hostname via DnsDiagnosticTool (DnsQuery_W). query() BLOCKS and emits
+// queryComplete (or errorOccurred) inline on this thread -- captured by direct
+// connection, no event loop. Read-only: it performs a DNS lookup only. A failed
+// lookup is a SUCCESSFUL op whose result.success is false (with the error), so the
+// op only fails on a malformed request or a hard engine error.
+AppActionResult dnsQuery(const QJsonObject& args) {
+    const QString hostname = args.value(QStringLiteral("hostname")).toString().trimmed();
+    if (hostname.isEmpty()) {
+        return {false, QStringLiteral("dns_query requires a 'hostname' argument"), {}};
+    }
+    QString record_type = args.value(QStringLiteral("record_type")).toString().trimmed();
+    if (record_type.isEmpty()) {
+        record_type = QStringLiteral("A");
+    }
+    const QString dns_server = args.value(QStringLiteral("dns_server")).toString().trimmed();
+
+    DnsDiagnosticTool tool;
+    DnsQueryResult result;
+    bool captured = false;
+    QString hard_error;
+    QObject::connect(&tool,
+                     &DnsDiagnosticTool::queryComplete,
+                     &tool,
+                     [&result, &captured](const DnsQueryResult& value) {
+                         result = value;
+                         captured = true;
+                     });
+    QObject::connect(&tool,
+                     &DnsDiagnosticTool::errorOccurred,
+                     &tool,
+                     [&hard_error](const QString& error) { hard_error = error; });
+    tool.query(hostname, record_type, dns_server);
+    if (!captured) {
+        return {false,
+                hard_error.isEmpty() ? QStringLiteral("DNS query did not complete") : hard_error,
+                {}};
+    }
+    const QString message =
+        result.success
+            ? QStringLiteral("%1 %2: %3 answer(s)")
+                  .arg(hostname, record_type)
+                  .arg(result.answers.size())
+            : QStringLiteral("%1 %2: %3").arg(hostname, record_type, result.errorMessage);
+    return {true, message, serializeDnsResult(result)};
+}
+
 AppActionDescriptor makeDescriptor(const QString& id,
                                    const QString& title,
                                    const QString& description,
@@ -829,6 +957,37 @@ void registerPartitionReadOnlyOps(const AddActionFn& add) {
         previewPartitionOperation);
 }
 
+QJsonObject dnsParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("hostname"), stringProp(QStringLiteral("Hostname (or IP) to resolve"))},
+        {QStringLiteral("record_type"),
+         stringProp(QStringLiteral("DNS record type: A/AAAA/CNAME/MX/TXT/NS/... (default A)"))},
+        {QStringLiteral("dns_server"),
+         stringProp(QStringLiteral("Specific DNS server to query (optional; default system)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("hostname")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Register the read-only network ops (adapter enumeration + DNS lookup). Split out to
+// keep registerReadOnlyAppActionsInto within the length budget as the op set grows.
+void registerNetworkReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("network.list_adapters"),
+                       QStringLiteral("List network adapters"),
+                       QStringLiteral("Enumerate network adapters with IP/DNS/DHCP/link details"),
+                       QStringLiteral("network"),
+                       noParamsSchema()),
+        listAdapters);
+
+    add(makeDescriptor(QStringLiteral("network.dns_query"),
+                       QStringLiteral("DNS lookup"),
+                       QStringLiteral("Resolve a hostname (A/AAAA/MX/TXT/...) via a DNS query"),
+                       QStringLiteral("network"),
+                       dnsParamsSchema()),
+        dnsQuery);
+}
+
 }  // namespace
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
@@ -840,6 +999,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     };
 
     registerPartitionReadOnlyOps(add);
+    registerNetworkReadOnlyOps(add);
 
     add(makeDescriptor(QStringLiteral("security.list_installed_programs"),
                        QStringLiteral("List installed programs"),

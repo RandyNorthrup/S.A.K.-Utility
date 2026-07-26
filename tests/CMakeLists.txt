@@ -1546,6 +1546,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/actions/backup_bitlocker_keys_action.cpp
         # W1a read-only app ops + the headless services they drive.
         ${CMAKE_SOURCE_DIR}/src/core/app_readonly_actions.cpp
+        # Network read-only ops: adapter enumeration + DNS lookup engines (synchronous,
+        # emit inline). GetAdaptersAddresses / DnsQuery_W -> need iphlpapi + dnsapi.
+        ${CMAKE_SOURCE_DIR}/src/core/network_adapter_inspector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/dns_diagnostic_tool.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
@@ -1647,6 +1651,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h
         ${CMAKE_SOURCE_DIR}/include/sak/partition_executor.h
         ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/network_adapter_inspector.h
+        ${CMAKE_SOURCE_DIR}/include/sak/dns_diagnostic_tool.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
