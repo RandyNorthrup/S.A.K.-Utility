@@ -84,6 +84,7 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     m_progress.percentage = 0.0;
     m_result = sak::FlashResult{};
     m_reportedWorkers.clear();
+    m_flashTimer.start();
 
     // Validate targets
     m_state = sak::FlashState::Validating;
@@ -300,6 +301,11 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     } else {
         m_progress.completedDrives++;
         m_result.successfulDrives.append(devicePath);
+        // The verified device checksum (== source when verification is on) -- the only
+        // checksum the result previously reported was an empty string.
+        if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
+            m_result.sourceChecksum = result.targetChecksum;
+        }
         Q_EMIT driveCompleted(devicePath, result.targetChecksum);
     }
 
@@ -307,6 +313,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
         m_state = sak::FlashState::Completed;
         m_result.success = m_progress.failedDrives == 0;
+        finalizeResultMetrics();
 
         Q_EMIT stateChanged(m_state,
                             QString("Completed: %1 successful, %2 failed")
@@ -361,6 +368,7 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
     if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
         m_state = sak::FlashState::Failed;
         m_result.success = false;
+        finalizeResultMetrics();
 
         Q_EMIT stateChanged(m_state,
                             QString("Failed: %1 successful, %2 failed")
@@ -479,6 +487,18 @@ void FlashCoordinator::updateProgress() {
     m_progress.currentOperation = QString("Writing to %1 drives...").arg(m_progress.activeDrives);
 
     Q_EMIT progressUpdated(m_progress);
+}
+
+void FlashCoordinator::finalizeResultMetrics() {
+    // m_mutex is already held by the caller (the finalize branch of a worker handler).
+    qint64 total_bytes = 0;
+    for (const std::unique_ptr<FlashWorker>& worker : m_workers) {
+        if (worker) {
+            total_bytes += worker->bytesWritten();
+        }
+    }
+    m_result.bytesWritten = total_bytes;
+    m_result.elapsedSeconds = static_cast<double>(m_flashTimer.elapsed()) / 1000.0;
 }
 
 void FlashCoordinator::cleanupWorkers() {

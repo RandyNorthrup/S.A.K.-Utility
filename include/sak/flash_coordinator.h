@@ -8,6 +8,7 @@
 #include "drive_scanner.h"
 #include "image_source.h"
 
+#include <QElapsedTimer>
 #include <QMutex>
 #include <QObject>
 #include <QSet>
@@ -242,6 +243,9 @@ private:
     bool validateTargets(const QStringList& targetDrives);
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();
+    /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at
+    /// finalize. Call with m_mutex held. (These were previously left at zero.)
+    void finalizeResultMetrics();
     void cleanupWorkers();
     /// Wire one worker's progress/completion/error/abort signals to the coordinator.
     void connectWorkerSignals(FlashWorker* worker);
@@ -269,4 +273,5 @@ private:
 
     QStringList m_targetDrives;
     QString m_sourceChecksum;
+    QElapsedTimer m_flashTimer;  ///< Wall-clock for FlashResult::elapsedSeconds
 };

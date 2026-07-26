@@ -21,6 +21,7 @@
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_mutating_actions.h"
+#include "sak/flash_coordinator.h"
 #include "sak/storage_inventory_worker.h"
 
 #include <QComboBox>
@@ -1525,6 +1526,61 @@ private Q_SLOTS:
                 QVERIFY2(!apply.ok, "apply guard must REFUSE the OS/system disk");
             }
         }
+    }
+
+    // REAL flash-execution cert (opt-in + DESTRUCTIVE): set SAK_LIVE_FLASH=<image path>
+    // and SAK_LIVE_FLASH_DISK=<number> of a DISPOSABLE, already-cleared disk. Runs the
+    // actual FlashCoordinator (the flash_image engine) with SHA-512 verification against
+    // real hardware. Must run ELEVATED (raw physical-disk write). QSKIP by default; this
+    // OVERWRITES the target disk, so it is never run in CI and only against a disk the
+    // guard accepts (a leftover EFI/system partition is refused first).
+    void liveFlashCertToDisposableDisk() {
+        const QString image = qEnvironmentVariable("SAK_LIVE_FLASH");
+        if (image.isEmpty()) {
+            QSKIP("Set SAK_LIVE_FLASH=<image> and SAK_LIVE_FLASH_DISK=<n> to run (DESTRUCTIVE)");
+        }
+        const int disk_number = qEnvironmentVariable("SAK_LIVE_FLASH_DISK", "999").toInt();
+        const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
+        const FlashTargetResolution target = resolveFlashTarget(inventory, disk_number);
+        QVERIFY2(target.ok,
+                 qUtf8Printable(QStringLiteral("guard refused disk %1: %2")
+                                    .arg(disk_number)
+                                    .arg(target.error.message)));
+        qInfo("=== LIVE flash: %s -> %s (SHA-512 verify on) ===",
+              qUtf8Printable(image),
+              qUtf8Printable(target.device_path));
+
+        FlashCoordinator coordinator;
+        coordinator.setVerificationEnabled(true);
+        bool done = false;
+        bool ok = false;
+        qint64 bytes = 0;
+        QString detail;
+        QObject::connect(&coordinator,
+                         &FlashCoordinator::flashCompleted,
+                         &coordinator,
+                         [&](const sak::FlashResult& result) {
+                             ok = result.success && !result.hasErrors();
+                             bytes = result.bytesWritten;
+                             detail = result.errorMessages.join(QStringLiteral("; "));
+                             if (!result.sourceChecksum.isEmpty()) {
+                                 detail += QStringLiteral(" sha512=") + result.sourceChecksum;
+                             }
+                             done = true;
+                         });
+        QObject::connect(
+            &coordinator, &FlashCoordinator::flashError, &coordinator, [&](const QString& error) {
+                detail = error;
+                done = true;
+            });
+        QVERIFY(coordinator.startFlash(image, QStringList{target.device_path}));
+        QTRY_VERIFY_WITH_TIMEOUT(done, 600'000);  // up to 10 min
+        qInfo("=== flash result: ok=%d bytes=%lld detail=%s ===",
+              ok,
+              static_cast<long long>(bytes),
+              qUtf8Printable(detail));
+        QVERIFY2(ok,
+                 qUtf8Printable(QStringLiteral("flash failed/verify mismatch: %1").arg(detail)));
     }
 
     void cleanup() {
