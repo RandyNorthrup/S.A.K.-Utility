@@ -9,6 +9,7 @@
 
 #include "sak/app_mutating_actions.h"
 
+#include "sak/advanced_uninstall_types.h"
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
@@ -16,6 +17,7 @@
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/flash_coordinator.h"
+#include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
 #include "sak/partition_apply_worker.h"
@@ -23,7 +25,9 @@
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_safety_validator.h"
+#include "sak/program_enumerator.h"
 #include "sak/storage_inventory_worker.h"
+#include "sak/uninstall_worker.h"
 #include "sak/worker_base.h"
 
 #include <QDir>
@@ -31,10 +35,12 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
+#include <QRegularExpression>
 #include <QString>
 #include <QStringList>
 
 #include <algorithm>
+#include <functional>
 #include <optional>
 
 namespace sak {
@@ -901,6 +907,148 @@ QJsonObject applyParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// ---------------------------------------------------------------------------
+// software.uninstall_uwp_app: remove an installed Store/UWP app (silent).
+// ---------------------------------------------------------------------------
+
+// Outer bridge ceiling. removeUwpPackage has its own 60s PowerShell timeout; this only fires
+// if that fails to bound the run.
+constexpr int kUninstallTimeoutMs = 3 * 60 * 1000;
+
+QJsonObject uninstallUwpParamsSchema() {
+    QJsonObject name_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                          {QStringLiteral("description"),
+                           QStringLiteral(
+                               "Exact display name of the installed Store/UWP app to remove "
+                               "(as shown by security.list_installed_programs)")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("program_name"), name_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("program_name")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Match the model-supplied display name against the SYSTEM's UWP package list and return the
+// single authoritative match in @p out. Returns an error result (to return verbatim) on a
+// failed scan or no/ambiguous match. The resolved ProgramInfo carries a system-sourced
+// PackageFullName -- the model never supplies the value that reaches PowerShell.
+std::optional<AppActionResult> resolveUwpProgram(const QString& name, ProgramInfo& out) {
+    ProgramEnumerator enumerator;
+    bool scan_ok = true;
+    const QVector<ProgramInfo> packages = enumerator.enumerateUwpPackagesSync(scan_ok);
+    if (!scan_ok) {
+        return AppActionResult{false,
+                               QStringLiteral("Could not enumerate installed Store/UWP apps "
+                                              "(package scan failed); refusing to uninstall"),
+                               {}};
+    }
+    QVector<ProgramInfo> matches;
+    for (const ProgramInfo& program : packages) {
+        if (program.displayName.compare(name, Qt::CaseInsensitive) == 0) {
+            matches.append(program);
+        }
+    }
+    if (matches.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("No installed Store/UWP app named '%1' (Win32 "
+                                              "programs cannot be uninstalled here yet)")
+                                   .arg(name),
+                               {}};
+    }
+    if (matches.size() > 1) {
+        return AppActionResult{false,
+                               QStringLiteral("'%1' matches %2 installed packages; use a more "
+                                              "specific name")
+                                   .arg(name)
+                                   .arg(matches.size()),
+                               {}};
+    }
+    out = matches.first();
+    if (!isSafePackageFullName(out.packageFullName)) {
+        return AppActionResult{false,
+                               QStringLiteral("The resolved package has no valid PackageFullName; "
+                                              "cannot uninstall it safely"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+AppActionResult uninstallUwpApp(const QJsonObject& args) {
+    const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
+    if (name.isEmpty()) {
+        return {false, QStringLiteral("uninstall_uwp_app requires a 'program_name' argument"), {}};
+    }
+    ProgramInfo program;
+    if (const std::optional<AppActionResult> error = resolveUwpProgram(name, program)) {
+        return *error;
+    }
+
+    // Drive the app's UninstallWorker in UwpRemove mode: Remove-AppxPackage / -Provisioned is
+    // silent, bounded (60s), and cancellable, and the mode early-returns BEFORE the leftover
+    // scan, so this ONLY removes the package (no file/registry cleanup). createRestorePoint
+    // false: a Store app is reinstallable, and a restore point needs admin + time.
+    UninstallWorker worker(program, UninstallWorker::Mode::UwpRemove, ScanLevel::Safe, false);
+    AsyncActionInvocation inv(kUninstallTimeoutMs);
+    QObject::connect(
+        &worker,
+        &UninstallWorker::uninstallComplete,
+        inv.context(),
+        [&inv, name](const UninstallReport& report) {
+            const bool ok = report.uninstallResult == UninstallReport::UninstallResult::Success;
+            QJsonObject data{{QStringLiteral("program"), name},
+                             {QStringLiteral("result"),
+                              ok ? QStringLiteral("success") : QStringLiteral("failed")}};
+            inv.finish({ok,
+                        ok ? QStringLiteral("Uninstalled '%1'").arg(name)
+                           : QStringLiteral("Uninstall of '%1' failed").arg(name),
+                        data});
+        });
+    QObject::connect(
+        &worker, &WorkerBase::failed, inv.context(), [&inv, name](int, const QString& error) {
+            inv.finish(
+                {false,
+                 error.isEmpty() ? QStringLiteral("Uninstall of '%1' failed").arg(name) : error,
+                 {}});
+        });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("Uninstall was cancelled"), {}});
+    });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    // Fully join HERE, while every UninstallWorker member is alive. Its dtor is =default, so
+    // ~WorkerBase (which joins) would otherwise run AFTER the derived members execute() reads
+    // (m_program, m_scanStopFlag) are destroyed = a UAF on the timeout path. Joining before
+    // the return guarantees the thread has stopped before any member is torn down.
+    worker.requestStop();
+    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
+        worker.terminate();
+        worker.wait(sak::kTimeoutThreadTerminateMs);
+    }
+    return result;
+}
+
+using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
+
+// Register the software-management ops. Split out to keep registerMutatingAppActionsInto
+// within the length budget as the op set grows.
+void registerSoftwareOps(const AddMutatingActionFn& add) {
+    // software.uninstall_uwp_app: removes an installed Store/UWP app via UninstallWorker
+    // (Remove-AppxPackage: silent, bounded, cancellable; early-returns before any leftover
+    // cleanup). Removing an app + its per-user data is destructive; provisioned (all-users)
+    // removal needs admin. NOT catastrophic (reinstallable, no disk wipe). Only silent UWP
+    // removal is offered -- interactive Win32 uninstallers (which would hang headless) come later.
+    AppActionDescriptor uninstall_uwp = mutatingDescriptor(
+        QStringLiteral("software.uninstall_uwp_app"),
+        QStringLiteral("Uninstall a Store/UWP app"),
+        QStringLiteral("Remove an installed Microsoft Store / UWP app by name (silent; Win32 "
+                       "programs are not supported yet)"),
+        QStringLiteral("software"));
+    uninstall_uwp.params_schema = uninstallUwpParamsSchema();
+    uninstall_uwp.destructive = true;
+    uninstall_uwp.requires_admin = true;
+    add(uninstall_uwp, uninstallUwpApp);
+}
+
 }  // namespace
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
@@ -941,6 +1089,16 @@ FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, in
     resolution.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk_number);
     resolution.description = flashTargetDescription(disk_number, *target);
     return resolution;
+}
+
+bool isSafePackageFullName(const QString& name) {
+    // Appx names are ASCII alphanumerics plus '.' '_' '-' and, for a provisioned (DISM
+    // PackageName) neutral ResourceId, '~' (e.g. Foo_1.0_neutral_~_8wekyb3d8bbwe). All are
+    // inert inside a single-quoted PowerShell string. Reject anything else (quotes, spaces,
+    // ';', backticks, '$', newlines) so the value can never break out of the -Package '<...>'
+    // argument.
+    static const QRegularExpression kPackageRe(QStringLiteral("\\A[A-Za-z0-9][A-Za-z0-9._~-]*\\z"));
+    return !name.isEmpty() && name.size() <= 256 && kPackageRe.match(name).hasMatch();
 }
 
 PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& inventory,
@@ -1060,6 +1218,8 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     apply.catastrophic = true;
     apply.requires_admin = true;
     add(apply, applyPartitionOperation);
+
+    registerSoftwareOps(add);
 
     return registered;
 }

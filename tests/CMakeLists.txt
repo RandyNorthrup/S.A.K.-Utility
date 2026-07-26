@@ -1607,6 +1607,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # through the AsyncActionInvocation bridge, like the read-only search.
         ${CMAKE_SOURCE_DIR}/src/threading/organizer_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/input_validator.cpp
+        # W-uninstall software.uninstall_uwp_app: the ProgramEnumerator (UWP-only sync resolve)
+        # + UninstallWorker (UwpRemove mode) are driven directly. The uninstall EXECUTION is not
+        # unit-tested (would remove a real app); the resolve + guard + gating are. The leftover/
+        # snapshot/restore-point stages must link even though UwpRemove never runs them.
+        ${CMAKE_SOURCE_DIR}/src/core/program_enumerator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/uninstall_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/leftover_scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/registry_snapshot_engine.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/restore_point_manager.cpp
         # W2d imaging.flash_image: FlashCoordinator + its worker chain must link (the
         # flash EXECUTION is not unit-tested -- needs a real disk -- but the safety
         # guard resolveFlashTarget is tested pure).
@@ -1664,6 +1673,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/connectivity_tester.h
         ${CMAKE_SOURCE_DIR}/include/sak/port_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/network_probe_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/program_enumerator.h
+        ${CMAKE_SOURCE_DIR}/include/sak/uninstall_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

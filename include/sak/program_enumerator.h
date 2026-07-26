@@ -42,6 +42,14 @@ public:
     /// @brief Start async enumeration of all installed programs
     void enumerateAll();
 
+    /// @brief Synchronously enumerate ONLY UWP + provisioned packages -- no registry scan and
+    ///        no icon/size enrichment (the slow whole-machine phases of enumerateAll). For a
+    ///        headless caller that needs the authoritative package list (with PackageFullName)
+    ///        FAST. Blocks on the two Get-AppxPackage PowerShell calls. @p scanOk is set false
+    ///        if either Appx scan failed, so an empty result reads as "scan failed", never a
+    ///        false "no packages installed".
+    [[nodiscard]] QVector<ProgramInfo> enumerateUwpPackagesSync(bool& scanOk);
+
     /// @brief Request cancellation of an in-progress enumeration
     void requestCancel();
 

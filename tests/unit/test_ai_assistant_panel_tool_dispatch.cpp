@@ -1449,6 +1449,101 @@ private Q_SLOTS:
                     .contains(QStringLiteral("size_bytes")));
     }
 
+    // W-uninstall: software.uninstall_uwp_app is listed mutating + destructive + requires_admin
+    // and NOT catastrophic (a Store app is reinstallable; no disk wipe) and NOT read_only.
+    void uninstallUwpListedMutatingDestructiveAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("software.uninstall_uwp_app")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-uninstall: missing program_name fails cleanly (never enumerates or removes anything).
+    void uninstallUwpMissingNameFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);  // proceeds past the destructive restore-point offer
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("program_name")));
+    }
+
+    // W-uninstall: a mutating op is refused in a chat/research session (never enumerates).
+    void uninstallUwpBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"program_name\":\"Whatever\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-uninstall: a name that matches no installed Store/UWP app fails cleanly after a REAL
+    // enumeration (Get-AppxPackage). Deterministic: this bogus name is never installed, so the
+    // resolve returns "not found" and no package is ever removed.
+    void uninstallUwpNonexistentProgramFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"program_name\":\"SAK No Such Store App ZZZ 9f3c\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("No installed")));
+    }
+
+    // W-uninstall (injection guard): isSafePackageFullName accepts a real Appx full name and
+    // rejects any value that could break out of the single-quoted PowerShell -Package '...'
+    // argument. The value passed to removal always comes from the system enumeration, but this
+    // is the defense-in-depth barrier that certifies it.
+    void packageFullNameValidatorRejectsInjection() {
+        // Per-user (Get-AppxPackage) full name and provisioned (DISM PackageName, with a '~'
+        // neutral ResourceId) are both accepted.
+        QVERIFY(sak::isSafePackageFullName(
+            QStringLiteral("Microsoft.WindowsCalculator_11.2.0.0_x64__8wekyb3d8bbwe")));
+        QVERIFY(sak::isSafePackageFullName(
+            QStringLiteral("Microsoft.BingWeather_4.53.51361.0_neutral_~_8wekyb3d8bbwe")));
+        // Anything that could break out of the single-quoted -Package '<...>' argument is refused.
+        QVERIFY(!sak::isSafePackageFullName(QString()));
+        QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app'; Remove-Item C:\\ -Recurse #")));
+        QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app name with spaces")));
+        QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app`whoami`")));
+        QVERIFY(!sak::isSafePackageFullName(QStringLiteral("app$(calc)")));
+        QVERIFY(!sak::isSafePackageFullName(QStringLiteral("safepart\ninjected")));  // trailing NL
+    }
+
     // Wave 1 (network): list_adapters drives NetworkAdapterInspector (GetAdaptersAddresses:
     // local, no admin/network) and returns at least the loopback adapter -- deterministic
     // on any Windows host. Read-only, runs ungated.

@@ -32,7 +32,16 @@ class AppActionRegistry;
 ///   organizer.organize_directory -- move files into category subfolders
 ///   imaging.flash_image          -- write a disk image to a physical drive (catastrophic)
 ///   partition.apply_operation    -- apply one partition-layout op to a disk (catastrophic)
+///   software.uninstall_uwp_app   -- remove an installed Store/UWP app (silent, per-name)
 [[nodiscard]] int registerMutatingAppActionsInto(AppActionRegistry& registry);
+
+/// True if @p name is a UWP PackageFullName safe to interpolate into the single-quoted
+/// Remove-AppxPackage -Package '<...>' PowerShell argument: ASCII alphanumerics plus '.'
+/// '_' '-' only (the real Appx format), non-empty, length-bounded. The value passed to the
+/// uninstall always comes from the SYSTEM enumeration, not model input, but this is a
+/// defense-in-depth guard against a malformed/hostile name breaking out of the quotes.
+/// Exposed (not anonymous) for unit testing.
+[[nodiscard]] bool isSafePackageFullName(const QString& name);
 
 /// Result of resolving + safety-validating a flash target disk. Exposed (not in an
 /// anonymous namespace) so the SAFETY logic can be unit-tested with synthetic

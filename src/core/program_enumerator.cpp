@@ -145,6 +145,29 @@ void ProgramEnumerator::enumerateAll() {
     }
 }
 
+QVector<ProgramInfo> ProgramEnumerator::enumerateUwpPackagesSync(bool& scanOk) {
+    // Reuse the exact Appx scanners enumerateAll uses -- just the UWP phases, deduped, with no
+    // registry/orphan/bloatware/icon/dir-size work.
+    //
+    // scanOk reflects only the PER-USER scan (Get-AppxPackage, no admin) -- the authoritative
+    // list for headless resolution. The provisioned scan (Get-AppxProvisionedPackage -Online)
+    // needs admin and is best-effort: its failure merely OMITS all-users entries from the list,
+    // which -- because resolution is an EXACT display-name match -- can only cause a safe
+    // not-found refusal, never a wrong match. So a provisioned failure does not fail the scan.
+    bool uwp_ok = true;
+    [[maybe_unused]] bool provisioned_ok = true;
+    QVector<ProgramInfo> packages = scanUwpPackages(uwp_ok);
+    packages.append(scanProvisionedPackages(provisioned_ok));
+    // Guard the dedup: unlike enumerateAll (which always has registry entries by here),
+    // BOTH Appx scans can legitimately be empty (a scan failure -- the fail-closed case that
+    // the caller handles via scanOk) and deduplicatePrograms asserts on an empty vector.
+    if (!packages.isEmpty()) {
+        deduplicatePrograms(packages);
+    }
+    scanOk = uwp_ok;
+    return packages;
+}
+
 void ProgramEnumerator::warnIfAppxIncomplete(bool uwpOk, bool provisionedOk) {
     // Fail closed: a PowerShell failure/timeout/parse error in either Appx scan means the list
     // may be incomplete. Warn (never silently claim completeness) but keep the registry list.
