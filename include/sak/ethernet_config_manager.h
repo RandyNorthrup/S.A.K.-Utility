@@ -82,6 +82,18 @@ public:
     [[nodiscard]] bool restoreSettings(const EthernetConfigSnapshot& snapshot,
                                        const QString& adapterName);
 
+    /// @brief Set an adapter's IPv4 DNS servers to a static list, leaving the
+    /// adapter's IP configuration (DHCP or static) untouched.
+    /// @param adapterName    Target adapter name
+    /// @param dnsServers     Ordered IPv4 DNS server addresses (first = primary)
+    /// @param primaryApplied Out: set true once the primary DNS is live, so a
+    ///        caller can tell a nothing-applied failure (primary set failed) from
+    ///        a partial one (primary live, a secondary add failed)
+    /// @return true if every netsh dnsservers command succeeded
+    [[nodiscard]] bool setDnsServers(const QString& adapterName,
+                                     const QStringList& dnsServers,
+                                     bool& primaryApplied);
+
     /// @brief List available Ethernet adapter names for backup
     [[nodiscard]] QStringList listEthernetAdapters();
 
@@ -96,8 +108,12 @@ private:
     [[nodiscard]] bool restoreDhcpMode(const QString& adapterName);
     [[nodiscard]] bool restoreStaticIp(const EthernetConfigSnapshot& snapshot,
                                        const QString& adapterName);
+    /// @param primaryApplied Optional out: set true once the primary DNS command
+    ///        succeeds (so a partial failure -- primary live, a secondary add
+    ///        failed -- is distinguishable from a nothing-applied failure).
     [[nodiscard]] bool restoreDnsServers(const EthernetConfigSnapshot& snapshot,
-                                         const QString& adapterName);
+                                         const QString& adapterName,
+                                         bool* primaryApplied = nullptr);
 
     /// @brief Run a netsh command and return stdout
     [[nodiscard]] QString runNetsh(const QStringList& args, bool* ok = nullptr);

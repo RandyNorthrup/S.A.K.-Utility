@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 35);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 36);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -2924,6 +2924,107 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("dns_servers")));
+    }
+
+    // W-net-dns: network.set_adapter_dns is listed mutating + requires_admin, NOT destructive
+    // (reversible -- set_adapter_dhcp returns DNS to automatic), NOT catastrophic, NOT read_only --
+    // same tier as the other adapter-admin ops (gate fires at the Assisted-confirm tier).
+    void setAdapterDnsListedMutatingAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("network.set_adapter_dns")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-net-dns: refused in a chat/research session (mutating; never runs netsh).
+    void setAdapterDnsBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"dns_servers\":[\"1.1.1.1\"]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-net-dns: an empty/absent dns_servers list is refused up front (a static DNS op with no
+    // servers is meaningless; set_adapter_dhcp is the way to return DNS to automatic). Env-
+    // independent -- validated before any adapter enumeration or netsh call.
+    void setAdapterDnsMissingDnsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"adapter_name\":\"Ethernet\",\"dns_servers\":[]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dns_servers")));
+    }
+
+    // W-net-dns: a malformed dns_servers entry is refused (validated BEFORE any adapter enumeration
+    // or netsh call). Deterministic + env-independent.
+    void setAdapterDnsInvalidDnsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"adapter_name\":\"Ethernet\",\"dns_servers\":"
+                                        "[\"1.1.1.1\",\"not-an-ip\"]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dns_servers")));
+    }
+
+    // W-net-dns: a name matching no system adapter fails cleanly after a REAL enumeration -- the
+    // exact-match guard refuses it before any netsh set (args otherwise valid so it reaches
+    // resolution). Deterministic + env-tolerant (this bogus name is never a real adapter).
+    void setAdapterDnsUnknownAdapterFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"adapter_name\":\"SAK No Such Adapter ZZZ 9f3c\","
+                                        "\"dns_servers\":[\"1.1.1.1\"]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("No network adapter")));
     }
 
     // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless

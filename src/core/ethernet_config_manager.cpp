@@ -224,7 +224,8 @@ bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapsh
 }
 
 bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snapshot,
-                                              const QString& adapterName) {
+                                              const QString& adapterName,
+                                              bool* primaryApplied) {
     if (snapshot.ipv4DnsServers.isEmpty()) {
         return true;
     }
@@ -244,6 +245,12 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
     if (!ok || result.contains("error", Qt::CaseInsensitive)) {
         Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
         return false;
+    }
+
+    // Primary DNS is now LIVE: the `set dnsservers source=static` above replaced the adapter's
+    // entire DNS list. A caller must be told this even if a secondary `add` fails next.
+    if (primaryApplied != nullptr) {
+        *primaryApplied = true;
     }
 
     for (int idx = 1; idx < snapshot.ipv4DnsServers.size(); ++idx) {
@@ -293,6 +300,22 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
     }
 
     return allSucceeded;
+}
+
+bool EthernetConfigManager::setDnsServers(const QString& adapterName,
+                                          const QStringList& dnsServers,
+                                          bool& primaryApplied) {
+    // Reuse the DNS-only restore leg: it issues `netsh interface ip set dnsservers source=static`
+    // for the primary plus `add dnsservers` for each secondary, and touches nothing else -- so the
+    // adapter's IP mode (DHCP or static) is preserved. An empty list is a no-op (returns true); the
+    // caller (network.set_adapter_dns) requires a non-empty list. primaryApplied reports whether
+    // the primary DNS went live, so a partial failure (primary set, a secondary add failed) is
+    // honest.
+    primaryApplied = false;
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = adapterName;
+    snapshot.ipv4DnsServers = dnsServers;
+    return restoreDnsServers(snapshot, adapterName, &primaryApplied);
 }
 
 QStringList EthernetConfigManager::listEthernetAdapters() {

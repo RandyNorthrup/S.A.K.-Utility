@@ -1674,6 +1674,119 @@ AppActionResult setAdapterStaticIp(const QJsonObject& args) {
     return {true, staticIpSuccessMessage(resolved, ip, mask, gateway, dns), data};
 }
 
+// ---------------------------------------------------------------------------
+// network.set_adapter_dns: set an adapter's DNS servers, leaving IP config alone.
+// ---------------------------------------------------------------------------
+
+QJsonObject setAdapterDnsParamsSchema() {
+    QJsonObject name_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral("Exact name of the network adapter (Ethernet OR Wi-Fi) whose DNS servers "
+                        "to set, as shown by network.list_adapters")}};
+    QJsonObject dns_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+        {QStringLiteral("description"),
+         QStringLiteral("IPv4 DNS server addresses to set (first is primary); at least one "
+                        "required. Use set_adapter_dhcp to return DNS to automatic.")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("adapter_name"), name_prop},
+                                    {QStringLiteral("dns_servers"), dns_prop}}},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("adapter_name"), QStringLiteral("dns_servers")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Map a FAILED setDnsServers into an honest result. A non-elevated run fails at the FIRST command
+// (primary set) with nothing applied -> report the elevation hint. But once the primary set
+// succeeded (primary_applied), the adapter's DNS is ALREADY redirected even though a later
+// secondary `add` failed -> disclose the applied primary (mirrors staticIpFailureResult); a bare
+// failure would wrongly imply nothing changed.
+AppActionResult dnsFailureResult(const QString& adapter,
+                                 const QString& primary_dns,
+                                 bool primary_applied,
+                                 const QString& error_text) {
+    if (primary_applied) {
+        return {false,
+                QStringLiteral("Set adapter '%1' primary DNS to %2, but adding a secondary DNS "
+                               "server failed (%3). The adapter is ALREADY using the new DNS -- "
+                               "revert with set_adapter_dhcp if this is wrong.")
+                    .arg(adapter,
+                         primary_dns,
+                         error_text.isEmpty() ? QStringLiteral("unknown error") : error_text),
+                QJsonObject{{QStringLiteral("adapter_name"), adapter},
+                            {QStringLiteral("primary_dns_applied"), primary_dns},
+                            {QStringLiteral("dns_partially_applied"), true}}};
+    }
+    return {false,
+            error_text.isEmpty()
+                ? QStringLiteral("Failed to set DNS on adapter '%1' (changing network config needs "
+                                 "administrator rights; run S.A.K. elevated)")
+                      .arg(adapter)
+                : error_text,
+            {}};
+}
+
+// Set a named adapter's IPv4 DNS servers to a static list via EthernetConfigManager (netsh
+// interface ip set/add dnsservers source=static), leaving the adapter's IP mode (DHCP or static)
+// untouched. SYNC + bounded (a few ~10s shell-free netsh calls). The adapter name is exact-matched
+// against the system's OWN adapter list first (anti-injection: a bogus/injected name never reaches
+// netsh); every DNS value is validated + de-duplicated as a well-formed IPv4 (staticDnsFromArgs)
+// before use. netsh set needs elevation, so a non-elevated run fails HONESTLY. Mutating +
+// requires_admin; NOT destructive (reversible -- set_adapter_dhcp returns DNS to automatic) and not
+// catastrophic. The panel gate still fires (chat refuses; Assisted confirms with the adapter
+// shown).
+AppActionResult setAdapterDns(const QJsonObject& args) {
+    const QString adapter = args.value(QStringLiteral("adapter_name")).toString().trimmed();
+    if (adapter.isEmpty()) {
+        return {false, QStringLiteral("set_adapter_dns requires an 'adapter_name' argument"), {}};
+    }
+    std::optional<AppActionResult> dns_error;
+    const QStringList dns = staticDnsFromArgs(args, dns_error);
+    if (dns_error) {
+        return *dns_error;
+    }
+    if (dns.isEmpty()) {
+        return {false,
+                QStringLiteral("set_adapter_dns requires at least one valid IPv4 address in "
+                               "'dns_servers' (use set_adapter_dhcp to return DNS to automatic)"),
+                {}};
+    }
+
+    EthernetConfigManager manager;
+    const QString resolved = resolveEthernetAdapter(manager, adapter);
+    if (resolved.isEmpty()) {
+        const QStringList adapters = manager.listEthernetAdapters();
+        return {false,
+                QStringLiteral("No network adapter named '%1' (available: %2)")
+                    .arg(adapter,
+                         adapters.isEmpty() ? QStringLiteral("none found") : adapters.join(", ")),
+                {}};
+    }
+
+    QString error_text;
+    QObject::connect(&manager,
+                     &EthernetConfigManager::errorOccurred,
+                     &manager,
+                     [&error_text](const QString& error) {
+                         if (error_text.isEmpty()) {
+                             error_text = error;
+                         }
+                     });
+
+    bool primary_applied = false;
+    if (!manager.setDnsServers(resolved, dns, primary_applied)) {
+        return dnsFailureResult(resolved, dns.first(), primary_applied, error_text);
+    }
+    return {
+        true,
+        QStringLiteral("Set adapter '%1' DNS to %2").arg(resolved, dns.join(QStringLiteral(", "))),
+        QJsonObject{{QStringLiteral("adapter_name"), resolved},
+                    {QStringLiteral("dns_servers"), QJsonArray::fromStringList(dns)}}};
+}
+
 // Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
@@ -1701,6 +1814,19 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     static_ip.params_schema = setAdapterStaticIpParamsSchema();
     static_ip.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
     add(static_ip, setAdapterStaticIp);
+
+    // network.set_adapter_dns: set only the DNS servers, leaving the adapter's IP mode alone.
+    // Reversible (set_adapter_dhcp returns DNS to automatic) so NOT destructive; needs elevation.
+    AppActionDescriptor dns = mutatingDescriptor(
+        QStringLiteral("network.set_adapter_dns"),
+        QStringLiteral("Set an adapter's DNS servers"),
+        QStringLiteral("Set a network adapter's IPv4 DNS servers (Ethernet or Wi-Fi) to a specific "
+                       "list, leaving its IP configuration unchanged; reversible with "
+                       "set_adapter_dhcp"),
+        QStringLiteral("network"));
+    dns.params_schema = setAdapterDnsParamsSchema();
+    dns.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
+    add(dns, setAdapterDns);
 }
 
 // Register the email export ops. Split out to keep registerMutatingAppActionsInto within the
