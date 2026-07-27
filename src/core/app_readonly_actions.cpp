@@ -22,6 +22,7 @@
 #include "sak/duplicate_finder_worker.h"
 #include "sak/error_codes.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/file_scanner.h"
 #include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
@@ -57,11 +58,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <thread>
+#include <vector>
 
 namespace sak {
 
@@ -87,6 +91,13 @@ constexpr int kMaxWifiProfiles = 500;
 // and the input archive size (a listing reads only the central directory, so this is generous).
 constexpr int kMaxListedArchiveEntries = 2000;
 constexpr qint64 kMaxArchiveListBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
+// files.scan_directory: cap the entry sample surfaced to the model (running totals stay accurate),
+// the recursion depth, and the wall time (a full tree walk of a large volume can take minutes).
+constexpr int kMaxScanEntriesCollected = 2000;
+constexpr int kMaxScanDepth = 64;
+constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
+// Shared by every deadline-cancel monitor (see DeadlineCanceller): how often it polls the clock.
+constexpr int kDeadlinePollMs = 50;
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
 // PST/OST: open() parses the whole NBT/BBT metadata synchronously, so cap the file size for a
@@ -100,7 +111,6 @@ constexpr int kMaxPstItems = 500;
 // hard wall-time ceiling -- the file-size cap alone leaves a pathological PST scanning for minutes.
 constexpr int kMaxRecoverItems = 1000;
 constexpr int kRecoverScanTimeoutMs = 5 * 60 * 1000;  // 5 min
-constexpr int kRecoverCancelPollMs = 50;
 constexpr int kDefaultPstItemLimit = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
@@ -127,6 +137,43 @@ constexpr int kSearchMaxResultsCeiling = 5000;
 constexpr int kDefaultMboxLimit = 200;
 constexpr int kMboxLimitCeiling = 1000;
 constexpr int kMaxHeaderChars = 1000;
+
+// A scoped deadline monitor for a SYNCHRONOUS engine driven on the AI worker thread. It starts a
+// jthread that invokes @p on_deadline once timeout_ms elapses (bounding an otherwise-unbounded
+// walk/scan on a huge tree or pathological input) and records whether it fired. The callback does
+// whatever cancels the engine -- request_stop() on a std::stop_source, or a worker's own cancel().
+// Call finish() the instant the engine returns so the monitor dies promptly; read fired() for an
+// honest "timed out / partial" flag. The jthread is the LAST member, so on destruction it is
+// stopped+joined FIRST -- before m_done/m_fired (which it reads) and before the caller's engine
+// (which the callback captures) are torn down. Replaces the hand-rolled monitor previously
+// duplicated across the recover_deleted and scan_directory ops.
+class DeadlineCanceller {
+public:
+    DeadlineCanceller(std::function<void()> on_deadline, int timeout_ms)
+        : m_monitor([this, on_deadline = std::move(on_deadline), timeout_ms](std::stop_token st) {
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(timeout_ms);
+            while (!st.stop_requested() && !m_done.load()) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    m_fired.store(true);
+                    on_deadline();
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(kDeadlinePollMs));
+            }
+        }) {}
+
+    void finish() {
+        m_done.store(true);
+        m_monitor.request_stop();
+    }
+    [[nodiscard]] bool fired() const { return m_fired.load(); }
+
+private:
+    std::atomic<bool> m_done{false};
+    std::atomic<bool> m_fired{false};
+    std::jthread m_monitor;  // declared LAST -> joined FIRST on destruction
+};
 
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
@@ -882,6 +929,198 @@ QJsonObject listArchiveParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// One entry collected during a directory scan (see runDirectoryScan).
+struct ScanCollectEntry {
+    QString rel_path;
+    qint64 size{0};
+    bool is_dir{false};
+};
+
+// Accumulated result of a bounded directory scan.
+struct DirScanOutcome {
+    std::vector<ScanCollectEntry> entries;  // capped sample of entries
+    qint64 files{0};
+    qint64 directories{0};
+    qint64 total_size{0};
+    qint64 errors{0};      // engine errors_encountered (only meaningful when `complete`)
+    bool complete{false};  // the walk finished fully (not cancelled / timed out)
+    bool timed_out{false};
+    bool failed{false};
+    QString error;
+};
+
+// Build scan_options from the model args. follow_symlinks stays FALSE, so the scanner never
+// descends a symlinked directory and runs cycle detection -- the walk cannot be steered off-box
+// through a planted directory symlink (a symlinked FILE's size stat still follows, the same
+// accepted planted-symlink residual the find_duplicates/search walks carry). calculate_sizes is off
+// (sizes are computed in the callback to avoid a double stat) -- which means the engine's own
+// min_file_size filter (gated on calculate_sizes) would be a no-op, so min_file_size is applied in
+// the callback instead. include/exclude patterns are honored by the engine unconditionally.
+sak::scan_options dirScanOptionsFromArgs(const QJsonObject& args) {
+    sak::scan_options options;
+    options.recursive = args.value(QStringLiteral("recursive")).toBool(true);
+    options.follow_symlinks = false;
+    options.calculate_sizes = false;
+    options.type_filter = sak::file_type_filter::all;
+    const int depth = args.value(QStringLiteral("max_depth")).toInt(0);
+    options.max_depth = static_cast<std::size_t>(std::clamp(depth, 0, kMaxScanDepth));
+    for (const QJsonValue& value : args.value(QStringLiteral("include_patterns")).toArray()) {
+        const QString pattern = value.toString().trimmed();
+        if (!pattern.isEmpty()) {
+            options.include_patterns.push_back(pattern.toStdString());
+        }
+    }
+    return options;
+}
+
+// Run a bounded directory scan under a wall-time ceiling. Running totals are accumulated in the
+// callback so they survive a deadline cancel (scan() returns operation_cancelled and DROPS its own
+// statistics on cancel). Only the first kMaxScanEntriesCollected entries are kept for the payload.
+DirScanOutcome runDirectoryScan(const std::filesystem::path& root, const QJsonObject& args) {
+    DirScanOutcome out;
+    std::stop_source stop;
+    DeadlineCanceller deadline([&stop]() { stop.request_stop(); }, kScanTimeoutMs);
+
+    const qint64 min_size =
+        static_cast<qint64>(args.value(QStringLiteral("min_file_size")).toDouble(0));
+    sak::scan_options options = dirScanOptionsFromArgs(args);
+    options.callback = [&out, &root, min_size](const std::filesystem::path& path,
+                                               bool is_dir) -> bool {
+        qint64 size = 0;
+        if (is_dir) {
+            ++out.directories;
+        } else {
+            std::error_code ec;
+            const auto bytes = std::filesystem::file_size(path, ec);
+            size = ec ? 0 : static_cast<qint64>(bytes);
+            if (min_size > 0 && size < min_size) {
+                return true;  // below the requested size floor: excluded from counts + sample
+            }
+            ++out.files;
+            out.total_size += size;
+        }
+        if (out.entries.size() < static_cast<std::size_t>(kMaxScanEntriesCollected)) {
+            // Convert via the WIDE path (symmetric with how root is built); the narrow
+            // generic_string() is the ANSI code page on Windows and QString::fromStdString would
+            // decode it as UTF-8, corrupting any non-ASCII filename.
+            out.entries.push_back(
+                {QString::fromStdWString(path.lexically_relative(root).generic_wstring()),
+                 size,
+                 is_dir});
+        }
+        return true;  // keep walking for accurate totals; the deadline bounds wall time
+    };
+
+    sak::file_scanner scanner;
+    const auto result = scanner.scan(root, options, stop.get_token());
+    deadline.finish();
+    out.timed_out = deadline.fired();
+    if (result.has_value()) {
+        // Full walk: capture errors_encountered so a partial tree (unreadable/errored subdirs the
+        // engine counts but does not fail on) is flagged, not reported as a complete total.
+        out.complete = true;
+        out.errors = static_cast<qint64>(result->errors_encountered);
+    } else if (result.error() != sak::error_code::operation_cancelled) {
+        out.failed = true;
+        out.error = QString::fromUtf8(sak::to_string(result.error()));
+    }
+    return out;
+}
+
+// Scan a directory tree and report a bounded entry sample + disk-usage totals (files/dirs/bytes).
+// Drives the app's OWN file_scanner (synchronous, std::stop_token, follow_symlinks off with cycle
+// detection). root_path goes through the shared refuseUnsafePath (UNC/device + reparse) then isDir.
+// read_only -> ungated. Totals are the true walk counts; entries[] is the first N (truncation +
+// timed_out reported), so a huge tree yields honest summary numbers without an unbounded payload.
+// Assemble the model-facing result from a scan outcome (capped entry array + honest totals +
+// completeness flags). scan_complete is true only when the walk FINISHED and hit no errors, so an
+// undercounted partial tree (timed out or unreadable subdirs) is never reported as authoritative.
+AppActionResult buildDirScanResult(const QFileInfo& info,
+                                   const QString& root,
+                                   const DirScanOutcome& out) {
+    QJsonArray entries;
+    for (const ScanCollectEntry& entry : out.entries) {
+        entries.append(QJsonObject{{QStringLiteral("path"), clampLine(entry.rel_path)},
+                                   {QStringLiteral("size_bytes"), static_cast<double>(entry.size)},
+                                   {QStringLiteral("is_dir"), entry.is_dir}});
+    }
+    const qint64 total_entries = out.files + out.directories;
+    const bool scan_complete = out.complete && !out.timed_out && out.errors == 0;
+    QJsonObject data{{QStringLiteral("root_path"), info.absoluteFilePath()},
+                     {QStringLiteral("files_found"), static_cast<double>(out.files)},
+                     {QStringLiteral("directories_found"), static_cast<double>(out.directories)},
+                     {QStringLiteral("total_size_bytes"), static_cast<double>(out.total_size)},
+                     {QStringLiteral("reported_entries"), entries.size()},
+                     {QStringLiteral("truncated"), total_entries > entries.size()},
+                     {QStringLiteral("errors_encountered"), static_cast<double>(out.errors)},
+                     {QStringLiteral("scan_complete"), scan_complete},
+                     {QStringLiteral("timed_out"), out.timed_out},
+                     {QStringLiteral("entries"), entries}};
+    QString message = QStringLiteral("Scanned '%1': %2 file(s), %3 dir(s), %4 bytes")
+                          .arg(info.fileName().isEmpty() ? root : info.fileName())
+                          .arg(out.files)
+                          .arg(out.directories)
+                          .arg(out.total_size);
+    if (out.timed_out) {
+        message += QStringLiteral(" (scan hit the time limit; results are partial)");
+    } else if (out.errors > 0) {
+        message += QStringLiteral(" (%1 subdirectorie(s) could not be read; totals are partial)")
+                       .arg(out.errors);
+    }
+    return {true, message, data};
+}
+
+AppActionResult scanDirectory(const QJsonObject& args) {
+    const QString root = args.value(QStringLiteral("root_path")).toString().trimmed();
+    if (root.isEmpty()) {
+        return {false, QStringLiteral("scan_directory requires a 'root_path' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(root, QStringLiteral("scan_directory"), QStringLiteral("root_path"))) {
+        return *unsafe;
+    }
+    const QFileInfo info(root);
+    if (!info.isDir()) {
+        return {false, QStringLiteral("root_path is not an existing directory: %1").arg(root), {}};
+    }
+
+    const DirScanOutcome out = runDirectoryScan(std::filesystem::path(root.toStdWString()), args);
+    if (out.failed) {
+        return {false, QStringLiteral("Directory scan failed: %1").arg(out.error), {}};
+    }
+    return buildDirScanResult(info, root, out);
+}
+
+QJsonObject scanDirectoryParamsSchema() {
+    QJsonObject patterns_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Optional filename glob patterns to include (e.g. \"*.log\")")}};
+    QJsonObject properties{
+        {QStringLiteral("root_path"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Absolute path of the directory to scan")}}},
+        {QStringLiteral("recursive"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Recurse into subdirectories (default true)")}}},
+        {QStringLiteral("max_depth"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Max recursion depth (0 = unlimited, capped at 64)")}}},
+        {QStringLiteral("min_file_size"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Only include files at least this many bytes")}}},
+        {QStringLiteral("include_patterns"), patterns_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("root_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject dupParamsSchema() {
     QJsonObject dirs_prop{
         {QStringLiteral("type"), QStringLiteral("array")},
@@ -1505,30 +1744,18 @@ struct DeletedScanOutcome {
 // visited-set-guarded folder tree, so there is no new fan-out surface.
 DeletedScanOutcome runDeletedItemScan(PstParser& parser, bool include_orphans) {
     DeletedItemScanner scanner(&parser);
-
-    std::atomic<bool> done{false};
-    std::atomic<bool> deadline_hit{false};
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(kRecoverScanTimeoutMs);
-    std::jthread monitor([&](std::stop_token stop) {
-        while (!stop.stop_requested() && !done.load()) {
-            if (std::chrono::steady_clock::now() >= deadline) {
-                deadline_hit.store(true);
-                scanner.cancel();
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRecoverCancelPollMs));
-        }
-    });
+    // scanner.cancel() (which also cancels the parser) is the cancel action; the monitor calls it
+    // at the ceiling. scanner is declared BEFORE the canceller, so the monitor is joined before
+    // scanner is destroyed (the callback captures &scanner).
+    DeadlineCanceller deadline([&scanner]() { scanner.cancel(); }, kRecoverScanTimeoutMs);
 
     DeletedScanOutcome outcome;
     outcome.recoverable = scanner.scanRecoverableItems();
     outcome.recoverable_reliable = scanner.recoverableReliable();
     outcome.orphaned = include_orphans ? scanner.scanOrphanedNodes() : QVector<PstItemDetail>{};
     outcome.orphan_reliable = !include_orphans || scanner.reachableReliable();
-    done.store(true);
-    monitor.request_stop();
-    outcome.timed_out = deadline_hit.load();
+    deadline.finish();
+    outcome.timed_out = deadline.fired();
     return outcome;
 }
 
@@ -3092,6 +3319,14 @@ void registerFileReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("files"),
                        listArchiveParamsSchema()),
         listArchive);
+
+    add(makeDescriptor(QStringLiteral("files.scan_directory"),
+                       QStringLiteral("Scan a directory"),
+                       QStringLiteral("List a directory tree's entries with sizes and report "
+                                      "disk-usage totals (files/dirs/bytes); read-only"),
+                       QStringLiteral("files"),
+                       scanDirectoryParamsSchema()),
+        scanDirectory);
 }
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {

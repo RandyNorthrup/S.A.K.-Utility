@@ -1641,6 +1641,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # is never taken (use_file_system_target=false), so the search stub below covers its two
         # FileManagementFileSystemBridge symbols and keeps the APFS/HFS driver out of the link.
         ${CMAKE_SOURCE_DIR}/src/threading/duplicate_finder_worker.cpp
+        # files.scan_directory: file_scanner (synchronous std::filesystem walk, follow_symlinks off
+        # + cycle detection) driven directly; path_utils provides its pattern matching.
+        ${CMAKE_SOURCE_DIR}/src/core/file_scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/path_utils.cpp
         # W-uninstall software.uninstall_uwp_app: the ProgramEnumerator (UWP-only sync resolve)
         # + UninstallWorker (UwpRemove mode) are driven directly. The uninstall EXECUTION is not
         # unit-tested (would remove a real app); the resolve + guard + gating are. The leftover/

@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 32);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 33);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -274,6 +274,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.list_archive")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("files.scan_directory")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
@@ -1600,6 +1601,126 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("list"), Qt::CaseInsensitive));
+    }
+
+    // files.scan_directory: read-only tree walk + disk-usage totals. Deterministic temp tree ->
+    // exact file/dir counts + total bytes, entries include the files, ungated in a Chat session.
+    void scanDirectoryListsTreeUngated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        writeTextFile(dir.filePath(QStringLiteral("a/b.txt")), QByteArrayLiteral("hello"));
+        writeTextFile(dir.filePath(QStringLiteral("a/c/d.txt")), QByteArrayLiteral("worldworld"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.scan_directory"),
+                         QJsonObject{{QStringLiteral("root_path"), dir.path()}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // read-only, never gated
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("files_found")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("directories_found")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("total_size_bytes")).toDouble(), 15.0);
+        // A clean temp tree finishes fully with no unreadable subdirs.
+        QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
+        QCOMPARE(data.value(QStringLiteral("errors_encountered")).toInt(), 0);
+        bool have_b = false;
+        bool have_d = false;
+        for (const auto& value : data.value(QStringLiteral("entries")).toArray()) {
+            const QString p = value.toObject().value(QStringLiteral("path")).toString();
+            have_b = have_b || p.contains(QStringLiteral("b.txt"));
+            have_d = have_d || p.contains(QStringLiteral("d.txt"));
+        }
+        QVERIFY(have_b);
+        QVERIFY(have_d);
+    }
+
+    void scanDirectoryMissingArgFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel, QStringLiteral("files.scan_directory"), QJsonObject{});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("root_path")));
+    }
+
+    void scanDirectoryRejectsNonDirectory() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(QStringLiteral("x.txt"));
+        writeTextFile(file, QByteArrayLiteral("x"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = runArchiveOp(panel,
+                                                QStringLiteral("files.scan_directory"),
+                                                QJsonObject{{QStringLiteral("root_path"), file}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("directory")));
+    }
+
+    // min_file_size must actually filter (it was a silent no-op: the engine only honors it when
+    // calculate_sizes is on, which this op keeps off; the op now applies it in the callback).
+    void scanDirectoryHonorsMinFileSize() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        writeTextFile(dir.filePath(QStringLiteral("small.txt")), QByteArray(3, 'x'));
+        writeTextFile(dir.filePath(QStringLiteral("big.txt")), QByteArray(100, 'y'));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.scan_directory"),
+                         QJsonObject{{QStringLiteral("root_path"), dir.path()},
+                                     {QStringLiteral("min_file_size"), 50}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("files_found")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("total_size_bytes")).toDouble(), 100.0);
+        bool have_small = false;
+        bool have_big = false;
+        for (const auto& value : data.value(QStringLiteral("entries")).toArray()) {
+            const QString p = value.toObject().value(QStringLiteral("path")).toString();
+            have_small = have_small || p.contains(QStringLiteral("small.txt"));
+            have_big = have_big || p.contains(QStringLiteral("big.txt"));
+        }
+        QVERIFY(have_big);
+        QVERIFY(!have_small);
+    }
+
+    // Non-ASCII filenames must survive to the model intact (the reported path was built via the
+    // NARROW generic_string() -> ANSI code page -> QString::fromStdString-as-UTF-8, which corrupted
+    // accented/CJK names; it now converts via the wide path).
+    void scanDirectoryPreservesNonAsciiNames() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString name = QString::fromUtf8("Caf\xC3\xA9.txt");  // "Cafe" with an acute e
+        writeTextFile(dir.filePath(name), QByteArrayLiteral("x"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.scan_directory"),
+                         QJsonObject{{QStringLiteral("root_path"), dir.path()}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        bool found = false;
+        for (const auto& value : result.value(QStringLiteral("data"))
+                                     .toObject()
+                                     .value(QStringLiteral("entries"))
+                                     .toArray()) {
+            found = found || value.toObject()
+                                 .value(QStringLiteral("path"))
+                                 .toString()
+                                 .contains(QString::fromUtf8("Caf\xC3\xA9"));
+        }
+        QVERIFY(found);
     }
 
     // ------------------------------------------------------------------
