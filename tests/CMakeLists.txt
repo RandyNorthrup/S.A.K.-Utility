@@ -1627,6 +1627,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/leftover_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/registry_snapshot_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/core/restore_point_manager.cpp
+        # system.list_users: WindowsUserScanner (NetUserEnum + profile/SID resolution) driven
+        # directly, like the read-only diagnostics scanners.
+        ${CMAKE_SOURCE_DIR}/src/core/windows_user_scanner.cpp
         # W2d imaging.flash_image: FlashCoordinator + its worker chain must link (the
         # flash EXECUTION is not unit-tested -- needs a real disk -- but the safety
         # guard resolveFlashTarget is tested pure).
@@ -1691,6 +1694,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/program_enumerator.h
         ${CMAKE_SOURCE_DIR}/include/sak/uninstall_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h
+        ${CMAKE_SOURCE_DIR}/include/sak/windows_user_scanner.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON

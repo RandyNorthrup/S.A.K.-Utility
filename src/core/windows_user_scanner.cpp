@@ -39,10 +39,20 @@ constexpr int kFolderSelectionFileLimit = 10'000;
 WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
 
 QVector<UserProfile> WindowsUserScanner::scanUsers() {
+    bool ignored = false;
+    return scanUsers(ignored);
+}
+
+QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {
     QVector<UserProfile> profiles;
 
 #ifdef Q_OS_WIN
-    enumerateWindowsUsers(profiles);
+    // enumerateWindowsUsers returns false only on a hard NetUserEnum failure (e.g. ERROR_ACCESS_
+    // DENIED without elevation -- the detailed USER_INFO_3 level needs admin). A drained-but-empty
+    // enumeration returns true: that is a genuine "no matching accounts", not a failed read.
+    queryOk = enumerateWindowsUsers(profiles);
+#else
+    queryOk = true;  // no Windows accounts to enumerate on this platform: genuine empty
 #endif
 
     return profiles;

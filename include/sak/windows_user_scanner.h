@@ -30,6 +30,15 @@ public:
     QVector<UserProfile> scanUsers();
 
     /**
+     * @brief Scan system for all user profiles, reporting whether the enumeration succeeded
+     * @param queryOk Set false if the underlying NetUserEnum call failed (e.g. access denied
+     *                without elevation); true for a genuine result (including a genuine empty
+     *                one). Lets a caller tell "no users" from "could not read users".
+     * @return List of detected user profiles
+     */
+    QVector<UserProfile> scanUsers(bool& queryOk);
+
+    /**
      * @brief Get current logged-in username
      */
     static QString getCurrentUsername();

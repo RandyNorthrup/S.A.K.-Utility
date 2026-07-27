@@ -35,6 +35,7 @@
 #include "sak/thermal_monitor.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
+#include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
 #include <QFileInfo>
@@ -72,6 +73,7 @@ constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
+constexpr int kMaxUsers = 200;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
 // + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
@@ -747,6 +749,51 @@ AppActionResult readTemperatures(const QJsonObject&) {
                   .arg(readings.size())
                   .arg(max_temp, 0, 'f', 1);
     return {true, message, data};
+}
+
+QJsonObject serializeUserProfile(const UserProfile& profile) {
+    return QJsonObject{{QStringLiteral("username"), clampLine(profile.username)},
+                       {QStringLiteral("sid"), clampLine(profile.sid)},
+                       {QStringLiteral("profile_path"), clampLine(profile.profile_path)},
+                       {QStringLiteral("is_current_user"), profile.is_current_user},
+                       {QStringLiteral("estimated_size_bytes"),
+                        static_cast<double>(profile.total_size_estimated)}};
+}
+
+// List local Windows user accounts via WindowsUserScanner (NetUserEnum for normal accounts, then
+// per-user profile-path / SID / current-user / size resolution -- the same headless engine the
+// user-profile backup wizard drives). Read-only: it enumerates accounts and reads profile
+// metadata; it never creates, modifies, or deletes a user. The scanner only reports accounts that
+// have an existing profile directory (service / never-logged-in accounts are filtered out), so the
+// message says "with a profile". Detailed enumeration (USER_INFO_3) typically needs elevation, so
+// a FAILED enumeration is reported as an honest failure via the queryOk signal rather than a
+// definitive "0 users" (the same fail-open honesty hole closed in the restore-point / thermal
+// engines); a genuine empty result has queryOk == true.
+AppActionResult listUsers(const QJsonObject&) {
+    WindowsUserScanner scanner;
+    bool query_ok = false;
+    const QVector<UserProfile> users = scanner.scanUsers(query_ok);
+    if (!query_ok) {
+        return {false,
+                QStringLiteral("Could not enumerate user accounts (the query failed; reading "
+                               "detailed account info may require elevation)"),
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const UserProfile& user : users) {
+        if (listed.size() >= kMaxUsers) {
+            break;
+        }
+        listed.append(serializeUserProfile(user));
+    }
+    QJsonObject data{{QStringLiteral("count"), users.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), users.size() > listed.size()},
+                     {QStringLiteral("users"), listed}};
+    return {true,
+            QStringLiteral("Found %1 local user account(s) with a profile").arg(users.size()),
+            data};
 }
 
 QString clampHeader(const QString& value) {
@@ -2138,6 +2185,14 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
         searchFiles);
 
     registerDiagnosticsReadOnlyOps(add);
+
+    add(makeDescriptor(QStringLiteral("system.list_users"),
+                       QStringLiteral("List user accounts"),
+                       QStringLiteral("List local Windows user accounts that have a profile "
+                                      "directory (detailed info may need admin)"),
+                       QStringLiteral("system"),
+                       noParamsSchema()),
+        listUsers);
 
     add(makeDescriptor(QStringLiteral("email.read_mbox"),
                        QStringLiteral("Read an MBOX mailbox"),

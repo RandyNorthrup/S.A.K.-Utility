@@ -241,7 +241,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + 20 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 23);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 24);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -272,6 +272,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.read_temperatures")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("system.list_users")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
     }
 
@@ -1971,6 +1972,46 @@ private Q_SLOTS:
             {QStringLiteral("operation"), QStringLiteral("run")},
             {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
             {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // System: list_users drives WindowsUserScanner (NetUserEnum). Env-tolerant: on an elevated
+    // host it succeeds with a well-formed user array (>=1: the current account has a profile); on
+    // a NON-elevated host the detailed USER_INFO_3 enumeration can be access-denied -> the op must
+    // fail HONESTLY (never a fake "0 users" success). Either way the shape is asserted, so the
+    // fail-open honesty hole stays closed and the test never flakes on the runner's elevation.
+    void listUsersReturnsWellFormed() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("users")));
+            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
+            QCOMPARE(data.value(QStringLiteral("users")).toArray().size(),
+                     data.value(QStringLiteral("reported_count")).toInt());
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("user account"), Qt::CaseInsensitive));
+        }
+    }
+
+    // System: list_users is read-only -> UNGATED in a Chat & Research session (never
+    // policy-blocked), whether or not the enumeration succeeds.
+    void listUsersRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
