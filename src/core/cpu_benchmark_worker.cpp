@@ -187,7 +187,11 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
+    // std::thread::hardware_concurrency() may return 0 ("not computable"). Clamp to >=1 so the
+    // multi-thread pass runs one thread instead of tripping runMultiThreaded's Q_ASSERT_X(>0),
+    // which would abort a Debug build (0xC0000409) -- now reachable when this worker is driven
+    // headless (diagnostics.run_benchmark) off the GUI thread.
+    const int hw_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
     const double mt_total = runMultiThreaded(hw_threads);
 
     if (mt_total > 0.0 && hw_threads > 0) {

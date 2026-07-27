@@ -1645,6 +1645,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # + cycle detection) driven directly; path_utils provides its pattern matching.
         ${CMAKE_SOURCE_DIR}/src/core/file_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/path_utils.cpp
+        # diagnostics.run_benchmark: the CPU + memory benchmark workers (WorkerBase QThreads, pure
+        # in-memory compute) are driven directly through the AsyncActionInvocation bridge. The
+        # benchmark EXECUTION is not re-run here (it is timing-sensitive and covered by the
+        # dedicated worker unit tests); the op-layer registration + target routing + invalid-target
+        # rejection are covered by the dispatch shape tests.
+        ${CMAKE_SOURCE_DIR}/src/core/cpu_benchmark_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/memory_benchmark_worker.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/cpu_benchmark_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/memory_benchmark_worker.h
         # W-uninstall software.uninstall_uwp_app: the ProgramEnumerator (UWP-only sync resolve)
         # + UninstallWorker (UwpRemove mode) are driven directly. The uninstall EXECUTION is not
         # unit-tested (would remove a real app); the resolve + guard + gating are. The leftover/

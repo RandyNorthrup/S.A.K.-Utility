@@ -16,6 +16,7 @@
 #include "sak/app_action_service.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/connectivity_tester.h"
+#include "sak/cpu_benchmark_worker.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
@@ -28,6 +29,7 @@
 #include "sak/image_source.h"
 #include "sak/iso_analyzer.h"
 #include "sak/mbox_parser.h"
+#include "sak/memory_benchmark_worker.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_probe_worker.h"
@@ -115,6 +117,12 @@ constexpr int kDefaultPstItemLimit = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
 constexpr int kMaxUsers = 200;
+// diagnostics.run_benchmark: the CPU suite (prime sieve to 10M + 512x512 matrix + 64 MB zlib +
+// 256 MB AES + a multi-threaded pass across every core) and the memory suite (256 MB bandwidth
+// streams + 64 MB pointer-chase + alloc stress) each run for seconds on typical hardware. Give
+// the bridge a generous wall ceiling so a slow-but-real run on modest hardware returns its
+// scores instead of a spurious timeout; WorkerBase stop + dtor-join bound it regardless.
+constexpr int kBenchmarkTimeoutMs = 5 * 60 * 1000;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
 // + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
@@ -1387,6 +1395,133 @@ AppActionResult readTemperatures(const QJsonObject&) {
                   .arg(readings.size())
                   .arg(max_temp, 0, 'f', 1);
     return {true, message, data};
+}
+
+QJsonObject serializeCpuBenchmark(const CpuBenchmarkResult& r) {
+    return QJsonObject{{QStringLiteral("single_thread_score"), r.single_thread_score},
+                       {QStringLiteral("multi_thread_score"), r.multi_thread_score},
+                       {QStringLiteral("thread_scaling_efficiency"), r.thread_scaling_efficiency},
+                       {QStringLiteral("thread_count"), static_cast<int>(r.thread_count)},
+                       {QStringLiteral("prime_sieve_time_ms"), r.prime_sieve_time_ms},
+                       {QStringLiteral("matrix_multiply_time_ms"), r.matrix_multiply_time_ms},
+                       {QStringLiteral("zlib_compression_time_ms"), r.zlib_compression_time_ms},
+                       {QStringLiteral("aes_encryption_time_ms"), r.aes_encryption_time_ms},
+                       {QStringLiteral("zlib_throughput_mbps"), r.zlib_throughput_mbps},
+                       {QStringLiteral("aes_throughput_mbps"), r.aes_throughput_mbps},
+                       {QStringLiteral("matrix_gflops"), r.matrix_gflops}};
+}
+
+QJsonObject serializeMemoryBenchmark(const MemoryBenchmarkResult& r) {
+    return QJsonObject{{QStringLiteral("overall_score"), r.overall_score},
+                       {QStringLiteral("read_bandwidth_gbps"), r.read_bandwidth_gbps},
+                       {QStringLiteral("write_bandwidth_gbps"), r.write_bandwidth_gbps},
+                       {QStringLiteral("copy_bandwidth_gbps"), r.copy_bandwidth_gbps},
+                       {QStringLiteral("random_latency_ns"), r.random_latency_ns},
+                       {QStringLiteral("max_contiguous_alloc_mb"),
+                        static_cast<double>(r.max_contiguous_alloc_mb)},
+                       {QStringLiteral("alloc_dealloc_ops_per_sec"), r.alloc_dealloc_ops_per_sec}};
+}
+
+// The benchmark workers have NO measurement-failure error channel: execute() returns success even
+// when a sub-test could not run (a compression call that did not return Z_OK, or -- for memory -- a
+// large buffer allocation that failed), leaving a zero-valued metric. A genuine completed run
+// always produces strictly-positive throughput/bandwidth/latency, so a zero in any of those is a
+// reliable failed-measurement sentinel. The bridge maps it to an honest op failure rather than
+// reporting {success:true, ...0.0...} as a real benchmark (the fail-open pattern this codebase
+// treats as must-fix). Fixed at the bridge because the workers are shared with the GUI.
+bool cpuBenchmarkMeasurementOk(const CpuBenchmarkResult& r) {
+    return r.zlib_throughput_mbps > 0.0 && r.aes_throughput_mbps > 0.0 && r.matrix_gflops > 0.0;
+}
+
+bool memoryBenchmarkMeasurementOk(const MemoryBenchmarkResult& r) {
+    return r.read_bandwidth_gbps > 0.0 && r.write_bandwidth_gbps > 0.0 &&
+           r.copy_bandwidth_gbps > 0.0 && r.random_latency_ns > 0.0;
+}
+
+// Drive the CPU benchmark ENGINE (WorkerBase) directly on the AI worker thread via the
+// AsyncActionInvocation bridge: it runs on its own thread and posts finished/failed back to the
+// caller-thread context, drained by the local event loop -- no GUI thread, no persisted prefs. The
+// suite is pure compute (no filesystem or system change), so it stays read-only; it consumes CPU
+// transiently. worker.result() is valid once finished has fired (written on the worker thread
+// before the signal, so happens-before holds). requestStop() after run() reaps a timed-out run.
+AppActionResult runCpuBenchmark() {
+    CpuBenchmarkWorker worker;
+    AsyncActionInvocation inv(kBenchmarkTimeoutMs);
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
+        const CpuBenchmarkResult& r = worker.result();
+        if (!cpuBenchmarkMeasurementOk(r)) {
+            inv.finish({false,
+                        QStringLiteral("CPU benchmark measurement failed (a compute/compression "
+                                       "sub-test did not complete)"),
+                        {}});
+            return;
+        }
+        const QString message = QStringLiteral(
+                                    "CPU benchmark complete -- single-thread %1, multi-thread %2 "
+                                    "(normalized: i5-12400 = 1000)")
+                                    .arg(r.single_thread_score)
+                                    .arg(r.multi_thread_score);
+        inv.finish({true, message, serializeCpuBenchmark(r)});
+    });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+// Same bridge for the memory benchmark engine. Peak transient footprint is bounded (256 MB
+// bandwidth buffers + a 64 MB latency array + a single <=1 GB alloc probe, all freed immediately);
+// no persistent change, so read-only.
+AppActionResult runMemoryBenchmark() {
+    MemoryBenchmarkWorker worker;
+    AsyncActionInvocation inv(kBenchmarkTimeoutMs);
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
+        const MemoryBenchmarkResult& r = worker.result();
+        if (!memoryBenchmarkMeasurementOk(r)) {
+            inv.finish({false,
+                        QStringLiteral("Memory benchmark measurement failed (a bandwidth/latency "
+                                       "buffer allocation did not succeed -- the host may be low "
+                                       "on memory)"),
+                        {}});
+            return;
+        }
+        const QString message = QStringLiteral(
+                                    "Memory benchmark complete -- read %1 GB/s, write %2 GB/s, "
+                                    "latency %3 ns (score %4)")
+                                    .arg(r.read_bandwidth_gbps, 0, 'f', 1)
+                                    .arg(r.write_bandwidth_gbps, 0, 'f', 1)
+                                    .arg(r.random_latency_ns, 0, 'f', 1)
+                                    .arg(r.overall_score);
+        inv.finish({true, message, serializeMemoryBenchmark(r)});
+    });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+// diagnostics.run_benchmark: run one performance benchmark suite. Only "cpu" and "memory" are
+// exposed -- both are pure in-memory workloads with no persistent change, so the op stays
+// read-only. The DISK benchmark is deliberately NOT exposed here: it writes a multi-GB test file
+// to a drive (a mutating side effect + wear), so it belongs on the mutating path if ever added.
+AppActionResult benchmarkSystem(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target")).toString().trimmed().toLower();
+    if (target.isEmpty() || target == QStringLiteral("cpu")) {
+        return runCpuBenchmark();
+    }
+    if (target == QStringLiteral("memory")) {
+        return runMemoryBenchmark();
+    }
+    return {false,
+            QStringLiteral("benchmark 'target' must be \"cpu\" or \"memory\" (the disk benchmark "
+                           "writes a test file and is not exposed as a read-only op)"),
+            {}};
 }
 
 QJsonObject serializeUserProfile(const UserProfile& profile) {
@@ -2855,6 +2990,20 @@ QJsonObject boolProp(const QString& description) {
                        {QStringLiteral("description"), description}};
 }
 
+QJsonObject benchmarkParamsSchema() {
+    QJsonObject target_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("enum"), QJsonArray{QStringLiteral("cpu"), QStringLiteral("memory")}},
+        {QStringLiteral("description"),
+         QStringLiteral("Which subsystem to benchmark: \"cpu\" (compute suite) or \"memory\" "
+                        "(bandwidth/latency). Default \"cpu\". The disk benchmark is not exposed "
+                        "(it writes a test file).")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("target"), target_prop}}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject scanParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("query_nvd"),
@@ -3261,6 +3410,15 @@ void registerDiagnosticsReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("diagnostics"),
                        noParamsSchema()),
         readTemperatures);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.run_benchmark"),
+                       QStringLiteral("Run a performance benchmark"),
+                       QStringLiteral("Run a CPU or memory performance benchmark suite and report "
+                                      "normalized scores plus throughput/latency (read-only; "
+                                      "consumes CPU/RAM transiently, no disk writes)"),
+                       QStringLiteral("diagnostics"),
+                       benchmarkParamsSchema()),
+        benchmarkSystem);
 }
 
 }  // namespace

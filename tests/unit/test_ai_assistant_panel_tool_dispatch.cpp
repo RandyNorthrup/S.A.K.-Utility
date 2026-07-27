@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 33);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 34);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -283,6 +283,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_pst")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.recover_deleted")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.run_benchmark")));
     }
 
     // W1a: identify_image drives the app's FileImageSource detection on a real
@@ -403,6 +404,58 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("network"), Qt::CaseInsensitive));
+    }
+
+    // diagnostics.run_benchmark: the op-layer routes on 'target'. An unknown target (e.g. the
+    // deliberately-unexposed "disk" suite, which would write a test file) is rejected cleanly by
+    // the thunk itself -- there is no schema pre-validation, so this certs MY routing/validation
+    // branch, not a framework reject. The successful cpu/memory runs are timing-sensitive and
+    // covered by the dedicated benchmark-worker unit tests (not re-run here).
+    void runBenchmarkRejectsUnknownTarget() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("diagnostics.run_benchmark")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"target\":\"disk\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QString message = result.value(QStringLiteral("message")).toString();
+        QVERIFY(message.contains(QStringLiteral("cpu"), Qt::CaseInsensitive));
+        QVERIFY(message.contains(QStringLiteral("memory"), Qt::CaseInsensitive));
+    }
+
+    // diagnostics.run_benchmark: the descriptor is registered read-only with a 'target' enum
+    // schema (cpu/memory only) and no admin/mutating flags -- so it is allowed in every access
+    // mode and never triggers the human gate.
+    void runBenchmarkDescriptorIsReadOnly() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject listing = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
+                        {QStringLiteral("action_id"), QString()},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        bool found = false;
+        for (const QJsonValue& value : listing.value(QStringLiteral("actions")).toArray()) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() !=
+                QStringLiteral("diagnostics.run_benchmark")) {
+                continue;
+            }
+            found = true;
+            QVERIFY(action.value(QStringLiteral("read_only")).toBool());
+            QVERIFY(!action.value(QStringLiteral("mutating")).toBool());
+            QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+            QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            const QJsonObject schema = action.value(QStringLiteral("params")).toObject();
+            const QJsonArray enum_vals = schema.value(QStringLiteral("properties"))
+                                             .toObject()
+                                             .value(QStringLiteral("target"))
+                                             .toObject()
+                                             .value(QStringLiteral("enum"))
+                                             .toArray();
+            QCOMPARE(enum_vals.size(), 2);
+        }
+        QVERIFY(found);
     }
 
     // W1a: a read-only op runs even in a chat/research session -- the per-action
