@@ -15,6 +15,8 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <stop_token>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -61,6 +63,16 @@ public:
      * @param parent Parent QObject
      */
     explicit DuplicateFinderWorker(const Config& config, QObject* parent = nullptr);
+
+    /**
+     * @brief Join the worker thread BEFORE the derived members are destroyed.
+     *
+     * ~WorkerBase joins the thread, but it runs AFTER this class's members (m_hash_stop, m_hasher,
+     * m_config) are already destroyed -- and a still-running execute()/cancel-monitor reads them,
+     * so relying on the base dtor is a use-after-free. Joining here (members still alive) closes
+     * it, mirroring PartitionApplyWorker / NetworkProbeWorker.
+     */
+    ~DuplicateFinderWorker() override;
 
     /**
      * @brief Duplicate groups found by the last run.
@@ -123,14 +135,6 @@ private:
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
                          sak::error_code>;
 
-    /// @brief Create the per-file hashing task callable for parallel execution
-    std::function<void(int)> createHashTask(
-        const std::vector<std::filesystem::path>& files,
-        std::vector<std::pair<std::filesystem::path, std::string>>& results,
-        std::atomic<int>& processed_count,
-        std::atomic<bool>& error_occurred,
-        QMutex& results_mutex);
-
     /// @brief Filter out empty/failed results from parallel hashing
     static std::vector<std::pair<std::filesystem::path, std::string>> filterValidResults(
         const std::vector<std::pair<std::filesystem::path, std::string>>& results);
@@ -154,6 +158,12 @@ private:
     auto hashFiles(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
                          sak::error_code>;
+
+    /// @brief Start a monitor thread that forwards the worker's cooperative stop (stopRequested())
+    /// into m_hash_stop, so file hashing can be cancelled MID-file. Without it, checkStop() is only
+    /// evaluated between files, so a large in-flight file could outlast the teardown join and force
+    /// QThread::terminate(). The returned jthread stops+joins the monitor when it leaves scope.
+    [[nodiscard]] std::jthread startHashCancelMonitor();
 
     struct VirtualFile {
         QString path;
@@ -202,4 +212,6 @@ private:
     sak::file_hasher m_hasher;
     std::vector<DuplicateGroup>
         m_duplicate_groups;  ///< Result of the last run (see duplicateGroups)
+    std::stop_source
+        m_hash_stop;         ///< Cancels in-flight file hashing (fed by startHashCancelMonitor)
 };
