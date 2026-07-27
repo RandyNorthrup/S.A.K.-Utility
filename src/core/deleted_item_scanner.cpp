@@ -7,6 +7,7 @@
 #include "sak/deleted_item_scanner.h"
 
 #include "sak/email_types.h"
+#include "sak/error_codes.h"
 #include "sak/logger.h"
 #include "sak/pst_parser.h"
 
@@ -37,6 +38,7 @@ DeletedItemScanner::DeletedItemScanner(PstParser* parser, QObject* parent)
 
 QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
     QVector<PstItemDetail> recovered;
+    m_recoverable_reliable = true;
 
     if (!m_parser->isOpen()) {
         return recovered;
@@ -83,6 +85,12 @@ void DeletedItemScanner::scanRecoverableFolder(const PstFolder& folder,
     while (!m_cancelled.load()) {
         auto items_result = m_parser->readFolderItems(folder.node_id, offset, kScanBatchSize);
         if (!items_result.has_value()) {
+            // A read error leaves the recovered set incomplete. Cancellation is reported through
+            // the caller's timeout channel, not as unreliability; any OTHER error means a real
+            // failure that must not masquerade as "nothing to recover" (fail-open honesty hole).
+            if (items_result.error() != error_code::operation_cancelled) {
+                m_recoverable_reliable = false;
+            }
             break;
         }
 
@@ -123,7 +131,9 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
     if (!m_reachable_reliable) {
         // The reachability set is incomplete; classifying orphans against it would
         // mis-report live messages as deleted, so skip orphan recovery entirely.
-        logWarning("DeletedItemScanner: folder read failed; skipping orphan scan");
+        logWarning(
+            "DeletedItemScanner: reachability set incomplete (read error or cancel); "
+            "skipping orphan scan");
         return recovered;
     }
 
@@ -178,6 +188,14 @@ QVector<PstItemDetail> DeletedItemScanner::recoverAll() {
 
 void DeletedItemScanner::cancel() {
     m_cancelled.store(true);
+    // Propagate to the parser so an in-flight per-page contents-table read aborts mid-parse. The
+    // scanner's own m_cancelled is only polled BETWEEN reads, so without this a single large
+    // folder's read (readContentsTable re-parses the whole table per page) could outrun a caller's
+    // wall-time ceiling. m_parser is non-owning but outlives this scanner; cancel() is an atomic
+    // store, safe to call from a monitor thread while a scan runs.
+    if (m_parser != nullptr) {
+        m_parser->cancel();
+    }
 }
 
 // ======================================================================
@@ -196,27 +214,13 @@ void DeletedItemScanner::buildReachableSet() {
             return;
         }
         m_reachable_nids.insert(folder.node_id);
-
-        // Load all item NIDs in this folder
-        int offset = 0;
-        while (true) {
-            auto items = m_parser->readFolderItems(folder.node_id, offset, kScanBatchSize);
-            if (!items.has_value()) {
-                // A read failure (not end-of-folder) leaves later live NIDs out of
-                // the reachable set. Mark the whole build unreliable and stop so
-                // scanOrphanedNodes does not resurrect live messages as deleted.
-                m_reachable_reliable = false;
-                return;
-            }
-            if (items.value().isEmpty()) {
-                break;
-            }
-            for (const auto& item : items.value()) {
-                m_reachable_nids.insert(item.node_id);
-            }
-            offset += items.value().size();
+        // A read failure OR a cancel (e.g. a caller's wall-time ceiling) leaves the set incomplete;
+        // mark it unreliable and stop so scanOrphanedNodes skips classification rather than
+        // resurrecting live messages as orphans against a partial reachable set.
+        if (!collectFolderItemNids(folder.node_id)) {
+            m_reachable_reliable = false;
+            return;
         }
-
         for (const auto& child : folder.children) {
             walk(child);
         }
@@ -228,6 +232,24 @@ void DeletedItemScanner::buildReachableSet() {
         }
         walk(root);
     }
+}
+
+bool DeletedItemScanner::collectFolderItemNids(uint64_t folder_node_id) {
+    int offset = 0;
+    while (!m_cancelled.load()) {
+        auto items = m_parser->readFolderItems(folder_node_id, offset, kScanBatchSize);
+        if (!items.has_value()) {
+            return false;  // read failure -> reachable set incomplete
+        }
+        if (items.value().isEmpty()) {
+            return true;  // end of folder
+        }
+        for (const auto& item : items.value()) {
+            m_reachable_nids.insert(item.node_id);
+        }
+        offset += items.value().size();
+    }
+    return false;  // cancelled -> incomplete
 }
 
 std::optional<PstItemDetail> DeletedItemScanner::tryReadOrphanedNode(uint64_t nid) {

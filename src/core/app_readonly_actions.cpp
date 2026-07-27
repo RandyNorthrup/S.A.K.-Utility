@@ -16,6 +16,7 @@
 #include "sak/app_action_service.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/connectivity_tester.h"
+#include "sak/deleted_item_scanner.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/duplicate_finder_worker.h"
@@ -53,10 +54,13 @@
 #include <QVector>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <thread>
 
 namespace sak {
 
@@ -86,6 +90,12 @@ constexpr int kMaxIsoEditions = 64;
 constexpr qint64 kMaxPstBytes = 2LL * 1024 * 1024 * 1024;  // 2 GiB
 constexpr int kMaxPstFolders = 2000;
 constexpr int kMaxPstItems = 500;
+// email.recover_deleted: cap the recovered-item inventory per source (recoverable + orphaned) and
+// bound the extra per-node scan work (readItemDetail for every unreachable message node) with a
+// hard wall-time ceiling -- the file-size cap alone leaves a pathological PST scanning for minutes.
+constexpr int kMaxRecoverItems = 1000;
+constexpr int kRecoverScanTimeoutMs = 5 * 60 * 1000;  // 5 min
+constexpr int kRecoverCancelPollMs = 50;
 constexpr int kDefaultPstItemLimit = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
@@ -1263,6 +1273,41 @@ void appendPstFolderItems(PstParser& parser, const QJsonObject& args, QJsonObjec
     data[QStringLiteral("items")] = listed;
 }
 
+// Validate a user-supplied PST/OST path for a headless read: reject empty, network/UNC/device (so a
+// crafted path can't pull the read over SMB and leak an NTLM handshake), non-file, and over the
+// size cap (open() parses all node metadata synchronously). Returns a ready-to-return failure
+// result, or nullopt + fills @p info when usable. Shared by read_pst and recover_deleted so the
+// guards -- a security boundary -- cannot drift apart (the export_mbox/export_pst shared-validator
+// lesson).
+std::optional<AppActionResult> validatePstReadPath(const QString& path,
+                                                   const QString& op_name,
+                                                   QFileInfo& info) {
+    if (path.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("%1 requires a 'path' argument").arg(op_name),
+                               {}};
+    }
+    if (isNetworkOrDevicePath(path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
+            {}};
+    }
+    info = QFileInfo(path);
+    if (!info.isFile()) {
+        return AppActionResult{false, QStringLiteral("No such PST/OST file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxPstBytes) {
+        return AppActionResult{false,
+                               QStringLiteral("PST/OST file is too large for a headless read (%1 "
+                                              "bytes > %2 limit); use the GUI")
+                                   .arg(info.size())
+                                   .arg(kMaxPstBytes),
+                               {}};
+    }
+    return std::nullopt;
+}
+
 // Read a PST/OST mailbox: file metadata + the folder tree, plus (when folder_node_id is given) that
 // folder's message headers. Drives PstParser DIRECTLY -- open() is fully synchronous (blocks,
 // parses header + NBT/BBT + folder tree, sets isOpen()), and folderTree()/readFolderItems() are
@@ -1273,23 +1318,9 @@ void appendPstFolderItems(PstParser& parser, const QJsonObject& args, QJsonObjec
 // open() parses all node metadata synchronously). Read-only: never writes or recovers anything.
 AppActionResult readPst(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
-    if (path.isEmpty()) {
-        return {false, QStringLiteral("read_pst requires a 'path' argument"), {}};
-    }
-    if (isNetworkOrDevicePath(path)) {
-        return {false, QStringLiteral("read_pst does not allow network/UNC or device paths"), {}};
-    }
-    const QFileInfo info(path);
-    if (!info.isFile()) {
-        return {false, QStringLiteral("No such PST/OST file: %1").arg(path), {}};
-    }
-    if (info.size() > kMaxPstBytes) {
-        return {false,
-                QStringLiteral("PST/OST file is too large for a headless read (%1 bytes > %2 "
-                               "limit); use the GUI")
-                    .arg(info.size())
-                    .arg(kMaxPstBytes),
-                {}};
+    QFileInfo info;
+    if (auto fail = validatePstReadPath(path, QStringLiteral("read_pst"), info)) {
+        return *fail;
     }
 
     PstParser parser;
@@ -1328,6 +1359,141 @@ AppActionResult readPst(const QJsonObject& args) {
     return {true,
             QStringLiteral("PST/OST '%1': %2 folder(s)").arg(info.fileName()).arg(total_folders),
             data};
+}
+
+// One recovered item as METADATA ONLY -- a recovery INVENTORY, never message bodies/headers/
+// attachments. Bounds the payload and discloses only what is needed to decide what to recover.
+QJsonObject serializeRecoveredItem(const PstItemDetail& item, const QString& source) {
+    return QJsonObject{{QStringLiteral("node_id"), static_cast<double>(item.node_id)},
+                       {QStringLiteral("type"), emailItemTypeToString(item.item_type)},
+                       {QStringLiteral("subject"), clampHeader(item.subject)},
+                       {QStringLiteral("sender_name"), clampHeader(item.sender_name)},
+                       {QStringLiteral("sender_email"), clampHeader(item.sender_email)},
+                       {QStringLiteral("date"), item.date.toString(Qt::ISODate)},
+                       {QStringLiteral("size_bytes"), static_cast<double>(item.size_bytes)},
+                       {QStringLiteral("source"), source}};
+}
+
+// Serialize a recovered-item vector into the capped output array (kMaxRecoverItems total across all
+// sources; truncation is reported by the caller, never silent).
+void appendRecoveredItems(const QVector<PstItemDetail>& items,
+                          const QString& source,
+                          QJsonArray& out) {
+    for (const PstItemDetail& item : items) {
+        if (out.size() >= kMaxRecoverItems) {
+            return;
+        }
+        out.append(serializeRecoveredItem(item, source));
+    }
+}
+
+// Outcome of a bounded deleted-item scan (see runDeletedItemScan).
+struct DeletedScanOutcome {
+    QVector<PstItemDetail> recoverable;
+    QVector<PstItemDetail> orphaned;
+    bool recoverable_reliable{true};  ///< false when a non-cancel read error truncated recoverable
+    bool orphan_reliable{true};       ///< false when the orphan scan was skipped (incomplete set)
+    bool timed_out{false};            ///< the wall-time ceiling fired; results are partial
+};
+
+// Run the DeletedItemScanner over an open PstParser under a hard wall-time ceiling. A deadline
+// monitor jthread cancels the scan (scanner polls m_cancelled in its item/node loops); `done` stops
+// the monitor the instant the scan finishes, so it dies long before the scanner is destroyed
+// (declared after it -> joined first). The scanner's recursions ride on the parser's depth-capped +
+// visited-set-guarded folder tree, so there is no new fan-out surface.
+DeletedScanOutcome runDeletedItemScan(PstParser& parser, bool include_orphans) {
+    DeletedItemScanner scanner(&parser);
+
+    std::atomic<bool> done{false};
+    std::atomic<bool> deadline_hit{false};
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(kRecoverScanTimeoutMs);
+    std::jthread monitor([&](std::stop_token stop) {
+        while (!stop.stop_requested() && !done.load()) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                deadline_hit.store(true);
+                scanner.cancel();
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(kRecoverCancelPollMs));
+        }
+    });
+
+    DeletedScanOutcome outcome;
+    outcome.recoverable = scanner.scanRecoverableItems();
+    outcome.recoverable_reliable = scanner.recoverableReliable();
+    outcome.orphaned = include_orphans ? scanner.scanOrphanedNodes() : QVector<PstItemDetail>{};
+    outcome.orphan_reliable = !include_orphans || scanner.reachableReliable();
+    done.store(true);
+    monitor.request_stop();
+    outcome.timed_out = deadline_hit.load();
+    return outcome;
+}
+
+// Assemble the model-facing result from a scan outcome (capped item array + honest counts/flags).
+AppActionResult buildRecoverResult(const QFileInfo& info,
+                                   const DeletedScanOutcome& outcome,
+                                   bool include_orphans) {
+    QJsonArray items;
+    appendRecoveredItems(outcome.recoverable, QStringLiteral("recoverable"), items);
+    appendRecoveredItems(outcome.orphaned, QStringLiteral("orphaned"), items);
+    const int total = static_cast<int>(outcome.recoverable.size() + outcome.orphaned.size());
+
+    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                     {QStringLiteral("name"), info.fileName()},
+                     {QStringLiteral("recoverable_count"),
+                      static_cast<int>(outcome.recoverable.size())},
+                     {QStringLiteral("orphaned_count"), static_cast<int>(outcome.orphaned.size())},
+                     {QStringLiteral("reported_count"), items.size()},
+                     {QStringLiteral("truncated"), total > items.size()},
+                     {QStringLiteral("recoverable_scan_reliable"), outcome.recoverable_reliable},
+                     {QStringLiteral("orphan_scan_included"), include_orphans},
+                     {QStringLiteral("orphan_scan_reliable"), outcome.orphan_reliable},
+                     {QStringLiteral("timed_out"), outcome.timed_out},
+                     {QStringLiteral("items"), items}};
+
+    QString message = QStringLiteral("Recoverable inventory for '%1': %2 recoverable + %3 orphaned")
+                          .arg(info.fileName())
+                          .arg(outcome.recoverable.size())
+                          .arg(outcome.orphaned.size());
+    if (!outcome.recoverable_reliable) {
+        message += QStringLiteral(" (recoverable scan hit a read error; the count is incomplete)");
+    }
+    if (!outcome.orphan_reliable) {
+        message += QStringLiteral(" (orphan scan skipped: reachability set incomplete)");
+    }
+    if (outcome.timed_out) {
+        message += QStringLiteral(" (scan hit the time limit; results are partial)");
+    }
+    return {true, message, data};
+}
+
+// Recover an inventory of DELETED/orphaned items from a PST/OST: soft-deleted items still in the
+// Recoverable Items hierarchy plus (optionally) hard-deleted orphaned NBT message nodes. Drives the
+// app's OWN DeletedItemScanner over the already-open PstParser. Synchronous scan methods run inline
+// (the read_pst pattern) under a wall-time ceiling. Honesty: isOpen() is the value channel for the
+// parse; reachableReliable() distinguishes "0 orphans" from "orphan scan skipped"; timed_out flags
+// a partial scan. Read-only: reads message metadata, never writes or restores anything.
+AppActionResult recoverDeleted(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    QFileInfo info;
+    if (auto fail = validatePstReadPath(path, QStringLiteral("recover_deleted"), info)) {
+        return *fail;
+    }
+
+    PstParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false,
+                QStringLiteral("Could not open or parse the PST/OST (not a valid PST/OST, "
+                               "unsupported, or corrupt): %1")
+                    .arg(info.fileName()),
+                {}};
+    }
+
+    const bool include_orphans = args.value(QStringLiteral("include_orphans")).toBool(true);
+    const DeletedScanOutcome outcome = runDeletedItemScan(parser, include_orphans);
+    return buildRecoverResult(info, outcome, include_orphans);
 }
 
 QJsonArray jsonStrings(const QVector<QString>& values) {
@@ -2434,6 +2600,18 @@ QJsonObject readPstParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject recoverDeletedParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the PST/OST file"))},
+        {QStringLiteral("include_orphans"),
+         boolProp(QStringLiteral("Also scan the NBT for hard-deleted orphaned message nodes "
+                                 "(default true; slower on large files)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject identifyParamsSchema() {
     QJsonObject path_prop{{QStringLiteral("type"), QStringLiteral("string")},
                           {QStringLiteral("description"),
@@ -2775,6 +2953,16 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("email"),
                        readPstParamsSchema()),
         readPst);
+
+    add(makeDescriptor(QStringLiteral("email.recover_deleted"),
+                       QStringLiteral("Recover deleted PST/OST items"),
+                       QStringLiteral(
+                           "Inventory recoverable soft-deleted and orphaned hard-deleted "
+                           "message items in an Outlook PST/OST (read-only, metadata "
+                           "only -- lists what can be recovered)"),
+                       QStringLiteral("email"),
+                       recoverDeletedParamsSchema()),
+        recoverDeleted);
 }
 
 // Register the read-only file-content ops (text search + duplicate finder). Split out to keep

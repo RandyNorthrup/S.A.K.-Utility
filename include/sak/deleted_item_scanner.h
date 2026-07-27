@@ -39,7 +39,28 @@ public:
     /// Combined: scan both sources
     [[nodiscard]] QVector<PstItemDetail> recoverAll();
 
-    /// Request cancellation
+    /// @brief Whether the last orphan scan's reachability set was reliable.
+    ///
+    /// scanOrphanedNodes() skips orphan recovery and returns an empty vector when a folder read
+    /// failed while building the reachability set (classifying orphans against an incomplete set
+    /// would resurrect live messages as deleted). This getter lets a caller distinguish that
+    /// "scan skipped" case from a genuine "no orphans found" -- without it an empty orphan result
+    /// is a fail-open honesty hole. Meaningful only after scanOrphanedNodes()/recoverAll() has run.
+    [[nodiscard]] bool reachableReliable() const { return m_reachable_reliable; }
+
+    /// @brief Whether the last recoverable-items scan completed without a read failure.
+    ///
+    /// scanRecoverableItems() stops a folder's item enumeration on any read error; a NON-cancelled
+    /// error means the recoverable set is incomplete, so an empty/partial result must not be read
+    /// as a definitive "nothing to recover". Mirrors reachableReliable() for the recoverable side
+    /// (cancellation is reported separately, not as unreliability). Meaningful only after
+    /// scanRecoverableItems()/recoverAll() has run.
+    [[nodiscard]] bool recoverableReliable() const { return m_recoverable_reliable; }
+
+    /// Request cancellation of an in-progress scan. Also cancels the underlying PstParser so its
+    /// per-page contents-table reads abort mid-parse (the scanner's own m_cancelled only gates
+    /// between reads); without that a large folder's read could outrun the caller's wall-time
+    /// ceiling. Safe cross-thread: both flags are atomic stores.
     void cancel();
 
 Q_SIGNALS:
@@ -48,6 +69,11 @@ Q_SIGNALS:
 private:
     /// Build the set of all NIDs reachable from the folder hierarchy
     void buildReachableSet();
+
+    /// Insert every item NID of one folder into m_reachable_nids. Returns false when the set is
+    /// left INCOMPLETE -- a page read failed or the scan was cancelled (m_cancelled) -- so the
+    /// caller marks the whole reachability build unreliable.
+    [[nodiscard]] bool collectFolderItemNids(uint64_t folder_node_id);
 
     /// Recursively scan a folder for recoverable items
     void scanRecoverableFolder(const PstFolder& folder, QVector<PstItemDetail>& recovered);
@@ -61,6 +87,9 @@ private:
     /// the set is incomplete and must not be used to classify orphans (a live
     /// message missing from it would be mis-reported as deleted).
     bool m_reachable_reliable = true;
+    /// False when a NON-cancelled folder read failed during scanRecoverableItems, meaning the
+    /// recovered set is incomplete (a failed read must not masquerade as "nothing to recover").
+    bool m_recoverable_reliable = true;
     std::atomic<bool> m_cancelled{false};
 };
 

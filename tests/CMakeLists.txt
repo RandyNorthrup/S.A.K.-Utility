@@ -1621,6 +1621,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/pdf_email_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/pst_parser.cpp
+        # email.recover_deleted: DeletedItemScanner drives the (already-open, hardened) PstParser
+        # directly (synchronous scan methods); its recursions ride the parser's depth-capped folder
+        # tree. Enumeration not unit-tested (no hand-buildable PST fixture, like read_pst); path
+        # guards + honesty (reachableReliable) + no-body serialization covered by shape.
+        ${CMAKE_SOURCE_DIR}/src/core/deleted_item_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_attachment_saver.cpp
         # W2b organizer.organize_directory: the OrganizerWorker (a QThread) is driven
         # through the AsyncActionInvocation bridge, like the read-only search.
@@ -1694,6 +1699,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/mbox_parser.h
         ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
+        ${CMAKE_SOURCE_DIR}/include/sak/deleted_item_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/organizer_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/duplicate_finder_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h

@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 28);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 29);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -280,6 +280,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("system.list_users")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_pst")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("email.recover_deleted")));
     }
 
     // W1a: identify_image drives the app's FileImageSource detection on a real
@@ -775,6 +776,80 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = runReadPst(panel, QJsonObject{{QStringLiteral("path"), path}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // email.recover_deleted helper: run the op with a JSON args object (robust path escaping).
+    static QJsonObject runRecoverDeleted(AiAssistantPanel& panel, const QJsonObject& arguments) {
+        const QString args =
+            QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
+        return panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.recover_deleted")},
+                        {QStringLiteral("arguments"), args}});
+    }
+
+    // email.recover_deleted: a missing file fails cleanly (shares read_pst's validatePstReadPath).
+    void recoverDeletedMissingFileFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = runRecoverDeleted(
+            panel, QJsonObject{{QStringLiteral("path"), QStringLiteral("C:/nope/no_such.pst")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+    }
+
+    // email.recover_deleted: refuse a UNC/network path (reading it would pull over SMB and could
+    // leak an NTLM handshake) -- the shared PST path guard.
+    void recoverDeletedRefusesUncPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = runRecoverDeleted(
+            panel,
+            QJsonObject{{QStringLiteral("path"), QStringLiteral("\\\\server\\share\\mail.pst")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("network"), Qt::CaseInsensitive));
+    }
+
+    // email.recover_deleted: a readable NON-PST file leaves PstParser::open isOpen()==false, which
+    // the op maps to an HONEST failure -- never a fake "0 recoverable" empty-success (fail-closed).
+    void recoverDeletedNonPstFileReportsFailure() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("not_a.pst"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(QByteArray(8192, 'Z')), static_cast<qint64>(8192));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = runRecoverDeleted(panel,
+                                                     QJsonObject{{QStringLiteral("path"), path}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("PST"), Qt::CaseInsensitive));
+    }
+
+    // email.recover_deleted: read-only -> UNGATED in a Chat & Research session (never
+    // policy-blocked), whether or not the parse succeeds -- it only READS message metadata.
+    void recoverDeletedRunsUngatedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("x.pst"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(QByteArray(8192, 'Z')), static_cast<qint64>(8192));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = runRecoverDeleted(panel,
+                                                     QJsonObject{{QStringLiteral("path"), path}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
