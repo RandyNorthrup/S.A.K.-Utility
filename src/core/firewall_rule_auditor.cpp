@@ -673,9 +673,13 @@ void FirewallRuleAuditor::checkDisabledBlockGap(const QVector<FirewallRule>& rul
 }
 
 QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr) {
-    Q_ASSERT(!portStr.isEmpty());
     QVector<uint16_t> ports;
 
+    // An empty port string is LEGITIMATE input, not a precondition violation: most Windows firewall
+    // rules place no port restriction, so localPorts is empty, and checkRdpGap/checkSmbGap call
+    // this unconditionally. (A prior Q_ASSERT(!isEmpty()) here fired abort() -> __fastfail
+    // 0xC0000409 in Debug on any host whose enumerated rules include an enabled inbound-allow rule
+    // with no ports.)
     if (portStr.isEmpty() || portStr == QStringLiteral("*")) {
         return ports;
     }
