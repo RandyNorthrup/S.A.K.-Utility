@@ -17,6 +17,7 @@
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/ethernet_config_manager.h"
+#include "sak/file_explorer_archive_service.h"
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
@@ -136,64 +137,104 @@ QJsonObject serializeExportResult(const EmailExportResult& result, bool item_ids
 // (op_name/file_kind/max_bytes vary; the security-critical guards must NOT be duplicated or they
 // could drift). Guards BOTH paths against UNC/device forms: the source must not open an SMB/device
 // path (credential leak) and the destination must not write onto a network/device path.
-std::optional<AppActionResult> validateExportPaths(const QString& path,
-                                                   const QString& output_path,
-                                                   qint64 max_bytes,
-                                                   const QString& op_name,
-                                                   const QString& file_kind) {
-    if (path.isEmpty() || output_path.isEmpty()) {
-        return AppActionResult{false,
-                               QStringLiteral("%1 requires 'path' and 'output_path'").arg(op_name),
-                               {}};
-    }
-    if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_path)) {
-        return AppActionResult{
-            false,
-            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
-            {}};
-    }
-    const QFileInfo info(path);
-    if (!info.isFile()) {
-        return AppActionResult{false,
-                               QStringLiteral("No such %1 file: %2").arg(file_kind, path),
-                               {}};
-    }
-    if (info.size() > max_bytes) {
-        return AppActionResult{
-            false,
-            QStringLiteral("%1 file is too large for a headless export (%2 bytes > %3 limit)")
-                .arg(file_kind)
-                .arg(info.size())
-                .arg(max_bytes),
-            {}};
-    }
-    // Require a NEW or EMPTY output directory. This is what actually keeps the op
-    // non-destructive: the html/pdf message writers de-duplicate collisions only
-    // within a single run and open with WriteOnly / QSaveFile (no exists-check), so
-    // writing into a directory that already holds a same-named file would silently
-    // overwrite it. Into an empty/new directory no pre-existing file can be clobbered
-    // by any format, so the op only ever ADDS files -- hence destructive=false stays
-    // honest. (A Windows restore point would not protect arbitrary user files here,
-    // so preventing the overwrite is the correct safeguard, not a higher gate tier.)
+// A path that is a reparse point (symlink / junction). Detected via QFileInfo::isSymLink /
+// isJunction, which read the LINK's own attributes and do NOT stat the target -- unlike exists()/
+// isFile()/isDir(), which FOLLOW the link. A symlink whose target is a UNC share makes a following
+// stat perform an SMB session-setup that leaks the user's NTLM hash off-box, so every
+// model-supplied path is screened here BEFORE any following stat (isNetworkOrDevicePath only sees
+// the literal string, so a drive-letter symlink to \\host\share slips past it). The archive engine
+// likewise skips symlink entries; this closes the same hole in the op-layer validation, which runs
+// first.
+bool pathIsReparsePoint(const QFileInfo& info) {
+    return info.isSymLink() || info.isJunction();
+}
+
+// Field/verb labels so the shared path validators emit the CALLER's schema field names -- a model
+// reading the error must be able to correct the RIGHT argument (extract_zip uses archive_path /
+// destination_dir, not path / output_path). Defaults match the email export ops so their messages
+// stay byte-identical.
+struct ExportPathLabels {
+    QString op_name;    // e.g. "export_mbox" / "extract_zip"
+    QString file_kind;  // e.g. "MBOX" / "archive"
+    QString source_field{QStringLiteral("path")};
+    QString dest_field{QStringLiteral("output_path")};
+    QString action_noun{QStringLiteral("export")};  // e.g. "export" / "extraction"
+};
+
+// Require a NEW or EMPTY output directory (returns a failure result, else nullopt). This is what
+// keeps a "writes into a directory" op non-destructive: writers open WriteOnly / QSaveFile with no
+// exists-check, so writing into a directory that already holds a same-named file would silently
+// overwrite it. Into an empty/new directory nothing pre-existing can be clobbered, so the op only
+// ever ADDS files -- hence destructive=false stays honest. Refuses a reparse-point destination
+// (a symlink/junction target could be off-box or redirect the writes). Shared by email export
+// (validateExportPaths) and files.extract_zip.
+std::optional<AppActionResult> requireNewOrEmptyDir(const QString& output_path,
+                                                    const QString& dest_field) {
     const QFileInfo out_info(output_path);
+    if (pathIsReparsePoint(out_info)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 must not be a symlink or junction: %2").arg(dest_field, output_path),
+            {}};
+    }
     if (out_info.exists()) {
         if (!out_info.isDir()) {
             return AppActionResult{
                 false,
-                QStringLiteral("output_path exists and is not a directory: %1").arg(output_path),
+                QStringLiteral("%1 exists and is not a directory: %2").arg(dest_field, output_path),
                 {}};
         }
         if (!QDir(output_path).isEmpty()) {
             return AppActionResult{
                 false,
                 QStringLiteral(
-                    "output_path must be a new or empty directory (refusing to write "
-                    "into a non-empty directory to avoid overwriting existing files): %1")
-                    .arg(output_path),
+                    "%1 must be a new or empty directory (refusing to write "
+                    "into a non-empty directory to avoid overwriting existing files): %2")
+                    .arg(dest_field, output_path),
                 {}};
         }
     }
     return std::nullopt;
+}
+
+std::optional<AppActionResult> validateExportPaths(const QString& path,
+                                                   const QString& output_path,
+                                                   qint64 max_bytes,
+                                                   const ExportPathLabels& labels) {
+    if (path.isEmpty() || output_path.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("%1 requires '%2' and '%3'")
+                                   .arg(labels.op_name, labels.source_field, labels.dest_field),
+                               {}};
+    }
+    if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(labels.op_name),
+            {}};
+    }
+    const QFileInfo info(path);
+    if (pathIsReparsePoint(info)) {
+        return AppActionResult{false,
+                               QStringLiteral("%1 must not be a symlink or junction: %2")
+                                   .arg(labels.source_field, path),
+                               {}};
+    }
+    if (!info.isFile()) {
+        return AppActionResult{false,
+                               QStringLiteral("No such %1 file: %2").arg(labels.file_kind, path),
+                               {}};
+    }
+    if (info.size() > max_bytes) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "%1 file is too large for a headless %2 (%3 bytes > %4 limit)")
+                                   .arg(labels.file_kind, labels.action_noun)
+                                   .arg(info.size())
+                                   .arg(max_bytes),
+                               {}};
+    }
+    return requireNewOrEmptyDir(output_path, labels.dest_field);
 }
 
 // Map a completed export into the tool result. Success = something was written, OR
@@ -230,12 +271,11 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
 AppActionResult exportMbox(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_path = args.value(QStringLiteral("output_path")).toString().trimmed();
-    if (const std::optional<AppActionResult> error =
-            validateExportPaths(path,
-                                output_path,
-                                kMaxMboxBytes,
-                                QStringLiteral("export_mbox"),
-                                QStringLiteral("MBOX"))) {
+    if (const std::optional<AppActionResult> error = validateExportPaths(
+            path,
+            output_path,
+            kMaxMboxBytes,
+            ExportPathLabels{QStringLiteral("export_mbox"), QStringLiteral("MBOX")})) {
         return *error;
     }
 
@@ -388,12 +428,11 @@ QJsonObject exportPstParamsSchema() {
 AppActionResult exportPst(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_path = args.value(QStringLiteral("output_path")).toString().trimmed();
-    if (const std::optional<AppActionResult> error =
-            validateExportPaths(path,
-                                output_path,
-                                kMaxPstExportBytes,
-                                QStringLiteral("export_pst"),
-                                QStringLiteral("PST/OST"))) {
+    if (const std::optional<AppActionResult> error = validateExportPaths(
+            path,
+            output_path,
+            kMaxPstExportBytes,
+            ExportPathLabels{QStringLiteral("export_pst"), QStringLiteral("PST/OST")})) {
         return *error;
     }
 
@@ -1685,6 +1724,225 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
     add(export_pst, exportPst);
 }
 
+// files.compress_zip / files.extract_zip: bound the model-facing blocker/warning lists and the
+// input archive size (the extraction resource ceilings live inside the engine).
+constexpr int kMaxArchiveMessages = 50;
+constexpr int kMaxCompressSources = 4096;
+constexpr qint64 kMaxArchiveInputBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB zip input
+
+QJsonArray clampStringList(const QStringList& values, int max) {
+    QJsonArray out;
+    for (const QString& value : values) {
+        if (out.size() >= max) {
+            break;
+        }
+        out.append(value);
+    }
+    return out;
+}
+
+// Map an archive engine result into the tool result. The engine's own ok flag + blockers/warnings
+// are the value channel (a failed op reports ok=false with the reason), so this never invents
+// success: a compress/extract that hit any blocker is a failure.
+AppActionResult buildArchiveResult(const FileExplorerArchiveResult& res, const QString& verb) {
+    QJsonObject data{
+        {QStringLiteral("output_path"), res.output_path},
+        {QStringLiteral("entries"), res.entries},
+        {QStringLiteral("blocker_count"), static_cast<int>(res.blockers.size())},
+        {QStringLiteral("warning_count"), static_cast<int>(res.warnings.size())},
+        {QStringLiteral("blockers"), clampStringList(res.blockers, kMaxArchiveMessages)},
+        {QStringLiteral("warnings"), clampStringList(res.warnings, kMaxArchiveMessages)}};
+    if (res.ok) {
+        return {true,
+                QStringLiteral("%1 succeeded: %2 entr%3")
+                    .arg(verb)
+                    .arg(res.entries)
+                    .arg(res.entries == 1 ? QStringLiteral("y") : QStringLiteral("ies")),
+                data};
+    }
+    const QString reason = res.blockers.isEmpty() ? QStringLiteral("unknown error")
+                                                  : res.blockers.first();
+    return {false, QStringLiteral("%1 failed: %2").arg(verb, reason), data};
+}
+
+QStringList compressSourcesFromArgs(const QJsonObject& args) {
+    QStringList sources;
+    for (const QJsonValue& value : args.value(QStringLiteral("sources")).toArray()) {
+        const QString path = value.toString().trimmed();
+        if (!path.isEmpty()) {
+            sources.append(path);
+        }
+    }
+    return sources;
+}
+
+// Reject any compress source that is a network/UNC/device path (SMB/NTLM leak) or does not exist.
+std::optional<AppActionResult> validateCompressSources(const QStringList& sources) {
+    for (const QString& source : sources) {
+        if (isNetworkOrDevicePath(source)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("compress_zip does not allow network/UNC or device sources: %1")
+                    .arg(source),
+                {}};
+        }
+        // Screen for a reparse point BEFORE the target-following exists(): a symlink to a UNC
+        // share would otherwise leak the NTLM hash here (the engine safely skips symlink sources,
+        // but this validation runs first).
+        const QFileInfo info(source);
+        if (pathIsReparsePoint(info)) {
+            return AppActionResult{false,
+                                   QStringLiteral(
+                                       "compress_zip does not allow a symlink/junction source: %1")
+                                       .arg(source),
+                                   {}};
+        }
+        if (!info.exists()) {
+            return AppActionResult{false, QStringLiteral("No such source: %1").arg(source), {}};
+        }
+    }
+    return std::nullopt;
+}
+
+// Validate files.compress_zip inputs. Rejects network/UNC/device paths (SMB/NTLM leak), a
+// non-.zip or already-existing output (compressToZip clobbers, and REMOVES the file on failure --
+// so an existing file at zip_path is a data-loss hazard), a missing output parent dir, and any
+// source that does not exist.
+std::optional<AppActionResult> validateCompressInputs(const QStringList& sources,
+                                                      const QString& zip_path) {
+    if (sources.isEmpty() || zip_path.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("compress_zip requires 'sources' and 'output_path'"),
+                               {}};
+    }
+    if (sources.size() > kMaxCompressSources) {
+        return AppActionResult{
+            false,
+            QStringLiteral("compress_zip accepts at most %1 sources").arg(kMaxCompressSources),
+            {}};
+    }
+    if (isNetworkOrDevicePath(zip_path)) {
+        return AppActionResult{
+            false, QStringLiteral("compress_zip does not allow network/UNC or device paths"), {}};
+    }
+    if (!FileExplorerArchiveService::isZipName(zip_path)) {
+        return AppActionResult{false, QStringLiteral("output_path must end in .zip"), {}};
+    }
+    const QFileInfo zip_info(zip_path);
+    // Screen before exists() (which follows a symlink target off-box, leaking the NTLM hash).
+    if (pathIsReparsePoint(zip_info)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("output_path must not be a symlink or junction: %1").arg(zip_path),
+            {}};
+    }
+    if (zip_info.exists()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("output_path already exists (refusing to overwrite): %1").arg(zip_path),
+            {}};
+    }
+    if (!QFileInfo(zip_info.absolutePath()).isDir()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("output_path's parent directory does not exist: %1").arg(zip_path),
+            {}};
+    }
+    return validateCompressSources(sources);
+}
+
+// Compress local files/folders into a new .zip. Drives the app's OWN FileExplorerArchiveService
+// (static, synchronous, symlink-skipping, entry-capped). Mutating but not destructive: writes ONE
+// new archive that must not already exist, never touches the sources.
+AppActionResult compressZip(const QJsonObject& args) {
+    const QStringList sources = compressSourcesFromArgs(args);
+    const QString zip_path = args.value(QStringLiteral("output_path")).toString().trimmed();
+    if (auto fail = validateCompressInputs(sources, zip_path)) {
+        return *fail;
+    }
+    return buildArchiveResult(FileExplorerArchiveService::compressToZip(zip_path, sources),
+                              QStringLiteral("Compress"));
+}
+
+// Extract a .zip into a NEW or EMPTY directory. Drives the app's OWN FileExplorerArchiveService,
+// which is already hardened against zip-slip (absolute/traversal entries refused), pre-planted
+// junction redirection, symlink entries, and zip-bombs (per-file/total-byte + entry-count
+// ceilings). Mutating but not destructive: the new/empty-dir guard means nothing pre-existing is
+// clobbered.
+AppActionResult extractZip(const QJsonObject& args) {
+    const QString archive_path = args.value(QStringLiteral("archive_path")).toString().trimmed();
+    const QString destination_dir =
+        args.value(QStringLiteral("destination_dir")).toString().trimmed();
+    if (auto fail = validateExportPaths(archive_path,
+                                        destination_dir,
+                                        kMaxArchiveInputBytes,
+                                        ExportPathLabels{QStringLiteral("extract_zip"),
+                                                         QStringLiteral("archive"),
+                                                         QStringLiteral("archive_path"),
+                                                         QStringLiteral("destination_dir"),
+                                                         QStringLiteral("extraction")})) {
+        return *fail;
+    }
+    return buildArchiveResult(FileExplorerArchiveService::extractZip(archive_path, destination_dir),
+                              QStringLiteral("Extract"));
+}
+
+QJsonObject compressZipParamsSchema() {
+    QJsonObject sources_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("description"),
+         QStringLiteral("Absolute paths of the files/folders to add (folders are recursed)")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}}};
+    QJsonObject properties{
+        {QStringLiteral("sources"), sources_prop},
+        {QStringLiteral("output_path"),
+         stringProp(QStringLiteral("Absolute path of the .zip to create (must not exist)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("sources"), QStringLiteral("output_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject extractZipParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("archive_path"),
+         stringProp(QStringLiteral("Absolute path to the .zip archive to extract"))},
+        {QStringLiteral("destination_dir"),
+         stringProp(QStringLiteral("Absolute path of a NEW or EMPTY directory to extract "
+                                   "into"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("archive_path"),
+                                   QStringLiteral("destination_dir")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Register the file-archive ops (zip compress/extract). Split out to keep
+// registerMutatingAppActionsInto within the length budget.
+void registerFileMutatingOps(const AddMutatingActionFn& add) {
+    // files.compress_zip: writes ONE new .zip (guarded to not exist), never touches the sources ->
+    // mutating, not destructive, no elevation.
+    AppActionDescriptor compress = mutatingDescriptor(
+        QStringLiteral("files.compress_zip"),
+        QStringLiteral("Compress files into a .zip"),
+        QStringLiteral("Create a new .zip archive from local files/folders (folders recursed)"),
+        QStringLiteral("files"));
+    compress.params_schema = compressZipParamsSchema();
+    add(compress, compressZip);
+
+    // files.extract_zip: extracts into a new/empty dir (zip-slip/bomb hardened in the engine),
+    // never overwrites existing files -> mutating, not destructive, no elevation.
+    AppActionDescriptor extract =
+        mutatingDescriptor(QStringLiteral("files.extract_zip"),
+                           QStringLiteral("Extract a .zip"),
+                           QStringLiteral("Extract a .zip archive into a new or empty directory"),
+                           QStringLiteral("files"));
+    extract.params_schema = extractZipParamsSchema();
+    add(extract, extractZip);
+}
+
 }  // namespace
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
@@ -1888,6 +2146,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
 
     registerSoftwareOps(add);
     registerNetworkMutatingOps(add);
+    registerFileMutatingOps(add);
 
     return registered;
 }

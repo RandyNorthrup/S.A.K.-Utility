@@ -241,8 +241,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + read-only ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 29);
+        // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 31);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -1196,6 +1196,264 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("Not a valid PST/OST")));
+    }
+
+    // ------------------------------------------------------------------
+    // files.compress_zip / files.extract_zip -- MUTATING (not destructive) archive
+    // ops. Prove listing/gating parity with the export ops, a real compress->extract
+    // round-trip when gated, and that the op-layer guards (UNC, .zip name, no-clobber
+    // output, new/empty destination) fail closed. The engine's zip-slip/bomb hardening
+    // is its own concern; these cert the dispatch + guards + honest result channel.
+    // ------------------------------------------------------------------
+
+    static void writeTextFile(const QString& path, const QByteArray& content) {
+        QVERIFY(QDir().mkpath(QFileInfo(path).absolutePath()));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(content), static_cast<qint64>(content.size()));
+    }
+
+    static QJsonObject runArchiveOp(AiAssistantPanel& panel,
+                                    const QString& action_id,
+                                    const QJsonObject& arguments) {
+        const QString args =
+            QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
+        return panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), action_id},
+                        {QStringLiteral("arguments"), args}});
+    }
+
+    static void verifyArchiveOpMutating(const QJsonArray& actions, const QString& id) {
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() == id) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    void archiveOpsListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        verifyArchiveOpMutating(actions, QStringLiteral("files.compress_zip"));
+        verifyArchiveOpMutating(actions, QStringLiteral("files.extract_zip"));
+    }
+
+    // Real end-to-end when gated in Unattended: compress a folder into a new .zip, then extract it
+    // into a new dir and confirm the file content round-trips. Also proves the gate was traversed.
+    void compressExtractRoundTripWhenGated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString src = dir.filePath(QStringLiteral("src"));
+        writeTextFile(src + QStringLiteral("/a.txt"), QByteArrayLiteral("hello A"));
+        writeTextFile(src + QStringLiteral("/nested/b.txt"), QByteArrayLiteral("hello B"));
+        const QString zip_path = dir.filePath(QStringLiteral("out.zip"));
+        const QString dest = dir.filePath(QStringLiteral("unpacked"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QJsonObject compressed =
+            runArchiveOp(panel,
+                         QStringLiteral("files.compress_zip"),
+                         QJsonObject{{QStringLiteral("sources"), QJsonArray{src}},
+                                     {QStringLiteral("output_path"), zip_path}});
+        QVERIFY(compressed.value(QStringLiteral("success")).toBool());
+        QVERIFY(QFileInfo::exists(zip_path));
+        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+
+        const QJsonObject extracted =
+            runArchiveOp(panel,
+                         QStringLiteral("files.extract_zip"),
+                         QJsonObject{{QStringLiteral("archive_path"), zip_path},
+                                     {QStringLiteral("destination_dir"), dest}});
+        QVERIFY(extracted.value(QStringLiteral("success")).toBool());
+        QFile a(dest + QStringLiteral("/src/a.txt"));
+        QVERIFY(a.open(QIODevice::ReadOnly));
+        QCOMPARE(a.readAll(), QByteArrayLiteral("hello A"));
+        QFile b(dest + QStringLiteral("/src/nested/b.txt"));
+        QVERIFY(b.open(QIODevice::ReadOnly));
+        QCOMPARE(b.readAll(), QByteArrayLiteral("hello B"));
+    }
+
+    void compressZipBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        writeTextFile(dir.filePath(QStringLiteral("a.txt")), QByteArrayLiteral("x"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = runArchiveOp(
+            panel,
+            QStringLiteral("files.compress_zip"),
+            QJsonObject{{QStringLiteral("sources"),
+                         QJsonArray{dir.filePath(QStringLiteral("a.txt"))}},
+                        {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}});
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    void extractZipBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = runArchiveOp(
+            panel,
+            QStringLiteral("files.extract_zip"),
+            QJsonObject{{QStringLiteral("archive_path"), QStringLiteral("C:/tmp/x.zip")},
+                        {QStringLiteral("destination_dir"), QStringLiteral("C:/tmp/out")}});
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // compress_zip guards all fail closed (never write a clobbering or off-box archive). Gated in
+    // Unattended so a guard failure is what stops each case, not the policy gate.
+    void compressZipGuardsFailClosed() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString good_src = dir.filePath(QStringLiteral("a.txt"));
+        writeTextFile(good_src, QByteArrayLiteral("x"));
+        const QString existing_zip = dir.filePath(QStringLiteral("exists.zip"));
+        writeTextFile(existing_zip, QByteArrayLiteral("PK"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QVector<QJsonObject> bad = {
+            // UNC source
+            QJsonObject{{QStringLiteral("sources"),
+                         QJsonArray{QStringLiteral("\\\\host\\share\\a.txt")}},
+                        {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}},
+            // UNC output
+            QJsonObject{{QStringLiteral("sources"), QJsonArray{good_src}},
+                        {QStringLiteral("output_path"), QStringLiteral("//host/share/o.zip")}},
+            // non-.zip output
+            QJsonObject{{QStringLiteral("sources"), QJsonArray{good_src}},
+                        {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.tar"))}},
+            // output already exists (no clobber)
+            QJsonObject{{QStringLiteral("sources"), QJsonArray{good_src}},
+                        {QStringLiteral("output_path"), existing_zip}},
+            // missing source
+            QJsonObject{{QStringLiteral("sources"),
+                         QJsonArray{dir.filePath(QStringLiteral("nope.txt"))}},
+                        {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}},
+            // missing args (no sources)
+            QJsonObject{{QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}}};
+        for (const QJsonObject& args : bad) {
+            const QJsonObject result =
+                runArchiveOp(panel, QStringLiteral("files.compress_zip"), args);
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
+        }
+        // The pre-existing archive was never clobbered/removed by a failed run.
+        QCOMPARE(QFile(existing_zip).size(), static_cast<qint64>(2));
+    }
+
+    // extract_zip guards fail closed (never read over SMB, never clobber a populated directory).
+    void extractZipGuardsFailClosed() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString real_zip = dir.filePath(QStringLiteral("real.zip"));
+        writeTextFile(dir.filePath(QStringLiteral("src/a.txt")), QByteArrayLiteral("x"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        // Make one genuine archive so the "non-empty destination" case reaches the dir guard.
+        runArchiveOp(panel,
+                     QStringLiteral("files.compress_zip"),
+                     QJsonObject{{QStringLiteral("sources"),
+                                  QJsonArray{dir.filePath(QStringLiteral("src"))}},
+                                 {QStringLiteral("output_path"), real_zip}});
+        const QString nonempty = dir.filePath(QStringLiteral("populated"));
+        writeTextFile(nonempty + QStringLiteral("/keep.txt"), QByteArrayLiteral("keep"));
+
+        const QVector<QJsonObject> bad = {
+            // UNC archive
+            QJsonObject{{QStringLiteral("archive_path"), QStringLiteral("\\\\host\\share\\a.zip")},
+                        {QStringLiteral("destination_dir"), dir.filePath(QStringLiteral("d1"))}},
+            // UNC destination
+            QJsonObject{{QStringLiteral("archive_path"), real_zip},
+                        {QStringLiteral("destination_dir"), QStringLiteral("//host/share/out")}},
+            // nonexistent archive
+            QJsonObject{{QStringLiteral("archive_path"), dir.filePath(QStringLiteral("nope.zip"))},
+                        {QStringLiteral("destination_dir"), dir.filePath(QStringLiteral("d2"))}},
+            // non-empty destination (would clobber)
+            QJsonObject{{QStringLiteral("archive_path"), real_zip},
+                        {QStringLiteral("destination_dir"), nonempty}},
+            // missing args
+            QJsonObject{{QStringLiteral("archive_path"), real_zip}}};
+        for (const QJsonObject& args : bad) {
+            const QJsonObject result =
+                runArchiveOp(panel, QStringLiteral("files.extract_zip"), args);
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
+        }
+        // The populated directory's pre-existing file survived every refused extract.
+        QVERIFY(QFileInfo::exists(nonempty + QStringLiteral("/keep.txt")));
+    }
+
+    // extract_zip's validation errors must name ITS OWN schema fields (archive_path/
+    // destination_dir), not the shared validator's export field names -- otherwise a model cannot
+    // correct the right argument (the schema is additionalProperties:false).
+    void extractZipErrorNamesItsOwnFields() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString real_zip = dir.filePath(QStringLiteral("real.zip"));
+        writeTextFile(dir.filePath(QStringLiteral("src/a.txt")), QByteArrayLiteral("x"));
+        const QString nonempty = dir.filePath(QStringLiteral("populated"));
+        writeTextFile(nonempty + QStringLiteral("/keep.txt"), QByteArrayLiteral("keep"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        runArchiveOp(panel,
+                     QStringLiteral("files.compress_zip"),
+                     QJsonObject{{QStringLiteral("sources"),
+                                  QJsonArray{dir.filePath(QStringLiteral("src"))}},
+                                 {QStringLiteral("output_path"), real_zip}});
+
+        // Missing destination_dir -> error names archive_path + destination_dir, never output_path.
+        const QJsonObject missing =
+            runArchiveOp(panel,
+                         QStringLiteral("files.extract_zip"),
+                         QJsonObject{{QStringLiteral("archive_path"), real_zip}});
+        const QString missing_msg = missing.value(QStringLiteral("message")).toString();
+        QVERIFY(missing_msg.contains(QStringLiteral("destination_dir")));
+        QVERIFY(!missing_msg.contains(QStringLiteral("output_path")));
+
+        // Non-empty destination -> the new/empty-dir error names destination_dir, not output_path.
+        const QJsonObject nonempty_result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.extract_zip"),
+                         QJsonObject{{QStringLiteral("archive_path"), real_zip},
+                                     {QStringLiteral("destination_dir"), nonempty}});
+        const QString nonempty_msg = nonempty_result.value(QStringLiteral("message")).toString();
+        QVERIFY(nonempty_msg.contains(QStringLiteral("destination_dir")));
+        QVERIFY(!nonempty_msg.contains(QStringLiteral("output_path")));
     }
 
     // ------------------------------------------------------------------

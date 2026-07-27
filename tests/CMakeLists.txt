@@ -1616,6 +1616,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # directly. The DHCP EXECUTION is not unit-tested (needs admin + would change the host's
         # network); the adapter exact-match guard + gating are.
         ${CMAKE_SOURCE_DIR}/src/core/ethernet_config_manager.cpp
+        # files.compress_zip / files.extract_zip: FileExplorerArchiveService (static, synchronous,
+        # QZipReader/QZipWriter via Qt6::CorePrivate -- already linked). zip-slip/bomb hardening is
+        # in the engine; the op-layer path guards + new/empty-dir + no-clobber are covered by tests.
+        ${CMAKE_SOURCE_DIR}/src/core/file_explorer_archive_service.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/file_explorer_archive_service.h
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
