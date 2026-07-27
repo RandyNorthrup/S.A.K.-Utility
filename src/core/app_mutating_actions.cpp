@@ -27,6 +27,7 @@
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/program_enumerator.h"
+#include "sak/pst_parser.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
 #include "sak/worker_base.h"
@@ -56,6 +57,11 @@ namespace {
 // prompt-injected) call cannot spray hundreds of thousands of files onto disk in a
 // single gated action. Larger exports use the GUI panel. Truncation is reported.
 constexpr int kMaxExportItems = 5000;
+
+// Bound the PST/OST size a headless export will open. PstParser::open() parses ALL node/block
+// metadata synchronously up front, so a multi-GB store would spend minutes and a lot of memory
+// before a single message is written; larger stores use the GUI. (Matches email.read_pst's cap.)
+constexpr qint64 kMaxPstExportBytes = 2LL * 1024 * 1024 * 1024;
 
 // Map the model-facing format string to the MBOX-capable ExportFormat set. MBOX
 // export only supports per-message file formats (eml/html/text/pdf); the CSV / VCF /
@@ -125,31 +131,40 @@ QJsonObject serializeExportResult(const EmailExportResult& result, bool item_ids
                        {QStringLiteral("errors"), errors}};
 }
 
-// Validate the source/destination paths BEFORE opening anything. Returns an error
-// result to short-circuit on, or nullopt when both paths are acceptable. Guards
-// BOTH paths against UNC/device forms: the source must not open an SMB/device path
-// (credential leak) and the destination must not write onto a network/device path.
-std::optional<AppActionResult> validateExportInputs(const QString& path,
-                                                    const QString& output_path) {
+// Validate the source/destination paths BEFORE opening anything. Returns an error result to
+// short-circuit on, or nullopt when both paths are acceptable. Shared by export_mbox and export_pst
+// (op_name/file_kind/max_bytes vary; the security-critical guards must NOT be duplicated or they
+// could drift). Guards BOTH paths against UNC/device forms: the source must not open an SMB/device
+// path (credential leak) and the destination must not write onto a network/device path.
+std::optional<AppActionResult> validateExportPaths(const QString& path,
+                                                   const QString& output_path,
+                                                   qint64 max_bytes,
+                                                   const QString& op_name,
+                                                   const QString& file_kind) {
     if (path.isEmpty() || output_path.isEmpty()) {
         return AppActionResult{false,
-                               QStringLiteral("export_mbox requires 'path' and 'output_path'"),
+                               QStringLiteral("%1 requires 'path' and 'output_path'").arg(op_name),
                                {}};
     }
     if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_path)) {
         return AppActionResult{
-            false, QStringLiteral("export_mbox does not allow network/UNC or device paths"), {}};
+            false,
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
+            {}};
     }
     const QFileInfo info(path);
     if (!info.isFile()) {
-        return AppActionResult{false, QStringLiteral("No such MBOX file: %1").arg(path), {}};
+        return AppActionResult{false,
+                               QStringLiteral("No such %1 file: %2").arg(file_kind, path),
+                               {}};
     }
-    if (info.size() > kMaxMboxBytes) {
+    if (info.size() > max_bytes) {
         return AppActionResult{
             false,
-            QStringLiteral("MBOX file is too large for a headless export (%1 bytes > %2 limit)")
+            QStringLiteral("%1 file is too large for a headless export (%2 bytes > %3 limit)")
+                .arg(file_kind)
                 .arg(info.size())
-                .arg(kMaxMboxBytes),
+                .arg(max_bytes),
             {}};
     }
     // Require a NEW or EMPTY output directory. This is what actually keeps the op
@@ -187,7 +202,8 @@ std::optional<AppActionResult> validateExportInputs(const QString& path,
 AppActionResult buildExportResult(const EmailExportResult& captured,
                                   ExportFormat format,
                                   const QString& output_path,
-                                  bool item_ids_capped) {
+                                  bool item_ids_capped,
+                                  const QString& source_label) {
     const bool ok = captured.items_exported > 0 ||
                     (captured.errors.isEmpty() && captured.items_failed == 0);
     QString message;
@@ -202,8 +218,9 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
             message += QStringLiteral(" (%1 failed)").arg(captured.items_failed);
         }
     } else if (captured.errors.isEmpty()) {
-        message =
-            QStringLiteral("MBOX export failed (%1 item(s) failed)").arg(captured.items_failed);
+        message = QStringLiteral("%1 export failed (%2 item(s) failed)")
+                      .arg(source_label)
+                      .arg(captured.items_failed);
     } else {
         message = captured.errors.first();
     }
@@ -213,7 +230,12 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
 AppActionResult exportMbox(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_path = args.value(QStringLiteral("output_path")).toString().trimmed();
-    if (const std::optional<AppActionResult> error = validateExportInputs(path, output_path)) {
+    if (const std::optional<AppActionResult> error =
+            validateExportPaths(path,
+                                output_path,
+                                kMaxMboxBytes,
+                                QStringLiteral("export_mbox"),
+                                QStringLiteral("MBOX"))) {
         return *error;
     }
 
@@ -263,7 +285,8 @@ AppActionResult exportMbox(const QJsonObject& args) {
                 error_text.isEmpty() ? QStringLiteral("MBOX export did not complete") : error_text,
                 {}};
     }
-    return buildExportResult(captured, format, output_path, item_ids_capped);
+    return buildExportResult(
+        captured, format, output_path, item_ids_capped, QStringLiteral("MBOX"));
 }
 
 QJsonObject stringProp(const QString& description) {
@@ -271,7 +294,9 @@ QJsonObject stringProp(const QString& description) {
                        {QStringLiteral("description"), description}};
 }
 
-QJsonObject exportMboxParamsSchema() {
+// Shared JSON-Schema for the email export ops (export_mbox / export_pst). Only the source-path and
+// item_ids descriptions differ; the format enum + output_path + required set are identical.
+QJsonObject emailExportParamsSchema(const QString& path_desc, const QString& ids_desc) {
     QJsonObject format_prop{{QStringLiteral("type"), QStringLiteral("string")},
                             {QStringLiteral("enum"),
                              QJsonArray{QStringLiteral("eml"),
@@ -280,14 +305,12 @@ QJsonObject exportMboxParamsSchema() {
                                         QStringLiteral("pdf")}},
                             {QStringLiteral("description"),
                              QStringLiteral("Output format per message (default eml)")}};
-    QJsonObject ids_prop{
-        {QStringLiteral("type"), QStringLiteral("array")},
-        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}},
-        {QStringLiteral("description"),
-         QStringLiteral("Message indices to export; omit or empty to export all messages")}};
+    QJsonObject ids_prop{{QStringLiteral("type"), QStringLiteral("array")},
+                         {QStringLiteral("items"),
+                          QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}},
+                         {QStringLiteral("description"), ids_desc}};
     QJsonObject properties{
-        {QStringLiteral("path"),
-         stringProp(QStringLiteral("Absolute path to the source MBOX file"))},
+        {QStringLiteral("path"), stringProp(path_desc)},
         {QStringLiteral("output_path"),
          stringProp(QStringLiteral("Directory to write exported message files into"))},
         {QStringLiteral("format"), format_prop},
@@ -297,6 +320,129 @@ QJsonObject exportMboxParamsSchema() {
                        {QStringLiteral("required"),
                         QJsonArray{QStringLiteral("path"), QStringLiteral("output_path")}},
                        {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject exportMboxParamsSchema() {
+    return emailExportParamsSchema(
+        QStringLiteral("Absolute path to the source MBOX file"),
+        QStringLiteral("Message indices to export; omit or empty to export all messages"));
+}
+
+// ---------------------------------------------------------------------------
+// email.export_pst
+// ---------------------------------------------------------------------------
+
+// Read the optional item_ids array for a PST/OST export. PST message ids are 32-bit node IDs (NIDs)
+// that can exceed INT_MAX, so parse them as doubles with an explicit unsigned-32-bit range check --
+// never toInt (which would silently drop a high NID) and never a raw double->uint cast of an
+// out-of-range value (UB). Empty => whole store. The count is capped like the MBOX path.
+QVector<uint64_t> pstExportItemIdsFromArgs(const QJsonObject& args, bool& capped) {
+    QVector<uint64_t> ids;
+    capped = false;
+    const QJsonArray raw = args.value(QStringLiteral("item_ids")).toArray();
+    for (const QJsonValue& value : raw) {
+        if (!value.isDouble()) {
+            continue;
+        }
+        const double raw_id = value.toDouble(-1.0);
+        if (!(raw_id >= 0.0) || raw_id > 4294967295.0) {  // NaN-safe; 0 .. 0xFFFFFFFF
+            continue;
+        }
+        if (ids.size() >= kMaxExportItems) {
+            capped = true;
+            break;
+        }
+        ids.append(static_cast<uint64_t>(raw_id));
+    }
+    return ids;
+}
+
+// Collect every folder's node id from a PST folder tree (depth-first). Used to seed a whole-store
+// export when the caller omits item_ids: PST item enumeration is folder-based (unlike MBOX, which
+// pages messages directly), so without at least one folder EmailExportWorker::collectItemIds
+// returns nothing and the documented "omit item_ids => export everything" mode would silently
+// export zero files. The tree comes from the fan-out-hardened PstParser (bounded, acyclic), so this
+// walk terminates. A container folder with no messages contributes an id whose page is simply
+// empty.
+void collectPstFolderNodeIds(const QVector<PstFolder>& folders, QVector<uint64_t>& out) {
+    for (const PstFolder& folder : folders) {
+        out.append(folder.node_id);
+        collectPstFolderNodeIds(folder.children, out);
+    }
+}
+
+QJsonObject exportPstParamsSchema() {
+    return emailExportParamsSchema(
+        QStringLiteral("Absolute path to the source PST or OST file"),
+        QStringLiteral("Message node IDs (NIDs, from email.read_pst) to export; omit or empty to "
+                       "export every message in the store"));
+}
+
+// Export messages from a PST/OST file to eml/html/text/pdf files, driving the app's OWN
+// EmailExportWorker::exportItems (the same engine the email panel drives). SYNC: exportItems runs
+// inline and emits exportComplete on THIS thread (early failures via emitEarlyFailure too), so a
+// direct connection captures the result without any event loop -- the export_mbox pattern. The
+// source is opened READ-ONLY through the fan-out-hardened PstParser that email.read_pst already
+// exposes (no new parser attack surface); the writer only ADDS files under the required-new/empty
+// output_path. Mutating, not destructive (no overwrite/delete), no elevation.
+AppActionResult exportPst(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    const QString output_path = args.value(QStringLiteral("output_path")).toString().trimmed();
+    if (const std::optional<AppActionResult> error =
+            validateExportPaths(path,
+                                output_path,
+                                kMaxPstExportBytes,
+                                QStringLiteral("export_pst"),
+                                QStringLiteral("PST/OST"))) {
+        return *error;
+    }
+
+    const ExportFormat format =
+        exportFormatFromArg(args.value(QStringLiteral("format")).toString());
+    bool item_ids_capped = false;
+    const QVector<uint64_t> item_ids = pstExportItemIdsFromArgs(args, item_ids_capped);
+
+    PstParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false, QStringLiteral("Not a valid PST/OST file: %1").arg(path), {}};
+    }
+
+    EmailExportConfig config;
+    config.format = format;
+    config.output_path = output_path;
+    config.item_ids = item_ids;
+    // No explicit item_ids => export the WHOLE store. PST enumeration is folder-based, so seed
+    // every folder's node id (the schema documents omit-item_ids as "export every message in the
+    // store"); without this collectItemIds would find nothing and report a false "No items to
+    // export".
+    if (item_ids.isEmpty()) {
+        collectPstFolderNodeIds(parser.folderTree(), config.folder_ids);
+    }
+
+    EmailExportWorker worker;
+    EmailExportResult captured;
+    bool completed = false;
+    QString error_text;
+    QObject::connect(&worker,
+                     &EmailExportWorker::exportComplete,
+                     &worker,
+                     [&captured, &completed](const EmailExportResult& result) {
+                         captured = result;
+                         completed = true;
+                     });
+    QObject::connect(&worker,
+                     &EmailExportWorker::errorOccurred,
+                     &worker,
+                     [&error_text](const QString& error) { error_text = error; });
+    worker.exportItems(&parser, config);
+
+    if (!completed) {
+        return {false,
+                error_text.isEmpty() ? QStringLiteral("PST export did not complete") : error_text,
+                {}};
+    }
+    return buildExportResult(captured, format, output_path, item_ids_capped, QStringLiteral("PST"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1514,6 +1660,31 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     add(static_ip, setAdapterStaticIp);
 }
 
+// Register the email export ops. Split out to keep registerMutatingAppActionsInto within the
+// length budget.
+void registerEmailMutatingOps(const AddMutatingActionFn& add) {
+    // email.export_mbox: adds files under output_path, never overwrites/deletes, no elevation ->
+    // mutating but not destructive and not admin.
+    AppActionDescriptor export_mbox = mutatingDescriptor(
+        QStringLiteral("email.export_mbox"),
+        QStringLiteral("Export MBOX messages"),
+        QStringLiteral("Export messages from an MBOX file to eml/html/text/pdf files"),
+        QStringLiteral("email"));
+    export_mbox.params_schema = exportMboxParamsSchema();
+    add(export_mbox, exportMbox);
+
+    // email.export_pst: same as export_mbox but the source is a PST/OST store (Outlook's format),
+    // driving EmailExportWorker::exportItems. Adds files under a new/empty output_path, never
+    // overwrites/deletes, no elevation -> mutating but not destructive and not admin.
+    AppActionDescriptor export_pst = mutatingDescriptor(
+        QStringLiteral("email.export_pst"),
+        QStringLiteral("Export PST/OST messages"),
+        QStringLiteral("Export messages from a PST/OST file to eml/html/text/pdf files"),
+        QStringLiteral("email"));
+    export_pst.params_schema = exportPstParamsSchema();
+    add(export_pst, exportPst);
+}
+
 }  // namespace
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
@@ -1666,15 +1837,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
         }
     };
 
-    // email.export_mbox: adds files under output_path, never overwrites/deletes, no
-    // elevation -> mutating but not destructive and not admin.
-    AppActionDescriptor export_mbox = mutatingDescriptor(
-        QStringLiteral("email.export_mbox"),
-        QStringLiteral("Export MBOX messages"),
-        QStringLiteral("Export messages from an MBOX file to eml/html/text/pdf files"),
-        QStringLiteral("email"));
-    export_mbox.params_schema = exportMboxParamsSchema();
-    add(export_mbox, exportMbox);
+    registerEmailMutatingOps(add);
 
     // organizer.organize_directory: relocates existing user files into category
     // subfolders (a bulk, not-trivially-undoable filesystem change) -> destructive.

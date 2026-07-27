@@ -873,6 +873,137 @@ private Q_SLOTS:
         QCOMPARE(produced.size(), 0);
     }
 
+    // W-net-... email.export_pst: exports a PST/OST via EmailExportWorker::exportItems, mirroring
+    // export_mbox. Listed with the SAME risk flags (mutating, not read_only/destructive/admin).
+    void exportPstListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("email.export_pst")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // email.export_pst: refused in a chat/research session (mutating; never opens the parser or
+    // writes -- the output directory is not even created).
+    void exportPstBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("path"), dir.filePath(QStringLiteral("in.pst"))},
+                            {QStringLiteral("output_path"), dir.filePath(QStringLiteral("out"))}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("out"))).exists());
+    }
+
+    // email.export_pst: both source and destination reject UNC/network/device paths (shared guard).
+    void exportPstRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString unc = QStringLiteral("\\\\attacker.example.com\\share\\x.pst");
+        const QString unc_out = QStringLiteral("//attacker.example.com/share/out");
+        struct Case {
+            QString path;
+            QString output_path;
+        };
+        const QVector<Case> cases = {{unc, QStringLiteral("C:/tmp/out")},
+                                     {QStringLiteral("C:/tmp/in.pst"), unc_out}};
+        for (const Case& c : cases) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("path"), c.path},
+                                          {QStringLiteral("output_path"), c.output_path}})
+                    .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
+                            {QStringLiteral("arguments"), args}});
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("network")));
+        }
+    }
+
+    // email.export_pst: missing required args fail cleanly (never opens a parser or writes).
+    void exportPstMissingArgsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"x.pst\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("output_path")));
+    }
+
+    // email.export_pst: a readable file that is NOT a PST/OST is refused honestly via isOpen()==
+    // false. Deterministic end-to-end: valid args (local paths, new output dir) pass validation and
+    // reach PstParser::open, which fails on the non-PST content -- no crash, no files written. (A
+    // valid PST is not hand-buildable in a unit test, so the success path is covered by the email
+    // panel's own PST tests; here we prove the honest-failure path.)
+    void exportPstRejectsNonPstFile() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("not.pst"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("this is definitely not a PST store\n") > 0);
+        }
+        const QString out_dir = dir.filePath(QStringLiteral("pst_out"));  // new/empty
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("output_path"), out_dir}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("Not a valid PST/OST")));
+    }
+
     // ------------------------------------------------------------------
     // W2b: organizer.organize_directory -- a DESTRUCTIVE mutating op (relocates
     // existing user files). Proves the destructive flag + restore-point path and
