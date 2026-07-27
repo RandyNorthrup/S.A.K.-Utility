@@ -240,8 +240,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 19 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 22);
+        // 7 built-in QuickActions + 20 read-only ops.
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 23);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -271,6 +271,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.read_temperatures")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
     }
 
@@ -1930,6 +1931,45 @@ private Q_SLOTS:
         const QJsonObject result = panel.runAppActionTool(QJsonObject{
             {QStringLiteral("operation"), QStringLiteral("run")},
             {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Diagnostics: read_temperatures drives ThermalMonitor::pollOnce (a bounded no-shell
+    // powershell sensor poll). The outcome is ENVIRONMENT/elevation-dependent (a VM / desktop /
+    // non-elevated process may expose no readable sensors; some sensors need admin), so this
+    // certifies the dispatch + SHAPE + honesty: either a success with the sensors array + counts
+    // (possibly zero, phrased as "no readable sensors"), or an honest failure whose message names
+    // the sensor query -- never a malformed result. sensor_count == reported when under the cap.
+    void readTemperaturesReturnsWellFormed() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("sensors")));
+            QVERIFY(data.value(QStringLiteral("sensor_count")).toInt() >= 0);
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("thermal"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Diagnostics: read_temperatures is read-only -> UNGATED in a Chat & Research session
+    // (never policy-blocked), whether or not sensors are readable.
+    void readTemperaturesRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
             {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }

@@ -73,6 +73,12 @@ bool ThermalMonitor::isRunning() const {
 }
 
 QVector<ThermalReading> ThermalMonitor::pollOnce() {
+    bool ignored = false;
+    return pollOnce(ignored);
+}
+
+QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
+    queryOk = false;
     const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NoLogo"),
@@ -80,9 +86,12 @@ QVector<ThermalReading> ThermalMonitor::pollOnce() {
                                          buildCombinedThermalScript()},
                                         sak::kTimeoutThermalQueryMs);
     if (!result.succeeded()) {
-        return {};
+        return {};  // query FAILED (non-zero exit / timeout) -> queryOk stays false
     }
 
+    // The script runs to completion and emits key=value lines only for available sensors; an
+    // empty parse is a genuine "no readable sensors", not a failure.
+    queryOk = true;
     return parseThermalOutput(result.std_out);
 }
 
@@ -110,7 +119,8 @@ void ThermalMonitor::onTimerTick() {
     }
 
     // Run pollOnce() on the thread pool — no UI blocking
-    m_poll_watcher.setFuture(QtConcurrent::run(&ThermalMonitor::pollOnce));
+    // Lambda (not &pollOnce) to disambiguate the overload set: pollOnce() vs pollOnce(bool&).
+    m_poll_watcher.setFuture(QtConcurrent::run([] { return ThermalMonitor::pollOnce(); }));
 }
 
 void ThermalMonitor::onPollComplete() {

@@ -32,6 +32,7 @@
 #include "sak/restore_point_manager.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
+#include "sak/thermal_monitor.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
 #include "sak/worker_base.h"
@@ -70,6 +71,7 @@ constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxRestorePoints = 200;
+constexpr int kMaxThermalReadings = 64;
 // A ping/traceroute/port_scan runs on a worker thread with a hard wall-time ceiling. A
 // legit all-timeout run can approach this: port_scan up to 128 ports each costing a connect
 // + two fixed 2s banner-grab timers (~4s) is ~512s; traceroute up to 30 hops with per-hop
@@ -698,6 +700,52 @@ AppActionResult listRestorePoints(const QJsonObject&) {
             message += QStringLiteral(" (run elevated to read the full list)");
         }
     }
+    return {true, message, data};
+}
+
+QJsonObject serializeThermalReading(const ThermalReading& reading) {
+    return QJsonObject{{QStringLiteral("component"), reading.component},
+                       {QStringLiteral("temperature_celsius"), reading.temperature_celsius}};
+}
+
+// Read current temperatures via ThermalMonitor::pollOnce (a single bounded no-shell PowerShell
+// poll of the WMI ACPI thermal zone, nvidia-smi/AMD WMI, and storage reliability counters;
+// unavailable sensors are omitted, exactly like smart_scan). Read-only and SYNC (pollOnce is a
+// static, thread-safe, self-contained call). Fail-CLOSED: a FAILED query (non-zero exit /
+// timeout) is reported as an honest failure via the queryOk signal, not as "no thermal data"; a
+// genuine empty result (the query ran but no sensor was readable -- common on desktops/VMs, or
+// when not elevated: the CPU thermal zone and disk counters need admin) is a success with zero
+// sensors, phrased so it never reads as "the system has no thermal concern".
+AppActionResult readTemperatures(const QJsonObject&) {
+    bool query_ok = false;
+    const QVector<ThermalReading> readings = ThermalMonitor::pollOnce(query_ok);
+    if (!query_ok) {
+        return {false,
+                QStringLiteral("Could not read thermal sensors (the query failed or timed out)"),
+                {}};
+    }
+
+    QJsonArray listed;
+    double max_temp = 0.0;
+    for (const ThermalReading& reading : readings) {
+        max_temp = std::max(max_temp, reading.temperature_celsius);
+        if (listed.size() < kMaxThermalReadings) {
+            listed.append(serializeThermalReading(reading));
+        }
+    }
+    QJsonObject data{{QStringLiteral("sensor_count"), readings.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), readings.size() > listed.size()},
+                     {QStringLiteral("sensors"), listed}};
+
+    const QString message =
+        readings.isEmpty()
+            ? QStringLiteral(
+                  "No readable thermal sensors (they may require elevation or may not "
+                  "be exposed on this system)")
+            : QStringLiteral("Read %1 thermal sensor(s), max %2 C")
+                  .arg(readings.size())
+                  .arg(max_temp, 0, 'f', 1);
     return {true, message, data};
 }
 
@@ -2036,6 +2084,14 @@ void registerDiagnosticsReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("diagnostics"),
                        noParamsSchema()),
         listRestorePoints);
+
+    add(makeDescriptor(QStringLiteral("diagnostics.read_temperatures"),
+                       QStringLiteral("Read temperatures"),
+                       QStringLiteral("Read current CPU/GPU/disk temperatures from system thermal "
+                                      "sensors (some need admin)"),
+                       QStringLiteral("diagnostics"),
+                       noParamsSchema()),
+        readTemperatures);
 }
 
 }  // namespace

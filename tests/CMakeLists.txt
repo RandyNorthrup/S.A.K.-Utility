@@ -1598,6 +1598,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # W1c sync read-only diagnostics ops: the scanners are driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/hardware_inventory_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/smart_disk_analyzer.cpp
+        # diagnostics.read_temperatures: ThermalMonitor::pollOnce (static, QtConcurrent already
+        # linked). Uses runProcess (bundled no-shell powershell poll).
+        ${CMAKE_SOURCE_DIR}/src/core/thermal_monitor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/bundled_tools_manager.cpp
         # W1c email.read_mbox: the MBOX parser (synchronous read API) is driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/mbox_parser.cpp
@@ -1666,6 +1669,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/worker_base.h
         ${CMAKE_SOURCE_DIR}/include/sak/hardware_inventory_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/smart_disk_analyzer.h
+        ${CMAKE_SOURCE_DIR}/include/sak/thermal_monitor.h
         ${CMAKE_SOURCE_DIR}/include/sak/mbox_parser.h
         ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
