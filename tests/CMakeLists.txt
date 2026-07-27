@@ -1633,6 +1633,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # network.list_shares: NetworkShareBrowser (NetShareEnum) driven read-only (no write
         # probe), like the other SYNC network enumerators.
         ${CMAKE_SOURCE_DIR}/src/core/network_share_browser.cpp
+        # imaging.analyze_iso: IsoAnalyzer::analyze (static, local file I/O) driven directly.
+        ${CMAKE_SOURCE_DIR}/src/core/iso_analyzer.cpp
         # W2d imaging.flash_image: FlashCoordinator + its worker chain must link (the
         # flash EXECUTION is not unit-tested -- needs a real disk -- but the safety
         # guard resolveFlashTarget is tested pure).

@@ -22,6 +22,7 @@
 #include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
+#include "sak/iso_analyzer.h"
 #include "sak/mbox_parser.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_types.h"
@@ -39,6 +40,7 @@
 #include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -73,6 +75,7 @@ constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxShares = 200;
+constexpr int kMaxIsoEditions = 64;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
 constexpr int kMaxUsers = 200;
@@ -396,6 +399,107 @@ AppActionResult identifyImage(const QJsonObject& args) {
                                      imageFormatToString(format),
                                      is_compressed ? QStringLiteral(", compressed") : QString());
     return {true, message, data};
+}
+
+QString clampField(const QString& value) {
+    // Volume-descriptor fields are fixed-width (<=128 bytes) but clamp defensively.
+    constexpr int kMaxIsoFieldChars = 256;
+    if (value.size() <= kMaxIsoFieldChars) {
+        return value;
+    }
+    return value.left(kMaxIsoFieldChars) + QStringLiteral("...");
+}
+
+QJsonObject serializeIsoInfo(const IsoInfo& iso) {
+    QJsonArray editions;
+    for (const QString& edition : iso.windows_editions) {
+        if (editions.size() >= kMaxIsoEditions) {
+            break;
+        }
+        editions.append(clampField(edition));
+    }
+    return QJsonObject{{QStringLiteral("os_name"), clampField(iso.os_name)},
+                       {QStringLiteral("os_version"), clampField(iso.os_version)},
+                       {QStringLiteral("os_family"), clampField(iso.os_family)},
+                       {QStringLiteral("architecture"), clampField(iso.architecture)},
+                       {QStringLiteral("volume_label"), clampField(iso.volume_label)},
+                       {QStringLiteral("publisher"), clampField(iso.publisher)},
+                       {QStringLiteral("preparer"), clampField(iso.preparer)},
+                       {QStringLiteral("application"), clampField(iso.application)},
+                       {QStringLiteral("creation_date"), clampField(iso.creation_date)},
+                       {QStringLiteral("filesystem"), clampField(iso.filesystem)},
+                       {QStringLiteral("is_bootable"), iso.is_bootable},
+                       {QStringLiteral("boot_type"), clampField(iso.boot_type)},
+                       {QStringLiteral("windows_build"), clampField(iso.windows_build)},
+                       {QStringLiteral("windows_editions"), editions},
+                       {QStringLiteral("windows_editions_truncated"),
+                        iso.windows_editions.size() > editions.size()},
+                       {QStringLiteral("distro_name"), clampField(iso.distro_name)},
+                       {QStringLiteral("distro_version"), clampField(iso.distro_version)},
+                       {QStringLiteral("desktop_env"), clampField(iso.desktop_env)},
+                       {QStringLiteral("is_live"), iso.is_live},
+                       {QStringLiteral("file_size_bytes"), static_cast<double>(iso.file_size)},
+                       {QStringLiteral("volume_size_bytes"), static_cast<double>(iso.volume_size)}};
+}
+
+// Analyze an ISO/IMG file via IsoAnalyzer::analyze (a STATIC, thread-safe, local-file-only read of
+// the ISO 9660 primary volume descriptor + El Torito boot record + UDF markers -- bounded seeks to
+// a few descriptor sectors, never a whole-file scan). Read-only and SYNC. Deeper than
+// identify_image (which reads zero bytes and classifies by extension): this reads the actual
+// on-disk metadata (volume label, publisher, boot type, OS/distro identity).
+//
+// Path is validated up front so IsoAnalyzer's own exists()/non-empty preconditions always hold,
+// and UNC/device paths are refused (a crafted \\host\share path would pull the read over SMB and
+// could leak credentials -- the same guard find_in_files/read_mbox use). A readable file that is
+// simply not ISO media is an honest is_valid=false success (the read worked; the content just is
+// not an ISO). The pre-open probe converts the COMMON unopenable case (permission denied / already
+// locked) into an honest failure; a narrow residual remains (a mid-descriptor I/O error on a
+// failing disk, or a TOCTOU vanish after the probe) because IsoAnalyzer::analyze has no error
+// channel -- it would surface as an is_valid=false "not ISO media" on a file that was momentarily
+// openable. Accepted as low-stakes for this informational read-only op (it gates nothing).
+AppActionResult analyzeIso(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("analyze_iso requires a 'path' argument"), {}};
+    }
+    if (isNetworkOrDevicePath(path)) {
+        return {false,
+                QStringLiteral("analyze_iso does not allow network/UNC or device paths"),
+                {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such image file: %1").arg(path), {}};
+    }
+    QFile probe(path);
+    if (!probe.open(QIODevice::ReadOnly)) {
+        return {false, QStringLiteral("Cannot open image file for reading: %1").arg(path), {}};
+    }
+    probe.close();
+
+    const IsoInfo iso = IsoAnalyzer::analyze(path);
+    QJsonObject data = serializeIsoInfo(iso);
+    data[QStringLiteral("path")] = info.absoluteFilePath();
+    data[QStringLiteral("name")] = info.fileName();
+    data[QStringLiteral("is_valid")] = iso.isValid();
+    data[QStringLiteral("is_windows_install_media")] = IsoAnalyzer::isWindowsInstallMedia(iso);
+
+    if (!iso.isValid()) {
+        return {true,
+                QStringLiteral("%1 is readable but not recognized as ISO 9660 / bootable media")
+                    .arg(info.fileName()),
+                data};
+    }
+    const QString identity = !iso.os_name.isEmpty()
+                                 ? iso.os_name
+                                 : (!iso.volume_label.isEmpty() ? iso.volume_label
+                                                                : QStringLiteral("unknown media"));
+    return {true,
+            QStringLiteral("%1: %2%3")
+                .arg(info.fileName(),
+                     identity,
+                     iso.is_bootable ? QStringLiteral(" (bootable)") : QString()),
+            data};
 }
 
 QString clampLine(const QString& line) {
@@ -1937,6 +2041,17 @@ QJsonObject identifyParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject isoParamsSchema() {
+    QJsonObject path_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                          {QStringLiteral("description"),
+                           QStringLiteral("Absolute path to the .iso/.img file to analyze")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("path"), path_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject previewParamsSchema() {
     QJsonObject payload_prop{
         {QStringLiteral("type"), QStringLiteral("object")},
@@ -2263,6 +2378,14 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        QStringLiteral("imaging"),
                        identifyParamsSchema()),
         identifyImage);
+
+    add(makeDescriptor(QStringLiteral("imaging.analyze_iso"),
+                       QStringLiteral("Analyze an ISO image"),
+                       QStringLiteral("Read an ISO/IMG file's volume metadata, boot type, and "
+                                      "OS/distro identity from its on-disk descriptors"),
+                       QStringLiteral("imaging"),
+                       isoParamsSchema()),
+        analyzeIso);
 
     add(makeDescriptor(QStringLiteral("search.find_in_files"),
                        QStringLiteral("Search files"),

@@ -42,6 +42,7 @@
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <cstring>
 #include <memory>
 
 namespace sak {
@@ -241,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + 20 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 25);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 26);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -268,6 +269,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
@@ -305,6 +307,96 @@ private Q_SLOTS:
         QCOMPARE(data.value(QStringLiteral("detection")).toString(), QStringLiteral("extension"));
         QCOMPARE(static_cast<qint64>(data.value(QStringLiteral("size_bytes")).toDouble()),
                  static_cast<qint64>(74));
+    }
+
+    // imaging.analyze_iso: build a minimal but REAL ISO 9660 image (system area + a Primary
+    // Volume Descriptor at LBA 16 carrying a volume label) and assert the app's IsoAnalyzer reads
+    // it back through the op. Deterministic, reads no system/network state.
+    void analyzeIsoDetectsMinimalVolume() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("mini.iso"));
+        {
+            QByteArray iso(18 * 2048, '\0');  // through LBA 17 so PVD + boot-record reads are safe
+            const int pvd = 16 * 2048;
+            iso[pvd + 0] = 0x01;              // Primary Volume Descriptor type
+            std::memcpy(iso.data() + pvd + 1, "CD001", 5);
+            iso[pvd + 6] = 0x01;              // version
+            const char* label = "SAK_TEST_ISO";
+            std::memset(iso.data() + pvd + 40, ' ', 32);  // 32-byte volume-id field, space-padded
+            std::memcpy(iso.data() + pvd + 40, label, std::strlen(label));
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(iso), static_cast<qint64>(iso.size()));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("is_valid")).toBool());
+        QCOMPARE(data.value(QStringLiteral("volume_label")).toString(),
+                 QStringLiteral("SAK_TEST_ISO"));
+        QCOMPARE(data.value(QStringLiteral("filesystem")).toString(), QStringLiteral("ISO 9660"));
+    }
+
+    // imaging.analyze_iso: a readable file that is NOT ISO media is an honest is_valid=false
+    // SUCCESS (the read worked; the content simply is not an ISO) -- never a failed-read
+    // masquerade.
+    void analyzeIsoNonIsoFileReportsInvalid() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("not_an.iso"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(QByteArray(40 * 1024, 'X')), static_cast<qint64>(40 * 1024));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("data"))
+                     .toObject()
+                     .value(QStringLiteral("is_valid"))
+                     .toBool(),
+                 false);
+    }
+
+    // imaging.analyze_iso: a missing path fails cleanly (IsoAnalyzer's exists() precondition is
+    // guaranteed by the op, never violated).
+    void analyzeIsoMissingFileFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"C:/nonexistent/no_such.iso\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+    }
+
+    // imaging.analyze_iso: refuse a UNC/network path -- reading it would pull over SMB and could
+    // leak credentials (same guard as find_in_files/read_mbox).
+    void analyzeIsoRefusesUncPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"\\\\\\\\server\\\\share\\\\x.iso\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("network"), Qt::CaseInsensitive));
     }
 
     // W1a: a read-only op runs even in a chat/research session -- the per-action
