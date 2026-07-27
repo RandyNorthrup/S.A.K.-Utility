@@ -27,6 +27,7 @@
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/file_recovery_engine.h"
 #include "sak/file_scanner.h"
 #include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
@@ -123,6 +124,17 @@ constexpr int kMaxPreviewPlannedFiles = 50'000;
 constexpr int kDeadlinePollMs = 50;
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
+// imaging.scan_recoverable: the model may only REDUCE the scan window/candidate cap below these
+// ceilings (which match the engine defaults). The scan reads up to kMaxRecoveryScanBytes into
+// memory (one bounded alloc), so the model cannot request a larger spike.
+constexpr int kMaxRecoveryScanMb = 512;  // == kFileRecoveryDefaultMaxScanBytes / MiB
+constexpr int kMaxRecoveryCandidates = 2048;
+constexpr int kMaxReportedRecoveryCandidates = 2048;
+// Wall-time ceiling on the carve. The signature scan is O(scan_window * max_candidate_bytes) in the
+// worst case (a repeating start marker with no end marker), so the engine polls a cancel flag we
+// drive with a DeadlineCanceller; a timed-out scan reports scan_complete=false, never a clean
+// empty.
+constexpr int kRecoveryScanTimeoutMs = 2 * 60 * 1000;  // 2 min
 // PST/OST: open() parses the whole NBT/BBT metadata synchronously, so cap the file size for a
 // headless read (larger archives use the GUI, which runs the parse off the UI thread with
 // progress). Folder tree and per-folder item payloads are bounded too.
@@ -828,6 +840,136 @@ QString clampLine(const QString& line) {
         return line;
     }
     return line.left(kMaxMatchLineChars) + QStringLiteral("...");
+}
+
+// imaging.scan_recoverable
+// ---------------------------------------------------------------------------
+// Read-only signature-carving of an offline disk-image FILE for recoverable (deleted/orphaned)
+// files, via the app's OWN FileRecoveryEngine::scanOfflineImage (the Partition Manager
+// data-recovery scanner). The source is opened READ-ONLY and NEVER mutated. capture_candidate_bytes
+// is forced OFF so only METADATA is returned (format/extension/offset/size/sha256) -- recovered
+// file CONTENT is never exfiltrated headless. Bounded: the model may only SHRINK the scan window
+// (<= 512 MiB, one alloc) and candidate cap below the engine defaults, never grow them.
+// source_opened_read_only is the honesty channel: a failed open is reported as a failure, never as
+// an empty "0 candidates" success.
+QJsonObject serializeRecoveryCandidate(const FileRecoveryCandidate& candidate) {
+    QJsonObject obj{{QStringLiteral("id"), clampLine(candidate.id)},
+                    {QStringLiteral("format"), clampLine(candidate.format)},
+                    {QStringLiteral("extension"), clampLine(candidate.extension)},
+                    {QStringLiteral("offset_bytes"), static_cast<double>(candidate.offset_bytes)},
+                    {QStringLiteral("size_bytes"), static_cast<double>(candidate.size_bytes)}};
+    if (!candidate.sha256.isEmpty()) {
+        obj.insert(QStringLiteral("sha256"), QString::fromLatin1(candidate.sha256.toHex()));
+    }
+    return obj;
+}
+
+// Build the engine scan options from the model args. capture_candidate_bytes is forced OFF; the
+// model may only SHRINK the scan window / candidate cap below the engine ceilings, never grow them.
+FileRecoveryScanOptions recoveryOptionsFromArgs(const QJsonObject& args, const QString& path) {
+    FileRecoveryScanOptions options;
+    options.image_path = path;
+    options.capture_candidate_bytes = false;  // METADATA only -- never return recovered CONTENT
+    if (args.contains(QStringLiteral("max_scan_mb"))) {
+        const int mb =
+            std::clamp(args.value(QStringLiteral("max_scan_mb")).toInt(kMaxRecoveryScanMb),
+                       1,
+                       kMaxRecoveryScanMb);
+        options.max_scan_bytes = static_cast<uint64_t>(mb) * 1024ULL * 1024ULL;
+    }
+    if (args.contains(QStringLiteral("max_candidates"))) {
+        options.max_candidates =
+            std::clamp(args.value(QStringLiteral("max_candidates")).toInt(kMaxRecoveryCandidates),
+                       1,
+                       kMaxRecoveryCandidates);
+    }
+    return options;
+}
+
+QJsonObject serializeRecoveryScan(const FileRecoveryScanResult& scan, const QFileInfo& info) {
+    QJsonArray candidates;
+    for (const FileRecoveryCandidate& candidate : scan.candidates) {
+        if (candidates.size() >= kMaxReportedRecoveryCandidates) {
+            break;
+        }
+        candidates.append(serializeRecoveryCandidate(candidate));
+    }
+    QJsonArray warnings;
+    for (const QString& warning : scan.warnings) {
+        if (warnings.size() >= kMaxInventoryWarnings) {
+            break;
+        }
+        warnings.append(clampLine(warning));
+    }
+    return QJsonObject{
+        {QStringLiteral("image_path"), info.absoluteFilePath()},
+        {QStringLiteral("name"), info.fileName()},
+        {QStringLiteral("bytes_read"), static_cast<double>(scan.bytes_read)},
+        {QStringLiteral("source_read_only"), scan.source_opened_read_only},
+        {QStringLiteral("candidate_count"), static_cast<int>(scan.candidates.size())},
+        {QStringLiteral("reported_count"), candidates.size()},
+        {QStringLiteral("truncated"), static_cast<int>(scan.candidates.size()) > candidates.size()},
+        {QStringLiteral("candidates"), candidates},
+        {QStringLiteral("warning_count"), static_cast<int>(scan.warnings.size())},
+        {QStringLiteral("warnings"), warnings}};
+}
+
+AppActionResult scanRecoverable(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("image_path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("scan_recoverable requires an 'image_path' argument"), {}};
+    }
+    // refuseUnsafePath FIRST: image_path is opened by name, so a symlink/junction to a UNC target
+    // (or a literal UNC path) would open a remote object and leak the NTLM hash. Device paths
+    // (\\.\PhysicalDriveN) are also refused, keeping this to offline image FILES.
+    if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
+            path, QStringLiteral("scan_recoverable"), QStringLiteral("image_path"))) {
+        return *unsafe;
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such image file: %1").arg(path), {}};
+    }
+
+    // Carve under a wall-time deadline: the engine polls `stop` in its inner loop, so a runaway
+    // O(window * candidate_bytes) scan (a repeating start marker with no end) is interrupted.
+    const FileRecoveryScanOptions options = recoveryOptionsFromArgs(args, path);
+    std::atomic<bool> stop{false};
+    DeadlineCanceller canceller([&stop]() { stop.store(true); }, kRecoveryScanTimeoutMs);
+    const FileRecoveryScanResult scan = FileRecoveryEngine::scanOfflineImage(options, &stop);
+    canceller.finish();
+
+    if (!scan.source_opened_read_only) {
+        const QString reason = scan.warnings.isEmpty()
+                                   ? QStringLiteral("could not open the image read-only")
+                                   : scan.warnings.first();
+        return {false, QStringLiteral("Could not scan %1: %2").arg(info.fileName(), reason), {}};
+    }
+    // OPEN success is NOT read success: a read of 0 bytes from a non-empty image is a FAILED read
+    // (failing media / bad sector at offset 0), not an honest "no recoverable files". Fail closed
+    // rather than report a clean empty result.
+    if (scan.bytes_read == 0 && info.size() > 0) {
+        return {false,
+                QStringLiteral("Opened %1 but read 0 bytes from it (the media may be failing)")
+                    .arg(info.fileName()),
+                {}};
+    }
+    // scan_complete is honest about COVERAGE: false if the carve was time-limited (scan_cancelled)
+    // OR fewer bytes were read than the requested window (a short read = a mid-stream I/O error),
+    // so the model never treats a partial scan as an authoritative "these are all the files".
+    const uint64_t expected = std::min<uint64_t>(
+        static_cast<uint64_t>(std::max<qint64>(0, info.size())), options.max_scan_bytes);
+    const bool scan_complete = !scan.scan_cancelled && scan.bytes_read >= expected;
+
+    QJsonObject data = serializeRecoveryScan(scan, info);
+    data.insert(QStringLiteral("scan_complete"), scan_complete);
+    const QString suffix = scan_complete ? QString()
+                                         : QStringLiteral(" (scan incomplete -- partial coverage)");
+    return {true,
+            QStringLiteral("Found %1 recoverable file candidate(s) in %2%3")
+                .arg(scan.candidates.size())
+                .arg(info.fileName(), suffix),
+            data};
 }
 
 QJsonObject serializeMatch(const SearchMatch& match) {
@@ -3592,6 +3734,23 @@ QJsonObject isoParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject scanRecoverableParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("image_path"),
+         stringProp(
+             QStringLiteral("Absolute path to an offline disk-image FILE to carve for "
+                            "recoverable files (a regular file, not a physical device path)"))},
+        {QStringLiteral("max_scan_mb"),
+         intProp(QStringLiteral("Cap the scan window read from the image, in MiB (1-512, default "
+                                "512); may only be lowered"))},
+        {QStringLiteral("max_candidates"),
+         intProp(QStringLiteral("Cap the number of candidates returned (1-2048, default 2048)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("image_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject previewParamsSchema() {
     QJsonObject payload_prop{
         {QStringLiteral("type"), QStringLiteral("object")},
@@ -3944,6 +4103,35 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
 
 // Register the read-only file-content ops (text search + duplicate finder). Split out to keep
 // registerReadOnlyAppActionsInto within the length budget.
+// Register the imaging read-only ops. Split out to keep registerReadOnlyAppActionsInto within the
+// length budget as the set grows.
+void registerImagingReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("imaging.identify_image"),
+                       QStringLiteral("Identify a disk image"),
+                       QStringLiteral(
+                           "Detect a disk-image file's format/compression by file extension"),
+                       QStringLiteral("imaging"),
+                       identifyParamsSchema()),
+        identifyImage);
+
+    add(makeDescriptor(QStringLiteral("imaging.analyze_iso"),
+                       QStringLiteral("Analyze an ISO image"),
+                       QStringLiteral("Read an ISO/IMG file's volume metadata, boot type, and "
+                                      "OS/distro identity from its on-disk descriptors"),
+                       QStringLiteral("imaging"),
+                       isoParamsSchema()),
+        analyzeIso);
+
+    add(makeDescriptor(QStringLiteral("imaging.scan_recoverable"),
+                       QStringLiteral("Scan an image for recoverable files"),
+                       QStringLiteral("Signature-carve an offline disk-image file for recoverable "
+                                      "(deleted) files and report their metadata (format, offset, "
+                                      "size, sha256); read-only, never returns file content"),
+                       QStringLiteral("imaging"),
+                       scanRecoverableParamsSchema()),
+        scanRecoverable);
+}
+
 void registerFileReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("search.find_in_files"),
                        QStringLiteral("Search files"),
@@ -4021,21 +4209,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        scanParamsSchema()),
         scanVulnerabilities);
 
-    add(makeDescriptor(QStringLiteral("imaging.identify_image"),
-                       QStringLiteral("Identify a disk image"),
-                       QStringLiteral(
-                           "Detect a disk-image file's format/compression by file extension"),
-                       QStringLiteral("imaging"),
-                       identifyParamsSchema()),
-        identifyImage);
-
-    add(makeDescriptor(QStringLiteral("imaging.analyze_iso"),
-                       QStringLiteral("Analyze an ISO image"),
-                       QStringLiteral("Read an ISO/IMG file's volume metadata, boot type, and "
-                                      "OS/distro identity from its on-disk descriptors"),
-                       QStringLiteral("imaging"),
-                       isoParamsSchema()),
-        analyzeIso);
+    registerImagingReadOnlyOps(add);
 
     registerFileReadOnlyOps(add);
 

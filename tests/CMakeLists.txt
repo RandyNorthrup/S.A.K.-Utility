@@ -1667,6 +1667,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/leftover_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/registry_snapshot_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/core/restore_point_manager.cpp
+        # imaging.scan_recoverable: FileRecoveryEngine (static signature-carver, pure Qt) reads an
+        # offline image file read-only and returns candidate metadata.
+        ${CMAKE_SOURCE_DIR}/src/core/file_recovery_engine.cpp
         # system.list_users: WindowsUserScanner (NetUserEnum + profile/SID resolution) driven
         # directly, like the read-only diagnostics scanners.
         ${CMAKE_SOURCE_DIR}/src/core/windows_user_scanner.cpp

@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 47);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 48);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -272,6 +272,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("imaging.scan_recoverable")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.preview_organize")));
@@ -931,6 +932,86 @@ private Q_SLOTS:
         QVERIFY2(message.contains(QStringLiteral("No installed program")) ||
                      message.contains(QStringLiteral("installed-programs registry")),
                  qPrintable(message));
+    }
+
+    // imaging.scan_recoverable with no image_path fails cleanly (never opens/scans).
+    void scanRecoverableMissingImageFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("image_path")));
+    }
+
+    // imaging.scan_recoverable drives the real FileRecoveryEngine end to end + deterministically:
+    // an image blob with an embedded JPEG (SOI ... EOI) between junk yields exactly one carved
+    // candidate. It is read-only (runs in a chat/research session) and returns METADATA ONLY -- no
+    // recovered file content leaves the process.
+    void scanRecoverableCarvesEmbeddedJpeg() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString imgPath = dir.filePath(QStringLiteral("disk.img"));
+        {
+            QFile file(imgPath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QByteArray blob;
+            blob.append(QByteArray(64, '\0'));                         // leading junk
+            blob.append(QByteArray::fromHex("ffd8ffe000104a464946"));  // JPEG SOI + APP0 "JFIF"
+            blob.append(QByteArray(128, 'x'));                         // body
+            blob.append(QByteArray::fromHex("ffd9"));                  // JPEG EOI
+            blob.append(QByteArray(64, '\0'));                         // trailing junk
+            QCOMPARE(file.write(blob), static_cast<qint64>(blob.size()));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("image_path"), imgPath}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("source_read_only")).toBool());
+        // The whole small image is read, so coverage is complete (honest scan_complete flag).
+        QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
+        QVERIFY(data.value(QStringLiteral("candidate_count")).toInt() >= 1);
+        const QJsonArray candidates = data.value(QStringLiteral("candidates")).toArray();
+        QVERIFY(!candidates.isEmpty());
+        const QJsonObject first = candidates.at(0).toObject();
+        QCOMPARE(first.value(QStringLiteral("extension")).toString(), QStringLiteral("jpg"));
+        // Metadata only: never a recovered-content field.
+        QVERIFY(!first.contains(QStringLiteral("recovered_bytes")));
+        QVERIFY(!first.contains(QStringLiteral("content")));
+    }
+
+    // imaging.scan_recoverable refuses UNC/network/device image paths before opening (a symlink or
+    // literal UNC target would leak the NTLM hash on the read-only open).
+    void scanRecoverableRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("image_path"),
+                             QStringLiteral("\\\\attacker.example.com\\share\\disk.img")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
     }
 
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to

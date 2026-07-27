@@ -415,10 +415,22 @@ FileRecoveryCandidate scanCandidateFromMatch(const QByteArray& data,
 
 void appendScanCandidates(const QByteArray& data,
                           const FileRecoveryScanOptions& options,
-                          FileRecoveryScanResult* result) {
+                          FileRecoveryScanResult* result,
+                          const std::atomic<bool>* cancel) {
     for (qsizetype offset = 0;
          offset < data.size() && result->candidates.size() < options.max_candidates;
          ++offset) {
+        // Poll the cancel flag once per start offset. matchAt scans forward up to
+        // max_candidate_bytes per format, so a signature that repeats with no end marker is
+        // O(n * max_candidate_bytes) work -- without this poll a deadline could not interrupt it
+        // (the flag lives outside the loop that actually spins). Overrun after cancel is at most
+        // one matchAt.
+        if (cancel != nullptr && cancel->load()) {
+            result->scan_cancelled = true;
+            result->warnings.append(
+                QStringLiteral("Scan cancelled before completing (time limit reached)"));
+            return;
+        }
         const auto match = matchAt(data, offset, options.max_candidate_bytes);
         if (!match) {
             continue;
@@ -432,8 +444,8 @@ void appendScanCandidates(const QByteArray& data,
 
 }  // namespace
 
-FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(
-    const FileRecoveryScanOptions& options) {
+FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoveryScanOptions& options,
+                                                            const std::atomic<bool>* cancel) {
     FileRecoveryScanResult result;
     QFile image(options.image_path);
     if (!image.open(QIODevice::ReadOnly)) {
@@ -444,7 +456,7 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(
 
     const uint64_t imageSize = static_cast<uint64_t>(std::max<qint64>(0, image.size()));
     const QByteArray data = readScanData(&image, imageSize, options, &result);
-    appendScanCandidates(data, options, &result);
+    appendScanCandidates(data, options, &result, cancel);
     if (result.candidates.size() >= options.max_candidates) {
         result.warnings.append(QStringLiteral("Candidate limit reached"));
     }
