@@ -21,6 +21,7 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/duplicate_finder_worker.h"
 #include "sak/error_codes.h"
+#include "sak/file_explorer_archive_service.h"
 #include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
@@ -82,6 +83,10 @@ constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxWifiProfiles = 500;
+// files.list_archive: cap the entries surfaced to the model (the engine bounds the total scan)
+// and the input archive size (a listing reads only the central directory, so this is generous).
+constexpr int kMaxListedArchiveEntries = 2000;
+constexpr qint64 kMaxArchiveListBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
 // PST/OST: open() parses the whole NBT/BBT metadata synchronously, so cap the file size for a
@@ -803,6 +808,78 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
     worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
     return result;
+}
+
+// List a .zip archive's contents WITHOUT extracting. Drives the app's OWN
+// FileExplorerArchiveService (reads only the central directory -- no entry payloads, no writes), so
+// this is a cheap read-only inspection that pairs with files.compress_zip/extract_zip. The archive
+// path goes through the shared refuseUnsafePath (UNC/device + symlink/junction) before any
+// following stat. ArchiveListing's ok flag is the value channel: an unreadable/oversize archive is
+// an honest failure, not empty.
+AppActionResult listArchive(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("archive_path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("list_archive requires an 'archive_path' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
+            path, QStringLiteral("list_archive"), QStringLiteral("archive_path"))) {
+        return *unsafe;
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such archive file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxArchiveListBytes) {
+        return {false,
+                QStringLiteral("Archive is too large for a headless listing (%1 bytes > %2 limit)")
+                    .arg(info.size())
+                    .arg(kMaxArchiveListBytes),
+                {}};
+    }
+
+    const ArchiveListing listing = FileExplorerArchiveService::listEntries(path);
+    if (!listing.ok) {
+        const QString reason = listing.blockers.isEmpty()
+                                   ? QStringLiteral("unreadable or unsupported archive")
+                                   : listing.blockers.first();
+        return {false, QStringLiteral("Could not list %1: %2").arg(info.fileName(), reason), {}};
+    }
+
+    QJsonArray entries;
+    for (const ArchiveEntryInfo& entry : listing.entries) {
+        if (entries.size() >= kMaxListedArchiveEntries) {
+            break;
+        }
+        entries.append(QJsonObject{{QStringLiteral("path"), clampLine(entry.path)},
+                                   {QStringLiteral("size_bytes"), static_cast<double>(entry.size)},
+                                   {QStringLiteral("is_dir"), entry.is_dir}});
+    }
+    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                     {QStringLiteral("name"), info.fileName()},
+                     {QStringLiteral("total_entries"), listing.total_entries},
+                     {QStringLiteral("reported_entries"), entries.size()},
+                     {QStringLiteral("truncated"), listing.total_entries > entries.size()},
+                     {QStringLiteral("total_uncompressed_bytes"),
+                      static_cast<double>(listing.total_uncompressed_bytes)},
+                     {QStringLiteral("entries"), entries}};
+    return {true,
+            QStringLiteral("Archive '%1': %2 entr%3")
+                .arg(info.fileName())
+                .arg(listing.total_entries)
+                .arg(listing.total_entries == 1 ? QStringLiteral("y") : QStringLiteral("ies")),
+            data};
+}
+
+QJsonObject listArchiveParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("archive_path"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Absolute path to the .zip archive to list")}}}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("archive_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
 }
 
 QJsonObject dupParamsSchema() {
@@ -3007,6 +3084,14 @@ void registerFileReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("organizer"),
                        dupParamsSchema()),
         findDuplicates);
+
+    add(makeDescriptor(QStringLiteral("files.list_archive"),
+                       QStringLiteral("List a .zip archive"),
+                       QStringLiteral("List a .zip archive's entries (paths, sizes, dir flags) "
+                                      "without extracting; read-only"),
+                       QStringLiteral("files"),
+                       listArchiveParamsSchema()),
+        listArchive);
 }
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {

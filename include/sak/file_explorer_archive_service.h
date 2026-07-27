@@ -8,6 +8,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 namespace sak {
 
@@ -18,6 +19,22 @@ struct FileExplorerArchiveResult {
     int entries{0};       ///< Files written into or out of the archive.
     QStringList blockers;
     QStringList warnings;
+};
+
+/// One entry in an archive's central directory (see listEntries).
+struct ArchiveEntryInfo {
+    QString path;        ///< Entry path within the archive.
+    qint64 size{0};      ///< Uncompressed size in bytes (0 for a directory entry).
+    bool is_dir{false};  ///< True for a directory entry.
+};
+
+/// Result of a read-only archive LISTING (no extraction, no writes).
+struct ArchiveListing {
+    bool ok{false};
+    int total_entries{0};               ///< Entries in the archive's central directory.
+    qint64 total_uncompressed_bytes{0};
+    QVector<ArchiveEntryInfo> entries;  ///< Bounded to the entry cap; truncation reported via ok.
+    QStringList blockers;
 };
 
 /// Zip archive engine mirroring the Files StorageArchiveService semantics the
@@ -38,6 +55,10 @@ public:
     /// Extract the whole archive into @p destination_dir (created if missing).
     [[nodiscard]] static FileExplorerArchiveResult extractZip(const QString& zip_path,
                                                               const QString& destination_dir);
+    /// List an archive's entries WITHOUT extracting (reads only the central directory; writes
+    /// nothing). Fails closed (ok=false + a blocker) on an unreadable archive or one whose entry
+    /// count exceeds the shared cap.
+    [[nodiscard]] static ArchiveListing listEntries(const QString& zip_path);
     /// Files smart-extract probe: true when every entry lives under one
     /// top-level folder; @p root_name receives that folder's name.
     [[nodiscard]] static bool hasSingleTopLevelRoot(const QString& zip_path, QString* root_name);

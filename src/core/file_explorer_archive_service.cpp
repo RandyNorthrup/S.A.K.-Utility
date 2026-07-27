@@ -31,11 +31,51 @@ namespace {
 // Bounds shared with the bridge directory walks: finite so a hostile tree or
 // archive cannot run away.
 constexpr int kArchiveMaxEntries = 100'000;
+// Ceiling on the central-directory byte size a LISTING will read. fileInfoList() materializes the
+// whole central directory (~2-3x its size in transient memory), so this bounds peak allocation
+// regardless of the file-size cap. 64 MiB comfortably holds the 100k-entry cap even with long
+// names (~46 bytes + name per record) while refusing a hostile multi-GB central directory.
+constexpr qint64 kMaxCentralDirBytes = 64LL * 1024 * 1024;
 // Extraction resource ceilings so a decompression bomb cannot exhaust the
 // destination volume. A hostile zip commonly declares a small compressed size
 // but a huge expanded size; extraction fails closed before writing past these.
 constexpr qint64 kExtractMaxTotalBytes = 8LL * 1024 * 1024 * 1024;  // 8 GiB expanded
 constexpr qint64 kExtractMaxFileBytes = 4LL * 1024 * 1024 * 1024;   // 4 GiB per file
+
+// Byte size of a zip's central directory (from the End-Of-Central-Directory record), or -1 when no
+// EOCD is found (i.e. not a zip). QZipReader::isReadable() only confirms the DEVICE opened and
+// status() stays NoError on a garbage file, so a non-zip would otherwise list as a fake "0
+// entries"; and reading the whole central directory (fileInfoList) allocates ~2-3x its size, so the
+// caller must bound this BEFORE listing -- a hostile zip can pack a multi-GB central directory of
+// maximal-length names under a file-size cap. The EOCD is within the last 64 KiB (max comment) + 22
+// bytes; scan that bounded tail (which also accepts a zip with a prepended stub). A ZIP64 archive
+// stores 0xFFFFFFFF here (the real value lives in the ZIP64 EOCD); that reads as ~4 GiB and is
+// correctly refused by the caller's ceiling -- fail closed on the oversize case.
+qint64 zipCentralDirectorySize(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return -1;
+    }
+    const qint64 size = file.size();
+    const qint64 tail = qMin<qint64>(size, (64LL * 1024) + 22);
+    if (tail < 22) {  // too small to hold an EOCD record
+        return -1;
+    }
+    if (!file.seek(size - tail)) {
+        return -1;
+    }
+    const QByteArray buf = file.read(tail);
+    const int eocd = buf.lastIndexOf(QByteArrayLiteral("PK\x05\x06"));
+    if (eocd < 0 || eocd + 16 > buf.size()) {
+        return -1;
+    }
+    // Central-directory size is a little-endian uint32 at EOCD offset +12.
+    const auto byte_at = [&](int i) {
+        return static_cast<quint32>(static_cast<quint8>(buf.at(eocd + i)));
+    };
+    return static_cast<qint64>(byte_at(12) | (byte_at(13) << 8) | (byte_at(14) << 16) |
+                               (byte_at(15) << 24));
+}
 
 // True when @p entry_name would escape @p destination_dir (zip-slip): an
 // absolute path, or a path whose cleaned form leaves the destination root.
@@ -318,6 +358,55 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
     }
     result.ok = true;
     return result;
+}
+
+ArchiveListing FileExplorerArchiveService::listEntries(const QString& zip_path) {
+    ArchiveListing listing;
+    QZipReader reader(zip_path);
+    // Fail closed on a non-zip BEFORE trusting an empty fileInfoList: a garbage file opens readable
+    // and lists as "0 entries" (a dishonest empty-success). A genuinely empty VALID zip has an EOCD
+    // (central-dir size 0) and is honestly reported as 0 entries.
+    const qint64 central_dir_size = zipCentralDirectorySize(zip_path);
+    if (!reader.isReadable() || central_dir_size < 0) {
+        listing.blockers.append(QStringLiteral("%1 is not a readable zip archive.").arg(zip_path));
+        return listing;
+    }
+    // Bound peak memory BEFORE fileInfoList() materializes the whole central directory (~2-3x its
+    // size): a hostile zip can pack a multi-GB central directory of maximal-length names under the
+    // caller's file-size cap, so the count cap below (checked only after fileInfoList) is not
+    // enough on its own.
+    if (central_dir_size > kMaxCentralDirBytes) {
+        listing.blockers.append(
+            QStringLiteral("%1 has a central directory too large to list (%2 bytes > %3 limit).")
+                .arg(zip_path)
+                .arg(central_dir_size)
+                .arg(kMaxCentralDirBytes));
+        return listing;
+    }
+    // fileInfoList() reads only the central directory (bounded above), so listing is cheap. Still
+    // cap the entry count so a directory with many records cannot run away.
+    const QList<QZipReader::FileInfo> entries = reader.fileInfoList();
+    if (entries.size() > kArchiveMaxEntries) {
+        listing.blockers.append(QStringLiteral("Archive %1 exceeds the %2-entry limit.")
+                                    .arg(zip_path)
+                                    .arg(kArchiveMaxEntries));
+        return listing;
+    }
+    listing.total_entries = static_cast<int>(entries.size());
+    listing.entries.reserve(static_cast<int>(entries.size()));
+    for (const QZipReader::FileInfo& info : entries) {
+        if (!info.isValid()) {
+            continue;
+        }
+        ArchiveEntryInfo entry;
+        entry.path = info.filePath;
+        entry.is_dir = info.isDir;
+        entry.size = info.isDir ? 0 : info.size;
+        listing.total_uncompressed_bytes += entry.size;
+        listing.entries.append(entry);
+    }
+    listing.ok = true;
+    return listing;
 }
 
 bool FileExplorerArchiveService::hasSingleTopLevelRoot(const QString& zip_path,

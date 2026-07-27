@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 31);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 32);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -273,6 +273,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("files.list_archive")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
@@ -1527,6 +1528,78 @@ private Q_SLOTS:
         const QString nonempty_msg = nonempty_result.value(QStringLiteral("message")).toString();
         QVERIFY(nonempty_msg.contains(QStringLiteral("destination_dir")));
         QVERIFY(!nonempty_msg.contains(QStringLiteral("output_path")));
+    }
+
+    // files.list_archive: read-only inspection. Compress a known tree, then list the archive and
+    // confirm the entries + counts round-trip. Read-only -> UNGATED even in a Chat session.
+    void listArchiveListsEntriesUngated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString src = dir.filePath(QStringLiteral("src"));
+        writeTextFile(src + QStringLiteral("/a.txt"), QByteArrayLiteral("hello A"));
+        writeTextFile(src + QStringLiteral("/nested/b.txt"), QByteArrayLiteral("hello B"));
+        const QString zip = dir.filePath(QStringLiteral("out.zip"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject compressed =
+            runArchiveOp(panel,
+                         QStringLiteral("files.compress_zip"),
+                         QJsonObject{{QStringLiteral("sources"), QJsonArray{src}},
+                                     {QStringLiteral("output_path"), zip}});
+        QVERIFY(compressed.value(QStringLiteral("success")).toBool());
+
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject listed = runArchiveOp(panel,
+                                                QStringLiteral("files.list_archive"),
+                                                QJsonObject{{QStringLiteral("archive_path"), zip}});
+        QVERIFY(!listed.contains(QStringLiteral("failure_class")));  // read-only, never gated
+        QVERIFY(listed.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = listed.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("total_entries")).toInt() >= 2);
+        bool have_a = false;
+        bool have_b = false;
+        for (const auto& value : data.value(QStringLiteral("entries")).toArray()) {
+            const QString p = value.toObject().value(QStringLiteral("path")).toString();
+            have_a = have_a || p.contains(QStringLiteral("a.txt"));
+            have_b = have_b || p.contains(QStringLiteral("b.txt"));
+        }
+        QVERIFY(have_a);
+        QVERIFY(have_b);
+    }
+
+    void listArchiveMissingArgFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel, QStringLiteral("files.list_archive"), QJsonObject{});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("archive_path")));
+    }
+
+    // A non-zip file makes listEntries fail (isReadable false), which the op maps to an HONEST
+    // failure -- never a fake "0 entries" empty listing.
+    void listArchiveNonArchiveFileReportsFailure() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("not.zip"));
+        writeTextFile(path, QByteArrayLiteral("this is definitely not a zip archive"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.list_archive"),
+                         QJsonObject{{QStringLiteral("archive_path"), path}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("list"), Qt::CaseInsensitive));
     }
 
     // ------------------------------------------------------------------
