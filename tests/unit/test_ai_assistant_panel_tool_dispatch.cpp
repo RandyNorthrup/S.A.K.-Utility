@@ -241,7 +241,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + 20 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 24);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 25);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -264,6 +264,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.port_scan")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.list_shares")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
@@ -2011,6 +2012,70 @@ private Q_SLOTS:
         const QJsonObject result = panel.runAppActionTool(
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Network: list_shares enumerates the LOCAL machine's shares read-only (no write probe).
+    // Env-tolerant: NetShareEnum on the local machine succeeds with a well-formed share array
+    // (shape asserted, NO fixed count -- a non-admin host may see fewer shares); on failure the op
+    // must fail HONESTLY (never a fake "0 shares" success). access_tested is always false (no
+    // probe). On success the message states "the local machine".
+    void listSharesLocalReturnsWellFormed() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("shares")));
+            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
+            QCOMPARE(data.value(QStringLiteral("access_tested")).toBool(), false);
+            QCOMPARE(data.value(QStringLiteral("shares")).toArray().size(),
+                     data.value(QStringLiteral("reported_count")).toInt());
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("share"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Network: list_shares is LOCAL-ONLY by design (no target argument). A prompt-injected model
+    // that supplies a hostname must NOT be able to redirect enumeration at a remote host -- the
+    // arg is structurally ignored (never reaches NetShareEnum). Proven by: an injected public
+    // hostname yields the SAME local behavior (success-with-shape OR honest failure), and the
+    // message always refers to "the local machine"/"share", never the injected host.
+    void listSharesIgnoresInjectedHostname() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"hostname\":\"8.8.8.8\"}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        const QString message = result.value(QStringLiteral("message")).toString();
+        QVERIFY(
+            !message.contains(QStringLiteral("8.8.8.8")));  // never enumerated the injected host
+        if (result.value(QStringLiteral("success")).toBool()) {
+            QVERIFY(message.contains(QStringLiteral("local machine"), Qt::CaseInsensitive));
+        } else {
+            QVERIFY(message.contains(QStringLiteral("share"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Network: list_shares is read-only -> UNGATED in a Chat & Research session (never
+    // policy-blocked), whether or not enumeration succeeds.
+    void listSharesRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }

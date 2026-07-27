@@ -26,6 +26,7 @@
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_probe_worker.h"
+#include "sak/network_share_browser.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/port_scanner.h"
@@ -71,6 +72,7 @@ constexpr int kMaxFirewallGaps = 100;
 constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
+constexpr int kMaxShares = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
 constexpr int kMaxUsers = 200;
@@ -1087,6 +1089,74 @@ AppActionResult wifiScan(const QJsonObject&) {
     return {true, QStringLiteral("WiFi scan: %1 network(s) found").arg(networks.size()), data};
 }
 
+QString shareTypeToString(NetworkShareInfo::ShareType type) {
+    switch (type) {
+    case NetworkShareInfo::ShareType::Disk:
+        return QStringLiteral("disk");
+    case NetworkShareInfo::ShareType::Printer:
+        return QStringLiteral("printer");
+    case NetworkShareInfo::ShareType::Device:
+        return QStringLiteral("device");
+    case NetworkShareInfo::ShareType::IPC:
+        return QStringLiteral("ipc");
+    case NetworkShareInfo::ShareType::Special:
+        break;
+    }
+    return QStringLiteral("special");
+}
+
+QJsonObject serializeShare(const NetworkShareInfo& share) {
+    // Access fields (canRead/canWrite) are intentionally omitted: the read-only enumeration
+    // performs no access probe, so they carry no meaning here.
+    return QJsonObject{{QStringLiteral("share_name"), clampLine(share.shareName)},
+                       {QStringLiteral("unc_path"), clampLine(share.uncPath)},
+                       {QStringLiteral("type"), shareTypeToString(share.type)},
+                       {QStringLiteral("remark"), clampLine(share.remark)},
+                       {QStringLiteral("hidden"), share.requiresAuth},
+                       {QStringLiteral("host"), clampLine(share.hostName)}};
+}
+
+// Enumerate the LOCAL machine's SMB/Windows file shares via NetworkShareBrowser::listSharesReadOnly
+// (NetShareEnum with a NULL server name = a pure local API read: no SMB round-trip, no credential
+// exposure). READ-ONLY: unlike the panel's discoverShares, this path performs NO write-access
+// probe (discoverShares writes a temporary file to every writable disk share -- a mutation), so
+// nothing is ever written to any share and canRead/canWrite are not reported. SYNC like
+// list_connections: listSharesReadOnly BLOCKS and returns the vector directly (no event loop).
+//
+// LOCAL-ONLY BY DESIGN (no target argument): enumerating a REMOTE host's shares authenticates
+// with the operator's current credentials, an NTLM-relay / credential-exposure vector that a
+// prompt-injectable model must not be able to aim at an attacker-controlled host. Taking no
+// hostname makes that structurally impossible -- no model-supplied string ever reaches
+// NetShareEnum. Remote share enumeration remains available in the GUI panel. Fail-CLOSED: a
+// NetShareEnum failure is an honest op failure via the ok signal, never a "0 shares" success.
+AppActionResult listShares(const QJsonObject&) {
+    NetworkShareBrowser browser;
+    bool ok = false;
+    // Empty hostname => local enumeration (NULL server name) inside the engine.
+    const QVector<NetworkShareInfo> shares = browser.listSharesReadOnly(QString(), ok);
+    if (!ok) {
+        return {false,
+                QStringLiteral("Could not enumerate the local machine's shares (the query failed)"),
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const NetworkShareInfo& share : shares) {
+        if (listed.size() >= kMaxShares) {
+            break;
+        }
+        listed.append(serializeShare(share));
+    }
+    QJsonObject data{{QStringLiteral("count"), shares.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), shares.size() > listed.size()},
+                     {QStringLiteral("access_tested"), false},
+                     {QStringLiteral("shares"), listed}};
+    return {true,
+            QStringLiteral("Found %1 share(s) on the local machine").arg(shares.size()),
+            data};
+}
+
 QString fwDirectionToString(FirewallRule::Direction d) {
     return d == FirewallRule::Direction::Inbound ? QStringLiteral("inbound")
                                                  : QStringLiteral("outbound");
@@ -2033,6 +2103,9 @@ QJsonObject portScanParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// Defined just below; declared here because registerNetworkReadOnlyOps tail-calls it.
+void registerNetworkProbeReadOnlyOps(const AddActionFn& add);
+
 // Register the read-only network ops (adapter enumeration, DNS lookup, and the active
 // ping/traceroute/port_scan probes). Split out to keep registerReadOnlyAppActionsInto
 // within the length budget as the op set grows.
@@ -2075,6 +2148,20 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        noParamsSchema()),
         wifiScan);
 
+    add(makeDescriptor(QStringLiteral("network.list_shares"),
+                       QStringLiteral("List file shares"),
+                       QStringLiteral("Enumerate SMB/Windows file shares on the local machine; "
+                                      "read-only, no access probe (local only)"),
+                       QStringLiteral("network"),
+                       noParamsSchema()),
+        listShares);
+
+    registerNetworkProbeReadOnlyOps(add);
+}
+
+// Register the active network probes (ping/traceroute/mtr/port_scan). Split out of
+// registerNetworkReadOnlyOps to keep each within the length budget.
+void registerNetworkProbeReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("network.ping"),
                        QStringLiteral("Ping a host"),
                        QStringLiteral("Send ICMP echo requests and report loss/latency/jitter"),

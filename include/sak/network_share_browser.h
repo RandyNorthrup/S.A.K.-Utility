@@ -35,6 +35,16 @@ public:
     /// @brief Discover shares on a host (blocking)
     void discoverShares(const QString& hostname);
 
+    /// @brief Enumerate shares on a host read-only (blocking): performs NO write-access probe,
+    /// so nothing is written to any discovered share. The per-share access fields
+    /// (canRead/canWrite) are therefore left unset. An empty hostname (or "localhost"/loopback)
+    /// enumerates the LOCAL machine's shares via a pure local API call (no SMB round-trip, no
+    /// credential exposure). Used by headless callers that must not mutate the target.
+    /// @param hostname target host (empty = local machine)
+    /// @param ok set false only if the NetShareEnum call itself failed (vs a genuine empty list)
+    /// @return discovered shares (access fields NOT populated)
+    [[nodiscard]] QVector<NetworkShareInfo> listSharesReadOnly(const QString& hostname, bool& ok);
+
     /// @brief Test read/write access to a UNC path (blocking)
     void testAccess(const QString& uncPath);
 
@@ -49,7 +59,9 @@ Q_SIGNALS:
 private:
     std::atomic<bool> m_cancelled{false};
 
-    [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(const QString& hostname);
+    [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(const QString& hostname,
+                                                            bool testAccess,
+                                                            bool& ok);
     [[nodiscard]] QPair<bool, bool> testReadWriteAccess(const QString& uncPath);
 };
 

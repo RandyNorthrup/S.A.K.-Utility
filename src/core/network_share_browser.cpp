@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QTemporaryFile>
 #include <QUuid>
 
@@ -48,6 +49,52 @@ constexpr qsizetype kTemporaryFileUuidChars = 8;
 [[nodiscard]] bool isSpecialShare(const QString& name) {
     return name.endsWith(QLatin1Char('$'));
 }
+
+// A share host counts as "local" when no host is given, when it is "localhost", or when it is a
+// loopback IP literal. Local enumeration is issued with a NULL server name so NetShareEnum reads
+// the local machine directly -- no SMB round-trip, no credential exposure to any remote host.
+[[nodiscard]] bool isLocalShareHost(const QString& hostname) {
+    if (hostname.isEmpty() ||
+        hostname.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    return QHostAddress(hostname).isLoopback();
+}
+
+struct ShareServer {
+    QString displayHost;      // normalized host for UNC paths / messages
+    std::wstring serverName;  // empty => enumerate the LOCAL machine (NULL server name)
+};
+
+// Normalize the target: a local host maps to an empty server name (pure local enumeration, no SMB
+// round-trip). The display host keeps the caller's spelling when one was given (so an explicit
+// "localhost"/loopback-literal request renders its own UNC paths); only a defaulted empty host is
+// shown as "localhost". A remote host is passed through verbatim.
+[[nodiscard]] ShareServer resolveShareServer(const QString& hostname) {
+    if (isLocalShareHost(hostname)) {
+        return {hostname.isEmpty() ? QStringLiteral("localhost") : hostname, std::wstring()};
+    }
+    return {hostname, hostname.toStdWString()};
+}
+
+// Build the model-facing record for one SHARE_INFO_1 entry (no access probe).
+[[nodiscard]] NetworkShareInfo makeShareInfo(const SHARE_INFO_1& entry,
+                                             const QString& displayHost) {
+    NetworkShareInfo info;
+    info.hostName = displayHost;
+    info.shareName = QString::fromWCharArray(entry.shi1_netname);
+    info.uncPath = QStringLiteral("\\\\%1\\%2").arg(displayHost, info.shareName);
+    info.type = mapShareType(entry.shi1_type);
+    info.remark = QString::fromWCharArray(entry.shi1_remark);
+    info.requiresAuth = isSpecialShare(info.shareName);
+    info.discovered = QDateTime::currentDateTime();
+    return info;
+}
+
+// A non-special disk share is the only kind whose read/write access is worth probing.
+[[nodiscard]] bool isProbeableDiskShare(const NetworkShareInfo& info) {
+    return info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName);
+}
 }  // namespace
 
 NetworkShareBrowser::NetworkShareBrowser(QObject* parent) : QObject(parent) {}
@@ -65,7 +112,8 @@ void NetworkShareBrowser::discoverShares(const QString& hostname) {
         return;
     }
 
-    auto shares = enumerateShares(hostname);
+    bool ok = false;
+    auto shares = enumerateShares(hostname, /*testAccess=*/true, ok);
 
     for (const auto& share : shares) {
         if (m_cancelled.load()) {
@@ -75,6 +123,14 @@ void NetworkShareBrowser::discoverShares(const QString& hostname) {
     }
 
     Q_EMIT discoveryComplete(shares);
+}
+
+QVector<NetworkShareInfo> NetworkShareBrowser::listSharesReadOnly(const QString& hostname,
+                                                                  bool& ok) {
+    m_cancelled.store(false);
+    // testAccess = false: never write a probe file to any share. An empty/loopback hostname is
+    // enumerated locally (NULL server name) inside enumerateShares.
+    return enumerateShares(hostname, /*testAccess=*/false, ok);
 }
 
 void NetworkShareBrowser::testAccess(const QString& uncPath) {
@@ -89,18 +145,24 @@ void NetworkShareBrowser::testAccess(const QString& uncPath) {
     Q_EMIT accessTestComplete(uncPath, canRead, canWrite);
 }
 
-QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& hostname) {
-    Q_ASSERT(!hostname.isEmpty());
+QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& hostname,
+                                                               bool testAccess,
+                                                               bool& ok) {
+    ok = false;
     QVector<NetworkShareInfo> shares;
 
-    const auto serverName = hostname.toStdWString();
+    // Local host (empty / "localhost" / loopback) -> NULL server name = pure local enumeration,
+    // no SMB round-trip. The UNC/display host is normalized to "localhost" for local reads.
+    const ShareServer server = resolveShareServer(hostname);
 
     PSHARE_INFO_1 shareInfo = nullptr;
     DWORD entriesRead = 0;
     DWORD totalEntries = 0;
     DWORD resumeHandle = 0;
 
-    NET_API_STATUS status = NetShareEnum(const_cast<LPWSTR>(serverName.c_str()),
+    NET_API_STATUS status = NetShareEnum(server.serverName.empty()
+                                             ? nullptr
+                                             : const_cast<LPWSTR>(server.serverName.c_str()),
                                          kShareInfoLevel,
                                          reinterpret_cast<LPBYTE*>(&shareInfo),
                                          MAX_PREFERRED_LENGTH,
@@ -110,11 +172,13 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
 
     if (status != NERR_Success && status != ERROR_MORE_DATA) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to enumerate shares on %1 (error %2)")
-                                 .arg(hostname)
+                                 .arg(server.displayHost)
                                  .arg(status));
-        return shares;
+        return shares;  // ok stays false: a real enumeration failure, not an empty host
     }
 
+    // NetShareEnum succeeded (a NULL buffer just means zero shares): a genuine, complete read.
+    ok = true;
     if (shareInfo == nullptr) {
         return shares;
     }
@@ -124,17 +188,11 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
             break;
         }
 
-        NetworkShareInfo info;
-        info.hostName = hostname;
-        info.shareName = QString::fromWCharArray(shareInfo[i].shi1_netname);
-        info.uncPath = QStringLiteral("\\\\%1\\%2").arg(hostname, info.shareName);
-        info.type = mapShareType(shareInfo[i].shi1_type);
-        info.remark = QString::fromWCharArray(shareInfo[i].shi1_remark);
-        info.requiresAuth = isSpecialShare(info.shareName);
-        info.discovered = QDateTime::currentDateTime();
+        NetworkShareInfo info = makeShareInfo(shareInfo[i], server.displayHost);
 
-        // Test access for non-special disk shares
-        if (info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName)) {
+        // Probe access ONLY when asked: testReadWriteAccess writes a temp file to the share, so
+        // read-only callers pass testAccess=false and leave canRead/canWrite unset.
+        if (testAccess && isProbeableDiskShare(info)) {
             auto [canRead, canWrite] = testReadWriteAccess(info.uncPath);
             info.canRead = canRead;
             info.canWrite = canWrite;
