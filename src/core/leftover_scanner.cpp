@@ -21,6 +21,10 @@ namespace sak {
 
 namespace {
 constexpr int kPowerShellTimeoutMs = 15'000;
+// Hard backstop on how many files calculateSize will enumerate for one folder's size, so even a
+// pathological install tree (millions of files) cannot make the walk unbounded when nothing
+// cancels.
+constexpr int kMaxSizeWalkEntries = 200'000;
 constexpr int kMinConcatNameLen = 4;
 constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kServiceOutputValueOffset = 14;
@@ -258,7 +262,7 @@ QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<boo
     item.type = LeftoverItem::Type::Folder;
     item.path = QDir::toNativeSeparators(install_dir.absolutePath());
     item.description = "Program install directory still exists";
-    item.sizeBytes = calculateSize(install_dir.absolutePath());
+    item.sizeBytes = calculateSize(install_dir.absolutePath(), stopRequested);
     // Route through classifyRisk so a shared publisher/OS install location (e.g. a program
     // whose InstallLocation is Program Files\Common Files) is Risky, not auto-selected.
     item.risk = classifyRisk(item.path, item.type);
@@ -323,7 +327,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
             item.type = LeftoverItem::Type::Folder;
             item.path = QDir::toNativeSeparators(entry.absoluteFilePath());
             item.description = QString("Leftover folder in %1").arg(basePath);
-            item.sizeBytes = calculateSize(entry.absoluteFilePath());
+            item.sizeBytes = calculateSize(entry.absoluteFilePath(), stopRequested);
             item.risk = classifyRisk(item.path, item.type);
             items.append(item);
             continue;
@@ -346,7 +350,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
             item.type = LeftoverItem::Type::Folder;
             item.path = QDir::toNativeSeparators(sub.absoluteFilePath());
             item.description = "Leftover folder under publisher directory";
-            item.sizeBytes = calculateSize(sub.absoluteFilePath());
+            item.sizeBytes = calculateSize(sub.absoluteFilePath(), stopRequested);
             item.risk = classifyRisk(item.path, item.type);
             items.append(item);
         }
@@ -909,17 +913,27 @@ bool LeftoverScanner::isPublisherDir(const QString& dirNameLower) const {
     return false;
 }
 
-qint64 LeftoverScanner::calculateSize(const QString& path) {
+qint64 LeftoverScanner::calculateSize(const QString& path, const std::atomic<bool>& stopRequested) {
     QFileInfo info(path);
     if (info.isFile()) {
         return info.size();
     }
 
     qint64 total = 0;
+    int seen = 0;
     QDirIterator it(path,
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        // Poll the shared cancel flag INSIDE the walk: scan() only checks stopRequested between
+        // phases/items, so without this a size accounting of a huge install tree (an installer that
+        // recorded InstallLocation=C:\ or a very large game/dev folder) would keep enumerating to
+        // completion after a DeadlineCanceller already fired -- the deadline would be theater. The
+        // entry cap is a hard backstop that bounds the walk even when nothing cancels.
+        if (stopRequested.load() || seen >= kMaxSizeWalkEntries) {
+            break;
+        }
+        ++seen;
         it.next();
         total += it.fileInfo().size();
     }

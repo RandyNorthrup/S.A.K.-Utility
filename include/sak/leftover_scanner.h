@@ -103,7 +103,11 @@ private:
     [[nodiscard]] bool isPublisherDir(const QString& dirNameLower) const;
 
     static const QStringList kProtectedPaths;
-    [[nodiscard]] static qint64 calculateSize(const QString& path);
+    /// @brief Sum the sizes of all files under @p path. Polls @p stopRequested inside the walk (and
+    ///        caps the entry count) so a cooperative cancel / deadline actually interrupts a huge
+    ///        subtree, rather than running to completion after the outer scan was told to stop.
+    [[nodiscard]] static qint64 calculateSize(const QString& path,
+                                              const std::atomic<bool>& stopRequested);
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

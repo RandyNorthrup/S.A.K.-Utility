@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 46);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 47);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -268,6 +268,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.port_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_shares")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.list_installed_programs")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("software.scan_leftovers")));
         QVERIFY(read_only_ids.contains(QStringLiteral("security.scan_vulnerabilities")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
@@ -890,6 +891,46 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // software.scan_leftovers with no program_name fails cleanly (never resolves/scans).
+    void scanLeftoversMissingNameFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("program_name")));
+    }
+
+    // software.scan_leftovers is read-only: even in a chat/research session it RUNS (never
+    // policy_blocked) and, for a program that does not exist, returns an honest resolution failure
+    // rather than a masked success. Deterministic: a random GUID-like name is never an installed
+    // program's exact display name.
+    void scanLeftoversUnknownProgramRunsUngatedAndFailsHonestly() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("program_name"),
+                                       QStringLiteral("NoSuchProgram_5f3c1a9e-dead-beef")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        // Ran (not policy_blocked) and honestly reports the program was not found.
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QString message = result.value(QStringLiteral("message")).toString();
+        QVERIFY2(!message.contains(QStringLiteral("policy")), qPrintable(message));
+        QVERIFY2(message.contains(QStringLiteral("No installed program")) ||
+                     message.contains(QStringLiteral("installed-programs registry")),
+                 qPrintable(message));
     }
 
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to

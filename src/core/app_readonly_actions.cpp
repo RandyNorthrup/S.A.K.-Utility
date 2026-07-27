@@ -11,6 +11,7 @@
 #include "sak/active_connections_monitor.h"
 #include "sak/advanced_search_types.h"
 #include "sak/advanced_search_worker.h"
+#include "sak/advanced_uninstall_types.h"
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
@@ -31,6 +32,7 @@
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/iso_analyzer.h"
+#include "sak/leftover_scanner.h"
 #include "sak/mbox_parser.h"
 #include "sak/memory_benchmark_worker.h"
 #include "sak/network_adapter_inspector.h"
@@ -41,6 +43,7 @@
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/port_scanner.h"
+#include "sak/program_enumerator.h"
 #include "sak/pst_parser.h"
 #include "sak/restore_point_manager.h"
 #include "sak/smart_disk_analyzer.h"
@@ -81,6 +84,10 @@ namespace {
 // large scan does not blow the tool-result size. Truncation is reported, never
 // silent.
 constexpr int kMaxListedPrograms = 500;
+// software.scan_leftovers: cap the item sample surfaced (running risk/size totals stay accurate)
+// and the wall time (an Advanced scan shells out to netsh/sc/schtasks + walks standard dirs).
+constexpr int kMaxLeftoverItems = 1000;
+constexpr int kLeftoverScanTimeoutMs = 5 * 60 * 1000;  // 5 min
 constexpr int kMaxReportedFindings = 200;
 constexpr int kMaxInventoryWarnings = 200;
 constexpr int kMaxPreviewMessages = 200;
@@ -421,6 +428,195 @@ AppActionResult listInstalledPrograms(const QJsonObject&) {
                      {QStringLiteral("truncated"), truncated},
                      {QStringLiteral("programs"), listed}};
     return {true, QStringLiteral("Found %1 installed program(s)").arg(programs.size()), data};
+}
+
+// software.scan_leftovers
+// ---------------------------------------------------------------------------
+// Read-only preview of what an uninstall would leave behind: drives the app's OWN LeftoverScanner
+// (the same engine the Advanced Uninstall panel + the mutating uninstall_program cleanup phase use)
+// at ScanLevel::Moderate to find orphaned files/folders/registry entries for a named program. It
+// only READS + classifies (risk Safe/Review/Risky) -- it never deletes anything (the delete step
+// lives in UninstallWorker's cleanup, which this op does not touch). The Advanced level (services/
+// tasks/firewall/startup) is NOT exposed: those phases have no error channel and would report a
+// failed enumeration as an empty scan (fail-open). Intended to run AFTER an uninstall; on a
+// still-installed program it will also list the program's LIVE files (the scanner cannot tell
+// "orphaned" from "current" without a pre-uninstall snapshot), so the count is "items matching this
+// program in leftover locations", not "confirmed orphans".
+
+// clampLine (truncate to a bounded single line) is defined further down; forward-declared so the
+// leftover serializers here can reuse it.
+QString clampLine(const QString& line);
+
+// Resolve a program NAME to its ProgramInfo for a leftover scan. Unlike the uninstall resolver
+// (which requires a SILENT uninstall command, since it is about to RUN the uninstaller), a
+// read-only scan works for ANY installed program -- so match purely by display name and refuse only
+// on ZERO or AMBIGUOUS matches (distinct by registry key path: an x86/x64 pair or two same-named
+// apps would otherwise scan the wrong one's leftovers).
+std::optional<AppActionResult> resolveProgramForLeftoverScan(const QString& name,
+                                                             ProgramInfo& out) {
+    ProgramEnumerator enumerator;
+    const QVector<ProgramInfo> programs = enumerator.enumerateRegistryProgramsSync();
+    if (programs.isEmpty()) {
+        // A running Windows box always has registered uninstall entries, so an empty list is a
+        // failed enumeration, not an honest zero (fail-open close).
+        return AppActionResult{false,
+                               QStringLiteral("Could not read the installed-programs registry"),
+                               {}};
+    }
+    ProgramInfo match;
+    QSet<QString> distinct_keys;
+    for (const ProgramInfo& program : programs) {
+        if (program.displayName.compare(name, Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        match = program;
+        distinct_keys.insert(program.registryKeyPath.isEmpty() ? program.installLocation
+                                                               : program.registryKeyPath);
+    }
+    if (distinct_keys.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("No installed program named '%1'").arg(name),
+                               {}};
+    }
+    if (distinct_keys.size() > 1) {
+        return AppActionResult{false,
+                               QStringLiteral("'%1' matches %2 distinct installed programs; use a "
+                                              "more specific name")
+                                   .arg(name)
+                                   .arg(distinct_keys.size()),
+                               {}};
+    }
+    out = match;
+    return std::nullopt;
+}
+
+QString leftoverTypeToString(LeftoverItem::Type type) {
+    switch (type) {
+    case LeftoverItem::Type::File:
+        return QStringLiteral("file");
+    case LeftoverItem::Type::Folder:
+        return QStringLiteral("folder");
+    case LeftoverItem::Type::RegistryKey:
+        return QStringLiteral("registry_key");
+    case LeftoverItem::Type::RegistryValue:
+        return QStringLiteral("registry_value");
+    case LeftoverItem::Type::Service:
+        return QStringLiteral("service");
+    case LeftoverItem::Type::ScheduledTask:
+        return QStringLiteral("scheduled_task");
+    case LeftoverItem::Type::FirewallRule:
+        return QStringLiteral("firewall_rule");
+    case LeftoverItem::Type::StartupEntry:
+        return QStringLiteral("startup_entry");
+    case LeftoverItem::Type::ShellExtension:
+        return QStringLiteral("shell_extension");
+    }
+    return QStringLiteral("unknown");
+}
+
+QString leftoverRiskToString(LeftoverItem::RiskLevel risk) {
+    switch (risk) {
+    case LeftoverItem::RiskLevel::Safe:
+        return QStringLiteral("safe");
+    case LeftoverItem::RiskLevel::Review:
+        return QStringLiteral("review");
+    case LeftoverItem::RiskLevel::Risky:
+        return QStringLiteral("risky");
+    }
+    return QStringLiteral("unknown");
+}
+
+// Totals for the whole item set (accurate even when the surfaced array is truncated).
+struct LeftoverTotals {
+    int safe = 0;
+    int review = 0;
+    int risky = 0;
+    qint64 total_size = 0;
+};
+
+QJsonArray serializeLeftovers(const QVector<LeftoverItem>& items, LeftoverTotals& totals) {
+    QJsonArray arr;
+    for (const LeftoverItem& item : items) {
+        switch (item.risk) {
+        case LeftoverItem::RiskLevel::Safe:
+            ++totals.safe;
+            break;
+        case LeftoverItem::RiskLevel::Review:
+            ++totals.review;
+            break;
+        case LeftoverItem::RiskLevel::Risky:
+            ++totals.risky;
+            break;
+        }
+        totals.total_size += item.sizeBytes;
+        if (arr.size() >= kMaxLeftoverItems) {
+            continue;  // keep counting totals, stop growing the sample
+        }
+        QJsonObject obj{{QStringLiteral("type"), leftoverTypeToString(item.type)},
+                        {QStringLiteral("risk"), leftoverRiskToString(item.risk)},
+                        {QStringLiteral("path"), clampLine(item.path)},
+                        {QStringLiteral("description"), clampLine(item.description)},
+                        {QStringLiteral("size_bytes"), static_cast<double>(item.sizeBytes)}};
+        if (!item.registryValueName.isEmpty()) {
+            obj.insert(QStringLiteral("registry_value_name"), clampLine(item.registryValueName));
+        }
+        arr.append(obj);
+    }
+    return arr;
+}
+
+AppActionResult scanLeftovers(const QJsonObject& args) {
+    const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
+    if (name.isEmpty()) {
+        return {false, QStringLiteral("scan_leftovers requires a 'program_name' argument"), {}};
+    }
+    ProgramInfo program;
+    if (const std::optional<AppActionResult> error = resolveProgramForLeftoverScan(name, program)) {
+        return *error;
+    }
+
+    // ScanLevel::Moderate ONLY: install location + standard dirs + registry (known paths + snapshot
+    // diff). The Advanced level (services/scheduled-tasks/firewall/startup) is deliberately NOT
+    // exposed headless: those phases shell out to sc/schtasks/netsh and silently DROP all results
+    // on a nonzero exit / spawn failure / their own 15s timeout with no error channel, so a failed
+    // enumeration would be reported as an honest empty scan (fail-open). Moderate is pure Qt
+    // filesystem/registry reads. See [[assistant-dominion-deferred]] for exposing Advanced once the
+    // engine grows a per-phase reliability signal.
+    LeftoverScanner scanner(program, ScanLevel::Moderate);
+
+    // Run the synchronous scan on this (worker) thread under a wall-time deadline. The scanner
+    // polls stopRequested between phases + items AND inside calculateSize's subtree walk, so the
+    // DeadlineCanceller flipping the flag actually interrupts a runaway scan. fired() is the honest
+    // timeout signal (set only when the deadline actually triggered), so a partial result is
+    // reported with scan_complete=false, never as complete.
+    std::atomic<bool> stop{false};
+    DeadlineCanceller canceller([&stop]() { stop.store(true); }, kLeftoverScanTimeoutMs);
+    const QVector<LeftoverItem> items = scanner.scan(stop);
+    canceller.finish();
+    const bool timed_out = canceller.fired();
+
+    LeftoverTotals totals;
+    const QJsonArray arr = serializeLeftovers(items, totals);
+    QJsonObject data{{QStringLiteral("program_name"), program.displayName},
+                     {QStringLiteral("install_location"), program.installLocation},
+                     {QStringLiteral("scan_level"), QStringLiteral("moderate")},
+                     {QStringLiteral("item_count"), static_cast<int>(items.size())},
+                     {QStringLiteral("reported_count"), arr.size()},
+                     {QStringLiteral("truncated"), static_cast<int>(items.size()) > arr.size()},
+                     {QStringLiteral("safe_count"), totals.safe},
+                     {QStringLiteral("review_count"), totals.review},
+                     {QStringLiteral("risky_count"), totals.risky},
+                     {QStringLiteral("total_size_bytes"), static_cast<double>(totals.total_size)},
+                     {QStringLiteral("scan_complete"), !timed_out},
+                     {QStringLiteral("items"), arr}};
+    const QString message =
+        timed_out ? QStringLiteral("Found at least %1 leftover item(s) for '%2' (scan timed out)")
+                        .arg(items.size())
+                        .arg(program.displayName)
+                  : QStringLiteral("Found %1 leftover item(s) for '%2'")
+                        .arg(items.size())
+                        .arg(program.displayName);
+    return {true, message, data};
 }
 
 VulnerabilityScanOptions scanOptionsFromArgs(const QJsonObject& args) {
@@ -3293,6 +3489,17 @@ QJsonObject stringProp(const QString& description) {
                        {QStringLiteral("description"), description}};
 }
 
+QJsonObject scanLeftoversParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("program_name"),
+         stringProp(QStringLiteral("Exact display name of the installed program to scan for "
+                                   "leftovers (as shown by list_installed_programs)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("program_name")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject searchParamsSchema() {
     QJsonObject ext_prop{
         {QStringLiteral("type"), QStringLiteral("array")},
@@ -3796,6 +4003,15 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        QStringLiteral("security"),
                        noParamsSchema()),
         listInstalledPrograms);
+
+    add(makeDescriptor(QStringLiteral("software.scan_leftovers"),
+                       QStringLiteral("Scan for a program's leftovers"),
+                       QStringLiteral("Preview the orphaned files/folders/registry entries a "
+                                      "program's uninstall would leave behind (read-only, deletes "
+                                      "nothing); classifies each by risk"),
+                       QStringLiteral("software"),
+                       scanLeftoversParamsSchema()),
+        scanLeftovers);
 
     add(makeDescriptor(QStringLiteral("security.scan_vulnerabilities"),
                        QStringLiteral("Scan for vulnerabilities"),
