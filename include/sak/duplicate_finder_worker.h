@@ -62,6 +62,19 @@ public:
      */
     explicit DuplicateFinderWorker(const Config& config, QObject* parent = nullptr);
 
+    /**
+     * @brief Duplicate groups found by the last run.
+     *
+     * Populated on the worker thread just before resultsReady is emitted, so it is safe to read
+     * from a slot connected to WorkerBase::finished (that emit happens-after execute() returns).
+     * The GUI uses the resultsReady summary; this accessor lets a headless caller retrieve the
+     * structured groups (paths + sizes) without parsing the summary text. Empty if no duplicates
+     * were found or before a run completes.
+     */
+    [[nodiscard]] const std::vector<DuplicateGroup>& duplicateGroups() const {
+        return m_duplicate_groups;
+    }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when scanning progresses
@@ -187,4 +200,6 @@ private:
 
     Config m_config;
     sak::file_hasher m_hasher;
+    std::vector<DuplicateGroup>
+        m_duplicate_groups;  ///< Result of the last run (see duplicateGroups)
 };

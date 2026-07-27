@@ -1622,6 +1622,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # through the AsyncActionInvocation bridge, like the read-only search.
         ${CMAKE_SOURCE_DIR}/src/threading/organizer_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/input_validator.cpp
+        # organizer.find_duplicates: DuplicateFinderWorker (a QThread) driven through the
+        # AsyncActionInvocation bridge like the search/organize workers. Its raw/image bridge path
+        # is never taken (use_file_system_target=false), so the search stub below covers its two
+        # FileManagementFileSystemBridge symbols and keeps the APFS/HFS driver out of the link.
+        ${CMAKE_SOURCE_DIR}/src/threading/duplicate_finder_worker.cpp
         # W-uninstall software.uninstall_uwp_app: the ProgramEnumerator (UWP-only sync resolve)
         # + UninstallWorker (UwpRemove mode) are driven directly. The uninstall EXECUTION is not
         # unit-tested (would remove a real app); the resolve + guard + gating are. The leftover/
@@ -1686,6 +1691,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
         ${CMAKE_SOURCE_DIR}/include/sak/organizer_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/duplicate_finder_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h

@@ -18,6 +18,7 @@
 #include "sak/connectivity_tester.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/duplicate_finder_worker.h"
 #include "sak/error_codes.h"
 #include "sak/firewall_rule_auditor.h"
 #include "sak/hardware_inventory_scanner.h"
@@ -619,6 +620,175 @@ AppActionResult searchFiles(const QJsonObject& args) {
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
     worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// organizer.find_duplicates
+// ---------------------------------------------------------------------------
+
+// Bound what a single headless duplicate scan reports back to the model. The scan still examines
+// every file under the roots (that is the point), but the serialized result is capped so a
+// directory full of duplicates cannot produce a multi-megabyte tool result.
+constexpr int kMaxReportedDupGroups = 200;
+constexpr int kMaxDupFilesPerGroup = 100;
+constexpr int kMaxDupScanDirs = 64;
+// Hashing reads every file in full, so it is heavier than a text search; give the bridge a
+// 10-minute wall ceiling (with a real cooperative cancel) so an enormous tree cannot block the
+// worker thread indefinitely. The assistant tool layer applies its own outer timeout too.
+constexpr int kDupScanTimeoutMs = 10 * 60 * 1000;
+
+QJsonObject serializeDuplicateGroup(const DuplicateFinderWorker::DuplicateGroup& group) {
+    QJsonArray files;
+    for (const QString& path : group.file_paths) {
+        if (files.size() >= kMaxDupFilesPerGroup) {
+            break;
+        }
+        files.append(path);
+    }
+    return QJsonObject{{QStringLiteral("hash"), group.hash},
+                       {QStringLiteral("file_size_bytes"), static_cast<double>(group.file_size)},
+                       {QStringLiteral("wasted_bytes"), static_cast<double>(group.wasted_space)},
+                       {QStringLiteral("file_count"), static_cast<int>(group.file_paths.size())},
+                       {QStringLiteral("files"), files},
+                       {QStringLiteral("files_truncated"),
+                        group.file_paths.size() > kMaxDupFilesPerGroup}};
+}
+
+// Serialize the duplicate groups and compute the totals (returned via out-params for the message).
+QJsonObject serializeDuplicates(const std::vector<DuplicateFinderWorker::DuplicateGroup>& groups,
+                                int& total_duplicate_files,
+                                qint64& total_wasted_bytes) {
+    QJsonArray arr;
+    total_duplicate_files = 0;
+    total_wasted_bytes = 0;
+    for (const DuplicateFinderWorker::DuplicateGroup& group : groups) {
+        total_duplicate_files += std::max(0, static_cast<int>(group.file_paths.size()) - 1);
+        total_wasted_bytes += group.wasted_space;
+        if (arr.size() < kMaxReportedDupGroups) {
+            arr.append(serializeDuplicateGroup(group));
+        }
+    }
+    return QJsonObject{
+        {QStringLiteral("total_groups"), static_cast<int>(groups.size())},
+        {QStringLiteral("total_duplicate_files"), total_duplicate_files},
+        {QStringLiteral("total_wasted_bytes"), static_cast<double>(total_wasted_bytes)},
+        {QStringLiteral("reported_groups"), static_cast<int>(arr.size())},
+        {QStringLiteral("report_truncated"), arr.size() < static_cast<int>(groups.size())},
+        {QStringLiteral("groups"), arr}};
+}
+
+QStringList dupDirectoriesFromArgs(const QJsonObject& args) {
+    QStringList dirs;
+    for (const QJsonValue& value : args.value(QStringLiteral("directories")).toArray()) {
+        const QString dir = value.toString().trimmed();
+        if (!dir.isEmpty()) {
+            dirs.append(dir);
+        }
+    }
+    return dirs;
+}
+
+std::optional<AppActionResult> validateDupInputs(const QStringList& dirs) {
+    if (dirs.isEmpty()) {
+        return AppActionResult{
+            false, QStringLiteral("find_duplicates requires a non-empty 'directories' array"), {}};
+    }
+    if (dirs.size() > kMaxDupScanDirs) {
+        return AppActionResult{
+            false,
+            QStringLiteral("find_duplicates accepts at most %1 directories").arg(kMaxDupScanDirs),
+            {}};
+    }
+    for (const QString& dir : dirs) {
+        // Reject UNC/device roots -- the same SMB/credential-leak guard the other path-taking
+        // read-only ops use. A duplicate scan HASHES file contents, so a network root would also
+        // pull large amounts of data over the wire.
+        if (isNetworkOrDevicePath(dir)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("find_duplicates does not allow network/UNC or device paths"),
+                {}};
+        }
+        // Fail CLOSED on a bad directory instead of letting the worker silently skip it: the worker
+        // just logs+continues past a nonexistent/non-directory path, so a wrong path would
+        // otherwise return a dishonest "0 duplicates" success indistinguishable from a genuinely
+        // clean scan.
+        const QFileInfo info(dir);
+        if (!info.exists() || !info.isDir()) {
+            return AppActionResult{
+                false,
+                QStringLiteral("find_duplicates: not an existing directory: %1").arg(dir),
+                {}};
+        }
+    }
+    return std::nullopt;
+}
+
+AppActionResult findDuplicates(const QJsonObject& args) {
+    const QStringList dirs = dupDirectoriesFromArgs(args);
+    if (const std::optional<AppActionResult> error = validateDupInputs(dirs)) {
+        return *error;
+    }
+
+    DuplicateFinderWorker::Config config;
+    config.scanDirectories = dirs;  // QStringList is a QList<QString> == QVector<QString> in Qt6
+    config.recursive_scan = args.value(QStringLiteral("recursive")).toBool(true);
+    config.parallel_hashing = true;
+    config.use_file_system_target = false;  // never the raw/image bridge path (GUI-only)
+    const double min_size = args.value(QStringLiteral("minimum_file_size")).toDouble(1.0);
+    config.minimum_file_size = min_size > 0.0 ? static_cast<qint64>(min_size) : 0;
+
+    // Drive the WORKER directly (not a controller) via the async->sync bridge, exactly like
+    // search.find_in_files: the worker runs on its own thread, hashing bounded by kDupScanTimeoutMs
+    // and cooperatively cancellable (checkStop). Declared before the invocation so it is destroyed
+    // LAST -- on a timeout ~WorkerBase stops+joins its thread, reaping a still-running scan.
+    DuplicateFinderWorker worker(config);
+    AsyncActionInvocation inv(kDupScanTimeoutMs);
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
+        int total_dupes = 0;
+        qint64 total_wasted = 0;
+        const QJsonObject data =
+            serializeDuplicates(worker.duplicateGroups(), total_dupes, total_wasted);
+        const QString message =
+            QStringLiteral(
+                "Found %1 duplicate group(s), %2 redundant file(s), %3 bytes reclaimable")
+                .arg(static_cast<int>(worker.duplicateGroups().size()))
+                .arg(total_dupes)
+                .arg(total_wasted);
+        inv.finish({true, message, data});
+    });
+    QObject::connect(&worker,
+                     &WorkerBase::failed,
+                     inv.context(),
+                     [&inv](int, const QString& error) { inv.finish({false, error, {}}); });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+QJsonObject dupParamsSchema() {
+    QJsonObject dirs_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Absolute directory paths to scan for duplicate files (matched by content "
+                        "hash, not name)")}};
+    QJsonObject recursive_prop{{QStringLiteral("type"), QStringLiteral("boolean")},
+                               {QStringLiteral("description"),
+                                QStringLiteral("Scan subdirectories too (default true)")}};
+    QJsonObject minsize_prop{
+        {QStringLiteral("type"), QStringLiteral("integer")},
+        {QStringLiteral("description"),
+         QStringLiteral("Ignore files smaller than this many bytes (default 1, i.e. skip empty "
+                        "files)")}};
+    QJsonObject properties{{QStringLiteral("directories"), dirs_prop},
+                           {QStringLiteral("recursive"), recursive_prop},
+                           {QStringLiteral("minimum_file_size"), minsize_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("directories")}},
+                       {QStringLiteral("additionalProperties"), false}};
 }
 
 QJsonObject serializeCpu(const CpuInfo& cpu) {
@@ -2565,6 +2735,25 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
         readPst);
 }
 
+// Register the read-only file-content ops (text search + duplicate finder). Split out to keep
+// registerReadOnlyAppActionsInto within the length budget.
+void registerFileReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("search.find_in_files"),
+                       QStringLiteral("Search files"),
+                       QStringLiteral("Search a directory tree for text/regex matches in files"),
+                       QStringLiteral("search"),
+                       searchParamsSchema()),
+        searchFiles);
+
+    add(makeDescriptor(QStringLiteral("organizer.find_duplicates"),
+                       QStringLiteral("Find duplicate files"),
+                       QStringLiteral("Scan directories for duplicate files (by content hash) and "
+                                      "report the groups and reclaimable space"),
+                       QStringLiteral("organizer"),
+                       dupParamsSchema()),
+        findDuplicates);
+}
+
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
@@ -2607,12 +2796,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        isoParamsSchema()),
         analyzeIso);
 
-    add(makeDescriptor(QStringLiteral("search.find_in_files"),
-                       QStringLiteral("Search files"),
-                       QStringLiteral("Search a directory tree for text/regex matches in files"),
-                       QStringLiteral("search"),
-                       searchParamsSchema()),
-        searchFiles);
+    registerFileReadOnlyOps(add);
 
     registerDiagnosticsReadOnlyOps(add);
 

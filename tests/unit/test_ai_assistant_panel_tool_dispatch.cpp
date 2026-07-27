@@ -271,6 +271,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
@@ -515,6 +516,123 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("root_path")));
+    }
+
+    // organizer.find_duplicates drives the real DuplicateFinderWorker (a QThread) through the
+    // AsyncActionInvocation bridge, end to end + deterministically: a temp dir with two byte-
+    // identical files plus one unique file yields exactly one duplicate group of two files.
+    void findDuplicatesDetectsIdenticalFiles() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto write = [&](const QString& name, const QByteArray& content) {
+            QFile file(dir.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(content), static_cast<qint64>(content.size()));
+        };
+        write(QStringLiteral("one.bin"), "IDENTICAL DUPLICATE PAYLOAD 12345");
+        write(QStringLiteral("copy.bin"), "IDENTICAL DUPLICATE PAYLOAD 12345");
+        write(QStringLiteral("unique.bin"), "a totally different payload");
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{dir.path()}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("total_groups")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("total_duplicate_files")).toInt(), 1);
+        const QJsonArray groups = data.value(QStringLiteral("groups")).toArray();
+        QCOMPARE(groups.size(), 1);
+        QCOMPARE(groups.at(0).toObject().value(QStringLiteral("file_count")).toInt(), 2);
+    }
+
+    // organizer.find_duplicates is read-only: it runs (never policy_blocked) even in a
+    // chat/research session. An empty temp dir yields an honest zero-duplicate success.
+    void findDuplicatesRunsUngatedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{dir.path()}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("data"))
+                     .toObject()
+                     .value(QStringLiteral("total_groups"))
+                     .toInt(),
+                 0);
+    }
+
+    // organizer.find_duplicates refuses UNC/network/device roots (the scan HASHES file contents, so
+    // a network root would also pull data over the wire) -- same guard as search.find_in_files.
+    void findDuplicatesRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QStringList roots = {QStringLiteral("\\\\attacker.example.com\\share"),
+                                   QStringLiteral("//attacker.example.com/share")};
+        for (const QString& root : roots) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{root}}})
+                    .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
+                {QStringLiteral("arguments"), args}});
+            QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(root));
+            QVERIFY2(result.value(QStringLiteral("message"))
+                         .toString()
+                         .contains(QStringLiteral("network")),
+                     qPrintable(root));
+        }
+    }
+
+    // organizer.find_duplicates with no directories fails cleanly (never starts a worker).
+    void findDuplicatesMissingDirsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("directories")));
+    }
+
+    // organizer.find_duplicates FAILS CLOSED on a nonexistent directory rather than letting the
+    // worker silently skip it and return a dishonest "0 duplicates" success (the fail-open honesty
+    // rule). Deterministic: a path under a temp dir that was never created cannot exist.
+    void findDuplicatesRejectsMissingDirectory() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString missing = dir.filePath(QStringLiteral("no_such_subdir_zzz"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{missing}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("existing directory")));
     }
 
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to

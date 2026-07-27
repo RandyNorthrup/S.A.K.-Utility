@@ -79,6 +79,10 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
                  total_duplicates,
                  total_wasted);
 
+    // Expose the structured groups (for a headless caller) before emitting the summary. This runs
+    // on the worker thread before resultsReady/finished, so a finished-slot read is race-free.
+    m_duplicate_groups = duplicate_groups;
+
     // Generate and emit results
     QString summary = generateSummary(duplicate_groups);
     Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
@@ -110,6 +114,7 @@ auto DuplicateFinderWorker::executeFileSystemTarget() -> std::expected<void, sak
     const auto duplicate_groups =
         buildVirtualDuplicateGroups(hashed_result.value(), total_duplicates, total_wasted);
 
+    m_duplicate_groups = duplicate_groups;  // expose structured groups before the summary emit
     Q_EMIT resultsReady(generateSummary(duplicate_groups), total_duplicates, total_wasted);
     return {};
 }
