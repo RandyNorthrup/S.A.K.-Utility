@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 38);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 46);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -273,6 +273,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("organizer.preview_organize")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.list_archive")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.scan_directory")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
@@ -793,6 +794,102 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("existing directory")));
+    }
+
+    // organizer.preview_organize drives the SAME OrganizerWorker in preview_mode through the
+    // AsyncActionInvocation bridge and end to end: three files across two categories yield an
+    // accurate per-category plan, and -- the whole point of a dry run -- NOT ONE file is moved and
+    // no category subfolder is created.
+    void previewOrganizePlansWithoutMoving() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto write = [&](const QString& name) {
+            QFile file(dir.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("x"), static_cast<qint64>(1));
+        };
+        write(QStringLiteral("a.jpg"));
+        write(QStringLiteral("b.png"));
+        write(QStringLiteral("c.txt"));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject mapping{{QStringLiteral("Images"),
+                                   QJsonArray{QStringLiteral("jpg"), QStringLiteral("png")}},
+                                  {QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("target_directory"), dir.path()},
+                                      {QStringLiteral("category_mapping"), mapping}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("files_to_move")).toInt(), 3);
+        QCOMPARE(data.value(QStringLiteral("category_count")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("collisions")).toInt(), 0);
+        QVERIFY(!data.value(QStringLiteral("plan_truncated")).toBool());  // 3 files, well under cap
+        const QJsonObject categories = data.value(QStringLiteral("categories")).toObject();
+        QCOMPARE(categories.value(QStringLiteral("Images")).toInt(), 2);
+        QCOMPARE(categories.value(QStringLiteral("Docs")).toInt(), 1);
+
+        // A dry run must not touch the filesystem: every source file stays put and no category
+        // subfolder was created.
+        QVERIFY(QFileInfo(dir.filePath(QStringLiteral("a.jpg"))).isFile());
+        QVERIFY(QFileInfo(dir.filePath(QStringLiteral("b.png"))).isFile());
+        QVERIFY(QFileInfo(dir.filePath(QStringLiteral("c.txt"))).isFile());
+        QVERIFY(!QFileInfo(dir.filePath(QStringLiteral("Images"))).exists());
+        QVERIFY(!QFileInfo(dir.filePath(QStringLiteral("Docs"))).exists());
+    }
+
+    // organizer.preview_organize is read-only: it runs (never policy_blocked) even in a
+    // chat/research session, since it moves nothing.
+    void previewOrganizeRunsUngatedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("target_directory"), dir.path()},
+                                      {QStringLiteral("category_mapping"), mapping}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("data"))
+                     .toObject()
+                     .value(QStringLiteral("files_to_move"))
+                     .toInt(),
+                 0);
+    }
+
+    // organizer.preview_organize refuses UNC/network/device targets before any stat (a symlink or
+    // literal UNC target would leak the NTLM hash on the directory scan) -- same guard as the
+    // apply.
+    void previewOrganizeRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("target_directory"),
+                                       QStringLiteral("\\\\attacker.example.com\\share")},
+                                      {QStringLiteral("category_mapping"), mapping}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
     }
 
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to

@@ -14,6 +14,7 @@
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
+#include "sak/app_organizer_helpers.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/connectivity_tester.h"
 #include "sak/cpu_benchmark_worker.h"
@@ -36,6 +37,7 @@
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_probe_worker.h"
 #include "sak/network_share_browser.h"
+#include "sak/organizer_worker.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/port_scanner.h"
@@ -100,6 +102,16 @@ constexpr qint64 kMaxArchiveListBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
 constexpr int kMaxScanEntriesCollected = 2000;
 constexpr int kMaxScanDepth = 64;
 constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
+// organizer.preview_organize: cap the per-move sample surfaced (planned counts stay accurate) and
+// the wall time. The preview scans only the target's immediate files (non-recursive), so it is
+// fast.
+constexpr int kMaxPreviewMoveSamples = 500;
+constexpr int kOrganizePreviewTimeoutMs = 2 * 60 * 1000;  // 2 min
+// In-memory ceiling on how many immediate files the preview collects + plans. Bounds peak RSS on a
+// pathological directory (a model-reachable read-only op must not be a memory DoS). Far above any
+// real organize target's immediate-file count; beyond it the plan is an honest lower bound
+// (plan_truncated). Sibling read ops cap collection the same way (kMaxScanEntriesCollected).
+constexpr int kMaxPreviewPlannedFiles = 50'000;
 // Shared by every deadline-cancel monitor (see DeadlineCanceller): how often it polls the clock.
 constexpr int kDeadlinePollMs = 50;
 constexpr int kMaxShares = 200;
@@ -869,6 +881,161 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
     worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
     return result;
+}
+
+// organizer.preview_organize
+// ---------------------------------------------------------------------------
+// Read-only DRY RUN of organizer.organize_directory: drive the SAME OrganizerWorker with
+// preview_mode=true so it scans the target's immediate files, categorizes them by the model's
+// category_mapping, and PLANS the moves WITHOUT touching a single file (execute() returns right
+// after planning). Reports the plan (per-category counts, collisions, a bounded per-move sample)
+// so the model can show the user what an apply would do first -- symmetric to
+// partition.preview_operation vs partition.apply_operation. A failed scan surfaces the worker's
+// failed() signal as an honest failure (not an empty-success).
+
+// Validate the preview inputs. Mirrors the apply's validateOrganizeInputs but omits the
+// collision_strategy check (a preview never moves, so the strategy is irrelevant to the plan).
+std::optional<AppActionResult> validatePreviewOrganizeInputs(
+    const QString& target, const QMap<QString, QStringList>& mapping) {
+    if (target.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("preview_organize requires a 'target_directory'"),
+                               {}};
+    }
+    if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
+            target, QStringLiteral("preview_organize"), QStringLiteral("target_directory"))) {
+        return *unsafe;
+    }
+    const QFileInfo info(target);
+    if (!info.exists() || !info.isDir()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("target_directory is not an existing directory: %1").arg(target),
+            {}};
+    }
+    if (mapping.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "preview_organize requires a non-empty 'category_mapping' of "
+                                   "category -> file extensions"),
+                               {}};
+    }
+    if (const QString unsafe = firstUnsafeCategory(mapping); !unsafe.isEmpty()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("category name '%1' is not a valid subfolder name (no path separators, "
+                           "':', '.' or '..')")
+                .arg(unsafe),
+            {}};
+    }
+    return std::nullopt;
+}
+
+QJsonObject serializePreviewPlan(const std::vector<OrganizerWorker::MoveOperation>& ops,
+                                 const QString& target,
+                                 bool plan_truncated) {
+    QMap<QString, int> category_counts;
+    int collisions = 0;
+    QJsonArray moves;
+    for (const OrganizerWorker::MoveOperation& op : ops) {
+        ++category_counts[op.category];
+        if (op.would_overwrite) {
+            ++collisions;
+        }
+        if (moves.size() < kMaxPreviewMoveSamples) {
+            moves.append(QJsonObject{{QStringLiteral("source"),
+                                      clampLine(QString::fromStdString(op.source.string()))},
+                                     {QStringLiteral("destination"),
+                                      clampLine(QString::fromStdString(op.destination.string()))},
+                                     {QStringLiteral("category"), op.category},
+                                     {QStringLiteral("would_overwrite"), op.would_overwrite}});
+        }
+    }
+    QJsonObject categories;
+    for (auto it = category_counts.begin(); it != category_counts.end(); ++it) {
+        categories.insert(it.key(), it.value());
+    }
+    // plan_truncated: the scan hit kMaxPreviewPlannedFiles, so files_to_move/categories/collisions
+    // count only the scanned prefix and are an honest LOWER BOUND, not the full directory.
+    return QJsonObject{{QStringLiteral("target_directory"), target},
+                       {QStringLiteral("files_to_move"), static_cast<int>(ops.size())},
+                       {QStringLiteral("category_count"), static_cast<int>(category_counts.size())},
+                       {QStringLiteral("collisions"), collisions},
+                       {QStringLiteral("categories"), categories},
+                       {QStringLiteral("moves"), moves},
+                       {QStringLiteral("moves_truncated"),
+                        static_cast<int>(ops.size()) > moves.size()},
+                       {QStringLiteral("plan_truncated"), plan_truncated}};
+}
+
+AppActionResult previewOrganize(const QJsonObject& args) {
+    const QString target = args.value(QStringLiteral("target_directory")).toString().trimmed();
+    const QMap<QString, QStringList> mapping =
+        categoryMappingFromArgs(args.value(QStringLiteral("category_mapping")).toObject());
+    if (const std::optional<AppActionResult> error = validatePreviewOrganizeInputs(target,
+                                                                                   mapping)) {
+        return *error;
+    }
+
+    OrganizerWorker::Config config;
+    config.target_directory = target;
+    config.category_mapping = mapping;
+    config.preview_mode = true;  // DRY RUN: scan + plan only, never move a file
+    config.create_subdirectories = false;
+    config.collision_strategy = QStringLiteral("skip");
+    config.max_preview_files = kMaxPreviewPlannedFiles;  // bound peak memory on a huge directory
+
+    // Drive the WORKER directly via the async->sync bridge, like organize_directory but in preview
+    // mode. Declared before the invocation so it is destroyed LAST: on a timeout ~WorkerBase stops
+    // and joins the thread after run() returns, so a still-running scan is reaped, never leaked.
+    OrganizerWorker worker(config);
+    AsyncActionInvocation inv(kOrganizePreviewTimeoutMs);
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
+        const bool truncated = worker.planTruncated();
+        const QJsonObject data =
+            serializePreviewPlan(worker.plannedOperations(), target, truncated);
+        const int files = static_cast<int>(worker.plannedOperations().size());
+        const QString message =
+            truncated ? QStringLiteral(
+                            "Preview: at least %1 file(s) would be organized (scan stopped at "
+                            "the preview limit)")
+                            .arg(files)
+                      : QStringLiteral("Preview: %1 file(s) would be organized").arg(files);
+        inv.finish({true, message, data});
+    });
+    QObject::connect(
+        &worker, &WorkerBase::failed, inv.context(), [&inv](int, const QString& error) {
+            inv.finish({false, error.isEmpty() ? QStringLiteral("Preview failed") : error, {}});
+        });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();  // cooperative stop before teardown (no-op if already finished)
+    return result;
+}
+
+QJsonObject previewOrganizeParamsSchema() {
+    QJsonObject mapping_prop{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("additionalProperties"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                     {QStringLiteral("items"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Map of category name -> list of file extensions (no dot); the preview "
+                        "reports which files would move into a same-named subfolder of the "
+                        "target")}};
+    QJsonObject target_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral("Absolute path of the directory to preview organizing")}};
+    QJsonObject properties{{QStringLiteral("target_directory"), target_prop},
+                           {QStringLiteral("category_mapping"), mapping_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("target_directory"),
+                                   QStringLiteral("category_mapping")}},
+                       {QStringLiteral("additionalProperties"), false}};
 }
 
 // List a .zip archive's contents WITHOUT extracting. Drives the app's OWN
@@ -3585,6 +3752,15 @@ void registerFileReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("organizer"),
                        dupParamsSchema()),
         findDuplicates);
+
+    add(makeDescriptor(QStringLiteral("organizer.preview_organize"),
+                       QStringLiteral("Preview organizing a directory"),
+                       QStringLiteral("Dry run of organizer.organize_directory: report which files "
+                                      "WOULD move into which category subfolder (per-category "
+                                      "counts, collisions, a per-move sample) without moving any"),
+                       QStringLiteral("organizer"),
+                       previewOrganizeParamsSchema()),
+        previewOrganize);
 
     add(makeDescriptor(QStringLiteral("files.list_archive"),
                        QStringLiteral("List a .zip archive"),

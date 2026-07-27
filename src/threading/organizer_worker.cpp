@@ -29,13 +29,18 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
     m_moved_count = 0;
+    m_plan_truncated = false;
 
-    // Validate target directory path
+    // Validate target directory path. A preview is a pure dry run that writes NOTHING, so it must
+    // not require write access -- otherwise a read-only inspection fails on directories the user
+    // can fully read (notably folders carrying FILE_ATTRIBUTE_READONLY, which Windows sets on many
+    // ordinary user folders and does not actually enforce for directories). An apply still requires
+    // write permission.
     sak::path_validation_config dir_cfg;
     dir_cfg.must_exist = true;
     dir_cfg.must_be_directory = true;
     dir_cfg.check_read_permission = true;
-    dir_cfg.check_write_permission = true;
+    dir_cfg.check_write_permission = !m_config.preview_mode;
     auto dir_result = sak::input_validator::validatePath(
         std::filesystem::path(m_config.target_directory.toStdString()), dir_cfg);
     if (!dir_result) {
@@ -139,6 +144,18 @@ auto OrganizerWorker::scanDirectory()
 
         if (entry.is_regular_file()) {
             files.push_back(entry.path());
+            // Preview mode bounds peak memory: a model-reachable dry run on a pathological
+            // directory (hundreds of thousands of immediate files) must not spike RSS building the
+            // file list plus one MoveOperation per file. Stop collecting at the cap and mark the
+            // plan truncated so the reported count is an honest lower bound. An apply
+            // (preview_mode=false, so max_preview_files unused) stays uncapped -- it must move
+            // every matching file.
+            if (m_config.preview_mode && m_config.max_preview_files > 0 &&
+                files.size() >= static_cast<size_t>(m_config.max_preview_files)) {
+                m_plan_truncated = true;
+                sak::logInfo("Preview scan capped at {} files", m_config.max_preview_files);
+                break;
+            }
         }
     }
 

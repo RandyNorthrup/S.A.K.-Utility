@@ -13,6 +13,7 @@
 #include "sak/app_action_guards.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
+#include "sak/app_organizer_helpers.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/email_export_worker.h"
@@ -477,61 +478,9 @@ AppActionResult exportPst(const QJsonObject& args) {
 // ---------------------------------------------------------------------------
 // organizer.organize_directory
 // ---------------------------------------------------------------------------
-
-// Convert the model-facing {category: [ext, ...]} object into the worker's
-// QMap<category, extensions>. Non-string / empty extensions are dropped; a category
-// with no usable extensions is dropped. Returns empty if nothing usable was given.
-QMap<QString, QStringList> categoryMappingFromArgs(const QJsonObject& mapping) {
-    QMap<QString, QStringList> result;
-    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
-        if (it.key().isEmpty() || !it.value().isArray()) {
-            continue;
-        }
-        QStringList extensions;
-        for (const QJsonValue& ext : it.value().toArray()) {
-            QString value = ext.toString().trimmed();
-            if (value.startsWith(QLatin1Char('.'))) {
-                value = value.mid(1);
-            }
-            if (!value.isEmpty()) {
-                extensions.append(value);
-            }
-        }
-        if (!extensions.isEmpty()) {
-            result.insert(it.key(), extensions);
-        }
-    }
-    return result;
-}
-
-// A category name becomes a SINGLE subdirectory component under the target
-// (planMove: target_dir / category). Reject anything that is not a plain component
-// so it cannot escape the target: a separator would make it multi-component or
-// (with std::filesystem operator/) an absolute path that REPLACES the target; a
-// colon is a Windows drive / alternate-data-stream; "." / ".." are traversal. This
-// is the containment guard for a prompt-injected category_mapping.
-bool isSafeCategoryName(const QString& name) {
-    if (name == QLatin1String(".") || name == QLatin1String("..")) {
-        return false;
-    }
-    for (const QChar ch : name) {
-        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Returns the first category key that is not a safe subdirectory name, or empty if
-// all are safe.
-QString firstUnsafeCategory(const QMap<QString, QStringList>& mapping) {
-    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
-        if (!isSafeCategoryName(it.key())) {
-            return it.key();
-        }
-    }
-    return QString();
-}
+// categoryMappingFromArgs / isSafeCategoryName / firstUnsafeCategory are shared with the
+// read-only organizer.preview_organize op (app_organizer_helpers.h) so the preview and the
+// apply categorize + containment-check a model-supplied mapping identically.
 
 // Validate the target directory + collision strategy. Returns an error result to
 // short-circuit on, or nullopt when the inputs are acceptable.
