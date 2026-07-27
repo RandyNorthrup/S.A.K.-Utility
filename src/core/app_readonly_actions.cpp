@@ -21,6 +21,8 @@
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/duplicate_finder_worker.h"
+#include "sak/email_profile_manager.h"
+#include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_scanner.h"
@@ -114,6 +116,10 @@ constexpr int kMaxPstItems = 500;
 constexpr int kMaxRecoverItems = 1000;
 constexpr int kRecoverScanTimeoutMs = 5 * 60 * 1000;  // 5 min
 constexpr int kDefaultPstItemLimit = 200;
+// email.list_profiles: bound the enumerated client-profile inventory and the per-profile data-file
+// list so a machine with many linked stores cannot produce an unbounded tool result.
+constexpr int kMaxEmailProfiles = 200;
+constexpr int kMaxEmailDataFiles = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
 constexpr int kMaxUsers = 200;
@@ -1574,6 +1580,106 @@ QString clampHeader(const QString& value) {
         return value;
     }
     return value.left(kMaxHeaderChars) + QStringLiteral("...");
+}
+
+QString emailClientTypeToString(EmailClientType type) {
+    switch (type) {
+    case EmailClientType::Outlook:
+        return QStringLiteral("outlook");
+    case EmailClientType::Thunderbird:
+        return QStringLiteral("thunderbird");
+    case EmailClientType::WindowsMail:
+        return QStringLiteral("windows_mail");
+    case EmailClientType::Other:
+        break;
+    }
+    return QStringLiteral("other");
+}
+
+QJsonObject serializeEmailDataFile(const EmailDataFile& file) {
+    return QJsonObject{{QStringLiteral("path"), clampLine(file.path)},
+                       {QStringLiteral("type"), file.type},
+                       {QStringLiteral("size_bytes"), static_cast<double>(file.size_bytes)},
+                       {QStringLiteral("linked"), file.is_linked}};
+}
+
+QJsonObject serializeEmailProfile(const EmailClientProfile& profile) {
+    QJsonArray files;
+    for (const EmailDataFile& file : profile.data_files) {
+        if (files.size() >= kMaxEmailDataFiles) {
+            break;
+        }
+        files.append(serializeEmailDataFile(file));
+    }
+    return QJsonObject{
+        {QStringLiteral("client_type"), emailClientTypeToString(profile.client_type)},
+        {QStringLiteral("client_name"), clampLine(profile.client_name)},
+        {QStringLiteral("client_version"), clampLine(profile.client_version)},
+        {QStringLiteral("profile_name"), clampLine(profile.profile_name)},
+        {QStringLiteral("profile_path"), clampLine(profile.profile_path)},
+        {QStringLiteral("total_size_bytes"), static_cast<double>(profile.total_size_bytes)},
+        {QStringLiteral("data_file_count"), static_cast<int>(profile.data_files.size())},
+        {QStringLiteral("data_files"), files},
+        {QStringLiteral("data_files_truncated"), profile.data_files.size() > files.size()}};
+}
+
+// email.list_profiles: enumerate installed email clients (Outlook / Thunderbird / Windows Mail)
+// and their profiles + linked data-file paths, driving the app's OWN EmailProfileManager
+// discovery (registry + profile-dir scan, no network). discoverProfiles() is fully synchronous
+// and emits profilesDiscovered inline, captured by a direct connection with no event loop -- the
+// hardware_scan / list_adapters pattern. Read-only: it reads metadata only (client/profile names,
+// data-file PATHS and sizes) and never opens a mailbox or exports any content -- the secret-bearing
+// copy lives on EmailProfileManager::backupProfiles, which is deliberately NOT exposed here.
+// Honesty (fail-open audit): a genuinely mail-clientless machine returns empty, which IS a valid
+// normal state -- but a FAILED source read (a corrupt profiles.ini, an unreadable registry key)
+// would ALSO return empty. discoveryReliable() distinguishes them (QSettings::status()); an empty
+// result from a failed read is reported as an honest failure, not a masked "0 profiles" success.
+AppActionResult listEmailProfiles(const QJsonObject&) {
+    EmailProfileManager manager;
+    QVector<EmailClientProfile> profiles;
+    bool captured = false;
+    QObject::connect(&manager,
+                     &EmailProfileManager::profilesDiscovered,
+                     &manager,
+                     [&profiles, &captured](QVector<EmailClientProfile> result) {
+                         profiles = std::move(result);
+                         captured = true;
+                     });
+    manager.discoverProfiles();
+    if (!captured) {
+        return {false, QStringLiteral("Email profile discovery did not complete"), {}};
+    }
+    const bool reliable = manager.discoveryReliable();
+    if (!reliable && profiles.isEmpty()) {
+        return {false,
+                QStringLiteral("Email profile discovery hit a read error (a client's registry key "
+                               "or profiles.ini could not be read) and found nothing -- the result "
+                               "is unreliable, not a confirmed absence of mail clients"),
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const EmailClientProfile& profile : profiles) {
+        if (listed.size() >= kMaxEmailProfiles) {
+            break;
+        }
+        listed.append(serializeEmailProfile(profile));
+    }
+    QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), profiles.size() > listed.size()},
+                     {QStringLiteral("discovery_complete"), reliable},
+                     {QStringLiteral("profiles"), listed}};
+    QString message =
+        profiles.isEmpty()
+            ? QStringLiteral(
+                  "No email client profiles found (no Outlook/Thunderbird/Windows Mail "
+                  "configuration detected)")
+            : QStringLiteral("Found %1 email client profile(s)").arg(profiles.size());
+    if (!reliable) {
+        message += QStringLiteral(" (partial: at least one source could not be read)");
+    }
+    return {true, message, data};
 }
 
 QJsonObject serializeMboxMessage(const MboxMessage& message) {
@@ -3450,6 +3556,16 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("email"),
                        recoverDeletedParamsSchema()),
         recoverDeleted);
+
+    add(makeDescriptor(QStringLiteral("email.list_profiles"),
+                       QStringLiteral("List email client profiles"),
+                       QStringLiteral(
+                           "Enumerate installed email clients (Outlook/Thunderbird/Windows Mail) "
+                           "and their profiles + linked data-file paths (read-only, metadata "
+                           "only -- no mailbox contents)"),
+                       QStringLiteral("email"),
+                       noParamsSchema()),
+        listEmailProfiles);
 }
 
 // Register the read-only file-content ops (text search + duplicate finder). Split out to keep

@@ -1631,6 +1631,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # tree. Enumeration not unit-tested (no hand-buildable PST fixture, like read_pst); path
         # guards + honesty (reachableReliable) + no-body serialization covered by shape.
         ${CMAKE_SOURCE_DIR}/src/core/deleted_item_scanner.cpp
+        # email.list_profiles: EmailProfileManager discovery (registry + profile-dir scan,
+        # synchronous, emits inline). Enumeration is env-dependent (real host mail clients);
+        # the op-layer shape + honest empty-success + metadata-only serialization are certed.
+        ${CMAKE_SOURCE_DIR}/src/core/email_profile_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_attachment_saver.cpp
         # W2b organizer.organize_directory: the OrganizerWorker (a QThread) is driven
         # through the AsyncActionInvocation bridge, like the read-only search.
@@ -1718,6 +1722,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/email_export_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/pst_parser.h
         ${CMAKE_SOURCE_DIR}/include/sak/deleted_item_scanner.h
+        ${CMAKE_SOURCE_DIR}/include/sak/email_profile_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/organizer_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/duplicate_finder_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h

@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 34);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 35);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -284,6 +284,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_pst")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.recover_deleted")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.run_benchmark")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("email.list_profiles")));
     }
 
     // W1a: identify_image drives the app's FileImageSource detection on a real
@@ -456,6 +457,35 @@ private Q_SLOTS:
             QCOMPARE(enum_vals.size(), 2);
         }
         QVERIFY(found);
+    }
+
+    // email.list_profiles: env-dependent enumeration (the real host's mail clients), so assert
+    // only shape-level invariants that hold whether or not any client is installed -- an honest
+    // success with a bounded profiles array and reported_count <= profile_count. Metadata only:
+    // no mailbox contents, no secret export.
+    void listEmailProfilesReportsShape() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.list_profiles")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.contains(QStringLiteral("profile_count")));
+        // The test host reads its (possibly empty) mail config cleanly, so discovery is reliable
+        // -- proves the honesty channel reports a complete read, not a masked failure.
+        QVERIFY(data.value(QStringLiteral("discovery_complete")).toBool());
+        const int profile_count = data.value(QStringLiteral("profile_count")).toInt(-1);
+        QVERIFY(profile_count >= 0);
+        const QJsonArray profiles = data.value(QStringLiteral("profiles")).toArray();
+        QVERIFY(profiles.size() <= profile_count);
+        QVERIFY(data.value(QStringLiteral("reported_count")).toInt() == profiles.size());
+        for (const QJsonValue& value : profiles) {
+            const QJsonObject profile = value.toObject();
+            QVERIFY(profile.contains(QStringLiteral("client_type")));
+            QVERIFY(profile.contains(QStringLiteral("data_files")));
+        }
     }
 
     // W1a: a read-only op runs even in a chat/research session -- the per-action

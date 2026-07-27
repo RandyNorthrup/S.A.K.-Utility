@@ -197,8 +197,15 @@ EmailProfileManager::EmailProfileManager(QObject* parent) : QObject(parent) {}
 // Public API
 // ============================================================================
 
+void EmailProfileManager::noteSettingsStatus(const QSettings& settings) {
+    if (settings.status() != QSettings::NoError) {
+        m_discovery_reliable = false;
+    }
+}
+
 void EmailProfileManager::discoverProfiles() {
     m_cancelled.store(false);
+    m_discovery_reliable = true;
     m_profiles.clear();
 
     auto outlook = discoverOutlookProfiles();
@@ -446,6 +453,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
                            QSettings::NativeFormat);
 
         QStringList profile_names = registry.childGroups();
+        noteSettingsStatus(registry);  // a failed key read must not read as "no profiles"
         if (profile_names.isEmpty()) {
             continue;
         }
@@ -496,6 +504,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
 void EmailProfileManager::discoverWmsProfiles(QVector<sak::EmailClientProfile>& results) {
     QSettings wms(kWmsProfilesPath, QSettings::NativeFormat);
     QStringList wms_profiles = wms.childGroups();
+    noteSettingsStatus(wms);
     for (const auto& name : wms_profiles) {
         if (m_cancelled.load()) {
             break;
@@ -550,6 +559,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverThunderbirdProfile
 
     QSettings ini(profiles_ini, QSettings::IniFormat);
     QStringList groups = ini.childGroups();
+    noteSettingsStatus(ini);  // a present-but-corrupt profiles.ini must not read as "no profiles"
 
     for (const auto& group : groups) {
         if (m_cancelled.load()) {

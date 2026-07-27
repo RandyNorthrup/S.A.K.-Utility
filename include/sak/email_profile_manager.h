@@ -17,6 +17,7 @@
 #include <atomic>
 
 class QJsonObject;
+class QSettings;
 
 class EmailProfileManager : public QObject {
     Q_OBJECT
@@ -26,6 +27,12 @@ public:
 
     /// Discover all installed email clients and their profiles
     void discoverProfiles();
+
+    /// @brief Whether the last discoverProfiles() run read every source cleanly.
+    /// False when a registry key or profiles.ini could not be read (QSettings
+    /// reported AccessError/FormatError) -- so an empty/partial result can be
+    /// reported as an honest failure instead of a masked "no profiles" success.
+    [[nodiscard]] bool discoveryReliable() const { return m_discovery_reliable; }
 
     /// Backup selected profiles to a target directory
     void backupProfiles(const QVector<int>& profile_indices, const QString& backup_path);
@@ -46,7 +53,12 @@ Q_SIGNALS:
     void errorOccurred(QString error);
 
 private:
+    /// Mark discovery unreliable if a QSettings read reported an error.
+    void noteSettingsStatus(const QSettings& settings);
+
     std::atomic<bool> m_cancelled{false};
+    /// Set true at the start of each discoverProfiles(); cleared on any read error.
+    bool m_discovery_reliable{true};
     QVector<sak::EmailClientProfile> m_profiles;
 
     /// Original data-file path -> the actual on-disk backup basename that was
