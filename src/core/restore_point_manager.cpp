@@ -71,7 +71,17 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
                                          QString("try { "
                                                  "  Checkpoint-Computer -Description '%1' "
                                                  "    -RestorePointType 'APPLICATION_UNINSTALL' "
-                                                 "    -ErrorAction Stop; "
+                                                 "    -ErrorAction Stop "
+                                                 "    -WarningVariable wv "
+                                                 "    -WarningAction SilentlyContinue; "
+                                                 // Checkpoint-Computer does NOT throw when Windows
+                                                 // SKIPS creation under the once-per-24h frequency
+                                                 // throttle -- it only writes a warning (and exits
+                                                 // 0). Fail on that warning so a silent no-op is
+                                                 // never reported as a created restore point; its
+                                                 // '1440'/'frequency' text routes to the throttle
+                                                 // branch below.
+                                                 "  if ($wv) { Write-Error $wv; exit 1; } "
                                                  "  Write-Output 'SUCCESS'; "
                                                  "} catch { "
                                                  "  Write-Error $_.Exception.Message; "

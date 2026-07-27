@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 36);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 37);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -3025,6 +3025,86 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("No network adapter")));
+    }
+
+    // W-restore-point: diagnostics.create_restore_point is listed mutating + requires_admin (needs
+    // elevation), NOT destructive (it ADDS a recovery checkpoint, removes nothing), NOT
+    // catastrophic, NOT read_only -- the gate fires at the Assisted-confirm tier.
+    void createRestorePointListedMutatingAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("diagnostics.create_restore_point")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-restore-point: refused in a chat/research session (mutating; never runs
+    // Checkpoint-Computer).
+    void createRestorePointBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"description\":\"Before update\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-restore-point: an empty/absent description is refused up front. This is the op-level guard
+    // that keeps an empty string from reaching RestorePointManager::createRestorePoint, whose
+    // Q_ASSERT(!description.isEmpty()) would abort a Debug build -- so the op MUST fail cleanly
+    // BEFORE the engine. Env-independent (validated before any elevation/PowerShell).
+    void createRestorePointEmptyDescriptionFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"description\":\"   \"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("description")));
+    }
+
+    // W-restore-point: a description longer than the engine's 64-char cap is refused up front, so
+    // the op never reports a full label the engine would silently truncate. Env-independent.
+    void createRestorePointTooLongDescriptionFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString long_desc(80, QLatin1Char('x'));  // > 64
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"description\":\"%1\"}").arg(long_desc)}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("description")));
     }
 
     // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless

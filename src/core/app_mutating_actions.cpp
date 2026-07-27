@@ -29,6 +29,7 @@
 #include "sak/partition_safety_validator.h"
 #include "sak/program_enumerator.h"
 #include "sak/pst_parser.h"
+#include "sak/restore_point_manager.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
 #include "sak/worker_base.h"
@@ -2217,6 +2218,102 @@ PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& i
     return resolution;
 }
 
+// ---------------------------------------------------------------------------
+// diagnostics.create_restore_point: create a System Restore checkpoint.
+// ---------------------------------------------------------------------------
+
+// The engine (RestorePointManager) silently truncates the label to 64 chars; enforce the same
+// bound here (schema + op guard) so the op never reports a full description the engine shortened.
+constexpr int kMaxRestorePointDescriptionChars = 64;
+
+QJsonObject createRestorePointParamsSchema() {
+    QJsonObject desc_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("minLength"), 1},
+        {QStringLiteral("maxLength"), kMaxRestorePointDescriptionChars},
+        {QStringLiteral("description"),
+         QStringLiteral(
+             "Label for the restore point (1-64 chars), e.g. \"Before driver update\"")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("description"), desc_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("description")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Create a Windows System Restore checkpoint via RestorePointManager (the same engine the app uses
+// to protect its own destructive ops). SYNC + bounded (a single Checkpoint-Computer PowerShell call
+// with a 2-min ceiling in the engine). The model-supplied description is REQUIRED non-empty (the
+// engine Q_ASSERTs on empty, which would abort a Debug build) and is escaped by the engine before
+// it reaches PowerShell (single-quote doubling inside a single-quoted -Command). Mutating +
+// requires_admin (Checkpoint-Computer needs elevation, checked inside the engine too); NOT
+// destructive (it ADDS a recovery checkpoint, removes nothing) and not catastrophic -- the panel
+// gate fires at the Assisted-confirm tier. Honesty: a disabled System Restore, a missing elevation,
+// the once-per-24h throttle, or any PowerShell failure are each reported as an honest failure via
+// the captured restorePointFailed signal, never a false success.
+AppActionResult createRestorePoint(const QJsonObject& args) {
+    const QString description = args.value(QStringLiteral("description")).toString().trimmed();
+    if (description.isEmpty()) {
+        return {false,
+                QStringLiteral("create_restore_point requires a non-empty 'description'"),
+                {}};
+    }
+    if (description.size() > kMaxRestorePointDescriptionChars) {
+        return {false,
+                QStringLiteral("'description' must be %1 characters or fewer")
+                    .arg(kMaxRestorePointDescriptionChars),
+                {}};
+    }
+
+    RestorePointManager manager;
+    if (!manager.isSystemRestoreEnabled()) {
+        return {false,
+                QStringLiteral("System Restore is disabled on this system; enable it before "
+                               "creating a restore point"),
+                {}};
+    }
+
+    QString error_text;
+    QObject::connect(&manager,
+                     &RestorePointManager::restorePointFailed,
+                     &manager,
+                     [&error_text](const QString& error) {
+                         if (error_text.isEmpty()) {
+                             error_text = error;
+                         }
+                     });
+
+    if (!manager.createRestorePoint(description)) {
+        return {false,
+                error_text.isEmpty()
+                    ? QStringLiteral("Failed to create restore point (creating one needs "
+                                     "administrator rights; run S.A.K. elevated)")
+                    : error_text,
+                {}};
+    }
+    return {true,
+            QStringLiteral("Created system restore point '%1'").arg(description),
+            QJsonObject{{QStringLiteral("description"), description}}};
+}
+
+// Register the diagnostics-mutating ops. Split out to keep registerMutatingAppActionsInto within
+// the length budget.
+void registerDiagnosticsMutatingOps(const AddMutatingActionFn& add) {
+    // diagnostics.create_restore_point: creates a System Restore checkpoint -> mutating +
+    // requires_admin, but NOT destructive (it adds a recovery point, removes nothing) and not
+    // catastrophic. The gate fires at the Assisted-confirm tier.
+    AppActionDescriptor restore_point = mutatingDescriptor(
+        QStringLiteral("diagnostics.create_restore_point"),
+        QStringLiteral("Create a system restore point"),
+        QStringLiteral("Create a Windows System Restore checkpoint (a recovery point to roll back "
+                       "to); adds a checkpoint, changes no user data"),
+        QStringLiteral("diagnostics"));
+    restore_point.params_schema = createRestorePointParamsSchema();
+    restore_point.requires_admin = true;  // Checkpoint-Computer needs elevation; additive, not
+                                          // destructive
+    add(restore_point, createRestorePoint);
+}
+
 int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
@@ -2274,6 +2371,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     apply.requires_admin = true;
     add(apply, applyPartitionOperation);
 
+    registerDiagnosticsMutatingOps(add);
     registerSoftwareOps(add);
     registerNetworkMutatingOps(add);
     registerFileMutatingOps(add);
