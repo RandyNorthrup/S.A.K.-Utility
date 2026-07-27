@@ -162,11 +162,12 @@ struct ExportPathLabels {
 std::optional<AppActionResult> requireNewOrEmptyDir(const QString& output_path,
                                                     const QString& dest_field) {
     const QFileInfo out_info(output_path);
-    if (pathIsReparsePoint(out_info)) {
-        return AppActionResult{
-            false,
-            QStringLiteral("%1 must not be a symlink or junction: %2").arg(dest_field, output_path),
-            {}};
+    if (pathReparseUnsafe(output_path)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "%1 must not be a symlink or junction (or under one): %2")
+                                   .arg(dest_field, output_path),
+                               {}};
     }
     if (out_info.exists()) {
         if (!out_info.isDir()) {
@@ -205,9 +206,11 @@ std::optional<AppActionResult> validateExportPaths(const QString& path,
             {}};
     }
     const QFileInfo info(path);
-    if (pathIsReparsePoint(info)) {
+    if (pathReparseUnsafe(path)) {
         return AppActionResult{false,
-                               QStringLiteral("%1 must not be a symlink or junction: %2")
+                               QStringLiteral(
+                                   "%1 must not be a symlink or junction (or under one): "
+                                   "%2")
                                    .arg(labels.source_field, path),
                                {}};
     }
@@ -499,13 +502,15 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
                                {}};
     }
     const QFileInfo info(target);
-    // Screen for a reparse point before the following exists()/isDir() stat (a symlink target to a
-    // UNC share would leak the NTLM hash; and this op RELOCATES files, so following a link off the
-    // intended tree is doubly wrong).
-    if (pathIsReparsePoint(info)) {
+    // Screen the leaf AND ancestors for a reparse point before the following exists()/isDir() stat
+    // (a symlink/junction -- at the target OR any ancestor -- to a UNC share would leak the NTLM
+    // hash; and this op RELOCATES files, so following a link off the intended tree is doubly
+    // wrong).
+    if (pathReparseUnsafe(target)) {
         return AppActionResult{
             false,
-            QStringLiteral("target_directory must not be a symlink or junction: %1").arg(target),
+            QStringLiteral("target_directory must not be a symlink or junction (or under one): %1")
+                .arg(target),
             {}};
     }
     if (!info.exists() || !info.isDir()) {
@@ -748,11 +753,12 @@ AppActionResult flashImage(const QJsonObject& args) {
         return {false, QStringLiteral("flash_image does not allow a network/UNC image path"), {}};
     }
     const QFileInfo info(image_path);
-    // Screen for a reparse point before the following isFile() stat (a symlink to a UNC image
-    // would leak the NTLM hash on the stat).
-    if (pathIsReparsePoint(info)) {
+    // Screen the leaf AND ancestors for a reparse point before the following isFile() stat (a
+    // symlink/junction -- at the image OR any ancestor -- to a UNC image would leak the NTLM hash).
+    if (pathReparseUnsafe(image_path)) {
         return {false,
-                QStringLiteral("image_path must not be a symlink or junction: %1").arg(image_path),
+                QStringLiteral("image_path must not be a symlink or junction (or under one): %1")
+                    .arg(image_path),
                 {}};
     }
     if (!info.isFile()) {
@@ -1921,14 +1927,15 @@ std::optional<AppActionResult> validateCompressSources(const QStringList& source
                     .arg(source),
                 {}};
         }
-        // Screen for a reparse point BEFORE the target-following exists(): a symlink to a UNC
-        // share would otherwise leak the NTLM hash here (the engine safely skips symlink sources,
-        // but this validation runs first).
+        // Screen the leaf AND ancestors for a reparse point BEFORE the target-following exists(): a
+        // symlink/junction -- at the source OR any ancestor -- to a UNC share would otherwise leak
+        // the NTLM hash here (the engine safely skips symlink sources, but this validation runs
+        // first).
         const QFileInfo info(source);
-        if (pathIsReparsePoint(info)) {
+        if (pathReparseUnsafe(source)) {
             return AppActionResult{false,
-                                   QStringLiteral(
-                                       "compress_zip does not allow a symlink/junction source: %1")
+                                   QStringLiteral("compress_zip does not allow a symlink/junction "
+                                                  "source (or one in its path): %1")
                                        .arg(source),
                                    {}};
         }
@@ -1964,11 +1971,13 @@ std::optional<AppActionResult> validateCompressInputs(const QStringList& sources
         return AppActionResult{false, QStringLiteral("output_path must end in .zip"), {}};
     }
     const QFileInfo zip_info(zip_path);
-    // Screen before exists() (which follows a symlink target off-box, leaking the NTLM hash).
-    if (pathIsReparsePoint(zip_info)) {
+    // Screen the leaf AND ancestors before exists() (which follows a symlink/junction target -- at
+    // the leaf OR any ancestor -- off-box, leaking the NTLM hash).
+    if (pathReparseUnsafe(zip_path)) {
         return AppActionResult{
             false,
-            QStringLiteral("output_path must not be a symlink or junction: %1").arg(zip_path),
+            QStringLiteral("output_path must not be a symlink or junction (or under one): %1")
+                .arg(zip_path),
             {}};
     }
     if (zip_info.exists()) {

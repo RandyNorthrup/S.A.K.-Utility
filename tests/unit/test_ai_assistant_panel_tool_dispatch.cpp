@@ -29,9 +29,11 @@
 #include "sak/uninstall_worker.h"
 
 #include <QComboBox>
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcess>
 #include <QSemaphore>
 #include <QSet>
 #include <QSignalSpy>
@@ -1012,6 +1014,70 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // R1 sweep: the shared path guards now reject a path whose ANCESTOR directory is a reparse
+    // point (symlink/junction), not just the leaf -- an ancestor junction to a UNC target would
+    // otherwise leak the NTLM hash on the following stat. Certified through refuseUnsafePath
+    // (imaging.scan_recoverable) since every file op shares pathReparseUnsafe. Deterministic on
+    // Windows via an unprivileged directory junction (mklink /J).
+    //
+    // Scope: this proves the guard REFUSES the ancestor-junction path (the functional wiring). It
+    // cannot observe the security-critical property that NO stat traversed the ancestor (that needs
+    // a UNC target + network observation, infeasible headless), so a LOCAL junction is used. The
+    // no-leak property rests on pathReparseUnsafe running the ancestor walk BEFORE the leaf stat
+    // (ancestor-first operand order), enforced + documented in app_action_guards.h -- this test
+    // certifies the observable half.
+    void refuseUnsafePathRejectsAncestorJunction() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString realTarget = dir.filePath(QStringLiteral("real"));
+        QVERIFY(QDir().mkpath(realTarget));
+        {
+            QFile file(realTarget + QStringLiteral("/disk.img"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("x"), static_cast<qint64>(1));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const auto runScan = [&](const QString& imagePath) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("image_path"), imagePath}})
+                    .toJson(QJsonDocument::Compact));
+            return panel.runAppActionTool(QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
+                {QStringLiteral("arguments"), args}});
+        };
+
+        // Control: the real path (no reparse ancestor) is accepted -- confirms the temp tree itself
+        // is clean, so a refusal below is attributable to the junction, not the environment.
+        const QJsonObject control = runScan(realTarget + QStringLiteral("/disk.img"));
+        QVERIFY2(control.value(QStringLiteral("success")).toBool(),
+                 qPrintable(control.value(QStringLiteral("message")).toString()));
+
+        // Create a directory junction (unprivileged) and scan an image THROUGH it.
+        const QString junction = dir.filePath(QStringLiteral("jlink"));
+        QProcess mklink;
+        mklink.start(QStringLiteral("cmd"),
+                     {QStringLiteral("/c"),
+                      QStringLiteral("mklink"),
+                      QStringLiteral("/J"),
+                      QDir::toNativeSeparators(junction),
+                      QDir::toNativeSeparators(realTarget)});
+        if (!mklink.waitForFinished(10'000) || mklink.exitCode() != 0 ||
+            !QFileInfo(junction).isJunction()) {
+            QSKIP("could not create a directory junction on this host");
+        }
+
+        const QJsonObject viaJunction = runScan(junction + QStringLiteral("/disk.img"));
+        QVERIFY(!viaJunction.value(QStringLiteral("success")).toBool());
+        const QString message = viaJunction.value(QStringLiteral("message")).toString();
+        QVERIFY2(message.contains(QStringLiteral("junction")) ||
+                     message.contains(QStringLiteral("symlink")) ||
+                     message.contains(QStringLiteral("path")),
+                 qPrintable(message));
     }
 
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to

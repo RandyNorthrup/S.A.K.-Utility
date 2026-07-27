@@ -693,10 +693,14 @@ std::optional<AppActionResult> refuseUnsafePath(const QString& path,
             QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
             {}};
     }
-    if (pathIsReparsePoint(path)) {
+    // Screen the leaf AND every ancestor directory for a reparse point: an ancestor
+    // junction/symlink to a UNC target would leak the NTLM hash on the following stat just as a
+    // leaf one would (R1).
+    if (pathReparseUnsafe(path)) {
         return AppActionResult{
             false,
-            QStringLiteral("%1 does not allow a symlink/junction %2: %3").arg(op_name, noun, path),
+            QStringLiteral("%1 does not allow a symlink/junction %2 (or one in its path): %3")
+                .arg(op_name, noun, path),
             {}};
     }
     return std::nullopt;

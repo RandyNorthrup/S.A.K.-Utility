@@ -4,9 +4,11 @@
 #pragma once
 
 #include <QChar>
+#include <QDir>
 #include <QFileInfo>
 #include <QLatin1Char>
 #include <QString>
+#include <QStringList>
 
 /// @file app_action_guards.h
 /// @brief Path guards shared by every AI-assistant app-action module.
@@ -45,6 +47,61 @@ namespace sak {
 }
 [[nodiscard]] inline bool pathIsReparsePoint(const QString& path) {
     return pathIsReparsePoint(QFileInfo(path));
+}
+
+/// True if any ANCESTOR directory component of @p path is a reparse point (symlink/junction).
+///
+/// pathIsReparsePoint above screens only the LEAF. But if an ANCESTOR is a symlink/junction to a
+/// UNC target (C:\link\sub\file where C:\link -> \\host\share), the first target-FOLLOWING stat
+/// (exists/isFile/isDir/open) resolves the ancestor during path traversal and performs the SMB/NTLM
+/// handshake, leaking the credential hash -- exactly what the leaf guard is meant to stop, evaded
+/// via an intermediate component. This closes that endemic gap: every model-supplied path is
+/// screened for a reparse ANCESTOR too, before any following stat.
+///
+/// The walk goes ROOT -> LEAF on purpose (SAFETY, not just style): isSymLink()/isJunction() read a
+/// component's OWN reparse attribute WITHOUT following it, and by checking a shallower prefix
+/// before a deeper one, a reparse ancestor is caught BEFORE we ever stat a deeper path that would
+/// traverse it (and trigger the very handshake we prevent). Each stat therefore only traverses
+/// ancestors already verified clean. The path is lexically cleaned first (Windows canonicalizes
+/// ".." without following links, so a cleaned ancestor set matches what CreateFile will actually
+/// traverse).
+[[nodiscard]] inline bool pathHasReparsePointAncestor(const QString& path) {
+    const QString absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    const QStringList parts = absolute.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    const bool absoluteRoot = absolute.startsWith(QLatin1Char('/'));
+    QString prefix;
+    // Stop at parts.size() - 1: the last component is the LEAF, covered by pathIsReparsePoint.
+    for (qsizetype i = 0; i + 1 < parts.size(); ++i) {
+        if (i == 0) {
+            prefix = absoluteRoot ? QLatin1Char('/') + parts.at(0) : parts.at(0);
+            // A bare drive root ("C:") has no reparse attribute of its own -- skip it.
+            if (parts.at(0).endsWith(QLatin1Char(':'))) {
+                continue;
+            }
+        } else {
+            prefix += QLatin1Char('/') + parts.at(i);
+        }
+        if (pathIsReparsePoint(QFileInfo(prefix))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Combined leaf + ancestor reparse screen: true if @p path itself OR any ancestor directory is a
+/// symlink/junction. Use this before any target-following stat on a model-supplied path.
+///
+/// ORDER IS SECURITY-CRITICAL: the ancestor walk MUST run first. The leaf check pathIsReparsePoint
+/// statically reads only the leaf's OWN attribute, but the OS still has to RESOLVE the full path to
+/// reach the leaf -- and path resolution FOLLOWS reparse points in ancestor (non-final) components
+/// (FILE_FLAG_OPEN_REPARSE_POINT spares only the final component). So statting the leaf of
+/// C:\link\sub\file where C:\link is a junction to \\host\share would itself trigger the SMB/NTLM
+/// handshake this guard exists to prevent. Running pathHasReparsePointAncestor first short-circuits
+/// (it reads each ancestor's own attribute root->leaf without following) so a bad ancestor is
+/// refused WITHOUT ever statting the leaf; the leaf stat runs only once every ancestor is proven
+/// clean, so it traverses only safe components.
+[[nodiscard]] inline bool pathReparseUnsafe(const QString& path) {
+    return pathHasReparsePointAncestor(path) || pathIsReparsePoint(path);
 }
 
 /// Cap on the MBOX size a headless op will index. MboxParser::readMessages builds
