@@ -16,6 +16,7 @@
 #include "sak/app_partition_op_parse.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
+#include "sak/ethernet_config_manager.h"
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
@@ -30,6 +31,7 @@
 #include "sak/uninstall_worker.h"
 #include "sak/worker_base.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -1139,6 +1141,111 @@ void registerSoftwareOps(const AddMutatingActionFn& add) {
     add(uninstall_win32, uninstallWin32Program);
 }
 
+// ---------------------------------------------------------------------------
+// network.set_adapter_dhcp: reset an Ethernet adapter to automatic (DHCP).
+// ---------------------------------------------------------------------------
+
+QJsonObject setAdapterDhcpParamsSchema() {
+    QJsonObject name_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral("Exact name of the network adapter to reset to DHCP -- any dedicated "
+                        "adapter (Ethernet OR Wi-Fi), e.g. \"Ethernet\" or \"Wi-Fi\"; as shown by "
+                        "network.list_adapters. Briefly drops that adapter's connectivity.")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("adapter_name"), name_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("adapter_name")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Resolve the model-supplied adapter name against the system's OWN adapter list (case-insensitive
+// exact match). listEthernetAdapters() returns every "dedicated" adapter netsh reports -- which
+// includes Wi-Fi and other non-loopback adapters, NOT wired-only -- so this op is honestly a
+// per-adapter DHCP reset, not Ethernet-exclusive. Returns the authoritative system spelling, or
+// empty. This is the anti-injection barrier: only a real, system-sourced name ever reaches netsh,
+// so a prompt-injected or bogus name is refused before any command runs.
+QString resolveEthernetAdapter(EthernetConfigManager& manager, const QString& requested) {
+    const QStringList adapters = manager.listEthernetAdapters();
+    for (const QString& candidate : adapters) {
+        if (candidate.compare(requested, Qt::CaseInsensitive) == 0) {
+            return candidate;
+        }
+    }
+    return QString();
+}
+
+// Reset a named network adapter (Ethernet or Wi-Fi) to automatic (DHCP) via EthernetConfigManager
+// (netsh interface ip set ... source=dhcp). SYNC + bounded (a couple of ~10s netsh calls, shell-
+// free via runProcess -- no interpolation). The adapter name is exact-matched against the system's
+// own adapter list first, so a bogus/injected name never reaches netsh. netsh set needs elevation,
+// so a non-elevated run fails HONESTLY, never silently. Mutating + requires_admin; NOT destructive
+// (reversible config change, no data loss) and not catastrophic -- the panel gate still fires (chat
+// refuses; Assisted confirms with the adapter name shown).
+AppActionResult setAdapterDhcp(const QJsonObject& args) {
+    const QString adapter = args.value(QStringLiteral("adapter_name")).toString().trimmed();
+    if (adapter.isEmpty()) {
+        return {false, QStringLiteral("set_adapter_dhcp requires an 'adapter_name' argument"), {}};
+    }
+
+    EthernetConfigManager manager;
+    const QString resolved = resolveEthernetAdapter(manager, adapter);
+    if (resolved.isEmpty()) {
+        const QStringList adapters = manager.listEthernetAdapters();
+        return {false,
+                QStringLiteral("No network adapter named '%1' (available: %2)")
+                    .arg(adapter,
+                         adapters.isEmpty() ? QStringLiteral("none found") : adapters.join(", ")),
+                {}};
+    }
+
+    QString error_text;
+    QObject::connect(&manager,
+                     &EthernetConfigManager::errorOccurred,
+                     &manager,
+                     [&error_text](const QString& error) {
+                         if (error_text.isEmpty()) {
+                             error_text = error;
+                         }
+                     });
+
+    // A DHCP snapshot: isValid() requires a non-empty adapterName + backupTimestamp and
+    // (dhcpEnabled || an IP); restoreSettings(dhcp) sets IPv4 to DHCP (authoritative, checked) and
+    // best-effort sets DNS to automatic (restoreDhcpMode discards the DNS-set result), so the
+    // message asserts only the verified IPv4 outcome.
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = resolved;
+    snapshot.dhcpEnabled = true;
+    snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+    if (!manager.restoreSettings(snapshot, resolved)) {
+        return {false,
+                error_text.isEmpty()
+                    ? QStringLiteral("Failed to set adapter '%1' to DHCP (changing network config "
+                                     "needs administrator rights; run S.A.K. elevated)")
+                          .arg(resolved)
+                    : error_text,
+                {}};
+    }
+    return {true,
+            QStringLiteral("Set adapter '%1' to automatic (DHCP)").arg(resolved),
+            QJsonObject{{QStringLiteral("adapter_name"), resolved},
+                        {QStringLiteral("dhcp_enabled"), true}}};
+}
+
+// Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
+// length budget.
+void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
+    AppActionDescriptor dhcp = mutatingDescriptor(
+        QStringLiteral("network.set_adapter_dhcp"),
+        QStringLiteral("Set an adapter to DHCP"),
+        QStringLiteral("Reset a network adapter (Ethernet or Wi-Fi) to automatic (DHCP) IPv4 and "
+                       "DNS; briefly drops that adapter's connectivity"),
+        QStringLiteral("network"));
+    dhcp.params_schema = setAdapterDhcpParamsSchema();
+    dhcp.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
+    add(dhcp, setAdapterDhcp);
+}
+
 }  // namespace
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
@@ -1349,6 +1456,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     add(apply, applyPartitionOperation);
 
     registerSoftwareOps(add);
+    registerNetworkMutatingOps(add);
 
     return registered;
 }

@@ -1793,6 +1793,83 @@ private Q_SLOTS:
                     .contains(QStringLiteral("No installed")));
     }
 
+    // W-net-dhcp: network.set_adapter_dhcp is listed mutating + requires_admin (netsh set needs
+    // elevation), NOT destructive (reversible config change, no data loss), NOT catastrophic, NOT
+    // read_only. Confirms the gate WILL fire but at the low-friction (Assisted-confirm) tier.
+    void setAdapterDhcpListedMutatingAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("network.set_adapter_dhcp")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-net-dhcp: missing adapter_name fails cleanly (never touches netsh).
+    void setAdapterDhcpMissingAdapterFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("adapter_name")));
+    }
+
+    // W-net-dhcp: refused in a chat/research session (mutating; never runs netsh).
+    void setAdapterDhcpBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
+            {QStringLiteral("arguments"), QStringLiteral("{\"adapter_name\":\"Ethernet\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-net-dhcp: a name matching no system Ethernet adapter fails cleanly after a REAL adapter
+    // enumeration -- the exact-match guard refuses it BEFORE any netsh set, so no config changes.
+    // Deterministic + env-tolerant: this bogus name is never a real adapter (and on a host with no
+    // dedicated adapter the list is empty), so it always fails with "No network adapter".
+    void setAdapterDhcpUnknownAdapterFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"adapter_name\":\"SAK No Such Adapter ZZZ 9f3c\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("No network adapter")));
+    }
+
     // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless
     // uninstall from launching an interactive uninstaller. It accepts a publisher quiet command
     // and an MSI (building a /qn removal), and REFUSES a bare interactive uninstallString.

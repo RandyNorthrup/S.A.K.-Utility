@@ -1608,6 +1608,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # is driven directly. Its writer/parser chain must link even though the MBOX-EML
         # test path only exercises the EmlWriter.
         ${CMAKE_SOURCE_DIR}/src/core/app_mutating_actions.cpp
+        # network.set_adapter_dhcp: EthernetConfigManager (netsh, no-shell runProcess) driven
+        # directly. The DHCP EXECUTION is not unit-tested (needs admin + would change the host's
+        # network); the adapter exact-match guard + gating are.
+        ${CMAKE_SOURCE_DIR}/src/core/ethernet_config_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
@@ -1701,6 +1705,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/windows_user_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/network_share_browser.h
+        ${CMAKE_SOURCE_DIR}/include/sak/ethernet_config_manager.h
     )
     set_target_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES
         AUTOMOC ON
