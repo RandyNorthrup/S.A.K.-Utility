@@ -137,18 +137,6 @@ QJsonObject serializeExportResult(const EmailExportResult& result, bool item_ids
 // (op_name/file_kind/max_bytes vary; the security-critical guards must NOT be duplicated or they
 // could drift). Guards BOTH paths against UNC/device forms: the source must not open an SMB/device
 // path (credential leak) and the destination must not write onto a network/device path.
-// A path that is a reparse point (symlink / junction). Detected via QFileInfo::isSymLink /
-// isJunction, which read the LINK's own attributes and do NOT stat the target -- unlike exists()/
-// isFile()/isDir(), which FOLLOW the link. A symlink whose target is a UNC share makes a following
-// stat perform an SMB session-setup that leaks the user's NTLM hash off-box, so every
-// model-supplied path is screened here BEFORE any following stat (isNetworkOrDevicePath only sees
-// the literal string, so a drive-letter symlink to \\host\share slips past it). The archive engine
-// likewise skips symlink entries; this closes the same hole in the op-layer validation, which runs
-// first.
-bool pathIsReparsePoint(const QFileInfo& info) {
-    return info.isSymLink() || info.isJunction();
-}
-
 // Field/verb labels so the shared path validators emit the CALLER's schema field names -- a model
 // reading the error must be able to correct the RIGHT argument (extract_zip uses archive_path /
 // destination_dir, not path / output_path). Defaults match the email export ops so their messages
@@ -560,6 +548,15 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
                                {}};
     }
     const QFileInfo info(target);
+    // Screen for a reparse point before the following exists()/isDir() stat (a symlink target to a
+    // UNC share would leak the NTLM hash; and this op RELOCATES files, so following a link off the
+    // intended tree is doubly wrong).
+    if (pathIsReparsePoint(info)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("target_directory must not be a symlink or junction: %1").arg(target),
+            {}};
+    }
     if (!info.exists() || !info.isDir()) {
         return AppActionResult{
             false,
@@ -800,6 +797,13 @@ AppActionResult flashImage(const QJsonObject& args) {
         return {false, QStringLiteral("flash_image does not allow a network/UNC image path"), {}};
     }
     const QFileInfo info(image_path);
+    // Screen for a reparse point before the following isFile() stat (a symlink to a UNC image
+    // would leak the NTLM hash on the stat).
+    if (pathIsReparsePoint(info)) {
+        return {false,
+                QStringLiteral("image_path must not be a symlink or junction: %1").arg(image_path),
+                {}};
+    }
     if (!info.isFile()) {
         return {false, QStringLiteral("No such image file: %1").arg(image_path), {}};
     }

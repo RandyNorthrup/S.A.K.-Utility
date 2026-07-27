@@ -393,10 +393,37 @@ AppActionResult scanVulnerabilities(const QJsonObject& args) {
     return {true, message, data};
 }
 
+// Refuse a model-supplied path that is unsafe to stat: a network/UNC/device path (literal) OR a
+// reparse point (symlink/junction) whose target could be off-box -- either would leak the NTLM
+// hash on the following exists()/isFile()/isDir() stat (see app_action_guards.h). Returns a
+// ready-to-return failure, or nullopt. @p noun labels the path in the reparse message. Shared by
+// every read-only file/dir op so the guard cannot drift between them or from the mutating module.
+std::optional<AppActionResult> refuseUnsafePath(const QString& path,
+                                                const QString& op_name,
+                                                const QString& noun) {
+    if (isNetworkOrDevicePath(path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
+            {}};
+    }
+    if (pathIsReparsePoint(path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 does not allow a symlink/junction %2: %3").arg(op_name, noun, path),
+            {}};
+    }
+    return std::nullopt;
+}
+
 AppActionResult identifyImage(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     if (path.isEmpty()) {
         return {false, QStringLiteral("identify_image requires a 'path' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, QStringLiteral("identify_image"), QStringLiteral("path"))) {
+        return *unsafe;
     }
     const QFileInfo info(path);
     if (!info.exists() || !info.isFile()) {
@@ -483,10 +510,9 @@ AppActionResult analyzeIso(const QJsonObject& args) {
     if (path.isEmpty()) {
         return {false, QStringLiteral("analyze_iso requires a 'path' argument"), {}};
     }
-    if (isNetworkOrDevicePath(path)) {
-        return {false,
-                QStringLiteral("analyze_iso does not allow network/UNC or device paths"),
-                {}};
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, QStringLiteral("analyze_iso"), QStringLiteral("path"))) {
+        return *unsafe;
     }
     const QFileInfo info(path);
     if (!info.isFile()) {
@@ -588,8 +614,9 @@ AppActionResult searchFiles(const QJsonObject& args) {
     if (root.isEmpty() || pattern.isEmpty()) {
         return {false, QStringLiteral("search requires 'root_path' and 'pattern'"), {}};
     }
-    if (isNetworkOrDevicePath(root)) {
-        return {false, QStringLiteral("search does not allow network/UNC or device paths"), {}};
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(root, QStringLiteral("search"), QStringLiteral("root_path"))) {
+        return *unsafe;
     }
     if (!QFileInfo(root).exists()) {
         return {false, QStringLiteral("root_path does not exist: %1").arg(root), {}};
@@ -712,14 +739,13 @@ std::optional<AppActionResult> validateDupInputs(const QStringList& dirs) {
             {}};
     }
     for (const QString& dir : dirs) {
-        // Reject UNC/device roots -- the same SMB/credential-leak guard the other path-taking
-        // read-only ops use. A duplicate scan HASHES file contents, so a network root would also
-        // pull large amounts of data over the wire.
-        if (isNetworkOrDevicePath(dir)) {
-            return AppActionResult{
-                false,
-                QStringLiteral("find_duplicates does not allow network/UNC or device paths"),
-                {}};
+        // Reject UNC/device roots AND reparse points -- the same SMB/credential-leak guard the
+        // other path-taking read-only ops use (a symlink to a UNC target would leak on the stat
+        // below). A duplicate scan also HASHES file contents, so a network root would pull large
+        // amounts of data over the wire.
+        if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
+                dir, QStringLiteral("find_duplicates"), QStringLiteral("directory"))) {
+            return *unsafe;
         }
         // Fail CLOSED on a bad directory instead of letting the worker silently skip it: the worker
         // just logs+continues past a nonexistent/non-directory path, so a wrong path would
@@ -1117,8 +1143,9 @@ AppActionResult readMbox(const QJsonObject& args) {
     if (path.isEmpty()) {
         return {false, QStringLiteral("read_mbox requires a 'path' argument"), {}};
     }
-    if (isNetworkOrDevicePath(path)) {
-        return {false, QStringLiteral("read_mbox does not allow network/UNC or device paths"), {}};
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, QStringLiteral("read_mbox"), QStringLiteral("path"))) {
+        return *unsafe;
     }
     const QFileInfo info(path);
     if (!info.isFile()) {
@@ -1287,11 +1314,9 @@ std::optional<AppActionResult> validatePstReadPath(const QString& path,
                                QStringLiteral("%1 requires a 'path' argument").arg(op_name),
                                {}};
     }
-    if (isNetworkOrDevicePath(path)) {
-        return AppActionResult{
-            false,
-            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
-            {}};
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, op_name, QStringLiteral("path"))) {
+        return *unsafe;
     }
     info = QFileInfo(path);
     if (!info.isFile()) {

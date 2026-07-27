@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QChar>
+#include <QFileInfo>
 #include <QLatin1Char>
 #include <QString>
 
@@ -28,6 +29,22 @@ namespace sak {
         return ch == QLatin1Char('\\') || ch == QLatin1Char('/');
     };
     return path.size() >= 2 && isSeparator(path.at(0)) && isSeparator(path.at(1));
+}
+
+/// True if @p info is a reparse point (symbolic link or junction).
+///
+/// This reads the LINK's own attributes and does NOT stat the target -- unlike exists()/isFile()/
+/// isDir()/size(), which FOLLOW the link. isNetworkOrDevicePath above only inspects the literal
+/// string, so a normal drive-letter path that is actually a symlink to \\host\share (or a .lnk
+/// whose target is a UNC path) slips past it; the following stat would then perform the SMB/NTLM
+/// handshake this module exists to prevent. So every model-supplied path is screened here BEFORE
+/// any following stat, and a reparse point is refused (fail closed -- an on-box symlink target is
+/// still refused, but a headless op has no need to follow one).
+[[nodiscard]] inline bool pathIsReparsePoint(const QFileInfo& info) {
+    return info.isSymLink() || info.isJunction();
+}
+[[nodiscard]] inline bool pathIsReparsePoint(const QString& path) {
+    return pathIsReparsePoint(QFileInfo(path));
 }
 
 /// Cap on the MBOX size a headless op will index. MboxParser::readMessages builds

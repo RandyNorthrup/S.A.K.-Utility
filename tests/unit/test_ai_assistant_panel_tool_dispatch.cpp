@@ -439,6 +439,79 @@ private Q_SLOTS:
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("path")));
     }
 
+    // identify_image now rejects a network/UNC path (it previously had NO UNC guard, so a bare
+    // exists()/isFile() on a UNC path would have leaked the NTLM hash).
+    void identifyImageRefusesNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("path"), QStringLiteral("\\\\host\\share\\x.iso")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // The reparse-point guard (endemic sweep): a model-supplied path that is a symlink/junction is
+    // refused BEFORE any following stat, so a link whose target is a UNC share cannot leak the NTLM
+    // hash. A Windows .lnk shortcut (creatable unprivileged) is reported by QFileInfo::isSymLink(),
+    // so it exercises the same guard as a real NTFS symlink. Covers a read-only op (read_mbox) and
+    // a mutating op (compress_zip source) through the shared refuseUnsafePath / pathIsReparsePoint.
+    void readMboxRefusesSymlinkPath() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString real = dir.filePath(QStringLiteral("real.mbox"));
+        writeSampleMbox(real);
+        const QString link = dir.filePath(QStringLiteral("link.mbox.lnk"));
+        if (!QFile::link(real, link) || !QFileInfo(link).isSymLink()) {
+            QSKIP("Could not create a symlink/shortcut on this filesystem");
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), link}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("symlink"), Qt::CaseInsensitive));
+    }
+
+    void compressZipRefusesSymlinkSource() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString real = dir.filePath(QStringLiteral("real.txt"));
+        writeTextFile(real, QByteArrayLiteral("x"));
+        const QString link = dir.filePath(QStringLiteral("link.txt.lnk"));
+        if (!QFile::link(real, link) || !QFileInfo(link).isSymLink()) {
+            QSKIP("Could not create a symlink/shortcut on this filesystem");
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = runArchiveOp(
+            panel,
+            QStringLiteral("files.compress_zip"),
+            QJsonObject{{QStringLiteral("sources"), QJsonArray{link}},
+                        {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("symlink"), Qt::CaseInsensitive));
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
+    }
+
     // W1b: search.find_in_files drives the real AdvancedSearchController + worker
     // (async, on its own thread) through the AsyncActionInvocation bridge, end to
     // end and deterministically: a temp tree with a known token yields exactly the
