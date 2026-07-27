@@ -107,11 +107,21 @@ QString parseWifiSecurityType(const QString& detail_output) {
     return {};
 }
 
-QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
+QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
+                                             bool* scan_ok,
+                                             bool include_xml) {
     const QString list_output =
         runNetsh({"wlan", "show", "profiles"}, kTimeoutNetworkReadMs, logger);
     if (list_output.isEmpty()) {
+        // netsh errored / WLAN AutoConfig unavailable: enumeration FAILED, not "0 profiles". Report
+        // the failure through scan_ok so callers do not treat it as an empty-but-successful scan.
+        if (scan_ok != nullptr) {
+            *scan_ok = false;
+        }
         return {};
+    }
+    if (scan_ok != nullptr) {
+        *scan_ok = true;
     }
 
     const QStringList profile_names = parseWifiProfileNames(list_output);
@@ -130,8 +140,11 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
         }
 
         // Store real WLANProfile XML (DPAPI-protected key), NOT the `key=clear` console text --
-        // that leaked the plaintext PSK into the backup and was not re-importable anyway.
-        info.xml_data = exportWifiProfileXml(name, kTimeoutWifiProfileMs, logger);
+        // that leaked the plaintext PSK into the backup and was not re-importable anyway. Skipped
+        // when include_xml is false (headless list op): no temp-dir/DPAPI churn, no key material.
+        if (include_xml) {
+            info.xml_data = exportWifiProfileXml(name, kTimeoutWifiProfileMs, logger);
+        }
 
         profiles.append(info);
     }

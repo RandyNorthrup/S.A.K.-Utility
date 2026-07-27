@@ -39,6 +39,7 @@
 #include "sak/thermal_monitor.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
+#include "sak/wifi_profile_scanner.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
@@ -76,6 +77,7 @@ constexpr int kMaxFirewallGaps = 100;
 constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
+constexpr int kMaxWifiProfiles = 500;
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
 // PST/OST: open() parses the whole NBT/BBT metadata synchronously, so cap the file size for a
@@ -1548,6 +1550,37 @@ AppActionResult wifiScan(const QJsonObject&) {
     return {true, QStringLiteral("WiFi scan: %1 network(s) found").arg(networks.size()), data};
 }
 
+// List the machine's SAVED WiFi profiles (distinct from network.wifi_scan, which scans nearby
+// broadcasting APs). Surfaces only the profile name and security type -- the DPAPI-protected key
+// material (WLANProfile XML) that scanAllWifiProfiles can export is deliberately NOT requested
+// (include_xml=false) and never reaches the model.
+AppActionResult listWifiProfiles(const QJsonObject&) {
+    bool scan_ok = false;
+    const QVector<WifiProfileInfo> profiles =
+        scanAllWifiProfiles(nullptr, &scan_ok, /*include_xml=*/false);
+    if (!scan_ok) {
+        return {false,
+                QStringLiteral("Could not enumerate WiFi profiles (WLAN AutoConfig service "
+                               "unavailable, no wireless adapter, or netsh failed)"),
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const WifiProfileInfo& profile : profiles) {
+        if (listed.size() >= kMaxWifiProfiles) {
+            break;
+        }
+        listed.append(
+            QJsonObject{{QStringLiteral("profile_name"), clampLine(profile.profile_name)},
+                        {QStringLiteral("security_type"), clampLine(profile.security_type)}});
+    }
+    QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), profiles.size() > listed.size()},
+                     {QStringLiteral("profiles"), listed}};
+    return {true, QStringLiteral("Found %1 saved WiFi profile(s)").arg(profiles.size()), data};
+}
+
 QString shareTypeToString(NetworkShareInfo::ShareType type) {
     switch (type) {
     case NetworkShareInfo::ShareType::Disk:
@@ -2633,6 +2666,15 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        noParamsSchema()),
         wifiScan);
+
+    add(makeDescriptor(QStringLiteral("network.list_wifi_profiles"),
+                       QStringLiteral("List saved WiFi profiles"),
+                       QStringLiteral(
+                           "Enumerate the machine's saved WiFi profiles (name + security "
+                           "type); read-only, no key material exposed"),
+                       QStringLiteral("network"),
+                       noParamsSchema()),
+        listWifiProfiles);
 
     add(makeDescriptor(QStringLiteral("network.list_shares"),
                        QStringLiteral("List file shares"),

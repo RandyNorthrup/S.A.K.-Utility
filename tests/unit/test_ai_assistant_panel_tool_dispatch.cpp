@@ -241,8 +241,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 20 read-only ops.
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 27);
+        // 7 built-in QuickActions + read-only ops (floor; grows as ops are added).
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 28);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -261,6 +261,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_connections")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.audit_firewall")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.wifi_scan")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.list_wifi_profiles")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
@@ -2503,6 +2504,54 @@ private Q_SLOTS:
         const QJsonObject result = panel.runAppActionTool(
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
+    }
+
+    // Network: list_wifi_profiles enumerates the machine's SAVED WiFi profiles (distinct from
+    // wifi_scan, which scans nearby APs). ENVIRONMENT-dependent: a host with no WLAN service (CI
+    // runner, wired desktop) cannot enumerate and reports an HONEST failure (fail-closed) rather
+    // than a misleading "0 profiles" success. Certifies dispatch + SHAPE + honesty + the security
+    // invariant that NO key material is surfaced: each listed profile carries only name and
+    // security_type, never xml_data / keyMaterial / a "key" field.
+    void listWifiProfilesReturnsWellFormedAndKeyless() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_wifi_profiles")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));
+        if (result.value(QStringLiteral("success")).toBool()) {
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(data.contains(QStringLiteral("profiles")));
+            QVERIFY(data.value(QStringLiteral("profile_count")).toInt() >= 0);
+            for (const auto& entry : data.value(QStringLiteral("profiles")).toArray()) {
+                const QJsonObject profile = entry.toObject();
+                QVERIFY(profile.contains(QStringLiteral("profile_name")));
+                QVERIFY(profile.contains(QStringLiteral("security_type")));
+                // Security invariant: no re-importable key material ever reaches the model.
+                QVERIFY(!profile.contains(QStringLiteral("xml_data")));
+                QVERIFY(!profile.contains(QStringLiteral("keyMaterial")));
+                QVERIFY(!profile.contains(QStringLiteral("key")));
+            }
+        } else {
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("WiFi"), Qt::CaseInsensitive));
+        }
+    }
+
+    // Network: list_wifi_profiles is read-only, so it runs UNGATED in a Chat & Research session --
+    // never POLICY-blocked, whether or not the enumeration itself succeeds.
+    void listWifiProfilesRunsUngatedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_wifi_profiles")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }

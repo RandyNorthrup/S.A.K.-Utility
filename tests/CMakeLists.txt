@@ -1564,6 +1564,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/firewall_rule_auditor.cpp
         # network.wifi_scan: Windows Native WiFi scan (wlanapi auto-link via #pragma comment).
         ${CMAKE_SOURCE_DIR}/src/core/wifi_analyzer.cpp
+        # network.list_wifi_profiles: WifiProfileScanner (netsh wlan, no-shell runProcess) driven
+        # directly. Enumeration is not unit-tested (needs a real WLAN service); the serialization
+        # (names + security type only, no key material) + honesty channel are covered by the shape.
+        ${CMAKE_SOURCE_DIR}/src/core/wifi_profile_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
@@ -1706,6 +1710,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/active_connections_monitor.h
         ${CMAKE_SOURCE_DIR}/include/sak/firewall_rule_auditor.h
         ${CMAKE_SOURCE_DIR}/include/sak/wifi_analyzer.h
+        ${CMAKE_SOURCE_DIR}/include/sak/wifi_profile_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/program_enumerator.h
         ${CMAKE_SOURCE_DIR}/include/sak/uninstall_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/restore_point_manager.h
