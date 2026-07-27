@@ -242,7 +242,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 37);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 38);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -3105,6 +3105,65 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("description")));
+    }
+
+    // W-flush-dns: network.flush_dns is listed mutating, NOT requires_admin (flushdns needs no
+    // elevation), NOT destructive (the cache repopulates), NOT catastrophic, NOT read_only -- the
+    // gate fires at the Assisted-confirm tier.
+    void flushDnsListedMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("network.flush_dns")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-flush-dns: refused in a chat/research session (mutating; never runs ipconfig).
+    void flushDnsBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.flush_dns")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-flush-dns: unlike the other mutating ops (which change adapters / write files / create a
+    // real restore point), flushing the DNS cache is harmless + fast, so this actually EXECUTES it
+    // in Unattended and asserts an honest success -- covering the real success path end to end
+    // (ipconfig /flushdns is always present on Windows and needs no elevation).
+    void flushDnsExecutesInUnattended() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.flush_dns")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("Flushed"), Qt::CaseInsensitive));
     }
 
     // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless

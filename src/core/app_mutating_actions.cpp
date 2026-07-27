@@ -14,6 +14,7 @@
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
 #include "sak/app_partition_op_parse.h"
+#include "sak/dns_diagnostic_tool.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/ethernet_config_manager.h"
@@ -1788,6 +1789,48 @@ AppActionResult setAdapterDns(const QJsonObject& args) {
                     {QStringLiteral("dns_servers"), QJsonArray::fromStringList(dns)}}};
 }
 
+// ---------------------------------------------------------------------------
+// network.flush_dns: clear the local DNS resolver cache.
+// ---------------------------------------------------------------------------
+
+QJsonObject flushDnsParamsSchema() {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), QJsonObject{}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Flush the local DNS resolver cache via DnsDiagnosticTool (the dnsapi DnsFlushResolverCache API --
+// the same call ipconfig /flushdns makes, but with a reliable BOOL result). SYNC: flushDnsCache()
+// returns then emits inline on this thread, captured by direct connections with no event loop --
+// the dns_query pattern. Mutating (clears a system cache) but NOT requires_admin (the flush needs
+// no elevation), NOT destructive (the cache is transient and repopulates on the next lookup -- no
+// data loss) and not catastrophic; the panel gate fires at the Assisted-confirm tier. Honesty:
+// flushDnsCache emits dnsCacheFlushed on BOTH paths and errorOccurred only on a REAL failure (the
+// API returned false), so success is inferred from the ABSENCE of an errorOccurred -- a failed
+// flush is reported as an honest failure, never a false success.
+AppActionResult flushDns(const QJsonObject&) {
+    DnsDiagnosticTool tool;
+    bool flushed = false;
+    QString error_text;
+    QObject::connect(
+        &tool, &DnsDiagnosticTool::errorOccurred, &tool, [&error_text](const QString& error) {
+            if (error_text.isEmpty()) {
+                error_text = error;
+            }
+        });
+    QObject::connect(&tool, &DnsDiagnosticTool::dnsCacheFlushed, &tool, [&flushed]() {
+        flushed = true;
+    });
+    tool.flushDnsCache();
+    if (!flushed) {
+        return {false, QStringLiteral("DNS cache flush did not complete"), {}};
+    }
+    if (!error_text.isEmpty()) {
+        return {false, error_text, {}};
+    }
+    return {true, QStringLiteral("Flushed the DNS resolver cache"), {}};
+}
+
 // Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
@@ -1828,6 +1871,18 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     dns.params_schema = setAdapterDnsParamsSchema();
     dns.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
     add(dns, setAdapterDns);
+
+    // network.flush_dns: clears the local DNS resolver cache -> mutating (a system-cache change)
+    // but NOT requires_admin (ipconfig /flushdns needs no elevation) and NOT destructive (the cache
+    // is transient and repopulates). The gate fires at the Assisted-confirm tier.
+    AppActionDescriptor flush = mutatingDescriptor(
+        QStringLiteral("network.flush_dns"),
+        QStringLiteral("Flush the DNS cache"),
+        QStringLiteral("Clear the local DNS resolver cache (ipconfig /flushdns); forces the next "
+                       "lookup to re-resolve. No elevation, no data loss."),
+        QStringLiteral("network"));
+    flush.params_schema = flushDnsParamsSchema();
+    add(flush, flushDns);
 }
 
 // Register the email export ops. Split out to keep registerMutatingAppActionsInto within the

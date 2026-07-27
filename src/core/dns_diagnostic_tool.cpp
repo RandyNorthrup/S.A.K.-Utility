@@ -353,16 +353,24 @@ void DnsDiagnosticTool::inspectDnsCache() {
 void DnsDiagnosticTool::flushDnsCache() {
     m_cancelled.store(false);
 
-    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
-                                        {QStringLiteral("/flushdns")},
-                                        10'000,
-                                        [this]() { return m_cancelled.load(); });
-    if (!result.succeeded()) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to flush DNS cache."));
-        Q_EMIT dnsCacheFlushed();
-        return;
+    // Flush via the dnsapi entry point DnsFlushResolverCache -- the same call `ipconfig /flushdns`
+    // makes internally, but it returns a BOOL that RELIABLY reflects success. `ipconfig /flushdns`
+    // can exit 0 even when the flush fails (e.g. the DNS Client service is stopped, where it prints
+    // "Could not flush the DNS Resolver Cache" yet still exits 0), which the exit-code check would
+    // read as a false success. The export is undocumented (not in windns.h) but stable since
+    // Windows 2000, so it is resolved by name at runtime from the already-loaded dnsapi.dll.
+    using DnsFlushFn = BOOL(WINAPI*)();
+    bool ok = false;
+    if (const HMODULE dnsapi = GetModuleHandleW(L"dnsapi.dll")) {
+        if (const auto flush =
+                reinterpret_cast<DnsFlushFn>(GetProcAddress(dnsapi, "DnsFlushResolverCache"))) {
+            ok = flush() != FALSE;
+        }
     }
 
+    if (!ok) {
+        Q_EMIT errorOccurred(QStringLiteral("Failed to flush the DNS resolver cache."));
+    }
     Q_EMIT dnsCacheFlushed();
 }
 
