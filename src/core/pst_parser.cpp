@@ -1644,7 +1644,24 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
     uint8_t key_size,
     int level,
     const QVector<int>& block_offsets) {
-    auto node_data = readHeapOnNode(heap_data, node_hid, block_offsets);
+    QSet<uint32_t> visited_hids;
+    return readBthLeafDataGuarded(node_hid,
+                                  level,
+                                  BthWalk{heap_data, key_size, block_offsets, visited_hids});
+}
+
+std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t node_hid,
+                                                                        int level,
+                                                                        BthWalk walk) {
+    // Reject a heap HID revisited on this traversal: a valid BTH references each HID exactly once,
+    // so a repeat is a cycle or a fan-out bomb (a node listing the same child HID repeatedly, which
+    // without this guard expands as entry_count^idx_levels). Stop the branch on both.
+    if (walk.visited_hids.contains(node_hid)) {
+        return QByteArray{};
+    }
+    walk.visited_hids.insert(node_hid);
+
+    auto node_data = readHeapOnNode(walk.heap_data, node_hid, walk.block_offsets);
     if (!node_data) {
         return std::unexpected(node_data.error());
     }
@@ -1653,7 +1670,7 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
         return *node_data;
     }
 
-    int entry_size = key_size + kBthChildHidSize;
+    int entry_size = walk.key_size + kBthChildHidSize;
     if (entry_size == 0) {
         return QByteArray{};
     }
@@ -1666,12 +1683,11 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
         if (offset + entry_size > node_data->size()) {
             break;
         }
-        uint32_t child_hid = readLE<uint32_t>(*node_data, offset + key_size);
+        uint32_t child_hid = readLE<uint32_t>(*node_data, offset + walk.key_size);
         if (child_hid == 0) {
             continue;
         }
-        auto child_result =
-            readBthLeafData(heap_data, child_hid, key_size, level - 1, block_offsets);
+        auto child_result = readBthLeafDataGuarded(child_hid, level - 1, walk);
         if (child_result) {
             combined.append(*child_result);
         }
@@ -2176,9 +2192,22 @@ std::expected<QByteArray, error_code> PstParser::resolveHnid(
 
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeBTree(
     uint64_t subnode_bid, int depth) {
+    QSet<uint64_t> visited_bids;
+    return readSubNodeBTreeGuarded(subnode_bid, depth, visited_bids);
+}
+
+std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeBTreeGuarded(
+    uint64_t subnode_bid, int depth, QSet<uint64_t>& visited_bids) {
     if (depth > kMaxBTreeDepth) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
+
+    // Reject a block BID revisited on this traversal: a valid sub-node BTree references each block
+    // once, so a repeat is a cycle or a fan-out bomb (entry_count^depth). Fail closed on both.
+    if (visited_bids.contains(subnode_bid)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited_bids.insert(subnode_bid);
 
     auto block_data = readBlock(subnode_bid);
     if (!block_data) {
@@ -2197,7 +2226,8 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
     if (level == 0) {
         return readSubNodeLeafEntries(data, kSubnodeHeaderSize, entry_count);
     }
-    return readSubNodeIntermediateEntries(data, kSubnodeHeaderSize, entry_count, depth);
+    return readSubNodeIntermediateEntries(
+        data, kSubnodeHeaderSize, entry_count, depth, visited_bids);
 }
 
 QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray& data,
@@ -2228,7 +2258,11 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
 }
 
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeIntermediateEntries(
-    const QByteArray& data, int header_size, uint16_t entry_count, int depth) {
+    const QByteArray& data,
+    int header_size,
+    uint16_t entry_count,
+    int depth,
+    QSet<uint64_t>& visited_bids) {
     QHash<uint64_t, sak::PstNode> result;
     int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode : kSubnodeIntermediateSizeAnsi;
     int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
@@ -2243,7 +2277,7 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeI
         uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset + bid_offset)
                                           : readLE<uint32_t>(data, offset + bid_offset);
 
-        auto child_result = readSubNodeBTree(child_bid, depth + 1);
+        auto child_result = readSubNodeBTreeGuarded(child_bid, depth + 1, visited_bids);
         if (child_result) {
             for (auto it = child_result->begin(); it != child_result->end(); ++it) {
                 result.insert(it.key(), it.value());
@@ -2399,12 +2433,26 @@ QString PstParser::propertyIdToName(uint16_t prop_id) {
 
 std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(uint64_t root_nid,
                                                                               int depth) {
+    QSet<uint64_t> visited_nids;
+    return buildFolderHierarchyGuarded(root_nid, depth, visited_nids);
+}
+
+std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchyGuarded(
+    uint64_t root_nid, int depth, QSet<uint64_t>& visited_nids) {
     if (depth > sak::email::kMaxFolderDepth) {
         return std::unexpected(error_code::pst_folder_traversal_error);
     }
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return std::unexpected(error_code::operation_cancelled);
     }
+
+    // Reject a folder NID revisited on this traversal: valid folders form a tree (each NID appears
+    // once), so a repeat is a cycle or a fan-out bomb (a hierarchy table listing the same child
+    // thousands of times, which without this guard expands as children^depth). Fail closed.
+    if (visited_nids.contains(root_nid)) {
+        return std::unexpected(error_code::pst_folder_traversal_error);
+    }
+    visited_nids.insert(root_nid);
 
     auto props_result = readPropertyContext(root_nid);
     if (!props_result) {
@@ -2422,7 +2470,7 @@ std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(ui
         }
     }
 
-    loadChildFolders(folder, root_nid, depth);
+    loadChildFolders(folder, root_nid, depth, visited_nids);
 
     folder.subfolder_count = folder.children.size();
 
@@ -2431,7 +2479,10 @@ std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(ui
     return tree;
 }
 
-void PstParser::loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int depth) {
+void PstParser::loadChildFolders(sak::PstFolder& folder,
+                                 uint64_t root_nid,
+                                 int depth,
+                                 QSet<uint64_t>& visited_nids) {
     uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
 
     sak::logInfo(
@@ -2458,7 +2509,7 @@ void PstParser::loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int 
                  htable_result->size());
     auto child_nids = extractChildNids(*htable_result);
     for (uint64_t child_nid : child_nids) {
-        auto child_tree = buildFolderHierarchy(child_nid, depth + 1);
+        auto child_tree = buildFolderHierarchyGuarded(child_nid, depth + 1, visited_nids);
         if (child_tree && !child_tree->isEmpty()) {
             auto child_folder = (*child_tree)[0];
             child_folder.parent_node_id = root_nid;

@@ -399,7 +399,8 @@ private:
         const QVector<int>& block_offsets,
         const QHash<uint64_t, sak::PstNode>& subnode_map);
 
-    /// Collect all leaf records from a multi-level BTH
+    /// Collect all leaf records from a multi-level BTH. Public entry point: seeds a fresh
+    /// per-traversal visited-HID set and delegates to readBthLeafDataGuarded.
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBthLeafData(
         const QByteArray& heap_data,
         uint32_t node_hid,
@@ -407,9 +408,28 @@ private:
         int level,
         const QVector<int>& block_offsets = {});
 
-    /// Read the sub-node BTree for a node
+    /// Recursion-invariant context for the BTH walk. @p visited_hids rejects a revisited heap HID
+    /// so a crafted BTH cannot drive exponential fan-out (a valid BTH references each HID once).
+    struct BthWalk {
+        const QByteArray& heap_data;
+        uint8_t key_size;
+        const QVector<int>& block_offsets;
+        QSet<uint32_t>& visited_hids;
+    };
+
+    /// Recursive worker for readBthLeafData; see BthWalk.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readBthLeafDataGuarded(
+        uint32_t node_hid, int level, BthWalk walk);
+
+    /// Read the sub-node BTree for a node. Public entry point: seeds a fresh per-traversal
+    /// visited-BID set and delegates to readSubNodeBTreeGuarded.
     [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code> readSubNodeBTree(
         uint64_t subnode_bid, int depth = 0);
+
+    /// Recursive worker for readSubNodeBTree. @p visited_bids rejects a revisited block BID so a
+    /// crafted sub-node BTree cannot drive exponential fan-out.
+    [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code>
+    readSubNodeBTreeGuarded(uint64_t subnode_bid, int depth, QSet<uint64_t>& visited_bids);
 
     /// Read sub-node BTree leaf entries
     [[nodiscard]] QHash<uint64_t, sak::PstNode> readSubNodeLeafEntries(const QByteArray& data,
@@ -421,7 +441,8 @@ private:
     readSubNodeIntermediateEntries(const QByteArray& data,
                                    int header_size,
                                    uint16_t entry_count,
-                                   int depth);
+                                   int depth,
+                                   QSet<uint64_t>& visited_bids);
 
     /// Format a MAPI property value for display
     [[nodiscard]] QString formatPropertyValue(uint16_t prop_type,
@@ -434,12 +455,22 @@ private:
     // Messaging Layer
     // ======================================================================
 
-    /// Build the folder hierarchy starting from the root folder NID
+    /// Build the folder hierarchy starting from the root folder NID. Public entry point: seeds a
+    /// fresh per-traversal visited-NID set and delegates to buildFolderHierarchyGuarded.
     [[nodiscard]] std::expected<sak::PstFolderTree, sak::error_code> buildFolderHierarchy(
         uint64_t root_nid, int depth = 0);
 
+    /// Recursive worker for buildFolderHierarchy. @p visited_nids rejects a revisited folder NID
+    /// so a crafted hierarchy table (a folder that lists itself/an ancestor as a child) cannot
+    /// drive exponential fan-out -- valid folders form a tree (each NID appears once).
+    [[nodiscard]] std::expected<sak::PstFolderTree, sak::error_code> buildFolderHierarchyGuarded(
+        uint64_t root_nid, int depth, QSet<uint64_t>& visited_nids);
+
     /// Load child folders from the hierarchy table into a parent folder
-    void loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int depth);
+    void loadChildFolders(sak::PstFolder& folder,
+                          uint64_t root_nid,
+                          int depth,
+                          QSet<uint64_t>& visited_nids);
 
     /// Read the contents table for a folder
     [[nodiscard]] std::expected<QVector<sak::PstItemSummary>, sak::error_code> readContentsTable(

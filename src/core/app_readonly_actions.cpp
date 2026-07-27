@@ -31,6 +31,7 @@
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/port_scanner.h"
+#include "sak/pst_parser.h"
 #include "sak/restore_point_manager.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
@@ -76,6 +77,13 @@ constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
+// PST/OST: open() parses the whole NBT/BBT metadata synchronously, so cap the file size for a
+// headless read (larger archives use the GUI, which runs the parse off the UI thread with
+// progress). Folder tree and per-folder item payloads are bounded too.
+constexpr qint64 kMaxPstBytes = 2LL * 1024 * 1024 * 1024;  // 2 GiB
+constexpr int kMaxPstFolders = 2000;
+constexpr int kMaxPstItems = 500;
+constexpr int kDefaultPstItemLimit = 200;
 constexpr int kMaxRestorePoints = 200;
 constexpr int kMaxThermalReadings = 64;
 constexpr int kMaxUsers = 200;
@@ -971,6 +979,183 @@ AppActionResult readMbox(const QJsonObject& args) {
     const QString summary =
         QStringLiteral("Returned %1 of %2 message(s)").arg(messages.size()).arg(total);
     return {true, summary, data};
+}
+
+QString emailItemTypeToString(EmailItemType type) {
+    switch (type) {
+    case EmailItemType::Email:
+        return QStringLiteral("email");
+    case EmailItemType::Contact:
+        return QStringLiteral("contact");
+    case EmailItemType::Calendar:
+        return QStringLiteral("calendar");
+    case EmailItemType::Task:
+        return QStringLiteral("task");
+    case EmailItemType::StickyNote:
+        return QStringLiteral("note");
+    case EmailItemType::JournalEntry:
+        return QStringLiteral("journal");
+    case EmailItemType::DistList:
+        return QStringLiteral("distlist");
+    case EmailItemType::MeetingRequest:
+        return QStringLiteral("meeting_request");
+    case EmailItemType::Unknown:
+        break;
+    }
+    return QStringLiteral("unknown");
+}
+
+QJsonObject serializePstFolder(const PstFolder& folder) {
+    return QJsonObject{{QStringLiteral("node_id"), static_cast<double>(folder.node_id)},
+                       {QStringLiteral("parent_node_id"),
+                        static_cast<double>(folder.parent_node_id)},
+                       {QStringLiteral("display_name"), clampHeader(folder.display_name)},
+                       {QStringLiteral("content_count"), folder.content_count},
+                       {QStringLiteral("unread_count"), folder.unread_count},
+                       {QStringLiteral("subfolder_count"), folder.subfolder_count},
+                       {QStringLiteral("container_class"), clampHeader(folder.container_class)}};
+}
+
+// Flatten the folder hierarchy into a capped flat array (parent_node_id preserves structure). A
+// flat list avoids deep JSON nesting and unbounded recursion width while keeping the tree
+// reconstructable by the model.
+void flattenPstFolders(const PstFolder& folder, QJsonArray& out) {
+    if (out.size() >= kMaxPstFolders) {
+        return;
+    }
+    out.append(serializePstFolder(folder));
+    for (const PstFolder& child : folder.children) {
+        flattenPstFolders(child, out);
+    }
+}
+
+int countPstFolders(const PstFolder& folder) {
+    int total = 1;
+    for (const PstFolder& child : folder.children) {
+        total += countPstFolders(child);
+    }
+    return total;
+}
+
+QJsonObject serializePstItem(const PstItemSummary& item) {
+    return QJsonObject{{QStringLiteral("node_id"), static_cast<double>(item.node_id)},
+                       {QStringLiteral("type"), emailItemTypeToString(item.item_type)},
+                       {QStringLiteral("subject"), clampHeader(item.subject)},
+                       {QStringLiteral("sender_name"), clampHeader(item.sender_name)},
+                       {QStringLiteral("sender_email"), clampHeader(item.sender_email)},
+                       {QStringLiteral("date"), item.date.toString(Qt::ISODate)},
+                       {QStringLiteral("size_bytes"), static_cast<double>(item.size_bytes)},
+                       {QStringLiteral("has_attachments"), item.has_attachments},
+                       {QStringLiteral("is_read"), item.is_read},
+                       {QStringLiteral("importance"), item.importance}};
+}
+
+// When a folder_node_id is supplied, read that ONE folder's item headers (synchronous, bounded by
+// offset/limit) and fold them into the result. Split from readPst so the op stays under the
+// complexity budget. A read failure is reported as a non-fatal items_error, not a whole-op
+// failure -- the folder tree is still useful on its own.
+void appendPstFolderItems(PstParser& parser, const QJsonObject& args, QJsonObject& data) {
+    if (!args.contains(QStringLiteral("folder_node_id"))) {
+        return;
+    }
+    // PST node IDs are 32-bit. Validate before the double->uint64 cast: an out-of-range or
+    // non-finite double would be undefined behavior to cast (a bad id otherwise just maps to a
+    // non-existent node and reads empty, but the cast itself must be well-defined).
+    const double raw_id = args.value(QStringLiteral("folder_node_id")).toDouble(-1);
+    if (!(raw_id >= 0.0) || raw_id > static_cast<double>(0xFF'FF'FF'FFu)) {
+        data[QStringLiteral("items_error")] =
+            QStringLiteral("Invalid folder_node_id (expected a node_id from the folder tree)");
+        return;
+    }
+    const auto folder_id = static_cast<uint64_t>(raw_id);
+    const int offset = std::max(0, args.value(QStringLiteral("offset")).toInt(0));
+    const int requested = args.value(QStringLiteral("limit")).toInt(kDefaultPstItemLimit);
+    const int limit = std::clamp(requested > 0 ? requested : kDefaultPstItemLimit, 1, kMaxPstItems);
+
+    data[QStringLiteral("folder_node_id")] = static_cast<double>(folder_id);
+    const auto items = parser.readFolderItems(folder_id, offset, limit);
+    if (!items.has_value()) {
+        data[QStringLiteral("items_error")] =
+            QStringLiteral("Could not read items for the requested folder");
+        return;
+    }
+    QJsonArray listed;
+    for (const PstItemSummary& item : *items) {
+        listed.append(serializePstItem(item));
+    }
+    data[QStringLiteral("offset")] = offset;
+    data[QStringLiteral("item_count")] = listed.size();
+    // A full page means more items may exist beyond this offset+limit window (the module reports
+    // truncation, never silent). The folder's content_count in the tree gives the true total.
+    data[QStringLiteral("items_truncated")] = listed.size() >= limit;
+    data[QStringLiteral("items")] = listed;
+}
+
+// Read a PST/OST mailbox: file metadata + the folder tree, plus (when folder_node_id is given) that
+// folder's message headers. Drives PstParser DIRECTLY -- open() is fully synchronous (blocks,
+// parses header + NBT/BBT + folder tree, sets isOpen()), and folderTree()/readFolderItems() are
+// synchronous worker-thread APIs -- so this runs inline with no event loop or controller, the
+// read_mbox pattern extended to PST. isOpen() is the value channel: any open/parse failure leaves
+// it false, so a failed read is an honest failure, never an empty-success. Path validated up front
+// (UNC/device refused so a crafted path can't pull the read over SMB; isFile; size-capped because
+// open() parses all node metadata synchronously). Read-only: never writes or recovers anything.
+AppActionResult readPst(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("read_pst requires a 'path' argument"), {}};
+    }
+    if (isNetworkOrDevicePath(path)) {
+        return {false, QStringLiteral("read_pst does not allow network/UNC or device paths"), {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such PST/OST file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxPstBytes) {
+        return {false,
+                QStringLiteral("PST/OST file is too large for a headless read (%1 bytes > %2 "
+                               "limit); use the GUI")
+                    .arg(info.size())
+                    .arg(kMaxPstBytes),
+                {}};
+    }
+
+    PstParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false,
+                QStringLiteral("Could not open or parse the PST/OST (not a valid PST/OST, "
+                               "unsupported, or corrupt): %1")
+                    .arg(info.fileName()),
+                {}};
+    }
+
+    const PstFileInfo file_info = parser.fileInfo();
+    QJsonArray folders;
+    int total_folders = 0;
+    for (const PstFolder& root : parser.folderTree()) {
+        flattenPstFolders(root, folders);
+        total_folders += countPstFolders(root);
+    }
+
+    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                     {QStringLiteral("name"), info.fileName()},
+                     {QStringLiteral("display_name"), clampHeader(file_info.display_name)},
+                     {QStringLiteral("is_ost"), file_info.is_ost},
+                     {QStringLiteral("is_unicode"), file_info.is_unicode},
+                     {QStringLiteral("encryption_type"), file_info.encryption_type},
+                     {QStringLiteral("total_items"), file_info.total_items},
+                     {QStringLiteral("file_size_bytes"),
+                      static_cast<double>(file_info.file_size_bytes)},
+                     {QStringLiteral("folder_count"), total_folders},
+                     {QStringLiteral("reported_folder_count"), folders.size()},
+                     {QStringLiteral("folders_truncated"), total_folders > folders.size()},
+                     {QStringLiteral("folders"), folders}};
+    appendPstFolderItems(parser, args, data);
+
+    return {true,
+            QStringLiteral("PST/OST '%1': %2 folder(s)").arg(info.fileName()).arg(total_folders),
+            data};
 }
 
 QJsonArray jsonStrings(const QVector<QString>& values) {
@@ -2030,6 +2215,22 @@ QJsonObject readMboxParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject readPstParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the PST/OST file"))},
+        {QStringLiteral("folder_node_id"),
+         intProp(QStringLiteral("Optional: read this folder's message headers too (use a node_id "
+                                "from the returned folder tree)"))},
+        {QStringLiteral("offset"),
+         intProp(QStringLiteral("First item index within the folder (0-based)"))},
+        {QStringLiteral("limit"),
+         intProp(QStringLiteral("Max folder items to return (default 200, max 500)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject identifyParamsSchema() {
     QJsonObject path_prop{{QStringLiteral("type"), QStringLiteral("string")},
                           {QStringLiteral("description"),
@@ -2345,6 +2546,25 @@ void registerDiagnosticsReadOnlyOps(const AddActionFn& add) {
 
 }  // namespace
 
+// Register the read-only email ops (MBOX + PST/OST readers). Split out to keep
+// registerReadOnlyAppActionsInto within the length budget.
+void registerEmailReadOnlyOps(const AddActionFn& add) {
+    add(makeDescriptor(QStringLiteral("email.read_mbox"),
+                       QStringLiteral("Read an MBOX mailbox"),
+                       QStringLiteral("List messages (headers) from an MBOX email file"),
+                       QStringLiteral("email"),
+                       readMboxParamsSchema()),
+        readMbox);
+
+    add(makeDescriptor(QStringLiteral("email.read_pst"),
+                       QStringLiteral("Read a PST/OST mailbox"),
+                       QStringLiteral("List the folder tree (and optionally one folder's message "
+                                      "headers) from an Outlook PST/OST file"),
+                       QStringLiteral("email"),
+                       readPstParamsSchema()),
+        readPst);
+}
+
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
@@ -2404,12 +2624,7 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
                        noParamsSchema()),
         listUsers);
 
-    add(makeDescriptor(QStringLiteral("email.read_mbox"),
-                       QStringLiteral("Read an MBOX mailbox"),
-                       QStringLiteral("List messages (headers) from an MBOX email file"),
-                       QStringLiteral("email"),
-                       readMboxParamsSchema()),
-        readMbox);
+    registerEmailReadOnlyOps(add);
 
     return registered;
 }
