@@ -1870,6 +1870,129 @@ private Q_SLOTS:
                     .contains(QStringLiteral("No network adapter")));
     }
 
+    // W-net-static: network.set_adapter_static_ip is listed mutating + requires_admin, NOT
+    // destructive (reversible config change, no data loss), NOT catastrophic, NOT read_only --
+    // same tier as set_adapter_dhcp (the gate fires at the Assisted-confirm tier).
+    void setAdapterStaticIpListedMutatingAdmin() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("network.set_adapter_static_ip")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // W-net-static: missing required args (here ip_address) fails cleanly, never touching netsh.
+    void setAdapterStaticIpMissingArgsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"subnet_mask\":\"255.255.255.0\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("ip_address")));
+    }
+
+    // W-net-static: a malformed IPv4 (validated up front) is refused BEFORE any adapter enumeration
+    // or netsh call, with an honest error -- the defense-in-depth address validation.
+    void setAdapterStaticIpInvalidIpFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"999.1.2.3 extra\","
+                            "\"subnet_mask\":\"255.255.255.0\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("ip_address")));
+    }
+
+    // W-net-static: refused in a chat/research session (mutating; never runs netsh).
+    void setAdapterStaticIpBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
+                            "\"subnet_mask\":\"255.255.255.0\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // W-net-static: a name matching no system adapter fails cleanly after a REAL enumeration -- the
+    // exact-match guard refuses it before any netsh set, so no config changes. Deterministic +
+    // env-tolerant (this bogus name is never a real adapter; the args are otherwise valid so the op
+    // reaches resolution rather than failing arg validation).
+    void setAdapterStaticIpUnknownAdapterFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+            {QStringLiteral("arguments"),
+             QStringLiteral("{\"adapter_name\":\"SAK No Such Adapter ZZZ 9f3c\",\"ip_address\":"
+                            "\"192.168.1.50\",\"subnet_mask\":\"255.255.255.0\"}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("No network adapter")));
+    }
+
+    // W-net-static: a malformed dns_servers entry is refused (validated BEFORE any adapter
+    // enumeration or netsh call). Deterministic + env-independent -- DNS validation runs ahead of
+    // resolution, so it fails regardless of what adapters the host has.
+    void setAdapterStaticIpInvalidDnsFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+            {QStringLiteral("arguments"),
+             QStringLiteral(
+                 "{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
+                 "\"subnet_mask\":\"255.255.255.0\",\"dns_servers\":[\"not-an-ip\"]}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dns_servers")));
+    }
+
     // W-uninstall (Win32): the silent-command builder is the guard that keeps a headless
     // uninstall from launching an interactive uninstaller. It accepts a publisher quiet command
     // and an MSI (building a /qn removal), and REFUSES a bare interactive uninstallString.

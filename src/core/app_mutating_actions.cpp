@@ -31,9 +31,11 @@
 #include "sak/uninstall_worker.h"
 #include "sak/worker_base.h"
 
+#include <QAbstractSocket>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
@@ -1232,6 +1234,257 @@ AppActionResult setAdapterDhcp(const QJsonObject& args) {
                         {QStringLiteral("dhcp_enabled"), true}}};
 }
 
+// ---------------------------------------------------------------------------
+// network.set_adapter_static_ip: assign a static IPv4 configuration to an adapter.
+// ---------------------------------------------------------------------------
+
+// Cap how many DNS servers a single static-IP call may set. netsh takes a small primary+secondary
+// list; a handful is plenty and bounds the number of netsh calls restoreDnsServers issues.
+constexpr int kMaxStaticDnsServers = 8;
+
+// True if @p value is a well-formed IPv4 address in exact dotted form. QHostAddress::setAddress
+// accepts ONLY a complete address (no CIDR suffix, no surrounding whitespace, no trailing junk), so
+// this refuses garbage up front (an honest error instead of an opaque netsh parse failure) and
+// guarantees the token shape that reaches netsh. runProcess is already shell-free (each value is a
+// single argv token, so there is no flag/shell injection); this is defense-in-depth on top of that.
+bool isValidIPv4(const QString& value) {
+    QHostAddress address;
+    return address.setAddress(value) && address.protocol() == QAbstractSocket::IPv4Protocol;
+}
+
+// Validate the required + optional address arguments (adapter/ip/mask/gateway). Returns an error
+// result to return verbatim, or nullopt when all are well-formed. Split out to keep the op within
+// the complexity/length budget. DNS entries are validated separately (they are a list).
+std::optional<AppActionResult> validateStaticIpArgs(const QString& adapter,
+                                                    const QString& ip,
+                                                    const QString& mask,
+                                                    const QString& gateway) {
+    if (adapter.isEmpty() || ip.isEmpty() || mask.isEmpty()) {
+        return AppActionResult{
+            false,
+            QStringLiteral(
+                "set_adapter_static_ip requires 'adapter_name', 'ip_address', and 'subnet_mask'"),
+            {}};
+    }
+    if (!isValidIPv4(ip)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "ip_address must be a valid IPv4 address (e.g. 192.168.1.50)"),
+                               {}};
+    }
+    if (!isValidIPv4(mask)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "subnet_mask must be a dotted IPv4 mask (e.g. 255.255.255.0)"),
+                               {}};
+    }
+    if (!gateway.isEmpty() && !isValidIPv4(gateway)) {
+        return AppActionResult{false,
+                               QStringLiteral("gateway, if given, must be a valid IPv4 address"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+// Read + validate the optional dns_servers array. Each entry must be a valid IPv4 address; the
+// first invalid entry fails the whole op (via @p error). Entries are de-duplicated and normalized
+// to their canonical dotted form, then capped at kMaxStaticDnsServers. De-duping matters: netsh's
+// "add dnsservers" fails ("The object already exists.", non-zero exit) if the same address is added
+// twice, which -- since the static IP is applied FIRST -- would otherwise turn a live, applied
+// address into a reported failure (see setAdapterStaticIp). Canonicalizing also feeds netsh the
+// exact dotted form even if a non-dotted numeric IPv4 spelling was supplied.
+QStringList staticDnsFromArgs(const QJsonObject& args, std::optional<AppActionResult>& error) {
+    QStringList dns;
+    QSet<QString> seen;
+    error = std::nullopt;
+    const QJsonArray raw = args.value(QStringLiteral("dns_servers")).toArray();
+    for (const QJsonValue& value : raw) {
+        const QString entry = value.toString().trimmed();
+        if (entry.isEmpty()) {
+            continue;
+        }
+        QHostAddress address;
+        if (!address.setAddress(entry) || address.protocol() != QAbstractSocket::IPv4Protocol) {
+            error = AppActionResult{
+                false,
+                QStringLiteral("dns_servers entry '%1' is not a valid IPv4 address").arg(entry),
+                {}};
+            return {};
+        }
+        const QString canonical = address.toString();
+        if (seen.contains(canonical)) {
+            continue;  // drop a duplicate so netsh's "add dnsservers" never fails on it
+        }
+        if (dns.size() >= kMaxStaticDnsServers) {
+            break;
+        }
+        seen.insert(canonical);
+        dns.append(canonical);
+    }
+    return dns;
+}
+
+QJsonObject setAdapterStaticIpParamsSchema() {
+    const auto strProp = [](const QString& description) {
+        return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                           {QStringLiteral("description"), description}};
+    };
+    QJsonObject dns_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+        {QStringLiteral("description"),
+         QStringLiteral("Optional DNS server IPv4 addresses (first is primary); omit to leave DNS "
+                        "unchanged")}};
+    QJsonObject properties{
+        {QStringLiteral("adapter_name"),
+         strProp(QStringLiteral("Exact name of the network adapter to configure (Ethernet OR "
+                                "Wi-Fi), as shown by network.list_adapters"))},
+        {QStringLiteral("ip_address"),
+         strProp(QStringLiteral("Static IPv4 address to assign, e.g. \"192.168.1.50\""))},
+        {QStringLiteral("subnet_mask"),
+         strProp(QStringLiteral("Dotted IPv4 subnet mask, e.g. \"255.255.255.0\""))},
+        {QStringLiteral("gateway"),
+         strProp(QStringLiteral("Optional default gateway IPv4 address, e.g. \"192.168.1.1\""))},
+        {QStringLiteral("dns_servers"), dns_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("adapter_name"),
+                                   QStringLiteral("ip_address"),
+                                   QStringLiteral("subnet_mask")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Build the human-readable success message describing exactly what was applied.
+QString staticIpSuccessMessage(const QString& adapter,
+                               const QString& ip,
+                               const QString& mask,
+                               const QString& gateway,
+                               const QStringList& dns) {
+    QString message =
+        QStringLiteral("Set adapter '%1' to static IPv4 %2 (mask %3)").arg(adapter, ip, mask);
+    if (!gateway.isEmpty()) {
+        message += QStringLiteral(", gateway %1").arg(gateway);
+    }
+    if (!dns.isEmpty()) {
+        message += QStringLiteral(", DNS %1").arg(dns.join(QStringLiteral(", ")));
+    }
+    return message;
+}
+
+// Map a FAILED restoreSettings into an honest result. restoreSettings applies the address+mask
+// (+gateway) in ONE netsh command FIRST, then DNS, folding both into one bool -- so a failure can
+// mean either "the address command failed (nothing applied)" or "the address is already LIVE and
+// only DNS failed". These are distinguished by which step emitted error_text: the address step
+// emits "Failed to set IP address ...", the DNS steps emit "... DNS ...". When the address already
+// applied, the caller MUST be told (connectivity may already have moved), so we report
+// success=false but disclose the applied config -- an empty "nothing changed" result would be
+// dishonest. (Residual: if netsh partially applied the address command itself and still reported
+// the IP-address error, we under-report by treating it as nothing-applied -- the safer direction,
+// and a netsh-internal edge.)
+AppActionResult staticIpFailureResult(const QString& adapter,
+                                      const QString& ip,
+                                      const QString& mask,
+                                      const QString& gateway,
+                                      const QString& error_text) {
+    const bool address_applied = !error_text.isEmpty() &&
+                                 !error_text.contains(QStringLiteral("IP address"));
+    if (address_applied) {
+        QJsonObject data{{QStringLiteral("adapter_name"), adapter},
+                         {QStringLiteral("ip_address"), ip},
+                         {QStringLiteral("subnet_mask"), mask},
+                         {QStringLiteral("address_applied"), true},
+                         {QStringLiteral("dns_applied"), false}};
+        if (!gateway.isEmpty()) {
+            data.insert(QStringLiteral("gateway"), gateway);
+        }
+        return {false,
+                QStringLiteral("Set adapter '%1' to static IPv4 %2 (mask %3), but configuring DNS "
+                               "failed (%4). The adapter is ALREADY on the new static IP -- revert "
+                               "with set_adapter_dhcp if this dropped connectivity.")
+                    .arg(adapter, ip, mask, error_text),
+                data};
+    }
+    return {false,
+            error_text.isEmpty()
+                ? QStringLiteral("Failed to set adapter '%1' to static IP %2 (changing network "
+                                 "config needs administrator rights; run S.A.K. elevated)")
+                      .arg(adapter, ip)
+                : error_text,
+            {}};
+}
+
+// Assign a static IPv4 configuration (address + mask + optional gateway + optional DNS) to a named
+// network adapter (Ethernet or Wi-Fi) via EthernetConfigManager (netsh interface ip set address /
+// set dnsservers source=static). SYNC + bounded (a few ~10s shell-free netsh calls). The adapter
+// name is exact-matched against the system's own adapter list first, so a bogus/injected name never
+// reaches netsh; every address value is validated as a well-formed IPv4 before use. netsh set needs
+// elevation, so a non-elevated run fails HONESTLY. Mutating + requires_admin; NOT destructive
+// (reversible config change, no data loss -- use set_adapter_dhcp to revert) and not catastrophic.
+// The panel gate still fires (chat refuses; Assisted confirms with the adapter shown).
+AppActionResult setAdapterStaticIp(const QJsonObject& args) {
+    const QString adapter = args.value(QStringLiteral("adapter_name")).toString().trimmed();
+    const QString ip = args.value(QStringLiteral("ip_address")).toString().trimmed();
+    const QString mask = args.value(QStringLiteral("subnet_mask")).toString().trimmed();
+    const QString gateway = args.value(QStringLiteral("gateway")).toString().trimmed();
+    if (std::optional<AppActionResult> error = validateStaticIpArgs(adapter, ip, mask, gateway)) {
+        return *error;
+    }
+    std::optional<AppActionResult> dns_error;
+    const QStringList dns = staticDnsFromArgs(args, dns_error);
+    if (dns_error) {
+        return *dns_error;
+    }
+
+    EthernetConfigManager manager;
+    const QString resolved = resolveEthernetAdapter(manager, adapter);
+    if (resolved.isEmpty()) {
+        const QStringList adapters = manager.listEthernetAdapters();
+        return {false,
+                QStringLiteral("No network adapter named '%1' (available: %2)")
+                    .arg(adapter,
+                         adapters.isEmpty() ? QStringLiteral("none found") : adapters.join(", ")),
+                {}};
+    }
+
+    QString error_text;
+    QObject::connect(&manager,
+                     &EthernetConfigManager::errorOccurred,
+                     &manager,
+                     [&error_text](const QString& error) {
+                         if (error_text.isEmpty()) {
+                             error_text = error;
+                         }
+                     });
+
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = resolved;
+    snapshot.dhcpEnabled = false;
+    snapshot.ipv4Address = ip;
+    snapshot.ipv4SubnetMask = mask;
+    snapshot.ipv4Gateway = gateway;
+    snapshot.ipv4DnsServers = dns;
+    snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+    // restoreSettings(static) applies the address+mask+gateway (authoritative, checked) FIRST, then
+    // the static DNS list, folding both into one bool. staticIpFailureResult reads error_text to
+    // tell an address-step failure (nothing applied) from a DNS-step failure (address already live)
+    // and reports each honestly -- a bare success=false would wrongly imply the adapter is
+    // unchanged.
+    if (!manager.restoreSettings(snapshot, resolved)) {
+        return staticIpFailureResult(resolved, ip, mask, gateway, error_text);
+    }
+    QJsonObject data{{QStringLiteral("adapter_name"), resolved},
+                     {QStringLiteral("ip_address"), ip},
+                     {QStringLiteral("subnet_mask"), mask}};
+    if (!gateway.isEmpty()) {
+        data.insert(QStringLiteral("gateway"), gateway);
+    }
+    if (!dns.isEmpty()) {
+        data.insert(QStringLiteral("dns_servers"), QJsonArray::fromStringList(dns));
+    }
+    return {true, staticIpSuccessMessage(resolved, ip, mask, gateway, dns), data};
+}
+
 // Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
@@ -1244,6 +1497,21 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     dhcp.params_schema = setAdapterDhcpParamsSchema();
     dhcp.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
     add(dhcp, setAdapterDhcp);
+
+    // network.set_adapter_static_ip: assign a manual IPv4 address/mask/gateway/DNS. Like the DHCP
+    // reset it is a reversible config change (no data loss -> NOT destructive) but needs elevation.
+    // A wrong value can drop the adapter's connectivity, but set_adapter_dhcp reverts it; NOT
+    // catastrophic. The panel gate still fires (chat refuses; Assisted confirms with the adapter).
+    AppActionDescriptor static_ip = mutatingDescriptor(
+        QStringLiteral("network.set_adapter_static_ip"),
+        QStringLiteral("Set a static IP on an adapter"),
+        QStringLiteral("Assign a static IPv4 address, subnet mask, optional gateway and DNS to a "
+                       "network adapter (Ethernet or Wi-Fi); a wrong value can drop that adapter's "
+                       "connectivity until reverted (use set_adapter_dhcp to revert)"),
+        QStringLiteral("network"));
+    static_ip.params_schema = setAdapterStaticIpParamsSchema();
+    static_ip.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
+    add(static_ip, setAdapterStaticIp);
 }
 
 }  // namespace
