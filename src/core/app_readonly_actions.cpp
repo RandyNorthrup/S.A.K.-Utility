@@ -161,6 +161,11 @@ constexpr int kRecoveryScanTimeoutMs = 2 * 60 * 1000;  // 2 min
 constexpr qint64 kMaxPstBytes = 2LL * 1024 * 1024 * 1024;  // 2 GiB
 constexpr int kMaxPstFolders = 2000;
 constexpr int kMaxPstItems = 500;
+// email.search_pst: wall-time ceiling. The PST search reads message BODIES across every folder, so
+// it is O(items); the DeadlineCanceller calls worker.cancel() (the engine polls it) and a cancelled
+// search is reported search_complete=false, never a partial result presented as the whole.
+constexpr int kPstSearchTimeoutMs = 2 * 60 * 1000;  // 2 min
+constexpr int kMaxPstSearchHits = 500;
 // email.recover_deleted: cap the recovered-item inventory per source (recoverable + orphaned) and
 // bound the extra per-node scan work (readItemDetail for every unreachable message node) with a
 // hard wall-time ceiling -- the file-size cap alone leaves a pathological PST scanning for minutes.
@@ -2729,7 +2734,7 @@ std::optional<AppActionResult> validateMboxSearchInputs(const QString& path, con
     return std::nullopt;
 }
 
-EmailSearchCriteria mboxCriteriaFromArgs(const QJsonObject& args, const QString& query) {
+EmailSearchCriteria emailSearchCriteriaFromArgs(const QJsonObject& args, const QString& query) {
     EmailSearchCriteria criteria;
     criteria.query_text = query;
     criteria.case_sensitive = args.value(QStringLiteral("case_sensitive")).toBool(false);
@@ -2739,18 +2744,16 @@ EmailSearchCriteria mboxCriteriaFromArgs(const QJsonObject& args, const QString&
     return criteria;
 }
 
-struct MboxSearchOutcome {
+struct EmailSearchOutcome {
     QVector<EmailSearchHit> hits;
     bool completed = false;
     QString error;
 };
 
-// Drive the app's OWN EmailSearchWorker synchronously over an already-open MboxParser. searchMbox
-// emits searchHit inline and searchComplete when done (captured by direct connection, no event
-// loop). A read failure emits errorOccurred and NO searchComplete.
-MboxSearchOutcome runMboxSearch(MboxParser& parser, const EmailSearchCriteria& criteria) {
-    MboxSearchOutcome outcome;
-    EmailSearchWorker worker;
+// Wire an EmailSearchWorker's inline signals into @p outcome. The connections are DIRECT (worker
+// and receiver live on this thread), so they fire synchronously during the worker's Q_EMIT and the
+// outcome is fully populated by the time the (synchronous) search call returns.
+void connectSearchOutcome(EmailSearchWorker& worker, EmailSearchOutcome& outcome) {
     QObject::connect(&worker,
                      &EmailSearchWorker::searchHit,
                      &worker,
@@ -2762,6 +2765,14 @@ MboxSearchOutcome runMboxSearch(MboxParser& parser, const EmailSearchCriteria& c
                      &EmailSearchWorker::errorOccurred,
                      &worker,
                      [&outcome](const QString& error) { outcome.error = error; });
+}
+
+// Drive the app's OWN EmailSearchWorker synchronously over an already-open MboxParser. A read
+// failure emits errorOccurred and NO searchComplete.
+EmailSearchOutcome runMboxSearch(MboxParser& parser, const EmailSearchCriteria& criteria) {
+    EmailSearchOutcome outcome;
+    EmailSearchWorker worker;
+    connectSearchOutcome(worker, outcome);
     worker.searchMbox(&parser, criteria);
     return outcome;
 }
@@ -2784,7 +2795,8 @@ AppActionResult searchMbox(const QJsonObject& args) {
     if (!parser.isOpen()) {
         return {false, QStringLiteral("Not a valid MBOX file: %1").arg(path), {}};
     }
-    const MboxSearchOutcome outcome = runMboxSearch(parser, mboxCriteriaFromArgs(args, query));
+    const EmailSearchOutcome outcome = runMboxSearch(parser,
+                                                     emailSearchCriteriaFromArgs(args, query));
     if (!outcome.error.isEmpty() || !outcome.completed) {
         return {false,
                 outcome.error.isEmpty() ? QStringLiteral("MBOX search did not complete")
@@ -2812,6 +2824,87 @@ AppActionResult searchMbox(const QJsonObject& args) {
             QStringLiteral("%1 hit(s) for \"%2\" in %3")
                 .arg(outcome.hits.size())
                 .arg(query, info.fileName()),
+            data};
+}
+
+// Defined below (near readPst); declared here because searchPst reuses the same PST path validator.
+std::optional<AppActionResult> validatePstReadPath(const QString& path,
+                                                   const QString& op_name,
+                                                   QFileInfo& info);
+
+// email.search_pst
+//
+// Full-text search a PST/OST file for messages matching a query, via the app's OWN
+// EmailSearchWorker driving an already-open PstParser (the search_mbox pattern extended to PST).
+// Distinct from email.read_pst, which lists the folder tree. Read-only. Returns per-hit metadata +
+// a CONTEXT SNIPPET around the match (never the full body). Bodies are read across every folder, so
+// the search runs under a wall-time deadline (worker.cancel()) and reports search_complete
+// honestly. A folder read failure emits errorOccurred -> reported as failure, never a misleading
+// empty/partial success.
+AppActionResult searchPst(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    QFileInfo info;
+    if (const std::optional<AppActionResult> fail =
+            validatePstReadPath(path, QStringLiteral("search_pst"), info)) {
+        return *fail;
+    }
+    const QString query = args.value(QStringLiteral("query")).toString();
+    if (query.trimmed().isEmpty()) {
+        return {false, QStringLiteral("search_pst requires a non-empty 'query' argument"), {}};
+    }
+
+    PstParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false,
+                QStringLiteral("Could not open or parse the PST/OST (not a valid PST/OST, "
+                               "unsupported, or corrupt): %1")
+                    .arg(info.fileName()),
+                {}};
+    }
+
+    EmailSearchWorker worker;
+    EmailSearchOutcome outcome;
+    connectSearchOutcome(worker, outcome);
+    // The deadline calls worker.cancel() (the engine polls m_cancelled). worker outlives `deadline`
+    // (declared first -> destroyed last), so the monitor never touches a dead worker.
+    DeadlineCanceller deadline([&worker]() { worker.cancel(); }, kPstSearchTimeoutMs);
+    worker.search(&parser, emailSearchCriteriaFromArgs(args, query));
+    deadline.finish();
+
+    // A folder-read failure emits errorOccurred (the outer search still emits searchComplete), so
+    // an error is authoritative -- report it rather than a partial-but-"complete" result.
+    if (!outcome.error.isEmpty()) {
+        return {false, outcome.error, {}};
+    }
+    if (!outcome.completed) {
+        return {false, QStringLiteral("PST/OST search did not complete"), {}};
+    }
+    // Honest coverage: a deadline cancel or hitting the engine's result ceiling means the search
+    // did NOT see every message, so search_complete is false (the hits are a partial set).
+    const bool capped = outcome.hits.size() >= sak::email::kMaxSearchResults;
+    const bool search_complete = !deadline.fired() && !capped;
+
+    QJsonArray listed;
+    for (const EmailSearchHit& hit : outcome.hits) {
+        if (listed.size() >= kMaxPstSearchHits) {
+            break;
+        }
+        listed.append(serializeSearchHit(hit));
+    }
+    QJsonObject data{{QStringLiteral("query"), query},
+                     {QStringLiteral("total_hits"), outcome.hits.size()},
+                     {QStringLiteral("reported_count"), listed.size()},
+                     {QStringLiteral("truncated"), outcome.hits.size() > listed.size()},
+                     {QStringLiteral("result_cap_reached"), capped},
+                     {QStringLiteral("search_complete"), search_complete},
+                     {QStringLiteral("hits"), listed}};
+    const QString suffix =
+        search_complete ? QString() : QStringLiteral(" (search incomplete -- partial coverage)");
+    return {true,
+            QStringLiteral("%1 hit(s) for \"%2\" in %3%4")
+                .arg(outcome.hits.size())
+                .arg(query, info.fileName(), suffix),
             data};
 }
 
@@ -4284,6 +4377,23 @@ QJsonObject searchMboxParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject searchPstParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the PST/OST file"))},
+        {QStringLiteral("query"), stringProp(QStringLiteral("Text to search for"))},
+        {QStringLiteral("case_sensitive"), boolProp(QStringLiteral("Case-sensitive match"))},
+        {QStringLiteral("search_subject"),
+         boolProp(QStringLiteral("Match the subject (default true)"))},
+        {QStringLiteral("search_body"), boolProp(QStringLiteral("Match the body (default true)"))},
+        {QStringLiteral("search_sender"),
+         boolProp(QStringLiteral("Match the sender (default true)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("path"), QStringLiteral("query")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject readPstParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the PST/OST file"))},
@@ -4700,6 +4810,17 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("email"),
                        readPstParamsSchema()),
         readPst);
+
+    add(makeDescriptor(QStringLiteral("email.search_pst"),
+                       QStringLiteral("Search a PST/OST mailbox"),
+                       QStringLiteral(
+                           "Full-text search an Outlook PST/OST file for messages matching "
+                           "a query (subject/body/sender); returns per-hit metadata and a "
+                           "context snippet around the match (read-only, never the full "
+                           "body)"),
+                       QStringLiteral("email"),
+                       searchPstParamsSchema()),
+        searchPst);
 
     add(makeDescriptor(QStringLiteral("email.recover_deleted"),
                        QStringLiteral("Recover deleted PST/OST items"),
