@@ -94,6 +94,13 @@ public:
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentData(
         uint64_t message_node_id, int attachment_index);
 
+    /// Read attachment metadata (names, sizes) for a message, synchronous. Index-aligned with
+    /// readAttachmentData: both walk the message's attachment sub-nodes with the same
+    /// readSingleAttachment success gate + compacted index, so entry i pairs with
+    /// readAttachmentData(message_node_id, i).
+    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> readAttachments(
+        uint64_t message_nid);
+
     /// Classify an item by its PR_MESSAGE_CLASS value
     [[nodiscard]] static sak::EmailItemType classifyMessageClass(const QString& message_class);
 
@@ -512,10 +519,6 @@ private:
 
     /// Enrich item summaries with sender names from their PCs
     void enrichItemSenders(QVector<sak::PstItemSummary>& items);
-
-    /// Read attachment metadata for a message
-    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> readAttachments(
-        uint64_t message_nid);
 
     /// Read a single attachment's properties from a sub-node
     [[nodiscard]] std::expected<sak::PstAttachmentInfo, sak::error_code> readSingleAttachment(

@@ -45,6 +45,7 @@
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QMap>
 #include <QRegularExpression>
 #include <QSet>
@@ -514,53 +515,75 @@ std::optional<AppActionResult> validateSaveOutputDir(const QString& output_dir) 
     return std::nullopt;
 }
 
-// Validate email.save_mbox_attachments inputs. The MBOX is opened READ-ONLY; output_dir must be an
-// EXISTING directory we write NEW files into (the saver dedupes, so nothing is overwritten).
-// Screens both paths for network/UNC/device and reparse points (leaf + ancestors) BEFORE any
-// target-following stat, so a symlink/junction to a UNC share cannot leak the NTLM hash here.
-std::optional<AppActionResult> validateMboxAttachmentSaveInputs(const QString& path,
-                                                                const QString& output_dir,
-                                                                int message_index) {
+// Shared source+destination validation for the attachment-save ops (MBOX and PST). The source file
+// is opened READ-ONLY; output_dir must be an EXISTING directory we write NEW files into (the saver
+// dedupes, so nothing is overwritten). Screens both paths for network/UNC/device and reparse points
+// (leaf + ancestors) BEFORE any target-following stat, so a symlink/junction to a UNC share cannot
+// leak the NTLM hash here.
+std::optional<AppActionResult> validateAttachmentSaveSource(const QString& path,
+                                                            const QString& output_dir,
+                                                            qint64 max_bytes,
+                                                            const QString& op_name,
+                                                            const QString& file_kind) {
     if (path.isEmpty() || output_dir.isEmpty()) {
-        return AppActionResult{
-            false, QStringLiteral("save_mbox_attachments requires 'path' and 'output_dir'"), {}};
-    }
-    if (message_index < 0) {
-        return AppActionResult{
-            false, QStringLiteral("save_mbox_attachments requires a message_index >= 0"), {}};
+        return AppActionResult{false,
+                               QStringLiteral("%1 requires 'path' and 'output_dir'").arg(op_name),
+                               {}};
     }
     if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_dir)) {
         return AppActionResult{
             false,
-            QStringLiteral("save_mbox_attachments does not allow network/UNC or device paths"),
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
             {}};
     }
     if (pathReparseUnsafe(path)) {
         return AppActionResult{false,
                                QStringLiteral(
-                                   "MBOX file must not be a symlink or junction (or under one): %1")
-                                   .arg(path),
+                                   "%1 file must not be a symlink or junction (or under one): %2")
+                                   .arg(file_kind, path),
                                {}};
     }
     const QFileInfo info(path);
     if (!info.isFile()) {
-        return AppActionResult{false, QStringLiteral("No such MBOX file: %1").arg(path), {}};
+        return AppActionResult{false,
+                               QStringLiteral("No such %1 file: %2").arg(file_kind, path),
+                               {}};
     }
-    if (info.size() > kMaxMboxBytes) {
-        return AppActionResult{
-            false,
-            QStringLiteral("MBOX file is too large for a headless save (%1 bytes > %2 limit)")
-                .arg(info.size())
-                .arg(kMaxMboxBytes),
-            {}};
+    if (info.size() > max_bytes) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "%1 file is too large for a headless save (%2 bytes > %3 limit)")
+                                   .arg(file_kind)
+                                   .arg(info.size())
+                                   .arg(max_bytes),
+                               {}};
     }
     return validateSaveOutputDir(output_dir);
 }
 
+// Validate email.save_mbox_attachments inputs (shared source/dest checks + a valid message_index).
+std::optional<AppActionResult> validateMboxAttachmentSaveInputs(const QString& path,
+                                                                const QString& output_dir,
+                                                                int message_index) {
+    if (message_index < 0) {
+        return AppActionResult{
+            false, QStringLiteral("save_mbox_attachments requires a message_index >= 0"), {}};
+    }
+    return validateAttachmentSaveSource(path,
+                                        output_dir,
+                                        kMaxMboxBytes,
+                                        QStringLiteral("save_mbox_attachments"),
+                                        QStringLiteral("MBOX"));
+}
+
 // One save-attachments run's parameters, bundled to keep the helper signatures within the argument
-// budget. total = attachments in the message; attempted = min(total, kMaxSavedAttachments).
+// budget. total = attachments in the message; attempted = min(total, kMaxSavedAttachments). id_key
+// / id_value carry the source's message identifier into the result payload without hard-coding a
+// name
+// ("message_index" for MBOX, "message_node_id" for PST -- a NID that would overflow an int).
 struct AttachmentSaveRequest {
-    int message_index = 0;
+    QString id_key;
+    QJsonValue id_value;
     int total = 0;
     int attempted = 0;
     bool truncated = false;
@@ -605,7 +628,7 @@ void runAttachmentSaves(const QVector<MboxAttachmentPayload>& payloads,
 AppActionResult buildAttachmentSaveResult(const AttachmentSaveTally& tally,
                                           const AttachmentSaveRequest& req) {
     QJsonObject data{{QStringLiteral("output_dir"), req.output_dir},
-                     {QStringLiteral("message_index"), req.message_index},
+                     {req.id_key, req.id_value},
                      {QStringLiteral("attachment_total"), req.total},
                      {QStringLiteral("attachments_attempted"), req.attempted},
                      {QStringLiteral("saved_count"), tally.saved},
@@ -661,7 +684,8 @@ AppActionResult saveMboxAttachments(const QJsonObject& args) {
     }
 
     AttachmentSaveRequest req;
-    req.message_index = message_index;
+    req.id_key = QStringLiteral("message_index");
+    req.id_value = message_index;
     req.total = payloads->size();
     req.truncated = req.total > kMaxSavedAttachments;
     req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
@@ -688,6 +712,141 @@ QJsonObject saveMboxAttachmentsParamsSchema() {
                        {QStringLiteral("required"),
                         QJsonArray{QStringLiteral("path"),
                                    QStringLiteral("message_index"),
+                                   QStringLiteral("output_dir")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// ---------------------------------------------------------------------------
+// email.save_pst_attachments
+// ---------------------------------------------------------------------------
+// The PST/OST pair to save_mbox_attachments. Saves one message's attachments (the message is a node
+// id / NID, from email.read_pst) into an EXISTING directory via the same app-OWNED AttachmentBatch
+// Save. UNLIKE the MBOX parser, PstParser::readAttachments (names) and readAttachmentData (bytes)
+// are DELIBERATELY index-aligned -- both walk the message's attachment sub-nodes with the SAME
+// readSingleAttachment success gate + compacted index (the GUI's loadAttachmentContent composes
+// them the same way), so pairing name[i] with readAttachmentData(nid,i) is safe here. Mutating, not
+// destructive (dedupe never overwrites -> only ADDS files), no admin.
+
+// Parse a PST message node id (NID). NIDs are 32-bit and can exceed INT_MAX, so read as a double
+// with an explicit unsigned-32-bit range check (never toInt, which would silently drop a high NID).
+quint64 parsePstNodeIdArg(const QJsonValue& value, bool& ok) {
+    ok = false;
+    if (!value.isDouble()) {
+        return 0;
+    }
+    const double raw = value.toDouble(-1.0);
+    if (!(raw >= 0.0) || raw > 4294967295.0) {  // NaN-safe; 0 .. 0xFFFFFFFF
+        return 0;
+    }
+    ok = true;
+    return static_cast<quint64>(raw);
+}
+
+// Save the first req.attempted attachments of a PST message, driving the app's OWN AttachmentBatch
+// Save. metas (from readAttachments) and readAttachmentData(node_id, i) share the same compacted
+// attachment index, so metas[i]'s name pairs with the bytes at index i. A per-attachment read
+// failure is recorded and the run continues.
+void runPstAttachmentSaves(PstParser& parser,
+                           quint64 node_id,
+                           const QVector<sak::PstAttachmentInfo>& metas,
+                           const AttachmentSaveRequest& req,
+                           AttachmentSaveTally& tally) {
+    sak::AttachmentBatchSave batch;
+    batch.begin(req.output_dir, req.attempted);
+    for (int i = 0; i < req.attempted; ++i) {
+        const std::expected<QByteArray, sak::error_code> bytes = parser.readAttachmentData(node_id,
+                                                                                           i);
+        if (!bytes) {
+            batch.recordError();
+            tally.errors.append(QStringLiteral("attachment %1: could not read bytes").arg(i));
+            ++tally.failed;
+            continue;
+        }
+        const QString name = metas[i].long_filename.isEmpty() ? metas[i].filename
+                                                              : metas[i].long_filename;
+        const sak::AttachmentSaveResult result = batch.recordOne(name, *bytes);
+        if (result.success) {
+            tally.saved_paths.append(result.saved_path);
+            ++tally.saved;
+        } else {
+            tally.errors.append(result.error_message);
+            ++tally.failed;
+        }
+    }
+}
+
+AppActionResult savePstAttachments(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    const QString output_dir = args.value(QStringLiteral("output_dir")).toString().trimmed();
+    bool node_ok = false;
+    const quint64 node_id = parsePstNodeIdArg(args.value(QStringLiteral("message_node_id")),
+                                              node_ok);
+    if (!node_ok) {
+        return {false,
+                QStringLiteral(
+                    "save_pst_attachments requires a numeric message_node_id (a NID from "
+                    "email.read_pst)"),
+                {}};
+    }
+    if (const std::optional<AppActionResult> error =
+            validateAttachmentSaveSource(path,
+                                         output_dir,
+                                         kMaxPstExportBytes,
+                                         QStringLiteral("save_pst_attachments"),
+                                         QStringLiteral("PST/OST"))) {
+        return *error;
+    }
+
+    PstParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false, QStringLiteral("Not a valid PST/OST file: %1").arg(path), {}};
+    }
+
+    const std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> metas =
+        parser.readAttachments(node_id);
+    if (!metas) {
+        return {false,
+                QStringLiteral("Could not read attachments for node 0x%1 in %2")
+                    .arg(node_id, 0, 16)
+                    .arg(path),
+                {}};
+    }
+    if (metas->isEmpty()) {
+        return {false,
+                QStringLiteral("Message node 0x%1 has no attachments to save").arg(node_id, 0, 16),
+                {}};
+    }
+
+    AttachmentSaveRequest req;
+    req.id_key = QStringLiteral("message_node_id");
+    req.id_value = static_cast<double>(node_id);  // NID up to 0xFFFFFFFF -> exact as a double
+    req.total = metas->size();
+    req.truncated = req.total > kMaxSavedAttachments;
+    req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
+    req.output_dir = output_dir;
+
+    AttachmentSaveTally tally;
+    runPstAttachmentSaves(parser, node_id, *metas, req, tally);
+    return buildAttachmentSaveResult(tally, req);
+}
+
+QJsonObject savePstAttachmentsParamsSchema() {
+    QJsonObject nid_prop{
+        {QStringLiteral("type"), QStringLiteral("integer")},
+        {QStringLiteral("description"),
+         QStringLiteral("Message node id (NID, from email.read_pst) whose attachments to save")}};
+    QJsonObject properties{
+        {QStringLiteral("path"),
+         stringProp(QStringLiteral("Absolute path to the source PST or OST file"))},
+        {QStringLiteral("message_node_id"), nid_prop},
+        {QStringLiteral("output_dir"),
+         stringProp(QStringLiteral("Existing directory to save the attachments into"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("path"),
+                                   QStringLiteral("message_node_id"),
                                    QStringLiteral("output_dir")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
@@ -2088,6 +2247,17 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
         QStringLiteral("email"));
     save_attach.params_schema = saveMboxAttachmentsParamsSchema();
     add(save_attach, saveMboxAttachments);
+
+    // email.save_pst_attachments: PST/OST pair to save_mbox_attachments. Same saver + gate tier;
+    // reads a message node's attachments through the fan-out-hardened PstParser (whose name/byte
+    // enumerations are deliberately index-aligned). Only ADDS files, so mutating not destructive.
+    AppActionDescriptor save_pst_attach = mutatingDescriptor(
+        QStringLiteral("email.save_pst_attachments"),
+        QStringLiteral("Save PST/OST attachments"),
+        QStringLiteral("Save all attachments of one PST/OST message to an existing directory"),
+        QStringLiteral("email"));
+    save_pst_attach.params_schema = savePstAttachmentsParamsSchema();
+    add(save_pst_attach, savePstAttachments);
 }
 
 // files.compress_zip / files.extract_zip: bound the model-facing blocker/warning lists and the
