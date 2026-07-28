@@ -21,6 +21,7 @@
 #include "sak/email_types.h"
 #include "sak/ethernet_config_manager.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/file_recovery_engine.h"
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
@@ -497,68 +498,79 @@ constexpr int kMaxSavedAttachments = 256;
 
 // Validate the destination: an EXISTING directory we write NEW files into. Screens for a reparse
 // point (leaf + ancestors) BEFORE the target-following isDir(), so a symlink/junction to a UNC
-// share cannot leak the NTLM hash here.
-std::optional<AppActionResult> validateSaveOutputDir(const QString& output_dir) {
+// share cannot leak the NTLM hash here. dir_field is the op's JSON arg name for this directory, so
+// the error text matches the schema (never a "field the schema doesn't have" dead-end).
+std::optional<AppActionResult> validateSaveOutputDir(const QString& output_dir,
+                                                     const QString& dir_field) {
     if (pathReparseUnsafe(output_dir)) {
-        return AppActionResult{
-            false,
-            QStringLiteral("output_dir must not be a symlink or junction (or under one): %1")
-                .arg(output_dir),
-            {}};
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "%1 must not be a symlink or junction (or under one): %2")
+                                   .arg(dir_field, output_dir),
+                               {}};
     }
     if (!QFileInfo(output_dir).isDir()) {
         return AppActionResult{
             false,
-            QStringLiteral("output_dir must be an existing directory: %1").arg(output_dir),
+            QStringLiteral("%1 must be an existing directory: %2").arg(dir_field, output_dir),
             {}};
     }
     return std::nullopt;
 }
 
-// Shared source+destination validation for the attachment-save ops (MBOX and PST). The source file
-// is opened READ-ONLY; output_dir must be an EXISTING directory we write NEW files into (the saver
-// dedupes, so nothing is overwritten). Screens both paths for network/UNC/device and reparse points
+// Names + limits for validateAttachmentSaveSource, bundled so its signature stays within the arg
+// budget. src_field / dir_field are the op's JSON arg names, so error text matches the schema.
+struct SaveSourceSpec {
+    qint64 max_bytes;
+    QString op_name;
+    QString file_kind;
+    QString src_field;
+    QString dir_field;
+};
+
+// Shared source+destination validation for the file-writing ops (MBOX/PST attachment save, offline
+// image recovery). The source file is opened READ-ONLY; the destination must be an EXISTING
+// directory we write NEW files into. Screens both paths for network/UNC/device and reparse points
 // (leaf + ancestors) BEFORE any target-following stat, so a symlink/junction to a UNC share cannot
 // leak the NTLM hash here.
 std::optional<AppActionResult> validateAttachmentSaveSource(const QString& path,
                                                             const QString& output_dir,
-                                                            qint64 max_bytes,
-                                                            const QString& op_name,
-                                                            const QString& file_kind) {
+                                                            const SaveSourceSpec& spec) {
     if (path.isEmpty() || output_dir.isEmpty()) {
         return AppActionResult{false,
-                               QStringLiteral("%1 requires 'path' and 'output_dir'").arg(op_name),
+                               QStringLiteral("%1 requires '%2' and '%3'")
+                                   .arg(spec.op_name, spec.src_field, spec.dir_field),
                                {}};
     }
     if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_dir)) {
         return AppActionResult{
             false,
-            QStringLiteral("%1 does not allow network/UNC or device paths").arg(op_name),
+            QStringLiteral("%1 does not allow network/UNC or device paths").arg(spec.op_name),
             {}};
     }
     if (pathReparseUnsafe(path)) {
         return AppActionResult{false,
                                QStringLiteral(
                                    "%1 file must not be a symlink or junction (or under one): %2")
-                                   .arg(file_kind, path),
+                                   .arg(spec.file_kind, path),
                                {}};
     }
     const QFileInfo info(path);
     if (!info.isFile()) {
         return AppActionResult{false,
-                               QStringLiteral("No such %1 file: %2").arg(file_kind, path),
+                               QStringLiteral("No such %1 file: %2").arg(spec.file_kind, path),
                                {}};
     }
-    if (info.size() > max_bytes) {
+    if (info.size() > spec.max_bytes) {
         return AppActionResult{false,
                                QStringLiteral(
-                                   "%1 file is too large for a headless save (%2 bytes > %3 limit)")
-                                   .arg(file_kind)
+                                   "%1 file is too large for a headless op (%2 bytes > %3 limit)")
+                                   .arg(spec.file_kind)
                                    .arg(info.size())
-                                   .arg(max_bytes),
+                                   .arg(spec.max_bytes),
                                {}};
     }
-    return validateSaveOutputDir(output_dir);
+    return validateSaveOutputDir(output_dir, spec.dir_field);
 }
 
 // Validate email.save_mbox_attachments inputs (shared source/dest checks + a valid message_index).
@@ -571,9 +583,11 @@ std::optional<AppActionResult> validateMboxAttachmentSaveInputs(const QString& p
     }
     return validateAttachmentSaveSource(path,
                                         output_dir,
-                                        kMaxMboxBytes,
-                                        QStringLiteral("save_mbox_attachments"),
-                                        QStringLiteral("MBOX"));
+                                        SaveSourceSpec{kMaxMboxBytes,
+                                                       QStringLiteral("save_mbox_attachments"),
+                                                       QStringLiteral("MBOX"),
+                                                       QStringLiteral("path"),
+                                                       QStringLiteral("output_dir")});
 }
 
 // One save-attachments run's parameters, bundled to keep the helper signatures within the argument
@@ -791,9 +805,11 @@ AppActionResult savePstAttachments(const QJsonObject& args) {
     if (const std::optional<AppActionResult> error =
             validateAttachmentSaveSource(path,
                                          output_dir,
-                                         kMaxPstExportBytes,
-                                         QStringLiteral("save_pst_attachments"),
-                                         QStringLiteral("PST/OST"))) {
+                                         SaveSourceSpec{kMaxPstExportBytes,
+                                                        QStringLiteral("save_pst_attachments"),
+                                                        QStringLiteral("PST/OST"),
+                                                        QStringLiteral("path"),
+                                                        QStringLiteral("output_dir")})) {
         return *error;
     }
 
@@ -1164,6 +1180,230 @@ QJsonObject flashParamsSchema() {
                        {QStringLiteral("properties"), properties},
                        {QStringLiteral("required"),
                         QJsonArray{QStringLiteral("image_path"), QStringLiteral("disk_number")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// ---------------------------------------------------------------------------
+// imaging.restore_recoverable
+// ---------------------------------------------------------------------------
+// The MUTATING pair to imaging.scan_recoverable: recover carved files out of an offline disk-image
+// FILE into a directory, driving the app's OWN FileRecoveryEngine::restoreCandidates (the Partition
+// Manager data-recovery restore path). The image is opened READ-ONLY and hashed before+after to
+// prove it was not mutated. overwrite_existing is forced OFF (only ADDS files -> mutating, not
+// destructive), no elevation. The output filename is DERIVED here (recovered_<hexoffset>.<ext>)
+// with a sanitized extension -- the model never supplies a raw name that could traverse out of the
+// destination.
+
+constexpr int kMaxRestoreCandidates = 256;
+constexpr qint64 kMaxRecoverImageBytes = 512LL * 1024 * 1024;  // cap the double-hashed image read
+
+// Reduce a model-supplied extension to a safe [a-z0-9]{1,8} token (default "bin"), so the derived
+// output name can never contain a path separator, "..", drive letter, or other traversal.
+QString sanitizeRecoverExtension(const QString& raw) {
+    QString ext;
+    for (const QChar c : raw) {
+        if (ext.size() >= 8) {
+            break;
+        }
+        if (c.isLetterOrNumber()) {
+            ext.append(c.toLower());
+        }
+    }
+    return ext.isEmpty() ? QStringLiteral("bin") : ext;
+}
+
+// Build the safe, fully-derived output basename for a recovered file.
+QString recoveredBaseName(quint64 offset, const QString& safe_ext) {
+    return QStringLiteral("recovered_%1.%2")
+        .arg(QString::number(offset, 16).rightJustified(16, QLatin1Char('0')), safe_ext);
+}
+
+// Parse the model's candidate list into engine candidates. Each candidate carries only an
+// offset/size range into the image (bytes are re-read by the engine) and a sanitized extension; the
+// id (output name) is derived here, never taken from the model. Rejects an out-of-image or
+// oversized range. Caps the count (reports truncation).
+std::optional<AppActionResult> parseRecoverCandidates(const QJsonArray& raw,
+                                                      qint64 image_size,
+                                                      QVector<sak::FileRecoveryCandidate>& out,
+                                                      bool& truncated) {
+    truncated = false;
+    double total_size = 0.0;
+    for (const QJsonValue& value : raw) {
+        if (out.size() >= kMaxRestoreCandidates) {
+            truncated = true;
+            break;
+        }
+        const QJsonObject obj = value.toObject();
+        const double off = obj.value(QStringLiteral("offset_bytes")).toDouble(-1.0);
+        const double size = obj.value(QStringLiteral("size_bytes")).toDouble(-1.0);
+        if (!(off >= 0.0) || !(size > 0.0)) {
+            return AppActionResult{false,
+                                   QStringLiteral(
+                                       "each candidate needs offset_bytes >= 0 and size_bytes > 0"),
+                                   {}};
+        }
+        if (size > static_cast<double>(sak::kFileRecoveryDefaultMaxCandidateBytes)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("a candidate size_bytes exceeds the per-file recovery limit"),
+                {}};
+        }
+        if (off + size > static_cast<double>(image_size)) {
+            return AppActionResult{false,
+                                   QStringLiteral("a candidate byte range falls outside the image"),
+                                   {}};
+        }
+        // Bound the TOTAL bytes written, not just per-file + count: a real carve yields
+        // non-overlapping candidates whose sizes sum to at most the image size. Capping the sum at
+        // the image size stops overlapping/duplicated ranges from amplifying a small image into a
+        // disk-filling write (the sibling ops cap file COUNT for the same reason).
+        total_size += size;
+        if (total_size > static_cast<double>(image_size)) {
+            return AppActionResult{false,
+                                   QStringLiteral("the combined candidate size exceeds the image "
+                                                  "size (overlapping or duplicated ranges are not "
+                                                  "recoverable)"),
+                                   {}};
+        }
+        sak::FileRecoveryCandidate candidate;
+        candidate.offset_bytes = static_cast<uint64_t>(off);
+        candidate.size_bytes = static_cast<uint64_t>(size);
+        candidate.extension =
+            sanitizeRecoverExtension(obj.value(QStringLiteral("extension")).toString());
+        candidate.id = recoveredBaseName(candidate.offset_bytes, candidate.extension);
+        out.append(std::move(candidate));
+    }
+    if (out.isEmpty()) {
+        return AppActionResult{
+            false, QStringLiteral("restore_recoverable requires at least one candidate"), {}};
+    }
+    return std::nullopt;
+}
+
+// Copy up to max strings into a JSON array (bounds the model-facing list).
+QJsonArray jsonStringArrayCapped(const QStringList& values, int max) {
+    QJsonArray out;
+    for (const QString& value : values) {
+        if (out.size() >= max) {
+            break;
+        }
+        out.append(value);
+    }
+    return out;
+}
+
+// The human-readable reason a restore did not fully succeed.
+QString restoreFailureReason(const sak::FileRecoveryRestoreResult& res) {
+    if (!res.source_opened_read_only) {
+        return QStringLiteral("could not open the image read-only");
+    }
+    if (!res.source_not_mutated) {
+        return QStringLiteral("could not verify the source image stayed unchanged");
+    }
+    return res.warnings.isEmpty() ? QStringLiteral("no files were recovered")
+                                  : res.warnings.first();
+}
+
+// Map the engine restore result into the tool result. Honest: success only when files were actually
+// written AND the engine confirmed the source was opened read-only and stayed byte-identical
+// (source_not_mutated); per-candidate skips are surfaced as warnings, never as silent success.
+AppActionResult buildRestoreResult(const sak::FileRecoveryRestoreResult& res,
+                                   int requested,
+                                   bool truncated,
+                                   const QString& image_path,
+                                   const QString& destination) {
+    const int restored = static_cast<int>(res.restored_paths.size());
+    QJsonObject data{{QStringLiteral("image_path"), image_path},
+                     {QStringLiteral("destination_directory"), destination},
+                     {QStringLiteral("requested_count"), requested},
+                     {QStringLiteral("restored_count"), restored},
+                     {QStringLiteral("truncated"), truncated},
+                     {QStringLiteral("source_opened_read_only"), res.source_opened_read_only},
+                     {QStringLiteral("source_not_mutated"), res.source_not_mutated},
+                     {QStringLiteral("restored_paths"),
+                      jsonStringArrayCapped(res.restored_paths, kMaxRestoreCandidates)},
+                     {QStringLiteral("warnings"), jsonStringArrayCapped(res.warnings, 50)}};
+    if (restored > 0 && res.source_opened_read_only && res.source_not_mutated) {
+        return {true,
+                QStringLiteral("Recovered %1 of %2 file(s) to %3")
+                    .arg(restored)
+                    .arg(requested)
+                    .arg(destination),
+                data};
+    }
+    return {false, QStringLiteral("Recovery failed: %1").arg(restoreFailureReason(res)), data};
+}
+
+AppActionResult restoreRecoverable(const QJsonObject& args) {
+    const QString image_path = args.value(QStringLiteral("image_path")).toString().trimmed();
+    const QString destination =
+        args.value(QStringLiteral("destination_directory")).toString().trimmed();
+    if (const std::optional<AppActionResult> error =
+            validateAttachmentSaveSource(image_path,
+                                         destination,
+                                         SaveSourceSpec{kMaxRecoverImageBytes,
+                                                        QStringLiteral("restore_recoverable"),
+                                                        QStringLiteral("image"),
+                                                        QStringLiteral("image_path"),
+                                                        QStringLiteral("destination_directory")})) {
+        return *error;
+    }
+
+    const qint64 image_size = QFileInfo(image_path).size();
+    QVector<sak::FileRecoveryCandidate> candidates;
+    bool truncated = false;
+    if (const std::optional<AppActionResult> error =
+            parseRecoverCandidates(args.value(QStringLiteral("candidates")).toArray(),
+                                   image_size,
+                                   candidates,
+                                   truncated)) {
+        return *error;
+    }
+
+    sak::FileRecoveryRestoreOptions options;
+    options.image_path = image_path;
+    options.destination_directory = destination;
+    options.candidates = candidates;
+    options.source_hash_bytes = 0;  // hash the whole (capped) image -> strongest not-mutated proof
+    options.overwrite_existing = false;  // only ADD files; never overwrite -> not destructive
+
+    const sak::FileRecoveryRestoreResult res = sak::FileRecoveryEngine::restoreCandidates(options);
+    return buildRestoreResult(res, candidates.size(), truncated, image_path, destination);
+}
+
+QJsonObject restoreRecoverableParamsSchema() {
+    QJsonObject int_prop{{QStringLiteral("type"), QStringLiteral("integer")}};
+    QJsonObject candidate_props{
+        {QStringLiteral("offset_bytes"), int_prop},
+        {QStringLiteral("size_bytes"), int_prop},
+        {QStringLiteral("extension"),
+         stringProp(QStringLiteral("Output file extension (letters/digits only; sanitized)"))}};
+    QJsonObject candidate_item{{QStringLiteral("type"), QStringLiteral("object")},
+                               {QStringLiteral("properties"), candidate_props},
+                               {QStringLiteral("required"),
+                                QJsonArray{QStringLiteral("offset_bytes"),
+                                           QStringLiteral("size_bytes")}},
+                               {QStringLiteral("additionalProperties"), false}};
+    QJsonObject candidates_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("items"), candidate_item},
+        {QStringLiteral("description"),
+         QStringLiteral(
+             "Files to recover (from imaging.scan_recoverable): offset_bytes + size_bytes "
+             "locate each file's bytes in the image")}};
+    QJsonObject properties{
+        {QStringLiteral("image_path"),
+         stringProp(QStringLiteral(
+             "Absolute path to the offline disk-image FILE to recover from (opened read-only)"))},
+        {QStringLiteral("destination_directory"),
+         stringProp(QStringLiteral("Existing directory to write recovered files into"))},
+        {QStringLiteral("candidates"), candidates_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("image_path"),
+                                   QStringLiteral("destination_directory"),
+                                   QStringLiteral("candidates")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
 
@@ -2849,6 +3089,39 @@ void registerDiagnosticsMutatingOps(const AddMutatingActionFn& add) {
     add(restore_point, createRestorePoint);
 }
 
+// Register the imaging-mutating ops. Split out to keep registerMutatingAppActionsInto within the
+// length budget.
+void registerImagingMutatingOps(const AddMutatingActionFn& add) {
+    // imaging.flash_image: OVERWRITES an entire physical disk with a disk image ->
+    // destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
+    // requires_admin (raw disk write). The system/boot disk and read-only disks are
+    // refused by resolveFlashTarget before any device is touched.
+    AppActionDescriptor flash = mutatingDescriptor(
+        QStringLiteral("imaging.flash_image"),
+        QStringLiteral("Flash a disk image"),
+        QStringLiteral("Write a disk image to a physical drive, ERASING all data on it"),
+        QStringLiteral("imaging"));
+    flash.params_schema = flashParamsSchema();
+    flash.destructive = true;
+    flash.catastrophic = true;
+    flash.requires_admin = true;
+    add(flash, flashImage);
+
+    // imaging.restore_recoverable: recover carved files (from imaging.scan_recoverable) out of an
+    // offline disk-image FILE into a directory. Reads the image READ-ONLY (hashed before+after to
+    // prove it was not mutated) and only ADDS files (overwrite forced off; derived output names) ->
+    // mutating but NOT destructive, no elevation.
+    AppActionDescriptor restore = mutatingDescriptor(
+        QStringLiteral("imaging.restore_recoverable"),
+        QStringLiteral("Recover files from a disk image"),
+        QStringLiteral(
+            "Recover carved files (from imaging.scan_recoverable) out of an offline "
+            "disk-image file into a directory; reads the image read-only, only adds files"),
+        QStringLiteral("imaging"));
+    restore.params_schema = restoreRecoverableParamsSchema();
+    add(restore, restoreRecoverable);
+}
+
 int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
@@ -2871,20 +3144,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     organize.destructive = true;
     add(organize, organizeDirectory);
 
-    // imaging.flash_image: OVERWRITES an entire physical disk with a disk image ->
-    // destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
-    // requires_admin (raw disk write). The system/boot disk and read-only disks are
-    // refused by resolveFlashTarget before any device is touched.
-    AppActionDescriptor flash = mutatingDescriptor(
-        QStringLiteral("imaging.flash_image"),
-        QStringLiteral("Flash a disk image"),
-        QStringLiteral("Write a disk image to a physical drive, ERASING all data on it"),
-        QStringLiteral("imaging"));
-    flash.params_schema = flashParamsSchema();
-    flash.destructive = true;
-    flash.catastrophic = true;
-    flash.requires_admin = true;
-    add(flash, flashImage);
+    registerImagingMutatingOps(add);
 
     // partition.apply_operation: applies ONE partition-layout op (diskpart/format/etc.) to
     // a disk -> destructive + CATASTROPHIC (forces a human confirm even in Unattended) +

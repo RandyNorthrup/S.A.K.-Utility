@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 56);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 57);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -2538,6 +2538,293 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("valid PST/OST")));
+    }
+
+    // ------------------------------------------------------------------
+    // imaging.restore_recoverable -- MUTATING (not destructive) pair to imaging.scan_recoverable.
+    // Recovers carved files out of an offline image FILE (opened read-only, hashed before+after)
+    // into a directory via the app's OWN FileRecoveryEngine::restoreCandidates. Proofs: listed
+    // mutating, chat refuses it, a real range is recovered byte-exact, a traversal-laced extension
+    // is neutralized (output stays in the destination), and the guards fail closed.
+    // ------------------------------------------------------------------
+
+    // Build image file: 16 zero bytes, then a 32-byte payload at offset 16, then 16 zero bytes.
+    static void writeRecoveryImage(const QString& path, const QByteArray& payload) {
+        QCOMPARE(payload.size(), 32);
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArray(16, '\0')), static_cast<qint64>(16));
+        QCOMPARE(file.write(payload), static_cast<qint64>(32));
+        QCOMPARE(file.write(QByteArray(16, '\0')), static_cast<qint64>(16));
+    }
+
+    void restoreRecoverableListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("imaging.restore_recoverable")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    void restoreRecoverableBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 16},
+                               {QStringLiteral("size_bytes"), 32}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"),
+                                       dir.filePath(QStringLiteral("disk.img"))},
+                                      {QStringLiteral("destination_directory"), dir.path()},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // Gated + approved, the op reads the image read-only and writes the recovered 32-byte range to
+    // the destination with the derived name recovered_<16-hex-offset>.<ext>, byte-exact.
+    void restoreRecoverableRecoversBytes() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        const QByteArray payload = QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD");
+        writeRecoveryImage(image, payload);
+        const QString dest = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(dest));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 16},
+                               {QStringLiteral("size_bytes"), 32},
+                               {QStringLiteral("extension"), QStringLiteral("bin")}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"), dest},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("restored_count")).toInt(), 1);
+        QVERIFY(data.value(QStringLiteral("source_opened_read_only")).toBool());
+        QVERIFY(data.value(QStringLiteral("source_not_mutated")).toBool());
+        QFile out(dest + QStringLiteral("/recovered_0000000000000010.bin"));
+        QVERIFY(out.open(QIODevice::ReadOnly));
+        QCOMPARE(out.readAll(), payload);
+    }
+
+    // A traversal-laced extension is sanitized to letters/digits, so the recovered file stays
+    // inside the destination and no file escapes it.
+    void restoreRecoverableNeutralizesTraversalExtension() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        writeRecoveryImage(image, QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD"));
+        const QString dest = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(dest));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 16},
+                               {QStringLiteral("size_bytes"), 32},
+                               {QStringLiteral("extension"), QStringLiteral("../../../evil")}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"), dest},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        // Sanitized to "evil"; the file is inside dest and nothing escaped above it.
+        QVERIFY(QFile::exists(dest + QStringLiteral("/recovered_0000000000000010.evil")));
+        QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("evil"))));
+        QVERIFY(!QFile::exists(dir.path() + QStringLiteral("/../evil")));
+    }
+
+    // A candidate whose byte range runs past the end of the image is refused (never an OOB read).
+    void restoreRecoverableRejectsOutOfRangeCandidate() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        writeRecoveryImage(image,
+                           QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD"));  // 64 bytes
+        const QString dest = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(dest));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 40},
+                               {QStringLiteral("size_bytes"), 1000}};  // 40+1000 > 64
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"), dest},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("outside")));
+    }
+
+    // Candidates whose sizes SUM past the image size are refused (anti disk-fill amplification):
+    // two 40-byte ranges (each individually in-bounds of the 64-byte image) sum to 80 > 64.
+    void restoreRecoverableRejectsAggregateOverflow() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        writeRecoveryImage(image,
+                           QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD"));  // 64 bytes
+        const QString dest = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(dest));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonArray cands{
+            QJsonObject{{QStringLiteral("offset_bytes"), 0}, {QStringLiteral("size_bytes"), 40}},
+            QJsonObject{{QStringLiteral("offset_bytes"), 10}, {QStringLiteral("size_bytes"), 40}}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"), dest},
+                                      {QStringLiteral("candidates"), cands}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("combined candidate size")));
+        // Nothing was written.
+        QVERIFY(QDir(dest).entryList(QDir::Files).isEmpty());
+    }
+
+    // An empty candidate list fails cleanly.
+    void restoreRecoverableNoCandidatesFails() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        writeRecoveryImage(image, QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD"));
+        const QString dest = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(dest));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"), dest},
+                                      {QStringLiteral("candidates"), QJsonArray{}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("candidate")));
+    }
+
+    // A UNC/network image path is refused before opening.
+    void restoreRecoverableRejectsNetworkPath() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 0},
+                               {QStringLiteral("size_bytes"), 4}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"),
+                                       QStringLiteral("\\\\attacker.example.com\\share\\disk.img")},
+                                      {QStringLiteral("destination_directory"), dir.path()},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // A non-existent destination_directory fails closed with a schema-matching field name.
+    void restoreRecoverableRejectsMissingDest() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString image = dir.filePath(QStringLiteral("disk.img"));
+        writeRecoveryImage(image, QByteArrayLiteral("RECOVERED-PAYLOAD-0123456789ABCD"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject cand{{QStringLiteral("offset_bytes"), 16},
+                               {QStringLiteral("size_bytes"), 32}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("image_path"), image},
+                                      {QStringLiteral("destination_directory"),
+                                       dir.filePath(QStringLiteral("nope"))},
+                                      {QStringLiteral("candidates"), QJsonArray{cand}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QString msg = result.value(QStringLiteral("message")).toString();
+        QVERIFY(msg.contains(QStringLiteral("existing directory")));
+        QVERIFY(
+            msg.contains(QStringLiteral("destination_directory")));  // matches the schema arg name
     }
 
     // W-net-... email.export_pst: exports a PST/OST via EmailExportWorker::exportItems, mirroring
