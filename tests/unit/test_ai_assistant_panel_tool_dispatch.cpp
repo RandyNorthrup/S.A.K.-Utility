@@ -34,6 +34,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QSemaphore>
 #include <QSet>
 #include <QSignalSpy>
@@ -42,6 +43,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
+#include <QUuid>
 
 #include <atomic>
 #include <cstring>
@@ -244,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 48);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 49);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -280,6 +282,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.preview_organize")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.list_archive")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.scan_directory")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("backup.preview_app_data")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.list_restore_points")));
@@ -2276,6 +2279,123 @@ private Q_SLOTS:
         }
         QVERIFY(have_big);
         QVERIFY(!have_small);
+    }
+
+    // backup.preview_app_data with no app_name fails cleanly (never scans).
+    void previewAppDataMissingNameFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel, QStringLiteral("backup.preview_app_data"), QJsonObject{});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("app_name")));
+    }
+
+    // backup.preview_app_data is read-only: even in a chat/research session it RUNS (never
+    // policy_blocked). A random GUID-like app name matches no standard data directory, so it
+    // returns an honest empty preview (found=false, zero size, scan_complete=true) -- not a masked
+    // failure.
+    void previewAppDataUnknownAppRunsUngatedAndReportsEmpty() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("app_name"),
+                                       QStringLiteral("NoSuchApp_5f3c1a9e_dead_beef")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY2(result.value(QStringLiteral("success")).toBool(),
+                 qPrintable(result.value(QStringLiteral("message")).toString()));
+        const QString message = result.value(QStringLiteral("message")).toString();
+        QVERIFY2(!message.contains(QStringLiteral("policy")), qPrintable(message));
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("found")).toBool());
+        QCOMPARE(data.value(QStringLiteral("directory_count")).toInt(), 0);
+        QCOMPARE(data.value(QStringLiteral("total_size_bytes")).toDouble(), 0.0);
+        QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
+    }
+
+    // backup.preview_app_data discovers a real directory under a standard data location (Documents)
+    // and sizes it via the hardened file_scanner. Creates a uniquely-named subdir so scanForAppData
+    // finds it by name, writes a known payload, and asserts the reported total matches. Cleaned up
+    // regardless of assertion outcome; QSKIP where Documents is not writable.
+    void previewAppDataSizesDiscoveredDir() {
+        const QString documents =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (documents.isEmpty()) {
+            QSKIP("no writable Documents location on this host");
+        }
+        const QString token = QStringLiteral("SakPreviewCanary") +
+                              QUuid::createUuid().toString(QUuid::Id128).left(12);
+        const QString appDir = QDir(documents).filePath(token);
+        if (!QDir().mkpath(appDir + QStringLiteral("/sub"))) {
+            QSKIP("could not create a probe directory under Documents");
+        }
+        const auto cleanup = qScopeGuard([&] { QDir(appDir).removeRecursively(); });
+
+        const QByteArray payload(4096, 'z');
+        {
+            QFile file(appDir + QStringLiteral("/sub/data.bin"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("app_name"), token}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY2(result.value(QStringLiteral("success")).toBool(),
+                 qPrintable(result.value(QStringLiteral("message")).toString()));
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("found")).toBool());
+        QCOMPARE(data.value(QStringLiteral("sized_count")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("total_size_bytes")).toDouble(),
+                 static_cast<double>(payload.size()));
+        QVERIFY(data.value(QStringLiteral("file_count")).toDouble() >= 1.0);
+        QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
+        bool listed = false;
+        for (const auto& value : data.value(QStringLiteral("paths")).toArray()) {
+            listed = listed || value.toString().contains(token);
+        }
+        QVERIFY(listed);
+    }
+
+    // backup.preview_app_data refuses a PATH-SHAPED app_name. app_name is a plain application name,
+    // never a path; a UNC/absolute/traversal value must be rejected BEFORE any discovery, so a
+    // prompt-injected model cannot turn it into an outbound stat (a UNC value would otherwise leak
+    // the NTLM hash). Covers UNC (both slash forms), a drive path, and a traversal.
+    void previewAppDataRejectsPathLikeName() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QStringList names = {QStringLiteral("\\\\attacker.example.com\\share"),
+                                   QStringLiteral("//attacker.example.com/share"),
+                                   QStringLiteral("C:\\Windows"),
+                                   QStringLiteral("../../secret")};
+        for (const QString& name : names) {
+            const QString args =
+                QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("app_name"), name}})
+                                      .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
+                {QStringLiteral("arguments"), args}});
+            QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(name));
+            QVERIFY2(result.value(QStringLiteral("message"))
+                         .toString()
+                         .contains(QStringLiteral("not a path")),
+                     qPrintable(name));
+        }
     }
 
     // Non-ASCII filenames must survive to the model intact (the reported path was built via the

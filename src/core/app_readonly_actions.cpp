@@ -50,6 +50,7 @@
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/thermal_monitor.h"
+#include "sak/user_data_manager.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
 #include "sak/wifi_profile_scanner.h"
@@ -110,6 +111,11 @@ constexpr qint64 kMaxArchiveListBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
 constexpr int kMaxScanEntriesCollected = 2000;
 constexpr int kMaxScanDepth = 64;
 constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
+// backup.preview_app_data: cap the discovered dirs actually SIZED (each is a full tree walk), the
+// dirs surfaced to the model, and the shared wall time across all of them.
+constexpr int kMaxAppDataScanDirs = 64;
+constexpr int kMaxAppDataReportedPaths = 200;
+constexpr int kAppDataPreviewTimeoutMs = 2 * 60 * 1000;  // 2 min
 // organizer.preview_organize: cap the per-move sample surfaced (planned counts stay accurate) and
 // the wall time. The preview scans only the target's immediate files (non-recursive), so it is
 // fast.
@@ -1694,6 +1700,220 @@ QJsonObject scanDirectoryParamsSchema() {
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"), properties},
                        {QStringLiteral("required"), QJsonArray{QStringLiteral("root_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// backup.preview_app_data
+// ---------------------------------------------------------------------------
+// Read-only preview of what a user-data backup would capture for a named app. Drives the app's OWN
+// UserDataManager::scanForAppData, which substring-matches the names of the REAL immediate subdirs
+// of fixed standard data locations (AppData Local/Roaming, ProgramData, Documents, Home). The op
+// takes an app NAME (rejected if path-shaped) and never joins it into a path or stats it, so a
+// prompt-injected model cannot steer discovery at an arbitrary/off-box location (see
+// discoverAppDataDirs for why discoverAppDataPaths is deliberately avoided). Each discovered
+// directory's on-disk size is summed with the already-hardened file_scanner (skip_symlinks on,
+// follow off) under ONE shared wall-time deadline; a directory that is (or sits under) a reparse
+// point or a UNC/device path is screened out, reported separately, and marks the total a lower
+// bound
+// -- never followed. Nothing is copied or written -- this only reports the paths + total size a
+// backup would include, so the technician can size the job before running it.
+
+struct AppDataPreviewOutcome {
+    QStringList scanned;    ///< directories actually sized
+    QStringList skipped;    ///< directories screened out (reparse / UNC) -- never followed
+    qint64 total_size{0};   ///< summed on-disk bytes across scanned dirs
+    qint64 file_count{0};   ///< summed regular-file count
+    bool truncated{false};  ///< discovery returned more dirs than the per-op scan cap
+    bool timed_out{false};  ///< the shared deadline fired mid-walk
+    bool complete{true};    ///< every scanned walk finished with no unreadable subtree
+};
+
+// Drop any path nested under another kept path (case-insensitive, '/'-boundary). A recursive size
+// walk of an ANCESTOR already includes its descendants, so keeping both would double-count that
+// subtree. scanForAppData matches on the FULL path string, so a name that is a substring of a
+// standard base's own path (e.g. "Documents") co-returns an ancestor and its children; this filter
+// keeps only the shallowest of any nested chain so each byte is counted once. @p paths must already
+// be cleanPath-normalized (so nesting is a pure lexical '/' prefix, not a separator/case artifact).
+QStringList dropNestedPaths(QStringList paths) {
+    std::sort(paths.begin(), paths.end(), [](const QString& lhs, const QString& rhs) {
+        return lhs.size() < rhs.size();  // ancestors (shorter) first
+    });
+    QStringList kept;
+    for (const QString& path : paths) {
+        const QString lower = path.toLower();
+        const bool nested =
+            std::any_of(kept.cbegin(), kept.cend(), [&lower](const QString& keeper) {
+                const QString keeper_lower = keeper.toLower();
+                return lower == keeper_lower || lower.startsWith(keeper_lower + QLatin1Char('/'));
+            });
+        if (!nested) {
+            kept.append(path);
+        }
+    }
+    return kept;
+}
+
+// Discover the candidate data directories for @p app_name (normalized, deduplicated,
+// non-overlapping).
+//
+// SECURITY: only scanForAppData is used. It substring-matches the names of the REAL immediate
+// subdirectories of the fixed standard bases (QDirIterator listing) -- app_name never becomes a
+// path or a stat target. UserDataManager::discoverAppDataPaths is DELIBERATELY NOT used: it does
+// QDir(base).filePath(variant) then QDir(path).exists(), and QDir::filePath returns an ABSOLUTE
+// argument (e.g. a UNC app_name like "\\\\host\\share") VERBATIM, so its following exists() would
+// perform an outbound SMB/NTLM handshake to a model-supplied host and leak the credential hash --
+// with no local plant and outside any deadline. scanForAppData has neither the path-join nor the
+// exists(); a listed directory that is itself a reparse point is screened on the sizing side
+// (pathReparseUnsafe in runAppDataPreview) before file_scanner ever follows it.
+//
+// Paths are QDir::cleanPath-normalized (unifies separators, resolves ".."/"." LEXICALLY -- no
+// filesystem access, no symlink following), deduped case-INSENSITIVELY (Windows FS), then
+// ancestor-filtered so an overlapping subtree is sized once.
+QStringList discoverAppDataDirs(const QString& app_name) {
+    UserDataManager manager;
+    const QStringList raw = manager.scanForAppData(app_name);
+    QStringList normalized;
+    QSet<QString> seen;
+    for (const QString& path : raw) {
+        const QString clean = QDir::cleanPath(path);
+        if (clean.isEmpty()) {
+            continue;
+        }
+        const QString key = clean.toLower();  // Windows paths are case-insensitive
+        if (!seen.contains(key)) {
+            seen.insert(key);
+            normalized.append(clean);
+        }
+    }
+    return dropNestedPaths(normalized);
+}
+
+// Sum one directory's size via the hardened file_scanner under the shared stop token. Returns false
+// if the walk errored/cancelled or hit any unreadable subtree (so the caller marks the total
+// partial). skip_symlinks keeps a planted symlink FILE inside the tree from being followed to a UNC
+// target; the ROOT is reparse-screened by the caller before we get here.
+bool sumAppDataDirSize(const QString& path,
+                       const std::stop_token& stop,
+                       qint64& size_out,
+                       qint64& files_out) {
+    sak::scan_options options;
+    options.recursive = true;
+    options.follow_symlinks = false;
+    options.skip_symlinks = true;
+    options.calculate_sizes = true;
+    sak::file_scanner scanner;
+    const auto result = scanner.scan(std::filesystem::path(path.toStdWString()), options, stop);
+    if (!result.has_value()) {
+        return false;
+    }
+    size_out += static_cast<qint64>(result->total_size);
+    files_out += static_cast<qint64>(result->files_found);
+    return result->errors_encountered == 0;
+}
+
+AppDataPreviewOutcome runAppDataPreview(const QStringList& paths) {
+    AppDataPreviewOutcome out;
+    std::stop_source stop;
+    DeadlineCanceller deadline([&stop]() { stop.request_stop(); }, kAppDataPreviewTimeoutMs);
+    for (const QString& path : paths) {
+        if (out.scanned.size() >= kMaxAppDataScanDirs) {
+            out.truncated = true;
+            out.complete = false;
+            break;
+        }
+        if (sak::isNetworkOrDevicePath(path) || sak::pathReparseUnsafe(path)) {
+            // A discovered candidate we refuse to follow (reparse/UNC) is NOT sized, so its bytes
+            // are absent from the total -- report the total as a lower bound (scan_complete=false),
+            // not a complete figure that silently omits it. skipped_paths[] names which.
+            out.skipped.append(path);
+            out.complete = false;
+            continue;
+        }
+        if (!sumAppDataDirSize(path, stop.get_token(), out.total_size, out.file_count)) {
+            out.complete = false;
+        }
+        out.scanned.append(path);
+    }
+    deadline.finish();
+    if (deadline.fired()) {
+        out.timed_out = true;
+        out.complete = false;
+    }
+    return out;
+}
+
+QJsonArray clampPathArray(const QStringList& paths) {
+    QJsonArray arr;
+    for (const QString& path : paths) {
+        if (arr.size() >= kMaxAppDataReportedPaths) {
+            break;
+        }
+        arr.append(clampLine(path));
+    }
+    return arr;
+}
+
+AppActionResult previewAppDataBackup(const QJsonObject& args) {
+    const QString app_name = args.value(QStringLiteral("app_name")).toString().trimmed();
+    if (app_name.isEmpty()) {
+        return {false, QStringLiteral("preview_app_data requires an 'app_name' argument"), {}};
+    }
+    // app_name is a NAME, never a path. Reject path-shaped input (separators, drive/UNC colon,
+    // "..") so it cannot be misused as a filesystem path -- defense in depth on top of
+    // discoverAppDataDirs using only the substring-matching scanForAppData (no path join, no
+    // exists()).
+    if (app_name.contains(QLatin1Char('/')) || app_name.contains(QLatin1Char('\\')) ||
+        app_name.contains(QLatin1Char(':')) || app_name.contains(QStringLiteral(".."))) {
+        return {false, QStringLiteral("app_name must be a plain application name, not a path"), {}};
+    }
+    // NOTE (accepted low residual): discovery reads only the user's OWN standard data directories
+    // via QDirIterator, which has no hard error channel -- an empty result is an honest "no
+    // matching data" (those dirs are always present + readable for the owning user), not a masked
+    // failure.
+    const QStringList paths = discoverAppDataDirs(app_name);
+    const AppDataPreviewOutcome out = runAppDataPreview(paths);
+
+    const bool scan_complete = out.complete && !out.timed_out;
+    QJsonObject data{{QStringLiteral("app_name"), app_name},
+                     {QStringLiteral("found"), !paths.isEmpty()},
+                     {QStringLiteral("directory_count"), static_cast<int>(paths.size())},
+                     {QStringLiteral("sized_count"), static_cast<int>(out.scanned.size())},
+                     {QStringLiteral("skipped_count"), static_cast<int>(out.skipped.size())},
+                     {QStringLiteral("total_size_bytes"), static_cast<double>(out.total_size)},
+                     {QStringLiteral("file_count"), static_cast<double>(out.file_count)},
+                     {QStringLiteral("paths"), clampPathArray(out.scanned)},
+                     {QStringLiteral("skipped_paths"), clampPathArray(out.skipped)},
+                     {QStringLiteral("truncated"), out.truncated},
+                     {QStringLiteral("timed_out"), out.timed_out},
+                     {QStringLiteral("scan_complete"), scan_complete}};
+    QString message = paths.isEmpty()
+                          ? QStringLiteral("No app-data directories found for '%1'").arg(app_name)
+                          : QStringLiteral("'%1': %2 director(ies), %3 bytes across %4 file(s)")
+                                .arg(app_name)
+                                .arg(paths.size())
+                                .arg(out.total_size)
+                                .arg(out.file_count);
+    if (out.timed_out) {
+        message += QStringLiteral(" (sizing hit the time limit; total is partial)");
+    } else if (!out.complete) {
+        message +=
+            QStringLiteral(" (some directories were unreadable or capped; total is partial)");
+    }
+    return {true, message, data};
+}
+
+QJsonObject previewAppDataParamsSchema() {
+    QJsonObject app_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral(
+             "Name of the application whose user-data locations to preview (e.g. "
+             "\"Google Chrome\"); matched against standard AppData/ProgramData/Documents "
+             "folders")}};
+    QJsonObject properties{{QStringLiteral("app_name"), app_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("app_name")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
 
@@ -4274,6 +4494,15 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     registerImagingReadOnlyOps(add);
 
     registerFileReadOnlyOps(add);
+
+    add(makeDescriptor(QStringLiteral("backup.preview_app_data"),
+                       QStringLiteral("Preview an app's backup data"),
+                       QStringLiteral("Report the standard user-data directories a named app would "
+                                      "back up and their total on-disk size, without copying "
+                                      "anything (read-only)"),
+                       QStringLiteral("backup"),
+                       previewAppDataParamsSchema()),
+        previewAppDataBackup);
 
     registerDiagnosticsReadOnlyOps(add);
 

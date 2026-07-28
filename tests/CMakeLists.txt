@@ -1546,6 +1546,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/actions/backup_bitlocker_keys_action.cpp
         # W1a read-only app ops + the headless services they drive.
         ${CMAKE_SOURCE_DIR}/src/core/app_readonly_actions.cpp
+        # backup.preview_app_data: UserDataManager discovery (scanForAppData/discoverAppDataPaths).
+        # Links the whole class, which drags encryption.cpp (backup AES; bcrypt auto-links) even
+        # though the op only calls the read-only discovery methods.
+        ${CMAKE_SOURCE_DIR}/src/core/user_data_manager.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/user_data_manager.h  # Q_OBJECT -> list header for AUTOMOC
+        ${CMAKE_SOURCE_DIR}/src/core/encryption.cpp
         # Network read-only ops: adapter enumeration + DNS lookup engines (synchronous,
         # emit inline). GetAdaptersAddresses / DnsQuery_W -> need iphlpapi + dnsapi.
         ${CMAKE_SOURCE_DIR}/src/core/network_adapter_inspector.cpp
