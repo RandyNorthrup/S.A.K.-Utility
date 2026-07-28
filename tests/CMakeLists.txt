@@ -1634,6 +1634,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # in the engine; the op-layer path guards + new/empty-dir + no-clobber are covered by tests.
         ${CMAKE_SOURCE_DIR}/src/core/file_explorer_archive_service.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/file_explorer_archive_service.h
+        ${CMAKE_SOURCE_DIR}/src/core/wifi_setup_script.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
@@ -4638,6 +4639,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     add_test(NAME test_email_profile_manager COMMAND test_email_profile_manager
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_profile_manager")
+endif()
+
+# test_wifi_setup_script --- injection-safe WLAN .cmd builder
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_setup_script.cpp")
+    add_executable(test_wifi_setup_script
+        unit/test_wifi_setup_script.cpp
+        ../src/core/wifi_setup_script.cpp
+        ../src/core/logger.cpp
+        ../include/sak/wifi_setup_script.h
+    )
+    set_target_properties(test_wifi_setup_script PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_wifi_setup_script PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_wifi_setup_script PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_wifi_setup_script COMMAND test_wifi_setup_script
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_wifi_setup_script")
 endif()
 
 # test_deadline_canceller --- header-only deadline/cancel monitor (single-winner finish/timeout race)

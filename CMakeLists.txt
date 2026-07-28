@@ -523,6 +523,7 @@ set(CORE_SOURCES
     src/core/bandwidth_tester.cpp
     src/core/wifi_analyzer.cpp
     src/core/wifi_profile_scanner.cpp
+    src/core/wifi_setup_script.cpp
     src/core/active_connections_monitor.cpp
     src/core/firewall_rule_auditor.cpp
     src/core/network_share_browser.cpp

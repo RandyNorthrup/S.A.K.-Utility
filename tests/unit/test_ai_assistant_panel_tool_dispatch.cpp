@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 57);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 58);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -266,6 +266,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("network.audit_firewall")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.wifi_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.list_wifi_profiles")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("network.generate_wifi_setup_script")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.ping")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.traceroute")));
         QVERIFY(read_only_ids.contains(QStringLiteral("network.mtr")));
@@ -1916,6 +1917,86 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("PST")));
+    }
+
+    // network.generate_wifi_setup_script: READ-ONLY (runs ungated in a chat session) -- builds a
+    // WLAN .cmd via the shared sak::buildWifiSetupScriptWindows. Real output: the script adds a
+    // profile + connects, and (for WPA) embeds the password. Nothing is executed or written.
+    void generateWifiScriptBuildsWpaScript() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("ssid"), QStringLiteral("MyNet")},
+                                      {QStringLiteral("password"), QStringLiteral("secret123")},
+                                      {QStringLiteral("security"), QStringLiteral("wpa2")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        const QString script = data.value(QStringLiteral("script")).toString();
+        QVERIFY(script.contains(QStringLiteral("netsh wlan add profile")));
+        QVERIFY(script.contains(QStringLiteral("netsh wlan connect name=\"MyNet\"")));
+        QVERIFY(data.value(QStringLiteral("embeds_password")).toBool());
+    }
+
+    // An OPEN network with a password: the profile omits keyMaterial, so embeds_password must be
+    // false and the note must not claim a password is in the script (honest disclosure).
+    void generateWifiScriptOpenNetworkReportsNoEmbeddedPassword() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("ssid"), QStringLiteral("CafeGuest")},
+                                      {QStringLiteral("password"), QStringLiteral("ignored")},
+                                      {QStringLiteral("security"), QStringLiteral("open")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("embeds_password")).toBool());
+        QVERIFY(
+            !data.value(QStringLiteral("note")).toString().contains(QStringLiteral("password")));
+    }
+
+    // An SSID with a double quote cannot be safely embedded -> refused (no script).
+    void generateWifiScriptRefusesUnsafeSsid() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("ssid"), QStringLiteral("Net\"work")},
+                                      {QStringLiteral("password"), QStringLiteral("pw")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("cannot be safely scripted")));
+    }
+
+    // A missing SSID fails cleanly.
+    void generateWifiScriptRequiresSsid() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("ssid")));
     }
 
     // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate

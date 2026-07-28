@@ -59,6 +59,7 @@
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
 #include "sak/wifi_profile_scanner.h"
+#include "sak/wifi_setup_script.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
@@ -3440,6 +3441,82 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
     return {true, QStringLiteral("Found %1 saved WiFi profile(s)").arg(profiles.size()), data};
 }
 
+// Build a Windows WLAN setup .cmd for a network (the WiFi panel's "export setup script" feature,
+// driving the shared, injection-hardened sak::buildWifiSetupScriptWindows). READ-ONLY: it only
+// BUILDS text -- no profile is added, no netsh runs, nothing is written to disk. The generated
+// script (which the user saves + runs elevated) adds the profile then connects. An empty/unsafe
+// SSID (double quote or control char, e.g. from a rogue AP) is refused fail-closed. The script
+// embeds the supplied WiFi password verbatim -- the caller already provided it -- so the payload is
+// sensitive; the note says so.
+AppActionResult generateWifiSetupScript(const QJsonObject& args) {
+    const QString ssid = args.value(QStringLiteral("ssid")).toString();
+    if (ssid.trimmed().isEmpty()) {
+        return {false,
+                QStringLiteral("generate_wifi_setup_script requires a non-empty 'ssid'"),
+                {}};
+    }
+    const QString password = args.value(QStringLiteral("password")).toString();
+    const QString security = args.value(QStringLiteral("security")).toString();
+    const bool hidden = args.value(QStringLiteral("hidden")).toBool(false);
+
+    const QString script = sak::buildWifiSetupScriptWindows(ssid, password, security, hidden);
+    if (script.isEmpty()) {
+        return {false,
+                QStringLiteral("SSID contains characters that cannot be safely scripted (a double "
+                               "quote or a control character); refusing to build the script"),
+                {}};
+    }
+    // Honest disclosure: the profile embeds <keyMaterial> ONLY for a passphrase network (WPA2) with
+    // a non-empty password -- an open/WEP network omits it even if a password was supplied.
+    const bool embeds_password = !password.isEmpty() && sak::wifiSecurityUsesPassphrase(security);
+    const QString note =
+        embeds_password
+            ? QStringLiteral(
+                  "Save as a .cmd and run as Administrator. It adds the WLAN profile then "
+                  "connects; the script contains the WiFi password in plain text.")
+            : QStringLiteral(
+                  "Save as a .cmd and run as Administrator. It adds the WLAN profile then "
+                  "connects.");
+    QJsonObject data{{QStringLiteral("ssid"), clampLine(ssid)},
+                     {QStringLiteral("platform"), QStringLiteral("windows")},
+                     {QStringLiteral("security"),
+                      security.isEmpty() ? QStringLiteral("wpa2") : clampLine(security)},
+                     {QStringLiteral("hidden"), hidden},
+                     {QStringLiteral("embeds_password"), embeds_password},
+                     {QStringLiteral("script"), script},
+                     {QStringLiteral("note"), note}};
+    return {true,
+            QStringLiteral("Built a Windows WiFi setup script for '%1'").arg(clampLine(ssid)),
+            data};
+}
+
+QJsonObject generateWifiSetupScriptParamsSchema() {
+    const auto strProp = [](const QString& desc) {
+        return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                           {QStringLiteral("description"), desc}};
+    };
+    QJsonObject security_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("enum"),
+         QJsonArray{QStringLiteral("wpa2"), QStringLiteral("wep"), QStringLiteral("open")}},
+        {QStringLiteral("description"),
+         QStringLiteral("Security type; anything other than wep/open is treated as WPA2-PSK "
+                        "(default wpa2)")}};
+    QJsonObject hidden_prop{{QStringLiteral("type"), QStringLiteral("boolean")},
+                            {QStringLiteral("description"),
+                             QStringLiteral("True if the network does not broadcast its SSID")}};
+    QJsonObject properties{
+        {QStringLiteral("ssid"), strProp(QStringLiteral("Network name (SSID) to connect to"))},
+        {QStringLiteral("password"),
+         strProp(QStringLiteral("WiFi passphrase (omit/empty for an open network)"))},
+        {QStringLiteral("security"), security_prop},
+        {QStringLiteral("hidden"), hidden_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("ssid")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QString shareTypeToString(NetworkShareInfo::ShareType type) {
     switch (type) {
     case NetworkShareInfo::ShareType::Disk:
@@ -4653,6 +4730,16 @@ void registerNetworkReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("network"),
                        noParamsSchema()),
         listWifiProfiles);
+
+    add(makeDescriptor(
+            QStringLiteral("network.generate_wifi_setup_script"),
+            QStringLiteral("Generate a WiFi setup script"),
+            QStringLiteral(
+                "Build a Windows .cmd that adds a WLAN profile and connects to a network "
+                "(returns the script text; does NOT run it or change any settings)"),
+            QStringLiteral("network"),
+            generateWifiSetupScriptParamsSchema()),
+        generateWifiSetupScript);
 
     add(makeDescriptor(QStringLiteral("network.list_shares"),
                        QStringLiteral("List file shares"),
