@@ -28,8 +28,8 @@ enum class error_code;
 
 /// One attachment with its decoded content, produced by MboxParser::readAllAttachments in a
 /// SINGLE recursive MIME pass. filename and data come from the same enumeration, so they always
-/// correspond (unlike pairing readMessageDetail's recursive index with the non-recursive
-/// readAttachmentData extractor).
+/// correspond -- readMessageDetail and readAttachmentData both enumerate recursively and are keyed
+/// on this same index.
 struct MboxAttachmentPayload {
     QString filename;
     QByteArray data;
@@ -81,7 +81,10 @@ public:
     [[nodiscard]] std::expected<sak::MboxMessageDetail, sak::error_code> readMessageDetail(
         int message_index);
 
-    /// Read decoded attachment bytes for a specific message and attachment index
+    /// Read decoded attachment bytes for a specific message and attachment index. The index is the
+    /// same recursive (DFS) enumeration as readMessageDetail's attachments list and
+    /// readAllAttachments (so name[i] and bytes[i] always correspond, including inside nested
+    /// multiparts).
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentData(
         int message_index, int attachment_index);
 
@@ -158,10 +161,6 @@ private:
     void appendAttachment(const MimePartInfo& part,
                           sak::MboxMessageDetail& detail,
                           int& attachment_idx);
-
-    /// Extract decoded bytes for a specific attachment index from raw MIME
-    [[nodiscard]] std::expected<QByteArray, sak::error_code> extractAttachmentBytes(
-        const QByteArray& raw_message, int attachment_index);
 
     /// Decode transfer encoding (base64, quoted-printable)
     [[nodiscard]] QByteArray decodeTransferEncoding(const QByteArray& data,

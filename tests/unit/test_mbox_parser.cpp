@@ -34,6 +34,7 @@ private Q_SLOTS:
     void readMessagesSync();
     void readMessageDetailSync();
     void nestedMultipartRecoversBodyAndAttachment();
+    void readAttachmentDataAlignsWithRecursiveEnumeration();
 
     // -- From Line Detection ---------------------------------------------
     void fromLineDetectsValidSeparator();
@@ -303,6 +304,69 @@ void TestMboxParser::nestedMultipartRecoversBodyAndAttachment() {
     QVERIFY(detail->body_html.contains(QStringLiteral("Hello html body")));
     QCOMPARE(detail->attachments.size(), 1);
     QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("a.bin"));
+    parser.close();
+}
+
+// Regression: readAttachmentData's index must mean the SAME attachment as readMessageDetail's list,
+// even when a nested multipart contains attachments. Shape: multipart/mixed { multipart/related {
+// text/html ; image/png inline "pic.png" = "ABC" } ; application/pdf attachment "report.pdf" =
+// "DEF" }. readMessageDetail enumerates recursively -> [pic.png, report.pdf]. The old
+// readAttachmentData counted only top-level parts, so index 0 wrongly returned the PDF and index 1
+// ran off the end.
+void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
+    QByteArray content =
+        "From sender@example.com Mon Jan  1 00:00:00 2024\r\n"
+        "Subject: Nested attach\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/mixed; boundary=\"OUT\"\r\n"
+        "\r\n"
+        "--OUT\r\n"
+        "Content-Type: multipart/related; boundary=\"IN\"\r\n"
+        "\r\n"
+        "--IN\r\n"
+        "Content-Type: text/html\r\n"
+        "\r\n"
+        "<p>hi</p>\r\n"
+        "--IN\r\n"
+        "Content-Type: image/png\r\n"
+        "Content-Disposition: inline; filename=\"pic.png\"\r\n"
+        "Content-Transfer-Encoding: base64\r\n"
+        "\r\n"
+        "QUJD\r\n"
+        "--IN--\r\n"
+        "--OUT\r\n"
+        "Content-Type: application/pdf\r\n"
+        "Content-Disposition: attachment; filename=\"report.pdf\"\r\n"
+        "Content-Transfer-Encoding: base64\r\n"
+        "\r\n"
+        "REVG\r\n"
+        "--OUT--\r\n";
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(content);
+    temp_file.close();
+
+    MboxParser parser;
+    parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
+
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->attachments.size(), 2);
+    QCOMPARE(detail->attachments.at(0).long_filename, QStringLiteral("pic.png"));
+    QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("report.pdf"));
+
+    // Bytes at each index must match the name at that index -- not the old top-level-only mapping.
+    auto bytes0 = parser.readAttachmentData(0, 0);
+    QVERIFY(bytes0.has_value());
+    QCOMPARE(*bytes0, QByteArray("ABC"));
+    auto bytes1 = parser.readAttachmentData(0, 1);
+    QVERIFY(bytes1.has_value());
+    QCOMPARE(*bytes1, QByteArray("DEF"));
+
+    // Out-of-range index is rejected.
+    QVERIFY(!parser.readAttachmentData(0, 2).has_value());
     parser.close();
 }
 

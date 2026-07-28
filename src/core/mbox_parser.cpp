@@ -254,28 +254,22 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
 
 std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message_index,
                                                                      int attachment_index) {
-    if (!m_is_open) {
-        return std::unexpected(error_code::invalid_operation);
-    }
     if (attachment_index < 0) {
         return std::unexpected(error_code::invalid_argument);
     }
-
-    auto raw = readRawMessage(message_index);
-    if (!raw) {
-        return std::unexpected(raw.error());
+    // Route through readAllAttachments so an attachment index means the SAME thing here as in
+    // readMessageDetail: both enumerate attachments RECURSIVELY (DFS through nested multiparts).
+    // The old bespoke extractor counted only TOP-LEVEL parts, so any nested multipart (e.g. an
+    // inline image in multipart/related plus a top-level attachment) mis-paired names and bytes for
+    // every caller. As a bonus this parses the message once, not twice.
+    const auto all = readAllAttachments(message_index);
+    if (!all) {
+        return std::unexpected(all.error());
     }
-
-    // Re-parse MIME to extract attachment bytes at the given index
-    sak::MboxMessageDetail detail;
-    parseMimeMessage(*raw, detail);
-
-    if (attachment_index >= detail.attachments.size()) {
+    if (attachment_index >= all->size()) {
         return std::unexpected(error_code::invalid_argument);
     }
-
-    // Re-parse extracting actual bytes this time
-    return extractAttachmentBytes(*raw, attachment_index);
+    return (*all)[attachment_index].data;
 }
 
 // ============================================================================
@@ -723,60 +717,6 @@ std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAtt
         out.append({name, i < payload_bytes.size() ? payload_bytes[i] : QByteArray()});
     }
     return out;
-}
-
-std::expected<QByteArray, error_code> MboxParser::extractAttachmentBytes(
-    const QByteArray& raw_message, int attachment_index) {
-    auto [header_end, body_start] = findBodyBoundary(raw_message);
-    if (header_end < 0) {
-        return std::unexpected(error_code::invalid_argument);
-    }
-
-    QByteArray body = raw_message.mid(body_start);
-    auto headers = parseHeaders(raw_message);
-    QString content_type = headers.value(QStringLiteral("content-type"),
-                                         QStringLiteral("text/plain"));
-
-    if (!content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
-        return std::unexpected(error_code::invalid_argument);
-    }
-
-    QString boundary = extractBoundary(content_type);
-    if (boundary.isEmpty()) {
-        return std::unexpected(error_code::invalid_argument);
-    }
-
-    QByteArray delimiter = QByteArrayLiteral("--") + boundary.toUtf8();
-    QVector<QByteArray> mime_parts = splitMimeParts(body, delimiter);
-
-    int att_idx = 0;
-    for (const auto& part : mime_parts) {
-        auto part_hdrs = parseHeaders(part);
-        QString part_ct = part_hdrs.value(QStringLiteral("content-type"),
-                                          QStringLiteral("text/plain"));
-        QString part_disp = part_hdrs.value(QStringLiteral("content-disposition"));
-
-        bool is_att = part_disp.startsWith(QLatin1String("attachment"), Qt::CaseInsensitive);
-        bool is_non_text = !part_ct.startsWith(QLatin1String("text/"), Qt::CaseInsensitive) &&
-                           !part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive);
-
-        if (!is_att && !is_non_text) {
-            continue;
-        }
-        if (att_idx != attachment_index) {
-            ++att_idx;
-            continue;
-        }
-
-        auto [phdr_end, pbody_start] = findBodyBoundary(part);
-        if (phdr_end < 0) {
-            return std::unexpected(error_code::invalid_argument);
-        }
-        QString part_enc = part_hdrs.value(QStringLiteral("content-transfer-encoding"));
-        QByteArray part_body = part.mid(pbody_start);
-        return decodeTransferEncoding(part_body, part_enc);
-    }
-    return std::unexpected(error_code::invalid_argument);
 }
 
 // ============================================================================
