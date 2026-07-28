@@ -188,6 +188,47 @@ private Q_SLOTS:
         QFileInfo fi(result.value());
         QVERIFY(fi.fileName().startsWith("2025-07-20_"));
     }
+
+    // Regression: colliding subjects must never overwrite an already-written message. Order crafted
+    // to trip the old counter-only scheme: "X_2" first, then two "X" (the 2nd "X" used to generate
+    // "X_2" and clobber the first message's file). The fix loops until the suffixed name is free.
+    void collidingSubjectsNeverClobber() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(),
+                                    false,
+                                    false);  // no date prefix, no subfolders
+        const QVector<QPair<QString, QByteArray>> none;
+        const auto make = [](const QString& subj, const QString& body) {
+            sak::PstItemDetail item;
+            item.subject = subj;
+            item.body_plain = body;
+            return item;
+        };
+        const auto r1 = writer.writeMessage(make(QStringLiteral("X_2"), QStringLiteral("BODY-ONE")),
+                                            none,
+                                            QString());
+        const auto r2 = writer.writeMessage(make(QStringLiteral("X"), QStringLiteral("BODY-TWO")),
+                                            none,
+                                            QString());
+        const auto r3 = writer.writeMessage(make(QStringLiteral("X"), QStringLiteral("BODY-THREE")),
+                                            none,
+                                            QString());
+        QVERIFY(r1.has_value());
+        QVERIFY(r2.has_value());
+        QVERIFY(r3.has_value());
+        // Three DISTINCT files, all present at once.
+        QVERIFY(r1.value() != r2.value());
+        QVERIFY(r2.value() != r3.value());
+        QVERIFY(r1.value() != r3.value());
+        QVERIFY(QFile::exists(r1.value()));
+        QVERIFY(QFile::exists(r2.value()));
+        QVERIFY(QFile::exists(r3.value()));
+        // The first message's file was NOT overwritten by the third.
+        QFile f1(r1.value());
+        QVERIFY(f1.open(QIODevice::ReadOnly));
+        QVERIFY(f1.readAll().contains("BODY-ONE"));
+    }
 };
 
 QTEST_MAIN(TestHtmlEmailWriter)

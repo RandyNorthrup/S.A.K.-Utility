@@ -149,6 +149,35 @@ private Q_SLOTS:
         std::ignore = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(writer.totalBytesWritten() > 0);
     }
+
+    // Regression: colliding subjects must never overwrite an already-written .pdf. The old
+    // counter-only scheme could make the 2nd "X" resolve to "X_1"/"X_2" and clobber a distinct
+    // file; the fix loops until the suffixed name is free.
+    void collidingSubjectsNeverClobber() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::PdfEmailWriter writer(temp_dir.path(), false, false);  // no date prefix, no subfolders
+        const QVector<QPair<QString, QByteArray>> none;
+        const auto make = [](const QString& subj) {
+            sak::PstItemDetail item;
+            item.subject = subj;
+            item.body_plain = QStringLiteral("body of ") + subj;
+            return item;
+        };
+        const auto r1 = writer.writeMessage(make(QStringLiteral("X_1")), none, QString());
+        const auto r2 = writer.writeMessage(make(QStringLiteral("X")), none, QString());
+        const auto r3 = writer.writeMessage(make(QStringLiteral("X")), none, QString());
+        QVERIFY(r1.has_value());
+        QVERIFY(r2.has_value());
+        QVERIFY(r3.has_value());
+        // Three DISTINCT files, all present at once (no clobber).
+        QVERIFY(r1.value() != r2.value());
+        QVERIFY(r2.value() != r3.value());
+        QVERIFY(r1.value() != r3.value());
+        QVERIFY(QFile::exists(r1.value()));
+        QVERIFY(QFile::exists(r2.value()));
+        QVERIFY(QFile::exists(r3.value()));
+    }
 };
 
 QTEST_MAIN(TestPdfEmailWriter)

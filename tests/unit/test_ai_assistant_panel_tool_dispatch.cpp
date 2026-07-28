@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 58);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 59);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -1997,6 +1997,173 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("ssid")));
+    }
+
+    // ------------------------------------------------------------------
+    // email.convert_ost -- MUTATING (not destructive): converts an OST/PST store to a directory of
+    // files via the app's OWN OstConversionWorker. Shape + guard certed (no hand-buildable OST
+    // fixture, like export_pst): the real writer paths mirror the already-shipped export writers.
+    // Proofs: listed mutating, chat refuses it, direct IMAP upload refused, guards fail closed.
+    // ------------------------------------------------------------------
+
+    void convertOstListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("email.convert_ost")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    void convertOstBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("not a pst"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_directory"),
+                                       dir.filePath(QStringLiteral("out"))},
+                                      {QStringLiteral("format"), QStringLiteral("eml")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("out"))).exists());
+    }
+
+    // Direct IMAP upload (a network-egress "format") is refused -- the headless tool only writes
+    // files.
+    void convertOstRefusesImapFormat() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("not a pst"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_directory"),
+                                       dir.filePath(QStringLiteral("out"))},
+                                      {QStringLiteral("format"), QStringLiteral("imap_upload")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("IMAP")));
+        QVERIFY(
+            !QDir(dir.filePath(QStringLiteral("out"))).exists());  // never opened/wrote anything
+    }
+
+    // A UNC/network source is refused before opening.
+    void convertOstRejectsNetworkPath() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"),
+                                       QStringLiteral("\\\\attacker.example.com\\share\\in.pst")},
+                                      {QStringLiteral("output_directory"),
+                                       dir.filePath(QStringLiteral("out"))},
+                                      {QStringLiteral("format"), QStringLiteral("eml")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // A non-empty output_directory is refused so nothing pre-existing can be overwritten.
+    void convertOstRefusesNonEmptyOutputDir() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("not a pst"));
+        const QString out_dir = dir.filePath(QStringLiteral("dest"));
+        QVERIFY(QDir().mkpath(out_dir));
+        writeTextFile(out_dir + QStringLiteral("/keepme.txt"), QByteArrayLiteral("precious"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_directory"), out_dir},
+                                      {QStringLiteral("format"), QStringLiteral("eml")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("directory")));
+        // The pre-existing file is untouched.
+        QFile check(out_dir + QStringLiteral("/keepme.txt"));
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("precious"));
+    }
+
+    // A regular file that is not a valid OST/PST fails honestly at open (never a false success).
+    void convertOstGarbageFileFailsHonestly() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("definitely not a pst store"));
+        const QString out_dir = dir.filePath(QStringLiteral("out"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_directory"), out_dir},
+                                      {QStringLiteral("format"), QStringLiteral("eml")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("items_converted")).toInt(), 0);
     }
 
     // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate

@@ -10,6 +10,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMarginsF>
 #include <QPageLayout>
@@ -64,16 +65,19 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
 
     QString filename = sanitizeFilename(item.subject, item.date);
 
-    // De-duplicate
-    QString key = target_dir + QStringLiteral("/") + filename;
-    if (m_filename_counters.contains(key)) {
-        int count = ++m_filename_counters[key];
-        filename = QFileInfo(filename).completeBaseName() + QStringLiteral("_%1.pdf").arg(count);
-    } else {
-        m_filename_counters[key] = 0;
-    }
-
+    // De-duplicate by re-checking existence (mirrors EmlWriter). The old counter-only scheme never
+    // verified the "_N" candidate was free, so a crafted subject could overwrite a distinct earlier
+    // message's .pdf whose name collided.
     QString full_path = target_dir + QStringLiteral("/") + filename;
+    if (QFile::exists(full_path)) {
+        const QString base = QFileInfo(filename).completeBaseName();
+        int& counter = m_filename_counters[target_dir + QStringLiteral("/") + base];
+        do {
+            ++counter;
+            filename = base + QStringLiteral("_%1.pdf").arg(counter);
+            full_path = target_dir + QStringLiteral("/") + filename;
+        } while (QFile::exists(full_path));
+    }
 
     // Build HTML content for the PDF
     QString html_content = buildHtmlForPdf(item, attachment_data);

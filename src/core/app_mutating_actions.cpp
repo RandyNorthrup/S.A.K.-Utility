@@ -26,6 +26,8 @@
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
+#include "sak/ost_conversion_worker.h"
+#include "sak/ost_converter_types.h"
 #include "sak/partition_apply_worker.h"
 #include "sak/partition_executor.h"
 #include "sak/partition_manager_types.h"
@@ -2453,6 +2455,191 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     add(flush, flushDns);
 }
 
+// ---------------------------------------------------------------------------
+// email.convert_ost
+// ---------------------------------------------------------------------------
+// Convert an OST/PST mail store to a folder of files, driving the app's OWN OstConversionWorker
+// (the OST Converter feature). The source is read through the fan-out-hardened PstParser; the
+// worker sanitizes each folder segment (sanitizeFolderSegment) so a crafted folder name cannot
+// escape the output root, and writes only into the required-new/empty output_directory. ImapUpload
+// (a network egress "format") is NOT selectable -- only file formats are accepted. Mutating, not
+// destructive (adds files into a new/empty dir), no elevation.
+
+// Bound the OST/PST size a headless conversion will open (PstParser parses all node metadata up
+// front; larger stores use the GUI). Matches the export cap.
+constexpr qint64 kMaxConvertSourceBytes = 2LL * 1024 * 1024 * 1024;
+
+// Map the model-facing format string to a FILE OstOutputFormat. Returns nullopt for imap_upload
+// (network) or any unknown value, so the op refuses it -- no network egress path is ever taken.
+std::optional<OstOutputFormat> convertFormatFromArg(const QString& value) {
+    const QString v = value.trimmed().toLower();
+    if (v == QLatin1String("pst")) {
+        return OstOutputFormat::Pst;
+    }
+    if (v == QLatin1String("eml")) {
+        return OstOutputFormat::Eml;
+    }
+    if (v == QLatin1String("msg")) {
+        return OstOutputFormat::Msg;
+    }
+    if (v == QLatin1String("mbox")) {
+        return OstOutputFormat::Mbox;
+    }
+    if (v == QLatin1String("dbx")) {
+        return OstOutputFormat::Dbx;
+    }
+    if (v == QLatin1String("html")) {
+        return OstOutputFormat::Html;
+    }
+    if (v == QLatin1String("pdf")) {
+        return OstOutputFormat::Pdf;
+    }
+    return std::nullopt;
+}
+
+// Map a completed conversion into the tool result. Honest: a hard error (folder read / open
+// failure, captured in result.errors) is a failure; otherwise success requires at least one item
+// written, and any per-item failures are surfaced in the message + payload (never hidden).
+AppActionResult buildConvertResult(const OstConversionResult& result,
+                                   const QString& format,
+                                   const QString& output_dir,
+                                   const QString& error_text) {
+    QJsonObject data{{QStringLiteral("output_directory"), output_dir},
+                     {QStringLiteral("format"), format.trimmed().toLower()},
+                     {QStringLiteral("items_converted"), result.items_converted},
+                     {QStringLiteral("items_failed"), result.items_failed},
+                     {QStringLiteral("items_recovered"), result.items_recovered},
+                     {QStringLiteral("folders_processed"), result.folders_processed},
+                     {QStringLiteral("bytes_written"), static_cast<double>(result.bytes_written)},
+                     {QStringLiteral("pst_volumes_created"), result.pst_volumes_created},
+                     {QStringLiteral("error_count"), static_cast<int>(result.errors.size())},
+                     {QStringLiteral("errors"), jsonStringArrayCapped(result.errors, 50)}};
+    // Honest + export-aligned (buildExportResult): a run that WROTE files is a success even if some
+    // non-fatal item errors were logged (a dropped attachment, one unreadable folder) -- those are
+    // surfaced as warnings in the payload + message, NOT treated as total failure. Failure only
+    // when nothing was written.
+    const int error_count = static_cast<int>(result.errors.size());
+    if (result.items_converted > 0) {
+        QString message = QStringLiteral("Converted %1 item(s) to %2 in %3")
+                              .arg(result.items_converted)
+                              .arg(format.trimmed().toLower(), output_dir);
+        if (result.items_failed > 0 || error_count > 0) {
+            message += QStringLiteral(" (%1 failed, %2 warning(s))")
+                           .arg(result.items_failed)
+                           .arg(error_count);
+        }
+        return {true, message, data};
+    }
+    // Nothing was written -> an honest failure (a source-open/writer-init failure, an all-failed
+    // run, or an empty store): the caller must never mistake an empty output for a completed
+    // conversion.
+    QString reason;
+    if (!result.errors.isEmpty()) {
+        reason = result.errors.first();
+    } else if (!error_text.isEmpty()) {
+        // A source-open / writer-init failure emits errorOccurred but may leave result.errors
+        // empty.
+        reason = error_text;
+    } else {
+        reason = QStringLiteral("no items were converted");
+    }
+    return {false, QStringLiteral("Conversion failed: %1").arg(reason), data};
+}
+
+AppActionResult convertOst(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    const QString output_dir = args.value(QStringLiteral("output_directory")).toString().trimmed();
+    if (const std::optional<AppActionResult> error =
+            validateExportPaths(path,
+                                output_dir,
+                                kMaxConvertSourceBytes,
+                                ExportPathLabels{QStringLiteral("convert_ost"),
+                                                 QStringLiteral("OST/PST"),
+                                                 QStringLiteral("path"),
+                                                 QStringLiteral("output_directory"),
+                                                 QStringLiteral("conversion")})) {
+        return *error;
+    }
+
+    const std::optional<OstOutputFormat> format =
+        convertFormatFromArg(args.value(QStringLiteral("format")).toString());
+    if (!format) {
+        return {false,
+                QStringLiteral("format must be one of pst/eml/msg/mbox/dbx/html/pdf (direct IMAP "
+                               "upload is not available in this headless tool)"),
+                {}};
+    }
+
+    OstConversionConfig config;
+    config.format = *format;
+    config.output_directory = output_dir;
+    config.recover_deleted_items = args.value(QStringLiteral("recover_deleted")).toBool(false);
+    // Every other field keeps its default (no folder/sender filters, no PST split, preserve
+    // structure). No ImapServerConfig is populated; format != ImapUpload guarantees the worker
+    // never takes a network-upload path.
+
+    // OstConversionWorker::convert runs synchronously and emits conversionFinished inline on THIS
+    // thread (open/writer-init failures too), so a direct connection captures the result without
+    // any event loop -- the export_mbox pattern.
+    OstConversionWorker worker;
+    OstConversionResult captured;
+    bool completed = false;
+    QString error_text;
+    QObject::connect(&worker,
+                     &OstConversionWorker::conversionFinished,
+                     &worker,
+                     [&captured, &completed](const OstConversionResult& result) {
+                         captured = result;
+                         completed = true;
+                     });
+    QObject::connect(&worker,
+                     &OstConversionWorker::errorOccurred,
+                     &worker,
+                     [&error_text](const QString& error) { error_text = error; });
+    worker.convert(path, config);
+
+    if (!completed) {
+        return {false,
+                error_text.isEmpty() ? QStringLiteral("Conversion did not complete") : error_text,
+                {}};
+    }
+    return buildConvertResult(
+        captured, args.value(QStringLiteral("format")).toString(), output_dir, error_text);
+}
+
+QJsonObject convertOstParamsSchema() {
+    QJsonObject format_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                            {QStringLiteral("enum"),
+                             QJsonArray{QStringLiteral("pst"),
+                                        QStringLiteral("eml"),
+                                        QStringLiteral("msg"),
+                                        QStringLiteral("mbox"),
+                                        QStringLiteral("dbx"),
+                                        QStringLiteral("html"),
+                                        QStringLiteral("pdf")}},
+                            {QStringLiteral("description"),
+                             QStringLiteral("Output format to convert the store into")}};
+    QJsonObject recover_prop{
+        {QStringLiteral("type"), QStringLiteral("boolean")},
+        {QStringLiteral("description"),
+         QStringLiteral(
+             "Also recover and convert deleted items found in the store (default false)")}};
+    QJsonObject properties{
+        {QStringLiteral("path"),
+         stringProp(QStringLiteral("Absolute path to the source OST or PST file"))},
+        {QStringLiteral("output_directory"),
+         stringProp(QStringLiteral("New or empty directory to write the converted files into"))},
+        {QStringLiteral("format"), format_prop},
+        {QStringLiteral("recover_deleted"), recover_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("path"),
+                                   QStringLiteral("output_directory"),
+                                   QStringLiteral("format")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 // Register the email export ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerEmailMutatingOps(const AddMutatingActionFn& add) {
@@ -2498,6 +2685,20 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
         QStringLiteral("email"));
     save_pst_attach.params_schema = savePstAttachmentsParamsSchema();
     add(save_pst_attach, savePstAttachments);
+
+    // email.convert_ost: converts an OST/PST store to a directory of files via the app's OWN
+    // OstConversionWorker. Reads through the fan-out-hardened PstParser; the worker sanitizes
+    // folder segments and writes only into the required-new/empty output_directory. Direct IMAP
+    // upload is not selectable. Only ADDS files -> mutating, not destructive; no elevation.
+    AppActionDescriptor convert = mutatingDescriptor(
+        QStringLiteral("email.convert_ost"),
+        QStringLiteral("Convert an OST/PST store"),
+        QStringLiteral(
+            "Convert an OST/PST mail store to a directory of files (pst/eml/msg/mbox/dbx/"
+            "html/pdf)"),
+        QStringLiteral("email"));
+    convert.params_schema = convertOstParamsSchema();
+    add(convert, convertOst);
 }
 
 // files.compress_zip / files.extract_zip: bound the model-facing blocker/warning lists and the

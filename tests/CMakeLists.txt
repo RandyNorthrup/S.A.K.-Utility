@@ -1635,6 +1635,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/file_explorer_archive_service.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/file_explorer_archive_service.h
         ${CMAKE_SOURCE_DIR}/src/core/wifi_setup_script.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ost_conversion_worker.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/ost_conversion_worker.h
+        ${CMAKE_SOURCE_DIR}/src/core/pst_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/msg_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/dbx_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/mbox_writer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/pst_splitter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp

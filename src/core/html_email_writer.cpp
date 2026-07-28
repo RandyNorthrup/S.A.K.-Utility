@@ -83,18 +83,20 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
 
     QString filename = sanitizeFilename(item.subject, item.date);
 
-    // Handle collisions
-    QString key = dir_path + "/" + filename;
-    if (m_filename_counters.contains(key)) {
-        int count = ++m_filename_counters[key];
-        QFileInfo fi(filename);
-        filename = fi.completeBaseName() + QStringLiteral("_%1").arg(count) +
-                   QStringLiteral(".html");
-    } else {
-        m_filename_counters.insert(key, 1);
-    }
-
+    // Resolve collisions like EmlWriter: keep incrementing until the suffixed candidate is actually
+    // FREE on disk. The old counter-only scheme never re-checked existence, so a crafted subject
+    // (e.g. "X" appearing twice plus a distinct "X_2") could make the generated "_N" name collide
+    // with an already-written message and silently overwrite it.
     QString full_path = dir_path + QStringLiteral("/") + filename;
+    if (QFile::exists(full_path)) {
+        const QString base = QFileInfo(filename).completeBaseName();
+        int& counter = m_filename_counters[dir_path + QStringLiteral("/") + base];
+        do {
+            ++counter;
+            filename = base + QStringLiteral("_%1.html").arg(counter);
+            full_path = dir_path + QStringLiteral("/") + filename;
+        } while (QFile::exists(full_path));
+    }
 
     QString attachments_dir = saveFileAttachments(attachment_data, dir_path, filename);
 
