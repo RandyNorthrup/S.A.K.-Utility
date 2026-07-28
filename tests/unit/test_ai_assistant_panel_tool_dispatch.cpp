@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 49);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 50);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -277,6 +277,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.identify_image")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.analyze_iso")));
         QVERIFY(read_only_ids.contains(QStringLiteral("imaging.scan_recoverable")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("imaging.list_drives")));
         QVERIFY(read_only_ids.contains(QStringLiteral("search.find_in_files")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.find_duplicates")));
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.preview_organize")));
@@ -1078,6 +1079,96 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // imaging.list_drives drives the app's OWN DriveScanner::enumerateDrivesOnce end to end. Every
+    // real host has at least PhysicalDrive0, so a healthy run reports >=1 drive with the flag set a
+    // technician needs (removable/read-only) and metadata only -- no drive data. Env-dependent: a
+    // locked-down sandbox that cannot open a physical drive even for metadata reports an HONEST
+    // failure (never a misleading "0 drives" success), which this test accepts via QSKIP.
+    void listDrivesReportsPhysicalDrives() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.list_drives")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+
+        if (!result.value(QStringLiteral("success")).toBool()) {
+            // Honest empty-read failure: message names the enumeration failure, not a silent empty.
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("enumerate")));
+            QSKIP("host does not permit physical-drive metadata enumeration");
+        }
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("drive_count")).toInt() >= 1);
+        QVERIFY(data.value(QStringLiteral("reported_count")).toInt() >= 1);
+        QVERIFY(data.value(QStringLiteral("enumeration_complete")).isBool());
+        QCOMPARE(data.value(QStringLiteral("filtered_removable_only")).toBool(), false);
+        const int removable = data.value(QStringLiteral("removable_count")).toInt();
+        QVERIFY(removable >= 0);
+        QVERIFY(removable <= data.value(QStringLiteral("drive_count")).toInt());
+        const QJsonArray drives = data.value(QStringLiteral("drives")).toArray();
+        QVERIFY(!drives.isEmpty());
+        const QJsonObject first = drives.at(0).toObject();
+        QVERIFY(first.value(QStringLiteral("device_path"))
+                    .toString()
+                    .contains(QStringLiteral("PhysicalDrive")));
+        QVERIFY(first.contains(QStringLiteral("size_bytes")));
+        QVERIFY(first.contains(QStringLiteral("is_removable")));
+        QVERIFY(first.contains(QStringLiteral("is_read_only")));
+        QVERIFY(first.contains(QStringLiteral("bus_type")));
+        QVERIFY(first.value(QStringLiteral("mount_points")).isArray());
+        // Metadata only: no drive-content field ever leaves the op.
+        QVERIFY(!first.contains(QStringLiteral("data")));
+        QVERIFY(!first.contains(QStringLiteral("bytes")));
+    }
+
+    // removable_only really filters (non-vacuous): if the filter were a no-op the removable listing
+    // would report drive_count entries, so reported_count == removable_count fails whenever a fixed
+    // (non-removable) system disk exists -- true on every normal host. Totals stay accurate under
+    // the filter, and every listed drive is removable.
+    void listDrivesRemovableOnlyReallyFilters() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);
+
+        const auto runList = [&panel](bool removable_only) {
+            const QString args = QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("removable_only"), removable_only}})
+                    .toJson(QJsonDocument::Compact));
+            return panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), QStringLiteral("imaging.list_drives")},
+                            {QStringLiteral("arguments"), args}});
+        };
+
+        const QJsonObject all = runList(false);
+        if (!all.value(QStringLiteral("success")).toBool()) {
+            QSKIP("host does not permit physical-drive metadata enumeration");
+        }
+        const QJsonObject allData = all.value(QStringLiteral("data")).toObject();
+        const int drive_count = allData.value(QStringLiteral("drive_count")).toInt();
+        const int removable_count = allData.value(QStringLiteral("removable_count")).toInt();
+        // Unfiltered listing reports the full set (drives are always well under the cap).
+        QCOMPARE(allData.value(QStringLiteral("reported_count")).toInt(), drive_count);
+
+        const QJsonObject rem = runList(true);
+        QVERIFY(rem.value(QStringLiteral("success")).toBool());
+        const QJsonObject remData = rem.value(QStringLiteral("data")).toObject();
+        QVERIFY(remData.value(QStringLiteral("filtered_removable_only")).toBool());
+        // Totals are unchanged by the filter; only the surfaced list narrows to removable drives.
+        QCOMPARE(remData.value(QStringLiteral("drive_count")).toInt(), drive_count);
+        QCOMPARE(remData.value(QStringLiteral("removable_count")).toInt(), removable_count);
+        QCOMPARE(remData.value(QStringLiteral("reported_count")).toInt(), removable_count);
+        const QJsonArray remDrives = remData.value(QStringLiteral("drives")).toArray();
+        for (const QJsonValue& value : remDrives) {
+            QVERIFY(value.toObject().value(QStringLiteral("is_removable")).toBool());
+        }
     }
 
     // R1 sweep: the shared path guards now reject a path whose ANCESTOR directory is a reparse

@@ -38,7 +38,11 @@ bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devi
     });
 }
 
-QVector<int> enumeratePhysicalDriveNumbers() {
+// @param query_ok Set true when QueryDosDeviceW returned the real device-name table (the drive
+// list is authoritative); false when every attempt failed and the returned {0} fallback is a
+// best-effort guess. Lets callers report an incomplete enumeration honestly.
+QVector<int> enumeratePhysicalDriveNumbers(bool& query_ok) {
+    query_ok = false;
     QVector<int> drive_numbers;
     std::vector<wchar_t> buffer(kDosDeviceInitialBufferChars);
 
@@ -46,6 +50,7 @@ QVector<int> enumeratePhysicalDriveNumbers() {
         const DWORD chars =
             QueryDosDeviceW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (chars != 0) {
+            query_ok = true;
             const wchar_t* current = buffer.data();
             while (*current != L'\0') {
                 const QString name = QString::fromWCharArray(current);
@@ -73,6 +78,11 @@ QVector<int> enumeratePhysicalDriveNumbers() {
                         drive_numbers.end());
 
     if (drive_numbers.isEmpty()) {
+        // No authoritative PhysicalDrive entry (query failed, or the table had none): probing
+        // drive 0 is a best-effort guess, so the enumeration is NOT complete. Keep query_ok
+        // tracking the REPORTED set, not just the raw QueryDosDeviceW return code, so a caller's
+        // "complete" flag never labels a drive-0 fallback as the authoritative drive set.
+        query_ok = false;
         drive_numbers.append(0);
     }
 
@@ -172,13 +182,17 @@ void DriveScanner::scanDrives() {
         return;  // A scan is already in flight.
     }
     // Enumerate/query drives off the UI thread; each drive query issues blocking
-    // Win32 IOCTLs, so doing this inline would freeze the interface.
-    m_scanWatcher.setFuture(QtConcurrent::run([this]() { return collectDrives(); }));
+    // Win32 IOCTLs, so doing this inline would freeze the interface. Shares the exact
+    // one-shot enumeration used by the headless imaging.list_drives path.
+    m_scanWatcher.setFuture(QtConcurrent::run([]() {
+        bool enumeration_ok = false;
+        return DriveScanner::enumerateDrivesOnce(enumeration_ok);
+    }));
 }
 
-QList<sak::DriveInfo> DriveScanner::collectDrives() {
+QList<sak::DriveInfo> DriveScanner::enumerateDrivesOnce(bool& enumeration_ok) {
     QList<sak::DriveInfo> newDrives;
-    const QVector<int> drive_numbers = enumeratePhysicalDriveNumbers();
+    const QVector<int> drive_numbers = enumeratePhysicalDriveNumbers(enumeration_ok);
     for (const int driveNumber : drive_numbers) {
         sak::DriveInfo info = queryDriveInfo(driveNumber);
         if (info.isValid()) {
@@ -610,7 +624,7 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
 
-    return std::any_of(mountPoints.begin(), mountPoints.end(), [this](const QString& mp) {
+    return std::any_of(mountPoints.begin(), mountPoints.end(), [](const QString& mp) {
         return hasWindowsIndicators(QDir(mp));
     });
 }

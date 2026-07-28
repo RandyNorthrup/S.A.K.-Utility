@@ -122,6 +122,22 @@ public:
      */
     void refresh();
 
+    /**
+     * @brief Enumerate all physical drives once, synchronously, with no monitor.
+     *
+     * A self-contained one-shot enumeration for headless/read-only callers (e.g. the
+     * AI assistant's imaging.list_drives). Constructs NO DriveScanner instance, so it
+     * never touches the s_instance singleton, the hot-plug notification window, or the
+     * refresh timer -- it is safe to call while a GUI DriveScanner is live and from a
+     * worker thread. Shares the exact per-drive query path used by the GUI scan.
+     * @param enumeration_ok Set true when the OS physical-drive device list was read
+     *        successfully; false when that query failed and the result is a best-effort
+     *        probe of drive 0 only (so the list may be incomplete). Lets a caller report
+     *        an empty/partial result honestly instead of as a definitive "no drives".
+     * @return All valid physical drives detected.
+     */
+    [[nodiscard]] static QList<sak::DriveInfo> enumerateDrivesOnce(bool& enumeration_ok);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when a new drive is attached
@@ -153,24 +169,24 @@ private Q_SLOTS:
 
 private:
     void scanDrives();
-    /// @brief Enumerate and query all physical drives (runs on a worker thread).
-    QList<sak::DriveInfo> collectDrives();
     /// @brief Diff a fresh scan against the cached list and emit changes (UI thread).
     void applyDriveScan(const QList<sak::DriveInfo>& newDrives);
     void registerDeviceNotification();
     void unregisterDeviceNotification();
 
-    sak::DriveInfo queryDriveInfo(int driveNumber);
-    QString getDriveName(int driveNumber);
-    qint64 getDriveSize(HANDLE hDrive);
-    quint32 getBlockSize(HANDLE hDrive);
-    QString getBusType(HANDLE hDrive);
-    bool isDriveRemovable(int driveNumber);
-    bool isDriveReadOnly(HANDLE hDrive);
-    QStringList getMountPoints(int driveNumber);
-    QString getVolumeLabel(const QString& mountPoint);
-    bool containsWindowsInstallation(int driveNumber);
-    void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
+    // These per-drive queries are pure (no instance state); they are static so the
+    // headless enumerateDrivesOnce() path can share them without constructing a scanner.
+    static sak::DriveInfo queryDriveInfo(int driveNumber);
+    static QString getDriveName(int driveNumber);
+    static qint64 getDriveSize(HANDLE hDrive);
+    static quint32 getBlockSize(HANDLE hDrive);
+    static QString getBusType(HANDLE hDrive);
+    static bool isDriveRemovable(int driveNumber);
+    static bool isDriveReadOnly(HANDLE hDrive);
+    static QStringList getMountPoints(int driveNumber);
+    static QString getVolumeLabel(const QString& mountPoint);
+    static bool containsWindowsInstallation(int driveNumber);
+    static void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
 
     static LRESULT CALLBACK deviceNotificationProc(HWND hwnd,
                                                    UINT message,

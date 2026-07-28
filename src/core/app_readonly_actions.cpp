@@ -22,6 +22,7 @@
 #include "sak/deleted_item_scanner.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/drive_scanner.h"
 #include "sak/duplicate_finder_worker.h"
 #include "sak/email_profile_manager.h"
 #include "sak/email_types.h"
@@ -102,6 +103,9 @@ constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
 constexpr int kMaxWifiProfiles = 500;
+// imaging.list_drives: a machine has at most a handful of physical drives; this cap is a
+// defensive ceiling, not an expected limit (truncation would be a real anomaly, still reported).
+constexpr int kMaxListedDrives = 64;
 // files.list_archive: cap the entries surfaced to the model (the engine bounds the total scan)
 // and the input archive size (a listing reads only the central directory, so this is generous).
 constexpr int kMaxListedArchiveEntries = 2000;
@@ -1024,6 +1028,85 @@ AppActionResult scanRecoverable(const QJsonObject& args) {
             QStringLiteral("Found %1 recoverable file candidate(s) in %2%3")
                 .arg(scan.candidates.size())
                 .arg(info.fileName(), suffix),
+            data};
+}
+
+// imaging.list_drives
+//
+// Enumerate the machine's PHYSICAL drives (the Image Flasher's target picker) via the app's OWN
+// DriveScanner::enumerateDrivesOnce -- a self-contained, monitor-free enumeration that constructs
+// no DriveScanner instance (so it never disturbs a live GUI scanner's singleton or hot-plug
+// window). Reports each drive's path, model, size, bus type, mount points, and the flags a
+// technician needs before flashing (removable, write-protected, contains-Windows). Read-only:
+// every drive handle is opened with 0 access (metadata IOCTLs only), never for reading data, and
+// no elevation is ever requested. This is the physical-device lens; partition.list_inventory is
+// the partition/volume lens.
+QJsonObject serializeDrive(const sak::DriveInfo& drive) {
+    QJsonArray mounts;
+    for (const QString& mount : drive.mountPoints) {
+        mounts.append(mount);
+    }
+    return QJsonObject{{QStringLiteral("device_path"), drive.devicePath},
+                       {QStringLiteral("name"), drive.name},
+                       {QStringLiteral("size_bytes"), static_cast<double>(drive.size)},
+                       {QStringLiteral("block_size_bytes"), static_cast<double>(drive.blockSize)},
+                       {QStringLiteral("bus_type"), drive.busType},
+                       {QStringLiteral("is_system"), drive.isSystem},
+                       {QStringLiteral("is_removable"), drive.isRemovable},
+                       {QStringLiteral("is_read_only"), drive.isReadOnly},
+                       {QStringLiteral("mount_points"), mounts},
+                       {QStringLiteral("volume_label"), drive.volumeLabel}};
+}
+
+AppActionResult listDrives(const QJsonObject& args) {
+    const bool removable_only = args.value(QStringLiteral("removable_only")).toBool(false);
+
+    bool enumeration_ok = false;
+    const QList<sak::DriveInfo> drives = DriveScanner::enumerateDrivesOnce(enumeration_ok);
+
+    // Every real machine has at least PhysicalDrive0; an empty result means the OS device query
+    // failed or no drive could even be opened for metadata. Report that honestly as a failure
+    // rather than a misleading "0 drives" success (fail-closed, per the empty-read audit rule).
+    if (drives.isEmpty()) {
+        return {false,
+                QStringLiteral("Could not enumerate any physical drive (the device query failed or "
+                               "no drive could be opened for metadata)"),
+                {}};
+    }
+
+    int removable_count = 0;
+    for (const sak::DriveInfo& drive : drives) {
+        if (drive.isRemovable) {
+            ++removable_count;
+        }
+    }
+
+    QJsonArray listed;
+    for (const sak::DriveInfo& drive : drives) {
+        if (removable_only && !drive.isRemovable) {
+            continue;
+        }
+        if (listed.size() >= kMaxListedDrives) {
+            break;
+        }
+        listed.append(serializeDrive(drive));
+    }
+
+    const int shown_total = removable_only ? removable_count : drives.size();
+    QJsonObject data{
+        {QStringLiteral("drive_count"), drives.size()},
+        {QStringLiteral("removable_count"), removable_count},
+        {QStringLiteral("reported_count"), listed.size()},
+        {QStringLiteral("truncated"), shown_total > listed.size()},
+        {QStringLiteral("filtered_removable_only"), removable_only},
+        // False when QueryDosDeviceW failed and the list is a best-effort probe of drive 0 only,
+        // so the model does not treat a possibly-partial list as the complete set of drives.
+        {QStringLiteral("enumeration_complete"), enumeration_ok},
+        {QStringLiteral("drives"), listed}};
+    return {true,
+            QStringLiteral("%1 physical drive(s) found (%2 removable)")
+                .arg(drives.size())
+                .arg(removable_count),
             data};
 }
 
@@ -4033,6 +4116,17 @@ QJsonObject scanRecoverableParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject listDrivesParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("removable_only"),
+         boolProp(QStringLiteral("Return only removable drives (USB/SD/MMC) -- the drives safe to "
+                                 "flash. Default false (all physical drives). removable_count and "
+                                 "the total drive_count are reported either way."))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject previewParamsSchema() {
     QJsonObject payload_prop{
         {QStringLiteral("type"), QStringLiteral("object")},
@@ -4412,6 +4506,17 @@ void registerImagingReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("imaging"),
                        scanRecoverableParamsSchema()),
         scanRecoverable);
+
+    add(makeDescriptor(QStringLiteral("imaging.list_drives"),
+                       QStringLiteral("List physical drives"),
+                       QStringLiteral(
+                           "Enumerate the machine's physical drives (the Image Flasher's "
+                           "target picker): path, model, size, bus type, mount points, "
+                           "and the removable/write-protected/contains-Windows flags. "
+                           "Read-only (metadata IOCTLs only, never reads drive data)"),
+                       QStringLiteral("imaging"),
+                       listDrivesParamsSchema()),
+        listDrives);
 }
 
 void registerFileReadOnlyOps(const AddActionFn& add) {

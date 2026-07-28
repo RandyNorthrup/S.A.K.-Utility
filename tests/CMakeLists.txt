@@ -1676,6 +1676,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # imaging.scan_recoverable: FileRecoveryEngine (static signature-carver, pure Qt) reads an
         # offline image file read-only and returns candidate metadata.
         ${CMAKE_SOURCE_DIR}/src/core/file_recovery_engine.cpp
+        # imaging.list_drives: DriveScanner::enumerateDrivesOnce (static, monitor-free physical-drive
+        # enumeration via Win32 metadata IOCTLs; setupapi auto-links via #pragma comment in the cpp).
+        ${CMAKE_SOURCE_DIR}/src/core/drive_scanner.cpp
         # system.list_users: WindowsUserScanner (NetUserEnum + profile/SID resolution) driven
         # directly, like the read-only diagnostics scanners.
         ${CMAKE_SOURCE_DIR}/src/core/windows_user_scanner.cpp
@@ -1736,6 +1739,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/include/sak/duplicate_finder_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_coordinator.h
         ${CMAKE_SOURCE_DIR}/include/sak/flash_worker.h
+        ${CMAKE_SOURCE_DIR}/include/sak/drive_scanner.h  # Q_OBJECT -> list header for AUTOMOC
         ${CMAKE_SOURCE_DIR}/include/sak/drive_unmounter.h
         ${CMAKE_SOURCE_DIR}/include/sak/partition_executor.h
         ${CMAKE_SOURCE_DIR}/include/sak/partition_apply_worker.h
