@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 54);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 55);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -2102,6 +2102,279 @@ private Q_SLOTS:
             QStringList{QStringLiteral("*.eml"), QStringLiteral("*.html"), QStringLiteral("*.pdf")},
             QDir::Files);
         QCOMPARE(produced.size(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // email.save_mbox_attachments -- MUTATING (not destructive): extracts one message's
+    // attachments into an EXISTING dir via the app's OWN AttachmentBatchSave. Proofs:
+    // (1) listed mutating so the gate fires, (2) a chat session refuses it, (3) gated +
+    // approved it really writes the decoded attachment to disk, (4) honesty + guards.
+    // ------------------------------------------------------------------
+
+    // A one-message mailbox whose message carries one base64 attachment "note.txt" =
+    // "hello world" (11 bytes). Exercises the real MIME + base64 decode path in MboxParser.
+    static void writeMboxWithAttachment(const QString& path) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray mbox =
+            "From alice@example.com Mon Jan  1 00:00:00 2024\n"
+            "From: alice@example.com\n"
+            "Subject: Has attachment\n"
+            "MIME-Version: 1.0\n"
+            "Content-Type: multipart/mixed; boundary=\"BOUND\"\n"
+            "\n"
+            "--BOUND\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "Body.\n"
+            "--BOUND\n"
+            "Content-Type: application/octet-stream; name=\"note.txt\"\n"
+            "Content-Disposition: attachment; filename=\"note.txt\"\n"
+            "Content-Transfer-Encoding: base64\n"
+            "\n"
+            "aGVsbG8gd29ybGQ=\n"
+            "--BOUND--\n";
+        QCOMPARE(file.write(mbox), static_cast<qint64>(mbox.size()));
+    }
+
+    void saveMboxAttachmentsListedAsMutating() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("email.save_mbox_attachments")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // A chat/research session refuses the mutating op (policy_blocked); nothing is written.
+    void saveMboxAttachmentsBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeMboxWithAttachment(path);
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("message_index"), 0},
+                                                        {QStringLiteral("output_dir"), dir.path()}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("note.txt"))));
+    }
+
+    // Gated + approved in Unattended, the op runs the REAL saver: the base64 attachment is
+    // decoded and written to disk with the exact bytes. Proves end-to-end execution.
+    void saveMboxAttachmentsRunsWhenGated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeMboxWithAttachment(path);
+        const QString out_dir = dir.filePath(QStringLiteral("saved"));
+        QVERIFY(QDir().mkpath(out_dir));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("message_index"), 0},
+                                                        {QStringLiteral("output_dir"), out_dir}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("saved_count")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("failed_count")).toInt(), 0);
+        QCOMPARE(data.value(QStringLiteral("attachment_total")).toInt(), 1);
+        const QString saved = out_dir + QStringLiteral("/note.txt");
+        QVERIFY(QFile::exists(saved));
+        QFile check(saved);
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("hello world"));
+    }
+
+    // A message with a nested multipart/related (inline image "pic.png" = "ABC") followed by a
+    // top-level PDF attachment "report.pdf" = "DEF". readMessageDetail enumerates attachments
+    // RECURSIVELY but readAttachmentData/extractAttachmentBytes does NOT -- pairing them by index
+    // would write the PDF's bytes under the image's name and report the PDF unreadable. The op uses
+    // readAllAttachments (one recursive pass, name + bytes aligned), so BOTH land with the right
+    // bytes under the right name.
+    static void writeMboxNestedMultipart(const QString& path) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray mbox =
+            "From alice@example.com Mon Jan  1 00:00:00 2024\n"
+            "From: alice@example.com\n"
+            "Subject: Nested\n"
+            "MIME-Version: 1.0\n"
+            "Content-Type: multipart/mixed; boundary=\"OUT\"\n"
+            "\n"
+            "--OUT\n"
+            "Content-Type: multipart/related; boundary=\"IN\"\n"
+            "\n"
+            "--IN\n"
+            "Content-Type: text/html\n"
+            "\n"
+            "<html>hi</html>\n"
+            "--IN\n"
+            "Content-Type: image/png\n"
+            "Content-Disposition: inline; filename=\"pic.png\"\n"
+            "Content-Transfer-Encoding: base64\n"
+            "\n"
+            "QUJD\n"
+            "--IN--\n"
+            "--OUT\n"
+            "Content-Type: application/pdf\n"
+            "Content-Disposition: attachment; filename=\"report.pdf\"\n"
+            "Content-Transfer-Encoding: base64\n"
+            "\n"
+            "REVG\n"
+            "--OUT--\n";
+        QCOMPARE(file.write(mbox), static_cast<qint64>(mbox.size()));
+    }
+
+    void saveMboxAttachmentsHandlesNestedMultipart() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("nested.mbox"));
+        writeMboxNestedMultipart(path);
+        const QString out_dir = dir.filePath(QStringLiteral("out"));
+        QVERIFY(QDir().mkpath(out_dir));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("message_index"), 0},
+                                                        {QStringLiteral("output_dir"), out_dir}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("attachment_total")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("saved_count")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("failed_count")).toInt(), 0);
+        // Each file has its OWN bytes -- not swapped and not misreported.
+        QFile pic(out_dir + QStringLiteral("/pic.png"));
+        QVERIFY(pic.open(QIODevice::ReadOnly));
+        QCOMPARE(pic.readAll(), QByteArray("ABC"));
+        QFile pdf(out_dir + QStringLiteral("/report.pdf"));
+        QVERIFY(pdf.open(QIODevice::ReadOnly));
+        QCOMPARE(pdf.readAll(), QByteArray("DEF"));
+    }
+
+    // A message with no attachments is an honest FAILURE (nothing to save), never a false success.
+    void saveMboxAttachmentsNoAttachmentsFails() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("plain.mbox"));
+        writeSampleMbox(path);  // its messages carry no attachments
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                                        {QStringLiteral("message_index"), 0},
+                                                        {QStringLiteral("output_dir"), dir.path()}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("no attachments")));
+    }
+
+    // A UNC/network source is refused before opening (shared guard).
+    void saveMboxAttachmentsRejectsNetworkPath() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"),
+                                       QStringLiteral("\\\\attacker.example.com\\share\\in.mbox")},
+                                      {QStringLiteral("message_index"), 0},
+                                      {QStringLiteral("output_dir"), dir.path()}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // A non-existent output_dir fails closed (the saver never creates directories).
+    void saveMboxAttachmentsRejectsMissingOutputDir() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.mbox"));
+        writeMboxWithAttachment(path);
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("path"), path},
+                            {QStringLiteral("message_index"), 0},
+                            {QStringLiteral("output_dir"), dir.filePath(QStringLiteral("nope"))}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
+            {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("existing directory")));
     }
 
     // W-net-... email.export_pst: exports a PST/OST via EmailExportWorker::exportItems, mirroring

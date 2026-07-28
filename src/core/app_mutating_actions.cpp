@@ -16,6 +16,7 @@
 #include "sak/app_organizer_helpers.h"
 #include "sak/app_partition_op_parse.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/email_attachment_saver.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/ethernet_config_manager.h"
@@ -477,6 +478,218 @@ AppActionResult exportPst(const QJsonObject& args) {
                 {}};
     }
     return buildExportResult(captured, format, output_path, item_ids_capped, QStringLiteral("PST"));
+}
+
+// ---------------------------------------------------------------------------
+// email.save_mbox_attachments
+// ---------------------------------------------------------------------------
+// Extract every attachment of ONE message in an MBOX file to an existing directory, driving the
+// app's OWN sak::AttachmentBatchSave / saveAttachmentToDirectory (the same saver the email
+// inspector panel and the attachments browser dialog use). Attachment filenames come from untrusted
+// email input, so the saver's sanitizeAttachmentFilename neutralizes path separators / traversal,
+// and it dedupes rather than overwriting -- the op only ever ADDS files. Mutating, not destructive
+// (no overwrite/delete), no elevation.
+
+// Bound how many attachments one gated call will write, so a crafted message with a huge attachment
+// list cannot spray files onto disk. Truncation is reported in the result.
+constexpr int kMaxSavedAttachments = 256;
+
+// Validate the destination: an EXISTING directory we write NEW files into. Screens for a reparse
+// point (leaf + ancestors) BEFORE the target-following isDir(), so a symlink/junction to a UNC
+// share cannot leak the NTLM hash here.
+std::optional<AppActionResult> validateSaveOutputDir(const QString& output_dir) {
+    if (pathReparseUnsafe(output_dir)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("output_dir must not be a symlink or junction (or under one): %1")
+                .arg(output_dir),
+            {}};
+    }
+    if (!QFileInfo(output_dir).isDir()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("output_dir must be an existing directory: %1").arg(output_dir),
+            {}};
+    }
+    return std::nullopt;
+}
+
+// Validate email.save_mbox_attachments inputs. The MBOX is opened READ-ONLY; output_dir must be an
+// EXISTING directory we write NEW files into (the saver dedupes, so nothing is overwritten).
+// Screens both paths for network/UNC/device and reparse points (leaf + ancestors) BEFORE any
+// target-following stat, so a symlink/junction to a UNC share cannot leak the NTLM hash here.
+std::optional<AppActionResult> validateMboxAttachmentSaveInputs(const QString& path,
+                                                                const QString& output_dir,
+                                                                int message_index) {
+    if (path.isEmpty() || output_dir.isEmpty()) {
+        return AppActionResult{
+            false, QStringLiteral("save_mbox_attachments requires 'path' and 'output_dir'"), {}};
+    }
+    if (message_index < 0) {
+        return AppActionResult{
+            false, QStringLiteral("save_mbox_attachments requires a message_index >= 0"), {}};
+    }
+    if (isNetworkOrDevicePath(path) || isNetworkOrDevicePath(output_dir)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("save_mbox_attachments does not allow network/UNC or device paths"),
+            {}};
+    }
+    if (pathReparseUnsafe(path)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "MBOX file must not be a symlink or junction (or under one): %1")
+                                   .arg(path),
+                               {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return AppActionResult{false, QStringLiteral("No such MBOX file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxMboxBytes) {
+        return AppActionResult{
+            false,
+            QStringLiteral("MBOX file is too large for a headless save (%1 bytes > %2 limit)")
+                .arg(info.size())
+                .arg(kMaxMboxBytes),
+            {}};
+    }
+    return validateSaveOutputDir(output_dir);
+}
+
+// One save-attachments run's parameters, bundled to keep the helper signatures within the argument
+// budget. total = attachments in the message; attempted = min(total, kMaxSavedAttachments).
+struct AttachmentSaveRequest {
+    int message_index = 0;
+    int total = 0;
+    int attempted = 0;
+    bool truncated = false;
+    QString output_dir;
+};
+
+// Running tally for a save-attachments run: the saved file paths, per-item error strings, and the
+// success/failure counts. Kept separate from AttachmentBatchSave's internal counters because the
+// batch does not expose the individual deduped output paths.
+struct AttachmentSaveTally {
+    QJsonArray saved_paths;
+    QJsonArray errors;
+    int saved = 0;
+    int failed = 0;
+};
+
+// Save the first req.attempted attachments, driving the app's OWN AttachmentBatchSave (which calls
+// saveAttachmentToDirectory -> sanitize + dedupe + atomic QSaveFile). Each payload already carries
+// its decoded bytes paired with the matching name from ONE recursive parse, so name and content
+// always correspond; only a write failure can fail an item.
+void runAttachmentSaves(const QVector<MboxAttachmentPayload>& payloads,
+                        const AttachmentSaveRequest& req,
+                        AttachmentSaveTally& tally) {
+    sak::AttachmentBatchSave batch;
+    batch.begin(req.output_dir, req.attempted);
+    for (int i = 0; i < req.attempted; ++i) {
+        const sak::AttachmentSaveResult result = batch.recordOne(payloads[i].filename,
+                                                                 payloads[i].data);
+        if (result.success) {
+            tally.saved_paths.append(result.saved_path);
+            ++tally.saved;
+        } else {
+            tally.errors.append(result.error_message);
+            ++tally.failed;
+        }
+    }
+}
+
+// Map a save run into the tool result. Honest: success only when EVERY attempted attachment was
+// saved (failed == 0); any read/write failure -> success=false with a partial-save message and the
+// per-item errors in the payload, so a partial run is never reported as a full one.
+AppActionResult buildAttachmentSaveResult(const AttachmentSaveTally& tally,
+                                          const AttachmentSaveRequest& req) {
+    QJsonObject data{{QStringLiteral("output_dir"), req.output_dir},
+                     {QStringLiteral("message_index"), req.message_index},
+                     {QStringLiteral("attachment_total"), req.total},
+                     {QStringLiteral("attachments_attempted"), req.attempted},
+                     {QStringLiteral("saved_count"), tally.saved},
+                     {QStringLiteral("failed_count"), tally.failed},
+                     {QStringLiteral("truncated"), req.truncated},
+                     {QStringLiteral("saved_paths"), tally.saved_paths},
+                     {QStringLiteral("errors"), tally.errors}};
+    if (tally.failed == 0 && tally.saved == req.attempted) {
+        QString msg =
+            QStringLiteral("Saved %1 attachment(s) to %2").arg(tally.saved).arg(req.output_dir);
+        if (req.truncated) {
+            msg += QStringLiteral(" (capped at %1 of %2)").arg(req.attempted).arg(req.total);
+        }
+        return {true, msg, data};
+    }
+    return {false,
+            QStringLiteral("Saved %1 of %2 attachment(s); %3 failed")
+                .arg(tally.saved)
+                .arg(req.attempted)
+                .arg(tally.failed),
+            data};
+}
+
+AppActionResult saveMboxAttachments(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    const QString output_dir = args.value(QStringLiteral("output_dir")).toString().trimmed();
+    const int message_index = args.value(QStringLiteral("message_index")).toInt(-1);
+    if (const std::optional<AppActionResult> error =
+            validateMboxAttachmentSaveInputs(path, output_dir, message_index)) {
+        return *error;
+    }
+
+    MboxParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false, QStringLiteral("Not a valid MBOX file: %1").arg(path), {}};
+    }
+
+    // ONE recursive pass yields each attachment's name paired with its decoded bytes, so name and
+    // content always correspond (readMessageDetail's recursive index does NOT align with the
+    // non-recursive readAttachmentData extractor), and the message is parsed only once.
+    const std::expected<QVector<MboxAttachmentPayload>, sak::error_code> payloads =
+        parser.readAllAttachments(message_index);
+    if (!payloads) {
+        return {false,
+                QStringLiteral("Could not read message %1 from %2").arg(message_index).arg(path),
+                {}};
+    }
+    if (payloads->isEmpty()) {
+        return {false,
+                QStringLiteral("Message %1 has no attachments to save").arg(message_index),
+                {}};
+    }
+
+    AttachmentSaveRequest req;
+    req.message_index = message_index;
+    req.total = payloads->size();
+    req.truncated = req.total > kMaxSavedAttachments;
+    req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
+    req.output_dir = output_dir;
+
+    AttachmentSaveTally tally;
+    runAttachmentSaves(*payloads, req, tally);
+    return buildAttachmentSaveResult(tally, req);
+}
+
+QJsonObject saveMboxAttachmentsParamsSchema() {
+    QJsonObject idx_prop{
+        {QStringLiteral("type"), QStringLiteral("integer")},
+        {QStringLiteral("description"),
+         QStringLiteral("0-based index of the message whose attachments to save")}};
+    QJsonObject properties{
+        {QStringLiteral("path"),
+         stringProp(QStringLiteral("Absolute path to the source MBOX file"))},
+        {QStringLiteral("message_index"), idx_prop},
+        {QStringLiteral("output_dir"),
+         stringProp(QStringLiteral("Existing directory to save the attachments into"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("path"),
+                                   QStringLiteral("message_index"),
+                                   QStringLiteral("output_dir")}},
+                       {QStringLiteral("additionalProperties"), false}};
 }
 
 // ---------------------------------------------------------------------------
@@ -1864,6 +2077,17 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
         QStringLiteral("email"));
     export_pst.params_schema = exportPstParamsSchema();
     add(export_pst, exportPst);
+
+    // email.save_mbox_attachments: extracts a message's attachments into an EXISTING directory via
+    // the app's OWN saver (sanitize + dedupe + atomic write). Only ADDS files (dedupe never
+    // overwrites), so mutating but not destructive; no elevation.
+    AppActionDescriptor save_attach = mutatingDescriptor(
+        QStringLiteral("email.save_mbox_attachments"),
+        QStringLiteral("Save MBOX attachments"),
+        QStringLiteral("Save all attachments of one MBOX message to an existing directory"),
+        QStringLiteral("email"));
+    save_attach.params_schema = saveMboxAttachmentsParamsSchema();
+    add(save_attach, saveMboxAttachments);
 }
 
 // files.compress_zip / files.extract_zip: bound the model-facing blocker/warning lists and the

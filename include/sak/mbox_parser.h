@@ -26,6 +26,15 @@ namespace sak {
 enum class error_code;
 }
 
+/// One attachment with its decoded content, produced by MboxParser::readAllAttachments in a
+/// SINGLE recursive MIME pass. filename and data come from the same enumeration, so they always
+/// correspond (unlike pairing readMessageDetail's recursive index with the non-recursive
+/// readAttachmentData extractor).
+struct MboxAttachmentPayload {
+    QString filename;
+    QByteArray data;
+};
+
 class MboxParser : public QObject {
     Q_OBJECT
 
@@ -76,6 +85,12 @@ public:
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentData(
         int message_index, int attachment_index);
 
+    /// Read ALL attachments (name + decoded bytes) of a message in ONE recursive pass.
+    /// Names and bytes are index-aligned by construction, and the raw message is read +
+    /// MIME-parsed + base64-decoded only once (not once per attachment).
+    [[nodiscard]] std::expected<QVector<MboxAttachmentPayload>, sak::error_code> readAllAttachments(
+        int message_index);
+
 Q_SIGNALS:
     void fileOpened(QString path, int estimated_count);
     void indexingComplete(int total_messages);
@@ -91,6 +106,11 @@ private:
     bool m_is_indexed = false;
     std::atomic<bool> m_cancelled{false};
 
+    /// Non-null only for the duration of a readAllAttachments() parse: appendAttachment pushes each
+    /// attachment's decoded bytes here so names (detail.attachments) and content stay index-aligned
+    /// from ONE recursive pass. Never set for the GUI's readMessageDetail path (stays nullptr).
+    QVector<QByteArray>* m_attachment_sink = nullptr;
+
     /// Scan file for all "From " line boundaries
     void buildMessageIndex();
 
@@ -100,7 +120,9 @@ private:
     /// Parse RFC 5322 headers from raw bytes
     [[nodiscard]] QMap<QString, QString> parseHeaders(const QByteArray& raw_message);
 
-    /// Parse MIME structure for body and attachments
+    /// Parse MIME structure for body and attachments. If m_attachment_sink is set (see
+    /// readAllAttachments), each attachment's decoded content is appended to it in lock-step with
+    /// detail.attachments, letting a caller recover the bytes from the SAME recursive enumeration.
     void parseMimeMessage(const QByteArray& raw_message, sak::MboxMessageDetail& detail);
 
     /// Handle a non-multipart message body
@@ -130,7 +152,9 @@ private:
         QMap<QString, QString> headers;
     };
 
-    /// Build and append an attachment entry to detail
+    /// Build and append an attachment entry to detail. If m_attachment_sink is set, the decoded
+    /// content (computed here anyway to size the attachment) is also appended to it, so it stays
+    /// index-aligned with detail.attachments.
     void appendAttachment(const MimePartInfo& part,
                           sak::MboxMessageDetail& detail,
                           int& attachment_idx);

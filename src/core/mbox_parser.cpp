@@ -12,6 +12,7 @@
 #include "sak/logger.h"
 
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QStringDecoder>
 #include <QTimeZone>
 
@@ -576,6 +577,12 @@ void MboxParser::appendAttachment(const MimePartInfo& part,
     att.size_bytes = decoded.size();
     att.content_id = part.headers.value(QStringLiteral("content-id"));
 
+    // Hand the decoded bytes to a collecting caller (readAllAttachments) in lock-step with the
+    // attachment entry, so name (detail.attachments) and content (m_attachment_sink) share one
+    // enumeration index.
+    if (m_attachment_sink != nullptr) {
+        m_attachment_sink->append(decoded);
+    }
     detail.attachments.append(std::move(att));
 }
 
@@ -675,6 +682,47 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
     for (const auto& part : mime_parts) {
         processMimePart(part, detail, attachment_idx);
     }
+}
+
+std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAttachments(
+    int message_index) {
+    if (!m_is_open) {
+        return std::unexpected(error_code::invalid_operation);
+    }
+    if (!m_is_indexed) {
+        buildMessageIndex();
+        m_is_indexed = true;
+    }
+    if (message_index < 0 || message_index >= m_message_offsets.size()) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+
+    auto raw = readRawMessage(message_index);
+    if (!raw) {
+        return std::unexpected(raw.error());
+    }
+
+    // One recursive pass: names land in detail.attachments, bytes in payload_bytes, index-aligned.
+    // m_attachment_sink routes appendAttachment's decoded bytes into payload_bytes for the duration
+    // of this parse only. A scope guard clears it on EVERY exit (including a thrown exception), so
+    // the pointer can never dangle past this call and the GUI's readMessageDetail path (which never
+    // sets it) stays unaffected.
+    sak::MboxMessageDetail detail;
+    QVector<QByteArray> payload_bytes;
+    m_attachment_sink = &payload_bytes;
+    const auto sink_guard = qScopeGuard([this] { m_attachment_sink = nullptr; });
+    parseMimeMessage(*raw, detail);
+
+    QVector<MboxAttachmentPayload> out;
+    out.reserve(detail.attachments.size());
+    for (int i = 0; i < detail.attachments.size(); ++i) {
+        const sak::PstAttachmentInfo& att = detail.attachments[i];
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        // Defensive: the two lists are appended in lock-step, so sizes match; guard anyway so a
+        // future divergence yields empty bytes rather than an out-of-range read.
+        out.append({name, i < payload_bytes.size() ? payload_bytes[i] : QByteArray()});
+    }
+    return out;
 }
 
 std::expected<QByteArray, error_code> MboxParser::extractAttachmentBytes(
