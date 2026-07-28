@@ -446,14 +446,16 @@ AppActionResult listInstalledPrograms(const QJsonObject&) {
 // ---------------------------------------------------------------------------
 // Read-only preview of what an uninstall would leave behind: drives the app's OWN LeftoverScanner
 // (the same engine the Advanced Uninstall panel + the mutating uninstall_program cleanup phase use)
-// at ScanLevel::Moderate to find orphaned files/folders/registry entries for a named program. It
-// only READS + classifies (risk Safe/Review/Risky) -- it never deletes anything (the delete step
-// lives in UninstallWorker's cleanup, which this op does not touch). The Advanced level (services/
-// tasks/firewall/startup) is NOT exposed: those phases have no error channel and would report a
-// failed enumeration as an empty scan (fail-open). Intended to run AFTER an uninstall; on a
-// still-installed program it will also list the program's LIVE files (the scanner cannot tell
-// "orphaned" from "current" without a pre-uninstall snapshot), so the count is "items matching this
-// program in leftover locations", not "confirmed orphans".
+// at ScanLevel::Moderate (files/folders/registry) or, with advanced=true, ScanLevel::Advanced (adds
+// services/tasks/firewall/startup) to find orphaned artifacts for a named program. It only READS +
+// classifies (risk Safe/Review/Risky) -- it never deletes anything (the delete step lives in
+// UninstallWorker's cleanup, which this op does not touch). The Advanced system-object phases shell
+// out (sc/schtasks/netsh) and previously reported a FAILED enumeration as an empty scan
+// (fail-open); the engine now returns a LeftoverScanReliability, so a failed phase sets
+// scan_complete=false and names the phase in failed_system_phases rather than lying. Intended to
+// run AFTER an uninstall; on a still-installed program it will also list the program's LIVE files
+// (the scanner cannot tell "orphaned" from "current" without a pre-uninstall snapshot), so the
+// count is "items matching this program in leftover locations", not "confirmed orphans".
 
 // clampLine (truncate to a bounded single line) is defined further down; forward-declared so the
 // leftover serializers here can reuse it.
@@ -577,6 +579,47 @@ QJsonArray serializeLeftovers(const QVector<LeftoverItem>& items, LeftoverTotals
     return arr;
 }
 
+// Names of the Advanced system-object phases whose shell-out FAILED (empty result is a failed read,
+// not "none found"). Empty for a Moderate scan or when every phase completed.
+QStringList failedLeftoverPhases(const LeftoverScanReliability& reliability) {
+    QStringList failed;
+    if (!reliability.services_ok) {
+        failed << QStringLiteral("services");
+    }
+    if (!reliability.scheduled_tasks_ok) {
+        failed << QStringLiteral("scheduled_tasks");
+    }
+    if (!reliability.firewall_ok) {
+        failed << QStringLiteral("firewall_rules");
+    }
+    if (!reliability.startup_ok) {
+        failed << QStringLiteral("startup_entries");
+    }
+    return failed;
+}
+
+QString buildLeftoverMessage(const ProgramInfo& program,
+                             int item_count,
+                             bool timed_out,
+                             const QStringList& failed_phases) {
+    if (timed_out) {
+        return QStringLiteral("Found at least %1 leftover item(s) for '%2' (scan timed out)")
+            .arg(item_count)
+            .arg(program.displayName);
+    }
+    if (!failed_phases.isEmpty()) {
+        return QStringLiteral(
+                   "Found at least %1 leftover item(s) for '%2' (%3 enumeration failed; "
+                   "results are partial)")
+            .arg(item_count)
+            .arg(program.displayName)
+            .arg(failed_phases.join(QStringLiteral(", ")));
+    }
+    return QStringLiteral("Found %1 leftover item(s) for '%2'")
+        .arg(item_count)
+        .arg(program.displayName);
+}
+
 AppActionResult scanLeftovers(const QJsonObject& args) {
     const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
     if (name.isEmpty()) {
@@ -587,31 +630,37 @@ AppActionResult scanLeftovers(const QJsonObject& args) {
         return *error;
     }
 
-    // ScanLevel::Moderate ONLY: install location + standard dirs + registry (known paths + snapshot
-    // diff). The Advanced level (services/scheduled-tasks/firewall/startup) is deliberately NOT
-    // exposed headless: those phases shell out to sc/schtasks/netsh and silently DROP all results
-    // on a nonzero exit / spawn failure / their own 15s timeout with no error channel, so a failed
-    // enumeration would be reported as an honest empty scan (fail-open). Moderate is pure Qt
-    // filesystem/registry reads. See [[assistant-dominion-deferred]] for exposing Advanced once the
-    // engine grows a per-phase reliability signal.
-    LeftoverScanner scanner(program, ScanLevel::Moderate);
+    // Moderate = pure Qt filesystem/registry reads. Advanced (advanced=true) ALSO runs the
+    // system-object phases that shell out to sc/schtasks/netsh; those used to DROP all results on a
+    // nonzero exit / spawn block / their 15s timeout with no error channel (fail-open). The engine
+    // now fills a LeftoverScanReliability so a FAILED phase is reported as scan_complete=false +
+    // named in failed_system_phases, never as an honest empty scan.
+    const bool advanced = args.value(QStringLiteral("advanced")).toBool(false);
+    LeftoverScanner scanner(program, advanced ? ScanLevel::Advanced : ScanLevel::Moderate);
 
     // Run the synchronous scan on this (worker) thread under a wall-time deadline. The scanner
     // polls stopRequested between phases + items AND inside calculateSize's subtree walk, so the
     // DeadlineCanceller flipping the flag actually interrupts a runaway scan. fired() is the honest
-    // timeout signal (set only when the deadline actually triggered), so a partial result is
-    // reported with scan_complete=false, never as complete.
+    // timeout signal; a per-phase failure (reliability) is the honest fail-open signal. Either
+    // makes scan_complete false, so a partial result is never reported as complete.
     std::atomic<bool> stop{false};
     DeadlineCanceller canceller([&stop]() { stop.store(true); }, kLeftoverScanTimeoutMs);
-    const QVector<LeftoverItem> items = scanner.scan(stop);
+    LeftoverScanReliability reliability;
+    const QVector<LeftoverItem> items = scanner.scan(stop, {}, &reliability);
     canceller.finish();
     const bool timed_out = canceller.fired();
+    const QStringList failed_phases = failedLeftoverPhases(reliability);
 
     LeftoverTotals totals;
     const QJsonArray arr = serializeLeftovers(items, totals);
+    QJsonArray failed_arr;
+    for (const QString& phase : failed_phases) {
+        failed_arr.append(phase);
+    }
     QJsonObject data{{QStringLiteral("program_name"), program.displayName},
                      {QStringLiteral("install_location"), program.installLocation},
-                     {QStringLiteral("scan_level"), QStringLiteral("moderate")},
+                     {QStringLiteral("scan_level"),
+                      advanced ? QStringLiteral("advanced") : QStringLiteral("moderate")},
                      {QStringLiteral("item_count"), static_cast<int>(items.size())},
                      {QStringLiteral("reported_count"), arr.size()},
                      {QStringLiteral("truncated"), static_cast<int>(items.size()) > arr.size()},
@@ -619,16 +668,12 @@ AppActionResult scanLeftovers(const QJsonObject& args) {
                      {QStringLiteral("review_count"), totals.review},
                      {QStringLiteral("risky_count"), totals.risky},
                      {QStringLiteral("total_size_bytes"), static_cast<double>(totals.total_size)},
-                     {QStringLiteral("scan_complete"), !timed_out},
+                     {QStringLiteral("scan_complete"), !timed_out && failed_phases.isEmpty()},
+                     {QStringLiteral("failed_system_phases"), failed_arr},
                      {QStringLiteral("items"), arr}};
-    const QString message =
-        timed_out ? QStringLiteral("Found at least %1 leftover item(s) for '%2' (scan timed out)")
-                        .arg(items.size())
-                        .arg(program.displayName)
-                  : QStringLiteral("Found %1 leftover item(s) for '%2'")
-                        .arg(items.size())
-                        .arg(program.displayName);
-    return {true, message, data};
+    return {true,
+            buildLeftoverMessage(program, static_cast<int>(items.size()), timed_out, failed_phases),
+            data};
 }
 
 VulnerabilityScanOptions scanOptionsFromArgs(const QJsonObject& args) {
@@ -3647,7 +3692,12 @@ QJsonObject scanLeftoversParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("program_name"),
          stringProp(QStringLiteral("Exact display name of the installed program to scan for "
-                                   "leftovers (as shown by list_installed_programs)"))}};
+                                   "leftovers (as shown by list_installed_programs)"))},
+        {QStringLiteral("advanced"),
+         boolProp(QStringLiteral("Also scan system objects (services, scheduled tasks, firewall "
+                                 "rules, startup entries) in addition to files + registry. Default "
+                                 "false. If a system-object enumeration fails, scan_complete is "
+                                 "reported false rather than a dishonest empty result."))}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"), properties},
                        {QStringLiteral("required"), QJsonArray{QStringLiteral("program_name")}},

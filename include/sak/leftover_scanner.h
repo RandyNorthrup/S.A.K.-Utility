@@ -23,6 +23,24 @@
 
 namespace sak {
 
+/// @brief Per-phase reliability for the Advanced (system-object) leftover phases.
+///
+/// scanServices / scanScheduledTasks / scanFirewallRules each shell out (sc / schtasks / netsh);
+/// scanStartupEntries reads the registry Run keys. A nonzero exit, a spawn block (AppLocker/SRP),
+/// the phase timeout, or a registry read failure (e.g. ERROR_ACCESS_DENIED) yields an EMPTY item
+/// vector that is indistinguishable from an honest "nothing found" -- the endemic fail-open. A
+/// caller passes this to scan() so a FAILED enumeration surfaces as scan_complete=false instead of
+/// a dishonest empty-success. Moderate scans (no system-object phases) leave every flag true.
+struct LeftoverScanReliability {
+    bool services_ok{true};         ///< sc.exe query succeeded
+    bool scheduled_tasks_ok{true};  ///< schtasks.exe /query succeeded
+    bool firewall_ok{true};         ///< netsh advfirewall show rule succeeded (both directions)
+    bool startup_ok{true};  ///< Run-key registry reads succeeded (absent key is NOT failure)
+    [[nodiscard]] bool allOk() const {
+        return services_ok && scheduled_tasks_ok && firewall_ok && startup_ok;
+    }
+};
+
 /// @brief Scans for leftover files, folders, registry keys, services, and tasks
 ///
 /// Uses a Revo-style targeted approach: scans the known install location,
@@ -40,9 +58,13 @@ public:
     LeftoverScanner(LeftoverScanner&&) = default;
     LeftoverScanner& operator=(LeftoverScanner&&) = default;
 
+    /// @param reliability Optional out-param. When non-null and the scan is Advanced, its flags
+    ///        record whether each shell-out system-object phase ACTUALLY completed (vs failed and
+    ///        returned empty). Null (the GUI default) preserves the original behavior exactly.
     [[nodiscard]] QVector<LeftoverItem> scan(
         const std::atomic<bool>& stopRequested,
-        std::function<void(const QString&, int)> progressCallback = {});
+        std::function<void(const QString&, int)> progressCallback = {},
+        LeftoverScanReliability* reliability = nullptr);
 
 private:
     ProgramInfo m_program;
@@ -73,22 +95,33 @@ private:
     [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
 #endif
 
-    // Phase 4: System objects (Advanced only)
-    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested);
+    // Phase 4: System objects (Advanced only). The shell-out phases take an out bool& set FALSE if
+    // the underlying process failed (so an empty result is not misread as an honest "none found").
+    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested, bool& ok);
 
     void scanFirewallDirection(const QStringList& netsh_args,
                                const QString& description,
                                const std::atomic<bool>& stopRequested,
-                               QVector<LeftoverItem>& items);
+                               QVector<LeftoverItem>& items,
+                               bool& ok);
 #ifdef Q_OS_WIN
-    void scanRunKey(HKEY hive,
-                    const wchar_t* subkey,
-                    const QString& hive_name,
-                    const std::atomic<bool>& stopRequested,
-                    QVector<LeftoverItem>& items);
+    /// Read one Run key. Returns TRUE if the enumeration was reliable (key read OK, or the key was
+    /// simply absent -- an honest "no entries"), FALSE on a real read failure (e.g.
+    /// ERROR_ACCESS_DENIED) so the caller can flag the startup phase incomplete.
+    [[nodiscard]] bool scanRunKey(HKEY hive,
+                                  const wchar_t* subkey,
+                                  const QString& hive_name,
+                                  const std::atomic<bool>& stopRequested,
+                                  QVector<LeftoverItem>& items);
+    /// Match + append a single Run-key value (nesting/complexity split out of scanRunKey).
+    void appendRunKeyValue(HKEY key,
+                           DWORD index,
+                           const QString& hive_name,
+                           const wchar_t* subkey,
+                           QVector<LeftoverItem>& items);
 #endif
     void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
 

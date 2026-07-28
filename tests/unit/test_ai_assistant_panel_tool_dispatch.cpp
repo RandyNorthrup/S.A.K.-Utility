@@ -936,6 +936,67 @@ private Q_SLOTS:
                  qPrintable(message));
     }
 
+    // software.scan_leftovers advanced=true drives an ADVANCED-level scan of a REAL, uniquely-named
+    // installed program (resolve refuses ambiguous display names) and emits the honesty fields the
+    // fail-open fix added. Asserts what is deterministically observable: the scan ran (success),
+    // the Advanced level was actually selected (scan_level=="advanced" -- this FAILS if the
+    // advanced param wiring is reverted, so it is the real regression guard), and the completeness
+    // fields are present with the right shape (failed_system_phases is an array, scan_complete is a
+    // bool).
+    //
+    // NOT asserted: that a FAILED phase yields a non-empty failed_system_phases +
+    // scan_complete=false
+    // -- that mapping cannot be triggered headless (sc/schtasks/netsh and the Run-key reads all
+    // succeed on a healthy host), and scan_complete/failed_system_phases are both derived from one
+    // internal variable so cross-checking them here would be a tautology. The failure mapping's
+    // correctness rests on code review + the engine's per-phase ok flags; the coverage gap is
+    // tracked in memory/assistant-dominion-deferred.md. QSKIP where nothing enumerable/unique.
+    void scanLeftoversAdvancedRunsAtAdvancedLevel() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject listed = panel.runAppActionTool(QJsonObject{
+            {QStringLiteral("operation"), QStringLiteral("run")},
+            {QStringLiteral("action_id"), QStringLiteral("security.list_installed_programs")},
+            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        if (!listed.value(QStringLiteral("success")).toBool()) {
+            QSKIP("could not enumerate installed programs on this host");
+        }
+        const QJsonArray programs = listed.value(QStringLiteral("data"))
+                                        .toObject()
+                                        .value(QStringLiteral("programs"))
+                                        .toArray();
+        QMap<QString, int> counts;
+        for (const auto& value : programs) {
+            counts[value.toObject().value(QStringLiteral("name")).toString()]++;
+        }
+        QString unique;
+        for (const auto& value : programs) {
+            const QString candidate = value.toObject().value(QStringLiteral("name")).toString();
+            if (!candidate.isEmpty() && counts.value(candidate) == 1) {
+                unique = candidate;
+                break;
+            }
+        }
+        if (unique.isEmpty()) {
+            QSKIP("no uniquely-named installed program to scan");
+        }
+
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("program_name"), unique},
+                                                        {QStringLiteral("advanced"), true}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY2(result.value(QStringLiteral("success")).toBool(),
+                 qPrintable(result.value(QStringLiteral("message")).toString()));
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("scan_level")).toString(), QStringLiteral("advanced"));
+        QVERIFY(data.value(QStringLiteral("failed_system_phases")).isArray());
+        QVERIFY(data.value(QStringLiteral("scan_complete")).isBool());
+    }
+
     // imaging.scan_recoverable with no image_path fails cleanly (never opens/scans).
     void scanRecoverableMissingImageFails() {
         AiAssistantPanel panel;

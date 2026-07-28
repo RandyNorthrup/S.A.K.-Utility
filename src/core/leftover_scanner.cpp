@@ -189,9 +189,11 @@ void LeftoverScanner::buildExactNames() {
 
 QVector<LeftoverItem> LeftoverScanner::scan(
     const std::atomic<bool>& stopRequested,
-    std::function<void(const QString&, int)> progressCallback) {
+    std::function<void(const QString&, int)> progressCallback,
+    LeftoverScanReliability* reliability) {
     QVector<LeftoverItem> all_items;
     int found_count = 0;
+    LeftoverScanReliability rel;  // per-phase reliability, copied to the out-param at the end
 
     auto report = [&](const QString& path) {
         ++found_count;
@@ -222,10 +224,18 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 
     // Phase 4: System objects (Advanced only)
     if (m_level == ScanLevel::Advanced) {
-        runPhase([&] { return scanServices(stopRequested); });
-        runPhase([&] { return scanScheduledTasks(stopRequested); });
-        runPhase([&] { return scanFirewallRules(stopRequested); });
-        runPhase([&] { return scanStartupEntries(stopRequested); });
+        runPhase([&] { return scanServices(stopRequested, rel.services_ok); });
+        runPhase([&] { return scanScheduledTasks(stopRequested, rel.scheduled_tasks_ok); });
+        runPhase([&] { return scanFirewallRules(stopRequested, rel.firewall_ok); });
+        runPhase([&] { return scanStartupEntries(stopRequested, rel.startup_ok); });
+    }
+
+    // Surface per-phase reliability (a shell-out phase that failed returns empty, which without
+    // this would read as an honest "nothing found"). runPhase skips a phase entirely when a stop
+    // was already requested; leaving its flag true is correct -- the op reports cancellation
+    // separately.
+    if (reliability != nullptr) {
+        *reliability = rel;
     }
 
     // Deduplicate by path and pre-select safe items
@@ -513,7 +523,8 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 
 #endif  // Q_OS_WIN
 
-QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested,
+                                                    bool& ok) {
     QVector<LeftoverItem> items;
 
     const auto result = sak::runProcess(QStringLiteral("sc.exe"),
@@ -525,6 +536,7 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
                                         kPowerShellTimeoutMs,
                                         [&stopRequested]() { return stopRequested.load(); });
     if (!result.succeeded()) {
+        ok = false;  // sc.exe failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return items;
     }
 
@@ -560,7 +572,8 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested,
+                                                          bool& ok) {
     QVector<LeftoverItem> items;
 
     const auto result = sak::runProcess(QStringLiteral("schtasks.exe"),
@@ -571,6 +584,8 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
                                         kPowerShellTimeoutMs,
                                         [&stopRequested]() { return stopRequested.load(); });
     if (!result.succeeded()) {
+        ok =
+            false;  // schtasks failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return items;
     }
 
@@ -612,12 +627,14 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
 void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
-                                            QVector<LeftoverItem>& items) {
+                                            QVector<LeftoverItem>& items,
+                                            bool& ok) {
     const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
                                         netsh_args,
                                         kPowerShellTimeoutMs,
                                         [&stopRequested]() { return stopRequested.load(); });
     if (!result.succeeded()) {
+        ok = false;  // netsh failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return;
     }
 
@@ -645,119 +662,126 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
     }
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested,
+                                                         bool& ok) {
     QVector<LeftoverItem> items;
 
     scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=in"},
                           "Windows Firewall rule",
                           stopRequested,
-                          items);
+                          items,
+                          ok);
 
     if (!stopRequested.load()) {
         scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=out"},
                               "Windows Firewall rule (outbound)",
                               stopRequested,
-                              items);
+                              items,
+                              ok);
     }
 
     return items;
 }
 
 #ifdef Q_OS_WIN
-void LeftoverScanner::scanRunKey(HKEY hive,
+void LeftoverScanner::appendRunKeyValue(HKEY key,
+                                        DWORD index,
+                                        const QString& hive_name,
+                                        const wchar_t* subkey,
+                                        QVector<LeftoverItem>& items) {
+    wchar_t value_name[kMaxRegistryValueNameLen];
+    BYTE value_data[kMaxRegistryValueDataLen];
+    DWORD name_len = kMaxRegistryValueNameLen;
+    DWORD data_len = kMaxRegistryValueDataLen;
+    DWORD type = 0;
+
+    if (RegEnumValueW(key, index, value_name, &name_len, nullptr, &type, value_data, &data_len) !=
+        ERROR_SUCCESS) {
+        return;
+    }
+
+    const QString name = QString::fromWCharArray(value_name, name_len);
+    QString data;
+    if ((type == REG_SZ || type == REG_EXPAND_SZ) && data_len >= sizeof(wchar_t)) {
+        data = QString::fromWCharArray(reinterpret_cast<wchar_t*>(value_data),
+                                       data_len / sizeof(wchar_t) - 1);
+    }
+
+    if (!matchesProgramStrict(name) && !matchesProgramStrict(data)) {
+        return;
+    }
+
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::StartupEntry;
+    item.path = QString("%1\\%2").arg(hive_name, QString::fromWCharArray(subkey));
+    item.registryValueName = name;
+    item.registryValueData = data;
+    item.description = QString("Startup entry: %1").arg(name);
+    item.risk = LeftoverItem::RiskLevel::Review;
+    items.append(item);
+}
+
+bool LeftoverScanner::scanRunKey(HKEY hive,
                                  const wchar_t* subkey,
                                  const QString& hive_name,
                                  const std::atomic<bool>& stopRequested,
                                  QVector<LeftoverItem>& items) {
     HKEY key = nullptr;
-    LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
+    const LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) {
-        return;
+        // ERROR_FILE_NOT_FOUND = the Run key simply does not exist -> an honest "no entries here"
+        // (reliable). Any OTHER error (ERROR_ACCESS_DENIED under a constrained token, etc.) IS a
+        // failed enumeration, so the empty result must not be reported as complete.
+        return rc == ERROR_FILE_NOT_FOUND;
     }
 
     DWORD value_count = 0;
-    RegQueryInfoKeyW(key,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     &value_count,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr);
+    if (RegQueryInfoKeyW(key,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         &value_count,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr) != ERROR_SUCCESS) {
+        RegCloseKey(key);
+        return false;  // could not read the value count -> the (empty) enumeration is unreliable
+    }
 
-    wchar_t value_name[kMaxRegistryValueNameLen];
-    BYTE value_data[kMaxRegistryValueDataLen];
-
-    for (DWORD idx = 0; idx < value_count; ++idx) {
-        if (stopRequested.load()) {
-            break;
-        }
-
-        DWORD name_len = kMaxRegistryValueNameLen;
-        DWORD data_len = kMaxRegistryValueDataLen;
-        DWORD type = 0;
-
-        rc = RegEnumValueW(key, idx, value_name, &name_len, nullptr, &type, value_data, &data_len);
-        if (rc != ERROR_SUCCESS) {
-            continue;
-        }
-
-        QString name = QString::fromWCharArray(value_name, name_len);
-        QString data;
-        if ((type == REG_SZ || type == REG_EXPAND_SZ) && data_len >= sizeof(wchar_t)) {
-            data = QString::fromWCharArray(reinterpret_cast<wchar_t*>(value_data),
-                                           data_len / sizeof(wchar_t) - 1);
-        }
-
-        if (!matchesProgramStrict(name) && !matchesProgramStrict(data)) {
-            continue;
-        }
-
-        LeftoverItem item;
-        item.type = LeftoverItem::Type::StartupEntry;
-        item.path = QString("%1\\%2").arg(hive_name, QString::fromWCharArray(subkey));
-        item.registryValueName = name;
-        item.registryValueData = data;
-        item.description = QString("Startup entry: %1").arg(name);
-        item.risk = LeftoverItem::RiskLevel::Review;
-        items.append(item);
+    for (DWORD idx = 0; idx < value_count && !stopRequested.load(); ++idx) {
+        appendRunKeyValue(key, idx, hive_name, subkey, items);
     }
 
     RegCloseKey(key);
+    return true;
 }
 #endif
 
-QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested,
+                                                          bool& ok) {
     QVector<LeftoverItem> items;
 
 #ifdef Q_OS_WIN
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-               "HKCU",
-               stopRequested,
-               items);
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
-               "HKCU",
-               stopRequested,
-               items);
-
+    // ok stays true only if EVERY Run-key read was reliable (a real failure -> phase incomplete).
+    const auto readRun = [&](HKEY hive, const wchar_t* subkey, const QString& hive_name) {
+        if (!scanRunKey(hive, subkey, hive_name, stopRequested, items)) {
+            ok = false;
+        }
+    };
+    readRun(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKCU");
+    readRun(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce", "HKCU");
     if (!stopRequested.load()) {
-        scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                   "HKLM",
-                   stopRequested,
-                   items);
-        scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
-                   "HKLM",
-                   stopRequested,
-                   items);
+        readRun(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKLM");
+        readRun(HKEY_LOCAL_MACHINE,
+                L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+                "HKLM");
     }
+#else
+    Q_UNUSED(ok);
 #endif
 
     if (!stopRequested.load()) {
