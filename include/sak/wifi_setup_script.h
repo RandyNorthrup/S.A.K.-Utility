@@ -29,4 +29,23 @@ namespace sak {
 /// given). Lets a caller report an honest "does the script contain the password" flag.
 [[nodiscard]] bool wifiSecurityUsesPassphrase(const QString& security);
 
+/// Outcome of a live connectWifiWindows() attempt. profile_added is the DURABLE change (the WLAN
+/// profile is installed machine-wide); connect_issued means netsh accepted the connect request (the
+/// association itself may still be pending / out of range). error is empty on full success.
+struct WifiConnectResult {
+    bool profile_added = false;
+    bool connect_issued = false;
+    QString error;
+};
+
+/// Install a WLAN profile for @p ssid and connect to it NOW, by running `netsh wlan add profile` +
+/// `netsh wlan connect` shell-free (argv vector, no interpolation). Requires administrator rights
+/// -- a non-elevated call fails honestly (profile_added stays false). Fails closed for an
+/// empty/unsafe SSID (a double quote or control character) or an over-length SSID before running
+/// anything.
+[[nodiscard]] WifiConnectResult connectWifiWindows(const QString& ssid,
+                                                   const QString& password,
+                                                   const QString& security,
+                                                   bool hidden);
+
 }  // namespace sak

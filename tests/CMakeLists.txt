@@ -4653,6 +4653,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_setup_script.cpp")
     add_executable(test_wifi_setup_script
         unit/test_wifi_setup_script.cpp
         ../src/core/wifi_setup_script.cpp
+        ../src/core/process_runner.cpp
         ../src/core/logger.cpp
         ../include/sak/wifi_setup_script.h
     )

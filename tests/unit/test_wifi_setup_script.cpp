@@ -35,7 +35,38 @@ private Q_SLOTS:
     void refusesEmptySsid();
     void neutralizesBatchMetacharacters();
     void usesPassphraseOnlyForWpa();
+    void connectRefusesEmptySsid();
+    void connectRefusesUnsafeSsid();
+    void connectRefusesOverlongSsid();
 };
+
+// connectWifiWindows must fail closed (no netsh, no temp file) for an empty/unsafe/over-length
+// SSID. These paths return before any process is run, so the tests have no system side effects.
+void TestWifiSetupScript::connectRefusesEmptySsid() {
+    const auto r =
+        sak::connectWifiWindows(QString(), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
+    QVERIFY(!r.profile_added);
+    QVERIFY(!r.connect_issued);
+    QVERIFY(!r.error.isEmpty());
+}
+
+void TestWifiSetupScript::connectRefusesUnsafeSsid() {
+    const auto quoted = sak::connectWifiWindows(
+        QStringLiteral("Net\"work"), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
+    QVERIFY(!quoted.profile_added);
+    QVERIFY(!quoted.error.isEmpty());
+    const auto ctrl = sak::connectWifiWindows(
+        QStringLiteral("Net\nwork"), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
+    QVERIFY(!ctrl.profile_added);
+    QVERIFY(!ctrl.error.isEmpty());
+}
+
+void TestWifiSetupScript::connectRefusesOverlongSsid() {
+    const auto r = sak::connectWifiWindows(
+        QString(200, QLatin1Char('a')), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
+    QVERIFY(!r.profile_added);
+    QVERIFY(!r.error.isEmpty());
+}
 
 void TestWifiSetupScript::usesPassphraseOnlyForWpa() {
     // The <keyMaterial>-emitting condition: only WPA2 (anything not open/none/wep).

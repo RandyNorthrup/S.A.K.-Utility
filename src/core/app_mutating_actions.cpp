@@ -39,6 +39,7 @@
 #include "sak/restore_point_manager.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
+#include "sak/wifi_setup_script.h"
 #include "sak/worker_base.h"
 
 #include <QAbstractSocket>
@@ -2401,6 +2402,64 @@ AppActionResult flushDns(const QJsonObject&) {
     return {true, QStringLiteral("Flushed the DNS resolver cache"), {}};
 }
 
+// ---------------------------------------------------------------------------
+// network.connect_wifi
+// ---------------------------------------------------------------------------
+// Install a WLAN profile and connect to a network NOW via the shared sak::connectWifiWindows, which
+// runs `netsh wlan add profile` + `netsh wlan connect` shell-free (argv, no interpolation). netsh
+// needs administrator rights, so a non-elevated run fails HONESTLY (like the adapter-config ops).
+// Mutating + requires_admin; NOT destructive (installs a reversible profile + associates -- no data
+// loss) and NOT catastrophic. The durable outcome is the installed profile; the immediate
+// association may be pending / out of range and is reported separately.
+AppActionResult connectWifi(const QJsonObject& args) {
+    const QString ssid = args.value(QStringLiteral("ssid")).toString();
+    if (ssid.trimmed().isEmpty()) {
+        return {false, QStringLiteral("connect_wifi requires a non-empty 'ssid'"), {}};
+    }
+    const QString password = args.value(QStringLiteral("password")).toString();
+    const QString security = args.value(QStringLiteral("security")).toString();
+    const bool hidden = args.value(QStringLiteral("hidden")).toBool(false);
+
+    const sak::WifiConnectResult res = sak::connectWifiWindows(ssid, password, security, hidden);
+    QJsonObject data{{QStringLiteral("ssid"), ssid},
+                     {QStringLiteral("profile_added"), res.profile_added},
+                     {QStringLiteral("connect_issued"), res.connect_issued}};
+    if (!res.profile_added) {
+        return {false, QStringLiteral("Could not connect to '%1': %2").arg(ssid, res.error), data};
+    }
+    if (res.connect_issued) {
+        return {true, QStringLiteral("Connected to '%1' (WLAN profile installed)").arg(ssid), data};
+    }
+    return {true,
+            QStringLiteral(
+                "Installed the WLAN profile for '%1'; it will connect when in range (%2)")
+                .arg(ssid, res.error),
+            data};
+}
+
+QJsonObject connectWifiParamsSchema() {
+    QJsonObject security_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("enum"),
+         QJsonArray{QStringLiteral("wpa2"), QStringLiteral("wep"), QStringLiteral("open")}},
+        {QStringLiteral("description"),
+         QStringLiteral("Security type; anything other than wep/open is treated as WPA2-PSK "
+                        "(default wpa2)")}};
+    QJsonObject hidden_prop{{QStringLiteral("type"), QStringLiteral("boolean")},
+                            {QStringLiteral("description"),
+                             QStringLiteral("True if the network does not broadcast its SSID")}};
+    QJsonObject properties{
+        {QStringLiteral("ssid"), stringProp(QStringLiteral("Network name (SSID) to connect to"))},
+        {QStringLiteral("password"),
+         stringProp(QStringLiteral("WiFi passphrase (omit/empty for an open network)"))},
+        {QStringLiteral("security"), security_prop},
+        {QStringLiteral("hidden"), hidden_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("ssid")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 // Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
@@ -2453,6 +2512,19 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
         QStringLiteral("network"));
     flush.params_schema = flushDnsParamsSchema();
     add(flush, flushDns);
+
+    // network.connect_wifi: installs a WLAN profile + connects NOW (netsh, shell-free). Needs admin
+    // (a non-elevated run fails honestly) -> requires_admin. NOT destructive (a reversible profile
+    // + association, no data loss) and NOT catastrophic; the panel gate still fires (chat refuses).
+    AppActionDescriptor connect = mutatingDescriptor(
+        QStringLiteral("network.connect_wifi"),
+        QStringLiteral("Connect to a WiFi network"),
+        QStringLiteral("Install a WLAN profile and connect to a WiFi network now (netsh); needs "
+                       "administrator rights"),
+        QStringLiteral("network"));
+    connect.params_schema = connectWifiParamsSchema();
+    connect.requires_admin = true;
+    add(connect, connectWifi);
 }
 
 // ---------------------------------------------------------------------------

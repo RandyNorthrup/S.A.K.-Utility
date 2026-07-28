@@ -11,6 +11,10 @@
 #include "sak/wifi_setup_script.h"
 
 #include "sak/logger.h"
+#include "sak/process_runner.h"
+
+#include <QDir>
+#include <QTemporaryFile>
 
 namespace sak {
 
@@ -173,6 +177,76 @@ bool wifiSecurityUsesPassphrase(const QString& security) {
     // resolved auth is NOT "open" (i.e. WPA2-PSK). Uses the SAME resolveWlanAuth so the two never
     // drift.
     return resolveWlanAuth(security).auth_type != QLatin1String("open");
+}
+
+WifiConnectResult connectWifiWindows(const QString& ssid,
+                                     const QString& password,
+                                     const QString& security,
+                                     bool hidden) {
+    // A WLAN SSID is at most 32 bytes; cap generously and fail closed on empty / unsafe (quote or
+    // control char) BEFORE touching a temp file or running netsh.
+    constexpr int kMaxSsidChars = 64;
+    WifiConnectResult result;
+    if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
+        result.error =
+            QStringLiteral("SSID is empty or contains a double quote / control character");
+        return result;
+    }
+    if (ssid.size() > kMaxSsidChars) {
+        result.error = QStringLiteral("SSID is too long to be a valid network name");
+        return result;
+    }
+
+    const WlanAuthConfig auth = resolveWlanAuth(security);
+    const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
+
+    // Write the profile XML to a private, auto-removed temp file for `netsh wlan add profile`.
+    QTemporaryFile xml_file(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
+    xml_file.setAutoRemove(true);
+    if (!xml_file.open()) {
+        result.error = QStringLiteral("Could not create a temporary WLAN profile file");
+        return result;
+    }
+    xml_file.write(xml.toUtf8());
+    xml_file.flush();
+
+    // netsh runs shell-free via an argv vector (no shell, no interpolation). Both calls need
+    // administrator rights, so a non-elevated run fails HONESTLY here rather than silently.
+    constexpr int kNetshTimeoutMs = 15'000;
+    const auto netsh_error = [](const ProcessResult& r) {
+        const QString err = r.std_err.trimmed();
+        return err.isEmpty() ? r.std_out.trimmed() : err;
+    };
+    const ProcessResult add = runProcess(QStringLiteral("netsh.exe"),
+                                         {QStringLiteral("wlan"),
+                                          QStringLiteral("add"),
+                                          QStringLiteral("profile"),
+                                          QStringLiteral("filename=") + xml_file.fileName(),
+                                          QStringLiteral("user=all")},
+                                         kNetshTimeoutMs);
+    if (!add.succeeded()) {
+        result.error =
+            add.timed_out
+                ? QStringLiteral("netsh timed out adding the WLAN profile")
+                : QStringLiteral(
+                      "Failed to add the WLAN profile (this needs administrator rights): %1")
+                      .arg(netsh_error(add));
+        return result;
+    }
+    result.profile_added = true;
+
+    const ProcessResult conn = runProcess(
+        QStringLiteral("netsh.exe"),
+        {QStringLiteral("wlan"), QStringLiteral("connect"), QStringLiteral("name=") + ssid},
+        kNetshTimeoutMs);
+    result.connect_issued = conn.succeeded();
+    if (!result.connect_issued) {
+        result.error = conn.timed_out
+                           ? QStringLiteral("netsh timed out issuing connect")
+                           : QStringLiteral("profile added, but connect could not be issued: %1")
+                                 .arg(netsh_error(conn));
+    }
+    return result;
 }
 
 }  // namespace sak
