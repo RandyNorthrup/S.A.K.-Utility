@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 52);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 53);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -291,6 +291,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.read_temperatures")));
         QVERIFY(read_only_ids.contains(QStringLiteral("system.list_users")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_mbox")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("email.search_mbox")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.read_pst")));
         QVERIFY(read_only_ids.contains(QStringLiteral("email.recover_deleted")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.run_benchmark")));
@@ -1755,6 +1756,102 @@ private Q_SLOTS:
             "\n"
             "Body two.\n";
         QCOMPARE(file.write(mbox), static_cast<qint64>(mbox.size()));
+    }
+
+    // email.search_mbox drives the app's OWN EmailSearchWorker over an open MboxParser end to end +
+    // deterministically: the sample MBOX has a subject "Second message", so a search for "Second"
+    // yields exactly one hit with that subject + a context snippet. Read-only; returns a snippet,
+    // never the full body.
+    void searchMboxFindsSubjectMatch() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("box.mbox"));
+        writeSampleMbox(path);
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("query"), QStringLiteral("Second")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("total_hits")).toInt(), 1);
+        const QJsonArray hits = data.value(QStringLiteral("hits")).toArray();
+        QCOMPARE(hits.size(), 1);
+        const QJsonObject hit = hits.at(0).toObject();
+        QCOMPARE(hit.value(QStringLiteral("subject")).toString(), QStringLiteral("Second message"));
+        QVERIFY(hit.contains(QStringLiteral("context")));
+        QVERIFY(!hit.contains(QStringLiteral("body")));  // snippet only, never the full body
+    }
+
+    // A completed search with no matches is an honest SUCCESS with zero hits (only a read FAILURE
+    // is an error) -- never a misleading failure.
+    void searchMboxNoMatchIsHonestZero() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("box.mbox"));
+        writeSampleMbox(path);
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("query"), QStringLiteral("zzznomatchzzz")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("total_hits")).toInt(), 0);
+        QVERIFY(data.value(QStringLiteral("hits")).toArray().isEmpty());
+    }
+
+    // A missing query fails cleanly (never searches).
+    void searchMboxMissingQueryFails() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("box.mbox"));
+        writeSampleMbox(path);
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("query")));
+    }
+
+    // A UNC/network path is refused before opening (the shared refuseUnsafePath guard).
+    void searchMboxRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"),
+                                       QStringLiteral("\\\\attacker.example.com\\share\\in.mbox")},
+                                      {QStringLiteral("query"), QStringLiteral("hi")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
     }
 
     // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate

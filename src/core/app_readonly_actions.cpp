@@ -24,7 +24,9 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/drive_scanner.h"
 #include "sak/duplicate_finder_worker.h"
+#include "sak/email_constants.h"
 #include "sak/email_profile_manager.h"
+#include "sak/email_search_worker.h"
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/file_explorer_archive_service.h"
@@ -107,6 +109,9 @@ constexpr int kMaxWifiProfiles = 500;
 // imaging.list_drives: a machine has at most a handful of physical drives; this cap is a
 // defensive ceiling, not an expected limit (truncation would be a real anomaly, still reported).
 constexpr int kMaxListedDrives = 64;
+// email.search_mbox: cap the hit sample surfaced to the model (the engine bounds the total search
+// at sak::email::kMaxSearchResults; total_hits stays accurate). Truncation is reported.
+constexpr int kMaxMboxSearchHits = 500;
 // files.list_archive: cap the entries surfaced to the model (the engine bounds the total scan)
 // and the input archive size (a listing reads only the central directory, so this is generous).
 constexpr int kMaxListedArchiveEntries = 2000;
@@ -2683,6 +2688,133 @@ AppActionResult readMbox(const QJsonObject& args) {
     return {true, summary, data};
 }
 
+QJsonObject serializeSearchHit(const EmailSearchHit& hit) {
+    return QJsonObject{{QStringLiteral("subject"), clampHeader(hit.subject)},
+                       {QStringLiteral("sender"), clampHeader(hit.sender)},
+                       {QStringLiteral("date"),
+                        hit.date.isValid() ? hit.date.toString(Qt::ISODate) : QString()},
+                       {QStringLiteral("match_field"), hit.match_field},
+                       // A small window around the match -- NOT the full message body.
+                       {QStringLiteral("context"), clampLine(hit.context_snippet)},
+                       {QStringLiteral("folder"), hit.folder_path}};
+}
+
+// Validate email.search_mbox inputs (path + query) before opening anything. Returns an error to
+// short-circuit on, or nullopt when they are acceptable.
+std::optional<AppActionResult> validateMboxSearchInputs(const QString& path, const QString& query) {
+    if (path.isEmpty()) {
+        return AppActionResult{false, QStringLiteral("search_mbox requires a 'path' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, QStringLiteral("search_mbox"), QStringLiteral("path"))) {
+        return *unsafe;
+    }
+    if (query.trimmed().isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("search_mbox requires a non-empty 'query' argument"),
+                               {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return AppActionResult{false, QStringLiteral("No such MBOX file: %1").arg(path), {}};
+    }
+    if (info.size() > kMaxMboxBytes) {
+        return AppActionResult{
+            false,
+            QStringLiteral("MBOX file is too large for a headless search (%1 bytes > %2 limit)")
+                .arg(info.size())
+                .arg(kMaxMboxBytes),
+            {}};
+    }
+    return std::nullopt;
+}
+
+EmailSearchCriteria mboxCriteriaFromArgs(const QJsonObject& args, const QString& query) {
+    EmailSearchCriteria criteria;
+    criteria.query_text = query;
+    criteria.case_sensitive = args.value(QStringLiteral("case_sensitive")).toBool(false);
+    criteria.search_subject = args.value(QStringLiteral("search_subject")).toBool(true);
+    criteria.search_body = args.value(QStringLiteral("search_body")).toBool(true);
+    criteria.search_sender = args.value(QStringLiteral("search_sender")).toBool(true);
+    return criteria;
+}
+
+struct MboxSearchOutcome {
+    QVector<EmailSearchHit> hits;
+    bool completed = false;
+    QString error;
+};
+
+// Drive the app's OWN EmailSearchWorker synchronously over an already-open MboxParser. searchMbox
+// emits searchHit inline and searchComplete when done (captured by direct connection, no event
+// loop). A read failure emits errorOccurred and NO searchComplete.
+MboxSearchOutcome runMboxSearch(MboxParser& parser, const EmailSearchCriteria& criteria) {
+    MboxSearchOutcome outcome;
+    EmailSearchWorker worker;
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchHit,
+                     &worker,
+                     [&outcome](const EmailSearchHit& hit) { outcome.hits.append(hit); });
+    QObject::connect(&worker, &EmailSearchWorker::searchComplete, &worker, [&outcome](int, double) {
+        outcome.completed = true;
+    });
+    QObject::connect(&worker,
+                     &EmailSearchWorker::errorOccurred,
+                     &worker,
+                     [&outcome](const QString& error) { outcome.error = error; });
+    worker.searchMbox(&parser, criteria);
+    return outcome;
+}
+
+// email.search_mbox
+//
+// Full-text search an MBOX file for messages matching a query, via the app's OWN EmailSearchWorker
+// (see runMboxSearch). Distinct from email.read_mbox, which lists messages. Read-only. Returns
+// per-hit metadata + a CONTEXT SNIPPET around the match (never the full body). A failed message
+// read is reported honestly, never a misleading "0 hits" success.
+AppActionResult searchMbox(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    const QString query = args.value(QStringLiteral("query")).toString();
+    if (const std::optional<AppActionResult> invalid = validateMboxSearchInputs(path, query)) {
+        return *invalid;
+    }
+    const QFileInfo info(path);
+    MboxParser parser;
+    parser.open(path);
+    if (!parser.isOpen()) {
+        return {false, QStringLiteral("Not a valid MBOX file: %1").arg(path), {}};
+    }
+    const MboxSearchOutcome outcome = runMboxSearch(parser, mboxCriteriaFromArgs(args, query));
+    if (!outcome.error.isEmpty() || !outcome.completed) {
+        return {false,
+                outcome.error.isEmpty() ? QStringLiteral("MBOX search did not complete")
+                                        : outcome.error,
+                {}};
+    }
+
+    QJsonArray listed;
+    for (const EmailSearchHit& hit : outcome.hits) {
+        if (listed.size() >= kMaxMboxSearchHits) {
+            break;
+        }
+        listed.append(serializeSearchHit(hit));
+    }
+    QJsonObject data{
+        {QStringLiteral("query"), query},
+        {QStringLiteral("total_hits"), outcome.hits.size()},
+        {QStringLiteral("reported_count"), listed.size()},
+        {QStringLiteral("truncated"), outcome.hits.size() > listed.size()},
+        // True if the engine stopped at its internal result ceiling, so more matches may exist.
+        {QStringLiteral("result_cap_reached"),
+         outcome.hits.size() >= sak::email::kMaxSearchResults},
+        {QStringLiteral("hits"), listed}};
+    return {true,
+            QStringLiteral("%1 hit(s) for \"%2\" in %3")
+                .arg(outcome.hits.size())
+                .arg(query, info.fileName()),
+            data};
+}
+
 QString emailItemTypeToString(EmailItemType type) {
     switch (type) {
     case EmailItemType::Email:
@@ -4135,6 +4267,23 @@ QJsonObject readMboxParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject searchMboxParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the MBOX file"))},
+        {QStringLiteral("query"), stringProp(QStringLiteral("Text to search for"))},
+        {QStringLiteral("case_sensitive"), boolProp(QStringLiteral("Case-sensitive match"))},
+        {QStringLiteral("search_subject"),
+         boolProp(QStringLiteral("Match the subject (default true)"))},
+        {QStringLiteral("search_body"), boolProp(QStringLiteral("Match the body (default true)"))},
+        {QStringLiteral("search_sender"),
+         boolProp(QStringLiteral("Match the sender (default true)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("path"), QStringLiteral("query")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject readPstParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the PST/OST file"))},
@@ -4533,6 +4682,16 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("email"),
                        readMboxParamsSchema()),
         readMbox);
+
+    add(makeDescriptor(QStringLiteral("email.search_mbox"),
+                       QStringLiteral("Search an MBOX mailbox"),
+                       QStringLiteral(
+                           "Full-text search an MBOX file for messages matching a query "
+                           "(subject/body/sender); returns per-hit metadata and a context "
+                           "snippet around the match (read-only, never the full body)"),
+                       QStringLiteral("email"),
+                       searchMboxParamsSchema()),
+        searchMbox);
 
     add(makeDescriptor(QStringLiteral("email.read_pst"),
                        QStringLiteral("Read a PST/OST mailbox"),

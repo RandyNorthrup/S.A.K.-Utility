@@ -1614,6 +1614,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/bundled_tools_manager.cpp
         # W1c email.read_mbox: the MBOX parser (synchronous read API) is driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/mbox_parser.cpp
+        # email.search_mbox: EmailSearchWorker (synchronous searchMbox, emits inline) drives the
+        # already-open MboxParser. The PST search path links but is never called by this op.
+        ${CMAKE_SOURCE_DIR}/src/core/email_search_worker.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/email_search_worker.h  # Q_OBJECT -> AUTOMOC
         # W2a email.export_mbox: the export worker (synchronous, signal-completes inline)
         # is driven directly. Its writer/parser chain must link even though the MBOX-EML
         # test path only exercises the EmlWriter.
