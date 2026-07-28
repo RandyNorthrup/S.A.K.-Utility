@@ -52,8 +52,17 @@ using scan_progress_callback =
 
 /// @brief Scan options for file scanner
 struct scan_options {
-    bool recursive = true;                                 ///< Recurse into subdirectories
-    bool follow_symlinks = false;                          ///< Follow symbolic links
+    bool recursive = true;         ///< Recurse into subdirectories
+    bool follow_symlinks = false;  ///< Follow symbolic links
+    /// Skip reparse-point (symlink/junction) entries ENTIRELY -- neither emitted nor descended --
+    /// via a non-following reparse-attribute check made BEFORE any target-following stat. Defaults
+    /// to false (GUI behavior: symlink files are still stat'd/emitted). A headless/injectable
+    /// caller sets this true so (a) a planted symlink whose target is a UNC share is never resolved
+    /// (its first following stat would perform an SMB/NTLM handshake and leak the credential hash),
+    /// and (b) a planted junction cannot steer the walk into an arbitrary local tree. Distinct from
+    /// follow_symlinks, which governs only whether a symlinked DIRECTORY is descended (and, being
+    /// is_symlink-based, does not even catch junctions).
+    bool skip_symlinks = false;
     file_type_filter type_filter = file_type_filter::all;  ///< Filter by type
     std::vector<std::string> include_patterns;             ///< Patterns to include (e.g., "*.txt")
     std::vector<std::string> exclude_patterns;             ///< Patterns to exclude

@@ -1080,6 +1080,160 @@ private Q_SLOTS:
                  qPrintable(message));
     }
 
+    // R2 sweep: a symlink FILE entry discovered INSIDE a scanned tree must be skipped by all three
+    // walk ops (find_duplicates hashes, find_in_files opens, scan_directory sizes) via a
+    // non-following check, so a planted symlink to a UNC target is never resolved (the following
+    // stat/open would leak the credential hash). Deterministic: a temp tree with two byte-identical
+    // real files plus a symlink to one of them. Each op must see exactly the TWO real files and
+    // EXCLUDE the symlink -- proving the skip, not mere absence (the symlink content is identical,
+    // so an unskipped walk would fold it into the results).
+    //
+    // COVERAGE NOTE: this is the ONLY test that exercises the walk-time symlink skip for
+    // find_duplicates and find_in_files, and it needs a real NTFS FILE symlink (mklink, requires
+    // SeCreateSymbolicLinkPrivilege / Developer Mode). It QSKIPs where unavailable, same posture as
+    // the ancestor-junction cert. The unprivileged junction cert below CANNOT substitute for those
+    // two engines: a junction is a DIRECTORY, so DuplicateFinderWorker drops it at
+    // is_regular_file() and AdvancedSearchWorker (QDir::Files, no FollowSymlinks) never lists or
+    // descends it -- neither ever reaches the file-symlink skip. So on a non-privileged host the
+    // find_duplicates/ find_in_files skip is UNCOVERED (a structural Windows limitation, tracked in
+    // memory/assistant-dominion-deferred.md); run the cert suite elevated or under Dev Mode for
+    // full R2 coverage.
+    // Assert the three walk ops all EXCLUDE the planted symlink from a tree of two byte-identical
+    // real files: find_duplicates sees ONE group of TWO (not three), find_in_files sees TWO NEEDLE
+    // matches (not three), scan_directory counts TWO files and never lists link.txt. Extracted from
+    // the slot to keep each function within the complexity budget.
+    static void verifySymlinkExcludedFromWalkOps(AiAssistantPanel& panel, const QString& dirPath) {
+        const auto run = [&](const QString& actionId, const QJsonObject& arguments) {
+            const QString args =
+                QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
+            return panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), actionId},
+                            {QStringLiteral("arguments"), args}});
+        };
+
+        const QJsonObject dup =
+            run(QStringLiteral("organizer.find_duplicates"),
+                QJsonObject{{QStringLiteral("directories"), QJsonArray{dirPath}}});
+        QVERIFY2(dup.value(QStringLiteral("success")).toBool(),
+                 qPrintable(dup.value(QStringLiteral("message")).toString()));
+        const QJsonObject dupData = dup.value(QStringLiteral("data")).toObject();
+        QCOMPARE(dupData.value(QStringLiteral("total_groups")).toInt(), 1);
+        QCOMPARE(dupData.value(QStringLiteral("groups"))
+                     .toArray()
+                     .at(0)
+                     .toObject()
+                     .value(QStringLiteral("file_count"))
+                     .toInt(),
+                 2);
+
+        const QJsonObject search =
+            run(QStringLiteral("search.find_in_files"),
+                QJsonObject{{QStringLiteral("root_path"), dirPath},
+                            {QStringLiteral("pattern"), QStringLiteral("NEEDLE")}});
+        QVERIFY2(search.value(QStringLiteral("success")).toBool(),
+                 qPrintable(search.value(QStringLiteral("message")).toString()));
+        QCOMPARE(search.value(QStringLiteral("data"))
+                     .toObject()
+                     .value(QStringLiteral("total_matches"))
+                     .toInt(),
+                 2);
+
+        const QJsonObject scan = run(QStringLiteral("files.scan_directory"),
+                                     QJsonObject{{QStringLiteral("root_path"), dirPath}});
+        QVERIFY2(scan.value(QStringLiteral("success")).toBool(),
+                 qPrintable(scan.value(QStringLiteral("message")).toString()));
+        const QJsonObject scanData = scan.value(QStringLiteral("data")).toObject();
+        QCOMPARE(scanData.value(QStringLiteral("files_found")).toInt(), 2);
+        for (const auto& value : scanData.value(QStringLiteral("entries")).toArray()) {
+            QVERIFY(!value.toObject()
+                         .value(QStringLiteral("path"))
+                         .toString()
+                         .contains(QStringLiteral("link.txt")));
+        }
+    }
+
+    void symlinkFileEntriesSkippedAcrossWalkOps() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QByteArray payload = "R2 NEEDLE canary identical payload for the symlink-skip cert";
+        const auto write = [&](const QString& name) {
+            QFile file(dir.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        };
+        write(QStringLiteral("real.txt"));
+        write(QStringLiteral("real2.txt"));
+
+        // Create an NTFS file symlink real.txt <- link.txt (identical content via the target).
+        const QString link = dir.filePath(QStringLiteral("link.txt"));
+        QProcess mklink;
+        mklink.start(QStringLiteral("cmd"),
+                     {QStringLiteral("/c"),
+                      QStringLiteral("mklink"),
+                      QDir::toNativeSeparators(link),
+                      QDir::toNativeSeparators(dir.filePath(QStringLiteral("real.txt")))});
+        if (!mklink.waitForFinished(10'000) || mklink.exitCode() != 0 ||
+            !QFileInfo(link).isSymLink()) {
+            QSKIP("could not create an NTFS file symlink on this host (needs privilege/Dev Mode)");
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        verifySymlinkExcludedFromWalkOps(panel, dir.path());
+    }
+
+    // R2, unprivileged half: a DIRECTORY JUNCTION entry inside a scanned tree is skipped by the
+    // file_scanner walk (scan_directory). Runs where the file-symlink cert above must QSKIP: mklink
+    // /J needs no privilege. The junction is caught by isReparsePointEntry's GetFileAttributesW
+    // reparse-attribute read, NOT by directory_entry::is_symlink() -- which on MSVC returns FALSE
+    // for a junction (it maps to file_type::junction, not file_type::symlink). That gap is exactly
+    // why the skip matters here: with is_symlink()==false, canDescendInto does not block the
+    // junction, so WITHOUT the skip the walk would DESCEND it -- counting it as a directory AND
+    // reaching target/inside.txt (directories_found==2, files_found==2). The skip drops it before
+    // both emission and descent, so directories_found==1 (only real 'keep') and files_found==1
+    // (only keep/a.txt) is the observable proof.
+    void scanDirectorySkipsReparseDirEntry() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QTemporaryDir target;  // junction target OUTSIDE root, so its file never double-counts
+        QVERIFY(target.isValid());
+        writeTextFile(dir.filePath(QStringLiteral("keep/a.txt")), QByteArrayLiteral("hello"));
+        writeTextFile(target.filePath(QStringLiteral("inside.txt")),
+                      QByteArrayLiteral("only reachable if the junction were descended"));
+
+        const QString junction = dir.filePath(QStringLiteral("jlink"));
+        QProcess mklink;
+        mklink.start(QStringLiteral("cmd"),
+                     {QStringLiteral("/c"),
+                      QStringLiteral("mklink"),
+                      QStringLiteral("/J"),
+                      QDir::toNativeSeparators(junction),
+                      QDir::toNativeSeparators(target.path())});
+        if (!mklink.waitForFinished(10'000) || mklink.exitCode() != 0 ||
+            !QFileInfo(junction).isJunction()) {
+            QSKIP("could not create a directory junction on this host");
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.scan_directory"),
+                         QJsonObject{{QStringLiteral("root_path"), dir.path()}});
+        QVERIFY2(result.value(QStringLiteral("success")).toBool(),
+                 qPrintable(result.value(QStringLiteral("message")).toString()));
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("directories_found")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("files_found")).toInt(), 1);
+        for (const auto& value : data.value(QStringLiteral("entries")).toArray()) {
+            QVERIFY(!value.toObject()
+                         .value(QStringLiteral("path"))
+                         .toString()
+                         .contains(QStringLiteral("jlink")));
+        }
+    }
+
     // W1c: email.read_mbox drives the real MboxParser (synchronous read API) end to
     // end and deterministically -- a temp mailbox with two messages yields exactly
     // those two, with parsed headers.

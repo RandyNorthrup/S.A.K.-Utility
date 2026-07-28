@@ -301,9 +301,16 @@ bool AdvancedSearchWorker::processSearchFile(const QString& file_path,
 void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
                                               int& total_matches,
                                               int& total_files) {
-    QDirIterator it(m_config.root_path,
-                    QDir::Files | QDir::NoDotAndDotDot,
-                    QDirIterator::Subdirectories);
+    // R2: when skip_symlinks is set, add QDir::NoSymLinks so a reparse-point entry is excluded via
+    // Qt's non-following isSymLink() check (evaluated in matchesFilters BEFORE isFile(), which
+    // would resolve the target). A planted symlink to a UNC share is thus never yielded, never
+    // opened, and never leaks the credential hash. Symlinked DIRECTORIES are already not descended
+    // (the iterator has no FollowSymlinks flag); this additionally drops symlinked FILE entries.
+    QDir::Filters filters = QDir::Files | QDir::NoDotAndDotDot;
+    if (m_config.skip_symlinks) {
+        filters |= QDir::NoSymLinks;
+    }
+    QDirIterator it(m_config.root_path, filters, QDirIterator::Subdirectories);
 
     int file_count = 0;
     QVector<SearchMatch> batch_matches;

@@ -61,6 +61,12 @@ struct SearchConfig {
     bool search_file_metadata = false;   ///< PDF/Office/audio/video metadata
     bool search_in_archives = false;     ///< Search inside ZIP/EPUB
     bool hex_search = false;             ///< Binary/hex search mode
+    /// Skip reparse-point (symlink/junction) entries during the local directory walk. Defaults to
+    /// false (GUI behavior). A headless/injectable caller sets this true: it adds QDir::NoSymLinks
+    /// to the QDirIterator filter, which excludes an entry via a non-following isSymLink() check
+    /// BEFORE isFile()/open() resolve the target -- so a planted symlink to a UNC share is never
+    /// opened (its first following stat would leak the credential hash via SMB/NTLM).
+    bool skip_symlinks = false;
 
     // Filtering
     QStringList file_extensions;      ///< Empty = all files

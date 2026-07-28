@@ -181,6 +181,22 @@ bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_o
     return true;
 }
 
+// Non-following test for a reparse point (symbolic link OR junction/mount point). directory_entry::
+// is_symlink() alone is insufficient on Windows: MSVC maps a junction to file_type::junction (not
+// file_type::symlink), so is_symlink() returns false for junctions. We therefore read the reparse
+// attribute directly -- GetFileAttributesW returns the reparse point's OWN attributes and does NOT
+// follow the link, so it never resolves a (possibly UNC) target. Mirrors the leaf guard
+// sak::pathIsReparsePoint used across the file ops. On non-Windows, is_symlink() is authoritative.
+bool isReparsePointEntry(const std::filesystem::directory_entry& entry) {
+#ifdef _WIN32
+    const DWORD attrs = GetFileAttributesW(entry.path().wstring().c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    }
+#endif
+    return entry.is_symlink();
+}
+
 }  // namespace
 
 bool file_scanner::passesDepthAndVisibility(const std::filesystem::path& path,
@@ -395,6 +411,17 @@ auto file_scanner::processEntryWithErrorHandling(const std::filesystem::director
                                                  std::stop_token stop_token)
     -> std::expected<void, error_code> {
     try {
+        // R2: a reparse-point (symlink/junction) entry is dropped BEFORE processScannedEntry runs
+        // any type/size query when skip_symlinks is set. isReparsePointEntry reads the reparse
+        // attribute non-following, so unlike is_regular_file()/file_size() -- which resolve the
+        // target -- it never triggers the SMB/NTLM handshake a UNC-targeted symlink would. Skipping
+        // here means the entry is neither emitted NOR descended, so a planted junction also cannot
+        // steer the headless walk into an arbitrary local tree. Kept inside the try so the
+        // non-following stat's own errors are absorbed like any other per-entry failure.
+        if (options.skip_symlinks && isReparsePointEntry(entry)) {
+            stats.skipped_by_filter++;
+            return {};
+        }
         return processScannedEntry(entry, options, stats, current_depth, stop_token);
     } catch (const std::filesystem::filesystem_error& e) {
         logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());

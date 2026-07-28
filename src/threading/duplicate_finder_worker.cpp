@@ -229,6 +229,13 @@ auto DuplicateFinderWorker::collectEntries(const std::filesystem::path& dir_path
         if (checkStop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
+        // R2: drop a symbolic-link entry via a non-following symlink_status check BEFORE
+        // is_regular_file()/file_size()/hashing, all of which resolve the target. A UNC-targeted
+        // symlink would otherwise leak the credential hash on the first following stat. (Junctions
+        // point only to directories, so they fall out at the is_regular_file() gate regardless.)
+        if (m_config.skip_symlinks && entry.is_symlink()) {
+            continue;
+        }
         if (!entry.is_regular_file()) {
             continue;
         }

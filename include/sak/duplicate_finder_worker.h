@@ -55,6 +55,14 @@ public:
         bool parallel_hashing{true};                   ///< Use parallel hash calculation
         int hash_thread_count{0};                      ///< Thread count (0 = auto-detect)
         bool use_file_system_target{false};            ///< Scan via FileManagementFileSystemBridge
+        /// Skip symbolic-link FILE entries via a non-following symlink_status check made BEFORE
+        /// is_regular_file()/file_size()/hashing (all of which resolve the target). Defaults to
+        /// false (GUI behavior). A headless/injectable caller sets this true so a planted symlink
+        /// to a UNC share is never opened for hashing (its first following stat would leak the
+        /// credential hash via SMB/NTLM); it also stops a symlink being mis-reported as a duplicate
+        /// of its own target. (Junctions target only directories, so they are already excluded here
+        /// by the is_regular_file() gate -- only symlink files can reach a hash.)
+        bool skip_symlinks{false};
     };
 
     /**

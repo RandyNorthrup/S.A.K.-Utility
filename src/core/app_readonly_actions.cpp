@@ -990,6 +990,7 @@ SearchConfig searchConfigFromArgs(const QJsonObject& args,
     SearchConfig config;
     config.root_path = root;
     config.pattern = pattern;
+    config.skip_symlinks = true;  // R2: never open a planted symlink's (possibly UNC) target
     config.case_sensitive = args.value(QStringLiteral("case_sensitive")).toBool(false);
     config.use_regex = args.value(QStringLiteral("use_regex")).toBool(false);
     config.whole_word = args.value(QStringLiteral("whole_word")).toBool(false);
@@ -1193,6 +1194,7 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     config.recursive_scan = args.value(QStringLiteral("recursive")).toBool(true);
     config.parallel_hashing = true;
     config.use_file_system_target = false;  // never the raw/image bridge path (GUI-only)
+    config.skip_symlinks = true;  // R2: never hash a planted symlink's (possibly UNC) target
     const double min_size = args.value(QStringLiteral("minimum_file_size")).toDouble(1.0);
     config.minimum_file_size = min_size > 0.0 ? static_cast<qint64>(min_size) : 0;
 
@@ -1474,8 +1476,9 @@ struct DirScanOutcome {
 
 // Build scan_options from the model args. follow_symlinks stays FALSE, so the scanner never
 // descends a symlinked directory and runs cycle detection -- the walk cannot be steered off-box
-// through a planted directory symlink (a symlinked FILE's size stat still follows, the same
-// accepted planted-symlink residual the find_duplicates/search walks carry). calculate_sizes is off
+// through a planted directory symlink. skip_symlinks is TRUE (R2 fix), so a symlinked FILE entry is
+// dropped by a non-following symlink_status check BEFORE its size stat, closing the UNC-leak vector
+// that the find_duplicates/search walks also now close. calculate_sizes is off
 // (sizes are computed in the callback to avoid a double stat) -- which means the engine's own
 // min_file_size filter (gated on calculate_sizes) would be a no-op, so min_file_size is applied in
 // the callback instead. include/exclude patterns are honored by the engine unconditionally.
@@ -1483,6 +1486,7 @@ sak::scan_options dirScanOptionsFromArgs(const QJsonObject& args) {
     sak::scan_options options;
     options.recursive = args.value(QStringLiteral("recursive")).toBool(true);
     options.follow_symlinks = false;
+    options.skip_symlinks = true;  // R2: never resolve a planted symlink's (possibly UNC) target
     options.calculate_sizes = false;
     options.type_filter = sak::file_type_filter::all;
     const int depth = args.value(QStringLiteral("max_depth")).toInt(0);
@@ -1552,12 +1556,16 @@ DirScanOutcome runDirectoryScan(const std::filesystem::path& root, const QJsonOb
 
 // Scan a directory tree and report a bounded entry sample + disk-usage totals (files/dirs/bytes).
 // Drives the app's OWN file_scanner (synchronous, std::stop_token, follow_symlinks off with cycle
-// detection). root_path goes through the shared refuseUnsafePath (UNC/device + reparse) then isDir.
-// read_only -> ungated. Totals are the true walk counts; entries[] is the first N (truncation +
-// timed_out reported), so a huge tree yields honest summary numbers without an unbounded payload.
-// Assemble the model-facing result from a scan outcome (capped entry array + honest totals +
-// completeness flags). scan_complete is true only when the walk FINISHED and hit no errors, so an
-// undercounted partial tree (timed out or unreadable subdirs) is never reported as authoritative.
+// detection, skip_symlinks on). root_path goes through the shared refuseUnsafePath (UNC/device +
+// reparse) then isDir. read_only -> ungated. Totals are the true walk counts for the NON-reparse
+// tree: reparse-point entries (symlinks, junctions, and cloud/dedup placeholders) are deliberately
+// excluded and never resolved -- a security-conservative choice (a following stat could leak a UNC
+// credential hash or hydrate an online-only cloud file), so on a heavily symlinked/cloud-backed
+// tree the counts are a lower bound. entries[] is the first N (truncation + timed_out reported), so
+// a huge tree yields honest summary numbers without an unbounded payload. Assemble the model-facing
+// result from a scan outcome (capped entry array + honest totals + completeness flags).
+// scan_complete is true only when the walk FINISHED and hit no errors, so an undercounted partial
+// tree (timed out or unreadable subdirs) is never reported as authoritative.
 AppActionResult buildDirScanResult(const QFileInfo& info,
                                    const QString& root,
                                    const DirScanOutcome& out) {
