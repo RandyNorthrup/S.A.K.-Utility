@@ -4640,6 +4640,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     message(STATUS "Added unit test: test_email_profile_manager")
 endif()
 
+# test_deadline_canceller --- header-only deadline/cancel monitor (single-winner finish/timeout race)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_deadline_canceller.cpp")
+    add_executable(test_deadline_canceller
+        unit/test_deadline_canceller.cpp
+        ../include/sak/deadline_canceller.h
+    )
+    set_target_properties(test_deadline_canceller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_deadline_canceller PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_deadline_canceller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_deadline_canceller COMMAND test_deadline_canceller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_deadline_canceller")
+endif()
+
 # test_email_attachment_saver --- short-write + dedupe integrity
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_attachment_saver.cpp")
     add_executable(test_email_attachment_saver

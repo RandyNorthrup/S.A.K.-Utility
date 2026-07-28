@@ -19,6 +19,7 @@
 #include "sak/app_partition_op_parse.h"
 #include "sak/connectivity_tester.h"
 #include "sak/cpu_benchmark_worker.h"
+#include "sak/deadline_canceller.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/diagnostic_types.h"
 #include "sak/dns_diagnostic_tool.h"
@@ -140,8 +141,6 @@ constexpr int kOrganizePreviewTimeoutMs = 2 * 60 * 1000;  // 2 min
 // real organize target's immediate-file count; beyond it the plan is an honest lower bound
 // (plan_truncated). Sibling read ops cap collection the same way (kMaxScanEntriesCollected).
 constexpr int kMaxPreviewPlannedFiles = 50'000;
-// Shared by every deadline-cancel monitor (see DeadlineCanceller): how often it polls the clock.
-constexpr int kDeadlinePollMs = 50;
 constexpr int kMaxShares = 200;
 constexpr int kMaxIsoEditions = 64;
 // imaging.scan_recoverable: the model may only REDUCE the scan window/candidate cap below these
@@ -207,43 +206,6 @@ constexpr int kSearchMaxResultsCeiling = 5000;
 constexpr int kDefaultMboxLimit = 200;
 constexpr int kMboxLimitCeiling = 1000;
 constexpr int kMaxHeaderChars = 1000;
-
-// A scoped deadline monitor for a SYNCHRONOUS engine driven on the AI worker thread. It starts a
-// jthread that invokes @p on_deadline once timeout_ms elapses (bounding an otherwise-unbounded
-// walk/scan on a huge tree or pathological input) and records whether it fired. The callback does
-// whatever cancels the engine -- request_stop() on a std::stop_source, or a worker's own cancel().
-// Call finish() the instant the engine returns so the monitor dies promptly; read fired() for an
-// honest "timed out / partial" flag. The jthread is the LAST member, so on destruction it is
-// stopped+joined FIRST -- before m_done/m_fired (which it reads) and before the caller's engine
-// (which the callback captures) are torn down. Replaces the hand-rolled monitor previously
-// duplicated across the recover_deleted and scan_directory ops.
-class DeadlineCanceller {
-public:
-    DeadlineCanceller(std::function<void()> on_deadline, int timeout_ms)
-        : m_monitor([this, on_deadline = std::move(on_deadline), timeout_ms](std::stop_token st) {
-            const auto deadline = std::chrono::steady_clock::now() +
-                                  std::chrono::milliseconds(timeout_ms);
-            while (!st.stop_requested() && !m_done.load()) {
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    m_fired.store(true);
-                    on_deadline();
-                    return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kDeadlinePollMs));
-            }
-        }) {}
-
-    void finish() {
-        m_done.store(true);
-        m_monitor.request_stop();
-    }
-    [[nodiscard]] bool fired() const { return m_fired.load(); }
-
-private:
-    std::atomic<bool> m_done{false};
-    std::atomic<bool> m_fired{false};
-    std::jthread m_monitor;  // declared LAST -> joined FIRST on destruction
-};
 
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
