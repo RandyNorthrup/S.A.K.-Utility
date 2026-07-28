@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 50);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 51);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -283,6 +283,7 @@ private Q_SLOTS:
         QVERIFY(read_only_ids.contains(QStringLiteral("organizer.preview_organize")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.list_archive")));
         QVERIFY(read_only_ids.contains(QStringLiteral("files.scan_directory")));
+        QVERIFY(read_only_ids.contains(QStringLiteral("files.hash_file")));
         QVERIFY(read_only_ids.contains(QStringLiteral("backup.preview_app_data")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.hardware_scan")));
         QVERIFY(read_only_ids.contains(QStringLiteral("diagnostics.smart_scan")));
@@ -1169,6 +1170,129 @@ private Q_SLOTS:
         for (const QJsonValue& value : remDrives) {
             QVERIFY(value.toObject().value(QStringLiteral("is_removable")).toBool());
         }
+    }
+
+    // files.hash_file drives the app's OWN file_hasher end to end + deterministically: the file
+    // content "abc" has the well-known SHA-256 ba7816bf...15ad. Read-only, returns the hex digest
+    // + size only.
+    void hashFileComputesKnownSha256() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString filePath = dir.filePath(QStringLiteral("data.bin"));
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("abc", 3), static_cast<qint64>(3));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), filePath}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("algorithm")).toString(), QStringLiteral("sha256"));
+        QCOMPARE(data.value(QStringLiteral("hash")).toString(),
+                 QStringLiteral(
+                     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        QCOMPARE(data.value(QStringLiteral("size_bytes")).toDouble(), 3.0);
+    }
+
+    // The algorithm arg selects MD5; MD5("abc") = 900150983cd24fb0d6963f7d28e17f72.
+    void hashFileMd5Selectable() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString filePath = dir.filePath(QStringLiteral("data.bin"));
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("abc", 3), static_cast<qint64>(3));
+        }
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), filePath},
+                                      {QStringLiteral("algorithm"), QStringLiteral("md5")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
+                        {QStringLiteral("arguments"), args}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QCOMPARE(data.value(QStringLiteral("algorithm")).toString(), QStringLiteral("md5"));
+        QCOMPARE(data.value(QStringLiteral("hash")).toString(),
+                 QStringLiteral("900150983cd24fb0d6963f7d28e17f72"));
+    }
+
+    // Missing path fails cleanly (never hashes).
+    void hashFileMissingPathFails() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("path")));
+    }
+
+    // An unknown algorithm is rejected before any file open.
+    void hashFileRejectsBadAlgorithm() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString filePath = dir.filePath(QStringLiteral("data.bin"));
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("abc", 3), static_cast<qint64>(3));
+        }
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), filePath},
+                                      {QStringLiteral("algorithm"), QStringLiteral("sha1")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("algorithm")));
+    }
+
+    // files.hash_file refuses UNC/network/device paths before opening (a symlink or literal UNC
+    // target would leak the NTLM hash on the read-only open) -- the shared refuseUnsafePath guard.
+    void hashFileRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("path"),
+                             QStringLiteral("\\\\attacker.example.com\\share\\secret.bin")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
     }
 
     // R1 sweep: the shared path guards now reject a path whose ANCESTOR directory is a reparse

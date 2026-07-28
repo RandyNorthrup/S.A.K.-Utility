@@ -28,6 +28,7 @@
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/file_hash.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/file_scanner.h"
 #include "sak/firewall_rule_auditor.h"
@@ -115,6 +116,10 @@ constexpr qint64 kMaxArchiveListBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
 constexpr int kMaxScanEntriesCollected = 2000;
 constexpr int kMaxScanDepth = 64;
 constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
+// files.hash_file: wall-time ceiling on the streamed hash. calculateHash polls the stop_token per
+// chunk, so a huge file is cancelled at the deadline and mapped to an honest timeout failure (never
+// a partial digest reported as the file's hash).
+constexpr int kHashFileTimeoutMs = 2 * 60 * 1000;  // 2 min
 // backup.preview_app_data: cap the discovered dirs actually SIZED (each is a full tree walk), the
 // dirs surfaced to the model, and the shared wall time across all of them.
 constexpr int kMaxAppDataScanDirs = 64;
@@ -1108,6 +1113,72 @@ AppActionResult listDrives(const QJsonObject& args) {
                 .arg(drives.size())
                 .arg(removable_count),
             data};
+}
+
+// files.hash_file
+//
+// Compute a file's SHA-256 (default) or MD5 checksum via the app's OWN file_hasher (chunked,
+// memory-efficient streaming, honest std::expected error channel). Read-only. The path goes through
+// the shared refuseUnsafePath (UNC/device + leaf-and-ancestor symlink/junction) BEFORE any stat or
+// open, so a reparse target can never leak the NTLM hash on the follow. Streamed under a wall-time
+// deadline: calculateHash polls the stop_token per chunk and returns operation_cancelled on cancel,
+// so a file too large to finish in time is reported as an honest TIMEOUT failure -- never a partial
+// digest masquerading as the file's hash.
+AppActionResult hashFile(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    if (path.isEmpty()) {
+        return {false, QStringLiteral("hash_file requires a 'path' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> unsafe =
+            refuseUnsafePath(path, QStringLiteral("hash_file"), QStringLiteral("path"))) {
+        return *unsafe;
+    }
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        return {false, QStringLiteral("No such file: %1").arg(path), {}};
+    }
+
+    const QString algo_str = args.value(QStringLiteral("algorithm"))
+                                 .toString(QStringLiteral("sha256"))
+                                 .trimmed()
+                                 .toLower();
+    hash_algorithm algorithm = hash_algorithm::sha256;
+    if (algo_str == QStringLiteral("md5")) {
+        algorithm = hash_algorithm::md5;
+    } else if (algo_str != QStringLiteral("sha256")) {
+        return {false, QStringLiteral("hash_file 'algorithm' must be \"sha256\" or \"md5\""), {}};
+    }
+
+    std::stop_source stop;
+    DeadlineCanceller deadline([&stop]() { stop.request_stop(); }, kHashFileTimeoutMs);
+    const file_hasher hasher(algorithm);
+    const std::expected<std::string, error_code> result =
+        hasher.calculateHash(std::filesystem::path(path.toStdWString()), nullptr, stop.get_token());
+    deadline.finish();
+
+    if (!result) {
+        if (deadline.fired() || result.error() == error_code::operation_cancelled) {
+            return {false,
+                    QStringLiteral("Hashing %1 exceeded the %2s time limit (file too large to hash "
+                                   "within the deadline)")
+                        .arg(info.fileName())
+                        .arg(kHashFileTimeoutMs / 1000),
+                    {}};
+        }
+        const std::string_view reason = sak::to_string(result.error());
+        return {false,
+                QStringLiteral("Could not hash %1: %2")
+                    .arg(info.fileName(),
+                         QString::fromUtf8(reason.data(), static_cast<qsizetype>(reason.size()))),
+                {}};
+    }
+
+    const QString hex = QString::fromStdString(result.value());
+    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                     {QStringLiteral("algorithm"), algo_str},
+                     {QStringLiteral("hash"), hex},
+                     {QStringLiteral("size_bytes"), static_cast<double>(info.size())}};
+    return {true, QStringLiteral("%1 (%2): %3").arg(info.fileName(), algo_str, hex), data};
 }
 
 QJsonObject serializeMatch(const SearchMatch& match) {
@@ -4037,6 +4108,21 @@ QJsonObject intProp(const QString& description) {
                        {QStringLiteral("description"), description}};
 }
 
+QJsonObject hashFileParamsSchema() {
+    QJsonObject algo_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                          {QStringLiteral("enum"),
+                           QJsonArray{QStringLiteral("sha256"), QStringLiteral("md5")}},
+                          {QStringLiteral("description"),
+                           QStringLiteral("Hash algorithm: \"sha256\" (default) or \"md5\"")}};
+    QJsonObject properties{{QStringLiteral("path"),
+                            stringProp(QStringLiteral("Absolute path to the file to hash"))},
+                           {QStringLiteral("algorithm"), algo_prop}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 QJsonObject readMboxParamsSchema() {
     QJsonObject properties{
         {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path to the MBOX file"))},
@@ -4559,6 +4645,15 @@ void registerFileReadOnlyOps(const AddActionFn& add) {
                        QStringLiteral("files"),
                        scanDirectoryParamsSchema()),
         scanDirectory);
+
+    add(makeDescriptor(QStringLiteral("files.hash_file"),
+                       QStringLiteral("Hash a file"),
+                       QStringLiteral("Compute a file's SHA-256 (default) or MD5 checksum for "
+                                      "integrity verification; read-only, streamed under a time "
+                                      "limit"),
+                       QStringLiteral("files"),
+                       hashFileParamsSchema()),
+        hashFile);
 }
 
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
