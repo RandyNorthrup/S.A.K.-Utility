@@ -31,6 +31,7 @@
 #include "sak/partition_safety_validator.h"
 #include "sak/program_enumerator.h"
 #include "sak/pst_parser.h"
+#include "sak/recycle_bin.h"
 #include "sak/restore_point_manager.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
@@ -2063,6 +2064,117 @@ QJsonObject extractZipParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+QJsonObject deleteToRecycleBinParamsSchema() {
+    QJsonObject properties{
+        {QStringLiteral("path"),
+         stringProp(QStringLiteral("Absolute path to the single file or directory to move to the "
+                                   "Recycle Bin (no wildcards)"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Validate a model-supplied recycle target. Returns an error result to short-circuit on, or nullopt
+// when the path is safe to send to the Recycle Bin. Every check runs BEFORE the shell op so a
+// prompt-injected path cannot cause an unintended delete or a credential leak:
+//   - reject an embedded NUL -- sendPathToRecycleBin double-null-terminates pFrom, so a NUL would
+//     split it into a MULTI-item delete list (deleting more than the validated item);
+//   - reject '*'/'?' -- SHFileOperation EXPANDS wildcards, so one call could delete many files;
+//   - require an ABSOLUTE path -- a relative one resolves against the process CWD (unknown target);
+//   - reject UNC/device + a leaf-or-ancestor symlink/junction (reparse -> NTLM leak, or off-tree);
+//   - resolve to the OS-canonical path (what the shell actually acts on) and refuse a drive/volume
+//     root. Validating the canonical string -- not the lexical one -- closes the mismatch where a
+//     trailing-dot/space form ("C:\\...", "C:\\ .") survives a lexical isRoot() check yet Win32
+//     canonicalizes it to the volume root.
+// @param canonical_out On success, the OS-canonical path to hand to sendPathToRecycleBin, so the op
+//        validates and deletes the SAME string.
+std::optional<AppActionResult> validateRecycleTarget(const QString& path, QString& canonical_out) {
+    if (path.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("delete_to_recycle_bin requires a 'path' argument"),
+                               {}};
+    }
+    if (path.contains(QChar(QChar::Null))) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "delete_to_recycle_bin path must not contain a null character"),
+                               {}};
+    }
+    if (path.contains(QLatin1Char('*')) || path.contains(QLatin1Char('?'))) {
+        return AppActionResult{
+            false,
+            QStringLiteral("delete_to_recycle_bin does not allow wildcard paths ('*' or '?'); pass "
+                           "one exact file or directory"),
+            {}};
+    }
+    if (isNetworkOrDevicePath(path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("delete_to_recycle_bin does not allow network/UNC or device paths"),
+            {}};
+    }
+    const QFileInfo info(path);
+    if (!info.isAbsolute()) {
+        return AppActionResult{false,
+                               QStringLiteral("path must be an absolute path: %1").arg(path),
+                               {}};
+    }
+    // Reparse screen BEFORE canonicalFilePath() (a following resolve): a symlink/junction to a UNC
+    // target would leak the NTLM hash on the resolve.
+    if (pathReparseUnsafe(path)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("path must not be a symlink or junction (or under one): %1").arg(path),
+            {}};
+    }
+    // canonicalFilePath() returns the real on-disk path (trailing dots/spaces stripped, "."/".."
+    // resolved) or empty if it does not exist -- this replaces the exists() check AND matches what
+    // SHFileOperationW canonicalizes the path to, so the root check below cannot be lexically
+    // evaded.
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("No such file or directory: %1").arg(path),
+                               {}};
+    }
+    if (QDir(canonical).isRoot()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("Refusing to recycle a drive/volume root: %1").arg(canonical),
+            {}};
+    }
+    canonical_out = canonical;
+    return std::nullopt;
+}
+
+// files.delete_to_recycle_bin: move ONE file or directory to the Windows Recycle Bin via the app's
+// OWN sendPathToRecycleBin (SHFileOperationW FO_DELETE + FOF_ALLOWUNDO -- recoverable). Marked
+// destructive so the panel gate requires a human confirm. All path guards live in
+// validateRecycleTarget above, which also yields the canonical path the delete acts on.
+AppActionResult deleteToRecycleBin(const QJsonObject& args) {
+    const QString path = args.value(QStringLiteral("path")).toString().trimmed();
+    QString canonical;
+    if (const std::optional<AppActionResult> invalid = validateRecycleTarget(path, canonical)) {
+        return *invalid;
+    }
+    const QFileInfo info(canonical);
+    // Capture the type BEFORE the delete -- after it, the item is gone.
+    const bool was_directory = info.isDir();
+    const QString name = info.fileName();
+    if (!sendPathToRecycleBin(canonical)) {
+        return {false,
+                QStringLiteral("Could not move %1 to the Recycle Bin (it may be in use, protected, "
+                               "or on a volume with no Recycle Bin)")
+                    .arg(name),
+                {}};
+    }
+    QJsonObject data{{QStringLiteral("path"), canonical},
+                     {QStringLiteral("was_directory"), was_directory},
+                     {QStringLiteral("recycled"), true}};
+    return {true, QStringLiteral("Moved %1 to the Recycle Bin").arg(name), data};
+}
+
 // Register the file-archive ops (zip compress/extract). Split out to keep
 // registerMutatingAppActionsInto within the length budget.
 void registerFileMutatingOps(const AddMutatingActionFn& add) {
@@ -2085,6 +2197,22 @@ void registerFileMutatingOps(const AddMutatingActionFn& add) {
                            QStringLiteral("files"));
     extract.params_schema = extractZipParamsSchema();
     add(extract, extractZip);
+
+    // files.delete_to_recycle_bin: moves ONE file/dir to the Recycle Bin (recoverable) -> mutating
+    // + destructive (the panel gate requires a human confirm). NOT catastrophic (recoverable,
+    // single target) and no elevation (per-user bin). Wildcard/absolute/reparse/root guards are in
+    // the thunk. Permanent only on a volume that has no Recycle Bin -- called out in the
+    // description.
+    AppActionDescriptor recycle = mutatingDescriptor(
+        QStringLiteral("files.delete_to_recycle_bin"),
+        QStringLiteral("Delete to Recycle Bin"),
+        QStringLiteral(
+            "Move one file or directory to the Windows Recycle Bin (recoverable from the "
+            "bin; permanent if the volume has no Recycle Bin)"),
+        QStringLiteral("files"));
+    recycle.params_schema = deleteToRecycleBinParamsSchema();
+    recycle.destructive = true;
+    add(recycle, deleteToRecycleBin);
 }
 
 }  // namespace

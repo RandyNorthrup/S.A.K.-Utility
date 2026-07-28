@@ -1618,6 +1618,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         # is driven directly. Its writer/parser chain must link even though the MBOX-EML
         # test path only exercises the EmlWriter.
         ${CMAKE_SOURCE_DIR}/src/core/app_mutating_actions.cpp
+        # files.delete_to_recycle_bin: sendPathToRecycleBin (SHFileOperationW, shell32 via
+        # PLATFORM_LIBS) moves one file/dir to the Recycle Bin.
+        ${CMAKE_SOURCE_DIR}/src/core/recycle_bin.cpp
         # network.set_adapter_dhcp: EthernetConfigManager (netsh, no-shell runProcess) driven
         # directly. The DHCP EXECUTION is not unit-tested (needs admin + would change the host's
         # network); the adapter exact-match guard + gating are.

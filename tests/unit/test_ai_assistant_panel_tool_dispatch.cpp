@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 51);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 52);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -2843,6 +2843,162 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("category_mapping")));
+    }
+
+    // ------------------------------------------------------------------
+    // files.delete_to_recycle_bin -- a DESTRUCTIVE (but recoverable) mutating op
+    // that moves one file/dir to the Windows Recycle Bin via the app's OWN
+    // sendPathToRecycleBin. Mirrors the organize_directory gate + guard coverage.
+    // ------------------------------------------------------------------
+
+    // Registered mutating AND destructive, no elevation.
+    void recycleListedAsMutatingDestructive() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("files.delete_to_recycle_bin")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(!action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // Blocked in a chat/research session; the file is NOT deleted.
+    void recycleBlockedInChatSession() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(QStringLiteral("keep.txt"));
+        writeTextFile(file, QByteArrayLiteral("x"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
+        const QJsonObject result = runArchiveOp(panel,
+                                                QStringLiteral("files.delete_to_recycle_bin"),
+                                                QJsonObject{{QStringLiteral("path"), file}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        QVERIFY(QFile::exists(file));  // untouched
+    }
+
+    // In Unattended the gate offers a restore point and the REAL delete runs: the
+    // file leaves its original location (moved to the Recycle Bin).
+    void recycleDeletesFileWhenGated() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(QStringLiteral("trash-me.txt"));
+        writeTextFile(file, QByteArrayLiteral("disposable"));
+        QVERIFY(QFile::exists(file));
+
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = runArchiveOp(panel,
+                                                QStringLiteral("files.delete_to_recycle_bin"),
+                                                QJsonObject{{QStringLiteral("path"), file}});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(data.value(QStringLiteral("recycled")).toBool());
+        QCOMPARE(data.value(QStringLiteral("was_directory")).toBool(), false);
+        QVERIFY(!QFile::exists(file));  // moved out of its location (to the bin)
+    }
+
+    // A wildcard path is refused BEFORE the shell op (SHFileOperation would expand it and delete
+    // many files). Runs in Unattended so the thunk executes and its own guard rejects (not the
+    // gate).
+    void recycleRejectsWildcardPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = runArchiveOp(
+            panel,
+            QStringLiteral("files.delete_to_recycle_bin"),
+            QJsonObject{{QStringLiteral("path"), QStringLiteral("C:\\Data\\Documents\\*")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("wildcard")));
+        QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
+    }
+
+    // A UNC/network path is refused before any shell op (the shared network guard).
+    void recycleRejectsNetworkPath() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = runArchiveOp(
+            panel,
+            QStringLiteral("files.delete_to_recycle_bin"),
+            QJsonObject{{QStringLiteral("path"),
+                         QStringLiteral("\\\\attacker.example.com\\share\\file.txt")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
+    }
+
+    // An embedded NUL is refused: it would split sendPathToRecycleBin's double-null pFrom into a
+    // MULTI-item delete list, deleting a second path the guards never validated.
+    void recycleRejectsEmbeddedNull() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        QString evil = QStringLiteral("C:\\Data\\ok.txt");
+        evil.append(QChar(QChar::Null));
+        evil.append(QStringLiteral("C:\\Windows\\System32"));
+        const QJsonObject result = runArchiveOp(panel,
+                                                QStringLiteral("files.delete_to_recycle_bin"),
+                                                QJsonObject{{QStringLiteral("path"), evil}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("null")));
+    }
+
+    // A drive/volume root is refused -- never recycle a whole volume. The literal root reports the
+    // root guard; the trailing-dot/space forms ("C:\\...", "C:\\ .") canonicalize to the same
+    // volume root at the Win32 layer, so they must ALSO be refused (they must never reach the shell
+    // op as the root). Validating the OS-canonical path -- not the lexical string -- is what closes
+    // that escape: whether canonicalization maps them to the root (root guard) or to empty
+    // (no-such-file), the security property holds -- the volume root is not recycled.
+    void recycleRejectsDriveRoot() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject literal =
+            runArchiveOp(panel,
+                         QStringLiteral("files.delete_to_recycle_bin"),
+                         QJsonObject{{QStringLiteral("path"), QStringLiteral("C:\\")}});
+        QVERIFY(!literal.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            literal.value(QStringLiteral("message")).toString().contains(QStringLiteral("root")));
+
+        const QStringList rootEscapes = {QStringLiteral("C:\\..."), QStringLiteral("C:\\ .")};
+        for (const QString& form : rootEscapes) {
+            const QJsonObject result = runArchiveOp(panel,
+                                                    QStringLiteral("files.delete_to_recycle_bin"),
+                                                    QJsonObject{{QStringLiteral("path"), form}});
+            QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(form));
+        }
     }
 
     // ------------------------------------------------------------------
