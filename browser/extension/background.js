@@ -96,10 +96,21 @@ const OEM_KEYS = {
   "]": ["BracketRight", 221], "}": ["BracketRight", 221],
   "'": ["Quote", 222], '"': ["Quote", 222],
 };
-// The agent's own on-page cursor: a page-injected overlay so the user SEES where the
-// agent acts, distinct from their untouched OS cursor. Cosmetic only (never a security
-// boundary): a hostile page can hide it, but cannot use it to drive input.
+// The assistant's on-page CONTROL PRESENCE: a page-injected overlay so the user SEES that the
+// assistant is driving this tab and where its pointer is -- distinct from their untouched OS
+// cursor. It is a prominent neon-pink pointer (with a pulsing halo), a viewport frame, and an
+// "AI CONTROL" badge. Cosmetic only (never a security boundary): a hostile page can hide it but
+// cannot use it to drive input. It is auto-hidden while a screenshot is captured so it never
+// bleeds into the image the model reads (and does not obscure page media in a capture).
 const AGENT_CURSOR_ID = "__sak_agent_cursor__";
+const CONTROL_STYLE_ID = "__sak_control_style__";
+const CONTROL_FRAME_ID = "__sak_control_frame__";
+const CONTROL_BADGE_ID = "__sak_control_badge__";
+// The ids the presence overlay owns, for bulk hide/remove.
+const PRESENCE_IDS = [CONTROL_STYLE_ID, CONTROL_FRAME_ID, CONTROL_BADGE_ID, AGENT_CURSOR_ID];
+// Where the parked cursor sits until the first real pointer action moves it, and the last point
+// it moved to (so a presence refresh after a navigation re-parks it where it was).
+let lastCursorPoint = { x: 24, y: 24 };
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
@@ -336,27 +347,30 @@ function sendCdp(tabId, method, params) {
 }
 
 async function ensureAttached(tabId) {
-  if (attachedTabId === tabId) {
-    return;
-  }
-  if (attachedTabId !== null) {
-    await detachAll("switching tabs");
-  }
-  try {
-    await chrome.debugger.attach({ tabId }, "1.3");
-  } catch (e) {
-    const m = String(e && e.message ? e.message : e);
-    if (m.includes("Another debugger")) {
-      throw new Error("Cannot inspect the tab: DevTools (or another debugger) is attached.");
+  if (attachedTabId !== tabId) {
+    if (attachedTabId !== null) {
+      await detachAll("switching tabs");
     }
-    throw new Error("Cannot attach to the tab: " + m);
+    try {
+      await chrome.debugger.attach({ tabId }, "1.3");
+    } catch (e) {
+      const m = String(e && e.message ? e.message : e);
+      if (m.includes("Another debugger")) {
+        throw new Error("Cannot inspect the tab: DevTools (or another debugger) is attached.");
+      }
+      throw new Error("Cannot attach to the tab: " + m);
+    }
+    attachedTabId = tabId;
+    // getFullAXTree needs the DOM + Accessibility domains; Page backs getFrameTree (used
+    // to detect omitted cross-origin frames). enable is idempotent.
+    await sendCdp(tabId, "DOM.enable");
+    await sendCdp(tabId, "Accessibility.enable");
+    await sendCdp(tabId, "Page.enable");
   }
-  attachedTabId = tabId;
-  // getFullAXTree needs the DOM + Accessibility domains; Page backs getFrameTree (used
-  // to detect omitted cross-origin frames). enable is idempotent.
-  await sendCdp(tabId, "DOM.enable");
-  await sendCdp(tabId, "Accessibility.enable");
-  await sendCdp(tabId, "Page.enable");
+  // Keep the control presence visible on every action (and re-created after a navigation wiped
+  // it); cheap + idempotent. This is what makes the assistant's control persistently apparent,
+  // not only during a pointer action.
+  await refreshControlPresence(tabId);
 }
 
 async function detachAll(_reason) {
@@ -369,6 +383,9 @@ async function detachAll(_reason) {
   }
   const tabId = attachedTabId;
   attachedTabId = null;
+  // Control of this tab is ending: clear the on-page presence + toolbar badge while we can still
+  // reach the tab (best-effort; a closed tab just fails silently).
+  await removeControlPresence(tabId);
   try {
     await chrome.debugger.detach({ tabId });
   } catch (_e) {
@@ -379,6 +396,7 @@ async function detachAll(_reason) {
 // The user opening DevTools, or the tab closing, force-detaches our session.
 chrome.debugger.onDetach.addListener((source) => {
   if (source && source.tabId === attachedTabId) {
+    setTabControlBadge(source.tabId, false);  // control ended; clear the toolbar badge
     attachedTabId = null;
     lastSnapshotTabId = null;
     lastShot = null;
@@ -411,6 +429,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     method === "Page.frameNavigated" && params && params.frame && !params.frame.parentId;
   if (topFrameNav || method === "Page.navigatedWithinDocument") {
     pendingDialogPolicy = null;
+    // A navigation wiped the injected overlay; re-assert the control presence on the new
+    // document so the assistant's control stays visible without waiting for the next action.
+    refreshControlPresence(source.tabId);
     return;
   }
   if (method !== "Page.javascriptDialogOpening") {
@@ -792,7 +813,15 @@ async function handleScreenshot(tabId, args) {
       };
     }
   }
-  const res = await sendCdp(tabId, "Page.captureScreenshot", params);
+  // Hide the control presence for the capture so it never bleeds into the image the model reads
+  // or obscures page media (video/pictures); restore it right after.
+  await setPresenceVisible(tabId, false);
+  let res;
+  try {
+    res = await sendCdp(tabId, "Page.captureScreenshot", params);
+  } finally {
+    await setPresenceVisible(tabId, true);
+  }
   const data = res && typeof res.data === "string" ? res.data : "";
   if (!data) {
     throw new Error("Screenshot capture returned no image data.");
@@ -846,31 +875,111 @@ async function resolveActionPoint(tabId, backendNodeId) {
   return quadCenter(quad);
 }
 
-// Move the agent's own on-page cursor to (x,y). Numbers are coerced to finite integers,
-// so nothing page- or model-controlled is interpolated as code.
-function agentCursorScript(x, y) {
-  // The arrow's tip is at (2,1) in the 24-unit viewBox; offset the translate so the tip
-  // lands exactly on the action point. Numbers are coerced to finite integers -- nothing
-  // page- or model-controlled is interpolated as code, and the SVG markup is constant.
-  const px = (Number.isFinite(x) ? Math.round(x) : 0) - 2;
+// Build the control-presence overlay (frame + badge + prominent pulsing cursor) and position the
+// cursor at (x,y). The whole markup is CONSTANT; only x/y are interpolated, coerced to finite
+// integers -- nothing page- or model-controlled is ever injected as code. Every element is
+// pointer-events:none (cosmetic; never intercepts input or hit-testing) and idempotent (reuses
+// an existing node), so it is cheap to call on every action and after a navigation.
+function controlPresenceScript(x, y) {
+  // The arrow's tip is at (2,1) in the 24-unit viewBox rendered at 32px (scale ~1.33); offset
+  // the translate so the tip lands on the action point.
+  const px = (Number.isFinite(x) ? Math.round(x) : 0) - 3;
   const py = (Number.isFinite(y) ? Math.round(y) : 0) - 1;
   return (
-    "(function(){var c=document.getElementById('" + AGENT_CURSOR_ID + "');" +
-    "if(!c){c=document.createElement('div');c.id='" + AGENT_CURSOR_ID + "';" +
-    "c.style.cssText='position:fixed;left:0;top:0;z-index:2147483647;width:26px;height:26px;" +
-    "pointer-events:none;will-change:transform;transition:transform .12s cubic-bezier(.22,1,.36,1);" +
-    "filter:drop-shadow(0 0 2px #ff2d95) drop-shadow(0 0 6px rgba(255,45,149,.95)) " +
-    "drop-shadow(0 0 12px rgba(255,45,149,.6))';" +
-    "c.innerHTML=\"<svg width='26' height='26' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>" +
+    "(function(){" +
+    "function mk(id,tag){var e=document.getElementById(id);if(!e){e=document.createElement(tag);" +
+    "e.id=id;(document.body||document.documentElement).appendChild(e);}return e;}" +
+    // Keyframes for the cursor halo pulse (injected once).
+    "var st=document.getElementById('" + CONTROL_STYLE_ID + "');" +
+    "if(!st){st=document.createElement('style');st.id='" + CONTROL_STYLE_ID + "';" +
+    "st.textContent='@keyframes sakPulse{0%{transform:scale(.6);opacity:.85}" +
+    "70%{transform:scale(1.6);opacity:0}100%{transform:scale(1.6);opacity:0}}';" +
+    "(document.head||document.documentElement).appendChild(st);}" +
+    // Viewport frame: thin neon border, hollow + pointer-events:none so it never covers content
+    // or intercepts a hit-test.
+    "var f=mk('" + CONTROL_FRAME_ID + "','div');" +
+    "f.style.cssText='position:fixed;inset:0;z-index:2147483644;pointer-events:none;" +
+    "border:3px solid rgba(255,45,149,.9);box-shadow:inset 0 0 14px rgba(255,45,149,.45);" +
+    "border-radius:3px';" +
+    // Badge pill, top-right.
+    "var b=mk('" + CONTROL_BADGE_ID + "','div');" +
+    "b.style.cssText='position:fixed;top:10px;right:12px;z-index:2147483646;pointer-events:none;" +
+    "font:600 11px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#fff;" +
+    "background:#12001a;border:1px solid #ff2d95;border-radius:11px;padding:2px 9px;" +
+    "letter-spacing:.07em;box-shadow:0 0 8px rgba(255,45,149,.8)';" +
+    "b.textContent='AI CONTROL';" +
+    // Cursor container with a pulsing halo behind a bold neon pointer.
+    "var c=mk('" + AGENT_CURSOR_ID + "','div');" +
+    "c.style.cssText='position:fixed;left:0;top:0;z-index:2147483647;width:32px;height:32px;" +
+    "pointer-events:none;will-change:transform;" +
+    "transition:transform .12s cubic-bezier(.22,1,.36,1);" +
+    "filter:drop-shadow(0 0 3px #ff2d95) drop-shadow(0 0 7px rgba(255,45,149,.95)) " +
+    "drop-shadow(0 0 14px rgba(255,45,149,.65))';" +
+    "c.innerHTML=\"<div style='position:absolute;left:-9px;top:-9px;width:34px;height:34px;" +
+    "border-radius:50%;background:radial-gradient(circle,rgba(255,45,149,.55),rgba(255,45,149,0) 70%);" +
+    "animation:sakPulse 1.6s ease-out infinite'></div>" +
+    "<svg width='32' height='32' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg' " +
+    "style='position:relative'>" +
     "<path d='M2 1 L2 19 L7 14 L10.5 21 L13.6 19.6 L10.1 13 L17 13 Z' fill='#ffffff' " +
     "stroke='#12001a' stroke-width='1.3' stroke-linejoin='round'/></svg>\";" +
-    "(document.body||document.documentElement).appendChild(c);}" +
     "c.style.transform='translate(" + px + "px," + py + "px)';})();"
   );
 }
 
+// Toggle the presence overlay's visibility without removing it (used to hide it for the duration
+// of a screenshot capture so it never appears in the image / over page media).
+function presenceVisibilityScript(visible) {
+  const disp = visible ? "" : "none";
+  return (
+    "(function(){['" + CONTROL_FRAME_ID + "','" + CONTROL_BADGE_ID + "','" + AGENT_CURSOR_ID +
+    "'].forEach(function(id){var e=document.getElementById(id);if(e){e.style.display='" + disp +
+    "';}});})();"
+  );
+}
+
 async function moveAgentCursor(tabId, x, y) {
-  await sendCdp(tabId, "Runtime.evaluate", { expression: agentCursorScript(x, y) }).catch(() => {});
+  lastCursorPoint = { x, y };
+  await sendCdp(tabId, "Runtime.evaluate", { expression: controlPresenceScript(x, y) }).catch(() => {});
+}
+
+// Ensure the control presence (frame + badge + parked cursor) is on the page and mark the tab in
+// the toolbar with an "AI" badge. Called on attach and after navigations; idempotent and cheap.
+async function refreshControlPresence(tabId) {
+  await sendCdp(tabId, "Runtime.evaluate", {
+    expression: controlPresenceScript(lastCursorPoint.x, lastCursorPoint.y),
+  }).catch(() => {});
+  setTabControlBadge(tabId, true);
+}
+
+// Remove the on-page overlay and clear the toolbar badge when control of the tab ends.
+async function removeControlPresence(tabId) {
+  await sendCdp(tabId, "Runtime.evaluate", {
+    expression: "(function(){['" + PRESENCE_IDS.join("','") +
+      "'].forEach(function(id){var e=document.getElementById(id);if(e){e.remove();}});})();",
+  }).catch(() => {});
+  setTabControlBadge(tabId, false);
+}
+
+async function setPresenceVisible(tabId, visible) {
+  await sendCdp(tabId, "Runtime.evaluate", { expression: presenceVisibilityScript(visible) })
+    .catch(() => {});
+}
+
+// Per-tab toolbar badge: only the controlled tab shows the pink "AI" chip, so the user can tell
+// which tab (and page) the assistant is driving from the tab strip / toolbar.
+function setTabControlBadge(tabId, on) {
+  try {
+    if (on) {
+      chrome.action.setBadgeText({ tabId, text: "AI" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: "#ff2d95" });
+      chrome.action.setTitle({ tabId, title: "S.A.K. assistant is controlling this tab" });
+    } else {
+      chrome.action.setBadgeText({ tabId, text: "" });
+      chrome.action.setTitle({ tabId, title: "" });
+    }
+  } catch (_e) {
+    // chrome.action is unavailable in some contexts; the on-page overlay still signals control.
+  }
 }
 
 async function dispatchMouse(tabId, type, x, y, extra) {
