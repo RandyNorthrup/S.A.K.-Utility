@@ -141,9 +141,12 @@ bool buildBridgePipeSecurity(SECURITY_ATTRIBUTES* attributes,
         return false;
     }
     // DACL: PROTECTED (no inherited ACEs), GENERIC_ALL to this user SID + SYSTEM only.
-    // SACL: Medium mandatory-integrity label, NO_WRITE_UP -- a lower-integrity process
-    // (e.g. a sandboxed browser renderer) cannot write to / open the pipe.
-    const QString sddl = QStringLiteral("D:P(A;;GA;;;%1)(A;;GA;;;SY)S:(ML;;NW;;;ME)").arg(sid);
+    // SACL: Medium mandatory-integrity label, NO_READ_UP | NO_WRITE_UP -- a below-Medium
+    // process (e.g. a sandboxed browser renderer, the real injection-to-local vector)
+    // cannot open the pipe for read OR write, so it can neither drive it nor occupy the
+    // single instance. NR is essential: with NW alone a low-IL subject could still open
+    // for read and wedge the sole pipe instance (denial of service).
+    const QString sddl = QStringLiteral("D:P(A;;GA;;;%1)(A;;GA;;;SY)S:(ML;;NRNW;;;ME)").arg(sid);
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
             reinterpret_cast<LPCWSTR>(sddl.utf16()), SDDL_REVISION_1, &sd, nullptr) == FALSE) {

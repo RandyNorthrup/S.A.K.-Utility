@@ -1117,6 +1117,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/browser_contract.cpp
         src/win32mcp/browser_bridge.cpp
         src/win32mcp/browser_bridge_security.cpp
+        src/win32mcp/browser_bridge_pipe.cpp
         src/win32mcp/native_messaging.cpp
         src/win32mcp/win32_mcp_native_host.cpp
         include/sak/win32mcp/win32_mcp_dispatch.h
@@ -1124,6 +1125,7 @@ if(PLATFORM_WINDOWS)
         include/sak/win32mcp/browser_contract.h
         include/sak/win32mcp/browser_bridge.h
         include/sak/win32mcp/browser_bridge_security.h
+        include/sak/win32mcp/browser_bridge_pipe.h
         include/sak/win32mcp/native_messaging.h
         include/sak/win32mcp/win32_mcp_native_host.h
         include/sak/ai/ai_mcp_jsonrpc.h

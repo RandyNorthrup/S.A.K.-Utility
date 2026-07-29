@@ -74,7 +74,8 @@ struct RendezvousRecord {
 /// Build a hardened SECURITY_ATTRIBUTES for the bridge pipe. The DACL is PROTECTED
 /// (no inherited ACEs) and grants GENERIC_ALL to the current user SID and local
 /// SYSTEM only -- no BUILTIN\Users, no Everyone, no NETWORK -- plus a Medium
-/// mandatory-integrity label with NO_WRITE_UP. On success @p descriptor receives the
+/// mandatory-integrity label with NO_READ_UP | NO_WRITE_UP, so a below-Medium process
+/// cannot open the pipe for read or write. On success @p descriptor receives the
 /// security descriptor, which the caller MUST LocalFree after CreateNamedPipe returns.
 [[nodiscard]] bool buildBridgePipeSecurity(SECURITY_ATTRIBUTES* attributes,
                                            PSECURITY_DESCRIPTOR* descriptor,

@@ -112,7 +112,8 @@ void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel()
     QVERIFY(!sddl.isEmpty());
     QVERIFY(sddl.contains(QStringLiteral("D:P")));  // DACL is protected
     QVERIFY(sddl.contains(sid));                    // current user is granted
-    QVERIFY(sddl.contains(QStringLiteral("NW")));   // NO_WRITE_UP mandatory label
+    QVERIFY(sddl.contains(QStringLiteral("NR")));   // NO_READ_UP mandatory-label bit
+    QVERIFY(sddl.contains(QStringLiteral("NW")));   // NO_WRITE_UP mandatory-label bit
     // No BUILTIN\Users, Everyone, or Authenticated Users (well-knowns render as SDDL
     // abbreviations BU / WD / AU, not raw SIDs).
     QVERIFY(!sddl.contains(QStringLiteral(";BU)")));
