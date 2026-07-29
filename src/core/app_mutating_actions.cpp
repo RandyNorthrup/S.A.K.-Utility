@@ -15,6 +15,7 @@
 #include "sak/app_action_service.h"
 #include "sak/app_organizer_helpers.h"
 #include "sak/app_partition_op_parse.h"
+#include "sak/cleanup_worker.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/email_attachment_saver.h"
 #include "sak/email_export_worker.h"
@@ -24,6 +25,7 @@
 #include "sak/file_recovery_engine.h"
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
+#include "sak/leftover_cleanup_guard.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
 #include "sak/ost_conversion_worker.h"
@@ -1868,6 +1870,297 @@ using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppAc
 
 // Register the software-management ops. Split out to keep registerMutatingAppActionsInto
 // within the length budget as the op set grows.
+// ---------------------------------------------------------------------------
+// software.clean_leftovers: PERMANENTLY delete selected uninstall-leftover items.
+// ---------------------------------------------------------------------------
+// The mutating counterpart to software.scan_leftovers: drives CleanupWorker (the WORKER, not the
+// AdvancedUninstallController, which persists prefs), which deletes files/folders, whole registry
+// key trees, registry values, services (sc delete), scheduled tasks (schtasks /delete /f), and
+// firewall rules (netsh ... delete rule). This is the technician's arbitrary-destruction surface,
+// so it is gated CATASTROPHIC (a human confirms every item even in Unattended) AND every item is
+// screened fail-closed by leftover_cleanup_guard.h before the worker is built -- an OS-critical /
+// unrecoverable / injection target (HKLM\SYSTEM, a core service, the \Microsoft\Windows task tree,
+// firewall name=all, the Windows dir, a drive/Program Files/Users root, a UNC/symlink path) is
+// refused outright. Refusal is ALL-OR-NOTHING: any bad item blocks the whole batch, so a poisoned
+// batch cannot smuggle a real deletion past a blocked one. The guard's empty-target rejections also
+// satisfy CleanupWorker's Q_ASSERT(!x.isEmpty()) preconditions.
+
+constexpr int kMaxCleanupItems = 500;
+constexpr int kCleanupTimeoutMs = 10 * 60 *
+                                  1000;  // ceiling above many ~10s sc/schtasks/netsh calls
+
+// Truncate a path/name to a bounded single line for reporting (clampLine is file-local to the
+// read-only module; this is the mutating module's own small equivalent).
+QString clampCleanupLine(const QString& value) {
+    constexpr int kMaxCleanupLineChars = 400;
+    QString line = value;
+    line.replace(QLatin1Char('\n'), QLatin1Char(' ')).replace(QLatin1Char('\r'), QLatin1Char(' '));
+    if (line.size() > kMaxCleanupLineChars) {
+        line.truncate(kMaxCleanupLineChars);
+        line += QStringLiteral("...");
+    }
+    return line;
+}
+
+std::optional<LeftoverItem::Type> leftoverTypeFromString(const QString& raw) {
+    static const QMap<QString, LeftoverItem::Type> kMap = {
+        {QStringLiteral("file"), LeftoverItem::Type::File},
+        {QStringLiteral("folder"), LeftoverItem::Type::Folder},
+        {QStringLiteral("registry_key"), LeftoverItem::Type::RegistryKey},
+        {QStringLiteral("registry_value"), LeftoverItem::Type::RegistryValue},
+        {QStringLiteral("service"), LeftoverItem::Type::Service},
+        {QStringLiteral("scheduled_task"), LeftoverItem::Type::ScheduledTask},
+        {QStringLiteral("firewall_rule"), LeftoverItem::Type::FirewallRule},
+        {QStringLiteral("startup_entry"), LeftoverItem::Type::StartupEntry},
+        {QStringLiteral("shell_extension"), LeftoverItem::Type::ShellExtension}};
+    const auto it = kMap.constFind(raw.toLower());
+    if (it == kMap.constEnd()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+// The fail-closed refusal for an already-resolved item (empty = allowed). The dispatch mirrors
+// CleanupWorker::cleanSingleItem exactly so the item the guard clears is the item the worker acts
+// on (StartupEntry with a value name routes to a registry-value delete; without, to a file delete;
+// ShellExtension routes to a registry-key delete).
+QString cleanupItemRefusal(const LeftoverItem& item) {
+    using Type = LeftoverItem::Type;
+    const Type type = item.type;
+    if (type == Type::RegistryKey || type == Type::ShellExtension) {
+        return registryKeyDeletionRefusal(item.path);
+    }
+    if (type == Type::RegistryValue) {
+        return registryValueDeletionRefusal(item.path, item.registryValueName);
+    }
+    if (type == Type::Service) {
+        return serviceDeletionRefusal(item.path);
+    }
+    if (type == Type::ScheduledTask) {
+        return scheduledTaskDeletionRefusal(item.path);
+    }
+    if (type == Type::FirewallRule) {
+        return firewallRuleDeletionRefusal(item.path);
+    }
+    // A registry-backed StartupEntry deletes a value; a file-backed one deletes a file.
+    if (type == Type::StartupEntry && !item.registryValueName.isEmpty()) {
+        return registryValueDeletionRefusal(item.path, item.registryValueName);
+    }
+    // File, Folder, and a file-backed StartupEntry all delete a filesystem path.
+    return filePathDeletionRefusal(item.path);
+}
+
+// Parse + validate ONE model-supplied item and fill @p out. Returns a refusal reason (empty =
+// allowed).
+QString validateCleanupItem(const QJsonObject& obj, LeftoverItem& out) {
+    const QString type_str = obj.value(QStringLiteral("type")).toString().trimmed();
+    const std::optional<LeftoverItem::Type> type = leftoverTypeFromString(type_str);
+    if (!type) {
+        return QStringLiteral("unknown item type '%1'").arg(clampCleanupLine(type_str));
+    }
+    out.type = *type;
+    out.path = obj.value(QStringLiteral("path")).toString().trimmed();
+    out.registryValueName = obj.value(QStringLiteral("registry_value_name")).toString().trimmed();
+    out.selected = true;
+    out.sizeBytes = 0;
+    return cleanupItemRefusal(out);
+}
+
+// Accumulated CleanupWorker signal state: filled by the per-item / summary / reboot-pending slots,
+// read once by the finished slot.
+struct CleanupTally {
+    int succeeded = 0;
+    int failed = 0;
+    QStringList reboot_paths;
+    QJsonArray per_item;
+};
+
+// Build the tool result from the accumulated tally. ok = every item deleted; a reboot-scheduled
+// file still EXISTS, so it is reported separately (count + message note), not folded silently into
+// the cleaned count.
+AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
+    const bool ok = tally.failed == 0;
+    QJsonObject data{{QStringLiteral("items_total"), items_total},
+                     {QStringLiteral("succeeded"), tally.succeeded},
+                     {QStringLiteral("failed"), tally.failed},
+                     {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
+                     {QStringLiteral("reboot_pending"),
+                      jsonStringArrayCapped(tally.reboot_paths, 50)},
+                     {QStringLiteral("items"), tally.per_item}};
+    QString message =
+        ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
+           : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
+    if (!tally.reboot_paths.isEmpty()) {
+        message +=
+            QStringLiteral(" (%1 path(s) scheduled for removal on next reboot; not yet deleted)")
+                .arg(tally.reboot_paths.size());
+    }
+    return {ok, message, data};
+}
+
+// Drive a prepared CleanupWorker to completion, accumulating its per-item / summary /
+// reboot-pending signals, and map the terminal signal to a tool result. The worker continues past
+// individual failures (an un-elevated sc/schtasks/netsh call fails honestly -> counted failed,
+// ok=false), so success means EVERY item deleted. Fully joined before return (requestStop +
+// wait/terminate), like driveUninstallWorker, so a timeout cannot outlive the worker's stack.
+AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_recycle_bin) {
+    // worker declared BEFORE inv so it is destroyed AFTER inv: a late finished() on teardown then
+    // hits an already-gone context and is dropped rather than delivered to a dangling bridge.
+    CleanupWorker worker(items, use_recycle_bin);
+    AsyncActionInvocation inv(kCleanupTimeoutMs);
+    CleanupTally tally;
+
+    QObject::connect(&worker,
+                     &CleanupWorker::itemCleaned,
+                     inv.context(),
+                     [&tally](const QString& path, bool ok) {
+                         if (tally.per_item.size() < kMaxCleanupItems) {
+                             tally.per_item.append(
+                                 QJsonObject{{QStringLiteral("path"), clampCleanupLine(path)},
+                                             {QStringLiteral("success"), ok}});
+                         }
+                     });
+    QObject::connect(
+        &worker, &CleanupWorker::cleanupComplete, inv.context(), [&tally](int s, int f, qint64) {
+            tally.succeeded = s;
+            tally.failed = f;
+        });
+    QObject::connect(&worker,
+                     &CleanupWorker::rebootPendingItems,
+                     inv.context(),
+                     [&tally](const QStringList& paths) { tally.reboot_paths = paths; });
+    // Finish on WorkerBase::finished (fires after execute() returns, i.e. AFTER cleanupComplete and
+    // rebootPendingItems, which are queued to this same caller-thread context in emission order),
+    // so every accumulator is populated by the time this runs.
+    QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &items, &tally]() {
+        inv.finish(buildCleanupResult(items.size(), tally));
+    });
+    QObject::connect(
+        &worker, &WorkerBase::failed, inv.context(), [&inv](int, const QString& error) {
+            inv.finish({false, error.isEmpty() ? QStringLiteral("Cleanup failed") : error, {}});
+        });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("Cleanup was cancelled"), {}});
+    });
+
+    const AppActionResult result = inv.run([&worker]() { worker.start(); });
+    worker.requestStop();
+    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
+        worker.terminate();
+        worker.wait(sak::kTimeoutThreadTerminateMs);
+    }
+    return result;
+}
+
+AppActionResult cleanLeftovers(const QJsonObject& args) {
+    const QJsonValue items_val = args.value(QStringLiteral("items"));
+    if (!items_val.isArray()) {
+        return {false, QStringLiteral("clean_leftovers requires an 'items' array"), {}};
+    }
+    const QJsonArray items_arr = items_val.toArray();
+    if (items_arr.isEmpty()) {
+        return {false, QStringLiteral("clean_leftovers 'items' array is empty"), {}};
+    }
+    if (items_arr.size() > kMaxCleanupItems) {
+        return {false,
+                QStringLiteral("clean_leftovers accepts at most %1 items per call")
+                    .arg(kMaxCleanupItems),
+                {}};
+    }
+
+    QVector<LeftoverItem> items;
+    items.reserve(items_arr.size());
+    QStringList refusals;
+    for (int i = 0; i < items_arr.size(); ++i) {
+        if (!items_arr.at(i).isObject()) {
+            refusals << QStringLiteral("item %1 is not an object").arg(i);
+            continue;
+        }
+        const QJsonObject obj = items_arr.at(i).toObject();
+        LeftoverItem item;
+        const QString reason = validateCleanupItem(obj, item);
+        if (!reason.isEmpty()) {
+            const QString label = item.path.isEmpty() ? obj.value(QStringLiteral("type")).toString()
+                                                      : item.path;
+            refusals
+                << QStringLiteral("item %1 (%2): %3").arg(i).arg(clampCleanupLine(label), reason);
+            continue;
+        }
+        items.push_back(item);
+    }
+
+    // All-or-nothing: any refused item blocks the WHOLE batch. Nothing is deleted unless every item
+    // clears the fail-closed screen.
+    if (!refusals.isEmpty()) {
+        return {false,
+                QStringLiteral("Refused: %1 of %2 item(s) target protected/invalid resources; no "
+                               "deletion performed. %3")
+                    .arg(refusals.size())
+                    .arg(items_arr.size())
+                    .arg(refusals.mid(0, 10).join(QStringLiteral("; "))),
+                QJsonObject{{QStringLiteral("refused"), jsonStringArrayCapped(refusals, 20)}}};
+    }
+
+    // Default to the Recycle Bin (files/folders recoverable). Registry keys/values, services,
+    // tasks, and firewall rules have no recycle equivalent -- their deletion is always permanent.
+    const bool use_recycle_bin = args.value(QStringLiteral("use_recycle_bin")).toBool(true);
+    return runCleanupWorker(items, use_recycle_bin);
+}
+
+QJsonObject cleanLeftoversParamsSchema() {
+    QJsonObject type_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                          {QStringLiteral("enum"),
+                           QJsonArray{QStringLiteral("file"),
+                                      QStringLiteral("folder"),
+                                      QStringLiteral("registry_key"),
+                                      QStringLiteral("registry_value"),
+                                      QStringLiteral("service"),
+                                      QStringLiteral("scheduled_task"),
+                                      QStringLiteral("firewall_rule"),
+                                      QStringLiteral("startup_entry"),
+                                      QStringLiteral("shell_extension")}},
+                          {QStringLiteral("description"),
+                           QStringLiteral("Kind of leftover item to delete")}};
+    QJsonObject item_props{
+        {QStringLiteral("type"), type_prop},
+        {QStringLiteral("path"),
+         stringProp(QStringLiteral(
+             "The item's path or name: an absolute filesystem path (file/folder), a full registry "
+             "key (registry_key/registry_value/startup_entry/shell_extension, e.g. "
+             "HKLM\\SOFTWARE\\Vendor\\App), a service name, a scheduled-task name, or a firewall "
+             "rule name"))},
+        {QStringLiteral("registry_value_name"),
+         stringProp(QStringLiteral("For registry_value (or a registry-backed startup_entry): the "
+                                   "value name to delete under 'path'"))}};
+    QJsonObject item_schema{{QStringLiteral("type"), QStringLiteral("object")},
+                            {QStringLiteral("properties"), item_props},
+                            {QStringLiteral("required"),
+                             QJsonArray{QStringLiteral("type"), QStringLiteral("path")}},
+                            {QStringLiteral("additionalProperties"), false}};
+    QJsonObject items_prop{
+        {QStringLiteral("type"), QStringLiteral("array")},
+        {QStringLiteral("description"),
+         QStringLiteral("Leftover items to permanently delete (typically copied from "
+                        "software.scan_leftovers output). OS-critical targets (the Windows dir, "
+                        "SYSTEM/SAM/SECURITY and shared SOFTWARE registry roots, core services, "
+                        "\\Microsoft\\Windows tasks, firewall name=all, drive/Program Files/Users "
+                        "roots, UNC/symlink paths) are always refused; any refused item blocks the "
+                        "entire batch.")},
+        {QStringLiteral("items"), item_schema}};
+    QJsonObject recycle_prop{
+        {QStringLiteral("type"), QStringLiteral("boolean")},
+        {QStringLiteral("description"),
+         QStringLiteral("If true (default), deleted files/folders go to the Recycle Bin "
+                        "(recoverable); if false, permanent deletion. Registry keys/values, "
+                        "services, tasks, and firewall rules are always permanent.")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("items"), items_prop},
+                                    {QStringLiteral("use_recycle_bin"), recycle_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("items")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
 void registerSoftwareOps(const AddMutatingActionFn& add) {
     // software.uninstall_uwp_app: removes an installed Store/UWP app via UninstallWorker
     // (Remove-AppxPackage: silent, bounded, cancellable; early-returns before any leftover
@@ -1903,6 +2196,27 @@ void registerSoftwareOps(const AddMutatingActionFn& add) {
     uninstall_win32.destructive = true;
     uninstall_win32.requires_admin = true;
     add(uninstall_win32, uninstallWin32Program);
+
+    // software.clean_leftovers: PERMANENTLY deletes selected leftover items (files, folders,
+    // registry keys/values, services, scheduled tasks, firewall rules, startup entries) found by
+    // software.scan_leftovers. The broadest destruction surface the assistant drives -> destructive
+    // + CATASTROPHIC (forces a human confirm even in Unattended) + requires_admin (registry HKLM,
+    // sc/schtasks/netsh all need elevation). leftover_cleanup_guard.h screens every item
+    // fail-closed (OS-critical/unrecoverable/injection targets refused) BEFORE CleanupWorker is
+    // built, and any refusal blocks the whole batch.
+    AppActionDescriptor clean = mutatingDescriptor(
+        QStringLiteral("software.clean_leftovers"),
+        QStringLiteral("Delete uninstall leftovers"),
+        QStringLiteral("Permanently delete selected leftover items (files, folders, registry "
+                       "keys/values, services, scheduled tasks, firewall rules, startup entries) "
+                       "found by software.scan_leftovers. ERASES data; OS-critical targets are "
+                       "always refused."),
+        QStringLiteral("software"));
+    clean.params_schema = cleanLeftoversParamsSchema();
+    clean.destructive = true;
+    clean.catastrophic = true;
+    clean.requires_admin = true;
+    add(clean, cleanLeftovers);
 }
 
 // ---------------------------------------------------------------------------

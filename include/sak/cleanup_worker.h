@@ -10,6 +10,7 @@
 #include "sak/worker_base.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QVector>
 
 #include <type_traits>
@@ -65,8 +66,14 @@ private:
     /// @brief Delete a folder, falling back to reboot scheduling for locked contents
     [[nodiscard]] bool deleteFolder(const QString& path);
 
+    /// @brief Unlink a reparse point (junction / symlink) WITHOUT touching its target
+    [[nodiscard]] bool unlinkReparsePoint(const QString& path);
+
     /// @brief Attempt to remove each file in dir, scheduling locked ones
     [[nodiscard]] bool removeFolderContentsForced(const QDir& dir);
+
+    /// @brief Remove one directory entry during a forced folder cleanup (never follows reparse pts)
+    [[nodiscard]] bool removeForcedEntry(const QFileInfo& entry);
 
     /// @brief Schedule reboot removal and record the path
     [[nodiscard]] bool tryScheduleReboot(const QString& path);

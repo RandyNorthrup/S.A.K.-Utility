@@ -149,6 +149,15 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         return true;
     }
 
+    // A reparse point (junction / directory symlink) must be UNLINKED, never recursed into -- else
+    // removeRecursively()/entryInfoList would enumerate THROUGH it and permanently delete the
+    // target's contents (e.g. a nested junction to System32). This function re-enters itself during
+    // the forced fallback, so screen it here too.
+    const QFileInfo info(path);
+    if (info.isSymLink() || info.isJunction()) {
+        return unlinkReparsePoint(path);
+    }
+
     if (m_useRecycleBin && sendPathToRecycleBin(path)) {
         return true;
     }
@@ -166,25 +175,38 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     return all_handled;
 }
 
+bool CleanupWorker::unlinkReparsePoint(const QString& path) {
+    // rmdir (RemoveDirectoryW) unlinks a directory reparse point; QFile::remove unlinks a file
+    // symlink -- both remove the LINK only, never the target's contents.
+    if (QDir().rmdir(path) || QFile::remove(path)) {
+        return true;
+    }
+    return tryScheduleReboot(path);
+}
+
+bool CleanupWorker::removeForcedEntry(const QFileInfo& entry) {
+    const QString entry_path = entry.absoluteFilePath();
+    // Never recurse THROUGH a reparse point (junction / directory symlink): entry.isDir() FOLLOWS
+    // it, so recursing would delete the target's contents, not the leftover (a nested junction to
+    // System32 must not wipe System32). Remove the link itself instead.
+    const bool is_reparse = entry.isSymLink() || entry.isJunction();
+    if (entry.isDir() && !is_reparse) {
+        return deleteFolder(entry_path);
+    }
+    if (is_reparse) {
+        return unlinkReparsePoint(entry_path);
+    }
+    // Plain file: QFile::remove unlinks it; a locked file is scheduled for reboot removal.
+    return QFile::remove(entry_path) || tryScheduleReboot(entry_path);
+}
+
 bool CleanupWorker::removeFolderContentsForced(const QDir& dir) {
     bool all_handled = true;
     const auto entries = dir.entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
 
     for (const auto& entry : entries) {
-        const QString entry_path = entry.absoluteFilePath();
-        if (entry.isDir()) {
-            if (!deleteFolder(entry_path)) {
-                all_handled = false;
-            }
-            continue;
-        }
-
-        if (QFile::remove(entry_path)) {
-            continue;
-        }
-
-        if (!tryScheduleReboot(entry_path)) {
+        if (!removeForcedEntry(entry)) {
             all_handled = false;
         }
     }
@@ -218,13 +240,16 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
     QString path = fullKeyPath;
     HKEY hive = nullptr;
 
-    if (path.startsWith("HKLM\\")) {
+    // Case-insensitive hive match: the Windows registry is case-insensitive, and the AI-assistant
+    // clean_leftovers guard accepts a mixed-case hive -- so the worker must too, or a
+    // guard-approved "hklm\..." item would silently no-op (guard/worker parity).
+    if (path.startsWith("HKLM\\", Qt::CaseInsensitive)) {
         hive = HKEY_LOCAL_MACHINE;
         path = path.mid(kRegistryHivePrefixLength);
-    } else if (path.startsWith("HKCU\\")) {
+    } else if (path.startsWith("HKCU\\", Qt::CaseInsensitive)) {
         hive = HKEY_CURRENT_USER;
         path = path.mid(kRegistryHivePrefixLength);
-    } else if (path.startsWith("HKCR\\")) {
+    } else if (path.startsWith("HKCR\\", Qt::CaseInsensitive)) {
         hive = HKEY_CLASSES_ROOT;
         path = path.mid(kRegistryHivePrefixLength);
     } else {
@@ -248,13 +273,14 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
     QString path = keyPath;
     HKEY hive = nullptr;
 
-    if (path.startsWith("HKLM\\")) {
+    // Case-insensitive hive match (see deleteRegistryKey): parity with the clean_leftovers guard.
+    if (path.startsWith("HKLM\\", Qt::CaseInsensitive)) {
         hive = HKEY_LOCAL_MACHINE;
         path = path.mid(kRegistryHivePrefixLength);
-    } else if (path.startsWith("HKCU\\")) {
+    } else if (path.startsWith("HKCU\\", Qt::CaseInsensitive)) {
         hive = HKEY_CURRENT_USER;
         path = path.mid(kRegistryHivePrefixLength);
-    } else if (path.startsWith("HKCR\\")) {
+    } else if (path.startsWith("HKCR\\", Qt::CaseInsensitive)) {
         hive = HKEY_CLASSES_ROOT;
         path = path.mid(kRegistryHivePrefixLength);
     } else {

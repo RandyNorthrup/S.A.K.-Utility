@@ -1686,6 +1686,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/program_enumerator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/uninstall_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/leftover_scanner.cpp
+        # software.clean_leftovers: CleanupWorker (WorkerBase QThread) deletes selected leftover
+        # items. The DELETION is never unit-tested here (would remove real system objects); every
+        # dispatch cert feeds an item that the leftover_cleanup_guard.h fail-closed screen REFUSES,
+        # so the worker is never constructed/run and the suite has no destructive side effects.
+        ${CMAKE_SOURCE_DIR}/src/core/cleanup_worker.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/cleanup_worker.h
         ${CMAKE_SOURCE_DIR}/src/core/registry_snapshot_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/core/restore_point_manager.cpp
         # imaging.scan_recoverable: FileRecoveryEngine (static signature-carver, pure Qt) reads an
@@ -4225,6 +4231,27 @@ endif()
 # ============================================================================
 # Unit Tests - Advanced Uninstall Panel
 # ============================================================================
+
+# test_leftover_cleanup_guard --- fail-closed target screens behind software.clean_leftovers
+# (header-only guard; pure, no filesystem/registry mutation).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_cleanup_guard.cpp")
+    add_executable(test_leftover_cleanup_guard
+        unit/test_leftover_cleanup_guard.cpp
+    )
+    set_target_properties(test_leftover_cleanup_guard PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_leftover_cleanup_guard PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_leftover_cleanup_guard PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_leftover_cleanup_guard COMMAND test_leftover_cleanup_guard
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_leftover_cleanup_guard")
+endif()
 
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")

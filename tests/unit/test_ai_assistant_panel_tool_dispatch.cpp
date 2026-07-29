@@ -246,7 +246,7 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 60);
+        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 61);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -2247,6 +2247,144 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("profile_added")).toBool());
+    }
+
+    // software.clean_leftovers -- MUTATING + destructive + CATASTROPHIC + requires_admin: deletes
+    // files/folders/registry/services/tasks/firewall rules via CleanupWorker. Every cert here feeds
+    // a DENYLISTED item, so the fail-closed guard refuses the whole batch BEFORE CleanupWorker is
+    // built -- the suite never deletes a real system object.
+    // ------------------------------------------------------------------
+
+    void cleanLeftoversListedCatastrophic() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() ==
+                QLatin1String("software.clean_leftovers")) {
+                found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+                QVERIFY(action.value(QStringLiteral("catastrophic")).toBool());
+                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // A chat/research session refuses the mutating op (policy_blocked) before any deletion.
+    void cleanLeftoversBlockedInChatSession() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
+        const QString args = QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("items"),
+                             QJsonArray{QJsonObject{
+                                 {QStringLiteral("type"), QStringLiteral("folder")},
+                                 {QStringLiteral("path"), QStringLiteral("C:\\Temp\\Acme")}}}}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+    }
+
+    // A missing/empty items array fails cleanly, before any deletion.
+    void cleanLeftoversRequiresItems() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(
+            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("items")));
+    }
+
+    // Run clean_leftovers Unattended (forced confirm auto-approved) with a single denylisted item
+    // and assert it is REFUSED with a non-empty "refused" list -- proving the guard fired and the
+    // worker never ran. @p item is one leftover-item object.
+    QJsonObject runCleanRefusedItem(AiAssistantPanel& panel, const QJsonObject& item) {
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("items"), QJsonArray{item}}})
+                .toJson(QJsonDocument::Compact));
+        return panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+    }
+
+    void cleanLeftoversRefusesOsCriticalTargets() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+
+        const QVector<QJsonObject> denied = {
+            // OS-critical registry subtree.
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("registry_key")},
+                        {QStringLiteral("path"),
+                         QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services\\RpcSs")}},
+            // Critical Windows service.
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("service")},
+                        {QStringLiteral("path"), QStringLiteral("RpcSs")}},
+            // Firewall wildcard that deletes ALL rules.
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("firewall_rule")},
+                        {QStringLiteral("path"), QStringLiteral("all")}},
+            // Windows system directory.
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("folder")},
+                        {QStringLiteral("path"), QStringLiteral("C:\\Windows\\System32")}},
+            // The \Microsoft\Windows OS task tree.
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("scheduled_task")},
+                        {QStringLiteral("path"), QStringLiteral("\\Microsoft\\Windows\\Foo")}}};
+
+        for (const QJsonObject& item : denied) {
+            const QJsonObject result = runCleanRefusedItem(panel, item);
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+            QVERIFY(!data.value(QStringLiteral("refused")).toArray().isEmpty());
+        }
+    }
+
+    // All-or-nothing: a batch mixing a VALID vendor item with one denylisted item is refused whole,
+    // so the valid item is never deleted (a poisoned batch cannot smuggle a real deletion through).
+    void cleanLeftoversAllOrNothingBatch() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonArray items{QJsonObject{{QStringLiteral("type"), QStringLiteral("registry_key")},
+                                           {QStringLiteral("path"),
+                                            QStringLiteral("HKLM\\SOFTWARE\\AcmeCorp\\App")}},
+                               QJsonObject{{QStringLiteral("type"), QStringLiteral("service")},
+                                           {QStringLiteral("path"), QStringLiteral("Dnscache")}}};
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("items"), items}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("refused")).toArray().isEmpty());
     }
 
     // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate
