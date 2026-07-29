@@ -35,6 +35,7 @@ private Q_SLOTS:
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
     void planWin32McpCallFlagsBrowserInputForConfirmation();
+    void planWin32McpCallGatesExtensionTools();
     void win32McpEnvironmentIncludesProviderValues();
     void win32McpResultExtractsTextAndRiskFlags();
     void win32McpResultFlagsLogicalToolError();
@@ -145,6 +146,19 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("clipboard_write")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("clipboard_read")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("clipboard_read")));
+
+    // Browser-extension setup: status is a read-only query (ungated); install/uninstall write
+    // user Chrome policy that force-installs software and take the hard-confirm input tier.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(
+        QStringLiteral("browser_extension_status")));
+    QVERIFY(
+        !sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_extension_status")));
+    QVERIFY(
+        sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_extension_install")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(
+        QStringLiteral("browser_extension_uninstall")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(
+        QStringLiteral("browser_extension_install")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {
@@ -212,6 +226,50 @@ void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() 
     QVERIFY(error.isEmpty());
     QVERIFY(!clip.read_only);
     QVERIFY(clip.requires_confirmation);
+}
+
+void AiProviderGatewayTests::planWin32McpCallGatesExtensionTools() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString command_path =
+        QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
+    QVERIFY(writeFile(command_path, QByteArray("stub")));
+    const QString providers_path =
+        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
+    const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                               {QStringLiteral("transport"), QStringLiteral("stdio")},
+                               {QStringLiteral("command"),
+                                QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
+                               {QStringLiteral("tools"),
+                                QJsonArray{QStringLiteral("browser_extension_install"),
+                                           QStringLiteral("browser_extension_status")}}};
+    QVERIFY(
+        writeFile(providers_path,
+                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
+                      .toJson(QJsonDocument::Compact)));
+
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    QString error;
+
+    // Installing the extension writes Chrome policy: not read-only, mandatory confirmation.
+    const auto install = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"),
+                                  QStringLiteral("browser_extension_install")}}}},
+        &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(!install.read_only);
+    QVERIFY(install.requires_confirmation);
+
+    // Status only reads state: read-only and NOT gated.
+    const auto status = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"),
+                                  QStringLiteral("browser_extension_status")}}}},
+        &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(status.read_only);
+    QVERIFY(!status.requires_confirmation);
 }
 
 void AiProviderGatewayTests::win32McpEnvironmentIncludesProviderValues() {

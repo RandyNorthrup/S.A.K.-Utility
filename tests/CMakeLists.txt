@@ -4263,6 +4263,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         unit/test_win32_mcp_server.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dispatch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
@@ -4360,6 +4361,39 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge.cpp")
     add_test(NAME test_browser_bridge COMMAND test_browser_bridge
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge")
+endif()
+
+# test_browser_extension_installer --- headless Chrome force-install policy + native-host
+# registration. Registry tests run only on Windows (guarded in the .cpp) against a throwaway
+# HKCU\Software\SAK_Test subkey; the identity guard (manifest key -> pinned id/version) runs
+# everywhere. SAK_REPO_ROOT lets the identity test read the committed manifest.json.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_extension_installer.cpp")
+    add_executable(test_browser_extension_installer
+        unit/test_browser_extension_installer.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_extension_installer.h
+    )
+    set_target_properties(test_browser_extension_installer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_browser_extension_installer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_browser_extension_installer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    target_compile_definitions(test_browser_extension_installer PRIVATE
+        SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}"
+    )
+    # AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32),
+    # so the Windows-only registry test slots register with QtTest on Windows.
+    if(WIN32)
+        target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
+    endif()
+    add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_browser_extension_installer")
 endif()
 
 # test_browser_bridge_security --- the load-bearing pipe security + discovery primitives

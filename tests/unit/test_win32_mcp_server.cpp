@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/win32mcp/browser_extension_installer.h"
 #include "sak/win32mcp/win32_mcp_dispatch.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
 
@@ -56,6 +57,7 @@ private slots:
     void invokeTool_getWindowInfoRequiresTitle();
     void invokeTool_clipboardWriteRequiresText();
     void invokeTool_clipboardReadReturnsTextShape();
+    void invokeTool_browserExtensionStatusReturnsShape();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
 };
@@ -98,7 +100,10 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("list_monitors"),
                                     QStringLiteral("mouse_position"),
                                     QStringLiteral("clipboard_read"),
-                                    QStringLiteral("clipboard_write")}) {
+                                    QStringLiteral("clipboard_write"),
+                                    QStringLiteral("browser_extension_install"),
+                                    QStringLiteral("browser_extension_uninstall"),
+                                    QStringLiteral("browser_extension_status")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes was dropped: it duplicated the app's own diagnostics/process listing, and the
@@ -201,6 +206,24 @@ void Win32McpServerTests::invokeTool_clipboardReadReturnsTextShape() {
     QVERIFY(payload.contains(QStringLiteral("text")));
     QVERIFY(payload.value(QStringLiteral("has_text")).isBool());
     QVERIFY(payload.value(QStringLiteral("truncated")).isBool());
+}
+
+void Win32McpServerTests::invokeTool_browserExtensionStatusReturnsShape() {
+    // status only READS the registry (never mutates policy), so it is safe here. It must
+    // return a well-formed {state, crx_present, extension_id} payload with the pinned id.
+    // (We deliberately do NOT invoke browser_extension_install/uninstall, which would write
+    // the machine's real Chrome policy; their behavior is covered by the installer unit test
+    // against a throwaway registry key.)
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("browser_extension_status"),
+                                                        {});
+    QVERIFY(!result.is_error);
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    QVERIFY(state == QStringLiteral("installed") || state == QStringLiteral("not_installed") ||
+            state == QStringLiteral("partial") || state == QStringLiteral("error"));
+    QVERIFY(payload.value(QStringLiteral("crx_present")).isBool());
+    QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
+             QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
 }
 
 void Win32McpServerTests::toolCallResult_textOnlyIsSingleTextBlock() {

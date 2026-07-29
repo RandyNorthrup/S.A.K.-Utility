@@ -5,3 +5,8 @@
 # local). Treat the whole tree as binary so checkout preserves the exact bytes
 # the manifest recorded.
 tools/filesystem/** -text
+
+# The signed browser-control extension is a CRX3 (ZIP + RSA signature over exact bytes).
+# core.autocrlf rewriting any byte breaks the signature and Chrome rejects the install,
+# so the CRX must be treated as binary on every checkout.
+browser/dist/*.crx binary

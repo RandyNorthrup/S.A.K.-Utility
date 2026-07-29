@@ -24,6 +24,34 @@ implemented and unit-tested in C++ under `src/win32mcp/` (`native_messaging`,
 `browser_control`). The relay <-> pipe <-> session loop is covered end to end by
 `test_browser_bridge_relay` (a fake extension). This extension is the real other end.
 
+## Installing (headless, no "Load unpacked")
+
+Modern stable Chrome ignores `--load-extension` and blocks off-store sideloading, so
+the app installs the extension the enterprise way: it force-installs a signed CRX via
+Chrome policy in the current user's registry (HKCU, no admin) and registers the native
+messaging host in one step. This is version-independent (the policy path and CRX3 format
+are stable across Chrome builds) and reversible.
+
+- `dist/sak_browser_control.crx` -- the committed, signed extension package. Its RSA
+  public key is pinned in `extension/manifest.json` ("key"), so the unpacked-load id and
+  the CRX id are identical: `ofodhfbipljnhenjjjpbdaglkjdphoec`.
+- `BrowserExtensionInstaller` (`src/win32mcp/browser_extension_installer.*`) writes an
+  Omaha `update.xml` + the host manifest under `%LOCALAPPDATA%\SAK`, adds our single
+  `ExtensionInstallForcelist` entry (never touching other policies), and registers the
+  native host. `uninstall()` removes only our entry; `state()` reports installed/partial/
+  not_installed/error. It is unit-tested against a throwaway HKCU key in
+  `test_browser_extension_installer`.
+- The assistant panel exposes Install/Uninstall, and the assistant has the
+  `browser_extension_install` / `browser_extension_uninstall` / `browser_extension_status`
+  tools (install/uninstall require a human confirmation in every access mode).
+- `pack-extension.ps1` re-signs the CRX after any change under `extension/`. The private
+  signing key is never committed; it lives at
+  `%LOCALAPPDATA%\SAK\keys\sak_browser_control.signing-key.pem` and MUST be backed up
+  (losing it changes the id and forces every machine to re-install).
+
+The manual `native-host/register_native_host.ps1` + "Load unpacked" flow below remains
+for developing an unpacked build.
+
 ## Topology
 
 Two processes speak on each side of a hardened named pipe:

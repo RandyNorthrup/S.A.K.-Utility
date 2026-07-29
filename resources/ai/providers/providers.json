@@ -71,7 +71,10 @@
         "click_text",
         "wait_for_text",
         "start_process",
-        "list_processes"
+        "list_processes",
+        "browser_extension_install",
+        "browser_extension_uninstall",
+        "browser_extension_status"
       ],
       "capabilities": [
         "window_observation",

@@ -4,6 +4,6 @@
   "path": "REPLACE_WITH_ABSOLUTE_PATH_TO_sak_win32_mcp.exe",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://REPLACE_WITH_UNPACKED_EXTENSION_ID/"
+    "chrome-extension://ofodhfbipljnhenjjjpbdaglkjdphoec/"
   ]
 }

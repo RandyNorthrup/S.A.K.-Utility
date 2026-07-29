@@ -15,8 +15,10 @@
 
 [CmdletBinding(DefaultParameterSetName = "Register")]
 param(
-    [Parameter(ParameterSetName = "Register", Mandatory = $true)]
-    [string]$ExtensionId,
+    # Defaults to the pinned production extension id (browser/extension/manifest.json "key").
+    # Pass a different id only when testing an unpacked build with a different key.
+    [Parameter(ParameterSetName = "Register")]
+    [string]$ExtensionId = "ofodhfbipljnhenjjjpbdaglkjdphoec",
 
     [Parameter(ParameterSetName = "Register")]
     [string]$ExePath,

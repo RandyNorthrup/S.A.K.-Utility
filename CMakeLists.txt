@@ -945,6 +945,15 @@ endif()
 
 add_executable(sak_utility ${ALL_SOURCES})
 
+# Browser-extension installer: shared with sak_win32_mcp, compiled into the app so
+# the assistant panel's Install/Uninstall button can set up Chrome in-process.
+if(PLATFORM_WINDOWS)
+    target_sources(sak_utility PRIVATE
+        src/win32mcp/browser_extension_installer.cpp
+        include/sak/win32mcp/browser_extension_installer.h
+    )
+endif()
+
 # Enable Qt MOC, UIC, and RCC
 set_target_properties(sak_utility PROPERTIES
     AUTOMOC ON
@@ -1120,6 +1129,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/browser_bridge_pipe.cpp
         src/win32mcp/browser_bridge_relay.cpp
         src/win32mcp/browser_control.cpp
+        src/win32mcp/browser_extension_installer.cpp
         src/win32mcp/native_messaging.cpp
         include/sak/win32mcp/win32_mcp_dispatch.h
         include/sak/win32mcp/win32_mcp_tools.h
@@ -1129,6 +1139,7 @@ if(PLATFORM_WINDOWS)
         include/sak/win32mcp/browser_bridge_pipe.h
         include/sak/win32mcp/browser_bridge_relay.h
         include/sak/win32mcp/browser_control.h
+        include/sak/win32mcp/browser_extension_installer.h
         include/sak/win32mcp/native_messaging.h
         include/sak/ai/ai_mcp_jsonrpc.h
     )
@@ -1302,6 +1313,15 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/win32-mcp-server/win32-mcp-
                         "before configuring/building so SAK ships with portable MCP automation.")
 endif()
 
+# The signed browser-control CRX is committed (browser/dist/) and force-installed by the
+# assistant's extension installer. Guard against a release silently shipping without it:
+# if it is missing the install fails closed on every customer PC. Restore it from git, or
+# re-sign with 'powershell -File browser/pack-extension.ps1'.
+if(PLATFORM_WINDOWS AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
+    message(FATAL_ERROR "browser/dist/sak_browser_control.crx not found. Restore it from git "
+                        "or re-sign with 'powershell -File browser/pack-extension.ps1'.")
+endif()
+
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/filesystem/manifest.json")
     message(FATAL_ERROR "Partition filesystem tool manifest not bundled. "
                         "tools/filesystem/manifest.json is required even when no non-native "
@@ -1354,6 +1374,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
             "$<TARGET_FILE_DIR:sak_utility>/icon.ico"
         COMMENT "Copying icon to output directory"
+    )
+endif()
+
+# Signed browser-control extension CRX: the assistant force-installs this into Chrome.
+# Copied next to the exe so BrowserExtensionInstaller finds it at <appDir>/<crx name>.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx"
+            "$<TARGET_FILE_DIR:sak_utility>/sak_browser_control.crx"
+        COMMENT "Copying browser-control extension CRX to output directory"
     )
 endif()
 
@@ -1430,6 +1461,14 @@ install(TARGETS sak_utility
     RUNTIME DESTINATION bin
     BUNDLE DESTINATION .
 )
+
+# Ship the signed browser-control CRX beside the installed exe so the assistant's
+# extension installer resolves it at <appDir>/sak_browser_control.crx on customer PCs.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx"
+        DESTINATION bin
+    )
+endif()
 
 # Qt deployment
 if(PLATFORM_WINDOWS)

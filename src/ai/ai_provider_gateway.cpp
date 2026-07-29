@@ -587,35 +587,21 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
 
 bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
     static const QSet<QString> read_only{
-        QStringLiteral("assert_text_visible"),
-        QStringLiteral("browser_read"),
-        QStringLiteral("browser_screenshot"),
-        QStringLiteral("browser_snapshot"),
-        QStringLiteral("browser_tabs"),
-        QStringLiteral("capture_monitor"),
-        QStringLiteral("capture_screen"),
-        QStringLiteral("capture_window"),
-        QStringLiteral("compare_screenshots"),
-        QStringLiteral("find_text_on_screen"),
-        QStringLiteral("get_pixel_color"),
-        QStringLiteral("get_window_info"),
-        QStringLiteral("get_window_snapshot"),
-        QStringLiteral("health_check"),
-        QStringLiteral("list_monitors"),
-        QStringLiteral("list_processes"),
-        QStringLiteral("list_windows"),
-        QStringLiteral("mouse_position"),
-        QStringLiteral("ocr_region"),
-        QStringLiteral("ocr_region_structured"),
-        QStringLiteral("ocr_screen"),
-        QStringLiteral("ocr_screen_structured"),
-        QStringLiteral("ocr_window"),
-        QStringLiteral("uia_find_control"),
-        QStringLiteral("uia_get_control_value"),
-        QStringLiteral("uia_get_focused"),
-        QStringLiteral("uia_inspect_window"),
-        QStringLiteral("wait_for_idle"),
-        QStringLiteral("wait_for_text"),
+        QStringLiteral("assert_text_visible"),   QStringLiteral("browser_extension_status"),
+        QStringLiteral("browser_read"),          QStringLiteral("browser_screenshot"),
+        QStringLiteral("browser_snapshot"),      QStringLiteral("browser_tabs"),
+        QStringLiteral("capture_monitor"),       QStringLiteral("capture_screen"),
+        QStringLiteral("capture_window"),        QStringLiteral("compare_screenshots"),
+        QStringLiteral("find_text_on_screen"),   QStringLiteral("get_pixel_color"),
+        QStringLiteral("get_window_info"),       QStringLiteral("get_window_snapshot"),
+        QStringLiteral("health_check"),          QStringLiteral("list_monitors"),
+        QStringLiteral("list_processes"),        QStringLiteral("list_windows"),
+        QStringLiteral("mouse_position"),        QStringLiteral("ocr_region"),
+        QStringLiteral("ocr_region_structured"), QStringLiteral("ocr_screen"),
+        QStringLiteral("ocr_screen_structured"), QStringLiteral("ocr_window"),
+        QStringLiteral("uia_find_control"),      QStringLiteral("uia_get_control_value"),
+        QStringLiteral("uia_get_focused"),       QStringLiteral("uia_inspect_window"),
+        QStringLiteral("wait_for_idle"),         QStringLiteral("wait_for_text"),
         QStringLiteral("wait_for_window"),
     };
     return read_only.contains(tool_name.trimmed());
@@ -632,6 +618,11 @@ bool AiProviderGateway::isWin32HighRiskTool(const QString& tool_name) {
 
 bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
     static const QSet<QString> input_tools{
+        // Installing/removing the browser-control extension writes user Chrome enterprise
+        // policy that force-installs software; gate it at the hard-confirm tier so it needs
+        // a human even in Unattended mode, like live input injection.
+        QStringLiteral("browser_extension_install"),
+        QStringLiteral("browser_extension_uninstall"),
         QStringLiteral("browser_click"),
         QStringLiteral("browser_click_at"),
         QStringLiteral("browser_dialog"),

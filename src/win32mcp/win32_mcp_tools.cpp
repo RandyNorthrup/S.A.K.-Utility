@@ -3,6 +3,8 @@
 
 #include "sak/win32mcp/win32_mcp_tools.h"
 
+#include "sak/win32mcp/browser_extension_installer.h"
+
 #include <QJsonDocument>
 #include <QLatin1String>
 #include <QVector>
@@ -295,6 +297,43 @@ ToolResult toolClipboardWrite(const QJsonObject& arguments) {
                                   {QStringLiteral("written"), static_cast<int>(text.size())}});
 }
 
+// Combine the installer's summary + detail into one error string.
+QString installerError(const ExtensionInstallResult& r) {
+    return r.detail.isEmpty() ? r.summary : (r.summary + QStringLiteral(": ") + r.detail);
+}
+
+ToolResult toolBrowserExtensionInstall(const QJsonObject&) {
+    BrowserExtensionInstaller installer;
+    const ExtensionInstallResult r = installer.install();
+    if (!r.ok) {
+        return errorResult(installerError(r));
+    }
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("summary"), r.summary},
+                                  {QStringLiteral("detail"), r.detail},
+                                  {QStringLiteral("state"), installer.stateString()}});
+}
+
+ToolResult toolBrowserExtensionUninstall(const QJsonObject&) {
+    BrowserExtensionInstaller installer;
+    const ExtensionInstallResult r = installer.uninstall();
+    if (!r.ok) {
+        return errorResult(installerError(r));
+    }
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("summary"), r.summary},
+                                  {QStringLiteral("detail"), r.detail},
+                                  {QStringLiteral("state"), installer.stateString()}});
+}
+
+ToolResult toolBrowserExtensionStatus(const QJsonObject&) {
+    BrowserExtensionInstaller installer;
+    return jsonResult(
+        QJsonObject{{QStringLiteral("state"), installer.stateString()},
+                    {QStringLiteral("crx_present"), installer.crxPresent()},
+                    {QStringLiteral("extension_id"), QString::fromLatin1(kBrowserExtensionId)}});
+}
+
 QJsonObject stringProperty(const QString& description) {
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
                        {QStringLiteral("description"), description}};
@@ -353,30 +392,51 @@ QJsonArray toolCatalog() {
         toolSchema(QJsonObject{{QStringLiteral("text"),
                                 stringProperty(QStringLiteral("Text to place on the clipboard."))}},
                    QJsonArray{QStringLiteral("text")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_extension_install"),
+        QStringLiteral("Set up the S.A.K. browser-control extension in Chrome so the assistant can "
+                       "drive the browser: force-installs the signed extension via user Chrome "
+                       "policy and registers the native messaging host. Restart Chrome to finish. "
+                       "Changes user (HKCU) Chrome policy, so it requires confirmation."),
+        toolSchema({}, {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_extension_uninstall"),
+        QStringLiteral("Remove the S.A.K. browser-control extension from Chrome: deletes our "
+                       "force-install policy entry (leaving any other policies intact) and the "
+                       "native messaging host. Chrome removes the extension on its next launch."),
+        toolSchema({}, {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_extension_status"),
+        QStringLiteral(
+            "Report whether the S.A.K. browser-control extension is set up: force-install "
+            "policy and native host presence, whether the extension package is available, "
+            "and the extension id."),
+        toolSchema({}, {})));
     return tools;
 }
 
 ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
-    if (name == QLatin1String("health_check")) {
-        return toolHealthCheck(arguments);
-    }
-    if (name == QLatin1String("list_windows")) {
-        return toolListWindows(arguments);
-    }
-    if (name == QLatin1String("get_window_info")) {
-        return toolGetWindowInfo(arguments);
-    }
-    if (name == QLatin1String("list_monitors")) {
-        return toolListMonitors(arguments);
-    }
-    if (name == QLatin1String("mouse_position")) {
-        return toolMousePosition(arguments);
-    }
-    if (name == QLatin1String("clipboard_read")) {
-        return toolClipboardRead(arguments);
-    }
-    if (name == QLatin1String("clipboard_write")) {
-        return toolClipboardWrite(arguments);
+    using Handler = ToolResult (*)(const QJsonObject&);
+    struct Entry {
+        QLatin1String name;
+        Handler fn;
+    };
+    static const Entry kHandlers[] = {
+        {QLatin1String("health_check"), toolHealthCheck},
+        {QLatin1String("list_windows"), toolListWindows},
+        {QLatin1String("get_window_info"), toolGetWindowInfo},
+        {QLatin1String("list_monitors"), toolListMonitors},
+        {QLatin1String("mouse_position"), toolMousePosition},
+        {QLatin1String("clipboard_read"), toolClipboardRead},
+        {QLatin1String("clipboard_write"), toolClipboardWrite},
+        {QLatin1String("browser_extension_install"), toolBrowserExtensionInstall},
+        {QLatin1String("browser_extension_uninstall"), toolBrowserExtensionUninstall},
+        {QLatin1String("browser_extension_status"), toolBrowserExtensionStatus},
+    };
+    for (const auto& entry : kHandlers) {
+        if (name == entry.name) {
+            return entry.fn(arguments);
+        }
     }
     return errorResult(QStringLiteral("Unknown tool: %1").arg(name));
 }
