@@ -80,6 +80,17 @@ acting. Targets come only from the latest snapshot's `[ref=eN]` handles (validat
 bridge), never from page content; `browser_type` requires a ref so page-controlled focus
 cannot redirect typed text.
 
+`browser_click_at` (unit 9) is the coordinate fallback for targets with no ref (canvas,
+image maps): it clicks at pixel coordinates the model read from the most recent
+`browser_screenshot`. Those coordinates are screenshot (device) pixels, so the extension
+divides them by the dpr captured WITH that screenshot before dispatching the CSS-pixel CDP
+click. The screenshot is bound to a render fingerprint (tab, dpr, scroll offset, document
+URL, and whether it was full-page); `browser_click_at` re-reads that fingerprint at click
+time and fails closed if anything moved -- a different tab, a dpr/zoom change, a scroll, a
+navigation, or a full-page (document-coordinate) screenshot -- asking for a fresh viewport
+screenshot rather than clicking stale coordinates. It is an input tool and takes the same
+hard confirmation gate as the other input actions.
+
 Confirmation policy: every input action requires an explicit human confirmation in the
 app in EVERY non-chat access mode, including Unattended (where read-only browser tools and
 navigation may auto-run). The prompt is the app's trusted UI -- untrusted page content can

@@ -57,6 +57,7 @@ private slots:
     void buildCommand_typeRequiresTextAndRef();
     void buildCommand_unknownToolFails();
     void buildCommand_selectTabCopiesIntArgument();
+    void buildCommand_clickAtRequiresXAndY();
 };
 
 void BrowserContractTests::renderSnapshot_assignsSequentialRefsToInteractableNodes() {
@@ -223,6 +224,7 @@ void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {
                                     QStringLiteral("browser_type"),
                                     QStringLiteral("browser_press_key"),
                                     QStringLiteral("browser_scroll"),
+                                    QStringLiteral("browser_click_at"),
                                     QStringLiteral("browser_tabs")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
@@ -317,6 +319,24 @@ void BrowserContractTests::buildCommand_selectTabCopiesIntArgument() {
     QVERIFY(ok.ok);
     QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("selectTab"));
     QCOMPARE(ok.command.value(QStringLiteral("index")).toInt(), 2);
+}
+
+void BrowserContractTests::buildCommand_clickAtRequiresXAndY() {
+    // Coordinate click takes no ref; both x and y are required ints copied into the command.
+    const ExtensionCommand missing = buildExtensionCommand(QStringLiteral("browser_click_at"),
+                                                           QJsonObject{{QStringLiteral("x"), 100}},
+                                                           {});
+    QVERIFY(!missing.ok);
+    QVERIFY(missing.error.contains(QStringLiteral("y")));
+
+    const ExtensionCommand ok =
+        buildExtensionCommand(QStringLiteral("browser_click_at"),
+                              QJsonObject{{QStringLiteral("x"), 120}, {QStringLiteral("y"), 340}},
+                              {});
+    QVERIFY(ok.ok);
+    QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("clickAt"));
+    QCOMPARE(ok.command.value(QStringLiteral("x")).toInt(), 120);
+    QCOMPARE(ok.command.value(QStringLiteral("y")).toInt(), 340);
 }
 
 QTEST_MAIN(BrowserContractTests)

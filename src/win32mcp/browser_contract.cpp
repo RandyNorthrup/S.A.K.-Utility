@@ -172,6 +172,11 @@ const QHash<QString, CmdSpec>& commandSpecs() {
           QStringLiteral("optional"),
           {{QStringLiteral("direction"), QStringLiteral("string"), false},
            {QStringLiteral("amount"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_click_at"),
+         {QStringLiteral("clickAt"),
+          QStringLiteral("none"),
+          {{QStringLiteral("x"), QStringLiteral("int"), true},
+           {QStringLiteral("y"), QStringLiteral("int"), true}}}},
         {QStringLiteral("browser_back"), {QStringLiteral("back"), QStringLiteral("none"), {}}},
         {QStringLiteral("browser_forward"),
          {QStringLiteral("forward"), QStringLiteral("none"), {}}},
@@ -339,6 +344,18 @@ void appendActionTools(QJsonArray& tools) {
                                           typedProperty(QStringLiteral("integer"),
                                                         QStringLiteral("Pixels to scroll."))}},
                              {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_click_at"),
+        QStringLiteral("Click at pixel coordinates read from the most recent browser_screenshot "
+                       "(x,y in that image's pixels). Use this only for targets with no [ref] "
+                       "(canvas, image maps); prefer browser_click by ref otherwise."),
+        toolSchema(QJsonObject{{QStringLiteral("x"),
+                                typedProperty(QStringLiteral("integer"),
+                                              QStringLiteral("X in screenshot pixels."))},
+                               {QStringLiteral("y"),
+                                typedProperty(QStringLiteral("integer"),
+                                              QStringLiteral("Y in screenshot pixels."))}},
+                   QJsonArray{QStringLiteral("x"), QStringLiteral("y")})));
 }
 
 void appendTabTools(QJsonArray& tools) {

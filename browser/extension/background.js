@@ -14,6 +14,7 @@
 //   - listTabs / selectTab / newTab / closeTab : tab management via chrome.tabs.
 //   - click / type / pressKey / scroll : input injected over CDP Input (unit 7).
 //   - screenshot : a PNG of the active tab via CDP Page.captureScreenshot (unit 8).
+//   - clickAt : coordinate click at screenshot pixels, dpr-converted to CSS px (unit 9).
 //
 // PROTOCOL: the native host is a thin relay in strict request/reply. For every
 // {type:"command", id, cmd, ...} frame this worker replies EXACTLY ONCE with
@@ -102,6 +103,12 @@ let attachedTabId = null;
 // only valid against THIS tab: if the active tab changed since the snapshot, applying the
 // ref elsewhere could click/type a node the user never saw, so ref actions refuse.
 let lastSnapshotTabId = null;
+// Fingerprint of the render the most recent screenshot captured: {tabId, fullPage, dpr,
+// scrollX, scrollY, href}. A coordinate click (browser_click_at) is meaningful only against
+// that exact image, so it converts device->CSS with THIS dpr (not a re-read) and refuses if
+// the tab, dpr, scroll, or document changed since -- a full-page shot is document-space, not
+// click-space. null when no valid screenshot is outstanding.
+let lastShot = null;
 let reconnectTimer = null;
 
 // -- Native messaging port ---------------------------------------------------
@@ -223,6 +230,8 @@ async function runCommand(cmd, args) {
       return await handleCloseTab(args);
     case "click":
       return await handleClick(await activeTabId(), args);
+    case "clickAt":
+      return await handleClickAt(await activeTabId(), args);
     case "type":
       return await handleType(await activeTabId(), args);
     case "pressKey":
@@ -287,6 +296,7 @@ async function ensureAttached(tabId) {
 
 async function detachAll(_reason) {
   lastSnapshotTabId = null;  // any ref_index is now unverifiable against a live tab
+  lastShot = null;           // and any screenshot coordinates are against a dead render
   if (attachedTabId === null) {
     return;
   }
@@ -304,6 +314,7 @@ chrome.debugger.onDetach.addListener((source) => {
   if (source && source.tabId === attachedTabId) {
     attachedTabId = null;
     lastSnapshotTabId = null;
+    lastShot = null;
   }
 });
 
@@ -507,15 +518,29 @@ async function handleRead(tabId, args) {
 // desktop. full_page uses captureBeyondViewport with a clip sized to the document, capped
 // at the Skia edge limit. The base64 PNG rides back in the reply payload; the bridge caps
 // its size and returns it as an MCP image content block.
-// devicePixelRatio of the live tab (>= 1), so the CSS clip can be bounded in the DEVICE
-// pixels Skia actually rasters. Defaults to 1 if the page cannot be evaluated.
-async function devicePixelRatio(tabId) {
+// The live tab's render fingerprint in one evaluate: devicePixelRatio (>= 1), scroll offset,
+// and document URL. dpr bounds the screenshot clip in the DEVICE pixels Skia rasters, and
+// the whole tuple binds a screenshot to the exact render a later coordinate click must match.
+// `ok` is false when the page could not be read: callers must fail closed on it rather than
+// trust the placeholder values, so that two failed reads (shot + click) can never compare
+// equal and wave a blind coordinate click through.
+async function viewportState(tabId) {
   const res = await sendCdp(tabId, "Runtime.evaluate", {
-    expression: "window.devicePixelRatio",
+    expression:
+      "({dpr: window.devicePixelRatio, sx: window.scrollX, sy: window.scrollY, href: location.href})",
     returnByValue: true,
   }).catch(() => null);
-  const v = res && res.result && typeof res.result.value === "number" ? res.result.value : 1;
-  return Number.isFinite(v) && v > 0 ? v : 1;
+  const v = res && res.result && res.result.value ? res.result.value : null;
+  if (!v || typeof v.href !== "string" || !Number.isFinite(v.dpr) || v.dpr <= 0) {
+    return { ok: false, dpr: 1, scrollX: 0, scrollY: 0, href: "" };
+  }
+  return {
+    ok: true,
+    dpr: v.dpr,
+    scrollX: Number.isFinite(v.sx) ? Math.round(v.sx) : 0,
+    scrollY: Number.isFinite(v.sy) ? Math.round(v.sy) : 0,
+    href: v.href,
+  };
 }
 
 async function handleScreenshot(tabId, args) {
@@ -523,11 +548,11 @@ async function handleScreenshot(tabId, args) {
   const fullPage = !!(args && args.full_page === true);
   const params = { format: "png", captureBeyondViewport: fullPage };
   const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
-  const dpr = await devicePixelRatio(tabId);
+  const state = await viewportState(tabId);
   // Bound the CSS clip so the DEVICE raster (css x dpr) stays within Skia's 16384 cap; a
   // plain CSS clamp would let a tall page overflow the surface and fail the capture on any
   // dpr > 1 display (Windows scaling, Retina).
-  const maxCssEdge = Math.max(1, Math.floor(MAX_SHOT_EDGE_PX / dpr));
+  const maxCssEdge = Math.max(1, Math.floor(MAX_SHOT_EDGE_PX / state.dpr));
   if (fullPage) {
     const content = metrics && (metrics.cssContentSize || metrics.contentSize);
     if (content) {
@@ -545,6 +570,14 @@ async function handleScreenshot(tabId, args) {
   if (!data) {
     throw new Error("Screenshot capture returned no image data.");
   }
+  // Bind this image to the exact render so a later browser_click_at can convert with the
+  // same dpr and refuse if the tab, dpr, scroll, or document moved. Only bind when the
+  // fingerprint was read successfully; otherwise leave no binding so a coordinate click
+  // fails closed ("no current screenshot") rather than trusting placeholder values.
+  lastShot = state.ok
+    ? { tabId, fullPage, dpr: state.dpr, scrollX: state.scrollX, scrollY: state.scrollY,
+        href: state.href }
+    : null;
   const info = await tabInfo(tabId);
   // Dimensions are read authoritatively from the PNG header on the bridge side, so they
   // reflect the real device pixels regardless of dpr/clip -- nothing is reported here.
@@ -611,17 +644,57 @@ async function dispatchMouse(tabId, type, x, y, extra) {
   await sendCdp(tabId, "Input.dispatchMouseEvent", Object.assign({ type, x, y }, extra || {}));
 }
 
+// A left click at a CSS-pixel viewport point: move the agent cursor there, then the
+// move/press/release triad CDP needs for a real click.
+async function leftClickAt(tabId, x, y) {
+  await moveAgentCursor(tabId, x, y);
+  await dispatchMouse(tabId, "mouseMoved", x, y, {});
+  await dispatchMouse(tabId, "mousePressed", x, y, { button: "left", buttons: 1, clickCount: 1 });
+  await dispatchMouse(tabId, "mouseReleased", x, y, { button: "left", buttons: 0, clickCount: 1 });
+}
+
 async function handleClick(tabId, args) {
   await ensureAttached(tabId);
   requireSnapshotTab(tabId);
   const point = await resolveActionPoint(tabId, args.backendNodeId);
-  await moveAgentCursor(tabId, point.x, point.y);
-  await dispatchMouse(tabId, "mouseMoved", point.x, point.y, {});
-  await dispatchMouse(tabId, "mousePressed", point.x, point.y,
-    { button: "left", buttons: 1, clickCount: 1 });
-  await dispatchMouse(tabId, "mouseReleased", point.x, point.y,
-    { button: "left", buttons: 0, clickCount: 1 });
+  await leftClickAt(tabId, point.x, point.y);
   return { ok: true, x: Math.round(point.x), y: Math.round(point.y) };
+}
+
+async function handleClickAt(tabId, args) {
+  await ensureAttached(tabId);
+  const shot = lastShot;
+  if (!shot || shot.tabId !== tabId) {
+    throw new Error(
+      "No current screenshot for the active tab; call browser_screenshot before " +
+        "browser_click_at so the coordinates match what you see.");
+  }
+  if (shot.fullPage) {
+    throw new Error(
+      "The last screenshot was full-page (document coordinates); take a viewport " +
+        "screenshot (full_page:false) before browser_click_at so x/y map to the visible page.");
+  }
+  const sx = Number(args.x);
+  const sy = Number(args.y);
+  if (!Number.isFinite(sx) || !Number.isFinite(sy) || sx < 0 || sy < 0) {
+    throw new Error("browser_click_at needs non-negative x and y in screenshot pixels.");
+  }
+  // Fail CLOSED if the render moved since the screenshot: a dpr change would mis-scale the
+  // conversion, a scroll would make viewport coordinates point elsewhere, and a navigation
+  // would put them on a different document. The coordinates are only valid against the exact
+  // image the model measured.
+  const now = await viewportState(tabId);
+  if (!now.ok || now.dpr !== shot.dpr || now.href !== shot.href ||
+      now.scrollX !== shot.scrollX || now.scrollY !== shot.scrollY) {
+    lastShot = null;
+    throw new Error(
+      "The page moved (scrolled, zoomed, or navigated) since the screenshot; take a fresh " +
+        "browser_screenshot before browser_click_at.");
+  }
+  // Screenshot pixels are DEVICE pixels; convert to the CSS pixels CDP Input wants using the
+  // dpr captured WITH the screenshot (not a re-read), so the two can never disagree.
+  await leftClickAt(tabId, sx / shot.dpr, sy / shot.dpr);
+  return { ok: true, x: Math.round(sx), y: Math.round(sy) };
 }
 
 async function handleType(tabId, args) {
