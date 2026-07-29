@@ -70,7 +70,7 @@ bool asBackendId(const QJsonValue& value, qint64* out) {
 // model may need to act on it (e.g. an icon-only button).
 bool roleIsStructuralNoise(const QString& role) {
     return role.isEmpty() || role == QLatin1String("generic") || role == QLatin1String("none") ||
-           role == QLatin1String("presentation") || role == QLatin1String("InlineTextBox");
+           role == QLatin1String("presentation") || role == QLatin1String("inlinetextbox");
 }
 
 // Drop invisible nodes, zero-area nodes, and unnamed structural filler. A node
@@ -378,7 +378,11 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
     QJsonObject ref_index;
     int next_ref = 0;
     int emitted = 0;
-    bool truncated = false;
+    // The extension caps its own node walk and marks the capture truncated; honor that
+    // marker so the model is told the outline is partial even though our local emitted
+    // count never reaches kMaxNodes for an already-capped capture. A page-derived bool
+    // consumed only to append a fixed literal note -- no injection surface.
+    bool truncated = capture.value(QStringLiteral("truncated")).toBool();
     const QJsonArray nodes = capture.value(QStringLiteral("nodes")).toArray();
     for (const QJsonValue& value : nodes) {
         const QJsonObject node = value.toObject();
@@ -408,6 +412,13 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
     }
     if (truncated) {
         outline += QStringLiteral("  ... (more elements omitted; the page is very large)\n");
+    }
+    // The single-pass capture does not reach cross-origin (out-of-process) iframes; when
+    // the extension reports their presence, say so rather than let the model treat the
+    // snapshot as the whole page.
+    if (capture.value(QStringLiteral("iframesOmitted")).toBool()) {
+        outline += QStringLiteral(
+            "  ... (cross-origin iframe content is not included in this snapshot)\n");
     }
 
     view.outline = outline;

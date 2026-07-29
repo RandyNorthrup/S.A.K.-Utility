@@ -44,6 +44,9 @@ private slots:
     void renderSnapshot_carriesMetaAndStateSuffix();
     void renderSnapshot_malformedCaptureIsEmptyNotCrash();
     void renderSnapshot_capsNodeCountAndFlagsTruncation();
+    void renderSnapshot_honorsExtensionTruncationFlag();
+    void renderSnapshot_flagsOmittedCrossOriginIframes();
+    void renderSnapshot_dropsInlineTextBoxNoise();
     void renderSnapshot_escapesRoleToPreventForgedLines();
     void renderSnapshot_ignoresNonIntegerBackendNodeId();
     void catalog_advertisesDomFirstToolsWithStrictSchemas();
@@ -142,6 +145,40 @@ void BrowserContractTests::renderSnapshot_capsNodeCountAndFlagsTruncation() {
     QVERIFY(view.element_count <= 4000);
     QVERIFY(view.ref_index.size() <= 4000);
     QVERIFY(view.outline.contains(QStringLiteral("more elements omitted")));
+}
+
+void BrowserContractTests::renderSnapshot_honorsExtensionTruncationFlag() {
+    // The extension caps its own walk and marks the capture truncated. Even with a tiny
+    // node list (below the C++ cap), that marker must surface the omitted-elements note
+    // so the model is not told a partial outline is the whole page.
+    const QJsonObject capture{
+        {QStringLiteral("truncated"), true},
+        {QStringLiteral("nodes"),
+         QJsonArray{node(1, QStringLiteral("button"), QStringLiteral("Go"), true)}}};
+    const SnapshotView view = renderSnapshot(capture);
+    QCOMPARE(view.element_count, 1);
+    QVERIFY(view.outline.contains(QStringLiteral("more elements omitted")));
+}
+
+void BrowserContractTests::renderSnapshot_flagsOmittedCrossOriginIframes() {
+    const QJsonObject capture{
+        {QStringLiteral("iframesOmitted"), true},
+        {QStringLiteral("nodes"),
+         QJsonArray{node(1, QStringLiteral("button"), QStringLiteral("Go"), true)}}};
+    const SnapshotView view = renderSnapshot(capture);
+    QVERIFY(view.outline.contains(QStringLiteral("cross-origin iframe content is not included")));
+}
+
+void BrowserContractTests::renderSnapshot_dropsInlineTextBoxNoise() {
+    // Roles arrive lower-cased from the extension; an unnamed, non-interactable
+    // inline-text-box is structural noise and must be dropped, not rendered.
+    const QJsonObject noise = node(1, QStringLiteral("inlinetextbox"), QString(), false);
+    const QJsonObject keep = node(2, QStringLiteral("button"), QStringLiteral("Go"), true);
+    const SnapshotView view =
+        renderSnapshot(QJsonObject{{QStringLiteral("nodes"), QJsonArray{noise, keep}}});
+    QCOMPARE(view.element_count, 1);
+    QVERIFY(!view.outline.contains(QStringLiteral("inlinetextbox")));
+    QVERIFY(view.outline.contains(QStringLiteral("- button \"Go\" [ref=e1]")));
 }
 
 void BrowserContractTests::renderSnapshot_escapesRoleToPreventForgedLines() {
