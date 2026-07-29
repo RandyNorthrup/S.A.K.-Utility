@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "S.A.K. Utility Browser Control",
+  "version": "0.1.0",
+  "description": "Lets the S.A.K. Utility assistant view and control the active tab through the DevTools protocol, with a visible agent cursor. Your own mouse and keyboard stay yours.",
+  "minimum_chrome_version": "116",
+  "permissions": ["nativeMessaging", "debugger", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "S.A.K. Browser Control"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "com.sak.browsercontrol",
+  "description": "S.A.K. Utility browser-control native messaging host",
+  "path": "REPLACE_WITH_ABSOLUTE_PATH_TO_sak_win32_mcp.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_UNPACKED_EXTENSION_ID/"
+  ]
+}

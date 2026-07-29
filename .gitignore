@@ -373,6 +373,9 @@ python_archive/**/*.egg-info/
 !resources/ai/providers/*.json
 !resources/icons/files/manifest.json
 !resources/ai/app_manifests/*.json
+# Browser-control extension + native-host manifests are hand-written source.
+!browser/extension/*.json
+!browser/native-host/*.json
 !docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
 
 # Partition Manager non-native filesystem tool bundle. This directory is
