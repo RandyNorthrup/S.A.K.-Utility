@@ -267,12 +267,22 @@ async function dispatchCommand(cmd, args) {
       return await handleDialog(await activeTabId(), args);
     case "type":
       return await handleType(await activeTabId(), args);
+    case "select":
+      return await handleSelect(await activeTabId(), args);
+    case "setValue":
+      return await handleSetValue(await activeTabId(), args);
+    case "media":
+      return await handleMedia(await activeTabId(), args);
     case "pressKey":
       return await handlePressKey(await activeTabId(), args);
     case "scroll":
       return await handleScroll(await activeTabId(), args);
     case "screenshot":
       return await handleScreenshot(await activeTabId(), args);
+    case "groupTabs":
+      return await handleGroupTabs(args);
+    case "ungroupTabs":
+      return await handleUngroupTabs(args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -497,6 +507,28 @@ function axNodeToCapture(node, depth, boundsByBackend) {
   if (props.checked !== undefined) {
     rec.checked = props.checked === true || props.checked === "true" || props.checked === "mixed";
   }
+  // ARIA state + current value, so the model can read expanded/selected/pressed/validity and
+  // the live value of inputs, sliders, and spinbuttons without a separate round-trip.
+  const truthy = (v) => v === true || v === "true" || v === "mixed";
+  if (props.expanded !== undefined && props.expanded !== "undefined") {
+    rec.expanded = truthy(props.expanded);
+  }
+  if (truthy(props.selected)) { rec.selected = true; }
+  if (truthy(props.pressed)) { rec.pressed = true; }
+  if (props.readonly === true) { rec.readonly = true; }
+  if (props.required === true) { rec.required = true; }
+  if (props.invalid !== undefined && props.invalid !== false && props.invalid !== "false") {
+    rec.invalid = true;
+  }
+  if (props.busy === true) { rec.busy = true; }
+  const currentValue = node.value && node.value.value;
+  if (currentValue !== undefined && currentValue !== null && currentValue !== "") {
+    rec.value = String(currentValue).slice(0, 80);
+  }
+  if (typeof props.valuemin === "number" && typeof props.valuemax === "number") {
+    rec.valuemin = props.valuemin;
+    rec.valuemax = props.valuemax;
+  }
   return rec;
 }
 
@@ -603,13 +635,43 @@ function collectOmittedFrames(snapshot, frameTree) {
   return omitted;
 }
 
+// <audio>/<video> elements are frequently absent or unnamed in the AX tree (no native
+// controls), so the model gets no ref to drive browser_media. Surface them directly from
+// the DOM (by tag) as ref'd capture nodes, deduped against what the AX pass already emitted.
+async function collectMediaNodes(tabId, existing) {
+  const have = new Set(
+    existing.filter((n) => typeof n.backendNodeId === "number").map((n) => n.backendNodeId));
+  const out = [];
+  try {
+    const doc = await sendCdp(tabId, "DOM.getDocument", { depth: 0 });
+    const root = doc && doc.root && doc.root.nodeId;
+    if (!root) { return out; }
+    const found = await sendCdp(tabId, "DOM.querySelectorAll", { nodeId: root, selector: "audio,video" });
+    for (const nodeId of (found && found.nodeIds) || []) {
+      const d = await sendCdp(tabId, "DOM.describeNode", { nodeId });
+      const node = d && d.node;
+      if (!node || typeof node.backendNodeId !== "number" || have.has(node.backendNodeId)) { continue; }
+      const attrs = {};
+      const a = node.attributes || [];
+      for (let i = 0; i + 1 < a.length; i += 2) { attrs[a[i]] = a[i + 1]; }
+      const role = (node.nodeName || "").toLowerCase() === "video" ? "video" : "audio";
+      const name = attrs["aria-label"] || attrs["title"] || role;
+      out.push({ role, name, depth: 0, interactable: true, visible: true, backendNodeId: node.backendNodeId });
+      have.add(node.backendNodeId);
+    }
+  } catch (_e) { /* media surfacing is best-effort */ }
+  return out;
+}
+
 async function captureSnapshot(tabId) {
   await ensureAttached(tabId);
   lastSnapshotTabId = tabId;  // refs from this snapshot are valid only against this tab
   const snapshot = await sendCdp(tabId, "DOMSnapshot.captureSnapshot", { computedStyles: [] });
   const boundsByBackend = buildBoundsMap(snapshot);
   const axTree = await sendCdp(tabId, "Accessibility.getFullAXTree", {});
-  const { nodes, truncated } = buildNodes(axTree, boundsByBackend);
+  const built = buildNodes(axTree, boundsByBackend);
+  const nodes = built.nodes.concat(await collectMediaNodes(tabId, built.nodes));
+  const truncated = built.truncated;
   const info = await tabInfo(tabId);
   // getFullAXTree + DOMSnapshot cover the main frame and its SAME-process subframes.
   // Cross-origin (out-of-process) iframes live in separate targets this single pass does
@@ -765,17 +827,23 @@ async function resolveActionPoint(tabId, backendNodeId) {
 // Move the agent's own on-page cursor to (x,y). Numbers are coerced to finite integers,
 // so nothing page- or model-controlled is interpolated as code.
 function agentCursorScript(x, y) {
-  const px = Number.isFinite(x) ? Math.round(x) : 0;
-  const py = Number.isFinite(y) ? Math.round(y) : 0;
+  // The arrow's tip is at (2,1) in the 24-unit viewBox; offset the translate so the tip
+  // lands exactly on the action point. Numbers are coerced to finite integers -- nothing
+  // page- or model-controlled is interpolated as code, and the SVG markup is constant.
+  const px = (Number.isFinite(x) ? Math.round(x) : 0) - 2;
+  const py = (Number.isFinite(y) ? Math.round(y) : 0) - 1;
   return (
     "(function(){var c=document.getElementById('" + AGENT_CURSOR_ID + "');" +
     "if(!c){c=document.createElement('div');c.id='" + AGENT_CURSOR_ID + "';" +
-    "c.style.cssText='position:fixed;z-index:2147483647;width:18px;height:18px;" +
-    "margin:-9px 0 0 -9px;border-radius:50%;border:2px solid #1e88e5;" +
-    "background:rgba(30,136,229,.25);pointer-events:none;transition:left .12s,top .12s;" +
-    "box-shadow:0 0 6px rgba(30,136,229,.9)';" +
+    "c.style.cssText='position:fixed;left:0;top:0;z-index:2147483647;width:26px;height:26px;" +
+    "pointer-events:none;will-change:transform;transition:transform .12s cubic-bezier(.22,1,.36,1);" +
+    "filter:drop-shadow(0 0 2px #ff2d95) drop-shadow(0 0 6px rgba(255,45,149,.95)) " +
+    "drop-shadow(0 0 12px rgba(255,45,149,.6))';" +
+    "c.innerHTML=\"<svg width='26' height='26' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>" +
+    "<path d='M2 1 L2 19 L7 14 L10.5 21 L13.6 19.6 L10.1 13 L17 13 Z' fill='#ffffff' " +
+    "stroke='#12001a' stroke-width='1.3' stroke-linejoin='round'/></svg>\";" +
     "(document.body||document.documentElement).appendChild(c);}" +
-    "c.style.left='" + px + "px';c.style.top='" + py + "px';})();"
+    "c.style.transform='translate(" + px + "px," + py + "px)';})();"
   );
 }
 
@@ -864,6 +932,162 @@ async function handleType(tabId, args) {
     await dispatchKey(tabId, KEY_DEFS.enter, 0);
   }
   return { ok: true, typed: text.length, submitted: args.submit === true };
+}
+
+// Select an <option> in a <select> by value, visible label, or index. The matching runs
+// inside the page via Runtime.callFunctionOn on the ref-resolved node -- the function body
+// is a CONSTANT string and value/label/index are passed as CDP argument VALUES (never
+// interpolated into code), so there is no page-content injection surface.
+async function handleSelect(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  if (typeof args.backendNodeId !== "number") {
+    throw new Error("This action needs a valid <select> element ref from the latest snapshot.");
+  }
+  const hasValue = typeof args.value === "string" && args.value.length > 0;
+  const hasLabel = typeof args.label === "string" && args.label.length > 0;
+  const hasIndex = Number.isInteger(args.index);
+  if (!hasValue && !hasLabel && !hasIndex) {
+    throw new Error("browser_select needs one of value, label, or index.");
+  }
+  const point = await resolveActionPoint(tabId, args.backendNodeId);
+  await moveAgentCursor(tabId, point.x, point.y);
+  const resolved = await sendCdp(tabId, "DOM.resolveNode", { backendNodeId: args.backendNodeId });
+  const objectId = resolved && resolved.object && resolved.object.objectId;
+  if (!objectId) {
+    throw new Error("Could not resolve the select element; take a fresh snapshot.");
+  }
+  const selectFn = function (mode, value, label, index) {
+    var el = this;
+    if (!el || el.tagName !== "SELECT") {
+      return { ok: false, error: "the ref is not a <select> element" };
+    }
+    var chosen = -1;
+    for (var i = 0; i < el.options.length; i++) {
+      var opt = el.options[i];
+      if (mode === "value" && opt.value === value) { chosen = i; break; }
+      if (mode === "label" && (opt.label === label || opt.text === label)) { chosen = i; break; }
+      if (mode === "index" && i === index) { chosen = i; break; }
+    }
+    if (chosen < 0) { return { ok: false, error: "no option matched" }; }
+    el.selectedIndex = chosen;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, selectedIndex: chosen, value: el.value, label: el.options[chosen].text };
+  };
+  const mode = hasValue ? "value" : hasLabel ? "label" : "index";
+  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: selectFn.toString(),
+    arguments: [
+      { value: mode },
+      { value: hasValue ? args.value : "" },
+      { value: hasLabel ? args.label : "" },
+      { value: hasIndex ? args.index : -1 },
+    ],
+    returnByValue: true,
+  });
+  const result = call && call.result && call.result.value;
+  if (!result || !result.ok) {
+    throw new Error((result && result.error) || "browser_select failed");
+  }
+  return { ok: true, selectedIndex: result.selectedIndex, value: result.value, label: result.label };
+}
+
+// Resolve a snapshot ref to a JS object handle for a constant callFunctionOn. Shared by the
+// value/media setters, which act via a fixed function body (no page content is ever eval'd).
+async function resolveNodeObjectId(tabId, backendNodeId) {
+  if (typeof backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  const resolved = await sendCdp(tabId, "DOM.resolveNode", { backendNodeId });
+  const objectId = resolved && resolved.object && resolved.object.objectId;
+  if (!objectId) {
+    throw new Error("Could not resolve the element; take a fresh snapshot.");
+  }
+  return objectId;
+}
+
+async function callOnNode(tabId, objectId, fn, args) {
+  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: fn.toString(),
+    arguments: (args || []).map((v) => ({ value: v })),
+    returnByValue: true,
+  });
+  return call && call.result && call.result.value;
+}
+
+// Set a control's value or checked state and fire input/change. Works for range sliders,
+// date/time/color/number inputs, checkboxes/radios, contenteditable, and hidden or custom
+// controls (no visible box needed -- it acts on the ref'd node via a CONSTANT function; the
+// value/checked come in as CDP argument values, never interpolated as code).
+async function handleSetValue(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const hasChecked = typeof args.checked === "boolean";
+  const hasValue = typeof args.value === "string";
+  if (!hasChecked && !hasValue) {
+    throw new Error("browser_set_value needs a value or checked.");
+  }
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  const point = await resolveActionPoint(tabId, args.backendNodeId).catch(() => null);
+  if (point) { await moveAgentCursor(tabId, point.x, point.y); }
+  const setFn = function (mode, value, checked) {
+    var el = this;
+    if (!el) { return { ok: false, error: "no element" }; }
+    var type = (el.type || "").toLowerCase();
+    if (mode === "checked" && (type === "checkbox" || type === "radio")) {
+      el.checked = checked;
+    } else if ("value" in el) {
+      el.value = value;
+    } else if (el.isContentEditable) {
+      el.textContent = value;
+    } else {
+      return { ok: false, error: "element has no settable value" };
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, value: "value" in el ? el.value : el.textContent || "", checked: !!el.checked };
+  };
+  const mode = hasChecked ? "checked" : "value";
+  const r = await callOnNode(tabId, objectId, setFn, [mode, hasValue ? args.value : "", hasChecked ? args.checked : false]);
+  if (!r || !r.ok) { throw new Error((r && r.error) || "browser_set_value failed"); }
+  return { ok: true, value: r.value, checked: r.checked };
+}
+
+// Control an <audio>/<video> element: play/pause/mute/unmute/seek/volume/rate. Returns the
+// resulting media state. Constant function body; the numeric argument arrives as a value.
+async function handleMedia(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const action = String(args.action || "").toLowerCase();
+  const num = args.value !== undefined && args.value !== null && String(args.value) !== ""
+    ? Number(args.value) : NaN;
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  const mediaFn = function (action, num, hasNum) {
+    var el = this;
+    if (!el || (el.tagName !== "VIDEO" && el.tagName !== "AUDIO")) {
+      return { ok: false, error: "the ref is not an <audio> or <video> element" };
+    }
+    try {
+      if (action === "play") { var p = el.play(); if (p && p.catch) { p.catch(function () {}); } }
+      else if (action === "pause") { el.pause(); }
+      else if (action === "mute") { el.muted = true; }
+      else if (action === "unmute") { el.muted = false; }
+      else if (action === "seek") { if (hasNum) { el.currentTime = num; } }
+      else if (action === "volume") { if (hasNum) { el.volume = Math.max(0, Math.min(1, num)); } }
+      else if (action === "rate") { if (hasNum) { el.playbackRate = num; } }
+      else { return { ok: false, error: "unknown media action: " + action }; }
+    } catch (e) { return { ok: false, error: String(e && e.message ? e.message : e) }; }
+    return {
+      ok: true, paused: el.paused, muted: el.muted, currentTime: el.currentTime,
+      duration: isFinite(el.duration) ? el.duration : null, volume: el.volume, rate: el.playbackRate,
+    };
+  };
+  const r = await callOnNode(tabId, objectId, mediaFn, [action, isNaN(num) ? 0 : num, !isNaN(num)]);
+  if (!r || !r.ok) { throw new Error((r && r.error) || "browser_media failed"); }
+  return r;
 }
 
 function keyDefinition(token) {
@@ -1040,11 +1264,60 @@ async function handleReload() {
 }
 
 async function handleListTabs() {
-  const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
-  const list = tabs
-    .sort((a, b) => a.index - b.index)
-    .map((t) => ({ index: t.index, title: t.title || "", url: t.url || "", active: !!t.active }));
+  const tabs = (await chrome.tabs.query({ lastFocusedWindow: true })).sort((a, b) => a.index - b.index);
+  const groupTitles = new Map();
+  const list = [];
+  for (const t of tabs) {
+    const entry = { index: t.index, title: t.title || "", url: t.url || "", active: !!t.active };
+    if (typeof t.groupId === "number" && t.groupId >= 0) {
+      entry.group_id = t.groupId;
+      if (!groupTitles.has(t.groupId)) {
+        try { const g = await chrome.tabGroups.get(t.groupId); groupTitles.set(t.groupId, g.title || ""); } catch (_e) { groupTitles.set(t.groupId, ""); }
+      }
+      entry.group = groupTitles.get(t.groupId);
+    }
+    list.push(entry);
+  }
   return { tabs: list };
+}
+
+const GROUP_COLORS = new Set(["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]);
+
+// Resolve a comma-separated zero-based tab-index spec to tab ids; default to the active tab.
+async function tabIdsFromIndices(spec) {
+  const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
+  if (spec === undefined || spec === null || String(spec).trim() === "") {
+    const active = tabs.find((t) => t.active);
+    if (!active) { throw new Error("No active tab to group."); }
+    return [active.id];
+  }
+  const indices = String(spec).split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n));
+  if (!indices.length) { throw new Error("tab_indices must be comma-separated integers, e.g. \"0,1\"."); }
+  const ids = [];
+  for (const idx of indices) {
+    const t = tabs.find((x) => x.index === idx);
+    if (!t) { throw new Error("No tab at index " + idx + "."); }
+    ids.push(t.id);
+  }
+  return ids;
+}
+
+async function handleGroupTabs(args) {
+  const tabIds = await tabIdsFromIndices(args && args.tab_indices);
+  const groupId = await chrome.tabs.group({ tabIds });
+  const update = {};
+  if (args && typeof args.title === "string" && args.title.length > 0) { update.title = args.title; }
+  if (args && typeof args.color === "string" && GROUP_COLORS.has(args.color)) { update.color = args.color; }
+  if (Object.keys(update).length > 0) { await chrome.tabGroups.update(groupId, update); }
+  let group = { title: update.title || "", color: update.color || "" };
+  try { group = await chrome.tabGroups.get(groupId); } catch (_e) {}
+  return { ok: true, group_id: groupId, title: group.title || "", color: group.color || "", tab_count: tabIds.length };
+}
+
+async function handleUngroupTabs(args) {
+  const tabIds = await tabIdsFromIndices(args && args.tab_indices);
+  await chrome.tabs.ungroup(tabIds);
+  return { ok: true, ungrouped: tabIds.length };
 }
 
 async function tabByIndex(index) {

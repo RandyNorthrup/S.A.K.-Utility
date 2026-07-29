@@ -94,18 +94,48 @@ bool nodeIsRenderable(const QJsonObject& node, bool interactable, const QString&
     return true;
 }
 
+// Append the current value + range for inputs/sliders. The value is page-derived, so it is
+// collapsed to one line and stripped of the paren/comma delimiters that could otherwise forge
+// extra state flags in the outline.
+void appendValueFlags(const QJsonObject& node, QStringList& flags) {
+    if (node.contains(QStringLiteral("value"))) {
+        QString value = oneLine(node.value(QStringLiteral("value")).toString(), 60);
+        value.remove(QLatin1Char('(')).remove(QLatin1Char(')')).remove(QLatin1Char(','));
+        if (!value.isEmpty()) {
+            flags << QStringLiteral("value=") + value;
+        }
+    }
+    if (node.contains(QStringLiteral("valuemin")) && node.contains(QStringLiteral("valuemax"))) {
+        flags << QStringLiteral("range %1..%2")
+                     .arg(node.value(QStringLiteral("valuemin")).toDouble())
+                     .arg(node.value(QStringLiteral("valuemax")).toDouble());
+    }
+}
+
 QString stateSuffix(const QJsonObject& node) {
     QStringList flags;
-    if (node.value(QStringLiteral("editable")).toBool()) {
-        flags << QStringLiteral("editable");
+    // Tri-state flags rendered as one of two labels when present.
+    struct TriFlag {
+        const char* key;
+        const char* on;
+        const char* off;
+    };
+    static const TriFlag kTri[] = {{"checked", "checked", "unchecked"},
+                                   {"expanded", "expanded", "collapsed"}};
+    for (const auto& t : kTri) {
+        if (node.contains(QLatin1String(t.key))) {
+            flags << QLatin1String(node.value(QLatin1String(t.key)).toBool() ? t.on : t.off);
+        }
     }
-    if (node.value(QStringLiteral("disabled")).toBool()) {
-        flags << QStringLiteral("disabled");
+    // Simple boolean flags whose label is the key.
+    static const char* const kBools[] = {
+        "editable", "disabled", "selected", "pressed", "readonly", "required", "invalid", "busy"};
+    for (const char* key : kBools) {
+        if (node.value(QLatin1String(key)).toBool()) {
+            flags << QLatin1String(key);
+        }
     }
-    if (node.contains(QStringLiteral("checked"))) {
-        flags << (node.value(QStringLiteral("checked")).toBool() ? QStringLiteral("checked")
-                                                                 : QStringLiteral("unchecked"));
-    }
+    appendValueFlags(node, flags);
     return flags.isEmpty()
                ? QString()
                : QStringLiteral("(") + flags.join(QLatin1Char(',')) + QStringLiteral(")");
@@ -148,8 +178,9 @@ struct CmdSpec {
     QVector<ArgSpec> args;
 };
 
-const QHash<QString, CmdSpec>& commandSpecs() {
-    static const QHash<QString, CmdSpec> specs = {
+// Navigation, read, and element-interaction command specs.
+QHash<QString, CmdSpec> interactionCommandSpecs() {
+    return {
         {QStringLiteral("browser_navigate"),
          {QStringLiteral("navigate"),
           QStringLiteral("none"),
@@ -167,6 +198,22 @@ const QHash<QString, CmdSpec>& commandSpecs() {
          {QStringLiteral("pressKey"),
           QStringLiteral("none"),
           {{QStringLiteral("keys"), QStringLiteral("string"), true}}}},
+        {QStringLiteral("browser_select"),
+         {QStringLiteral("select"),
+          QStringLiteral("required"),
+          {{QStringLiteral("value"), QStringLiteral("string"), false},
+           {QStringLiteral("label"), QStringLiteral("string"), false},
+           {QStringLiteral("index"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_set_value"),
+         {QStringLiteral("setValue"),
+          QStringLiteral("required"),
+          {{QStringLiteral("value"), QStringLiteral("string"), false},
+           {QStringLiteral("checked"), QStringLiteral("bool"), false}}}},
+        {QStringLiteral("browser_media"),
+         {QStringLiteral("media"),
+          QStringLiteral("required"),
+          {{QStringLiteral("action"), QStringLiteral("string"), true},
+           {QStringLiteral("value"), QStringLiteral("string"), false}}}},
         {QStringLiteral("browser_scroll"),
          {QStringLiteral("scroll"),
           QStringLiteral("optional"),
@@ -182,6 +229,12 @@ const QHash<QString, CmdSpec>& commandSpecs() {
           QStringLiteral("none"),
           {{QStringLiteral("action"), QStringLiteral("string"), false},
            {QStringLiteral("text"), QStringLiteral("string"), false}}}},
+    };
+}
+
+// History, read/screenshot, and tab/tab-group command specs.
+QHash<QString, CmdSpec> pageAndTabCommandSpecs() {
+    return {
         {QStringLiteral("browser_back"), {QStringLiteral("back"), QStringLiteral("none"), {}}},
         {QStringLiteral("browser_forward"),
          {QStringLiteral("forward"), QStringLiteral("none"), {}}},
@@ -207,7 +260,25 @@ const QHash<QString, CmdSpec>& commandSpecs() {
          {QStringLiteral("closeTab"),
           QStringLiteral("none"),
           {{QStringLiteral("index"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_group_tabs"),
+         {QStringLiteral("groupTabs"),
+          QStringLiteral("none"),
+          {{QStringLiteral("tab_indices"), QStringLiteral("string"), false},
+           {QStringLiteral("title"), QStringLiteral("string"), false},
+           {QStringLiteral("color"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_ungroup_tabs"),
+         {QStringLiteral("ungroupTabs"),
+          QStringLiteral("none"),
+          {{QStringLiteral("tab_indices"), QStringLiteral("string"), false}}}},
     };
+}
+
+const QHash<QString, CmdSpec>& commandSpecs() {
+    static const QHash<QString, CmdSpec> specs = [] {
+        QHash<QString, CmdSpec> merged = interactionCommandSpecs();
+        merged.insert(pageAndTabCommandSpecs());
+        return merged;
+    }();
     return specs;
 }
 
@@ -376,6 +447,60 @@ void appendActionTools(QJsonArray& tools) {
                    {})));
 }
 
+void appendFormControlTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_select"),
+        QStringLiteral(
+            "Select an option in a <select> dropdown with [ref] from the latest snapshot, "
+            "by option value, visible label, or zero-based index (give exactly one). "
+            "Fires the page's input and change events."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("ref"),
+                 stringProperty(QStringLiteral("The <select> element ref, e.g. \"e5\"."))},
+                {QStringLiteral("value"),
+                 stringProperty(QStringLiteral("Option value attribute to select (optional)."))},
+                {QStringLiteral("label"),
+                 stringProperty(QStringLiteral("Visible option text to select (optional)."))},
+                {QStringLiteral("index"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral("Zero-based option index (optional)."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_set_value"),
+        QStringLiteral(
+            "Set the value of a form control with [ref] from the latest snapshot and fire "
+            "its input/change events. Works for range sliders, date/time/color/number "
+            "inputs, and hidden or custom controls; pass checked (true/false) for a "
+            "checkbox or radio. Use browser_type for normal text fields."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Target control ref, e.g. \"e5\"."))},
+                        {QStringLiteral("value"),
+                         stringProperty(QStringLiteral("Value to set (e.g. \"7\", \"2026-07-29\", "
+                                                       "\"#ff2d95\")."))},
+                        {QStringLiteral("checked"),
+                         typedProperty(QStringLiteral("boolean"),
+                                       QStringLiteral("For a checkbox/radio: checked state."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_media"),
+        QStringLiteral("Control an <audio> or <video> element with [ref] from the latest snapshot. "
+                       "action is play, pause, mute, unmute, seek, volume, or rate; value is the "
+                       "seconds (seek), 0..1 (volume), or playback rate. Returns the media state."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("ref"),
+                 stringProperty(QStringLiteral("The media element ref, e.g. \"e5\"."))},
+                {QStringLiteral("action"),
+                 stringProperty(QStringLiteral("play | pause | mute | unmute | seek | volume | "
+                                               "rate."))},
+                {QStringLiteral("value"),
+                 stringProperty(
+                     QStringLiteral("Numeric argument for seek/volume/rate (optional)."))}},
+            QJsonArray{QStringLiteral("ref"), QStringLiteral("action")})));
+}
+
 void appendTabTools(QJsonArray& tools) {
     tools.append(toolEntry(QStringLiteral("browser_tabs"),
                            QStringLiteral("List the open tabs with index, title, and URL."),
@@ -399,6 +524,29 @@ void appendTabTools(QJsonArray& tools) {
         toolSchema(QJsonObject{{QStringLiteral("index"),
                                 typedProperty(QStringLiteral("integer"),
                                               QStringLiteral("Zero-based tab index (optional)."))}},
+                   {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_group_tabs"),
+        QStringLiteral("Group tabs into a Chrome tab group (creating one), optionally naming and "
+                       "coloring it. tab_indices is a comma-separated list of zero-based tab "
+                       "indices; the active tab is grouped if omitted."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("tab_indices"),
+                 stringProperty(QStringLiteral("Comma-separated zero-based tab indices, e.g. "
+                                               "\"0,1,2\" (optional; default the active tab)."))},
+                {QStringLiteral("title"), stringProperty(QStringLiteral("Group name (optional)."))},
+                {QStringLiteral("color"),
+                 stringProperty(QStringLiteral("Group color: grey, blue, red, yellow, green, pink, "
+                                               "purple, cyan, or orange (optional)."))}},
+            {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_ungroup_tabs"),
+        QStringLiteral("Remove tabs from their Chrome tab group. tab_indices is a comma-separated "
+                       "list of zero-based tab indices; the active tab is ungrouped if omitted."),
+        toolSchema(QJsonObject{{QStringLiteral("tab_indices"),
+                                stringProperty(QStringLiteral(
+                                    "Comma-separated zero-based tab indices (optional)."))}},
                    {})));
 }
 
@@ -500,6 +648,7 @@ QJsonArray browserToolCatalog() {
     QJsonArray tools;
     appendNavTools(tools);
     appendActionTools(tools);
+    appendFormControlTools(tools);
     appendTabTools(tools);
     return tools;
 }

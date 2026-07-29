@@ -79,6 +79,9 @@
         "browser_click",
         "browser_click_at",
         "browser_type",
+        "browser_select",
+        "browser_set_value",
+        "browser_media",
         "browser_press_key",
         "browser_scroll",
         "browser_dialog",
@@ -86,6 +89,8 @@
         "browser_select_tab",
         "browser_new_tab",
         "browser_close_tab",
+        "browser_group_tabs",
+        "browser_ungroup_tabs",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"

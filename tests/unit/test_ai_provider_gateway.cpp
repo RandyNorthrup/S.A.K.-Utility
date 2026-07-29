@@ -130,6 +130,13 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_type")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_press_key")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_scroll")));
+    // Dropdown selection + tab grouping mutate the page/browser and take the input tier.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_select")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_set_value")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_media")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_group_tabs")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_ungroup_tabs")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_select")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_snapshot")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_click")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_click_at")));

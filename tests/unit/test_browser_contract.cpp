@@ -57,6 +57,10 @@ private slots:
     void buildCommand_clickMissingRefFails();
     void buildCommand_typeRequiresTextAndRef();
     void buildCommand_unknownToolFails();
+    void buildCommand_selectResolvesRefAndCopiesOption();
+    void buildCommand_setValueAndMediaBuild();
+    void buildCommand_groupTabsCopiesArgs();
+    void renderSnapshot_emitsAriaStateAndValue();
     void buildCommand_selectTabCopiesIntArgument();
     void buildCommand_clickAtRequiresXAndY();
     void buildCommand_dialogCopiesOptionalActionAndText();
@@ -254,6 +258,11 @@ void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {
                                     QStringLiteral("browser_scroll"),
                                     QStringLiteral("browser_click_at"),
                                     QStringLiteral("browser_dialog"),
+                                    QStringLiteral("browser_select"),
+                                    QStringLiteral("browser_set_value"),
+                                    QStringLiteral("browser_media"),
+                                    QStringLiteral("browser_group_tabs"),
+                                    QStringLiteral("browser_ungroup_tabs"),
                                     QStringLiteral("browser_tabs")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
@@ -335,6 +344,108 @@ void BrowserContractTests::buildCommand_unknownToolFails() {
     const ExtensionCommand cmd = buildExtensionCommand(QStringLiteral("browser_teleport"), {}, {});
     QVERIFY(!cmd.ok);
     QVERIFY(cmd.error.contains(QStringLiteral("Unknown browser tool")));
+}
+
+void BrowserContractTests::buildCommand_selectResolvesRefAndCopiesOption() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e2"), QJsonObject{{QStringLiteral("backendNodeId"), 88}}}};
+    // ref is required.
+    const ExtensionCommand missing =
+        buildExtensionCommand(QStringLiteral("browser_select"),
+                              QJsonObject{{QStringLiteral("value"), QStringLiteral("uk")}},
+                              refIndex);
+    QVERIFY(!missing.ok);
+
+    const ExtensionCommand ok =
+        buildExtensionCommand(QStringLiteral("browser_select"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e2")},
+                                          {QStringLiteral("value"), QStringLiteral("uk")}},
+                              refIndex);
+    QVERIFY(ok.ok);
+    QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("select"));
+    QCOMPARE(ok.command.value(QStringLiteral("backendNodeId")).toInt(), 88);
+    QCOMPARE(ok.command.value(QStringLiteral("value")).toString(), QStringLiteral("uk"));
+}
+
+void BrowserContractTests::buildCommand_groupTabsCopiesArgs() {
+    const ExtensionCommand group =
+        buildExtensionCommand(QStringLiteral("browser_group_tabs"),
+                              QJsonObject{{QStringLiteral("tab_indices"), QStringLiteral("0,1,2")},
+                                          {QStringLiteral("title"), QStringLiteral("Research")},
+                                          {QStringLiteral("color"), QStringLiteral("pink")}},
+                              {});
+    QVERIFY(group.ok);
+    QCOMPARE(group.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("groupTabs"));
+    QCOMPARE(group.command.value(QStringLiteral("tab_indices")).toString(),
+             QStringLiteral("0,1,2"));
+    QCOMPARE(group.command.value(QStringLiteral("title")).toString(), QStringLiteral("Research"));
+    QCOMPARE(group.command.value(QStringLiteral("color")).toString(), QStringLiteral("pink"));
+
+    // All args optional (default: the active tab).
+    const ExtensionCommand bare =
+        buildExtensionCommand(QStringLiteral("browser_group_tabs"), {}, {});
+    QVERIFY(bare.ok);
+    QCOMPARE(bare.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("groupTabs"));
+
+    const ExtensionCommand ungroup =
+        buildExtensionCommand(QStringLiteral("browser_ungroup_tabs"), {}, {});
+    QVERIFY(ungroup.ok);
+    QCOMPARE(ungroup.command.value(QStringLiteral("cmd")).toString(),
+             QStringLiteral("ungroupTabs"));
+}
+
+void BrowserContractTests::buildCommand_setValueAndMediaBuild() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 55}}}};
+    QVERIFY(
+        !buildExtensionCommand(QStringLiteral("browser_set_value"), {}, {}).ok);  // ref required
+    const ExtensionCommand sv =
+        buildExtensionCommand(QStringLiteral("browser_set_value"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")},
+                                          {QStringLiteral("value"), QStringLiteral("7")},
+                                          {QStringLiteral("checked"), true}},
+                              refIndex);
+    QVERIFY(sv.ok);
+    QCOMPARE(sv.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("setValue"));
+    QCOMPARE(sv.command.value(QStringLiteral("backendNodeId")).toInt(), 55);
+    QCOMPARE(sv.command.value(QStringLiteral("value")).toString(), QStringLiteral("7"));
+    QCOMPARE(sv.command.value(QStringLiteral("checked")).toBool(), true);
+
+    // media: action is required.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_media"),
+                                   QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}},
+                                   refIndex)
+                 .ok);
+    const ExtensionCommand md =
+        buildExtensionCommand(QStringLiteral("browser_media"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")},
+                                          {QStringLiteral("action"), QStringLiteral("seek")},
+                                          {QStringLiteral("value"), QStringLiteral("30")}},
+                              refIndex);
+    QVERIFY(md.ok);
+    QCOMPARE(md.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("media"));
+    QCOMPARE(md.command.value(QStringLiteral("action")).toString(), QStringLiteral("seek"));
+    QCOMPARE(md.command.value(QStringLiteral("value")).toString(), QStringLiteral("30"));
+}
+
+void BrowserContractTests::renderSnapshot_emitsAriaStateAndValue() {
+    QJsonObject tab = node(41, QStringLiteral("tab"), QStringLiteral("Overview"), true);
+    tab.insert(QStringLiteral("selected"), true);
+    QJsonObject menu = node(42, QStringLiteral("button"), QStringLiteral("More"), true);
+    menu.insert(QStringLiteral("expanded"), false);
+    QJsonObject slider = node(43, QStringLiteral("slider"), QStringLiteral("Volume"), true);
+    slider.insert(QStringLiteral("value"), QStringLiteral("7"));
+    slider.insert(QStringLiteral("valuemin"), 0);
+    slider.insert(QStringLiteral("valuemax"), 10);
+
+    const QJsonObject capture{{QStringLiteral("url"), QStringLiteral("https://x/")},
+                              {QStringLiteral("title"), QStringLiteral("T")},
+                              {QStringLiteral("nodes"), QJsonArray{tab, menu, slider}}};
+    const SnapshotView view = renderSnapshot(capture);
+    QVERIFY2(view.outline.contains(QStringLiteral("(selected)")), qPrintable(view.outline));
+    QVERIFY2(view.outline.contains(QStringLiteral("(collapsed)")), qPrintable(view.outline));
+    QVERIFY2(view.outline.contains(QStringLiteral("value=7")), qPrintable(view.outline));
+    QVERIFY2(view.outline.contains(QStringLiteral("range 0..10")), qPrintable(view.outline));
 }
 
 void BrowserContractTests::buildCommand_selectTabCopiesIntArgument() {
