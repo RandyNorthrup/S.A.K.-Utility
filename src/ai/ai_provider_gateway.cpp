@@ -638,6 +638,8 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         QStringLiteral("browser_press_key"),
         QStringLiteral("browser_scroll"),
         QStringLiteral("browser_type"),
+        // Writing the system clipboard injects content the user may later paste elsewhere.
+        QStringLiteral("clipboard_write"),
         // Live desktop input injection (physical text-click / arbitrary UIA invoke).
         // These are already in the win32_mcp manifest and must take the same hard gate.
         QStringLiteral("click_text"),

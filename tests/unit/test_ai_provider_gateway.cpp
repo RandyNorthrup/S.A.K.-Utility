@@ -138,6 +138,13 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     // the input tier too (they were fail-open ungated before).
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("uia_click_control")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("click_text")));
+
+    // Clipboard: writing injects content (input tier); reading exposes cross-app data, so it
+    // must not be on the read-only allowlist -- the fail-closed default then gates it.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("clipboard_write")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("clipboard_write")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("clipboard_read")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("clipboard_read")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {
@@ -155,6 +162,7 @@ void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() 
                                {QStringLiteral("tools"),
                                 QJsonArray{QStringLiteral("browser_click"),
                                            QStringLiteral("browser_snapshot"),
+                                           QStringLiteral("clipboard_read"),
                                            QStringLiteral("mystery_tool")}}};
     QVERIFY(
         writeFile(providers_path,
@@ -194,6 +202,16 @@ void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() 
     QVERIFY(!mystery.read_only);
     QVERIFY(!mystery.high_risk);
     QVERIFY(mystery.requires_confirmation);
+
+    // clipboard_read is not on any classifier list, so the same fail-closed default gates it
+    // -- reading the user's clipboard never auto-runs unattended.
+    const auto clip = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("clipboard_read")}}}},
+        &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(!clip.read_only);
+    QVERIFY(clip.requires_confirmation);
 }
 
 void AiProviderGatewayTests::win32McpEnvironmentIncludesProviderValues() {

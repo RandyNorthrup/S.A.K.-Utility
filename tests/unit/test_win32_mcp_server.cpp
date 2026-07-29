@@ -54,6 +54,8 @@ private slots:
     void toolsCall_unknownToolReturnsIsError();
     void invokeTool_listWindowsReturnsStructuredArray();
     void invokeTool_getWindowInfoRequiresTitle();
+    void invokeTool_clipboardWriteRequiresText();
+    void invokeTool_clipboardReadReturnsTextShape();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
 };
@@ -94,7 +96,9 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("list_windows"),
                                     QStringLiteral("get_window_info"),
                                     QStringLiteral("list_monitors"),
-                                    QStringLiteral("mouse_position")}) {
+                                    QStringLiteral("mouse_position"),
+                                    QStringLiteral("clipboard_read"),
+                                    QStringLiteral("clipboard_write")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes was dropped: it duplicated the app's own diagnostics/process listing, and the
@@ -175,6 +179,28 @@ void Win32McpServerTests::invokeTool_listWindowsReturnsStructuredArray() {
 void Win32McpServerTests::invokeTool_getWindowInfoRequiresTitle() {
     const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("get_window_info"), {});
     QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_clipboardWriteRequiresText() {
+    // Missing 'text' must be a clean error and must NOT touch the clipboard.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("clipboard_write"), {});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_clipboardReadReturnsTextShape() {
+    // A read is non-destructive, so it is safe to exercise against the real clipboard. It
+    // must be honest: either a well-formed {text,has_text,truncated} payload or a flagged
+    // error -- never a bare empty success. (We deliberately do NOT test clipboard_write's
+    // success path, which would clobber the user's actual clipboard.)
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("clipboard_read"), {});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    QVERIFY(payload.contains(QStringLiteral("text")));
+    QVERIFY(payload.value(QStringLiteral("has_text")).isBool());
+    QVERIFY(payload.value(QStringLiteral("truncated")).isBool());
 }
 
 void Win32McpServerTests::toolCallResult_textOnlyIsSingleTextBlock() {

@@ -7,6 +7,9 @@
 #include <QLatin1String>
 #include <QVector>
 
+#include <algorithm>
+#include <cwchar>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -193,6 +196,105 @@ ToolResult toolMousePosition(const QJsonObject&) {
                                   {QStringLiteral("y"), static_cast<int>(point.y)}});
 }
 
+// Bound clipboard text both ways: never dump an unbounded clipboard into the model, and
+// never allocate an unbounded write buffer from a model-supplied string.
+constexpr int kMaxClipboardChars = 200'000;
+
+// The clipboard is a shared, single-owner OS resource; another process may hold it for a
+// moment. Retry a few times before giving up rather than failing on transient contention.
+bool openClipboardWithRetry() {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (OpenClipboard(nullptr) != FALSE) {
+            return true;
+        }
+        Sleep(10);
+    }
+    return false;
+}
+
+ToolResult toolClipboardRead(const QJsonObject&) {
+    if (!openClipboardWithRetry()) {
+        return errorResult(
+            QStringLiteral("Could not open the clipboard (held by another process)."));
+    }
+    const HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    if (handle == nullptr) {
+        // No Unicode text on the clipboard (empty, or an image/other format). Report an
+        // honest empty-with-no-text rather than an error, so the model can tell "nothing to
+        // paste" from "the read failed".
+        CloseClipboard();
+        return jsonResult(QJsonObject{{QStringLiteral("text"), QString()},
+                                      {QStringLiteral("has_text"), false},
+                                      {QStringLiteral("truncated"), false}});
+    }
+    const auto* data = static_cast<const wchar_t*>(GlobalLock(handle));
+    if (data == nullptr) {
+        // A handle exists but could not be locked: a real failure, not empty success.
+        CloseClipboard();
+        return errorResult(QStringLiteral("Clipboard text could not be read."));
+    }
+    const size_t max_chars = GlobalSize(handle) / sizeof(wchar_t);
+    const size_t length = wcsnlen(data, max_chars);  // bounded even if not null-terminated
+    const size_t capped = std::min(length, static_cast<size_t>(kMaxClipboardChars));
+    const QString text = QString::fromWCharArray(data, static_cast<int>(capped));
+    GlobalUnlock(handle);
+    CloseClipboard();
+    return jsonResult(QJsonObject{{QStringLiteral("text"), text},
+                                  {QStringLiteral("has_text"), true},
+                                  {QStringLiteral("truncated"), capped < length}});
+}
+
+// Copy the model's text into a moveable global the clipboard can own. Returns nullptr on
+// allocation/lock failure; on success the caller passes ownership to SetClipboardData.
+HGLOBAL allocClipboardText(const QString& text) {
+    const size_t bytes = (static_cast<size_t>(text.size()) + 1) * sizeof(wchar_t);
+    const HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (mem == nullptr) {
+        return nullptr;
+    }
+    auto* dst = static_cast<wchar_t*>(GlobalLock(mem));
+    if (dst == nullptr) {
+        GlobalFree(mem);
+        return nullptr;
+    }
+    const qsizetype copied = text.toWCharArray(dst);
+    dst[copied] = L'\0';
+    GlobalUnlock(mem);
+    return mem;
+}
+
+ToolResult toolClipboardWrite(const QJsonObject& arguments) {
+    if (!arguments.contains(QStringLiteral("text"))) {
+        return errorResult(QStringLiteral("clipboard_write requires 'text'"));
+    }
+    const QString text = arguments.value(QStringLiteral("text")).toString();
+    if (text.size() > kMaxClipboardChars) {
+        return errorResult(QStringLiteral("Text exceeds the clipboard write limit."));
+    }
+    const HGLOBAL mem = allocClipboardText(text);
+    if (mem == nullptr) {
+        return errorResult(QStringLiteral("Could not allocate clipboard memory."));
+    }
+    if (!openClipboardWithRetry()) {
+        GlobalFree(mem);
+        return errorResult(
+            QStringLiteral("Could not open the clipboard (held by another process)."));
+    }
+    // EmptyClipboard must precede SetClipboardData to take ownership; it clears any prior
+    // contents. This is the mandated Win32 order (SetClipboardData with a valid moveable
+    // handle after a successful open+empty does not realistically fail).
+    EmptyClipboard();
+    if (SetClipboardData(CF_UNICODETEXT, mem) == nullptr) {
+        // Ownership is transferred to the system only on success; free it ourselves here.
+        GlobalFree(mem);
+        CloseClipboard();
+        return errorResult(QStringLiteral("SetClipboardData failed."));
+    }
+    CloseClipboard();  // on success the system owns `mem`; do not free it
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("written"), static_cast<int>(text.size())}});
+}
+
 QJsonObject stringProperty(const QString& description) {
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
                        {QStringLiteral("description"), description}};
@@ -240,6 +342,17 @@ QJsonArray toolCatalog() {
                            QStringLiteral("Return the current mouse cursor position in virtual "
                                           "screen coordinates."),
                            toolSchema({}, {})));
+    tools.append(toolEntry(
+        QStringLiteral("clipboard_read"),
+        QStringLiteral("Read the system clipboard's text. May expose data the user copied from "
+                       "other applications, so it requires confirmation."),
+        toolSchema({}, {})));
+    tools.append(toolEntry(
+        QStringLiteral("clipboard_write"),
+        QStringLiteral("Replace the system clipboard's text with the given string."),
+        toolSchema(QJsonObject{{QStringLiteral("text"),
+                                stringProperty(QStringLiteral("Text to place on the clipboard."))}},
+                   QJsonArray{QStringLiteral("text")})));
     return tools;
 }
 
@@ -258,6 +371,12 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
     }
     if (name == QLatin1String("mouse_position")) {
         return toolMousePosition(arguments);
+    }
+    if (name == QLatin1String("clipboard_read")) {
+        return toolClipboardRead(arguments);
+    }
+    if (name == QLatin1String("clipboard_write")) {
+        return toolClipboardWrite(arguments);
     }
     return errorResult(QStringLiteral("Unknown tool: %1").arg(name));
 }
