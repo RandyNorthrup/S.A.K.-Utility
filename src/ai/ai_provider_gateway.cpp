@@ -634,6 +634,7 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
     static const QSet<QString> input_tools{
         QStringLiteral("browser_click"),
         QStringLiteral("browser_click_at"),
+        QStringLiteral("browser_dialog"),
         QStringLiteral("browser_press_key"),
         QStringLiteral("browser_scroll"),
         QStringLiteral("browser_type"),

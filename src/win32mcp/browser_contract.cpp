@@ -177,6 +177,11 @@ const QHash<QString, CmdSpec>& commandSpecs() {
           QStringLiteral("none"),
           {{QStringLiteral("x"), QStringLiteral("int"), true},
            {QStringLiteral("y"), QStringLiteral("int"), true}}}},
+        {QStringLiteral("browser_dialog"),
+         {QStringLiteral("dialog"),
+          QStringLiteral("none"),
+          {{QStringLiteral("action"), QStringLiteral("string"), false},
+           {QStringLiteral("text"), QStringLiteral("string"), false}}}},
         {QStringLiteral("browser_back"), {QStringLiteral("back"), QStringLiteral("none"), {}}},
         {QStringLiteral("browser_forward"),
          {QStringLiteral("forward"), QStringLiteral("none"), {}}},
@@ -356,6 +361,19 @@ void appendActionTools(QJsonArray& tools) {
                                 typedProperty(QStringLiteral("integer"),
                                               QStringLiteral("Y in screenshot pixels."))}},
                    QJsonArray{QStringLiteral("x"), QStringLiteral("y")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_dialog"),
+        QStringLiteral("Set how the NEXT JavaScript dialog is answered and report the last one. "
+                       "Dialogs are auto-answered (alert/beforeunload accepted, confirm/prompt "
+                       "dismissed); call this with action \"accept\" just before the step that "
+                       "opens a confirm/prompt you want to accept."),
+        toolSchema(QJsonObject{{QStringLiteral("action"),
+                                stringProperty(QStringLiteral("\"accept\" or \"dismiss\" "
+                                                              "(default) for the next dialog."))},
+                               {QStringLiteral("text"),
+                                stringProperty(QStringLiteral("Text for an accepted prompt() "
+                                                              "dialog (optional)."))}},
+                   {})));
 }
 
 void appendTabTools(QJsonArray& tools) {

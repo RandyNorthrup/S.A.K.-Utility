@@ -58,6 +58,7 @@ private slots:
     void buildCommand_unknownToolFails();
     void buildCommand_selectTabCopiesIntArgument();
     void buildCommand_clickAtRequiresXAndY();
+    void buildCommand_dialogCopiesOptionalActionAndText();
 };
 
 void BrowserContractTests::renderSnapshot_assignsSequentialRefsToInteractableNodes() {
@@ -225,6 +226,7 @@ void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {
                                     QStringLiteral("browser_press_key"),
                                     QStringLiteral("browser_scroll"),
                                     QStringLiteral("browser_click_at"),
+                                    QStringLiteral("browser_dialog"),
                                     QStringLiteral("browser_tabs")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
@@ -319,6 +321,22 @@ void BrowserContractTests::buildCommand_selectTabCopiesIntArgument() {
     QVERIFY(ok.ok);
     QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("selectTab"));
     QCOMPARE(ok.command.value(QStringLiteral("index")).toInt(), 2);
+}
+
+void BrowserContractTests::buildCommand_dialogCopiesOptionalActionAndText() {
+    // Both args are optional (default response is dismiss), so an empty call is valid.
+    const ExtensionCommand empty = buildExtensionCommand(QStringLiteral("browser_dialog"), {}, {});
+    QVERIFY(empty.ok);
+    QCOMPARE(empty.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("dialog"));
+
+    const ExtensionCommand accept =
+        buildExtensionCommand(QStringLiteral("browser_dialog"),
+                              QJsonObject{{QStringLiteral("action"), QStringLiteral("accept")},
+                                          {QStringLiteral("text"), QStringLiteral("hello")}},
+                              {});
+    QVERIFY(accept.ok);
+    QCOMPARE(accept.command.value(QStringLiteral("action")).toString(), QStringLiteral("accept"));
+    QCOMPARE(accept.command.value(QStringLiteral("text")).toString(), QStringLiteral("hello"));
 }
 
 void BrowserContractTests::buildCommand_clickAtRequiresXAndY() {

@@ -97,6 +97,19 @@ navigation may auto-run). The prompt is the app's trusted UI -- untrusted page c
 never grant permission. The classifier fails CLOSED: any win32 tool not on the read-only
 allowlist requires confirmation, so a new automation tool cannot silently act as the user.
 
+## Dialogs (unit 10)
+
+A JavaScript dialog (`alert` / `confirm` / `prompt` / `beforeunload`) pauses the page until
+CDP answers it, so with the Page domain attached the extension must respond or every later
+command on the tab would wedge. An `onEvent` handler answers automatically by type: `alert`
+and `beforeunload` are accepted (an alert only has OK; accepting `beforeunload` lets a
+navigation the automation is driving proceed), while `confirm` and `prompt` are dismissed so
+a page can never auto-confirm a destructive action. `browser_dialog` arms the response for
+the NEXT dialog (one-shot) -- call it with `action:"accept"` (and optional `text` for a
+prompt) just before the step that opens a `confirm`/`prompt` you want accepted -- and
+reports the last dialog handled. It is gated as an input tool, so accepting a dialog takes
+the same hard confirmation as the other input actions.
+
 ## Screenshot (unit 8)
 
 `browser_screenshot` captures a PNG of the active tab via CDP `Page.captureScreenshot`

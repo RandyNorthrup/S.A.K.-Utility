@@ -15,6 +15,8 @@
 //   - click / type / pressKey / scroll : input injected over CDP Input (unit 7).
 //   - screenshot : a PNG of the active tab via CDP Page.captureScreenshot (unit 8).
 //   - clickAt : coordinate click at screenshot pixels, dpr-converted to CSS px (unit 9).
+//   - dialog : arm the next JS dialog's response + report the last one (unit 10); dialogs
+//              are auto-answered by an onEvent handler so the page never wedges.
 //
 // PROTOCOL: the native host is a thin relay in strict request/reply. For every
 // {type:"command", id, cmd, ...} frame this worker replies EXACTLY ONCE with
@@ -109,6 +111,15 @@ let lastSnapshotTabId = null;
 // the tab, dpr, scroll, or document changed since -- a full-page shot is document-space, not
 // click-space. null when no valid screenshot is outstanding.
 let lastShot = null;
+// A one-shot response armed for the NEXT JavaScript dialog by browser_dialog, e.g.
+// {accept:true, text:"..."}. It is scoped to the single command that follows the arm (see
+// runCommand): consumed if that command's action opens a dialog, otherwise dropped when the
+// command finishes -- so an armed "accept" can never linger and auto-confirm an unrelated
+// later dialog. Also cleared on navigation and teardown.
+let pendingDialogPolicy = null;
+// The most recent dialog the extension handled: {type, message, accepted}. Reported by
+// browser_dialog so the model can see what an auto-dismissed alert/confirm said.
+let lastDialog = null;
 let reconnectTimer = null;
 
 // -- Native messaging port ---------------------------------------------------
@@ -207,6 +218,23 @@ async function handleCommand(msg) {
 }
 
 async function runCommand(cmd, args) {
+  // Scope an armed dialog response to the SINGLE command meant to trigger the dialog: if that
+  // command runs without the dialog firing (which would consume the arm in the onEvent
+  // handler), drop the arm so it can never persist and auto-answer an unrelated later dialog.
+  // The arming command itself ("dialog") is excluded so it can set the policy. Capture the
+  // exact policy object and clear only if it is STILL that object -- so we never clobber a
+  // fresh arm placed by a later (e.g. overlapping) command, only the one we scoped.
+  const scopedPolicy = cmd !== "dialog" ? pendingDialogPolicy : null;
+  try {
+    return await dispatchCommand(cmd, args);
+  } finally {
+    if (scopedPolicy !== null && pendingDialogPolicy === scopedPolicy) {
+      pendingDialogPolicy = null;
+    }
+  }
+}
+
+async function dispatchCommand(cmd, args) {
   switch (cmd) {
     case "snapshot":
       return await captureSnapshot(await activeTabId());
@@ -232,6 +260,8 @@ async function runCommand(cmd, args) {
       return await handleClick(await activeTabId(), args);
     case "clickAt":
       return await handleClickAt(await activeTabId(), args);
+    case "dialog":
+      return await handleDialog(await activeTabId(), args);
     case "type":
       return await handleType(await activeTabId(), args);
     case "pressKey":
@@ -297,6 +327,8 @@ async function ensureAttached(tabId) {
 async function detachAll(_reason) {
   lastSnapshotTabId = null;  // any ref_index is now unverifiable against a live tab
   lastShot = null;           // and any screenshot coordinates are against a dead render
+  pendingDialogPolicy = null;  // an armed dialog response does not carry across sessions
+  lastDialog = null;         // nor does a prior page's dialog report
   if (attachedTabId === null) {
     return;
   }
@@ -315,7 +347,55 @@ chrome.debugger.onDetach.addListener((source) => {
     attachedTabId = null;
     lastSnapshotTabId = null;
     lastShot = null;
+    pendingDialogPolicy = null;
+    lastDialog = null;
   }
+});
+
+// A JavaScript dialog (alert/confirm/prompt/beforeunload) PAUSES the page until CDP answers
+// it; with the Page domain enabled we must respond or every later command on the tab wedges.
+// Default by type: alert only has OK (accept just closes it), and beforeunload accepts so a
+// navigation the automation is driving is not blocked; confirm/prompt DISMISS (cancel) so a
+// page can never auto-confirm a destructive action -- the model opts into acceptance per
+// dialog via browser_dialog. A page cannot escalate through this: it only ever gets its own
+// default, or an accept the model explicitly armed (an input-gated tool).
+function defaultDialogAccept(type) {
+  return type === "alert" || type === "beforeunload";
+}
+
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (!source || source.tabId !== attachedTabId) {
+    return;
+  }
+  // A navigation ends the page an armed response was meant for; drop it so an accept armed
+  // for page A cannot auto-confirm page B's first dialog. Cover both a real document swap
+  // (top-frame Page.frameNavigated) and a client-side/SPA route change
+  // (Page.navigatedWithinDocument). A beforeunload for the navigation itself fires BEFORE the
+  // commit, so an arm meant for it is still honored.
+  const topFrameNav =
+    method === "Page.frameNavigated" && params && params.frame && !params.frame.parentId;
+  if (topFrameNav || method === "Page.navigatedWithinDocument") {
+    pendingDialogPolicy = null;
+    return;
+  }
+  if (method !== "Page.javascriptDialogOpening") {
+    return;
+  }
+  const type = params && typeof params.type === "string" ? params.type : "alert";
+  const message = params && typeof params.message === "string" ? params.message : "";
+  let accept = defaultDialogAccept(type);
+  let promptText;
+  if (pendingDialogPolicy) {
+    accept = pendingDialogPolicy.accept;
+    promptText = pendingDialogPolicy.text;
+    pendingDialogPolicy = null;  // one-shot: never carry an armed response to a later dialog
+  }
+  lastDialog = { type, message, accepted: accept };
+  const answer = { accept };
+  if (accept && typeof promptText === "string") {
+    answer.promptText = promptText;
+  }
+  sendCdp(source.tabId, "Page.handleJavaScriptDialog", answer).catch(() => {});
 });
 
 // Refs are valid only on the tab the snapshot was taken from; refuse a ref action when
@@ -810,6 +890,24 @@ async function handleScroll(tabId, args) {
   await moveAgentCursor(tabId, point.x, point.y);
   await dispatchMouse(tabId, "mouseWheel", point.x, point.y, { deltaX: 0, deltaY });
   return { ok: true, deltaY };
+}
+
+// -- dialogs -----------------------------------------------------------------
+//
+// Dialogs are answered automatically by the onEvent handler above so the page never wedges.
+// This tool ARMS the response for the NEXT dialog (one-shot) -- use action "accept" before
+// the action that pops a confirm()/prompt() you want accepted (with optional text for a
+// prompt) -- and reports the last dialog the extension handled.
+async function handleDialog(tabId, args) {
+  await ensureAttached(tabId);
+  const accept = !!(args && args.action === "accept");
+  const text = args && typeof args.text === "string" ? args.text : undefined;
+  pendingDialogPolicy = { accept, text };
+  return {
+    ok: true,
+    armed: accept ? "accept" : "dismiss",
+    last_dialog: lastDialog,
+  };
 }
 
 // -- navigation + tabs (via chrome.tabs, no debugger banner) ------------------
