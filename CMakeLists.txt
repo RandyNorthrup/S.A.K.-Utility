@@ -945,13 +945,33 @@ endif()
 
 add_executable(sak_utility ${ALL_SOURCES})
 
-# Browser-extension installer: shared with sak_win32_mcp, compiled into the app so the
-# assistant panel's Install/Uninstall button can set up Chrome in-process. The .cpp has a
-# non-Windows stub, so it compiles on every platform the panel does.
+# Browser-extension installer: drives the panel's Install/Uninstall button in-process.
+# Has a non-Windows stub, so it compiles on every platform the panel does.
 target_sources(sak_utility PRIVATE
     src/win32mcp/browser_extension_installer.cpp
     include/sak/win32mcp/browser_extension_installer.h
 )
+
+# The win32 MCP server + Chrome browser-control host are folded into this one app binary
+# instead of a second exe: main() dispatches to the helper modes (env var / chrome-extension
+# origin) before any GUI init. Windows-only (raw Win32 + Chrome DevTools Protocol).
+if(PLATFORM_WINDOWS)
+    target_sources(sak_utility PRIVATE
+        src/win32mcp/win32_mcp_entry.cpp
+        src/win32mcp/win32_mcp_dispatch.cpp
+        src/win32mcp/win32_mcp_tools.cpp
+        src/win32mcp/browser_contract.cpp
+        src/win32mcp/browser_bridge.cpp
+        src/win32mcp/browser_bridge_security.cpp
+        src/win32mcp/browser_bridge_pipe.cpp
+        src/win32mcp/browser_bridge_relay.cpp
+        src/win32mcp/browser_control.cpp
+        src/win32mcp/native_messaging.cpp
+        include/sak/win32mcp/win32_mcp_entry.h
+    )
+    # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors).
+    target_link_libraries(sak_utility PRIVATE shcore)
+endif()
 
 # Enable Qt MOC, UIC, and RCC
 set_target_properties(sak_utility PROPERTIES
@@ -1110,74 +1130,12 @@ endif()
 add_dependencies(sak_utility sak_hfs_writer_cli)
 
 # ============================================================================
-# Native win32 MCP Server (assistant computer + browser control)
+# Native win32 MCP server (assistant computer + browser control)
 # ============================================================================
-# A standalone stdio MCP server the assistant spawns to drive the live desktop
-# (window/monitor inspection today; UI-Automation locate, screen capture, and
-# gated input actions to follow). Native C++ so it ships no third-party runtime
-# -- only Windows system APIs and Qt, which the app already bundles. Replaces
-# the external, frozen PyInstaller win32-inspector server.
-if(PLATFORM_WINDOWS)
-    add_executable(sak_win32_mcp
-        src/win32mcp/win32_mcp_main.cpp
-        src/win32mcp/win32_mcp_dispatch.cpp
-        src/win32mcp/win32_mcp_tools.cpp
-        src/win32mcp/browser_contract.cpp
-        src/win32mcp/browser_bridge.cpp
-        src/win32mcp/browser_bridge_security.cpp
-        src/win32mcp/browser_bridge_pipe.cpp
-        src/win32mcp/browser_bridge_relay.cpp
-        src/win32mcp/browser_control.cpp
-        src/win32mcp/browser_extension_installer.cpp
-        src/win32mcp/native_messaging.cpp
-        include/sak/win32mcp/win32_mcp_dispatch.h
-        include/sak/win32mcp/win32_mcp_tools.h
-        include/sak/win32mcp/browser_contract.h
-        include/sak/win32mcp/browser_bridge.h
-        include/sak/win32mcp/browser_bridge_security.h
-        include/sak/win32mcp/browser_bridge_pipe.h
-        include/sak/win32mcp/browser_bridge_relay.h
-        include/sak/win32mcp/browser_control.h
-        include/sak/win32mcp/browser_extension_installer.h
-        include/sak/win32mcp/native_messaging.h
-        include/sak/ai/ai_mcp_jsonrpc.h
-    )
-
-    set_target_properties(sak_win32_mcp PROPERTIES
-        AUTOMOC ON
-        WIN32_EXECUTABLE FALSE
-    )
-
-    target_include_directories(sak_win32_mcp PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_BINARY_DIR}/include
-    )
-
-    # shcore: GetDpiForMonitor (per-monitor DPI reporting in list_monitors).
-    target_link_libraries(sak_win32_mcp PRIVATE
-        Qt6::Core
-        ${PLATFORM_LIBS}
-        shcore
-    )
-
-    target_compile_definitions(sak_win32_mcp PRIVATE
-        QT_NO_KEYWORDS
-        QT_DEPRECATED_WARNINGS
-        QT_DISABLE_DEPRECATED_BEFORE=0x060000
-    )
-
-    if(MSVC)
-        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_win32_mcp_crt_pos)
-        if(_sak_win32_mcp_crt_pos EQUAL -1)
-            target_link_options(sak_win32_mcp PRIVATE
-                /NODEFAULTLIB:MSVCRT
-                /NODEFAULTLIB:MSVCRTD
-            )
-        endif()
-    endif()
-
-    add_dependencies(sak_utility sak_win32_mcp)
-endif()
+# Formerly a standalone sak_win32_mcp.exe; now FOLDED into the app binary (its sources
+# are compiled into sak_utility above and its entry points dispatched from main()). One
+# binary serves GUI, the MCP server (SAK_WIN32_MCP_MODE env), and the Chrome native host
+# (chrome-extension:// origin) -- so there is a single executable to ship and sign.
 
 # ============================================================================
 # Elevated Helper Executable (Phase 2 — per-task elevation)
@@ -1306,11 +1264,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/_build")
                         "Remove that directory before building so release packages stay portable.")
 endif()
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/win32-mcp-server/win32-mcp-server.exe")
-    message(FATAL_ERROR "win32-mcp-server.exe not bundled. Run "
-                        "'powershell -File scripts/bundle_mcp_servers.ps1 -BuildWin32' "
-                        "before configuring/building so SAK ships with portable MCP automation.")
-endif()
+# The win32 desktop/browser automation provider is now the native sak_win32_mcp target
+# (built below), not a bundled external binary, so nothing to require here.
 
 # The signed browser-control CRX is committed (browser/dist/) and force-installed by the
 # assistant's extension installer. Guard against a release silently shipping without it:

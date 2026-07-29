@@ -14,8 +14,34 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <iterator>
+
+#include <windows.h>
+#endif
+
 namespace sak::win32mcp {
 namespace {
+
+// Full path of THIS running executable. The installer runs both in the GUI app (where
+// QCoreApplication is up) and in the headless MCP helper process (which has none), so on
+// Windows it resolves the path from the OS directly rather than via QCoreApplication.
+QString currentExeFilePath() {
+#if defined(_WIN32)
+    wchar_t buf[MAX_PATH * 4];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+    if (n > 0 && n < std::size(buf)) {
+        return QString::fromWCharArray(buf, static_cast<int>(n));
+    }
+#endif
+    return QCoreApplication::applicationFilePath();
+}
 
 // file:///C:/Program%20Files/... - percent-encoded so paths with spaces work as a
 // Chrome file:// update_url / CRX codebase (QUrl handles the encoding + drive letter).
@@ -34,6 +60,10 @@ QString defaultDataDir() {
 }
 
 QString appDir() {
+    const QString exe = currentExeFilePath();
+    if (!exe.isEmpty()) {
+        return QFileInfo(exe).absolutePath();
+    }
     const QString dir = QCoreApplication::applicationDirPath();
     return dir.isEmpty() ? QDir::currentPath() : dir;
 }
@@ -144,7 +174,9 @@ BrowserExtensionInstaller::BrowserExtensionInstaller(ExtensionInstallConfig conf
     }
     config_.crx_path = resolveCrxPath(config_.crx_path);
     if (config_.host_exe_path.isEmpty()) {
-        config_.host_exe_path = QDir(appDir()).filePath(QStringLiteral("sak_win32_mcp.exe"));
+        // The app binary is itself the Chrome native messaging host (folded win32 MCP):
+        // Chrome launches it with the extension origin, and main() runs the relay.
+        config_.host_exe_path = currentExeFilePath();
     }
     if (config_.forcelist_key_path.isEmpty()) {
         config_.forcelist_key_path =

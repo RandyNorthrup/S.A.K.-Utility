@@ -1,10 +1,13 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Entry point for the native win32 MCP server. Speaks MCP JSON-RPC 2.0 over stdio
-// (one compact JSON object per line), the same transport the S.A.K. Utility client
-// (AiMcpStdioSession / AiMcpSessionPool) already drives. Runs fully synchronously
-// with no Qt event loop: read a line, route it, write the reply.
+// The win32 MCP server. Speaks MCP JSON-RPC 2.0 over stdio (one compact JSON object per
+// line), the same transport the S.A.K. Utility client (AiMcpStdioSession /
+// AiMcpSessionPool) already drives. Runs fully synchronously with no Qt event loop: read
+// a line, route it, write the reply. Folded into the app binary: see win32_mcp_entry.h;
+// the app's main() dispatches here before GUI startup.
+
+#include "sak/win32mcp/win32_mcp_entry.h"
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
 #include "sak/win32mcp/browser_bridge_relay.h"
@@ -31,7 +34,11 @@
 #endif
 #include <windows.h>
 
+namespace sak::win32mcp {
 namespace {
+
+// The provider gateway sets this in the spawned server's environment (providers.json).
+constexpr char kWin32McpModeEnv[] = "SAK_WIN32_MCP_MODE";
 
 void writeResponse(const QJsonObject& response) {
     const QByteArray out = sak::ai::mcp::jsonLine(response);
@@ -53,9 +60,25 @@ bool wantsRelayMode(int argc, char** argv) {
     return false;
 }
 
+// MCP server mode is selected by the provider gateway's spawned child. Require BOTH the
+// exact env token AND a redirected-pipe stdin (QProcess always connects one). This
+// guards against a stray SAK_WIN32_MCP_MODE in the user's persistent environment silently
+// launching the GUI-subsystem app headless (EOF on stdin -> exit 0, no window, no error):
+// a normal double-click has a console or no stdin, never a pipe.
+bool wantsMcpServerMode() {
+    if (qEnvironmentVariable(kWin32McpModeEnv) != QLatin1String("1")) {
+        return false;
+    }
+    return GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_PIPE;
+}
+
 }  // namespace
 
-int main(int argc, char** argv) {
+bool isWin32McpHelperInvocation(int argc, char** argv) {
+    return wantsRelayMode(argc, argv) || wantsMcpServerMode();
+}
+
+int runWin32McpProcess(int argc, char** argv) {
     // Per-monitor-v2 DPI awareness BEFORE any window/monitor query or input injection: without it
     // the OS virtualizes coordinates on scaled/multi-monitor hosts, so GetWindowRect bounds are
     // wrong and any future click/drag would land in the wrong place. Best-effort (older OSes lack
@@ -111,3 +134,5 @@ int main(int argc, char** argv) {
     browser.stop();
     return 0;
 }
+
+}  // namespace sak::win32mcp

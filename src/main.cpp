@@ -12,6 +12,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/splash_screen.h"
 #include "sak/version.h"
+#include "sak/win32mcp/win32_mcp_entry.h"
 #include "sak/windows11_theme.h"
 
 #include <QAbstractButton>
@@ -548,6 +549,16 @@ int runApplication(int argc, char* argv[]) {
 /// @param argv Argument vector
 /// @return Exit code
 int main(int argc, char* argv[]) {
+#if defined(_WIN32)
+    // The win32 MCP server and the Chrome browser-control host are folded into this one
+    // binary. When launched in either helper mode (env var set by the provider gateway, or
+    // a chrome-extension:// origin passed by Chrome), run headless on stdio and return
+    // before any Qt/GUI initialization -- these processes must never open a window.
+    if (sak::win32mcp::isWin32McpHelperInvocation(argc, argv)) {
+        return sak::win32mcp::runWin32McpProcess(argc, argv);
+    }
+#endif
+
     try {
         return runApplication(argc, argv);
 
