@@ -300,11 +300,46 @@ QHash<QString, CmdSpec> pageAndTabCommandSpecs() {
     };
 }
 
+// Read-only inspection + robustness command specs (no page mutation).
+QHash<QString, CmdSpec> inspectionCommandSpecs() {
+    return {
+        {QStringLiteral("browser_wait_for"),
+         {QStringLiteral("waitFor"),
+          QStringLiteral("none"),
+          {{QStringLiteral("text"), QStringLiteral("string"), false},
+           {QStringLiteral("url_contains"), QStringLiteral("string"), false},
+           {QStringLiteral("selector"), QStringLiteral("string"), false},
+           {QStringLiteral("absent"), QStringLiteral("bool"), false},
+           {QStringLiteral("timeout_ms"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_get_value"),
+         {QStringLiteral("getValue"), QStringLiteral("required"), {}}},
+        {QStringLiteral("browser_get_attribute"),
+         {QStringLiteral("getAttribute"),
+          QStringLiteral("required"),
+          {{QStringLiteral("name"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_box"), {QStringLiteral("box"), QStringLiteral("required"), {}}},
+        {QStringLiteral("browser_focus"),
+         {QStringLiteral("focus"), QStringLiteral("required"), {}}},
+        {QStringLiteral("browser_reveal"),
+         {QStringLiteral("reveal"), QStringLiteral("required"), {}}},
+    };
+}
+
+// Advanced (gated) input command specs.
+QHash<QString, CmdSpec> advancedInputCommandSpecs() {
+    return {
+        {QStringLiteral("browser_js_click"),
+         {QStringLiteral("jsClick"), QStringLiteral("required"), {}}},
+    };
+}
+
 const QHash<QString, CmdSpec>& commandSpecs() {
     static const QHash<QString, CmdSpec> specs = [] {
         QHash<QString, CmdSpec> merged = interactionCommandSpecs();
         merged.insert(formCommandSpecs());
         merged.insert(pageAndTabCommandSpecs());
+        merged.insert(inspectionCommandSpecs());
+        merged.insert(advancedInputCommandSpecs());
         return merged;
     }();
     return specs;
@@ -347,6 +382,33 @@ QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& comma
 
 ExtensionCommand fail(const QString& reason) {
     return {QJsonObject{}, false, reason};
+}
+
+// Tool-specific extras the generic ref/scalar-arg copiers do not cover: browser_drag's second
+// ref endpoint (to_ref) and browser_select's array-valued multi-select values (passed through
+// verbatim). Returns an error string (empty on success).
+QString applyToolExtras(const QString& tool,
+                        const QJsonObject& arguments,
+                        const QJsonObject& ref_index,
+                        QJsonObject& command) {
+    if (tool == QLatin1String("browser_drag")) {
+        const QString to_ref = arguments.value(QStringLiteral("to_ref")).toString();
+        if (to_ref.isEmpty()) {
+            return QString();
+        }
+        if (!ref_index.contains(to_ref)) {
+            return QStringLiteral("Unknown element ref '%1'; call browser_snapshot to refresh")
+                .arg(to_ref);
+        }
+        command.insert(QStringLiteral("to_backendNodeId"),
+                       ref_index.value(to_ref).toObject().value(QStringLiteral("backendNodeId")));
+        return QString();
+    }
+    if (tool == QLatin1String("browser_select") &&
+        arguments.value(QStringLiteral("values")).isArray()) {
+        command.insert(QStringLiteral("values"), arguments.value(QStringLiteral("values")));
+    }
+    return QString();
 }
 
 // -- Catalog -----------------------------------------------------------------
@@ -555,7 +617,15 @@ void appendFormControlTools(QJsonArray& tools) {
                  stringProperty(QStringLiteral("Visible option text to select (optional)."))},
                 {QStringLiteral("index"),
                  typedProperty(QStringLiteral("integer"),
-                               QStringLiteral("Zero-based option index (optional)."))}},
+                               QStringLiteral("Zero-based option index (optional)."))},
+                {QStringLiteral("values"),
+                 QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                             {QStringLiteral("items"),
+                              QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+                             {QStringLiteral("description"),
+                              QStringLiteral(
+                                  "Option values or labels to select in a multiple-select "
+                                  "(optional).")}}}},
             QJsonArray{QStringLiteral("ref")})));
     tools.append(toolEntry(
         QStringLiteral("browser_set_value"),
@@ -639,6 +709,86 @@ void appendTabTools(QJsonArray& tools) {
                                 stringProperty(QStringLiteral(
                                     "Comma-separated zero-based tab indices (optional)."))}},
                    {})));
+}
+
+void appendInspectionTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_wait_for"),
+        QStringLiteral("Wait until a condition holds on the active tab, or timeout. Give exactly "
+                       "one of text (page text appears), url_contains (URL contains a substring), "
+                       "or selector (a CSS selector matches). Set absent to wait for it to go "
+                       "away instead. Read-only polling."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("text"),
+                 stringProperty(QStringLiteral("Page text to wait for (optional)."))},
+                {QStringLiteral("url_contains"),
+                 stringProperty(QStringLiteral("Substring the tab URL must contain (optional)."))},
+                {QStringLiteral("selector"),
+                 stringProperty(QStringLiteral("CSS selector to wait for (optional)."))},
+                {QStringLiteral("absent"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Wait for the condition to be false (optional)."))},
+                {QStringLiteral("timeout_ms"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral("Max wait in ms (default 8000)."))}},
+            {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_get_value"),
+        QStringLiteral("Read the current state of a control with [ref]: value, checked, selected "
+                       "options, contenteditable text, and disabled. Read-only."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Target control ref, e.g. \"e5\"."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_get_attribute"),
+        QStringLiteral("Read an element's attributes by [ref]: give name for one attribute "
+                       "(e.g. href, src, aria-label), or omit name for all attributes. Read-only."),
+        toolSchema(QJsonObject{{QStringLiteral("ref"),
+                                stringProperty(QStringLiteral("Target element ref, e.g. \"e5\"."))},
+                               {QStringLiteral("name"),
+                                stringProperty(
+                                    QStringLiteral("Attribute name (optional; all if omitted)."))}},
+                   QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_box"),
+        QStringLiteral("Report an element's geometry by [ref]: position/size, whether it is in "
+                       "the viewport, and whether an overlay covers its center (occlusion). "
+                       "Read-only."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Target element ref, e.g. \"e5\"."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_focus"),
+        QStringLiteral("Focus the element with [ref] (to then browser_press_key into it without "
+                       "clicking)."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Target element ref, e.g. \"e5\"."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(
+        toolEntry(QStringLiteral("browser_reveal"),
+                  QStringLiteral("Scroll the element with [ref] into view (before a screenshot or "
+                                 "browser_click_at)."),
+                  toolSchema(QJsonObject{{QStringLiteral("ref"),
+                                          stringProperty(
+                                              QStringLiteral("Target element ref, e.g. \"e5\"."))}},
+                             QJsonArray{QStringLiteral("ref")})));
+}
+
+void appendAdvancedInputTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_js_click"),
+        QStringLiteral("Click the element with [ref] via its DOM click() method, as a fallback "
+                       "when a normal browser_click cannot land (target occluded by an overlay, "
+                       "zero-size but present, or ignoring synthetic pointer events). Prefer "
+                       "browser_click otherwise."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Target element ref, e.g. \"e5\"."))}},
+            QJsonArray{QStringLiteral("ref")})));
 }
 
 // Cap how many omitted-frame URLs are listed so a page spawning hundreds of cross-origin
@@ -742,6 +892,8 @@ QJsonArray browserToolCatalog() {
     appendPointerTools(tools);
     appendFormControlTools(tools);
     appendTabTools(tools);
+    appendInspectionTools(tools);
+    appendAdvancedInputTools(tools);
     return tools;
 }
 
@@ -768,20 +920,10 @@ ExtensionCommand buildExtensionCommand(const QString& tool,
             return fail(error);
         }
     }
-    // browser_drag has a SECOND endpoint given by a ref: resolve the optional to_ref to its
-    // backendNodeId here (the primary `ref` is the drag source, resolved above).
-    if (tool == QLatin1String("browser_drag")) {
-        const QString to_ref = arguments.value(QStringLiteral("to_ref")).toString();
-        if (!to_ref.isEmpty()) {
-            if (!ref_index.contains(to_ref)) {
-                return fail(
-                    QStringLiteral("Unknown element ref '%1'; call browser_snapshot to refresh")
-                        .arg(to_ref));
-            }
-            command.insert(QStringLiteral("to_backendNodeId"),
-                           ref_index.value(to_ref).toObject().value(
-                               QStringLiteral("backendNodeId")));
-        }
+    // Tool-specific extras (drag's second ref endpoint, array-valued upload/select args).
+    const QString extra = applyToolExtras(tool, arguments, ref_index, command);
+    if (!extra.isEmpty()) {
+        return fail(extra);
     }
     return {command, true, QString()};
 }

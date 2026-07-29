@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <utility>
+
 using sak::win32mcp::browser::browserToolCatalog;
 using sak::win32mcp::browser::buildExtensionCommand;
 using sak::win32mcp::browser::ExtensionCommand;
@@ -66,6 +68,10 @@ private slots:
     void buildCommand_selectTabCopiesIntArgument();
     void buildCommand_clickAtRequiresXAndY();
     void buildCommand_dialogCopiesOptionalActionAndText();
+    void buildCommand_inspectionToolsBuild();
+    void buildCommand_jsClickNeedsRef();
+    void buildCommand_selectMultiValuesPassThrough();
+    void catalog_advertisesBatch3Tools();
 };
 
 void BrowserContractTests::renderSnapshot_assignsSequentialRefsToInteractableNodes() {
@@ -541,6 +547,97 @@ void BrowserContractTests::buildCommand_clickAtRequiresXAndY() {
     QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("clickAt"));
     QCOMPARE(ok.command.value(QStringLiteral("x")).toInt(), 120);
     QCOMPARE(ok.command.value(QStringLiteral("y")).toInt(), 340);
+}
+
+void BrowserContractTests::buildCommand_inspectionToolsBuild() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 33}}}};
+
+    // wait_for takes no ref; all condition args optional at the contract layer (the extension
+    // enforces exactly-one), and timeout_ms/absent copy through typed.
+    const ExtensionCommand wait =
+        buildExtensionCommand(QStringLiteral("browser_wait_for"),
+                              QJsonObject{{QStringLiteral("selector"), QStringLiteral(".done")},
+                                          {QStringLiteral("absent"), true},
+                                          {QStringLiteral("timeout_ms"), 5000}},
+                              {});
+    QVERIFY(wait.ok);
+    QCOMPARE(wait.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("waitFor"));
+    QCOMPARE(wait.command.value(QStringLiteral("selector")).toString(), QStringLiteral(".done"));
+    QCOMPARE(wait.command.value(QStringLiteral("absent")).toBool(), true);
+    QCOMPARE(wait.command.value(QStringLiteral("timeout_ms")).toInt(), 5000);
+
+    // The ref-required inspection tools refuse without a ref and resolve it when present.
+    for (const auto& pair : {std::pair<QString, QString>{QStringLiteral("browser_get_value"),
+                                                         QStringLiteral("getValue")},
+                             {QStringLiteral("browser_box"), QStringLiteral("box")},
+                             {QStringLiteral("browser_focus"), QStringLiteral("focus")},
+                             {QStringLiteral("browser_reveal"), QStringLiteral("reveal")}}) {
+        QVERIFY2(!buildExtensionCommand(pair.first, {}, refIndex).ok, qPrintable(pair.first));
+        const ExtensionCommand ok = buildExtensionCommand(
+            pair.first, QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}}, refIndex);
+        QVERIFY2(ok.ok, qPrintable(pair.first));
+        QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), pair.second);
+        QCOMPARE(ok.command.value(QStringLiteral("backendNodeId")).toInt(), 33);
+    }
+
+    // get_attribute resolves the ref and copies the optional name.
+    const ExtensionCommand attr =
+        buildExtensionCommand(QStringLiteral("browser_get_attribute"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")},
+                                          {QStringLiteral("name"), QStringLiteral("href")}},
+                              refIndex);
+    QVERIFY(attr.ok);
+    QCOMPARE(attr.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("getAttribute"));
+    QCOMPARE(attr.command.value(QStringLiteral("name")).toString(), QStringLiteral("href"));
+}
+
+void BrowserContractTests::buildCommand_jsClickNeedsRef() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 9}}}};
+    // js_click requires a ref.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_js_click"), {}, refIndex).ok);
+    const ExtensionCommand js =
+        buildExtensionCommand(QStringLiteral("browser_js_click"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}},
+                              refIndex);
+    QVERIFY(js.ok);
+    QCOMPARE(js.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("jsClick"));
+    QCOMPARE(js.command.value(QStringLiteral("backendNodeId")).toInt(), 9);
+}
+
+void BrowserContractTests::buildCommand_selectMultiValuesPassThrough() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e2"), QJsonObject{{QStringLiteral("backendNodeId"), 12}}}};
+    const ExtensionCommand ok = buildExtensionCommand(
+        QStringLiteral("browser_select"),
+        QJsonObject{{QStringLiteral("ref"), QStringLiteral("e2")},
+                    {QStringLiteral("values"),
+                     QJsonArray{QStringLiteral("red"), QStringLiteral("blue")}}},
+        refIndex);
+    QVERIFY(ok.ok);
+    QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("select"));
+    QCOMPARE(ok.command.value(QStringLiteral("backendNodeId")).toInt(), 12);
+    const QJsonArray values = ok.command.value(QStringLiteral("values")).toArray();
+    QCOMPARE(values.size(), 2);
+    QCOMPARE(values.at(1).toString(), QStringLiteral("blue"));
+}
+
+void BrowserContractTests::catalog_advertisesBatch3Tools() {
+    const QJsonArray tools = browserToolCatalog();
+    QStringList names;
+    for (const QJsonValue& value : tools) {
+        names << value.toObject().value(QStringLiteral("name")).toString();
+    }
+    for (const QString& expected : {QStringLiteral("browser_wait_for"),
+                                    QStringLiteral("browser_get_value"),
+                                    QStringLiteral("browser_get_attribute"),
+                                    QStringLiteral("browser_box"),
+                                    QStringLiteral("browser_focus"),
+                                    QStringLiteral("browser_reveal"),
+                                    QStringLiteral("browser_js_click")}) {
+        QVERIFY2(names.contains(expected), qPrintable(expected));
+    }
 }
 
 QTEST_MAIN(BrowserContractTests)

@@ -93,6 +93,13 @@
         "browser_close_tab",
         "browser_group_tabs",
         "browser_ungroup_tabs",
+        "browser_wait_for",
+        "browser_get_value",
+        "browser_get_attribute",
+        "browser_box",
+        "browser_focus",
+        "browser_reveal",
+        "browser_js_click",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"

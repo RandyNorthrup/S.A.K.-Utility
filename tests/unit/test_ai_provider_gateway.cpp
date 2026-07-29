@@ -34,6 +34,7 @@ private Q_SLOTS:
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
+    void classifiesBatch3BrowserTools();
     void planWin32McpCallFlagsBrowserInputForConfirmation();
     void planWin32McpCallGatesExtensionTools();
     void win32McpEnvironmentIncludesProviderValues();
@@ -170,6 +171,23 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
         QStringLiteral("browser_extension_uninstall")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(
         QStringLiteral("browser_extension_install")));
+}
+
+void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
+    // Batch 3 inspection tools are pure reads (or pointer-adjacent focus/reveal): read-only,
+    // ungated, and never in the input tier.
+    for (const QString& ro : {QStringLiteral("browser_wait_for"),
+                              QStringLiteral("browser_get_value"),
+                              QStringLiteral("browser_get_attribute"),
+                              QStringLiteral("browser_box"),
+                              QStringLiteral("browser_focus"),
+                              QStringLiteral("browser_reveal")}) {
+        QVERIFY2(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(ro), qPrintable(ro));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32InputTool(ro), qPrintable(ro));
+    }
+    // js_click is a click: hard-confirm input tier, never read-only.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_js_click")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_js_click")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

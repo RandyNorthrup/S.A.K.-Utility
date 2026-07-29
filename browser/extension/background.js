@@ -287,6 +287,20 @@ async function dispatchCommand(cmd, args) {
       return await handleGroupTabs(args);
     case "ungroupTabs":
       return await handleUngroupTabs(args);
+    case "waitFor":
+      return await handleWaitFor(await activeTabId(), args);
+    case "getValue":
+      return await handleGetValue(await activeTabId(), args);
+    case "getAttribute":
+      return await handleGetAttribute(await activeTabId(), args);
+    case "box":
+      return await handleBox(await activeTabId(), args);
+    case "focus":
+      return await handleFocus(await activeTabId(), args);
+    case "reveal":
+      return await handleReveal(await activeTabId(), args);
+    case "jsClick":
+      return await handleJsClick(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -893,14 +907,54 @@ async function leftClickAt(tabId, x, y) {
   await clickAt(tabId, x, y, {});
 }
 
+// Hit-test the point a ref click will land on: is the topmost element there the target (or a
+// descendant of it), or is something else painted over it? Returns {occluded, by} best-effort;
+// a failure to hit-test is reported as not-occluded (never blocks the click). This lets a click
+// warn the model when an overlay/modal intercepted it, so it can dismiss it or use js_click.
+async function occlusionAt(tabId, x, y, targetBackendId) {
+  try {
+    const hit = await sendCdp(tabId, "DOM.getNodeForLocation",
+      { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: false });
+    const hitBackend = hit && hit.backendNodeId;
+    if (typeof hitBackend !== "number" || hitBackend === targetBackendId) {
+      return { occluded: false };
+    }
+    // The hit node may be a descendant of the target (e.g. clicking a button lands on its inner
+    // <span>); that is not occlusion. Ask the target whether it contains the hit node.
+    const targetObj = await resolveNodeObjectId(tabId, targetBackendId).catch(() => null);
+    const hitResolved = await sendCdp(tabId, "DOM.resolveNode", { backendNodeId: hitBackend }).catch(() => null);
+    const hitObj = hitResolved && hitResolved.object && hitResolved.object.objectId;
+    if (targetObj && hitObj) {
+      const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+        objectId: targetObj,
+        functionDeclaration: "function(other){return this===other||this.contains(other);}",
+        arguments: [{ objectId: hitObj }],
+        returnByValue: true,
+      });
+      if (call && call.result && call.result.value === true) {
+        return { occluded: false };
+      }
+    }
+    const d = await sendCdp(tabId, "DOM.describeNode", { backendNodeId: hitBackend }).catch(() => null);
+    const node = d && d.node;
+    const tag = node ? String(node.nodeName || "").toLowerCase() : "";
+    return { occluded: true, by: { tag, backendNodeId: hitBackend } };
+  } catch (_e) {
+    return { occluded: false };
+  }
+}
+
 async function handleClick(tabId, args) {
   await ensureAttached(tabId);
   requireSnapshotTab(tabId);
   const point = await resolveActionPoint(tabId, args.backendNodeId);
   const button = args.button === "right" || args.button === "middle" ? args.button : "left";
   const clickCount = Number(args.click_count) === 2 || Number(args.click_count) === 3 ? Number(args.click_count) : 1;
+  const occ = await occlusionAt(tabId, point.x, point.y, args.backendNodeId);
   await clickAt(tabId, point.x, point.y, { button, clickCount, modifiers: parseModifiers(args.modifiers) });
-  return { ok: true, x: Math.round(point.x), y: Math.round(point.y), button, click_count: clickCount };
+  const out = { ok: true, x: Math.round(point.x), y: Math.round(point.y), button, click_count: clickCount };
+  if (occ.occluded) { out.occluded_by = occ.by; }
+  return out;
 }
 
 // Move-only pointer over a target so :hover/mouseenter UI (menus, tooltips) reveals; the model
@@ -1022,20 +1076,35 @@ async function handleSelect(tabId, args) {
   const hasValue = typeof args.value === "string" && args.value.length > 0;
   const hasLabel = typeof args.label === "string" && args.label.length > 0;
   const hasIndex = Number.isInteger(args.index);
-  if (!hasValue && !hasLabel && !hasIndex) {
-    throw new Error("browser_select needs one of value, label, or index.");
+  const hasValues = Array.isArray(args.values) && args.values.length > 0;
+  if (!hasValue && !hasLabel && !hasIndex && !hasValues) {
+    throw new Error("browser_select needs one of value, label, index, or values.");
   }
   const point = await resolveActionPoint(tabId, args.backendNodeId);
   await moveAgentCursor(tabId, point.x, point.y);
-  const resolved = await sendCdp(tabId, "DOM.resolveNode", { backendNodeId: args.backendNodeId });
-  const objectId = resolved && resolved.object && resolved.object.objectId;
-  if (!objectId) {
-    throw new Error("Could not resolve the select element; take a fresh snapshot.");
-  }
-  const selectFn = function (mode, value, label, index) {
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  // One CONSTANT function body covers single (value/label/index) and multi (values) selection;
+  // all match criteria arrive as CDP argument VALUES, never interpolated into code.
+  const selectFn = function (mode, value, label, index, values) {
     var el = this;
     if (!el || el.tagName !== "SELECT") {
       return { ok: false, error: "the ref is not a <select> element" };
+    }
+    if (mode === "values") {
+      if (!el.multiple) {
+        return { ok: false, error: "the <select> is not a multiple-select; use value/label/index" };
+      }
+      var want = {};
+      for (var k = 0; k < values.length; k++) { want[String(values[k])] = true; }
+      var picked = [];
+      for (var j = 0; j < el.options.length; j++) {
+        var o = el.options[j];
+        o.selected = !!(want[o.value] || want[o.text]);
+        if (o.selected) { picked.push({ value: o.value, label: o.text }); }
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true, multiple: true, selected: picked };
     }
     var chosen = -1;
     for (var i = 0; i < el.options.length; i++) {
@@ -1050,21 +1119,19 @@ async function handleSelect(tabId, args) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true, selectedIndex: chosen, value: el.value, label: el.options[chosen].text };
   };
-  const mode = hasValue ? "value" : hasLabel ? "label" : "index";
-  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: selectFn.toString(),
-    arguments: [
-      { value: mode },
-      { value: hasValue ? args.value : "" },
-      { value: hasLabel ? args.label : "" },
-      { value: hasIndex ? args.index : -1 },
-    ],
-    returnByValue: true,
-  });
-  const result = call && call.result && call.result.value;
+  const mode = hasValues ? "values" : hasValue ? "value" : hasLabel ? "label" : "index";
+  const result = await callOnNode(tabId, objectId, selectFn, [
+    mode,
+    hasValue ? args.value : "",
+    hasLabel ? args.label : "",
+    hasIndex ? args.index : -1,
+    hasValues ? args.values.map(String) : [],
+  ]);
   if (!result || !result.ok) {
     throw new Error((result && result.error) || "browser_select failed");
+  }
+  if (result.multiple) {
+    return { ok: true, multiple: true, selected: result.selected };
   }
   return { ok: true, selectedIndex: result.selectedIndex, value: result.value, label: result.label };
 }
@@ -1163,6 +1230,213 @@ async function handleMedia(tabId, args) {
   const r = await callOnNode(tabId, objectId, mediaFn, [action, isNaN(num) ? 0 : num, !isNaN(num)]);
   if (!r || !r.ok) { throw new Error((r && r.error) || "browser_media failed"); }
   return r;
+}
+
+// -- inspection + robustness (mostly read-only) ------------------------------
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Does `selector` currently match an element in the tab? Injection-safe: the selector rides as
+// a CDP DOM.querySelector PARAMETER, never interpolated into evaluated code. Throws on an
+// invalid selector so a mistyped condition fails fast instead of polling until timeout.
+async function selectorPresent(tabId, selector) {
+  const doc = await sendCdp(tabId, "DOM.getDocument", { depth: 0 });
+  const root = doc && doc.root && doc.root.nodeId;
+  if (!root) { return false; }
+  const q = await sendCdp(tabId, "DOM.querySelector", { nodeId: root, selector });
+  return !!(q && q.nodeId);
+}
+
+async function bodyText(tabId) {
+  const res = await sendCdp(tabId, "Runtime.evaluate", {
+    expression: "document.body ? document.body.innerText : ''",
+    returnByValue: true,
+  }).catch(() => null);
+  return res && res.result && typeof res.result.value === "string" ? res.result.value : "";
+}
+
+// Poll until a page condition holds or the timeout elapses. Read-only: it reads text/URL or
+// checks element presence, never mutating the page. Exactly one of text / url_contains /
+// selector; `absent` inverts the wait (gone instead of present). Text/selector conditions run
+// injection-safely (text compared here, selector passed as a CDP param).
+async function handleWaitFor(tabId, args) {
+  await ensureAttached(tabId);
+  const timeout = Math.min(120000, Math.max(0, Number(args.timeout_ms) || 8000));
+  const absent = args.absent === true;
+  const text = typeof args.text === "string" && args.text.length > 0 ? args.text : null;
+  const urlSub = typeof args.url_contains === "string" && args.url_contains.length > 0 ? args.url_contains : null;
+  const selector = typeof args.selector === "string" && args.selector.length > 0 ? args.selector : null;
+  if ((text ? 1 : 0) + (urlSub ? 1 : 0) + (selector ? 1 : 0) !== 1) {
+    throw new Error("browser_wait_for needs exactly one of text, url_contains, or selector.");
+  }
+  const holds = async () => {
+    let hit;
+    if (text) { hit = (await bodyText(tabId)).includes(text); }
+    else if (urlSub) { hit = (await tabInfo(tabId)).url.includes(urlSub); }
+    else { hit = await selectorPresent(tabId, selector); }
+    return absent ? !hit : hit;
+  };
+  const started = Date.now();
+  for (;;) {
+    if (await holds()) {
+      return { ok: true, satisfied: true, waited_ms: Date.now() - started };
+    }
+    if (Date.now() - started >= timeout) {
+      return { ok: true, satisfied: false, timed_out: true, waited_ms: Date.now() - started };
+    }
+    await delay(250);
+  }
+}
+
+// Read the live state of a control by ref (value, checked, selected options, contenteditable
+// text, disabled). Read-only; constant function body.
+async function handleGetValue(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  const getFn = function () {
+    var el = this;
+    if (!el) { return { ok: false, error: "no element" }; }
+    var out = { ok: true, tag: String(el.tagName || "").toLowerCase() };
+    if ("value" in el) { out.value = String(el.value); }
+    if (typeof el.checked === "boolean") { out.checked = el.checked; }
+    if (el.tagName === "SELECT") {
+      out.multiple = !!el.multiple;
+      out.selected = Array.prototype.map.call(el.selectedOptions || [],
+        function (o) { return { value: o.value, label: o.text }; });
+    }
+    if (el.isContentEditable) { out.text = String(el.textContent || "").slice(0, 5000); }
+    out.disabled = !!el.disabled;
+    return out;
+  };
+  const r = await callOnNode(tabId, objectId, getFn, []);
+  if (!r || !r.ok) { throw new Error((r && r.error) || "browser_get_value failed"); }
+  return r;
+}
+
+// Read one attribute (name given) or all attributes of a ref. Read-only; values are page-
+// derived, so each is length-capped to keep one giant data: URI from flooding the reply.
+async function handleGetAttribute(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  const name = typeof args.name === "string" ? args.name : "";
+  const attrFn = function (name) {
+    var el = this;
+    if (!el || !el.getAttribute) { return { ok: false, error: "element has no attributes" }; }
+    var cap = function (v) { return v === null ? null : String(v).slice(0, 2048); };
+    if (name) { return { ok: true, name: name, value: cap(el.getAttribute(name)) }; }
+    var all = {};
+    for (var i = 0; i < el.attributes.length; i++) { all[el.attributes[i].name] = cap(el.attributes[i].value); }
+    return { ok: true, attributes: all };
+  };
+  const r = await callOnNode(tabId, objectId, attrFn, [name]);
+  if (!r || !r.ok) { throw new Error((r && r.error) || "browser_get_attribute failed"); }
+  return r;
+}
+
+// Report a ref's geometry, whether it is inside the viewport, and whether an overlay covers its
+// center (occlusion). Read-only; scrolls-into-view are not performed here so the box reflects
+// where the element actually sits right now.
+async function handleBox(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  if (typeof args.backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  let model;
+  try {
+    model = await sendCdp(tabId, "DOM.getBoxModel", { backendNodeId: args.backendNodeId });
+  } catch (_e) {
+    return { ok: true, laid_out: false };
+  }
+  const quad = model && model.model && model.model.content;
+  if (!quad || quad.length < 8) { return { ok: true, laid_out: false }; }
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const left = Math.min.apply(null, xs), top = Math.min.apply(null, ys);
+  const right = Math.max.apply(null, xs), bottom = Math.max.apply(null, ys);
+  const center = quadCenter(quad);
+  const out = {
+    ok: true, laid_out: true,
+    x: Math.round(left), y: Math.round(top),
+    width: Math.round(right - left), height: Math.round(bottom - top),
+    center: { x: Math.round(center.x), y: Math.round(center.y) },
+  };
+  const vp = await viewportState(tabId);
+  const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
+  const view = metrics && (metrics.cssVisualViewport || metrics.visualViewport);
+  if (view) {
+    const vw = view.clientWidth || 0, vh = view.clientHeight || 0;
+    out.in_viewport = left >= 0 && top >= 0 && right <= vw && bottom <= vh;
+  }
+  out.dpr = vp.dpr;
+  const occ = await occlusionAt(tabId, center.x, center.y, args.backendNodeId);
+  out.occluded = occ.occluded;
+  if (occ.occluded) { out.occluded_by = occ.by; }
+  return out;
+}
+
+// Focus a ref (fires the page's focus events, like a real tab-into). Pointer-adjacent and
+// non-destructive; used to prepare an element for browser_press_key without a click.
+async function handleFocus(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  if (typeof args.backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  try {
+    await sendCdp(tabId, "DOM.focus", { backendNodeId: args.backendNodeId });
+  } catch (_e) {
+    throw new Error("Could not focus the element (it may not be focusable); take a fresh snapshot.");
+  }
+  return { ok: true };
+}
+
+// Scroll a ref into view (bring an off-screen element on-screen before a screenshot or
+// coordinate click). Viewport-only change, like browser_scroll.
+async function handleReveal(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  if (typeof args.backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  try {
+    await sendCdp(tabId, "DOM.scrollIntoViewIfNeeded", { backendNodeId: args.backendNodeId });
+  } catch (_e) {
+    throw new Error("The element is not laid out (hidden or gone); take a fresh snapshot.");
+  }
+  const point = await resolveActionPoint(tabId, args.backendNodeId).catch(() => null);
+  if (point) { await moveAgentCursor(tabId, point.x, point.y); }
+  return { ok: true };
+}
+
+// NOTE: a dedicated file-upload tool is intentionally absent. CDP DOM.setFileInputFiles is
+// blocked ("Not allowed") for chrome.debugger extension sessions -- Chrome forbids programmatic
+// local-file selection through an extension, which is the exact exfiltration vector such a tool
+// would create. File uploads are instead done by composition: browser_click the file input to
+// open the native Windows chooser, then drive that dialog with the win32 UIA tools.
+
+// Programmatic el.click() in-page, as a fallback when a real pointer click cannot land (target
+// occluded by an overlay, zero-box but present, or a control that ignores synthetic pointer
+// events). GATED like browser_click. Constant function body.
+async function handleJsClick(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
+  const point = await resolveActionPoint(tabId, args.backendNodeId).catch(() => null);
+  if (point) { await moveAgentCursor(tabId, point.x, point.y); }
+  const clickFn = function () {
+    var el = this;
+    if (!el || typeof el.click !== "function") { return { ok: false, error: "element is not clickable" }; }
+    el.click();
+    return { ok: true };
+  };
+  const r = await callOnNode(tabId, objectId, clickFn, []);
+  if (!r || !r.ok) { throw new Error((r && r.error) || "browser_js_click failed"); }
+  return { ok: true };
 }
 
 function keyDefinition(token) {
