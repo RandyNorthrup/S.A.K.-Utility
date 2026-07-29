@@ -18,6 +18,24 @@ constexpr int kMaxNameChars = 120;
 // Guard against a hostile/broken capture reporting a huge depth and producing a
 // megabyte of leading spaces.
 constexpr int kMaxIndentDepth = 20;
+// Cap how many nodes we render. The whole capture is an untrusted, web-page-derived
+// payload; without this a hostile page reporting millions of nodes would blow up the
+// outline string + ref_index held in the long-lived process and overflow next_ref.
+constexpr int kMaxNodes = 4000;
+// Cap the page-controlled url/title that head the snapshot text.
+constexpr int kMaxUrlChars = 2048;
+constexpr int kMaxTitleChars = 300;
+
+// Collapse to a single line and length-cap an untrusted string. simplified() strips
+// newlines/tabs, which is what stops a hostile role/title/url from forging extra
+// outline lines or fake [ref=...] entries in the model-facing text.
+QString oneLine(const QString& raw, int cap) {
+    QString value = raw.simplified();
+    if (value.size() > cap) {
+        value = value.left(cap) + QLatin1String("...");
+    }
+    return value;
+}
 
 QString escapeName(const QString& raw) {
     QString name = raw.simplified();  // collapse internal whitespace + trim
@@ -27,6 +45,25 @@ QString escapeName(const QString& raw) {
         name = name.left(kMaxNameChars) + QLatin1String("...");
     }
     return name;
+}
+
+// A backendNodeId is only usable if it is a positive JSON integer. A hostile capture
+// could report it as a string/object/array/float to smuggle a non-integer into the
+// CDP command envelope; such a node gets no ref (it cannot be acted on).
+bool asBackendId(const QJsonValue& value, qint64* out) {
+    if (!value.isDouble()) {
+        return false;
+    }
+    const double raw = value.toDouble();
+    if (raw < 1.0 || raw > 9.0e15) {  // stay within exact-integer double range
+        return false;
+    }
+    const auto id = static_cast<qint64>(raw);
+    if (static_cast<double>(id) != raw) {  // reject non-integral values
+        return false;
+    }
+    *out = id;
+    return true;
 }
 
 // An interactable role we still show even with no accessible name, because the
@@ -77,7 +114,12 @@ QString stateSuffix(const QJsonObject& node) {
 QString buildNodeLine(const QJsonObject& node, const QString& name, const QString& ref) {
     int depth = node.value(QStringLiteral("depth")).toInt(0);
     depth = qBound(0, depth, kMaxIndentDepth);
-    const QString role = node.value(QStringLiteral("role")).toString(QStringLiteral("generic"));
+    // role is untrusted: escape + cap it like name, so a hostile role cannot inject
+    // newlines/brackets/quotes and forge fake outline lines or [ref=...] entries.
+    QString role = escapeName(node.value(QStringLiteral("role")).toString());
+    if (role.isEmpty()) {
+        role = QStringLiteral("generic");
+    }
     QString line = QString(depth * 2, QLatin1Char(' ')) + QStringLiteral("- ") + role;
     if (!name.isEmpty()) {
         line += QStringLiteral(" \"") + name + QLatin1Char('"');
@@ -329,12 +371,14 @@ void appendTabTools(QJsonArray& tools) {
 
 SnapshotView renderSnapshot(const QJsonObject& capture) {
     SnapshotView view;
-    view.url = capture.value(QStringLiteral("url")).toString();
-    view.title = capture.value(QStringLiteral("title")).toString();
+    view.url = oneLine(capture.value(QStringLiteral("url")).toString(), kMaxUrlChars);
+    view.title = oneLine(capture.value(QStringLiteral("title")).toString(), kMaxTitleChars);
 
     QString outline;
     QJsonObject ref_index;
     int next_ref = 0;
+    int emitted = 0;
+    bool truncated = false;
     const QJsonArray nodes = capture.value(QStringLiteral("nodes")).toArray();
     for (const QJsonValue& value : nodes) {
         const QJsonObject node = value.toObject();
@@ -343,17 +387,27 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
         if (!nodeIsRenderable(node, interactable, name)) {
             continue;
         }
+        if (emitted >= kMaxNodes) {
+            truncated = true;
+            break;
+        }
+        // Only an interactable node with a valid integer backendNodeId gets a ref;
+        // otherwise it is shown for context but cannot be acted on.
+        qint64 backend_id = 0;
         QString ref;
-        if (interactable) {
+        if (interactable && asBackendId(node.value(QStringLiteral("backendNodeId")), &backend_id)) {
             ref = QStringLiteral("e%1").arg(++next_ref);
             ref_index.insert(ref,
-                             QJsonObject{{QStringLiteral("backendNodeId"),
-                                          node.value(QStringLiteral("backendNodeId"))},
+                             QJsonObject{{QStringLiteral("backendNodeId"), backend_id},
                                          {QStringLiteral("role"),
-                                          node.value(QStringLiteral("role"))},
+                                          node.value(QStringLiteral("role")).toString()},
                                          {QStringLiteral("name"), name}});
         }
         outline += buildNodeLine(node, name, ref);
+        ++emitted;
+    }
+    if (truncated) {
+        outline += QStringLiteral("  ... (more elements omitted; the page is very large)\n");
     }
 
     view.outline = outline;

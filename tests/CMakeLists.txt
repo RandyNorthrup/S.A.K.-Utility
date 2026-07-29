@@ -4326,6 +4326,32 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_native_messaging.cpp")
     message(STATUS "Added unit test: test_native_messaging")
 endif()
 
+# test_browser_bridge --- the MCP-side browser session state machine (id minting,
+# single-winner reply matching, snapshot->ref_index, session/stale lifecycle).
+# OS-agnostic (Qt Core only); links browser_bridge + browser_contract.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge.cpp")
+    add_executable(test_browser_bridge
+        unit/test_browser_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_bridge.h
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_contract.h
+    )
+    set_target_properties(test_browser_bridge PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_browser_bridge PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_browser_bridge PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_browser_bridge COMMAND test_browser_bridge
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_browser_bridge")
+endif()
+
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types
