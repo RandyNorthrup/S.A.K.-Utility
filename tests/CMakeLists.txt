@@ -4253,6 +4253,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_cleanup_guard.cpp")
     message(STATUS "Added unit test: test_leftover_cleanup_guard")
 endif()
 
+# test_win32_mcp_server --- native win32 MCP server: JSON-RPC dispatch + tool catalog/invocation
+# (Windows only; shcore for GetDpiForMonitor in list_monitors).
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp")
+    add_executable(test_win32_mcp_server
+        unit/test_win32_mcp_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dispatch.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_dispatch.h
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_tools.h
+    )
+    set_target_properties(test_win32_mcp_server PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_server PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS} shcore
+    )
+    target_include_directories(test_win32_mcp_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_server COMMAND test_win32_mcp_server
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_server")
+endif()
+
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types

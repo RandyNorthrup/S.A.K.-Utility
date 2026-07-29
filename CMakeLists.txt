@@ -1102,6 +1102,60 @@ endif()
 add_dependencies(sak_utility sak_hfs_writer_cli)
 
 # ============================================================================
+# Native win32 MCP Server (assistant computer + browser control)
+# ============================================================================
+# A standalone stdio MCP server the assistant spawns to drive the live desktop
+# (window/monitor inspection today; UI-Automation locate, screen capture, and
+# gated input actions to follow). Native C++ so it ships no third-party runtime
+# -- only Windows system APIs and Qt, which the app already bundles. Replaces
+# the external, frozen PyInstaller win32-inspector server.
+if(PLATFORM_WINDOWS)
+    add_executable(sak_win32_mcp
+        src/win32mcp/win32_mcp_main.cpp
+        src/win32mcp/win32_mcp_dispatch.cpp
+        src/win32mcp/win32_mcp_tools.cpp
+        include/sak/win32mcp/win32_mcp_dispatch.h
+        include/sak/win32mcp/win32_mcp_tools.h
+        include/sak/ai/ai_mcp_jsonrpc.h
+    )
+
+    set_target_properties(sak_win32_mcp PROPERTIES
+        AUTOMOC ON
+        WIN32_EXECUTABLE FALSE
+    )
+
+    target_include_directories(sak_win32_mcp PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+    )
+
+    # shcore: GetDpiForMonitor (per-monitor DPI reporting in list_monitors).
+    target_link_libraries(sak_win32_mcp PRIVATE
+        Qt6::Core
+        ${PLATFORM_LIBS}
+        shcore
+    )
+
+    target_compile_definitions(sak_win32_mcp PRIVATE
+        QT_NO_KEYWORDS
+        QT_DEPRECATED_WARNINGS
+        QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    )
+
+    if(MSVC)
+        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_win32_mcp_crt_pos)
+        if(_sak_win32_mcp_crt_pos EQUAL -1)
+            target_link_options(sak_win32_mcp PRIVATE
+                /NODEFAULTLIB:MSVCRT
+                /NODEFAULTLIB:MSVCRTD
+            )
+        endif()
+    endif()
+
+    add_dependencies(sak_utility sak_win32_mcp)
+endif()
+
+# ============================================================================
 # Elevated Helper Executable (Phase 2 — per-task elevation)
 # ============================================================================
 
