@@ -59,6 +59,8 @@ private slots:
     void buildCommand_unknownToolFails();
     void buildCommand_selectResolvesRefAndCopiesOption();
     void buildCommand_setValueAndMediaBuild();
+    void buildCommand_clickCopiesButtonCountModifiers();
+    void buildCommand_dragResolvesBothEndpoints();
     void buildCommand_groupTabsCopiesArgs();
     void renderSnapshot_emitsAriaStateAndValue();
     void buildCommand_selectTabCopiesIntArgument();
@@ -261,6 +263,8 @@ void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {
                                     QStringLiteral("browser_select"),
                                     QStringLiteral("browser_set_value"),
                                     QStringLiteral("browser_media"),
+                                    QStringLiteral("browser_hover"),
+                                    QStringLiteral("browser_drag"),
                                     QStringLiteral("browser_group_tabs"),
                                     QStringLiteral("browser_ungroup_tabs"),
                                     QStringLiteral("browser_tabs")}) {
@@ -426,6 +430,50 @@ void BrowserContractTests::buildCommand_setValueAndMediaBuild() {
     QCOMPARE(md.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("media"));
     QCOMPARE(md.command.value(QStringLiteral("action")).toString(), QStringLiteral("seek"));
     QCOMPARE(md.command.value(QStringLiteral("value")).toString(), QStringLiteral("30"));
+}
+
+void BrowserContractTests::buildCommand_clickCopiesButtonCountModifiers() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 7}}}};
+    const ExtensionCommand cmd =
+        buildExtensionCommand(QStringLiteral("browser_click"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")},
+                                          {QStringLiteral("button"), QStringLiteral("right")},
+                                          {QStringLiteral("click_count"), 2},
+                                          {QStringLiteral("modifiers"), QStringLiteral("Control")}},
+                              refIndex);
+    QVERIFY(cmd.ok);
+    QCOMPARE(cmd.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("click"));
+    QCOMPARE(cmd.command.value(QStringLiteral("backendNodeId")).toInt(), 7);
+    QCOMPARE(cmd.command.value(QStringLiteral("button")).toString(), QStringLiteral("right"));
+    QCOMPARE(cmd.command.value(QStringLiteral("click_count")).toInt(), 2);
+    QCOMPARE(cmd.command.value(QStringLiteral("modifiers")).toString(), QStringLiteral("Control"));
+}
+
+void BrowserContractTests::buildCommand_dragResolvesBothEndpoints() {
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 10}}},
+        {QStringLiteral("e2"), QJsonObject{{QStringLiteral("backendNodeId"), 20}}}};
+    // from = ref (resolved to backendNodeId), to = to_ref (resolved to to_backendNodeId).
+    const ExtensionCommand cmd =
+        buildExtensionCommand(QStringLiteral("browser_drag"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")},
+                                          {QStringLiteral("to_ref"), QStringLiteral("e2")},
+                                          {QStringLiteral("steps"), 8}},
+                              refIndex);
+    QVERIFY(cmd.ok);
+    QCOMPARE(cmd.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("drag"));
+    QCOMPARE(cmd.command.value(QStringLiteral("backendNodeId")).toInt(), 10);
+    QCOMPARE(cmd.command.value(QStringLiteral("to_backendNodeId")).toInt(), 20);
+    QCOMPARE(cmd.command.value(QStringLiteral("steps")).toInt(), 8);
+
+    // Unknown to_ref fails cleanly.
+    const ExtensionCommand bad =
+        buildExtensionCommand(QStringLiteral("browser_drag"),
+                              QJsonObject{{QStringLiteral("to_ref"), QStringLiteral("e9")}},
+                              refIndex);
+    QVERIFY(!bad.ok);
+    QVERIFY(bad.error.contains(QStringLiteral("e9")));
 }
 
 void BrowserContractTests::renderSnapshot_emitsAriaStateAndValue() {

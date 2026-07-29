@@ -263,6 +263,10 @@ async function dispatchCommand(cmd, args) {
       return await handleClick(await activeTabId(), args);
     case "clickAt":
       return await handleClickAt(await activeTabId(), args);
+    case "hover":
+      return await handleHover(await activeTabId(), args);
+    case "drag":
+      return await handleDrag(await activeTabId(), args);
     case "dialog":
       return await handleDialog(await activeTabId(), args);
     case "type":
@@ -855,21 +859,90 @@ async function dispatchMouse(tabId, type, x, y, extra) {
   await sendCdp(tabId, "Input.dispatchMouseEvent", Object.assign({ type, x, y }, extra || {}));
 }
 
-// A left click at a CSS-pixel viewport point: move the agent cursor there, then the
-// move/press/release triad CDP needs for a real click.
-async function leftClickAt(tabId, x, y) {
+const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
+
+// Parse "Control+Shift" -> the CDP modifier bitmask (reuses MODIFIER_BITS).
+function parseModifiers(spec) {
+  if (!spec) { return 0; }
+  let mods = 0;
+  for (const part of String(spec).split("+")) {
+    const bit = MODIFIER_BITS[part.trim().toLowerCase()];
+    if (bit) { mods |= bit; }
+  }
+  return mods;
+}
+
+// A click at a CSS-pixel viewport point with button/count/modifiers. For clickCount > 1 the
+// press/release pair repeats with an incrementing clickCount, which is how Chrome derives
+// dblclick (2) and tripleclick (3). The agent cursor is moved there first.
+async function clickAt(tabId, x, y, opts) {
+  opts = opts || {};
+  const button = opts.button === "right" || opts.button === "middle" ? opts.button : "left";
+  const mask = MOUSE_BUTTONS[button] || 1;
+  const clickCount = opts.clickCount === 2 || opts.clickCount === 3 ? opts.clickCount : 1;
+  const modifiers = opts.modifiers || 0;
   await moveAgentCursor(tabId, x, y);
-  await dispatchMouse(tabId, "mouseMoved", x, y, {});
-  await dispatchMouse(tabId, "mousePressed", x, y, { button: "left", buttons: 1, clickCount: 1 });
-  await dispatchMouse(tabId, "mouseReleased", x, y, { button: "left", buttons: 0, clickCount: 1 });
+  await dispatchMouse(tabId, "mouseMoved", x, y, { modifiers });
+  for (let c = 1; c <= clickCount; c++) {
+    await dispatchMouse(tabId, "mousePressed", x, y, { button, buttons: mask, clickCount: c, modifiers });
+    await dispatchMouse(tabId, "mouseReleased", x, y, { button, buttons: 0, clickCount: c, modifiers });
+  }
+}
+
+async function leftClickAt(tabId, x, y) {
+  await clickAt(tabId, x, y, {});
 }
 
 async function handleClick(tabId, args) {
   await ensureAttached(tabId);
   requireSnapshotTab(tabId);
   const point = await resolveActionPoint(tabId, args.backendNodeId);
-  await leftClickAt(tabId, point.x, point.y);
+  const button = args.button === "right" || args.button === "middle" ? args.button : "left";
+  const clickCount = Number(args.click_count) === 2 || Number(args.click_count) === 3 ? Number(args.click_count) : 1;
+  await clickAt(tabId, point.x, point.y, { button, clickCount, modifiers: parseModifiers(args.modifiers) });
+  return { ok: true, x: Math.round(point.x), y: Math.round(point.y), button, click_count: clickCount };
+}
+
+// Move-only pointer over a target so :hover/mouseenter UI (menus, tooltips) reveals; the model
+// then re-snapshots to read what appeared. Optional dwell lets hover-intent JS settle.
+async function handleHover(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const point = await resolveActionPoint(tabId, args.backendNodeId);
+  await moveAgentCursor(tabId, point.x, point.y);
+  await dispatchMouse(tabId, "mouseMoved", point.x, point.y, { modifiers: parseModifiers(args.modifiers) });
+  const dwell = Math.min(5000, Math.max(0, Number(args.duration_ms) || 0));
+  if (dwell > 0) { await new Promise((r) => setTimeout(r, dwell)); }
   return { ok: true, x: Math.round(point.x), y: Math.round(point.y) };
+}
+
+// Drag from a source (ref or x,y) to a target (ref or x,y) with interpolated moves so drag
+// thresholds trigger. hold_ms pauses after press (long-press pickup for sortables/kanban).
+async function handleDrag(tabId, args) {
+  await ensureAttached(tabId);
+  const from = typeof args.backendNodeId === "number"
+    ? await resolveActionPoint(tabId, args.backendNodeId)
+    : { x: Number(args.from_x), y: Number(args.from_y) };
+  const to = typeof args.to_backendNodeId === "number"
+    ? await resolveActionPoint(tabId, args.to_backendNodeId)
+    : { x: Number(args.to_x), y: Number(args.to_y) };
+  if (![from.x, from.y, to.x, to.y].every(Number.isFinite)) {
+    throw new Error("browser_drag needs a from (ref or from_x/from_y) and a to (to_ref or to_x/to_y).");
+  }
+  const steps = Math.min(60, Math.max(2, Number(args.steps) || 12));
+  const hold = Math.min(5000, Math.max(0, Number(args.hold_ms) || 0));
+  await moveAgentCursor(tabId, from.x, from.y);
+  await dispatchMouse(tabId, "mouseMoved", from.x, from.y, {});
+  await dispatchMouse(tabId, "mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1 });
+  if (hold > 0) { await new Promise((r) => setTimeout(r, hold)); }
+  for (let i = 1; i <= steps; i++) {
+    const x = from.x + ((to.x - from.x) * i) / steps;
+    const y = from.y + ((to.y - from.y) * i) / steps;
+    await moveAgentCursor(tabId, x, y);
+    await dispatchMouse(tabId, "mouseMoved", x, y, { button: "left", buttons: 1 });
+  }
+  await dispatchMouse(tabId, "mouseReleased", to.x, to.y, { button: "left", buttons: 0, clickCount: 1 });
+  return { ok: true, from: { x: Math.round(from.x), y: Math.round(from.y) }, to: { x: Math.round(to.x), y: Math.round(to.y) } };
 }
 
 async function handleClickAt(tabId, args) {
@@ -904,8 +977,10 @@ async function handleClickAt(tabId, args) {
   }
   // Screenshot pixels are DEVICE pixels; convert to the CSS pixels CDP Input wants using the
   // dpr captured WITH the screenshot (not a re-read), so the two can never disagree.
-  await leftClickAt(tabId, sx / shot.dpr, sy / shot.dpr);
-  return { ok: true, x: Math.round(sx), y: Math.round(sy) };
+  const button = args.button === "right" || args.button === "middle" ? args.button : "left";
+  const clickCount = Number(args.click_count) === 2 || Number(args.click_count) === 3 ? Number(args.click_count) : 1;
+  await clickAt(tabId, sx / shot.dpr, sy / shot.dpr, { button, clickCount, modifiers: parseModifiers(args.modifiers) });
+  return { ok: true, x: Math.round(sx), y: Math.round(sy), button, click_count: clickCount };
 }
 
 async function handleType(tabId, args) {

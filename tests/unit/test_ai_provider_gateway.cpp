@@ -136,6 +136,10 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_media")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_group_tabs")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_ungroup_tabs")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_drag")));
+    // Hover only moves the pointer to reveal content; treated as read-only (ungated).
+    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_hover")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_hover")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_select")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_snapshot")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_click")));

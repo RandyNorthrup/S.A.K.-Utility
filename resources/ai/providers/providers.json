@@ -78,6 +78,8 @@
         "browser_screenshot",
         "browser_click",
         "browser_click_at",
+        "browser_hover",
+        "browser_drag",
         "browser_type",
         "browser_select",
         "browser_set_value",

@@ -188,7 +188,25 @@ QHash<QString, CmdSpec> interactionCommandSpecs() {
         {QStringLiteral("browser_snapshot"),
          {QStringLiteral("snapshot"), QStringLiteral("none"), {}}},
         {QStringLiteral("browser_click"),
-         {QStringLiteral("click"), QStringLiteral("required"), {}}},
+         {QStringLiteral("click"),
+          QStringLiteral("required"),
+          {{QStringLiteral("button"), QStringLiteral("string"), false},
+           {QStringLiteral("click_count"), QStringLiteral("int"), false},
+           {QStringLiteral("modifiers"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_hover"),
+         {QStringLiteral("hover"),
+          QStringLiteral("required"),
+          {{QStringLiteral("duration_ms"), QStringLiteral("int"), false},
+           {QStringLiteral("modifiers"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_drag"),
+         {QStringLiteral("drag"),
+          QStringLiteral("optional"),
+          {{QStringLiteral("from_x"), QStringLiteral("int"), false},
+           {QStringLiteral("from_y"), QStringLiteral("int"), false},
+           {QStringLiteral("to_x"), QStringLiteral("int"), false},
+           {QStringLiteral("to_y"), QStringLiteral("int"), false},
+           {QStringLiteral("steps"), QStringLiteral("int"), false},
+           {QStringLiteral("hold_ms"), QStringLiteral("int"), false}}}},
         {QStringLiteral("browser_type"),
          {QStringLiteral("type"),
           QStringLiteral("required"),
@@ -198,6 +216,30 @@ QHash<QString, CmdSpec> interactionCommandSpecs() {
          {QStringLiteral("pressKey"),
           QStringLiteral("none"),
           {{QStringLiteral("keys"), QStringLiteral("string"), true}}}},
+        {QStringLiteral("browser_scroll"),
+         {QStringLiteral("scroll"),
+          QStringLiteral("optional"),
+          {{QStringLiteral("direction"), QStringLiteral("string"), false},
+           {QStringLiteral("amount"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_click_at"),
+         {QStringLiteral("clickAt"),
+          QStringLiteral("none"),
+          {{QStringLiteral("x"), QStringLiteral("int"), true},
+           {QStringLiteral("y"), QStringLiteral("int"), true},
+           {QStringLiteral("button"), QStringLiteral("string"), false},
+           {QStringLiteral("click_count"), QStringLiteral("int"), false},
+           {QStringLiteral("modifiers"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_dialog"),
+         {QStringLiteral("dialog"),
+          QStringLiteral("none"),
+          {{QStringLiteral("action"), QStringLiteral("string"), false},
+           {QStringLiteral("text"), QStringLiteral("string"), false}}}},
+    };
+}
+
+// Form-control command specs (dropdown, value-set, media).
+QHash<QString, CmdSpec> formCommandSpecs() {
+    return {
         {QStringLiteral("browser_select"),
          {QStringLiteral("select"),
           QStringLiteral("required"),
@@ -214,21 +256,6 @@ QHash<QString, CmdSpec> interactionCommandSpecs() {
           QStringLiteral("required"),
           {{QStringLiteral("action"), QStringLiteral("string"), true},
            {QStringLiteral("value"), QStringLiteral("string"), false}}}},
-        {QStringLiteral("browser_scroll"),
-         {QStringLiteral("scroll"),
-          QStringLiteral("optional"),
-          {{QStringLiteral("direction"), QStringLiteral("string"), false},
-           {QStringLiteral("amount"), QStringLiteral("int"), false}}}},
-        {QStringLiteral("browser_click_at"),
-         {QStringLiteral("clickAt"),
-          QStringLiteral("none"),
-          {{QStringLiteral("x"), QStringLiteral("int"), true},
-           {QStringLiteral("y"), QStringLiteral("int"), true}}}},
-        {QStringLiteral("browser_dialog"),
-         {QStringLiteral("dialog"),
-          QStringLiteral("none"),
-          {{QStringLiteral("action"), QStringLiteral("string"), false},
-           {QStringLiteral("text"), QStringLiteral("string"), false}}}},
     };
 }
 
@@ -276,6 +303,7 @@ QHash<QString, CmdSpec> pageAndTabCommandSpecs() {
 const QHash<QString, CmdSpec>& commandSpecs() {
     static const QHash<QString, CmdSpec> specs = [] {
         QHash<QString, CmdSpec> merged = interactionCommandSpecs();
+        merged.insert(formCommandSpecs());
         merged.insert(pageAndTabCommandSpecs());
         return merged;
     }();
@@ -385,11 +413,23 @@ void appendNavTools(QJsonArray& tools) {
 void appendActionTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_click"),
-        QStringLiteral("Click the element with the given [ref] from the latest snapshot. The "
-                       "click is injected at the browser level, so the user's mouse is untouched."),
-        toolSchema(QJsonObject{{QStringLiteral("ref"),
-                                stringProperty(QStringLiteral("Element ref, e.g. \"e5\"."))}},
-                   QJsonArray{QStringLiteral("ref")})));
+        QStringLiteral("Click the element with [ref] from the latest snapshot (injected at the "
+                       "browser level, so the user's mouse is untouched). button is left "
+                       "(default), right (context menu), or middle; click_count 2 double-clicks "
+                       "and 3 triple-clicks; modifiers like \"Control+Shift\" enable multi/range "
+                       "select."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Element ref, e.g. \"e5\"."))},
+                        {QStringLiteral("button"),
+                         stringProperty(QStringLiteral("left | right | middle (optional)."))},
+                        {QStringLiteral("click_count"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("1, 2, or 3 (optional)."))},
+                        {QStringLiteral("modifiers"),
+                         stringProperty(QStringLiteral("e.g. \"Control\", \"Shift\" "
+                                                       "(optional)."))}},
+            QJsonArray{QStringLiteral("ref")})));
     tools.append(toolEntry(
         QStringLiteral("browser_type"),
         QStringLiteral("Type text into the element with [ref] from the latest snapshot. Set submit "
@@ -421,18 +461,6 @@ void appendActionTools(QJsonArray& tools) {
                                                         QStringLiteral("Pixels to scroll."))}},
                              {})));
     tools.append(toolEntry(
-        QStringLiteral("browser_click_at"),
-        QStringLiteral("Click at pixel coordinates read from the most recent browser_screenshot "
-                       "(x,y in that image's pixels). Use this only for targets with no [ref] "
-                       "(canvas, image maps); prefer browser_click by ref otherwise."),
-        toolSchema(QJsonObject{{QStringLiteral("x"),
-                                typedProperty(QStringLiteral("integer"),
-                                              QStringLiteral("X in screenshot pixels."))},
-                               {QStringLiteral("y"),
-                                typedProperty(QStringLiteral("integer"),
-                                              QStringLiteral("Y in screenshot pixels."))}},
-                   QJsonArray{QStringLiteral("x"), QStringLiteral("y")})));
-    tools.append(toolEntry(
         QStringLiteral("browser_dialog"),
         QStringLiteral("Set how the NEXT JavaScript dialog is answered and report the last one. "
                        "Dialogs are auto-answered (alert/beforeunload accepted, confirm/prompt "
@@ -445,6 +473,69 @@ void appendActionTools(QJsonArray& tools) {
                                 stringProperty(QStringLiteral("Text for an accepted prompt() "
                                                               "dialog (optional)."))}},
                    {})));
+}
+
+void appendPointerTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_click_at"),
+        QStringLiteral("Click at pixel coordinates read from the most recent browser_screenshot "
+                       "(x,y in that image's pixels). Use this only for targets with no [ref] "
+                       "(canvas, image maps); prefer browser_click by ref otherwise. Supports "
+                       "button, click_count, and modifiers like browser_click."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("x"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("X in screenshot pixels."))},
+                        {QStringLiteral("y"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Y in screenshot pixels."))},
+                        {QStringLiteral("button"),
+                         stringProperty(QStringLiteral("left | right | middle (optional)."))},
+                        {QStringLiteral("click_count"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("1, 2, or 3 (optional)."))},
+                        {QStringLiteral("modifiers"),
+                         stringProperty(QStringLiteral("e.g. \"Control+Shift\" (optional)."))}},
+            QJsonArray{QStringLiteral("x"), QStringLiteral("y")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_hover"),
+        QStringLiteral("Move the pointer over the element with [ref] to reveal hover menus, "
+                       "tooltips, or row actions, then take a fresh snapshot to read what "
+                       "appeared. duration_ms lets hover-intent UI settle."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         stringProperty(QStringLiteral("Element ref to hover, e.g. \"e5\"."))},
+                        {QStringLiteral("duration_ms"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Dwell time in ms (optional)."))}},
+            QJsonArray{QStringLiteral("ref")})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_drag"),
+        QStringLiteral("Drag from a source to a target with interpolated moves (sliders, "
+                       "sortable/kanban lists, splitters, canvas, media scrubbers). Give the "
+                       "source as [ref] or from_x/from_y and the target as to_ref or to_x/to_y. "
+                       "hold_ms pauses after press for long-press pickup."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("ref"),
+                 stringProperty(QStringLiteral("Source element ref (optional if from_x/from_y)."))},
+                {QStringLiteral("to_ref"),
+                 stringProperty(QStringLiteral("Target element ref (optional if to_x/to_y)."))},
+                {QStringLiteral("from_x"),
+                 typedProperty(QStringLiteral("integer"), QStringLiteral("Source X (optional)."))},
+                {QStringLiteral("from_y"),
+                 typedProperty(QStringLiteral("integer"), QStringLiteral("Source Y (optional)."))},
+                {QStringLiteral("to_x"),
+                 typedProperty(QStringLiteral("integer"), QStringLiteral("Target X (optional)."))},
+                {QStringLiteral("to_y"),
+                 typedProperty(QStringLiteral("integer"), QStringLiteral("Target Y (optional)."))},
+                {QStringLiteral("steps"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral("Interpolated moves (optional)."))},
+                {QStringLiteral("hold_ms"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral("Hold after press (optional)."))}},
+            {})));
 }
 
 void appendFormControlTools(QJsonArray& tools) {
@@ -648,6 +739,7 @@ QJsonArray browserToolCatalog() {
     QJsonArray tools;
     appendNavTools(tools);
     appendActionTools(tools);
+    appendPointerTools(tools);
     appendFormControlTools(tools);
     appendTabTools(tools);
     return tools;
@@ -674,6 +766,21 @@ ExtensionCommand buildExtensionCommand(const QString& tool,
         const QString error = copyArg(arguments, arg, command);
         if (!error.isEmpty()) {
             return fail(error);
+        }
+    }
+    // browser_drag has a SECOND endpoint given by a ref: resolve the optional to_ref to its
+    // backendNodeId here (the primary `ref` is the drag source, resolved above).
+    if (tool == QLatin1String("browser_drag")) {
+        const QString to_ref = arguments.value(QStringLiteral("to_ref")).toString();
+        if (!to_ref.isEmpty()) {
+            if (!ref_index.contains(to_ref)) {
+                return fail(
+                    QStringLiteral("Unknown element ref '%1'; call browser_snapshot to refresh")
+                        .arg(to_ref));
+            }
+            command.insert(QStringLiteral("to_backendNodeId"),
+                           ref_index.value(to_ref).toObject().value(
+                               QStringLiteral("backendNodeId")));
         }
     }
     return {command, true, QString()};
