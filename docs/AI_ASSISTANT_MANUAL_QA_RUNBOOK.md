@@ -145,10 +145,9 @@ Expected:
 - Context7 reports no auth required and is used for public docs lookup.
 - `docs_query` can search Microsoft Learn and resolve Context7 library ids
   through public Streamable HTTP MCP without any bundled API key.
-- `win32_mcp` shows available only when
-  `tools\mcp\win32-mcp-server\win32-mcp-server.exe` is bundled.
-- `tools\mcp\win32-mcp-server\THIRD_PARTY_LICENSES.txt` is present in bundled
-  builds and should be reviewed when updating Win32 MCP dependencies.
+- `win32_mcp` is the app's built-in desktop/browser automation server (the app
+  binary run headless via `SAK_WIN32_MCP_MODE`); it shows available whenever
+  `sak_utility.exe` is present.
 - Planned providers such as browser/GitHub report planned or disabled instead
   of pretending they are ready.
 - `operation=win32_mcp_call` can call bundled Win32 MCP tools when local tools
@@ -412,8 +411,8 @@ Manual QA can proceed when:
 
 - App launches from `build\Release\sak_utility.exe`.
 - Release package creation refuses missing MCP/provider/app-control files:
-  `win32-mcp-server.exe`, its `THIRD_PARTY_LICENSES.txt`, `providers.json`,
-  `windows_defender.json`, `superantispyware.json`, and `windows_sfc.json`.
+  `providers.json`, `windows_defender.json`, `superantispyware.json`, and
+  `windows_sfc.json`.
 - Clean extracted release folder has no `*.local.json`, no `tools\mcp\_build`,
   and no Chocolatey runtime state under `tools\chocolatey\lib-bad`, `cache`, or
   `temp`.

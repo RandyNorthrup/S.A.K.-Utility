@@ -1,13 +1,10 @@
-﻿SAK MCP bundle layout
+SAK MCP bundle layout
 =====================
 
-Expected portable files:
-
-  tools/mcp/win32-mcp-server/win32-mcp-server.exe
-
-Build/package win32-mcp-server as a self-contained Windows executable before
-shipping unattended GUI automation. SAK provider manifests already point to this
-path and the build copies tools/ into the release directory.
+The Win32 desktop and browser automation MCP server is built into the app binary
+(sak_utility.exe run in a headless stdio mode), not a separately bundled tool, so
+there are no local runtime files to place here for it. The provider manifest
+(data/ai/providers/providers.json) points the win32_mcp provider at sak_utility.exe.
 
 Remote MCP providers do not need local runtime files:
 

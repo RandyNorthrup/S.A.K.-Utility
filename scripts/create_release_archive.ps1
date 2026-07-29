@@ -42,8 +42,6 @@ if ($packagedLocalProviderFiles) {
 $requiredPackageFiles = @(
     "sak_utility.exe",
     "sak_elevated_helper.exe",
-    "tools/mcp/win32-mcp-server/win32-mcp-server.exe",
-    "tools/mcp/win32-mcp-server/THIRD_PARTY_LICENSES.txt",
     "data/ai/providers/providers.json",
     "data/ai/app_manifests/windows_defender.json",
     "data/ai/app_manifests/superantispyware.json",

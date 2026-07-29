@@ -108,13 +108,6 @@ jobs:
         # The script is idempotent - skips if iperf3.exe is already present.
         & scripts/bundle_iperf3.ps1
 
-    - name: Bundle MCP servers
-      shell: pwsh
-      run: |
-        # Build portable MCP servers before CMake config so the app output and
-        # packaged ZIP get the same bundled tools layout as local releases.
-        & scripts/bundle_mcp_servers.ps1 -BuildWin32 -Python python
-
     - name: Install release gate tools
       shell: pwsh
       run: |
@@ -263,14 +256,8 @@ jobs:
           Write-Host "OK  tools/iperf3/iperf3.exe"
         }
 
-        # Win32 MCP server (bundled for manifest-gated desktop automation)
-        if (!(Test-Path "tools/mcp/win32-mcp-server/win32-mcp-server.exe")) {
-          Write-Error "FATAL: tools/mcp/win32-mcp-server/win32-mcp-server.exe not found - app-control MCP automation unavailable"
-          exit 1
-        } else {
-          $win32McpVer = & .\tools\mcp\win32-mcp-server\win32-mcp-server.exe --version 2>&1 | Select-Object -First 1
-          Write-Host "OK  tools/mcp/win32-mcp-server/win32-mcp-server.exe ($win32McpVer)"
-        }
+        # Win32 desktop/browser automation is now the app binary's built-in MCP server
+        # (folded into sak_utility.exe), not a separately bundled executable.
         if (Test-Path "tools/mcp/_build") {
           Write-Error "FATAL: tools/mcp/_build leaked into release output"
           exit 1

@@ -768,7 +768,6 @@ and `-PartitionExternalEvidenceChecklist`. See
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
 | [qrcodegen](https://www.nayuki.io/page/qr-code-generator-library) | MIT | QR code generation (bundled source) |
-| [win32-mcp-server](https://github.com/RandyNorthrup/win32-mcp-server) | MIT | Bundled portable MCP server for manifest-gated Windows desktop observation/automation |
 | [Context7 MCP](https://github.com/upstash/context7) | MIT | Remote documentation MCP provider; no bundled code; no app API key |
 | [Microsoft Learn MCP](https://learn.microsoft.com/en-us/training/support/mcp) | Microsoft Learn Terms | Remote Microsoft documentation MCP provider; no bundled code; no app API key |
 | [aria2](https://aria2.github.io/) | GPLv2 | Multi-connection downloader bundled for ISO/UUP payload downloads |
@@ -811,10 +810,10 @@ OpenAI API calls include a `safety_identifier` derived from the local AI session
 ID hash. The raw session ID and user identity are not sent for this field.
 
 The provider gateway exposes Microsoft Learn and Context7 public documentation
-lookups through HTTP MCP, plus bundled Win32 MCP calls through the portable
-`tools/mcp/win32-mcp-server/win32-mcp-server.exe`. Win32 MCP access follows the
-selected AI access mode: observation tools are read-only, interactive tools use
-the interactive profile, and high-risk tools require the existing high-risk
+lookups through HTTP MCP, plus the app's built-in Win32 desktop and browser
+automation server (the app binary run in a headless stdio mode). Win32 MCP access
+follows the selected AI access mode: observation tools are read-only, interactive
+tools use the interactive profile, and high-risk tools require the existing high-risk
 handling path. Supported app-manifest actions can run through the same gateway;
 for example, the Microsoft Defender manifest exposes quick/full scan and
 definition update actions while SUPERAntiSpyware scan actions remain manual
@@ -863,7 +862,6 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 
 - [**Qt**](https://www.qt.io/) - Cross-platform UI framework (LGPL v3)
 - [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) - QR code generator by Project Nayuki (MIT)
-- [**win32-mcp-server**](https://github.com/RandyNorthrup/win32-mcp-server) - Portable Windows automation MCP server (MIT)
 - [**Context7 MCP**](https://github.com/upstash/context7) - Remote code documentation MCP provider (MIT source; no app API key required)
 - [**Microsoft Learn MCP**](https://learn.microsoft.com/en-us/training/support/mcp) - Remote Microsoft documentation MCP provider
 - [**aria2**](https://aria2.github.io/) - Multi-connection download manager (GPLv2)
