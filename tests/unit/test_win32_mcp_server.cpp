@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/win32mcp/browser_control.h"
 #include "sak/win32mcp/browser_extension_installer.h"
 #include "sak/win32mcp/win32_mcp_dispatch.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
@@ -58,6 +59,7 @@ private slots:
     void invokeTool_clipboardWriteRequiresText();
     void invokeTool_clipboardReadReturnsTextShape();
     void invokeTool_browserExtensionStatusReturnsShape();
+    void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
 };
@@ -222,6 +224,37 @@ void Win32McpServerTests::invokeTool_browserExtensionStatusReturnsShape() {
     QVERIFY(state == QStringLiteral("installed") || state == QStringLiteral("not_installed") ||
             state == QStringLiteral("partial") || state == QStringLiteral("error"));
     QVERIFY(payload.value(QStringLiteral("crx_present")).isBool());
+    QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
+             QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
+}
+
+void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {
+    // Regression: the browser_extension_* tools are native installer tools. Their
+    // "browser_" prefix must NOT route them to the browser bridge (which would answer
+    // "browser not connected" before Chrome is even set up). handles() must reject them,
+    // and tools/call must reach invokeTool even when a BrowserControl is present.
+    sak::win32mcp::BrowserControl browser;  // not started; handles() is a pure check
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_install")));
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_uninstall")));
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_status")));
+    QVERIFY(browser.handles(QStringLiteral("browser_snapshot")));
+    QVERIFY(browser.handles(QStringLiteral("browser_click")));
+
+    const auto response = handleRequest(
+        request(QStringLiteral("tools/call"),
+                42,
+                QJsonObject{{QStringLiteral("name"), QStringLiteral("browser_extension_status")}}),
+        &browser);
+    QVERIFY(response.has_value());
+    const QJsonObject result = response->value(QStringLiteral("result")).toObject();
+    QVERIFY(!result.value(QStringLiteral("isError")).toBool(true));
+    const QString text = result.value(QStringLiteral("content"))
+                             .toArray()
+                             .first()
+                             .toObject()
+                             .value(QStringLiteral("text"))
+                             .toString();
+    const QJsonObject payload = QJsonDocument::fromJson(text.toUtf8()).object();
     QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
              QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
 }
