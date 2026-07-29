@@ -160,7 +160,7 @@ const QHash<QString, CmdSpec>& commandSpecs() {
          {QStringLiteral("click"), QStringLiteral("required"), {}}},
         {QStringLiteral("browser_type"),
          {QStringLiteral("type"),
-          QStringLiteral("optional"),
+          QStringLiteral("required"),
           {{QStringLiteral("text"), QStringLiteral("string"), true},
            {QStringLiteral("submit"), QStringLiteral("bool"), false}}}},
         {QStringLiteral("browser_press_key"),
@@ -311,16 +311,16 @@ void appendActionTools(QJsonArray& tools) {
                    QJsonArray{QStringLiteral("ref")})));
     tools.append(toolEntry(
         QStringLiteral("browser_type"),
-        QStringLiteral("Type text into the element with [ref] (or the focused element if omitted). "
-                       "Set submit to press Enter afterward."),
+        QStringLiteral("Type text into the element with [ref] from the latest snapshot. Set submit "
+                       "to press Enter afterward."),
         toolSchema(QJsonObject{{QStringLiteral("text"),
                                 stringProperty(QStringLiteral("Text to type."))},
                                {QStringLiteral("ref"),
-                                stringProperty(QStringLiteral("Target element ref (optional)."))},
+                                stringProperty(QStringLiteral("Target element ref, e.g. \"e5\"."))},
                                {QStringLiteral("submit"),
                                 typedProperty(QStringLiteral("boolean"),
                                               QStringLiteral("Press Enter after typing."))}},
-                   QJsonArray{QStringLiteral("text")})));
+                   QJsonArray{QStringLiteral("text"), QStringLiteral("ref")})));
     tools.append(toolEntry(
         QStringLiteral("browser_press_key"),
         QStringLiteral("Press a key or chord, e.g. \"Enter\", \"Escape\", \"Control+A\"."),

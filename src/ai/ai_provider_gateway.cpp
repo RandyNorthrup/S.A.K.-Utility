@@ -396,6 +396,14 @@ void populateWin32Plan(AiProviderGateway::Win32McpCallPlan* plan,
     plan->tool_arguments = tool_arguments;
     plan->read_only = AiProviderGateway::isWin32ReadOnlyTool(tool_name);
     plan->high_risk = AiProviderGateway::isWin32HighRiskTool(tool_name);
+    // Fail CLOSED: any tool that is neither on the read-only allowlist nor a known
+    // high-risk exec tool -- every input-injection tool, and anything added to the
+    // manifest later -- requires an explicit human confirmation, instead of dropping into
+    // the ungated "interactive" tier where it would auto-run in Unattended. This is the
+    // safety net behind isWin32InputTool: a new automation tool cannot silently act as the
+    // user just because someone forgot to classify it.
+    plan->requires_confirmation = AiProviderGateway::isWin32InputTool(tool_name) ||
+                                  !(plan->read_only || plan->high_risk);
     plan->security_profile = plan->read_only   ? QStringLiteral("read_only")
                              : plan->high_risk ? QStringLiteral("unrestricted")
                                                : QStringLiteral("interactive");
@@ -580,6 +588,10 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
 bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
     static const QSet<QString> read_only{
         QStringLiteral("assert_text_visible"),
+        QStringLiteral("browser_read"),
+        QStringLiteral("browser_screenshot"),
+        QStringLiteral("browser_snapshot"),
+        QStringLiteral("browser_tabs"),
         QStringLiteral("capture_monitor"),
         QStringLiteral("capture_screen"),
         QStringLiteral("capture_window"),
@@ -616,6 +628,20 @@ bool AiProviderGateway::isWin32HighRiskTool(const QString& tool_name) {
         QStringLiteral("start_process"),
     };
     return high_risk.contains(tool_name.trimmed());
+}
+
+bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
+    static const QSet<QString> input_tools{
+        QStringLiteral("browser_click"),
+        QStringLiteral("browser_press_key"),
+        QStringLiteral("browser_scroll"),
+        QStringLiteral("browser_type"),
+        // Live desktop input injection (physical text-click / arbitrary UIA invoke).
+        // These are already in the win32_mcp manifest and must take the same hard gate.
+        QStringLiteral("click_text"),
+        QStringLiteral("uia_click_control"),
+    };
+    return input_tools.contains(tool_name.trimmed());
 }
 
 QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& security_profile,

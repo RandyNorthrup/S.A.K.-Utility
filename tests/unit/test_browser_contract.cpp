@@ -54,7 +54,7 @@ private slots:
     void buildCommand_clickResolvesRefToBackendNodeId();
     void buildCommand_clickUnknownRefFails();
     void buildCommand_clickMissingRefFails();
-    void buildCommand_typeRequiresTextAndAcceptsOptionalRef();
+    void buildCommand_typeRequiresTextAndRef();
     void buildCommand_unknownToolFails();
     void buildCommand_selectTabCopiesIntArgument();
 };
@@ -273,10 +273,9 @@ void BrowserContractTests::buildCommand_clickMissingRefFails() {
     QVERIFY(cmd.error.contains(QStringLiteral("ref")));
 }
 
-void BrowserContractTests::buildCommand_typeRequiresTextAndAcceptsOptionalRef() {
+void BrowserContractTests::buildCommand_typeRequiresTextAndRef() {
     const ExtensionCommand missing = buildExtensionCommand(QStringLiteral("browser_type"), {}, {});
     QVERIFY(!missing.ok);
-    QVERIFY(missing.error.contains(QStringLiteral("text")));
 
     const QJsonObject refIndex{
         {QStringLiteral("e3"), QJsonObject{{QStringLiteral("backendNodeId"), 77}}}};
@@ -291,13 +290,14 @@ void BrowserContractTests::buildCommand_typeRequiresTextAndAcceptsOptionalRef() 
     QCOMPARE(ok.command.value(QStringLiteral("backendNodeId")).toInt(), 77);
     QCOMPARE(ok.command.value(QStringLiteral("submit")).toBool(), true);
 
-    // ref is optional: typing into the focused element is allowed with no ref.
+    // ref is REQUIRED now: typing without a validated target is refused, so page-
+    // controlled focus can never choose where the model's text lands.
     const ExtensionCommand noRef =
         buildExtensionCommand(QStringLiteral("browser_type"),
                               QJsonObject{{QStringLiteral("text"), QStringLiteral("hi")}},
                               {});
-    QVERIFY(noRef.ok);
-    QVERIFY(!noRef.command.contains(QStringLiteral("backendNodeId")));
+    QVERIFY(!noRef.ok);
+    QVERIFY(noRef.error.contains(QStringLiteral("ref")));
 }
 
 void BrowserContractTests::buildCommand_unknownToolFails() {

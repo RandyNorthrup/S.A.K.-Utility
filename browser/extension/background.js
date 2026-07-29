@@ -48,10 +48,56 @@ const STRUCTURAL_ROLES = new Set([
 const MAX_CAPTURE_NODES = 2000;
 const MAX_READ_CHARS = 200000;
 const NAV_TIMEOUT_MS = 15000;
+const DEFAULT_SCROLL_PX = 400;
+
+// CDP Input.dispatchKeyEvent modifier bitmask (Alt=1, Control=2, Meta=4, Shift=8).
+const MODIFIER_BITS = { alt: 1, control: 2, ctrl: 2, meta: 4, command: 4, cmd: 4, shift: 8 };
+// Named non-printable keys the model may press, mapped to their DOM code + legacy
+// keyCode (needed so browser shortcuts like Control+A actually register).
+const KEY_DEFS = {
+  enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+  tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  esc: { key: "Escape", code: "Escape", keyCode: 27 },
+  backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  delete: { key: "Delete", code: "Delete", keyCode: 46 },
+  space: { key: " ", code: "Space", keyCode: 32, text: " " },
+  arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  home: { key: "Home", code: "Home", keyCode: 36 },
+  end: { key: "End", code: "End", keyCode: 35 },
+  pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+  pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+};
+// OEM punctuation -> [DOM code, Windows virtual key code]. ASCII charCodeAt is NOT the
+// virtual key (e.g. '.' is 46 = VK_DELETE), so a chord like Control+/ needs the real VK.
+const OEM_KEYS = {
+  ";": ["Semicolon", 186], ":": ["Semicolon", 186],
+  "=": ["Equal", 187], "+": ["Equal", 187],
+  ",": ["Comma", 188], "<": ["Comma", 188],
+  "-": ["Minus", 189], "_": ["Minus", 189],
+  ".": ["Period", 190], ">": ["Period", 190],
+  "/": ["Slash", 191], "?": ["Slash", 191],
+  "`": ["Backquote", 192], "~": ["Backquote", 192],
+  "[": ["BracketLeft", 219], "{": ["BracketLeft", 219],
+  "\\": ["Backslash", 220], "|": ["Backslash", 220],
+  "]": ["BracketRight", 221], "}": ["BracketRight", 221],
+  "'": ["Quote", 222], '"': ["Quote", 222],
+};
+// The agent's own on-page cursor: a page-injected overlay so the user SEES where the
+// agent acts, distinct from their untouched OS cursor. Cosmetic only (never a security
+// boundary): a hostile page can hide it, but cannot use it to drive input.
+const AGENT_CURSOR_ID = "__sak_agent_cursor__";
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
 let attachedTabId = null;
+// The tab whose nodes populated the current ref_index. An element ref (backendNodeId) is
+// only valid against THIS tab: if the active tab changed since the snapshot, applying the
+// ref elsewhere could click/type a node the user never saw, so ref actions refuse.
+let lastSnapshotTabId = null;
 let reconnectTimer = null;
 
 // -- Native messaging port ---------------------------------------------------
@@ -172,10 +218,13 @@ async function runCommand(cmd, args) {
     case "closeTab":
       return await handleCloseTab(args);
     case "click":
+      return await handleClick(await activeTabId(), args);
     case "type":
+      return await handleType(await activeTabId(), args);
     case "pressKey":
+      return await handlePressKey(await activeTabId(), args);
     case "scroll":
-      throw new Error("Input actions are not enabled in this build yet.");
+      return await handleScroll(await activeTabId(), args);
     case "screenshot":
       throw new Error("Screenshots are not enabled in this build yet.");
     default:
@@ -233,6 +282,7 @@ async function ensureAttached(tabId) {
 }
 
 async function detachAll(_reason) {
+  lastSnapshotTabId = null;  // any ref_index is now unverifiable against a live tab
   if (attachedTabId === null) {
     return;
   }
@@ -249,8 +299,19 @@ async function detachAll(_reason) {
 chrome.debugger.onDetach.addListener((source) => {
   if (source && source.tabId === attachedTabId) {
     attachedTabId = null;
+    lastSnapshotTabId = null;
   }
 });
+
+// Refs are valid only on the tab the snapshot was taken from; refuse a ref action when
+// the active tab has changed since (a tab switch, or a model-opened foreground tab).
+function requireSnapshotTab(tabId) {
+  if (lastSnapshotTabId === null || tabId !== lastSnapshotTabId) {
+    throw new Error(
+      "The active tab changed since the last snapshot; call browser_snapshot on the " +
+        "current tab before acting on an element.");
+  }
+}
 
 // -- snapshot: accessibility roles/names joined with DOM-snapshot geometry ----
 
@@ -390,6 +451,7 @@ function countFrames(frameTree) {
 
 async function captureSnapshot(tabId) {
   await ensureAttached(tabId);
+  lastSnapshotTabId = tabId;  // refs from this snapshot are valid only against this tab
   const snapshot = await sendCdp(tabId, "DOMSnapshot.captureSnapshot", { computedStyles: [] });
   const boundsByBackend = buildBoundsMap(snapshot);
   const axTree = await sendCdp(tabId, "Accessibility.getFullAXTree", {});
@@ -432,6 +494,194 @@ async function handleRead(tabId, args) {
   }
   const info = await tabInfo(tabId);
   return { format, content, truncated, url: info.url, title: info.title };
+}
+
+// -- input: browser-level injection (the user's OS cursor is never touched) ---
+//
+// Every action here is driven by the assistant through the code-verified bridge and
+// gated by the app's confirmation policy before it arrives; a page can neither initiate
+// input nor supply the target (backendNodeId comes from our own validated snapshot,
+// text/keys from the model). Actions are dispatched over CDP Input, so they land in the
+// page at the browser level and the user's real mouse/keyboard are untouched.
+
+// Center of a CDP content-box quad [x1,y1,x2,y2,x3,y3,x4,y4], in the CSS-pixel viewport
+// space Input.dispatchMouseEvent expects.
+function quadCenter(quad) {
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const avg = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+  return { x: avg(xs), y: avg(ys) };
+}
+
+async function resolveActionPoint(tabId, backendNodeId) {
+  if (typeof backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  await sendCdp(tabId, "DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
+  let model;
+  try {
+    model = await sendCdp(tabId, "DOM.getBoxModel", { backendNodeId });
+  } catch (_e) {
+    throw new Error("The element is not laid out (hidden or gone); take a fresh snapshot.");
+  }
+  const quad = model && model.model && model.model.content;
+  if (!quad || quad.length < 8) {
+    throw new Error("The element has no visible box; take a fresh snapshot.");
+  }
+  return quadCenter(quad);
+}
+
+// Move the agent's own on-page cursor to (x,y). Numbers are coerced to finite integers,
+// so nothing page- or model-controlled is interpolated as code.
+function agentCursorScript(x, y) {
+  const px = Number.isFinite(x) ? Math.round(x) : 0;
+  const py = Number.isFinite(y) ? Math.round(y) : 0;
+  return (
+    "(function(){var c=document.getElementById('" + AGENT_CURSOR_ID + "');" +
+    "if(!c){c=document.createElement('div');c.id='" + AGENT_CURSOR_ID + "';" +
+    "c.style.cssText='position:fixed;z-index:2147483647;width:18px;height:18px;" +
+    "margin:-9px 0 0 -9px;border-radius:50%;border:2px solid #1e88e5;" +
+    "background:rgba(30,136,229,.25);pointer-events:none;transition:left .12s,top .12s;" +
+    "box-shadow:0 0 6px rgba(30,136,229,.9)';" +
+    "(document.body||document.documentElement).appendChild(c);}" +
+    "c.style.left='" + px + "px';c.style.top='" + py + "px';})();"
+  );
+}
+
+async function moveAgentCursor(tabId, x, y) {
+  await sendCdp(tabId, "Runtime.evaluate", { expression: agentCursorScript(x, y) }).catch(() => {});
+}
+
+async function dispatchMouse(tabId, type, x, y, extra) {
+  await sendCdp(tabId, "Input.dispatchMouseEvent", Object.assign({ type, x, y }, extra || {}));
+}
+
+async function handleClick(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const point = await resolveActionPoint(tabId, args.backendNodeId);
+  await moveAgentCursor(tabId, point.x, point.y);
+  await dispatchMouse(tabId, "mouseMoved", point.x, point.y, {});
+  await dispatchMouse(tabId, "mousePressed", point.x, point.y,
+    { button: "left", buttons: 1, clickCount: 1 });
+  await dispatchMouse(tabId, "mouseReleased", point.x, point.y,
+    { button: "left", buttons: 0, clickCount: 1 });
+  return { ok: true, x: Math.round(point.x), y: Math.round(point.y) };
+}
+
+async function handleType(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const text = typeof args.text === "string" ? args.text : "";
+  // A validated ref is required: typing into the page-focused element would let page
+  // content (element.focus()/autofocus) redirect the model's text into a field the
+  // bridge never chose. Focus the snapshot-resolved node, and abort (never silently type
+  // into the wrong place) if that node cannot be focused.
+  if (typeof args.backendNodeId !== "number") {
+    throw new Error("This action needs a valid element ref from the latest snapshot.");
+  }
+  const point = await resolveActionPoint(tabId, args.backendNodeId);
+  await moveAgentCursor(tabId, point.x, point.y);
+  try {
+    await sendCdp(tabId, "DOM.focus", { backendNodeId: args.backendNodeId });
+  } catch (_e) {
+    throw new Error("Could not focus the target element (it may not be focusable); take a "
+      + "fresh snapshot and target an input.");
+  }
+  await sendCdp(tabId, "Input.insertText", { text });
+  if (args.submit === true) {
+    await dispatchKey(tabId, KEY_DEFS.enter, 0);
+  }
+  return { ok: true, typed: text.length, submitted: args.submit === true };
+}
+
+function keyDefinition(token) {
+  const named = KEY_DEFS[token.toLowerCase()];
+  if (named) {
+    return named;
+  }
+  if (token.length === 1) {
+    const upper = token.toUpperCase();
+    if (/[A-Z]/.test(upper)) {
+      // key casing follows the (separate) Shift modifier; shortcut matching uses
+      // code/keyCode + modifiers, so emit lower-case key to keep DOM state consistent.
+      return { key: token.toLowerCase(), code: "Key" + upper, keyCode: upper.charCodeAt(0),
+        text: token };
+    }
+    if (/[0-9]/.test(upper)) {
+      return { key: token, code: "Digit" + upper, keyCode: upper.charCodeAt(0), text: token };
+    }
+    const oem = OEM_KEYS[token];
+    if (oem) {
+      return { key: token, code: oem[0], keyCode: oem[1], text: token };
+    }
+  }
+  throw new Error("Unsupported key: " + token);
+}
+
+function parseChord(keys) {
+  const parts = String(keys || "").split("+").map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) {
+    throw new Error('pressKey needs a key or chord, e.g. "Enter" or "Control+A".');
+  }
+  const keyToken = parts.pop();
+  let modifiers = 0;
+  for (const mod of parts) {
+    const bit = MODIFIER_BITS[mod.toLowerCase()];
+    if (!bit) {
+      throw new Error("Unknown modifier: " + mod);
+    }
+    modifiers |= bit;
+  }
+  return { modifiers, def: keyDefinition(keyToken) };
+}
+
+async function dispatchKey(tabId, def, modifiers) {
+  const base = {
+    modifiers,
+    key: def.key,
+    code: def.code,
+    windowsVirtualKeyCode: def.keyCode,
+    nativeVirtualKeyCode: def.keyCode,
+  };
+  const down = Object.assign({ type: "keyDown" }, base);
+  // A keyDown with `text` fires keypress/char: this is what makes Enter's implicit form
+  // submit work and makes a printable key actually insert its character. Suppress it under
+  // Ctrl/Alt/Meta so chords (Control+A) stay edit commands rather than typing a char.
+  const nonShift = MODIFIER_BITS.alt | MODIFIER_BITS.control | MODIFIER_BITS.meta;
+  if (def.text && (modifiers & nonShift) === 0) {
+    down.text = def.text;
+  }
+  await sendCdp(tabId, "Input.dispatchKeyEvent", down);
+  await sendCdp(tabId, "Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, base));
+}
+
+async function handlePressKey(tabId, args) {
+  await ensureAttached(tabId);
+  const { modifiers, def } = parseChord(args.keys);
+  await dispatchKey(tabId, def, modifiers);
+  return { ok: true, keys: String(args.keys) };
+}
+
+async function handleScroll(tabId, args) {
+  await ensureAttached(tabId);
+  const requested = Number(args.amount);
+  const amount = Number.isFinite(requested) && requested > 0 ? requested : DEFAULT_SCROLL_PX;
+  const deltaY = args.direction === "up" ? -amount : amount;
+  let point;
+  if (typeof args.backendNodeId === "number") {
+    requireSnapshotTab(tabId);
+    point = await resolveActionPoint(tabId, args.backendNodeId);
+  } else {
+    const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
+    const vp = metrics && (metrics.cssVisualViewport || metrics.visualViewport);
+    point = vp
+      ? { x: (vp.clientWidth || 800) / 2, y: (vp.clientHeight || 600) / 2 }
+      : { x: 200, y: 200 };
+  }
+  await moveAgentCursor(tabId, point.x, point.y);
+  await dispatchMouse(tabId, "mouseWheel", point.x, point.y, { deltaX: 0, deltaY });
+  return { ok: true, deltaY };
 }
 
 // -- navigation + tabs (via chrome.tabs, no debugger banner) ------------------

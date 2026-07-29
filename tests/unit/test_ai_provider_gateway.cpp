@@ -34,6 +34,7 @@ private Q_SLOTS:
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
+    void planWin32McpCallFlagsBrowserInputForConfirmation();
     void win32McpEnvironmentIncludesProviderValues();
     void win32McpResultExtractsTextAndRiskFlags();
     void win32McpResultFlagsLogicalToolError();
@@ -117,6 +118,78 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("kill_process")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("start_process")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("click")));
+
+    // Browser reads are read-only (ungated); browser input tools are the confirmation
+    // tier and must NOT be misclassified as read-only.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_snapshot")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_read")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_click")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_type")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_press_key")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_scroll")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_snapshot")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_click")));
+
+    // The live-desktop input tools already shipped in the win32_mcp manifest must be in
+    // the input tier too (they were fail-open ungated before).
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("uia_click_control")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("click_text")));
+}
+
+void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString command_path =
+        QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
+    QVERIFY(writeFile(command_path, QByteArray("stub")));
+    const QString providers_path =
+        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
+    const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                               {QStringLiteral("transport"), QStringLiteral("stdio")},
+                               {QStringLiteral("command"),
+                                QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
+                               {QStringLiteral("tools"),
+                                QJsonArray{QStringLiteral("browser_click"),
+                                           QStringLiteral("browser_snapshot"),
+                                           QStringLiteral("mystery_tool")}}};
+    QVERIFY(
+        writeFile(providers_path,
+                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
+                      .toJson(QJsonDocument::Compact)));
+
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    QString error;
+
+    // Input tool: not read-only, and flagged for a mandatory human confirmation.
+    const auto click = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_click")},
+                                 {QStringLiteral("ref"), QStringLiteral("e5")}}}},
+        &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(!click.read_only);
+    QVERIFY(click.requires_confirmation);
+
+    // Read tool: read-only and NOT gated for confirmation.
+    const auto snapshot =
+        gateway.planWin32McpCall(QJsonObject{{QStringLiteral("arguments"),
+                                              QJsonObject{{QStringLiteral("tool_name"),
+                                                           QStringLiteral("browser_snapshot")}}}},
+                                 &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(snapshot.read_only);
+    QVERIFY(!snapshot.requires_confirmation);
+
+    // Fail CLOSED: a tool on none of the classifier lists must still require confirmation
+    // rather than dropping into the ungated interactive tier and auto-running unattended.
+    const auto mystery = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("mystery_tool")}}}},
+        &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(!mystery.read_only);
+    QVERIFY(!mystery.high_risk);
+    QVERIFY(mystery.requires_confirmation);
 }
 
 void AiProviderGatewayTests::win32McpEnvironmentIncludesProviderValues() {

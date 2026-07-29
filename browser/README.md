@@ -68,3 +68,19 @@ replies exactly once with `{type:"result", id, cmd, payload}` or
 
 To remove the host registration:
 `./browser/native-host/register_native_host.ps1 -Unregister`.
+
+## Input (unit 7)
+
+The assistant can also act on the page: `browser_click`, `browser_type`,
+`browser_press_key`, and `browser_scroll`. These are injected at the DevTools-protocol
+level (CDP `Input`), so the user's real mouse and keyboard are never taken over, and the
+agent draws its OWN cursor on the page (a small blue dot) so the user can see where it is
+acting. Targets come only from the latest snapshot's `[ref=eN]` handles (validated by the
+bridge), never from page content; `browser_type` requires a ref so page-controlled focus
+cannot redirect typed text.
+
+Confirmation policy: every input action requires an explicit human confirmation in the
+app in EVERY non-chat access mode, including Unattended (where read-only browser tools and
+navigation may auto-run). The prompt is the app's trusted UI -- untrusted page content can
+never grant permission. The classifier fails CLOSED: any win32 tool not on the read-only
+allowlist requires confirmation, so a new automation tool cannot silently act as the user.

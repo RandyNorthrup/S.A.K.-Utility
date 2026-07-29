@@ -25,6 +25,12 @@ public:
         int timeout_ms = kDefaultProviderGatewayTimeoutMs;
         bool read_only = false;
         bool high_risk = false;
+        // Set for tools that inject input into the user's logged-in browser
+        // (click/type/press-key/scroll). These demand a HARD human confirmation in every
+        // non-chat access mode -- including Unattended, where other win32 automation
+        // would otherwise auto-run -- so an autonomous or injected model cannot silently
+        // act as the user in their browser.
+        bool requires_confirmation = false;
         QString preview;
     };
 
@@ -57,6 +63,9 @@ public:
 
     [[nodiscard]] static bool isWin32ReadOnlyTool(const QString& tool_name);
     [[nodiscard]] static bool isWin32HighRiskTool(const QString& tool_name);
+    /// Browser-control tools that inject input into the active tab and therefore
+    /// require an explicit human confirmation in every non-chat access mode.
+    [[nodiscard]] static bool isWin32InputTool(const QString& tool_name);
     [[nodiscard]] static QProcessEnvironment win32McpEnvironment(const QString& security_profile,
                                                                  const QJsonObject& provider);
     [[nodiscard]] static QJsonObject win32McpResult(const QJsonObject& provider,
