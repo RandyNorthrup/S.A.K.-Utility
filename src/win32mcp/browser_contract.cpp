@@ -333,6 +333,20 @@ QHash<QString, CmdSpec> advancedInputCommandSpecs() {
     };
 }
 
+// Browser-window (chrome.windows) command specs.
+QHash<QString, CmdSpec> windowCommandSpecs() {
+    return {
+        {QStringLiteral("browser_windows"),
+         {QStringLiteral("listWindows"), QStringLiteral("none"), {}}},
+        {QStringLiteral("browser_window"),
+         {QStringLiteral("window"),
+          QStringLiteral("none"),
+          {{QStringLiteral("action"), QStringLiteral("string"), true},
+           {QStringLiteral("window_id"), QStringLiteral("int"), false},
+           {QStringLiteral("url"), QStringLiteral("string"), false}}}},
+    };
+}
+
 const QHash<QString, CmdSpec>& commandSpecs() {
     static const QHash<QString, CmdSpec> specs = [] {
         QHash<QString, CmdSpec> merged = interactionCommandSpecs();
@@ -340,6 +354,7 @@ const QHash<QString, CmdSpec>& commandSpecs() {
         merged.insert(pageAndTabCommandSpecs());
         merged.insert(inspectionCommandSpecs());
         merged.insert(advancedInputCommandSpecs());
+        merged.insert(windowCommandSpecs());
         return merged;
     }();
     return specs;
@@ -778,6 +793,28 @@ void appendInspectionTools(QJsonArray& tools) {
                              QJsonArray{QStringLiteral("ref")})));
 }
 
+void appendWindowTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_windows"),
+        QStringLiteral("List the open browser windows (window_id, focused, type, state, tab_count) "
+                       "so a model-opened popup or new window is visible. Read-only."),
+        toolSchema({}, {})));
+    tools.append(toolEntry(
+        QStringLiteral("browser_window"),
+        QStringLiteral("Manage a browser window. action is new (open a window, optionally at a "
+                       "URL), focus (bring window_id to front), or close (close window_id). Get "
+                       "window_id from browser_windows."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("action"),
+                         stringProperty(QStringLiteral("new | focus | close."))},
+                        {QStringLiteral("window_id"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Target window id for focus/close."))},
+                        {QStringLiteral("url"),
+                         stringProperty(QStringLiteral("URL to open for action new (optional)."))}},
+            QJsonArray{QStringLiteral("action")})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -893,6 +930,7 @@ QJsonArray browserToolCatalog() {
     appendFormControlTools(tools);
     appendTabTools(tools);
     appendInspectionTools(tools);
+    appendWindowTools(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

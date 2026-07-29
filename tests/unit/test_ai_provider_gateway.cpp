@@ -188,6 +188,13 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // js_click is a click: hard-confirm input tier, never read-only.
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_js_click")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_js_click")));
+
+    // Batch 3b: listing windows is read-only; browser_window (new/focus/close) mutates the
+    // browser, so it is neither read-only nor input-tier -- the fail-closed default confirms it.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_windows")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_windows")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_window")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_window")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

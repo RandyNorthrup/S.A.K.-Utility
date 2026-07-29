@@ -600,6 +600,7 @@ bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
         QStringLiteral("browser_snapshot"),
         QStringLiteral("browser_tabs"),
         QStringLiteral("browser_wait_for"),
+        QStringLiteral("browser_windows"),
         QStringLiteral("capture_monitor"),
         QStringLiteral("capture_screen"),
         QStringLiteral("capture_window"),

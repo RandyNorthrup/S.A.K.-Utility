@@ -301,6 +301,10 @@ async function dispatchCommand(cmd, args) {
       return await handleReveal(await activeTabId(), args);
     case "jsClick":
       return await handleJsClick(await activeTabId(), args);
+    case "listWindows":
+      return await handleListWindows();
+    case "window":
+      return await handleWindow(args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -1705,6 +1709,56 @@ async function handleCloseTab(args) {
       : await activeTab();
   await chrome.tabs.remove(tab.id);
   return { ok: true, index: tab.index };
+}
+
+// -- browser windows (chrome.windows) ----------------------------------------
+//
+// A model-opened link can spawn a popup or a new window; browser_windows lists them (and
+// browser_tabs lists the tabs inside) so nothing opened off-screen is invisible. window CRUD
+// mutates the browser (opening/closing windows), so it is gated at the normal-confirm tier.
+
+async function handleListWindows() {
+  const wins = await chrome.windows.getAll({ populate: true });
+  const list = wins.map((w) => ({
+    window_id: w.id,
+    focused: !!w.focused,
+    type: w.type || "normal",
+    state: w.state || "",
+    tab_count: (w.tabs || []).length,
+    incognito: !!w.incognito,
+  }));
+  return { windows: list };
+}
+
+async function handleWindow(args) {
+  const action = String((args && args.action) || "").toLowerCase();
+  if (action !== "new" && action !== "focus" && action !== "close") {
+    throw new Error("browser_window action must be new, focus, or close.");
+  }
+  if (action === "new") {
+    // A standard browser window (Chrome's extension API does not reliably honor a popup type
+    // for a navigated window, so we do not expose one). An optional URL opens it there.
+    const url = args && args.url ? normalizeUrl(args.url) : null;
+    if (args && args.url && !url) {
+      throw new Error("browser_window new url must be http(s).");
+    }
+    const win = await chrome.windows.create(url ? { url } : {});
+    const firstTab = (win.tabs && win.tabs[0]) || null;
+    return {
+      ok: true, window_id: win.id, type: win.type || "normal",
+      tab_index: firstTab ? firstTab.index : null,
+    };
+  }
+  const windowId = Number(args && args.window_id);
+  if (!Number.isInteger(windowId)) {
+    throw new Error("browser_window needs window_id for focus/close (see browser_windows).");
+  }
+  if (action === "focus") {
+    await chrome.windows.update(windowId, { focused: true });
+    return { ok: true, window_id: windowId, focused: true };
+  }
+  await chrome.windows.remove(windowId);  // action === "close"
+  return { ok: true, window_id: windowId, closed: true };
 }
 
 // -- Bring the bridge up -----------------------------------------------------

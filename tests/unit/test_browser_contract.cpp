@@ -71,6 +71,7 @@ private slots:
     void buildCommand_inspectionToolsBuild();
     void buildCommand_jsClickNeedsRef();
     void buildCommand_selectMultiValuesPassThrough();
+    void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
 
@@ -623,6 +624,34 @@ void BrowserContractTests::buildCommand_selectMultiValuesPassThrough() {
     QCOMPARE(values.at(1).toString(), QStringLiteral("blue"));
 }
 
+void BrowserContractTests::buildCommand_windowToolsBuild() {
+    // browser_windows: no args, maps to listWindows.
+    const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
+    QVERIFY(ls.ok);
+    QCOMPARE(ls.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("listWindows"));
+
+    // browser_window: action required; window_id/url copy through.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_window"), {}, {}).ok);
+    const ExtensionCommand nw = buildExtensionCommand(
+        QStringLiteral("browser_window"),
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("new")},
+                    {QStringLiteral("url"), QStringLiteral("https://example.com/")}},
+        {});
+    QVERIFY(nw.ok);
+    QCOMPARE(nw.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("window"));
+    QCOMPARE(nw.command.value(QStringLiteral("action")).toString(), QStringLiteral("new"));
+    QCOMPARE(nw.command.value(QStringLiteral("url")).toString(),
+             QStringLiteral("https://example.com/"));
+
+    const ExtensionCommand fc =
+        buildExtensionCommand(QStringLiteral("browser_window"),
+                              QJsonObject{{QStringLiteral("action"), QStringLiteral("focus")},
+                                          {QStringLiteral("window_id"), 42}},
+                              {});
+    QVERIFY(fc.ok);
+    QCOMPARE(fc.command.value(QStringLiteral("window_id")).toInt(), 42);
+}
+
 void BrowserContractTests::catalog_advertisesBatch3Tools() {
     const QJsonArray tools = browserToolCatalog();
     QStringList names;
@@ -635,7 +664,9 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_box"),
                                     QStringLiteral("browser_focus"),
                                     QStringLiteral("browser_reveal"),
-                                    QStringLiteral("browser_js_click")}) {
+                                    QStringLiteral("browser_js_click"),
+                                    QStringLiteral("browser_windows"),
+                                    QStringLiteral("browser_window")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }

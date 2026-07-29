@@ -100,6 +100,8 @@
         "browser_focus",
         "browser_reveal",
         "browser_js_click",
+        "browser_windows",
+        "browser_window",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"
