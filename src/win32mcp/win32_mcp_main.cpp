@@ -7,8 +7,9 @@
 // with no Qt event loop: read a line, route it, write the reply.
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
+#include "sak/win32mcp/browser_bridge_relay.h"
+#include "sak/win32mcp/browser_control.h"
 #include "sak/win32mcp/win32_mcp_dispatch.h"
-#include "sak/win32mcp/win32_mcp_native_host.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include <QByteArray>
@@ -40,11 +41,11 @@ void writeResponse(const QJsonObject& response) {
 
 // Chrome launches a native messaging host with the calling extension's origin
 // (chrome-extension://<id>/) as an argument -- we never get to add our own flag to
-// the manifest's `path`, so that origin is the signal to run in host mode. The
-// explicit --native-host flag is accepted too, for local testing.
-bool wantsNativeHostMode(int argc, char** argv) {
+// the manifest's `path`, so that origin is the signal to run as the browser-control
+// relay. The explicit --browser-relay flag is accepted too, for local testing.
+bool wantsRelayMode(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--native-host") == 0 ||
+        if (std::strcmp(argv[i], "--browser-relay") == 0 ||
             std::strncmp(argv[i], "chrome-extension://", 19) == 0) {
             return true;
         }
@@ -68,12 +69,25 @@ int main(int argc, char** argv) {
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 
-    // Native messaging host mode (launched by Chrome for the browser-control
-    // extension) speaks length-prefixed frames, not newline-delimited JSON-RPC.
-    if (wantsNativeHostMode(argc, argv)) {
-        return sak::win32mcp::runNativeHostLoop(sak::win32mcp::serverName(),
-                                                sak::win32mcp::serverVersion());
+    // Relay mode (launched by Chrome for the browser-control extension): pump
+    // length-prefixed native-messaging frames between Chrome and the bridge pipe of
+    // the long-lived MCP process, instead of serving newline-delimited JSON-RPC.
+    if (wantsRelayMode(argc, argv)) {
+        return sak::win32mcp::runBrowserRelay();
     }
+
+    // MCP server mode: own the browser authority (pipe server + session) so a browser_*
+    // tool call drives the live extension through the relay. If the pipe fails to start
+    // (e.g. squatted), keep serving the built-in win32 tools with browser control off.
+    sak::win32mcp::BrowserControl browser;
+    QString browser_error;
+    const bool browser_ready = browser.start(&browser_error);
+    if (!browser_ready) {
+        std::fprintf(stderr,
+                     "browser control unavailable: %s\n",
+                     browser_error.toUtf8().constData());
+    }
+    sak::win32mcp::BrowserControl* const browser_ptr = browser_ready ? &browser : nullptr;
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -88,10 +102,12 @@ int main(int argc, char** argv) {
             // keep serving rather than desynchronizing the stream.
             continue;
         }
-        const std::optional<QJsonObject> response = sak::win32mcp::handleRequest(request);
+        const std::optional<QJsonObject> response = sak::win32mcp::handleRequest(request,
+                                                                                 browser_ptr);
         if (response.has_value()) {
             writeResponse(response.value());
         }
     }
+    browser.stop();
     return 0;
 }

@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_dispatch.h"
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
+#include "sak/win32mcp/browser_control.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include <QJsonArray>
@@ -47,18 +48,36 @@ QJsonObject toolCallResult(const ToolResult& result) {
                        {QStringLiteral("isError"), result.is_error}};
 }
 
-std::optional<QJsonObject> handleToolsCall(const QJsonValue& id, const QJsonObject& params) {
+// The full tool catalog: the built-in win32 tools plus, when browser control is live,
+// the browser_* tools the facade owns.
+QJsonArray fullToolCatalog(BrowserControl* browser) {
+    QJsonArray tools = toolCatalog();
+    if (browser != nullptr) {
+        const QJsonArray browser_tools = browser->toolCatalog();
+        for (const QJsonValue& tool : browser_tools) {
+            tools.append(tool);
+        }
+    }
+    return tools;
+}
+
+std::optional<QJsonObject> handleToolsCall(const QJsonValue& id,
+                                           const QJsonObject& params,
+                                           BrowserControl* browser) {
     const QString name = params.value(QStringLiteral("name")).toString().trimmed();
     if (name.isEmpty()) {
         return errorResponse(id, kInvalidParams, QStringLiteral("tools/call requires params.name"));
     }
     const QJsonObject arguments = params.value(QStringLiteral("arguments")).toObject();
+    if (browser != nullptr && browser->handles(name)) {
+        return resultResponse(id, toolCallResult(browser->invoke(name, arguments)));
+    }
     return resultResponse(id, toolCallResult(invokeTool(name, arguments)));
 }
 
 }  // namespace
 
-std::optional<QJsonObject> handleRequest(const QJsonObject& request) {
+std::optional<QJsonObject> handleRequest(const QJsonObject& request, BrowserControl* browser) {
     const QString method = request.value(QStringLiteral("method")).toString();
     const bool has_id = request.contains(QStringLiteral("id")) &&
                         !request.value(QStringLiteral("id")).isNull();
@@ -74,10 +93,10 @@ std::optional<QJsonObject> handleRequest(const QJsonObject& request) {
         return resultResponse(id, initializeResult());
     }
     if (method == QLatin1String("tools/list")) {
-        return resultResponse(id, QJsonObject{{QStringLiteral("tools"), toolCatalog()}});
+        return resultResponse(id, QJsonObject{{QStringLiteral("tools"), fullToolCatalog(browser)}});
     }
     if (method == QLatin1String("tools/call")) {
-        return handleToolsCall(id, request.value(QStringLiteral("params")).toObject());
+        return handleToolsCall(id, request.value(QStringLiteral("params")).toObject(), browser);
     }
     if (method == QLatin1String("ping")) {
         return resultResponse(id, QJsonObject{});

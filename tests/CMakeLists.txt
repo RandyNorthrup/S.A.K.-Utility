@@ -4256,12 +4256,22 @@ endif()
 # test_win32_mcp_server --- native win32 MCP server: JSON-RPC dispatch + tool catalog/invocation
 # (Windows only; shcore for GetDpiForMonitor in list_monitors).
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp")
+    # The dispatch now references BrowserControl (browser_* tools merged into
+    # tools/list and routed on tools/call), so the server test links the browser
+    # facade and its transitive transport/session/contract deps.
     add_executable(test_win32_mcp_server
         unit/test_win32_mcp_server.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dispatch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_pipe.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_security.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/native_messaging.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_dispatch.h
         ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_tools.h
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_control.h
     )
     set_target_properties(test_win32_mcp_server PROPERTIES
         AUTOMOC ON
@@ -4400,6 +4410,39 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.c
     add_test(NAME test_browser_bridge_pipe COMMAND test_browser_bridge_pipe
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_pipe")
+endif()
+
+# test_browser_bridge_relay --- the Chrome-side RELAY (rendezvous discovery + server
+# code-identity verify + hello/welcome handshake + id-transparent frame pump) and the
+# MCP-side BrowserControl facade, exercised end-to-end against a real in-process pipe
+# server with a fake extension. Windows only; links relay + control + transport +
+# session + contract.
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.cpp")
+    add_executable(test_browser_bridge_relay
+        unit/test_browser_bridge_relay.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_relay.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_pipe.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_security.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/native_messaging.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_bridge_relay.h
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_control.h
+    )
+    set_target_properties(test_browser_bridge_relay PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_browser_bridge_relay PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_browser_bridge_relay PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_browser_bridge_relay COMMAND test_browser_bridge_relay
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_browser_bridge_relay")
 endif()
 
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
