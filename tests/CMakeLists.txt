@@ -4352,6 +4352,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge.cpp")
     message(STATUS "Added unit test: test_browser_bridge")
 endif()
 
+# test_browser_bridge_security --- the load-bearing pipe security + discovery primitives
+# (current-user-SID DACL + Medium NO_WRITE_UP label, per-user/session nonce pipe name,
+# rendezvous record). Windows only (Win32 SID/SDDL APIs); links advapi32 via PLATFORM_LIBS.
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_security.cpp")
+    add_executable(test_browser_bridge_security
+        unit/test_browser_bridge_security.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_security.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_bridge_security.h
+    )
+    set_target_properties(test_browser_bridge_security PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_browser_bridge_security PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_browser_bridge_security PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_browser_bridge_security COMMAND test_browser_bridge_security
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_browser_bridge_security")
+endif()
+
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types
