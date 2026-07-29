@@ -36,6 +36,8 @@ public:
         bool is_error{false};  ///< True iff the matched reply was an error.
         QString text;          ///< Tool-facing result text (snapshot outline or payload JSON).
         QString error;         ///< Error message when is_error.
+        QString image_base64;  ///< Base64 image for a screenshot reply (empty otherwise).
+        QString image_mime;    ///< MIME type for image_base64 (e.g. "image/png").
     };
 
     /// A new relay has connected: this is a fresh browser/CDP session, so any stored
@@ -82,6 +84,7 @@ private:
                     quint64 sent_epoch,
                     const QJsonObject& frame,
                     Incoming& incoming);
+    static void fillScreenshotResult(const QJsonObject& payload, Incoming& incoming);
 
     bool connected_{false};
     bool ref_index_stale_{false};

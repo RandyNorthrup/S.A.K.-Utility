@@ -65,7 +65,7 @@ ToolResult BrowserControl::invoke(const QString& name, const QJsonObject& argume
     if (incoming.is_error) {
         return {incoming.error, true};
     }
-    return {incoming.text, false};
+    return {incoming.text, false, incoming.image_base64, incoming.image_mime};
 }
 
 }  // namespace sak::win32mcp

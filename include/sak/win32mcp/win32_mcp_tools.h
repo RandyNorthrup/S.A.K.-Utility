@@ -18,10 +18,15 @@ namespace sak::win32mcp {
 
 /// One tool invocation result. `text` is the (usually JSON) payload surfaced to the
 /// model as MCP text content; `is_error` marks a failed call so the transport sets
-/// the MCP `isError` flag rather than pretending success.
+/// the MCP `isError` flag rather than pretending success. `image_base64` (with
+/// `image_mime`) is an optional binary image -- a browser screenshot -- returned as an
+/// MCP `image` content block instead of a base64 blob buried in text; empty means the
+/// result is text only.
 struct ToolResult {
     QString text;
     bool is_error{false};
+    QString image_base64;
+    QString image_mime;
 };
 
 /// The static tool catalog returned by `tools/list`: one object per tool with

@@ -37,8 +37,9 @@ Two processes speak on each side of a hardened named pipe:
 
 The extension answers commands off the active tab: `snapshot` (accessibility roles +
 names joined with DOM-snapshot geometry by backendNodeId), `read` (text/html),
-`navigate` / `back` / `forward` / `reload`, and `listTabs` / `selectTab` / `newTab` /
-`closeTab`. Input actions and screenshots are later units.
+`navigate` / `back` / `forward` / `reload`, `listTabs` / `selectTab` / `newTab` /
+`closeTab`, the input actions (`click` / `type` / `pressKey` / `scroll`, unit 7), and
+`screenshot` (a PNG of the active tab, unit 8).
 
 ## Protocol
 
@@ -84,3 +85,12 @@ app in EVERY non-chat access mode, including Unattended (where read-only browser
 navigation may auto-run). The prompt is the app's trusted UI -- untrusted page content can
 never grant permission. The classifier fails CLOSED: any win32 tool not on the read-only
 allowlist requires confirmation, so a new automation tool cannot silently act as the user.
+
+## Screenshot (unit 8)
+
+`browser_screenshot` captures a PNG of the active tab via CDP `Page.captureScreenshot`
+(`full_page:true` clips to the document height, capped at the Skia edge limit). It
+rasterizes at the browser level -- no `getUserMedia` / display-capture prompt and no OS
+screen grab, so it sees only the tab, never other windows or the desktop. It is classified
+read-only (ungated). The PNG returns as an MCP `image` content block (not a base64 blob in
+text); the bridge caps the payload size and fails closed on an empty capture.

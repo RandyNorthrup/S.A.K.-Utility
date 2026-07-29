@@ -5,7 +5,10 @@
 
 #include "sak/win32mcp/browser_contract.h"
 
+#include <QByteArray>
 #include <QJsonDocument>
+
+#include <cstring>
 
 namespace sak::win32mcp::browser {
 
@@ -13,6 +16,59 @@ namespace {
 
 QString compactJson(const QJsonObject& object) {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+// A screenshot payload is page-influenced in size (a full-page capture scales with the
+// document height). Cap the base64 length so a pathological page cannot flood the model
+// context or the transport; a rejected capture returns an honest error, not a silent
+// truncation. 16 MiB of base64 is ~12 MiB of PNG -- ample for any real viewport.
+constexpr int kMaxScreenshotBase64 = 16 * 1024 * 1024;
+
+// Only image types WE emit are honored; anything else is coerced to PNG so a tampered or
+// unexpected mimeType can never turn the image block into an arbitrary content type.
+QString sanitizedImageMime(const QString& mime) {
+    if (mime == QLatin1String("image/png") || mime == QLatin1String("image/jpeg") ||
+        mime == QLatin1String("image/webp")) {
+        return mime;
+    }
+    return QStringLiteral("image/png");
+}
+
+// Read the true pixel dimensions from a PNG's IHDR chunk: 8-byte signature, then a chunk
+// whose type at offset 12 is "IHDR" with big-endian width@16 and height@20. This is the
+// authoritative image size regardless of devicePixelRatio / clip / emulation, and it is a
+// bounded, fixed-offset read of the (untrusted) payload. Returns false unless it is a
+// valid PNG header with positive dimensions.
+bool pngDimensions(const QByteArray& png, int& width, int& height) {
+    static const unsigned char kSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (png.size() < 24 || std::memcmp(png.constData(), kSignature, 8) != 0 ||
+        std::memcmp(png.constData() + 12, "IHDR", 4) != 0) {
+        return false;
+    }
+    const auto* bytes = reinterpret_cast<const unsigned char*>(png.constData());
+    const auto be32 = [bytes](int offset) {
+        return (static_cast<quint32>(bytes[offset]) << 24) |
+               (static_cast<quint32>(bytes[offset + 1]) << 16) |
+               (static_cast<quint32>(bytes[offset + 2]) << 8) |
+               static_cast<quint32>(bytes[offset + 3]);
+    };
+    width = static_cast<int>(be32(16));
+    height = static_cast<int>(be32(20));
+    return width > 0 && height > 0;
+}
+
+// The summary line for a screenshot, using the PNG's own IHDR dimensions when they can be
+// read from the base64 (a 64-char prefix decodes to ~48 bytes, past IHDR at offset 24).
+QString screenshotSummary(const QString& base64) {
+    int width = 0;
+    int height = 0;
+    const QByteArray head = QByteArray::fromBase64(base64.left(64).toLatin1());
+    if (pngDimensions(head, width, height)) {
+        return QStringLiteral("Captured a %1x%2 PNG screenshot of the active tab.")
+            .arg(width)
+            .arg(height);
+    }
+    return QStringLiteral("Captured a PNG screenshot of the active tab.");
 }
 
 QString formatSnapshot(const SnapshotView& view) {
@@ -118,12 +174,35 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
         incoming.text = formatSnapshot(view);
         return;
     }
+    if (sent_cmd == QLatin1String("screenshot")) {
+        fillScreenshotResult(payload, incoming);
+        return;
+    }
     // After a navigation/tab-change lands, refs from a prior snapshot no longer map to
     // live nodes; refuse act-by-ref until the next snapshot.
     if (isNavigationCmd(sent_cmd)) {
         ref_index_stale_ = true;
     }
     incoming.text = compactJson(payload);
+}
+
+void BrowserBridgeSession::fillScreenshotResult(const QJsonObject& payload, Incoming& incoming) {
+    const QString data = payload.value(QStringLiteral("data")).toString();
+    if (data.isEmpty()) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral("The browser returned an empty screenshot.");
+        return;
+    }
+    if (data.size() > kMaxScreenshotBase64) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral(
+            "The screenshot is too large to return; capture the viewport instead of the "
+            "full page.");
+        return;
+    }
+    incoming.image_base64 = data;
+    incoming.image_mime = sanitizedImageMime(payload.value(QStringLiteral("mimeType")).toString());
+    incoming.text = screenshotSummary(data);
 }
 
 BrowserBridgeSession::Incoming BrowserBridgeSession::onReply(const QJsonObject& frame) {

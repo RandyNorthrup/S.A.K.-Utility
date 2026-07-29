@@ -12,8 +12,8 @@
 //   - read      : return the active tab's text or html.
 //   - navigate / back / forward / reload : drive history via chrome.tabs.
 //   - listTabs / selectTab / newTab / closeTab : tab management via chrome.tabs.
-// Input actions (click/type/pressKey/scroll) and screenshot are deferred to later units
-// and answered with an explicit "not supported yet" error.
+//   - click / type / pressKey / scroll : input injected over CDP Input (unit 7).
+//   - screenshot : a PNG of the active tab via CDP Page.captureScreenshot (unit 8).
 //
 // PROTOCOL: the native host is a thin relay in strict request/reply. For every
 // {type:"command", id, cmd, ...} frame this worker replies EXACTLY ONCE with
@@ -49,6 +49,10 @@ const MAX_CAPTURE_NODES = 2000;
 const MAX_READ_CHARS = 200000;
 const NAV_TIMEOUT_MS = 15000;
 const DEFAULT_SCROLL_PX = 400;
+// Skia caps a single raster surface at 16384 DEVICE px per edge; a full-page clip past
+// that fails the capture. The clip is expressed in CSS px and rasterized at the display's
+// devicePixelRatio, so the CSS clip is clamped to this cap divided by dpr (below).
+const MAX_SHOT_EDGE_PX = 16384;
 
 // CDP Input.dispatchKeyEvent modifier bitmask (Alt=1, Control=2, Meta=4, Shift=8).
 const MODIFIER_BITS = { alt: 1, control: 2, ctrl: 2, meta: 4, command: 4, cmd: 4, shift: 8 };
@@ -226,7 +230,7 @@ async function runCommand(cmd, args) {
     case "scroll":
       return await handleScroll(await activeTabId(), args);
     case "screenshot":
-      throw new Error("Screenshots are not enabled in this build yet.");
+      return await handleScreenshot(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -494,6 +498,57 @@ async function handleRead(tabId, args) {
   }
   const info = await tabInfo(tabId);
   return { format, content, truncated, url: info.url, title: info.title };
+}
+
+// -- screenshot (vision): a PNG of the active tab over CDP --------------------
+//
+// Page.captureScreenshot rasterizes at the browser level (no getUserMedia / display
+// prompt, no OS screen capture), so it sees only the tab -- never other windows or the
+// desktop. full_page uses captureBeyondViewport with a clip sized to the document, capped
+// at the Skia edge limit. The base64 PNG rides back in the reply payload; the bridge caps
+// its size and returns it as an MCP image content block.
+// devicePixelRatio of the live tab (>= 1), so the CSS clip can be bounded in the DEVICE
+// pixels Skia actually rasters. Defaults to 1 if the page cannot be evaluated.
+async function devicePixelRatio(tabId) {
+  const res = await sendCdp(tabId, "Runtime.evaluate", {
+    expression: "window.devicePixelRatio",
+    returnByValue: true,
+  }).catch(() => null);
+  const v = res && res.result && typeof res.result.value === "number" ? res.result.value : 1;
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+async function handleScreenshot(tabId, args) {
+  await ensureAttached(tabId);
+  const fullPage = !!(args && args.full_page === true);
+  const params = { format: "png", captureBeyondViewport: fullPage };
+  const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
+  const dpr = await devicePixelRatio(tabId);
+  // Bound the CSS clip so the DEVICE raster (css x dpr) stays within Skia's 16384 cap; a
+  // plain CSS clamp would let a tall page overflow the surface and fail the capture on any
+  // dpr > 1 display (Windows scaling, Retina).
+  const maxCssEdge = Math.max(1, Math.floor(MAX_SHOT_EDGE_PX / dpr));
+  if (fullPage) {
+    const content = metrics && (metrics.cssContentSize || metrics.contentSize);
+    if (content) {
+      params.clip = {
+        x: 0,
+        y: 0,
+        width: Math.min(Math.round(content.width), maxCssEdge),
+        height: Math.min(Math.round(content.height), maxCssEdge),
+        scale: 1,
+      };
+    }
+  }
+  const res = await sendCdp(tabId, "Page.captureScreenshot", params);
+  const data = res && typeof res.data === "string" ? res.data : "";
+  if (!data) {
+    throw new Error("Screenshot capture returned no image data.");
+  }
+  const info = await tabInfo(tabId);
+  // Dimensions are read authoritatively from the PNG header on the bridge side, so they
+  // reflect the real device pixels regardless of dpr/clip -- nothing is reported here.
+  return { data, mimeType: "image/png", url: info.url, title: info.title };
 }
 
 // -- input: browser-level injection (the user's OS cursor is never touched) ---

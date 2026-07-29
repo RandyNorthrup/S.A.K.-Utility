@@ -11,7 +11,9 @@
 
 using sak::win32mcp::handleRequest;
 using sak::win32mcp::invokeTool;
+using sak::win32mcp::toolCallResult;
 using sak::win32mcp::toolCatalog;
+using sak::win32mcp::ToolResult;
 
 namespace {
 
@@ -52,6 +54,8 @@ private slots:
     void toolsCall_unknownToolReturnsIsError();
     void invokeTool_listWindowsReturnsStructuredArray();
     void invokeTool_getWindowInfoRequiresTitle();
+    void toolCallResult_textOnlyIsSingleTextBlock();
+    void toolCallResult_imageBecomesImageBlockPlusSummary();
 };
 
 void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
@@ -171,6 +175,36 @@ void Win32McpServerTests::invokeTool_listWindowsReturnsStructuredArray() {
 void Win32McpServerTests::invokeTool_getWindowInfoRequiresTitle() {
     const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("get_window_info"), {});
     QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::toolCallResult_textOnlyIsSingleTextBlock() {
+    const QJsonObject out = toolCallResult(ToolResult{QStringLiteral("hello"), false, {}, {}});
+    const QJsonArray content = out.value(QStringLiteral("content")).toArray();
+    QCOMPARE(content.size(), 1);
+    QCOMPARE(content.at(0).toObject().value(QStringLiteral("type")).toString(),
+             QStringLiteral("text"));
+    QCOMPARE(content.at(0).toObject().value(QStringLiteral("text")).toString(),
+             QStringLiteral("hello"));
+    QCOMPARE(out.value(QStringLiteral("isError")).toBool(true), false);
+}
+
+void Win32McpServerTests::toolCallResult_imageBecomesImageBlockPlusSummary() {
+    ToolResult result;
+    result.text = QStringLiteral("Captured a 800x600 PNG screenshot of the active tab.");
+    result.image_base64 = QStringLiteral("iVBORw0KGgo");
+    result.image_mime = QStringLiteral("image/png");
+    const QJsonObject out = toolCallResult(result);
+    const QJsonArray content = out.value(QStringLiteral("content")).toArray();
+    QCOMPARE(content.size(), 2);
+    // Image block first, carrying the base64 in `data` with a proper mimeType.
+    const QJsonObject image = content.at(0).toObject();
+    QCOMPARE(image.value(QStringLiteral("type")).toString(), QStringLiteral("image"));
+    QCOMPARE(image.value(QStringLiteral("data")).toString(), QStringLiteral("iVBORw0KGgo"));
+    QCOMPARE(image.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
+    // Text summary follows so a text-only client still learns what happened.
+    const QJsonObject text = content.at(1).toObject();
+    QCOMPARE(text.value(QStringLiteral("type")).toString(), QStringLiteral("text"));
+    QVERIFY(text.value(QStringLiteral("text")).toString().contains(QStringLiteral("screenshot")));
 }
 
 QTEST_MAIN(Win32McpServerTests)

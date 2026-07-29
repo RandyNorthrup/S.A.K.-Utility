@@ -41,13 +41,6 @@ QJsonObject initializeResult() {
                      {QStringLiteral("version"), serverVersion()}}}};
 }
 
-QJsonObject toolCallResult(const ToolResult& result) {
-    return QJsonObject{{QStringLiteral("content"),
-                        QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                                               {QStringLiteral("text"), result.text}}}},
-                       {QStringLiteral("isError"), result.is_error}};
-}
-
 // The full tool catalog: the built-in win32 tools plus, when browser control is live,
 // the browser_* tools the facade owns.
 QJsonArray fullToolCatalog(BrowserControl* browser) {
@@ -76,6 +69,25 @@ std::optional<QJsonObject> handleToolsCall(const QJsonValue& id,
 }
 
 }  // namespace
+
+QJsonObject toolCallResult(const ToolResult& result) {
+    QJsonArray content;
+    if (!result.image_base64.isEmpty()) {
+        const QString mime = result.image_mime.isEmpty() ? QStringLiteral("image/png")
+                                                         : result.image_mime;
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                                   {QStringLiteral("data"), result.image_base64},
+                                   {QStringLiteral("mimeType"), mime}});
+    }
+    // Keep a text block whenever there is text, or when there is nothing else, so the
+    // content array is never empty (a bare screenshot still carries its summary text).
+    if (!result.text.isEmpty() || content.isEmpty()) {
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                   {QStringLiteral("text"), result.text}});
+    }
+    return QJsonObject{{QStringLiteral("content"), content},
+                       {QStringLiteral("isError"), result.is_error}};
+}
 
 std::optional<QJsonObject> handleRequest(const QJsonObject& request, BrowserControl* browser) {
     const QString method = request.value(QStringLiteral("method")).toString();

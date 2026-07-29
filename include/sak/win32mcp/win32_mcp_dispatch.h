@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/win32mcp/win32_mcp_tools.h"
+
 #include <QJsonObject>
 
 #include <optional>
@@ -14,6 +16,12 @@
 namespace sak::win32mcp {
 
 class BrowserControl;
+
+/// Shape a ToolResult into the MCP `tools/call` result object. A screenshot (image
+/// present) becomes an `image` content block plus an optional text summary; a text
+/// result stays a single `text` block. Exposed so the content shaping -- including the
+/// image branch -- is unit-testable without a live browser.
+[[nodiscard]] QJsonObject toolCallResult(const ToolResult& result);
 
 /// Handle one parsed JSON-RPC request. Returns the response object to write back,
 /// or std::nullopt for notifications (no `id`, e.g. notifications/initialized)

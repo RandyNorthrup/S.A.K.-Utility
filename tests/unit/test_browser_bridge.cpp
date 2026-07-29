@@ -3,6 +3,7 @@
 
 #include "sak/win32mcp/browser_bridge.h"
 
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QtTest/QtTest>
@@ -28,6 +29,34 @@ QJsonObject snapshotPayload(int backendNodeId, const QString& name) {
                                                             {QStringLiteral("y"), 0},
                                                             {QStringLiteral("width"), 80},
                                                             {QStringLiteral("height"), 20}}}}}}};
+}
+
+// A screenshot reply payload: base64 image bytes (the bridge reads dimensions from the
+// PNG header itself, not from any payload-declared size).
+QJsonObject screenshotPayload(const QString& data) {
+    return QJsonObject{{QStringLiteral("data"), data},
+                       {QStringLiteral("mimeType"), QStringLiteral("image/png")}};
+}
+
+// Base64 of a valid PNG header (8-byte signature + IHDR chunk with the given dimensions),
+// enough for the bridge to read width/height from the image.
+QString pngHeaderBase64(int width, int height) {
+    QByteArray bytes;
+    const unsigned char signature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    bytes.append(reinterpret_cast<const char*>(signature), 8);
+    const unsigned char ihdr_len[4] = {0x00, 0x00, 0x00, 0x0D};
+    bytes.append(reinterpret_cast<const char*>(ihdr_len), 4);
+    bytes.append("IHDR", 4);
+    const auto append_be32 = [&bytes](int value) {
+        bytes.append(static_cast<char>((value >> 24) & 0xFF));
+        bytes.append(static_cast<char>((value >> 16) & 0xFF));
+        bytes.append(static_cast<char>((value >> 8) & 0xFF));
+        bytes.append(static_cast<char>(value & 0xFF));
+    };
+    append_be32(width);
+    append_be32(height);
+    bytes.append(8, '\0');  // bit depth / color type / etc. -- unread, just pads the prefix
+    return QString::fromLatin1(bytes.toBase64());
 }
 
 QJsonObject resultFrame(const QString& id, const QString& cmd, const QJsonObject& payload) {
@@ -56,6 +85,10 @@ private slots:
     void reply_forgedSnapshotCmdCannotInstallRefIndex();
     void detachDuringSnapshot_replyDoesNotInstallRefIndex();
     void navigationInvalidatesRefsFromPriorSnapshot();
+    void screenshotReply_populatesImageChannelWithDimsFromPngHeader();
+    void screenshotReply_nonPngFallsBackToPlainSummary();
+    void screenshotReply_emptyDataIsHonestError();
+    void screenshotReply_oversizeBase64IsRejected();
 };
 
 void BrowserBridgeTests::beginCommand_refusedWhenNotConnected() {
@@ -274,6 +307,74 @@ void BrowserBridgeTests::navigationInvalidatesRefsFromPriorSnapshot() {
                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}});
     QVERIFY(!click.ok);
     QVERIFY(click.error.contains(QStringLiteral("page changed")));
+}
+
+void BrowserBridgeTests::screenshotReply_populatesImageChannelWithDimsFromPngHeader() {
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    QVERIFY(shot.ok);
+    QCOMPARE(shot.frame.value(QStringLiteral("cmd")).toString(), QStringLiteral("screenshot"));
+
+    const QString png = pngHeaderBase64(1280, 720);
+    const auto in = session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                                QStringLiteral("screenshot"),
+                                                screenshotPayload(png)));
+    QVERIFY(in.matched);
+    QVERIFY(!in.is_error);
+    // The image rides the dedicated channel, NOT the text field (which is only a summary).
+    QCOMPARE(in.image_base64, png);
+    QCOMPARE(in.image_mime, QStringLiteral("image/png"));
+    // Dimensions are read from the PNG's own IHDR, so they are the true device pixels.
+    QVERIFY(in.text.contains(QStringLiteral("1280x720")));
+    QVERIFY(!in.text.contains(png));  // the base64 is never dumped into text
+}
+
+void BrowserBridgeTests::screenshotReply_nonPngFallsBackToPlainSummary() {
+    // A payload whose header is not a readable PNG still returns the image, but the summary
+    // omits dimensions instead of inventing them.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const QString data = QString::fromLatin1(QByteArray("not-a-real-png-payload").toBase64());
+    const auto in = session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                                QStringLiteral("screenshot"),
+                                                screenshotPayload(data)));
+    QVERIFY(in.matched);
+    QVERIFY(!in.is_error);
+    QCOMPARE(in.image_base64, data);
+    QCOMPARE(in.text, QStringLiteral("Captured a PNG screenshot of the active tab."));
+}
+
+void BrowserBridgeTests::screenshotReply_emptyDataIsHonestError() {
+    // A capture that yields no bytes is a FAILED read, not an empty-success -- it must
+    // surface as an error, never as a blank image the model would treat as real.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const auto in = session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                                QStringLiteral("screenshot"),
+                                                screenshotPayload(QString())));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY(in.image_base64.isEmpty());
+    QVERIFY(in.error.contains(QStringLiteral("empty")));
+}
+
+void BrowserBridgeTests::screenshotReply_oversizeBase64IsRejected() {
+    // A full-page capture is page-influenced in size; a payload over the cap is refused
+    // with an honest error instead of flooding the transport / model context.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const QString huge(16 * 1024 * 1024 + 1, QLatin1Char('A'));
+    const auto in = session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                                QStringLiteral("screenshot"),
+                                                screenshotPayload(huge)));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY(in.image_base64.isEmpty());
+    QVERIFY(in.error.contains(QStringLiteral("too large")));
 }
 
 QTEST_MAIN(BrowserBridgeTests)
