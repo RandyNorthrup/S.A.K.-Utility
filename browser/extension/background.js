@@ -52,6 +52,9 @@ const MAX_CAPTURE_NODES = 2000;
 const MAX_READ_CHARS = 200000;
 const NAV_TIMEOUT_MS = 15000;
 const DEFAULT_SCROLL_PX = 400;
+// Cap how many omitted cross-origin frame URLs a snapshot reports (the C++ renderer caps
+// the listing too); a hostile page could otherwise spawn thousands of iframes.
+const MAX_OMITTED_FRAMES = 20;
 // Skia caps a single raster surface at 16384 DEVICE px per edge; a full-page clip past
 // that fails the capture. The clip is expressed in CSS px and rasterized at the display's
 // devicePixelRatio, so the CSS clip is clamped to this cap divided by dpr (below).
@@ -544,6 +547,62 @@ function countFrames(frameTree) {
   return total;
 }
 
+// DOMSnapshot's documentURL keeps the "#fragment" (it mirrors document.URL), but
+// Page.getFrameTree's frame.url drops it (the fragment is a separate frame.urlFragment we
+// never read). Compare both sides fragment-insensitively, or a page at ".../docs#intro"
+// with no iframes would see its own main frame falsely listed as an omitted cross-origin one.
+function stripFragment(url) {
+  return String(url).split("#")[0];
+}
+
+// The document URLs the single capture DID reach (main frame + same-process subframes),
+// fragment-stripped. DOMSnapshot stores documentURL as an index into the shared string table.
+function sameProcessUrls(snapshot) {
+  const urls = new Set();
+  const strings = (snapshot && snapshot.strings) || [];
+  for (const doc of (snapshot && snapshot.documents) || []) {
+    if (doc && typeof doc.documentURL === "number" && strings[doc.documentURL] != null) {
+      urls.add(stripFragment(strings[doc.documentURL]));
+    }
+  }
+  return urls;
+}
+
+function collectFrameUrls(frameTree, out) {
+  if (!frameTree || !frameTree.frame) {
+    return;
+  }
+  if (frameTree.frame.url) {
+    out.push(frameTree.frame.url);
+  }
+  for (const child of frameTree.childFrames || []) {
+    collectFrameUrls(child, out);
+  }
+}
+
+// The http(s) frames present in the tab but NOT covered by the same-process capture, i.e.
+// the cross-origin (out-of-process) iframes whose content is missing. Deduplicated and
+// capped; only http(s) so the model gets frames it can actually navigate to.
+function collectOmittedFrames(snapshot, frameTree) {
+  const covered = sameProcessUrls(snapshot);
+  const all = [];
+  collectFrameUrls(frameTree, all);
+  const omitted = [];
+  const seen = new Set();
+  for (const url of all) {
+    const key = stripFragment(url);
+    if (!/^https?:\/\//i.test(url) || covered.has(key) || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    omitted.push(url);  // the original (already fragmentless) URL, navigable as-is
+    if (omitted.length >= MAX_OMITTED_FRAMES) {
+      break;
+    }
+  }
+  return omitted;
+}
+
 async function captureSnapshot(tabId) {
   await ensureAttached(tabId);
   lastSnapshotTabId = tabId;  // refs from this snapshot are valid only against this tab
@@ -558,16 +617,20 @@ async function captureSnapshot(tabId) {
   // same-process documents) and flag it, so the model is told the capture is partial
   // instead of concluding those elements do not exist.
   let iframesOmitted = false;
+  let omittedFrames = [];
   try {
     const tree = await sendCdp(tabId, "Page.getFrameTree", {});
+    omittedFrames = collectOmittedFrames(snapshot, tree && tree.frameTree);
     const totalFrames = countFrames(tree && tree.frameTree);
     const sameProcessDocs = ((snapshot && snapshot.documents) || []).length;
-    iframesOmitted = totalFrames > sameProcessDocs;
+    // Flag omission from either signal: the named http(s) frames, or a frame-count excess
+    // (covers non-http frames the URL list intentionally skips).
+    iframesOmitted = omittedFrames.length > 0 || totalFrames > sameProcessDocs;
   } catch (_e) {
     // If the frame tree is unavailable, do not claim completeness we cannot verify.
     iframesOmitted = true;
   }
-  return { url: info.url, title: info.title, nodes, truncated, iframesOmitted };
+  return { url: info.url, title: info.title, nodes, truncated, iframesOmitted, omittedFrames };
 }
 
 // -- read --------------------------------------------------------------------

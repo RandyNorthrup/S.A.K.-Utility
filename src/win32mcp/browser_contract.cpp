@@ -402,6 +402,43 @@ void appendTabTools(QJsonArray& tools) {
                    {})));
 }
 
+// Cap how many omitted-frame URLs are listed so a page spawning hundreds of cross-origin
+// iframes cannot flood the outline.
+constexpr int kMaxOmittedFramesListed = 20;
+
+// Cross-origin (out-of-process) iframes are not reached by the single-pass capture. Rather
+// than a bare "some content is missing", list the omitted frames' URLs so the model can
+// navigate into a frame it needs. Each URL is page-derived, so it is collapsed to one line
+// and length-capped (a newline in a URL could otherwise forge an outline line); refs are
+// only ever trusted from ref_index, never parsed from this text. Falls back to the older
+// boolean-only note when an extension does not send the URL list.
+void appendOmittedFramesNote(const QJsonObject& capture, QString& outline) {
+    const QJsonArray frames = capture.value(QStringLiteral("omittedFrames")).toArray();
+    if (!frames.isEmpty()) {
+        outline += QStringLiteral(
+            "  ... (cross-origin iframe content not included; "
+            "browser_navigate to a frame URL to read it):\n");
+        int listed = 0;
+        for (const QJsonValue& value : frames) {
+            if (listed >= kMaxOmittedFramesListed) {
+                outline += QStringLiteral("    ... (more omitted frames)\n");
+                break;
+            }
+            const QString url = oneLine(value.toString(), kMaxUrlChars);
+            if (url.isEmpty()) {
+                continue;
+            }
+            outline += QStringLiteral("    - %1\n").arg(url);
+            ++listed;
+        }
+        return;
+    }
+    if (capture.value(QStringLiteral("iframesOmitted")).toBool()) {
+        outline += QStringLiteral(
+            "  ... (cross-origin iframe content is not included in this snapshot)\n");
+    }
+}
+
 }  // namespace
 
 SnapshotView renderSnapshot(const QJsonObject& capture) {
@@ -448,13 +485,10 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
     if (truncated) {
         outline += QStringLiteral("  ... (more elements omitted; the page is very large)\n");
     }
-    // The single-pass capture does not reach cross-origin (out-of-process) iframes; when
-    // the extension reports their presence, say so rather than let the model treat the
-    // snapshot as the whole page.
-    if (capture.value(QStringLiteral("iframesOmitted")).toBool()) {
-        outline += QStringLiteral(
-            "  ... (cross-origin iframe content is not included in this snapshot)\n");
-    }
+    // The single-pass capture does not reach cross-origin (out-of-process) iframes; when the
+    // extension reports them, name the omitted frames so the model can navigate into them
+    // rather than treat the snapshot as the whole page.
+    appendOmittedFramesNote(capture, outline);
 
     view.outline = outline;
     view.ref_index = ref_index;
