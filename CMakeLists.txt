@@ -1114,8 +1114,10 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_main.cpp
         src/win32mcp/win32_mcp_dispatch.cpp
         src/win32mcp/win32_mcp_tools.cpp
+        src/win32mcp/browser_contract.cpp
         include/sak/win32mcp/win32_mcp_dispatch.h
         include/sak/win32mcp/win32_mcp_tools.h
+        include/sak/win32mcp/browser_contract.h
         include/sak/ai/ai_mcp_jsonrpc.h
     )
 
