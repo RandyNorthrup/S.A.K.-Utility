@@ -33,7 +33,9 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QProcess>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSet>
@@ -48,6 +50,13 @@
 #include <atomic>
 #include <cstring>
 #include <memory>
+
+#if defined(SAK_WIN_REGISTRY_TESTS)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace sak {
 
@@ -84,6 +93,46 @@ private Q_SLOTS:
         // Keep the panel's stores out of the real user data directory.
         QStandardPaths::setTestModeEnabled(true);
     }
+
+#if defined(SAK_WIN_REGISTRY_TESTS)
+    // The panel's Install/Uninstall button drives BrowserExtensionInstaller in-process.
+    // Point it at a throwaway HKCU key + temp dir (never the real Chrome policy) via the
+    // friend seam, then confirm a click installs and a second click uninstalls, reflected
+    // in the button label.
+    void browserExtensionButtonInstallsAndUninstalls() {
+        AiAssistantPanel panel;
+        const std::wstring base = L"Software\\SAK_Test\\PanelExt";
+        RegDeleteTreeW(HKEY_CURRENT_USER, base.c_str());
+        auto cleanup = qScopeGuard([&] { RegDeleteTreeW(HKEY_CURRENT_USER, base.c_str()); });
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString crx = dir.filePath(QStringLiteral("sak_browser_control.crx"));
+        {
+            QFile f(crx);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("CRX");
+        }
+        sak::win32mcp::ExtensionInstallConfig cfg;
+        cfg.data_dir = dir.path();
+        cfg.crx_path = crx;
+        cfg.host_exe_path = dir.filePath(QStringLiteral("sak_win32_mcp.exe"));
+        cfg.forcelist_key_path = QStringLiteral("Software\\SAK_Test\\PanelExt\\Forcelist");
+        cfg.native_host_key_path =
+            QStringLiteral("Software\\SAK_Test\\PanelExt\\NativeHost\\com.sak.browsercontrol");
+        panel.m_browserExtensionConfig = cfg;
+
+        panel.refreshBrowserExtensionStatus();
+        QVERIFY(panel.m_browserExtensionButton != nullptr);
+        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Install extension"));
+
+        panel.onBrowserExtensionButtonClicked();  // install
+        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Uninstall extension"));
+
+        panel.onBrowserExtensionButtonClicked();  // uninstall
+        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Install extension"));
+    }
+#endif
 
     // A download_file call whose handler blocks must run off the GUI thread: the
     // handler enters on a non-GUI thread, the GUI event loop keeps running, and

@@ -3742,8 +3742,80 @@ QWidget* AiAssistantPanel::createContextPane() {
     setupContextPaneAgentSection(layout, pane);
     setupContextPaneAccessSection(layout, pane);
     setupContextPaneCredentialSection(layout, pane);
+    setupContextPaneBrowserExtensionSection(layout, pane);
     layout->addStretch();
     return scroll;
+}
+
+void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layout, QWidget* pane) {
+    layout->addSpacing(sak::ui::kSpacingMedium);
+    auto* titleRow = new QHBoxLayout();
+    titleRow->setSpacing(sak::ui::kSpacingSmall);
+    titleRow->addWidget(makeRailTitle(pane, tr("Browser Control")));
+    titleRow->addStretch();
+    m_browserExtensionButton = new QPushButton(tr("Install extension"), pane);
+    configureCompactButton(m_browserExtensionButton);
+    m_browserExtensionButton->setToolTip(
+        tr("Set up (or remove) the Chrome extension the assistant uses to drive the browser. "
+           "This changes only your own Chrome policy and needs no administrator rights."));
+    setAccessible(m_browserExtensionButton, tr("Install or remove browser-control extension"));
+    connect(m_browserExtensionButton,
+            &QPushButton::clicked,
+            this,
+            &AiAssistantPanel::onBrowserExtensionButtonClicked);
+    titleRow->addWidget(m_browserExtensionButton);
+    layout->addLayout(titleRow);
+
+    m_browserExtensionStatusLabel = new QLabel(pane);
+    m_browserExtensionStatusLabel->setWordWrap(true);
+    m_browserExtensionStatusLabel->setToolTip(tr("Browser-control extension setup status"));
+    setAccessible(m_browserExtensionStatusLabel, tr("Browser-control extension status"));
+    layout->addWidget(m_browserExtensionStatusLabel);
+
+    refreshBrowserExtensionStatus();
+}
+
+void AiAssistantPanel::refreshBrowserExtensionStatus() {
+    if (m_browserExtensionButton == nullptr || m_browserExtensionStatusLabel == nullptr) {
+        return;
+    }
+    sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
+    QString statusText;
+    QString buttonText;
+    switch (installer.state()) {
+    case sak::win32mcp::ExtensionInstallState::Installed:
+        statusText = tr("Installed. Restart Chrome if it is open.");
+        buttonText = tr("Uninstall extension");
+        break;
+    case sak::win32mcp::ExtensionInstallState::Partial:
+        statusText = tr("Partly set up. Click to finish.");
+        buttonText = tr("Finish setup");
+        break;
+    case sak::win32mcp::ExtensionInstallState::Error:
+        statusText = tr("Setup status could not be read.");
+        buttonText = tr("Install extension");
+        break;
+    case sak::win32mcp::ExtensionInstallState::NotInstalled:
+        statusText = installer.crxPresent()
+                         ? tr("Not installed.")
+                         : tr("Not installed (extension package is missing from this build).");
+        buttonText = tr("Install extension");
+        break;
+    }
+    m_browserExtensionStatusLabel->setText(statusText);
+    m_browserExtensionButton->setText(buttonText);
+}
+
+void AiAssistantPanel::onBrowserExtensionButtonClicked() {
+    sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
+    const bool installed = installer.state() == sak::win32mcp::ExtensionInstallState::Installed;
+    const sak::win32mcp::ExtensionInstallResult result = installed ? installer.uninstall()
+                                                                   : installer.install();
+
+    appendLocalEvent(result.ok ? tr("Browser extension: %1").arg(result.summary)
+                               : tr("Browser extension setup failed: %1").arg(result.summary));
+    Q_EMIT statusMessage(result.summary, sak::kTimerStatusDefaultMs);
+    refreshBrowserExtensionStatus();
 }
 
 void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane) {

@@ -945,14 +945,13 @@ endif()
 
 add_executable(sak_utility ${ALL_SOURCES})
 
-# Browser-extension installer: shared with sak_win32_mcp, compiled into the app so
-# the assistant panel's Install/Uninstall button can set up Chrome in-process.
-if(PLATFORM_WINDOWS)
-    target_sources(sak_utility PRIVATE
-        src/win32mcp/browser_extension_installer.cpp
-        include/sak/win32mcp/browser_extension_installer.h
-    )
-endif()
+# Browser-extension installer: shared with sak_win32_mcp, compiled into the app so the
+# assistant panel's Install/Uninstall button can set up Chrome in-process. The .cpp has a
+# non-Windows stub, so it compiles on every platform the panel does.
+target_sources(sak_utility PRIVATE
+    src/win32mcp/browser_extension_installer.cpp
+    include/sak/win32mcp/browser_extension_installer.h
+)
 
 # Enable Qt MOC, UIC, and RCC
 set_target_properties(sak_utility PROPERTIES

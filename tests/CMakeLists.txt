@@ -1518,6 +1518,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
     add_executable(test_ai_assistant_panel_tool_dispatch
         unit/test_ai_assistant_panel_tool_dispatch.cpp
         ${_panel_dispatch_test_srcs}
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/app_paths.cpp
         ${CMAKE_SOURCE_DIR}/src/core/chocolatey_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/package_list_manager.cpp
@@ -1790,6 +1791,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
     )
+    # AUTOMOC forwards target compile definitions to moc (not the builtin _WIN32), so the
+    # Windows-only browser-extension button test slot registers with QtTest on Windows.
+    if(WIN32)
+        target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
+            SAK_WIN_REGISTRY_TESTS)
+    endif()
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
         Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse

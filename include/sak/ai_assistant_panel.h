@@ -19,6 +19,7 @@
 #include "sak/app_action_registry.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/widget_helpers.h"
+#include "sak/win32mcp/browser_extension_installer.h"
 
 #include <QByteArray>
 #include <QFutureWatcher>
@@ -132,6 +133,7 @@ private Q_SLOTS:
     void onResumeGateClicked();
     void onNewSessionClicked();
     void onLoadApiKeyClicked();
+    void onBrowserExtensionButtonClicked();
     void onAddContextFilesClicked();
     void onAddInstructionContextClicked();
     void onClearContextClicked();
@@ -245,6 +247,8 @@ private:
     void setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWidget* pane);
     void setupContextPaneAccessSection(QVBoxLayout* layout, QWidget* pane);
     void setupContextPaneCredentialSection(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneBrowserExtensionSection(QVBoxLayout* layout, QWidget* pane);
+    void refreshBrowserExtensionStatus();
     void onWorkflowTemplatePickerChanged(int index);
     void clearWorkflowSelectionPreview();
     void previewWorkflowTemplateSelection(const ai::WorkflowTemplate& workflow);
@@ -915,6 +919,11 @@ private:
     QPushButton* m_clearContextButton{nullptr};
     QPushButton* m_sendButton{nullptr};
     QPushButton* m_generateReportButton{nullptr};
+    QPushButton* m_browserExtensionButton{nullptr};
+    QLabel* m_browserExtensionStatusLabel{nullptr};
+    // Empty in production (installer uses real Chrome-policy paths); the panel test seam
+    // points it at a throwaway HKCU key + temp dir so button clicks never touch real Chrome.
+    sak::win32mcp::ExtensionInstallConfig m_browserExtensionConfig;
 
     std::unique_ptr<ai::OpenAIResponsesClient> m_client;
     std::unique_ptr<ai::CredentialStore> m_credentialStore;
