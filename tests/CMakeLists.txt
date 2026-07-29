@@ -4301,6 +4301,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_contract.cpp")
     message(STATUS "Added unit test: test_browser_contract")
 endif()
 
+# test_native_messaging --- Chrome native-messaging frame codec + host message handler
+# (ping->pong handshake). OS-agnostic (Qt Core only), so it builds and runs on any host.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_native_messaging.cpp")
+    add_executable(test_native_messaging
+        unit/test_native_messaging.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/native_messaging.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_native_host.cpp
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/native_messaging.h
+        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_native_host.h
+    )
+    set_target_properties(test_native_messaging PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_native_messaging PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_native_messaging PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_native_messaging COMMAND test_native_messaging
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_native_messaging")
+endif()
+
 # test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types
