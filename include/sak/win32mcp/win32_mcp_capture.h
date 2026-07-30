@@ -49,4 +49,9 @@ struct WindowRect {
 // minimized (its pixels are not renderable for capture/OCR).
 [[nodiscard]] bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& err);
 
+// Report the current foreground (active) top-level window's handle + bounds. This is how the
+// active pop-up dialog -- which often has no title for windowRectByTitle to match -- is reached.
+// Returns false and sets `err` when there is no foreground window or it is minimized.
+[[nodiscard]] bool foregroundWindowRect(WindowRect& out, QString& err);
+
 }  // namespace sak::win32mcp

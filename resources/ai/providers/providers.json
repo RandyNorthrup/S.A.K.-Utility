@@ -93,6 +93,7 @@
         "mouse_click",
         "type_text",
         "send_keys",
+        "focus_window",
         "clipboard_read",
         "clipboard_write",
         "browser_navigate",

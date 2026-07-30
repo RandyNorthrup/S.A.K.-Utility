@@ -65,6 +65,11 @@ QJsonObject typedProperty(const QString& type, const QString& description) {
                        {QStringLiteral("description"), description}};
 }
 
+QJsonObject boolProperty(const QString& description) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                       {QStringLiteral("description"), description}};
+}
+
 QJsonObject toolSchema(const QJsonObject& properties, const QJsonArray& required) {
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"), properties},
@@ -110,6 +115,29 @@ HWND findVisibleWindowByTitle(const QString& needle_lower) {
         },
         reinterpret_cast<LPARAM>(&state));
     return state.match;
+}
+
+// Resolve the window an observation tool targets: foreground=true -> the active window (the only
+// way to reach a title-less pop-up dialog), otherwise the first visible window whose title
+// contains window_title. Sets err and returns null on failure.
+HWND resolveTargetHwnd(const QJsonObject& args, QString& err) {
+    if (args.value(QStringLiteral("foreground")).toBool()) {
+        HWND fg = GetForegroundWindow();
+        if (!fg) {
+            err = QStringLiteral("There is no foreground window.");
+        }
+        return fg;
+    }
+    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
+    if (title.isEmpty()) {
+        err = QStringLiteral("window_title or foreground is required");
+        return nullptr;
+    }
+    HWND hwnd = findVisibleWindowByTitle(title.toLower());
+    if (!hwnd) {
+        err = QStringLiteral("No visible window matching '%1'").arg(title);
+    }
+    return hwnd;
 }
 
 // -- screen capture ----------------------------------------------------------
@@ -158,13 +186,10 @@ QString captureToBase64(void* hwnd, const RECT& rect, QString* err) {
 }
 
 ToolResult toolCaptureWindow(const QJsonObject& args) {
-    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
-    if (title.isEmpty()) {
-        return errorResult(QStringLiteral("window_title is required"));
-    }
-    HWND hwnd = findVisibleWindowByTitle(title.toLower());
+    QString err_target;
+    HWND hwnd = resolveTargetHwnd(args, err_target);
     if (!hwnd) {
-        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+        return errorResult(err_target);
     }
     if (IsIconic(hwnd)) {
         return errorResult(QStringLiteral("The window is minimized; restore it before capturing."));
@@ -530,13 +555,10 @@ struct UiaSnapshot {
 UiaSnapshot g_uia_snapshot;
 
 ToolResult toolUiaInspectWindow(const QJsonObject& args) {
-    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
-    if (title.isEmpty()) {
-        return errorResult(QStringLiteral("window_title is required"));
-    }
-    HWND hwnd = findVisibleWindowByTitle(title.toLower());
+    QString err_target;
+    HWND hwnd = resolveTargetHwnd(args, err_target);
     if (!hwnd) {
-        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+        return errorResult(err_target);
     }
     ComApartment com;
     QVector<UiaNode> nodes;
@@ -555,14 +577,14 @@ ToolResult toolUiaInspectWindow(const QJsonObject& args) {
 }
 
 ToolResult toolUiaFindControl(const QJsonObject& args) {
-    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
     const QString query = args.value(QStringLiteral("name")).toString().trimmed();
-    if (title.isEmpty() || query.isEmpty()) {
-        return errorResult(QStringLiteral("window_title and name are required"));
+    if (query.isEmpty()) {
+        return errorResult(QStringLiteral("name is required"));
     }
-    HWND hwnd = findVisibleWindowByTitle(title.toLower());
+    QString err_target;
+    HWND hwnd = resolveTargetHwnd(args, err_target);
     if (!hwnd) {
-        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+        return errorResult(err_target);
     }
     const QString type_filter =
         args.value(QStringLiteral("control_type")).toString().trimmed().toLower();
@@ -772,15 +794,17 @@ void appendUiaTools(QJsonArray& tools) {
             "Read a window's live UI Automation control tree as an indented outline of "
             "[ref] role \"name\" = \"value\" lines (the desktop analog of "
             "browser_snapshot). Each ref is usable with uia_get_control_value. Match the "
-            "window by title substring."),
+            "window by title substring, or set foreground=true to inspect the active pop-up."),
         toolSchema(
             QJsonObject{
                 {QStringLiteral("window_title"),
                  stringProperty(QStringLiteral("Title substring of the target window."))},
+                {QStringLiteral("foreground"),
+                 boolProperty(QStringLiteral("Inspect the active window (title-less pop-ups)."))},
                 {QStringLiteral("max_depth"),
                  typedProperty(QStringLiteral("integer"),
                                QStringLiteral("Optional tree depth cap (default/max 40)."))}},
-            QJsonArray{QStringLiteral("window_title")})));
+            QJsonArray{})));
     tools.append(toolEntry(
         QStringLiteral("uia_find_control"),
         QStringLiteral(
@@ -790,11 +814,13 @@ void appendUiaTools(QJsonArray& tools) {
         toolSchema(
             QJsonObject{{QStringLiteral("window_title"),
                          stringProperty(QStringLiteral("Title substring of the target window."))},
+                        {QStringLiteral("foreground"),
+                         boolProperty(QStringLiteral("Search the active window instead."))},
                         {QStringLiteral("name"),
                          stringProperty(QStringLiteral("Accessible-name substring to match."))},
                         {QStringLiteral("control_type"),
                          stringProperty(QStringLiteral("Optional control-type name to require."))}},
-            QJsonArray{QStringLiteral("window_title"), QStringLiteral("name")})));
+            QJsonArray{QStringLiteral("name")})));
     tools.append(toolEntry(
         QStringLiteral("uia_get_control_value"),
         QStringLiteral("Read one control's current value/name/enabled/toggle state by its ref from "
@@ -829,12 +855,16 @@ void appendUiaTools(QJsonArray& tools) {
 void appendCaptureTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("capture_window"),
-        QStringLiteral("Capture a PNG screenshot of the first visible window whose title contains "
-                       "the query (uses PrintWindow, so occluded or DWM-composited windows still "
-                       "render). Fails if the window is minimized."),
-        toolSchema(QJsonObject{{QStringLiteral("window_title"),
-                                stringProperty(QStringLiteral("Title substring to match."))}},
-                   QJsonArray{QStringLiteral("window_title")})));
+        QStringLiteral("Capture a PNG screenshot of a window (uses PrintWindow, so occluded or "
+                       "DWM-composited windows still render). Match by title substring, or set "
+                       "foreground=true to grab the active pop-up (which often has no title). "
+                       "Fails if the window is minimized."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("window_title"),
+                         stringProperty(QStringLiteral("Title substring to match."))},
+                        {QStringLiteral("foreground"),
+                         boolProperty(QStringLiteral("Capture the active window instead."))}},
+            QJsonArray{})));
     tools.append(toolEntry(
         QStringLiteral("capture_screen"),
         QStringLiteral("Capture a PNG screenshot of the full virtual screen (all monitors)."),

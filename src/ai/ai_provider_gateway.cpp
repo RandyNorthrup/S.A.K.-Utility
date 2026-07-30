@@ -669,6 +669,9 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         QStringLiteral("mouse_click"),
         QStringLiteral("type_text"),
         QStringLiteral("send_keys"),
+        // Changing which window is foreground steals focus and redirects where subsequent typed
+        // input lands, so it takes the same hard gate as the input it sets up.
+        QStringLiteral("focus_window"),
     };
     return input_tools.contains(tool_name.trimmed());
 }

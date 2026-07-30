@@ -5,7 +5,9 @@
 
 #include "sak/win32mcp/win32_mcp_capture.h"
 
+#include <QHash>
 #include <QJsonDocument>
+#include <QStringList>
 #include <QVector>
 
 #include <algorithm>
@@ -63,6 +65,11 @@ QJsonObject stringProperty(const QString& description) {
 
 QJsonObject intProperty(const QString& description) {
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                       {QStringLiteral("description"), description}};
+}
+
+QJsonObject boolProperty(const QString& description) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
                        {QStringLiteral("description"), description}};
 }
 
@@ -223,13 +230,16 @@ CaptureRequest screenRequest() {
 }
 
 ToolResult toolOcrWindow(const QJsonObject& args) {
+    const bool fg = args.value(QStringLiteral("foreground")).toBool();
     const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
-    if (title.isEmpty()) {
-        return errorResult(QStringLiteral("window_title is required"));
+    if (!fg && title.isEmpty()) {
+        return errorResult(QStringLiteral("window_title or foreground is required"));
     }
     WindowRect wr;
     QString err;
-    if (!windowRectByTitle(title.toLower(), wr, err)) {
+    const bool ok = fg ? foregroundWindowRect(wr, err)
+                       : windowRectByTitle(title.toLower(), wr, err);
+    if (!ok) {
         return errorResult(err);
     }
     return runOcrCapture(CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0}, false);
@@ -269,9 +279,11 @@ struct WordHit {
     int y;
     int w;
     int h;
+    int line;
 };
 
 void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<WordHit>& out) {
+    int line_idx = 0;
     for (const auto& line : result.Lines()) {
         for (const auto& word : line.Words()) {
             const auto rect = word.BoundingRect();
@@ -279,8 +291,10 @@ void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<
                                static_cast<int>(std::llround(ox + rect.X * inv)),
                                static_cast<int>(std::llround(oy + rect.Y * inv)),
                                static_cast<int>(std::llround(rect.Width * inv)),
-                               static_cast<int>(std::llround(rect.Height * inv))});
+                               static_cast<int>(std::llround(rect.Height * inv)),
+                               line_idx});
         }
+        ++line_idx;
     }
 }
 
@@ -307,14 +321,123 @@ QString ocrCollect(CaptureRequest req, QVector<WordHit>& out) {
     return {};
 }
 
-// A text tool targets a window (window_title present) or the full screen (absent).
+// A located run of OCR text with its combined screen box, source line, and a rank score.
+struct TextMatch {
+    QString text;
+    int x;
+    int y;
+    int w;
+    int h;
+    int line;
+    int score;
+};
+
+// Lowercase a word and strip leading/trailing non-alphanumerics so OCR punctuation ("Continue:",
+// "cookies,") does not defeat a whole-word comparison.
+QString normWord(const QString& raw) {
+    const QString s = raw.toLower();
+    int a = 0;
+    int b = static_cast<int>(s.size());
+    while (a < b && !s[a].isLetterOrNumber()) {
+        ++a;
+    }
+    while (b > a && !s[b - 1].isLetterOrNumber()) {
+        --b;
+    }
+    return s.mid(a, b - a);
+}
+
+// Match strength of the token run starting at hits[i]: 2 = every token is a WHOLE-WORD match,
+// 1 = at least one token only matched as a substring (allowed only when allow_sub), 0 = no match.
+// On a non-zero return m holds the union box, joined text, and source line of the run.
+int runMatch(
+    const QVector<WordHit>& hits, int i, const QStringList& tokens, bool allow_sub, TextMatch& m) {
+    const int line = hits[i].line;
+    int x0 = hits[i].x;
+    int y0 = hits[i].y;
+    int x1 = hits[i].x + hits[i].w;
+    int y1 = hits[i].y + hits[i].h;
+    int strength = 2;
+    QStringList joined;
+    for (int t = 0; t < tokens.size(); ++t) {
+        const WordHit& h = hits[i + t];
+        const QString w = normWord(h.text);
+        if (h.line != line || w.isEmpty()) {
+            return 0;
+        }
+        if (w != tokens[t]) {
+            if (!(allow_sub && w.contains(tokens[t]))) {
+                return 0;
+            }
+            strength = 1;
+        }
+        x0 = std::min(x0, h.x);
+        y0 = std::min(y0, h.y);
+        x1 = std::max(x1, h.x + h.w);
+        y1 = std::max(y1, h.y + h.h);
+        joined << h.text;
+    }
+    m = TextMatch{joined.join(QLatin1Char(' ')), x0, y0, x1 - x0, y1 - y0, line, 0};
+    return strength;
+}
+
+// Locate a query in the OCR word hits. Tokens must match WHOLE OCR words (case/punctuation
+// insensitive) so "OK" never matches "cookies" and "Scan" never matches "Scanning"; a multi-word
+// query must match a consecutive same-line run. Results are ranked so exact matches beat substring
+// ones and a standalone label (its own short line, e.g. a button) beats the same word buried in a
+// sentence. Substring matching is opt-in via allow_sub, and never outranks a whole-word hit.
+QVector<TextMatch> locateText(const QVector<WordHit>& hits, const QString& query, bool allow_sub) {
+    QVector<TextMatch> out;
+    QStringList tokens;
+    const QStringList parts = query.toLower().simplified().split(QLatin1Char(' '),
+                                                                 Qt::SkipEmptyParts);
+    for (const QString& p : parts) {
+        const QString t = normWord(p);
+        if (!t.isEmpty()) {
+            tokens.append(t);
+        }
+    }
+    if (tokens.isEmpty()) {
+        return out;
+    }
+    QHash<int, int> line_words;
+    for (const WordHit& h : hits) {
+        ++line_words[h.line];
+    }
+    const int n = static_cast<int>(hits.size());
+    const int tk = static_cast<int>(tokens.size());
+    for (int i = 0; i + tk <= n; ++i) {
+        TextMatch m;
+        const int strength = runMatch(hits, i, tokens, allow_sub, m);
+        if (strength == 0) {
+            continue;
+        }
+        const int extra = line_words.value(m.line, tk) - tk;  // other words sharing the line
+        m.score = strength * 100'000 - extra;
+        out.append(m);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const TextMatch& a, const TextMatch& b) {
+        return a.score > b.score;
+    });
+    return out;
+}
+
+// A text tool targets the foreground window (foreground=true, reaches title-less pop-ups), a
+// titled window (window_title present), or the full screen (both absent).
 bool resolveTextTarget(const QJsonObject& args, CaptureRequest& req, QString& err) {
+    WindowRect wr;
+    if (args.value(QStringLiteral("foreground")).toBool()) {
+        if (!foregroundWindowRect(wr, err)) {
+            return false;
+        }
+        req = CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0};
+        return true;
+    }
     const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
     if (title.isEmpty()) {
         req = screenRequest();
         return true;
     }
-    WindowRect wr;
     if (!windowRectByTitle(title.toLower(), wr, err)) {
         return false;
     }
@@ -322,18 +445,14 @@ bool resolveTextTarget(const QJsonObject& args, CaptureRequest& req, QString& er
     return true;
 }
 
-QJsonArray matchesToJson(const QVector<WordHit>& hits, const QString& query) {
-    const QString needle = query.toLower();
+QJsonArray matchesToJson(const QVector<WordHit>& hits, const QString& query, bool allow_sub) {
     QJsonArray matches;
-    for (const auto& hit : hits) {
-        if (!hit.text.toLower().contains(needle)) {
-            continue;
-        }
-        matches.append(QJsonObject{{QStringLiteral("text"), hit.text},
-                                   {QStringLiteral("x"), hit.x},
-                                   {QStringLiteral("y"), hit.y},
-                                   {QStringLiteral("width"), hit.w},
-                                   {QStringLiteral("height"), hit.h}});
+    for (const auto& m : locateText(hits, query, allow_sub)) {
+        matches.append(QJsonObject{{QStringLiteral("text"), m.text},
+                                   {QStringLiteral("x"), m.x},
+                                   {QStringLiteral("y"), m.y},
+                                   {QStringLiteral("width"), m.w},
+                                   {QStringLiteral("height"), m.h}});
     }
     return matches;
 }
@@ -355,7 +474,8 @@ ToolResult textQuery(const QJsonObject& args, bool assert_mode) {
     if (!ocr_err.isEmpty()) {
         return errorResult(ocr_err);
     }
-    const QJsonArray matches = matchesToJson(hits, query);
+    const bool allow_sub = args.value(QStringLiteral("contains")).toBool();
+    const QJsonArray matches = matchesToJson(hits, query, allow_sub);
     QJsonObject out{{QStringLiteral("count"), matches.size()},
                     {QStringLiteral("matches"), matches}};
     if (assert_mode) {
@@ -398,7 +518,7 @@ ToolResult toolWaitForText(const QJsonObject& args) {
             if (!ocr_err.isEmpty()) {
                 return errorResult(ocr_err);  // an engine problem is not a "not yet"
             }
-            matches = matchesToJson(hits, query);
+            matches = matchesToJson(hits, query, args.value(QStringLiteral("contains")).toBool());
         }
         const qint64 waited = static_cast<qint64>(GetTickCount64() - start);
         if (!matches.isEmpty()) {
@@ -419,10 +539,18 @@ ToolResult toolWaitForText(const QJsonObject& args) {
 void appendTextTools(QJsonArray& tools) {
     const QJsonObject text_target =
         QJsonObject{{QStringLiteral("text"),
-                     stringProperty(QStringLiteral("Substring to find (case-insensitive)."))},
+                     stringProperty(QStringLiteral("Text to find. Matched as whole words "
+                                                   "(case/punctuation-insensitive); a multi-word "
+                                                   "value must appear on one line."))},
                     {QStringLiteral("window_title"),
                      stringProperty(QStringLiteral("Optional window to scope to; omit for the "
-                                                   "full screen."))}};
+                                                   "full screen."))},
+                    {QStringLiteral("foreground"),
+                     boolProperty(QStringLiteral("Scope to the active window (title-less pop-ups); "
+                                                 "overrides window_title."))},
+                    {QStringLiteral("contains"),
+                     boolProperty(QStringLiteral("When true, also accept substring matches (e.g. "
+                                                 "'updat' in 'updates'). Default false."))}};
     tools.append(toolEntry(
         QStringLiteral("find_text_on_screen"),
         QStringLiteral("OCR the screen (or a window) and return every occurrence of the query as a "
@@ -471,12 +599,15 @@ void appendRegionTools(QJsonArray& tools) {
 void appendOcrTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("ocr_window"),
-        QStringLiteral("Read visible text from a window (matched by title substring) via Windows "
-                       "OCR -- text the UI Automation tree cannot expose (canvas, images, "
-                       "custom-drawn UI). Returns text and line count."),
+        QStringLiteral("Read visible text from a window (matched by title substring, or "
+                       "foreground=true for the active title-less pop-up) via Windows OCR -- text "
+                       "the UI Automation tree cannot expose (canvas, images, custom-drawn UI). "
+                       "Returns text and line count."),
         toolSchema(QJsonObject{{QStringLiteral("window_title"),
-                                stringProperty(QStringLiteral("Title substring to match."))}},
-                   QJsonArray{QStringLiteral("window_title")})));
+                                stringProperty(QStringLiteral("Title substring to match."))},
+                               {QStringLiteral("foreground"),
+                                boolProperty(QStringLiteral("Read the active window instead."))}},
+                   QJsonArray{})));
     appendRegionTools(tools);
     tools.append(toolEntry(QStringLiteral("ocr_screen"),
                            QStringLiteral(
@@ -532,16 +663,10 @@ ToolResult invokeOcrTool(const QString& name, const QJsonObject& args) {
     return errorResult(QStringLiteral("Unknown OCR tool: %1").arg(name));
 }
 
-QString ocrLocateText(const QString& text,
-                      const QString& window_title,
-                      int& center_x,
-                      int& center_y) {
+QString ocrLocateText(const QJsonObject& args, int& center_x, int& center_y) {
+    const QString text = args.value(QStringLiteral("text")).toString();
     if (text.trimmed().isEmpty()) {
         return QStringLiteral("text is required");
-    }
-    QJsonObject args;
-    if (!window_title.trimmed().isEmpty()) {
-        args.insert(QStringLiteral("window_title"), window_title);
     }
     CaptureRequest req{};
     QString err;
@@ -553,15 +678,14 @@ QString ocrLocateText(const QString& text,
     if (!ocr_err.isEmpty()) {
         return ocr_err;
     }
-    const QString needle = text.toLower();
-    for (const auto& hit : hits) {
-        if (hit.text.toLower().contains(needle)) {
-            center_x = hit.x + hit.w / 2;
-            center_y = hit.y + hit.h / 2;
-            return {};
-        }
+    const QVector<TextMatch> matches =
+        locateText(hits, text, args.value(QStringLiteral("contains")).toBool());
+    if (matches.isEmpty()) {
+        return QStringLiteral("Text not found on screen: %1").arg(text.trimmed());
     }
-    return QStringLiteral("Text not found on screen: %1").arg(text.trimmed());
+    center_x = matches.first().x + matches.first().w / 2;
+    center_y = matches.first().y + matches.first().h / 2;
+    return {};
 }
 
 }  // namespace sak::win32mcp

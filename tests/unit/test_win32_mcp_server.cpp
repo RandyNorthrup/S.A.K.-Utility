@@ -144,7 +144,8 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("mouse_click"),
                                     QStringLiteral("click_text"),
                                     QStringLiteral("type_text"),
-                                    QStringLiteral("send_keys")}) {
+                                    QStringLiteral("send_keys"),
+                                    QStringLiteral("focus_window")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -402,6 +403,9 @@ void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
     QVERIFY(invokeTool(QStringLiteral("uia_click_control"), {}).is_error);  // needs ref
     QVERIFY(invokeTool(QStringLiteral("uia_click_control"), QJsonObject{{QStringLiteral("ref"), 0}})
                 .is_error);  // no prior uia_inspect_window -> refuse
+    // focus_window needs a target: neither window_title nor foreground is a clean error that
+    // raises nothing (a bare success path could steal focus on the test host).
+    QVERIFY(invokeTool(QStringLiteral("focus_window"), {}).is_error);
 }
 
 void Win32McpServerTests::invokeTool_closeWindowRequiresTitle() {

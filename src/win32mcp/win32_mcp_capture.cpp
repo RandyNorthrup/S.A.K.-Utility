@@ -252,4 +252,27 @@ bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& er
     return true;
 }
 
+bool foregroundWindowRect(WindowRect& out, QString& err) {
+    const HWND fg = GetForegroundWindow();
+    if (fg == nullptr) {
+        err = QStringLiteral("There is no foreground window.");
+        return false;
+    }
+    if (IsIconic(fg) != FALSE) {
+        err = QStringLiteral("The foreground window is minimized; restore it first.");
+        return false;
+    }
+    RECT rc{};
+    if (GetWindowRect(fg, &rc) == FALSE) {
+        err = QStringLiteral("Could not read the foreground window bounds.");
+        return false;
+    }
+    out.hwnd = fg;
+    out.left = rc.left;
+    out.top = rc.top;
+    out.right = rc.right;
+    out.bottom = rc.bottom;
+    return true;
+}
+
 }  // namespace sak::win32mcp

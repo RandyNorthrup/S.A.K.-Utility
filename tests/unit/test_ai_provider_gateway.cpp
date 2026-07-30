@@ -177,7 +177,8 @@ void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {
                               QStringLiteral("click_text"),
                               QStringLiteral("mouse_click"),
                               QStringLiteral("type_text"),
-                              QStringLiteral("send_keys")}) {
+                              QStringLiteral("send_keys"),
+                              QStringLiteral("focus_window")}) {
         QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(in), qPrintable(in));
         QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(in), qPrintable(in));
     }

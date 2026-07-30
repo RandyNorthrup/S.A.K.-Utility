@@ -3,6 +3,7 @@
 
 #include "sak/win32mcp/win32_mcp_input.h"
 
+#include "sak/win32mcp/win32_mcp_capture.h"
 #include "sak/win32mcp/win32_mcp_ocr.h"
 
 #include <QJsonDocument>
@@ -210,6 +211,51 @@ bool parseChord(const QString& chord, QVector<WORD>& modifiers, WORD& main_key) 
     return main_key != 0;
 }
 
+// Bring a top-level window to the foreground so the next input actuates its control instead of
+// only raising it. Works around SetForegroundWindow's focus-steal guard by briefly attaching this
+// thread's input queue to the current foreground thread. Restores a minimized window. Best-effort.
+void activateWindow(HWND hwnd) {
+    if (hwnd == nullptr) {
+        return;
+    }
+    if (IsIconic(hwnd) != FALSE) {
+        ShowWindow(hwnd, SW_RESTORE);
+    }
+    const HWND fg = GetForegroundWindow();
+    const DWORD this_tid = GetCurrentThreadId();
+    const DWORD fg_tid = (fg != nullptr) ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    const bool attach = fg_tid != 0 && fg_tid != this_tid;
+    if (attach) {
+        AttachThreadInput(fg_tid, this_tid, TRUE);
+    }
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+    if (attach) {
+        AttachThreadInput(fg_tid, this_tid, FALSE);
+    }
+}
+
+// Activate whichever window an input tool is aimed at: foreground=true is a no-op that confirms
+// the active pop-up, window_title raises that titled window; neither leaves focus untouched. Gives
+// the OS a moment to repaint/focus before the caller clicks or types.
+void activateTarget(const QJsonObject& args) {
+    WindowRect wr;
+    QString err;
+    bool ok = false;
+    if (args.value(QStringLiteral("foreground")).toBool()) {
+        ok = foregroundWindowRect(wr, err);
+    } else {
+        const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
+        if (!title.isEmpty()) {
+            ok = windowRectByTitle(title.toLower(), wr, err);
+        }
+    }
+    if (ok) {
+        activateWindow(static_cast<HWND>(wr.hwnd));
+        Sleep(120);
+    }
+}
+
 // -- tools -------------------------------------------------------------------
 
 ToolResult toolMouseClick(const QJsonObject& args) {
@@ -223,6 +269,7 @@ ToolResult toolMouseClick(const QJsonObject& args) {
     if (!buttonFlags(args.value(QStringLiteral("button")).toString(), down, up)) {
         return errorResult(QStringLiteral("button must be left, right, or middle"));
     }
+    activateTarget(args);  // optional window_title / foreground raises the target first
     const int clicks = args.value(QStringLiteral("double")).toBool() ? 2 : 1;
     clickAt(x, y, down, up, clicks);
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
@@ -236,10 +283,10 @@ ToolResult toolClickText(const QJsonObject& args) {
     if (text.isEmpty()) {
         return errorResult(QStringLiteral("text is required"));
     }
+    activateTarget(args);  // raise the target window so the click actuates, not just activates
     int cx = 0;
     int cy = 0;
-    const QString err =
-        ocrLocateText(text, args.value(QStringLiteral("window_title")).toString(), cx, cy);
+    const QString err = ocrLocateText(args, cx, cy);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
@@ -305,29 +352,65 @@ ToolResult toolSendKeys(const QJsonObject& args) {
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("keys"), keys}});
 }
 
+ToolResult toolFocusWindow(const QJsonObject& args) {
+    const bool fg = args.value(QStringLiteral("foreground")).toBool();
+    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
+    if (!fg && title.isEmpty()) {
+        return errorResult(QStringLiteral("window_title or foreground is required"));
+    }
+    WindowRect wr;
+    QString err;
+    const bool ok = fg ? foregroundWindowRect(wr, err)
+                       : windowRectByTitle(title.toLower(), wr, err);
+    if (!ok) {
+        return errorResult(err);
+    }
+    activateWindow(static_cast<HWND>(wr.hwnd));
+    Sleep(120);
+    return jsonResult(
+        QJsonObject{{QStringLiteral("ok"), true},
+                    {QStringLiteral("window"), fg ? QStringLiteral("<foreground>") : title}});
+}
+
 // -- catalog + dispatch ------------------------------------------------------
 
 void appendInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("mouse_click"),
         QStringLiteral("Move the physical mouse to virtual-screen (x, y) and click. button = "
-                       "left (default) / right / middle; double = true for a double-click."),
+                       "left (default) / right / middle; double = true for a double-click. Pass "
+                       "window_title or foreground=true to raise that window before clicking."),
         toolSchema(QJsonObject{{QStringLiteral("x"), intProperty(QStringLiteral("Screen X."))},
                                {QStringLiteral("y"), intProperty(QStringLiteral("Screen Y."))},
                                {QStringLiteral("button"),
                                 stringProperty(QStringLiteral("left / right / middle."))},
+                               {QStringLiteral("window_title"),
+                                stringProperty(QStringLiteral("Optional window to raise first."))},
+                               {QStringLiteral("foreground"),
+                                boolProperty(QStringLiteral("Raise the active window first."))},
                                {QStringLiteral("double"),
                                 boolProperty(QStringLiteral("Double-click when true."))}},
                    QJsonArray{QStringLiteral("x"), QStringLiteral("y")})));
     tools.append(toolEntry(
         QStringLiteral("click_text"),
-        QStringLiteral("Find on-screen text with OCR (optionally within a window) and click its "
-                       "center with the physical mouse. Prefer uia_click_control when the target "
-                       "has a ref."),
+        QStringLiteral(
+            "Find on-screen text with OCR and click its center with the physical mouse. "
+            "Scope with window_title, or foreground=true to hit the active pop-up dialog "
+            "(which often has no title); the target window is raised first so the click "
+            "actuates. Matches whole words and prefers a standalone label (a button) "
+            "over the same word inside a sentence. Prefer uia_click_control when the "
+            "target has a ref."),
         toolSchema(QJsonObject{{QStringLiteral("text"),
-                                stringProperty(QStringLiteral("Visible text to click."))},
+                                stringProperty(QStringLiteral("Visible label to click (whole "
+                                                              "words, case-insensitive)."))},
                                {QStringLiteral("window_title"),
                                 stringProperty(QStringLiteral("Optional window to scope to."))},
+                               {QStringLiteral("foreground"),
+                                boolProperty(QStringLiteral("Target the active window (title-less "
+                                                            "pop-ups). Overrides window_title."))},
+                               {QStringLiteral("contains"),
+                                boolProperty(QStringLiteral("Allow substring matches too. Default "
+                                                            "false (whole-word only)."))},
                                {QStringLiteral("double"),
                                 boolProperty(QStringLiteral("Double-click when true."))}},
                    QJsonArray{QStringLiteral("text")})));
@@ -341,10 +424,21 @@ void appendInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("send_keys"),
         QStringLiteral("Press a key or chord, e.g. 'Enter', 'Tab', 'F5', 'Ctrl+S', "
-                       "'Ctrl+Shift+Escape'. Modifiers: Ctrl/Alt/Shift/Win."),
+                       "'Ctrl+Shift+Escape'. Modifiers: Ctrl/Alt/Shift/Win. Goes to the focused "
+                       "window -- focus_window first to aim it."),
         toolSchema(QJsonObject{{QStringLiteral("keys"),
                                 stringProperty(QStringLiteral("A key or modifier+key chord."))}},
                    QJsonArray{QStringLiteral("keys")})));
+    tools.append(toolEntry(
+        QStringLiteral("focus_window"),
+        QStringLiteral("Bring a window to the foreground so keyboard input (type_text / send_keys) "
+                       "lands in it. Give window_title, or foreground=true to confirm the active "
+                       "pop-up. Use before typing when no click precedes it."),
+        toolSchema(QJsonObject{{QStringLiteral("window_title"),
+                                stringProperty(QStringLiteral("Title substring to raise."))},
+                               {QStringLiteral("foreground"),
+                                boolProperty(QStringLiteral("Raise the active window instead."))}},
+                   QJsonArray{})));
 }
 
 struct InputHandler {
@@ -357,6 +451,7 @@ const InputHandler kInputHandlers[] = {
     {QLatin1String("click_text"), toolClickText},
     {QLatin1String("type_text"), toolTypeText},
     {QLatin1String("send_keys"), toolSendKeys},
+    {QLatin1String("focus_window"), toolFocusWindow},
 };
 
 }  // namespace
