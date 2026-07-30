@@ -32,6 +32,11 @@ constexpr int kFpGrid = 16;
 constexpr int kFpTolerance = 16;
 constexpr double kChangedRatio = 0.02;
 
+// Upper bound for a poll's total wait. Driving real apps means waiting out long operations --
+// an antivirus scan runs for minutes to hours -- so the cap is generous; the default stays short
+// (10s) and only a caller that explicitly asks for a long timeout_ms gets one.
+constexpr qint64 kMaxWaitMs = 7'200'000;  // 2 hours
+
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
@@ -239,7 +244,7 @@ ToolResult toolWaitForWindow(const QJsonObject& args) {
     }
     const bool want_present = args.value(QStringLiteral("state")).toString().trimmed().toLower() !=
                               QLatin1String("absent");
-    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, 60'000);
+    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, kMaxWaitMs);
     const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 300, 100, 5000);
     const ULONGLONG start = GetTickCount64();
     for (;;) {
@@ -259,8 +264,8 @@ ToolResult toolWaitForIdle(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, 60'000);
-    const qint64 idle_ms = clampMs(args, QStringLiteral("idle_ms"), 600, 150, 10'000);
+    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, kMaxWaitMs);
+    const qint64 idle_ms = clampMs(args, QStringLiteral("idle_ms"), 600, 150, 30'000);
     const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 200, 100, 2000);
     const ULONGLONG start = GetTickCount64();
     QByteArray previous;
@@ -322,27 +327,29 @@ void appendWaitTools(QJsonArray& tools) {
         QStringLiteral("Poll until a visible window matching the title appears (default) or is "
                        "gone (state=absent), or the timeout elapses. Returns satisfied + present "
                        "+ waited_ms."),
-        toolSchema(
-            QJsonObject{{QStringLiteral("window_title"),
-                         stringProperty(QStringLiteral("Title substring to match."))},
-                        {QStringLiteral("state"),
-                         stringProperty(QStringLiteral("'present' (default) or 'absent'."))},
-                        {QStringLiteral("timeout_ms"),
-                         intProperty(QStringLiteral("Max wait (default 10000, max 60000)."))}},
-            QJsonArray{QStringLiteral("window_title")})));
+        toolSchema(QJsonObject{{QStringLiteral("window_title"),
+                                stringProperty(QStringLiteral("Title substring to match."))},
+                               {QStringLiteral("state"),
+                                stringProperty(QStringLiteral("'present' (default) or 'absent'."))},
+                               {QStringLiteral("timeout_ms"),
+                                intProperty(QStringLiteral(
+                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))}},
+                   QJsonArray{QStringLiteral("window_title")})));
     tools.append(toolEntry(
         QStringLiteral("wait_for_idle"),
         QStringLiteral("Poll a window's visual fingerprint until it stops changing for idle_ms "
-                       "(the UI has settled) or the timeout elapses. Returns idle + waited_ms."),
-        toolSchema(
-            QJsonObject{
-                {QStringLiteral("window_title"),
-                 stringProperty(QStringLiteral("Title substring to match."))},
-                {QStringLiteral("idle_ms"),
-                 intProperty(QStringLiteral("Quiet time required (default 600, min 150)."))},
-                {QStringLiteral("timeout_ms"),
-                 intProperty(QStringLiteral("Max wait (default 10000, max 60000)."))}},
-            QJsonArray{QStringLiteral("window_title")})));
+                       "(the UI has settled) or the timeout elapses. Returns idle + waited_ms. For "
+                       "a long operation (a scan) raise timeout_ms and idle_ms so a brief pause is "
+                       "not mistaken for the end."),
+        toolSchema(QJsonObject{{QStringLiteral("window_title"),
+                                stringProperty(QStringLiteral("Title substring to match."))},
+                               {QStringLiteral("idle_ms"),
+                                intProperty(QStringLiteral(
+                                    "Quiet time required (default 600, min 150, max 30000)."))},
+                               {QStringLiteral("timeout_ms"),
+                                intProperty(QStringLiteral(
+                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))}},
+                   QJsonArray{QStringLiteral("window_title")})));
 }
 
 struct WatchHandler {

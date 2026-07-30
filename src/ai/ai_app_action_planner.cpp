@@ -16,6 +16,76 @@ namespace {
 constexpr int kAppActionDefaultTimeoutSeconds = 1800;
 constexpr int kAppActionMinTimeoutSeconds = 5;
 constexpr int kAppActionMaxTimeoutSeconds = 14'400;
+
+// Structurally validate a win32_gui recipe: a non-empty array of {tool:<non-empty string>,
+// arguments?:object, optional?:bool} steps. Deeper checks (tool exists / is not high-risk) are
+// enforced at execution time by the step runner via planWin32McpCall, which sees the live
+// provider manifest and risk classification. Returns empty on success, else an error string.
+QString validateWin32GuiSteps(const QJsonArray& steps) {
+    if (steps.isEmpty()) {
+        return QStringLiteral(
+            "win32_gui action requires a non-empty 'steps' array in the manifest");
+    }
+    for (int i = 0; i < steps.size(); ++i) {
+        if (!steps.at(i).isObject()) {
+            return QStringLiteral("win32_gui step %1 must be an object").arg(i);
+        }
+        const QJsonObject step = steps.at(i).toObject();
+        if (step.value(QStringLiteral("tool")).toString().trimmed().isEmpty()) {
+            return QStringLiteral("win32_gui step %1 is missing a 'tool' name").arg(i);
+        }
+        if (step.contains(QStringLiteral("arguments")) &&
+            !step.value(QStringLiteral("arguments")).isObject()) {
+            return QStringLiteral("win32_gui step %1 'arguments' must be an object").arg(i);
+        }
+    }
+    return {};
+}
+
+// Finalize a win32_gui (GUI recipe) plan: validate the manifest steps and preview them. A GUI
+// recipe injects mouse/keyboard input, so it is always at least input-tier risky;
+// authorizeAppAction takes the single action-level consent (confirm in Assisted, restore point in
+// Unattended). Individual steps are vetted manifest content, not model input, and high-risk desktop
+// tools are rejected by the step runner. Sets error_message on failure.
+void applyWin32GuiMethod(AiAppActionPlan& plan) {
+    plan.steps = plan.action_profile.value(QStringLiteral("steps")).toArray();
+    const QString steps_error = validateWin32GuiSteps(plan.steps);
+    if (!steps_error.isEmpty()) {
+        plan.error_message = steps_error;
+        return;
+    }
+    plan.preview = QStringLiteral("Drive %1 GUI action '%2' (%3 desktop-control steps)")
+                       .arg(plan.display_name, plan.action)
+                       .arg(plan.steps.size());
+    plan.risky = true;
+}
+
+// Finalize a powershell/cli plan: require a supported method + command, preview it, and run it
+// through the command guard (blocking / approval / destructive classification). Sets error_message
+// on failure.
+void applyCommandMethod(AiAppActionPlan& plan) {
+    if (plan.method != QLatin1String("powershell") && plan.method != QLatin1String("cli")) {
+        plan.error_message = QStringLiteral(
+            "app_run_action supports powershell/cli/win32_gui manifest actions only");
+        return;
+    }
+    if (plan.request.command.isEmpty()) {
+        plan.error_message = QStringLiteral("Supported app action has no command in manifest");
+        return;
+    }
+    plan.preview = QStringLiteral("Run %1 action '%2': %3")
+                       .arg(plan.display_name, plan.action, plan.request.command);
+    plan.guard_block_error = commandGuardBlockError(plan.request, plan.preview);
+    if (!plan.guard_block_error.isEmpty()) {
+        plan.error_message = plan.guard_block_error;
+        return;
+    }
+    plan.guard_approval_reason = commandGuardApprovalReason(plan.request, plan.preview);
+    plan.risky =
+        plan.action_profile.value(QStringLiteral("high_risk")).toBool(false) ||
+        plan.action_profile.value(QStringLiteral("requires_restore_point")).toBool(false) ||
+        AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);
+}
 }  // namespace
 
 AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
@@ -58,28 +128,11 @@ AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
         options.max_output_bytes);
     plan.evidence = plan.action_profile.value(QStringLiteral("evidence")).toArray();
 
-    if (plan.method != QLatin1String("powershell") && plan.method != QLatin1String("cli")) {
-        plan.error_message =
-            QStringLiteral("app_run_action supports powershell/cli manifest actions only");
-        return plan;
+    if (plan.method == QLatin1String("win32_gui")) {
+        applyWin32GuiMethod(plan);
+    } else {
+        applyCommandMethod(plan);
     }
-    if (plan.request.command.isEmpty()) {
-        plan.error_message = QStringLiteral("Supported app action has no command in manifest");
-        return plan;
-    }
-
-    plan.preview = QStringLiteral("Run %1 action '%2': %3")
-                       .arg(plan.display_name, plan.action, plan.request.command);
-    plan.guard_block_error = commandGuardBlockError(plan.request, plan.preview);
-    if (!plan.guard_block_error.isEmpty()) {
-        plan.error_message = plan.guard_block_error;
-        return plan;
-    }
-    plan.guard_approval_reason = commandGuardApprovalReason(plan.request, plan.preview);
-    plan.risky =
-        plan.action_profile.value(QStringLiteral("high_risk")).toBool(false) ||
-        plan.action_profile.value(QStringLiteral("requires_restore_point")).toBool(false) ||
-        AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);
     return plan;
 }
 

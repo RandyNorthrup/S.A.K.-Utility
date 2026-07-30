@@ -17,32 +17,55 @@
       "SASCore64.exe"
     ]
   },
+  "notes": "Free edition has no scan CLI; the validated control path is the GUI via the win32 desktop-control engine. Recipes below are win32_gui: an ordered list of desktop-control tool steps the step runner drives (plan -> per-step risk check -> execute over the win32 stdio pipe). Preconditions: SUPERAntiSpyware.exe is already running and showing its main (home) window. The engine raises the window before each click, so it need not be foreground. The main UI is custom-drawn: nav tiles and some buttons expose no UI Automation name, so recipes use OCR whole-word click_text; scan/update completion pops a title-less modal, read with foreground=true. optional:true steps tolerate a label that is not present. MODERN SCAN = run definition_update first, then quick_scan/full_scan: the scan page's 'Check for malware database updates' pre-scan option is a PRO-locked feature in the free edition (clicking it pops a 'Professional Feature Unavailable' dialog), so defs cannot be refreshed inside the scan itself. Both scan and update completion leave an OK dialog on a nameless custom button -- dismiss it with uia_inspect_window(foreground) + uia_click_control by ref (the ref is not stable across screens).",
   "actions": {
     "quick_scan": {
-      "supported": false,
-      "method": "manual_gui_required",
-      "reason": "No documented, validated non-interactive scan interface is bundled yet. Win32 MCP may observe or drive a manifest-gated GUI workflow only after a tested workflow is added.",
-      "allowed_discovery": [
-        "detect install/version",
-        "verify signature",
-        "collect logs",
-        "open visible GUI for user"
+      "supported": true,
+      "method": "win32_gui",
+      "timeout_seconds": 7200,
+      "steps": [
+        {"tool": "focus_window", "arguments": {"window_title": "SUPERAntiSpyware"}},
+        {"tool": "click_text", "arguments": {"text": "Scan This Computer", "window_title": "SUPERAntiSpyware"}},
+        {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 8000}},
+        {"tool": "click_text", "arguments": {"text": "Quick Scan", "window_title": "SUPERAntiSpyware"}},
+        {"tool": "wait_for_text", "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 1800000, "poll_ms": 3000}},
+        {"tool": "ocr_window", "arguments": {"foreground": true}}
       ],
-      "blocked_discovery": [
-        "brute-force helper EXEs",
-        "try undocumented scan switches",
-        "click arbitrary OCR text without tested workflow"
+      "evidence": [
+        "Items Detected",
+        "Scan Results"
       ]
     },
     "full_scan": {
-      "supported": false,
-      "method": "manual_gui_required",
-      "reason": "No documented, validated non-interactive scan interface is bundled yet."
+      "supported": true,
+      "method": "win32_gui",
+      "timeout_seconds": 14400,
+      "steps": [
+        {"tool": "focus_window", "arguments": {"window_title": "SUPERAntiSpyware"}},
+        {"tool": "click_text", "arguments": {"text": "Scan This Computer", "window_title": "SUPERAntiSpyware"}},
+        {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 8000}},
+        {"tool": "click_text", "arguments": {"text": "Complete Scan", "window_title": "SUPERAntiSpyware"}},
+        {"tool": "wait_for_text", "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 7200000, "poll_ms": 5000}},
+        {"tool": "ocr_window", "arguments": {"foreground": true}}
+      ],
+      "evidence": [
+        "Items Detected",
+        "Scan Results"
+      ]
     },
     "definition_update": {
-      "supported": false,
-      "method": "manual_gui_required",
-      "reason": "No documented, validated non-interactive update interface is bundled yet."
+      "supported": true,
+      "method": "win32_gui",
+      "timeout_seconds": 1800,
+      "steps": [
+        {"tool": "focus_window", "arguments": {"window_title": "SUPERAntiSpyware"}},
+        {"tool": "click_text", "arguments": {"text": "check for", "window_title": "SUPERAntiSpyware"}},
+        {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 300000, "idle_ms": 3000}},
+        {"tool": "ocr_window", "arguments": {"foreground": true}}
+      ],
+      "evidence": [
+        "Complete"
+      ]
     }
   }
 }

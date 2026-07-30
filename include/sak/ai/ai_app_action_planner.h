@@ -25,6 +25,7 @@ struct AiAppActionPlan {
     QString error_message;
     QString guard_block_error;
     QString guard_approval_reason;
+    QJsonArray steps;  // win32_gui recipe: ordered {tool, arguments, optional?} desktop-tool steps
     bool risky{false};
 
     [[nodiscard]] bool ok() const { return error_message.isEmpty(); }

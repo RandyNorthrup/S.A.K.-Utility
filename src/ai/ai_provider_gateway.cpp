@@ -25,7 +25,11 @@ constexpr qsizetype kMcpResultPreviewChars = 49'152;
 constexpr qsizetype kMcpInlineResultJsonBytes = 65'536;
 constexpr int kWin32McpDefaultTimeoutMs = 20'000;
 constexpr int kWin32McpMinimumTimeoutMs = 1000;
-constexpr int kWin32McpMaximumTimeoutMs = 120'000;
+// A single win32 call may legitimately block for a long-running desktop operation -- a wait_for_*
+// step that polls until an antivirus scan finishes runs for minutes to hours. The default stays
+// short (20s); only a step that explicitly requests a long timeout_ms (e.g. a scan recipe) gets
+// one. These calls run off the GUI thread, so a long block never freezes the app.
+constexpr int kWin32McpMaximumTimeoutMs = 7'200'000;  // 2 hours
 
 QString cappedString(const QString& value, qsizetype max_chars, bool* truncated = nullptr) {
     if (value.size() <= max_chars) {

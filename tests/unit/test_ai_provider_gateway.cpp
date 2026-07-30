@@ -510,10 +510,10 @@ void AiProviderGatewayTests::planWin32McpCallClampsTimeout() {
     const auto high = gateway.planWin32McpCall(
         QJsonObject{{QStringLiteral("arguments"),
                      QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("list_windows")},
-                                 {QStringLiteral("timeout_ms"), 999'999}}}},
+                                 {QStringLiteral("timeout_ms"), 9'999'999}}}},
         &error);
     QVERIFY(error.isEmpty());
-    QCOMPARE(high.timeout_ms, 120'000);
+    QCOMPARE(high.timeout_ms, 7'200'000);  // clamped to the long-operation ceiling (2 hours)
 }
 
 void AiProviderGatewayTests::checkAvailabilityRejectsUnsupportedAppAction() {

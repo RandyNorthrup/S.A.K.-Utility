@@ -505,8 +505,10 @@ ToolResult toolWaitForText(const QJsonObject& args) {
     if (query.isEmpty()) {
         return errorResult(QStringLiteral("text is required"));
     }
-    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, 30'000);
-    const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 500, 150, 5000);
+    // Generous cap: driving a real app means waiting out long operations (an antivirus scan runs
+    // minutes to hours). The default stays short; only an explicit long timeout_ms gets one.
+    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, 7'200'000);
+    const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 500, 150, 10'000);
     const ULONGLONG start = GetTickCount64();
     for (;;) {
         CaptureRequest req{};
@@ -564,9 +566,12 @@ void appendTextTools(QJsonArray& tools) {
         toolSchema(text_target, QJsonArray{QStringLiteral("text")})));
     QJsonObject wait_props = text_target;
     wait_props.insert(QStringLiteral("timeout_ms"),
-                      intProperty(QStringLiteral("Max wait (default 10000, max 30000).")));
+                      intProperty(QStringLiteral(
+                          "Max wait in ms (default 10000; up to 7200000 = 2h for long "
+                          "operations like a scan). Raise poll_ms for long waits.")));
     wait_props.insert(QStringLiteral("poll_ms"),
-                      intProperty(QStringLiteral("Poll interval (default 500, min 150).")));
+                      intProperty(
+                          QStringLiteral("Poll interval (default 500, min 150, max 10000).")));
     tools.append(toolEntry(
         QStringLiteral("wait_for_text"),
         QStringLiteral("Poll with OCR until text appears on screen (or in a window) or the timeout "

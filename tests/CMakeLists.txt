@@ -2000,6 +2000,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_app_action_planner.cpp")
     message(STATUS "Added unit test: test_ai_app_action_planner")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_win32_gui_runner.cpp")
+    add_executable(test_ai_win32_gui_runner
+        unit/test_ai_win32_gui_runner.cpp
+        ../src/ai/ai_win32_gui_runner.cpp
+        ../include/sak/ai/ai_win32_gui_runner.h
+    )
+    set_target_properties(test_ai_win32_gui_runner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_win32_gui_runner PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ai_win32_gui_runner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_win32_gui_runner COMMAND test_ai_win32_gui_runner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_win32_gui_runner")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp

@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_app_action_planner.h"
 #include "sak/ai/ai_credential_store.h"
+#include "sak/ai/ai_win32_gui_runner.h"
 
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -361,6 +362,99 @@ QJsonObject runGatewayReadOperation(const QString& operation,
     return error.isEmpty() ? finalizeResult(std::move(result), operation) : toolError(error);
 }
 
+// Backs one win32_gui recipe step with the real desktop-control engine: plan the tool call
+// (validating it against the live provider manifest + risk classification) then execute it over
+// the win32 stdio pipe. High-risk steps are flagged (not executed) so the step runner can reject
+// the whole recipe. The recipe already has its single action-level authorization; individual
+// vetted-manifest steps are not re-confirmed.
+Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGateway* gateway) {
+    Win32StepOutcome outcome;
+    QJsonObject inner{
+        {QStringLiteral("tool_name"), step.value(QStringLiteral("tool")).toString().trimmed()},
+        {QStringLiteral("tool_arguments"), step.value(QStringLiteral("arguments")).toObject()}};
+    if (step.contains(QStringLiteral("timeout_ms"))) {
+        inner[QStringLiteral("timeout_ms")] = step.value(QStringLiteral("timeout_ms"));
+    }
+    const QJsonObject call_args{{QStringLiteral("arguments"), inner}};
+
+    QString error;
+    const AiProviderGateway::Win32McpCallPlan call_plan = gateway->planWin32McpCall(call_args,
+                                                                                    &error);
+    if (!error.isEmpty()) {
+        outcome.error = error;
+        return outcome;
+    }
+    outcome.planned = true;
+    outcome.high_risk = call_plan.high_risk;
+    if (outcome.high_risk) {
+        return outcome;  // rejected by executeWin32GuiSteps; do not run
+    }
+
+    QJsonObject result = gateway->callWin32Mcp(call_plan, &error);
+    if (!error.isEmpty()) {
+        outcome.tool_error = true;
+        outcome.error = error;
+        return outcome;
+    }
+    outcome.tool_error = result.value(QStringLiteral("mcp_is_error")).toBool(false);
+    outcome.result_text = result.value(QStringLiteral("result_text")).toString();
+
+    // A wait_for_* step whose condition never came true (found / satisfied / idle == false) is a
+    // failed step even though the tool returned no error: the recipe's expected state was not
+    // reached (e.g. a scan-complete marker never appeared before the timeout), so downstream steps
+    // would run against the wrong screen. Treat it as a tool error (optional steps still tolerate
+    // it). Non-wait tools have none of these keys, so they are unaffected.
+    if (!outcome.tool_error) {
+        const QJsonObject payload = QJsonDocument::fromJson(outcome.result_text.toUtf8()).object();
+        struct WaitFlag {
+            QLatin1String key;
+            QLatin1String message;
+        };
+        for (const WaitFlag& flag :
+             {WaitFlag{QLatin1String("found"), QLatin1String("awaited text did not appear")},
+              WaitFlag{QLatin1String("satisfied"),
+                       QLatin1String("awaited window state was not reached")},
+              WaitFlag{QLatin1String("idle"), QLatin1String("window did not settle")}}) {
+            const QJsonValue value = payload.value(flag.key);
+            if (value.isBool() && !value.toBool()) {
+                outcome.tool_error = true;
+                outcome.error = QStringLiteral("%1 before the timeout").arg(flag.message);
+                break;
+            }
+        }
+    }
+    return outcome;
+}
+
+QJsonObject runWin32GuiAction(const AiAppActionPlan& plan,
+                              const QString& app_id,
+                              const QString& action,
+                              const AiProviderGateway* gateway,
+                              const AiProviderGatewayToolCallbacks& callbacks) {
+    if (callbacks.append_local_event) {
+        callbacks.append_local_event(QStringLiteral("Running app GUI action %1/%2 (%3 steps)")
+                                         .arg(app_id, action)
+                                         .arg(plan.steps.size()));
+    }
+    const QJsonObject steps_result =
+        executeWin32GuiSteps(plan.steps, [gateway](const QJsonObject& step) {
+            return executeWin32GuiStep(step, gateway);
+        });
+
+    QJsonObject result = steps_result;
+    result[QStringLiteral("app_id")] = app_id;
+    result[QStringLiteral("action")] = action;
+    result[QStringLiteral("display_name")] = plan.display_name;
+    result[QStringLiteral("manifest_method")] = plan.method;
+    result[QStringLiteral("preview")] = plan.preview;
+    result[QStringLiteral("evidence")] = plan.evidence;
+    result[QStringLiteral("operation")] = QStringLiteral("app_run_action");
+    if (callbacks.record_command) {
+        callbacks.record_command(plan.preview, result);
+    }
+    return result;
+}
+
 QJsonObject runAppAction(const QJsonObject& args,
                          const AiProviderGateway* gateway,
                          AiProviderGatewayToolAccess access,
@@ -398,6 +492,13 @@ QJsonObject runAppAction(const QJsonObject& args,
     if (!authorization_error.isEmpty()) {
         return authorization_error;
     }
+
+    // GUI recipes drive the desktop-control engine step by step instead of running a shell
+    // command, so they take the win32 path rather than the PowerShell executor.
+    if (plan.method == QLatin1String("win32_gui")) {
+        return runWin32GuiAction(plan, app_id, action, gateway, callbacks);
+    }
+
     QJsonObject executor_error = requireAppActionExecutor(callbacks);
     if (!executor_error.isEmpty()) {
         return executor_error;

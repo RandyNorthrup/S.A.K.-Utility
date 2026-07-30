@@ -30,6 +30,9 @@ private Q_SLOTS:
     void blocksUnsupportedMethod();
     void clampsOutputAndTimeout();
     void carriesGuardBlockForChecksumBypass();
+    void buildsWin32GuiActionPlan();
+    void blocksWin32GuiWithoutSteps();
+    void blocksWin32GuiStepMissingTool();
 };
 
 void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
@@ -80,7 +83,8 @@ void AiAppActionPlannerTests::blocksUnsupportedMethod() {
 
     QVERIFY(!plan.ok());
     QCOMPARE(plan.error_message,
-             QStringLiteral("app_run_action supports powershell/cli manifest actions only"));
+             QStringLiteral(
+                 "app_run_action supports powershell/cli/win32_gui manifest actions only"));
 }
 
 void AiAppActionPlannerTests::clampsOutputAndTimeout() {
@@ -114,6 +118,56 @@ void AiAppActionPlannerTests::carriesGuardBlockForChecksumBypass() {
     QVERIFY(plan.guard_block_error.contains(QStringLiteral("checksum bypass")));
     QCOMPARE(plan.error_message, plan.guard_block_error);
     QVERIFY(plan.guard_approval_reason.isEmpty());
+}
+
+void AiAppActionPlannerTests::buildsWin32GuiActionPlan() {
+    const QJsonObject manifest = actionManifest(QJsonObject{
+        {QStringLiteral("method"), QStringLiteral("win32_gui")},
+        {QStringLiteral("steps"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("tool"), QStringLiteral("focus_window")},
+                         {QStringLiteral("arguments"),
+                          QJsonObject{{QStringLiteral("window_title"), QStringLiteral("App")}}}},
+             QJsonObject{{QStringLiteral("tool"), QStringLiteral("click_text")},
+                         {QStringLiteral("arguments"),
+                          QJsonObject{{QStringLiteral("text"), QStringLiteral("Quick Scan")}}}}}},
+        {QStringLiteral("evidence"), QJsonArray{QStringLiteral("Items Detected")}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(plan.ok());
+    QCOMPARE(plan.method, QStringLiteral("win32_gui"));
+    QCOMPARE(plan.steps.size(), 2);
+    QVERIFY(plan.risky);  // GUI input injection is always at least input-tier
+    QVERIFY(plan.request.command.isEmpty());
+    QVERIFY(plan.preview.contains(QStringLiteral("quick_scan")));
+    QVERIFY(plan.error_message.isEmpty());
+}
+
+void AiAppActionPlannerTests::blocksWin32GuiWithoutSteps() {
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("win32_gui")},
+                                   {QStringLiteral("steps"), QJsonArray{}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("non-empty 'steps'")));
+}
+
+void AiAppActionPlannerTests::blocksWin32GuiStepMissingTool() {
+    const QJsonObject manifest = actionManifest(
+        QJsonObject{{QStringLiteral("method"), QStringLiteral("win32_gui")},
+                    {QStringLiteral("steps"),
+                     QJsonArray{QJsonObject{{QStringLiteral("arguments"), QJsonObject{}}}}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("missing a 'tool'")));
 }
 
 QTEST_GUILESS_MAIN(AiAppActionPlannerTests)
