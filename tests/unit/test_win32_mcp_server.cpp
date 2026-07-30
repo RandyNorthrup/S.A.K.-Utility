@@ -67,6 +67,7 @@ private slots:
     void invokeTool_uiaGetFocusedReturnsShapeOrError();
     void invokeTool_ocrWindowRequiresTitle();
     void invokeTool_ocrRegionRequiresBounds();
+    void invokeTool_findAndWaitTextRequireQuery();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -125,7 +126,10 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("ocr_region"),
                                     QStringLiteral("ocr_region_structured"),
                                     QStringLiteral("ocr_screen"),
-                                    QStringLiteral("ocr_screen_structured")}) {
+                                    QStringLiteral("ocr_screen_structured"),
+                                    QStringLiteral("find_text_on_screen"),
+                                    QStringLiteral("assert_text_visible"),
+                                    QStringLiteral("wait_for_text")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -325,6 +329,15 @@ void Win32McpServerTests::invokeTool_ocrRegionRequiresBounds() {
                                    {QStringLiteral("width"), 0},
                                    {QStringLiteral("height"), 10}})
                 .is_error);
+}
+
+void Win32McpServerTests::invokeTool_findAndWaitTextRequireQuery() {
+    // The OCR text tools reject a missing 'text' before doing any capture/OCR/polling, so this
+    // is deterministic and needs no OCR language pack. wait_for_text especially must NOT enter
+    // its poll loop without a query. (Positive matches are covered by the live cert harness.)
+    QVERIFY(invokeTool(QStringLiteral("find_text_on_screen"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("assert_text_visible"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("wait_for_text"), {}).is_error);
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {

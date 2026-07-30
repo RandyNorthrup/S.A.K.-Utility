@@ -6,6 +6,7 @@
 #include "sak/win32mcp/win32_mcp_capture.h"
 
 #include <QJsonDocument>
+#include <QVector>
 
 #include <algorithm>
 #include <cmath>
@@ -165,15 +166,19 @@ OcrEngine makeEngine() {
     }
 }
 
+QString noOcrLanguageText() {
+    return QStringLiteral(
+        "No OCR language is installed. Add a language with text recognition in "
+        "Windows Settings > Time & language > Language.");
+}
+
 // Shared flow for every OCR tool: create the engine, capture the target (downscaled to the
 // engine's limit), recognize, and shape the reply. origin for box mapping is (req.left, top).
 ToolResult runOcrCapture(CaptureRequest req, bool structured) {
     ComApartment com;
     const OcrEngine engine = makeEngine();
     if (!engine) {
-        return errorResult(QStringLiteral(
-            "No OCR language is installed. Add a language with text recognition in Windows "
-            "Settings > Time & language > Language."));
+        return errorResult(noOcrLanguageText());
     }
     req.max_edge = std::min<int>(static_cast<int>(engine.MaxImageDimension()), kOcrMaxEdgeCap);
     CaptureBits bits;
@@ -256,6 +261,191 @@ ToolResult toolOcrScreenStructured(const QJsonObject&) {
     return runOcrCapture(screenRequest(), true);
 }
 
+// -- text search / wait (OCR-backed) -----------------------------------------
+
+struct WordHit {
+    QString text;
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<WordHit>& out) {
+    for (const auto& line : result.Lines()) {
+        for (const auto& word : line.Words()) {
+            const auto rect = word.BoundingRect();
+            out.append(WordHit{hstringToQString(word.Text()),
+                               static_cast<int>(std::llround(ox + rect.X * inv)),
+                               static_cast<int>(std::llround(oy + rect.Y * inv)),
+                               static_cast<int>(std::llround(rect.Width * inv)),
+                               static_cast<int>(std::llround(rect.Height * inv))});
+        }
+    }
+}
+
+// OCR the target and collect every recognized word with an absolute screen box. Returns an
+// error string (missing language / capture / recognize failure), empty on success.
+QString ocrCollect(CaptureRequest req, QVector<WordHit>& out) {
+    ComApartment com;
+    const OcrEngine engine = makeEngine();
+    if (!engine) {
+        return noOcrLanguageText();
+    }
+    req.max_edge = std::min<int>(static_cast<int>(engine.MaxImageDimension()), kOcrMaxEdgeCap);
+    CaptureBits bits;
+    QString err;
+    if (!captureBgra(req, bits, err)) {
+        return err;
+    }
+    OcrResult result{nullptr};
+    const QString ocr_err = recognize(engine, bits, result);
+    if (!ocr_err.isEmpty()) {
+        return ocr_err;
+    }
+    appendWords(result, req.left, req.top, (bits.scale > 0.0) ? (1.0 / bits.scale) : 1.0, out);
+    return {};
+}
+
+// A text tool targets a window (window_title present) or the full screen (absent).
+bool resolveTextTarget(const QJsonObject& args, CaptureRequest& req, QString& err) {
+    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
+    if (title.isEmpty()) {
+        req = screenRequest();
+        return true;
+    }
+    WindowRect wr;
+    if (!windowRectByTitle(title.toLower(), wr, err)) {
+        return false;
+    }
+    req = CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0};
+    return true;
+}
+
+QJsonArray matchesToJson(const QVector<WordHit>& hits, const QString& query) {
+    const QString needle = query.toLower();
+    QJsonArray matches;
+    for (const auto& hit : hits) {
+        if (!hit.text.toLower().contains(needle)) {
+            continue;
+        }
+        matches.append(QJsonObject{{QStringLiteral("text"), hit.text},
+                                   {QStringLiteral("x"), hit.x},
+                                   {QStringLiteral("y"), hit.y},
+                                   {QStringLiteral("width"), hit.w},
+                                   {QStringLiteral("height"), hit.h}});
+    }
+    return matches;
+}
+
+// find_text_on_screen and assert_text_visible share the OCR + filter flow; assert mode adds a
+// boolean verdict, find mode echoes the query.
+ToolResult textQuery(const QJsonObject& args, bool assert_mode) {
+    const QString query = args.value(QStringLiteral("text")).toString().trimmed();
+    if (query.isEmpty()) {
+        return errorResult(QStringLiteral("text is required"));
+    }
+    CaptureRequest req{};
+    QString err;
+    if (!resolveTextTarget(args, req, err)) {
+        return errorResult(err);
+    }
+    QVector<WordHit> hits;
+    const QString ocr_err = ocrCollect(req, hits);
+    if (!ocr_err.isEmpty()) {
+        return errorResult(ocr_err);
+    }
+    const QJsonArray matches = matchesToJson(hits, query);
+    QJsonObject out{{QStringLiteral("count"), matches.size()},
+                    {QStringLiteral("matches"), matches}};
+    if (assert_mode) {
+        out.insert(QStringLiteral("text"), query);
+        out.insert(QStringLiteral("visible"), !matches.isEmpty());
+    } else {
+        out.insert(QStringLiteral("query"), query);
+    }
+    return jsonResult(out);
+}
+
+ToolResult toolFindText(const QJsonObject& args) {
+    return textQuery(args, false);
+}
+
+ToolResult toolAssertText(const QJsonObject& args) {
+    return textQuery(args, true);
+}
+
+qint64 clampMs(const QJsonObject& args, const QString& key, qint64 def, qint64 lo, qint64 hi) {
+    const qint64 value = static_cast<qint64>(args.value(key).toDouble(static_cast<double>(def)));
+    return std::min(std::max(value, lo), hi);
+}
+
+ToolResult toolWaitForText(const QJsonObject& args) {
+    const QString query = args.value(QStringLiteral("text")).toString().trimmed();
+    if (query.isEmpty()) {
+        return errorResult(QStringLiteral("text is required"));
+    }
+    const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, 30'000);
+    const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 500, 150, 5000);
+    const ULONGLONG start = GetTickCount64();
+    for (;;) {
+        CaptureRequest req{};
+        QString err;
+        QJsonArray matches;
+        if (resolveTextTarget(args, req, err)) {  // window not there yet -> keep waiting
+            QVector<WordHit> hits;
+            const QString ocr_err = ocrCollect(req, hits);
+            if (!ocr_err.isEmpty()) {
+                return errorResult(ocr_err);  // an engine problem is not a "not yet"
+            }
+            matches = matchesToJson(hits, query);
+        }
+        const qint64 waited = static_cast<qint64>(GetTickCount64() - start);
+        if (!matches.isEmpty()) {
+            return jsonResult(QJsonObject{{QStringLiteral("found"), true},
+                                          {QStringLiteral("waited_ms"), waited},
+                                          {QStringLiteral("count"), matches.size()},
+                                          {QStringLiteral("matches"), matches}});
+        }
+        if (waited >= timeout_ms) {
+            return jsonResult(QJsonObject{{QStringLiteral("found"), false},
+                                          {QStringLiteral("waited_ms"), waited},
+                                          {QStringLiteral("count"), 0}});
+        }
+        Sleep(static_cast<DWORD>(poll_ms));
+    }
+}
+
+void appendTextTools(QJsonArray& tools) {
+    const QJsonObject text_target =
+        QJsonObject{{QStringLiteral("text"),
+                     stringProperty(QStringLiteral("Substring to find (case-insensitive)."))},
+                    {QStringLiteral("window_title"),
+                     stringProperty(QStringLiteral("Optional window to scope to; omit for the "
+                                                   "full screen."))}};
+    tools.append(toolEntry(
+        QStringLiteral("find_text_on_screen"),
+        QStringLiteral("OCR the screen (or a window) and return every occurrence of the query as a "
+                       "word with its absolute screen box (x/y/width/height), for locating text to "
+                       "click."),
+        toolSchema(text_target, QJsonArray{QStringLiteral("text")})));
+    tools.append(toolEntry(
+        QStringLiteral("assert_text_visible"),
+        QStringLiteral("Check whether text is currently visible on screen (or in a window) via "
+                       "OCR. Returns visible=true/false plus any matching boxes."),
+        toolSchema(text_target, QJsonArray{QStringLiteral("text")})));
+    QJsonObject wait_props = text_target;
+    wait_props.insert(QStringLiteral("timeout_ms"),
+                      intProperty(QStringLiteral("Max wait (default 10000, max 30000).")));
+    wait_props.insert(QStringLiteral("poll_ms"),
+                      intProperty(QStringLiteral("Poll interval (default 500, min 150).")));
+    tools.append(toolEntry(
+        QStringLiteral("wait_for_text"),
+        QStringLiteral("Poll with OCR until text appears on screen (or in a window) or the timeout "
+                       "elapses. Returns found=true/false and waited_ms."),
+        toolSchema(wait_props, QJsonArray{QStringLiteral("text")})));
+}
+
 void appendRegionTools(QJsonArray& tools) {
     const QJsonObject region_schema = toolSchema(
         QJsonObject{{QStringLiteral("x"), intProperty(QStringLiteral("Left edge (screen)."))},
@@ -297,6 +487,7 @@ void appendOcrTools(QJsonArray& tools) {
         QStringLiteral("Like ocr_screen but also returns each word with its absolute screen "
                        "bounding box (x/y/width/height)."),
         toolSchema(QJsonObject{}, QJsonArray{})));
+    appendTextTools(tools);
 }
 
 struct OcrHandler {
@@ -310,6 +501,9 @@ const OcrHandler kOcrHandlers[] = {
     {QLatin1String("ocr_region_structured"), toolOcrRegionStructured},
     {QLatin1String("ocr_screen"), toolOcrScreen},
     {QLatin1String("ocr_screen_structured"), toolOcrScreenStructured},
+    {QLatin1String("find_text_on_screen"), toolFindText},
+    {QLatin1String("assert_text_visible"), toolAssertText},
+    {QLatin1String("wait_for_text"), toolWaitForText},
 };
 
 }  // namespace
