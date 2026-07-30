@@ -2119,6 +2119,30 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.
     message(STATUS "Added unit test: test_win32_mcp_input_plan")
 endif()
 
+# test_win32_mcp_uia_ref --- deterministic coverage of the UIA ref-drift guard that protects
+# uia_click_control / uia_get_control_value / dismiss_dialog from acting on a stale ref: identity is
+# role + name + bounding-rect origin, and out-of-range against either walk fails closed. Pure logic.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_uia_ref.cpp")
+    add_executable(test_win32_mcp_uia_ref
+        unit/test_win32_mcp_uia_ref.cpp
+        ../src/win32mcp/win32_mcp_uia_ref.cpp
+        ../include/sak/win32mcp/win32_mcp_uia_ref.h
+    )
+    set_target_properties(test_win32_mcp_uia_ref PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_uia_ref PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_uia_ref PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_uia_ref COMMAND test_win32_mcp_uia_ref
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_uia_ref")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4391,6 +4415,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_desktop.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dialog_choice.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_uia_ref.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp

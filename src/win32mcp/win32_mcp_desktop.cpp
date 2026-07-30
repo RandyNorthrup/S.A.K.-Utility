@@ -5,6 +5,7 @@
 
 #include "sak/win32mcp/win32_mcp_capture.h"
 #include "sak/win32mcp/win32_mcp_dialog_choice.h"
+#include "sak/win32mcp/win32_mcp_uia_ref.h"
 
 #include <QBuffer>
 #include <QByteArray>
@@ -272,7 +273,9 @@ ToolResult toolCaptureMonitor(const QJsonObject& args) {
 
 using Microsoft::WRL::ComPtr;
 
-// One control-tree node, flattened depth-first. `role` is a friendly control-type name.
+// One control-tree node, flattened depth-first. `role` is a friendly control-type name. left/top
+// are the element's screen-space bounding-rectangle origin, kept as part of the ref-drift identity
+// so two same-role, same-(or empty-)name controls that swap position cannot pass the guard.
 struct UiaNode {
     QString role;
     QString name;
@@ -280,6 +283,8 @@ struct UiaNode {
     int depth{0};
     bool enabled{true};
     bool offscreen{false};
+    long left{0};
+    long top{0};
 };
 
 // Bound the walk so a pathological tree (thousands of list items) cannot flood the transport
@@ -439,6 +444,11 @@ UiaNode describeElement(IUIAutomationElement* element, int depth) {
     BOOL offscreen = FALSE;
     element->get_CurrentIsOffscreen(&offscreen);
     node.offscreen = offscreen != FALSE;
+    RECT bounds{};
+    if (SUCCEEDED(element->get_CurrentBoundingRectangle(&bounds))) {
+        node.left = bounds.left;
+        node.top = bounds.top;
+    }
     node.value = readElementValue(element);
     return node;
 }
@@ -552,8 +562,19 @@ struct UiaSnapshot {
     HWND hwnd{nullptr};
     QString title;
     QVector<UiaNode> nodes;
+    int depth{kDefaultUiaDepth};  // walk depth used, so a ref re-walk matches the stored indices
 };
 UiaSnapshot g_uia_snapshot;
+
+// The stable-identity view (role/name/bounds) of a walked tree, for the ref-drift guard.
+QVector<UiaRefNode> toRefNodes(const QVector<UiaNode>& nodes) {
+    QVector<UiaRefNode> out;
+    out.reserve(nodes.size());
+    for (const UiaNode& node : nodes) {
+        out.append(UiaRefNode{node.role, node.name, node.left, node.top});
+    }
+    return out;
+}
 
 ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     QString err_target;
@@ -564,11 +585,12 @@ ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
-    const QString err = inspectHwnd(hwnd, clampUiaDepth(args), nodes, truncated);
+    const int depth = clampUiaDepth(args);
+    const QString err = inspectHwnd(hwnd, depth, nodes, truncated);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_uia_snapshot = UiaSnapshot{hwnd, windowTitleOf(hwnd), nodes};
+    g_uia_snapshot = UiaSnapshot{hwnd, windowTitleOf(hwnd), nodes, depth};
     return jsonResult(
         QJsonObject{{QStringLiteral("window"), windowTitleOf(hwnd)},
                     {QStringLiteral("hwnd"), QString::number(reinterpret_cast<quintptr>(hwnd))},
@@ -636,13 +658,10 @@ QString uiaSnapshotPrecheck() {
 }
 
 // True when the ref no longer points at the same control it did at inspection time (the tree
-// shifted between calls), so reading it would silently target the wrong element.
-bool uiaRefDrifted(const QVector<UiaNode>& live, int ref) {
-    if (ref < 0 || ref >= live.size() || ref >= g_uia_snapshot.nodes.size()) {
-        return true;
-    }
-    return live[ref].role != g_uia_snapshot.nodes[ref].role ||
-           live[ref].name != g_uia_snapshot.nodes[ref].name;
+// shifted between calls), so reading it would silently target the wrong element. Delegates the
+// comparison to the pure, unit-tested uiaRefDrifted seam over the stored snapshot.
+bool snapshotRefDrifted(const QVector<UiaNode>& live, int ref) {
+    return uiaRefDrifted(toRefNodes(g_uia_snapshot.nodes), toRefNodes(live), ref);
 }
 
 ToolResult toolUiaGetControlValue(const QJsonObject& args) {
@@ -657,11 +676,11 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
     ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
-    const QString err = inspectHwnd(g_uia_snapshot.hwnd, kDefaultUiaDepth, nodes, truncated);
+    const QString err = inspectHwnd(g_uia_snapshot.hwnd, g_uia_snapshot.depth, nodes, truncated);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    if (uiaRefDrifted(nodes, ref)) {
+    if (snapshotRefDrifted(nodes, ref)) {
         return errorResult(
             QStringLiteral("That ref no longer points at the same control; call "
                            "uia_inspect_window again."));
@@ -736,11 +755,11 @@ ToolResult toolUiaClickControl(const QJsonObject& args) {
     bool truncated = false;
     QVector<ComPtr<IUIAutomationElement>> elements;
     const QString err =
-        inspectHwnd(g_uia_snapshot.hwnd, kDefaultUiaDepth, nodes, truncated, &elements);
+        inspectHwnd(g_uia_snapshot.hwnd, g_uia_snapshot.depth, nodes, truncated, &elements);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    if (uiaRefDrifted(nodes, ref) || ref >= elements.size()) {
+    if (snapshotRefDrifted(nodes, ref) || ref >= elements.size()) {
         return errorResult(
             QStringLiteral("That ref no longer points at the same control; call "
                            "uia_inspect_window again."));
