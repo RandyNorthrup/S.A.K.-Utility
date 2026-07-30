@@ -8,18 +8,23 @@
 #include <QString>
 
 #include <functional>
+#include <optional>
 
 namespace sak::ai {
 
 // Result of executing one win32_gui recipe step through the desktop-control engine. `planned` is
 // false when the step's tool could not be planned at all (unknown/unadvertised tool -> a recipe
 // bug, always fatal). `high_risk` marks a step whose tool is on the high-risk exec allowlist
-// (close_window / kill_process / start_process) -- disallowed inside a GUI recipe. `tool_error`
-// is a runtime failure of the tool itself (e.g. a label was not found); it is fatal unless the
-// step is optional.
+// (close_window / kill_process / start_process) -- disallowed inside a GUI recipe. `disallowed`
+// marks a middle-tier tool that is neither read-only nor a vetted input-tier desktop tool (e.g.
+// browser cookies/http-auth/download/storage/permission, extension install/uninstall,
+// clipboard_write) -- these demand a per-call human confirmation on the direct path, so they must
+// not auto-run inside a recipe either. `tool_error` is a runtime failure of the tool itself (e.g. a
+// label was not found); it is fatal unless the step is optional.
 struct Win32StepOutcome {
     bool planned{false};
     bool high_risk{false};
+    bool disallowed{false};
     bool tool_error{false};
     QString result_text;
     QString error;
@@ -27,6 +32,13 @@ struct Win32StepOutcome {
 
 // Executes one recipe step (a {tool, arguments, optional?} object) and reports the outcome.
 using Win32StepExecutor = std::function<Win32StepOutcome(const QJsonObject& step)>;
+
+// Given a completed wait/OCR tool's parsed result payload, return the failure message when an
+// awaited condition did not hold -- a wait_for_* whose found / satisfied / idle came back false --
+// so the recipe treats the step as failed rather than marching on against a screen that never
+// reached the expected state. Returns nullopt when no awaited flag is present or all are true. Pure
+// (no gateway) so it is unit-testable; the live step executor calls it on each non-error result.
+[[nodiscard]] std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload);
 
 // Run a win32_gui recipe: execute each step in order via `exec`, aggregating per-step results.
 // Stops at the first fatal step -- a planning failure, a high-risk tool, or a non-optional tool

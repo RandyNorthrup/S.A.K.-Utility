@@ -45,7 +45,37 @@ private Q_SLOTS:
     void planWin32McpCallClampsTimeout();
     void checkAvailabilityRejectsUnsupportedAppAction();
     void checkAvailabilityAcceptsReadOnlyWin32Tool();
+    void mutatingToolsAreNeverReadOnly();
 };
+
+void AiProviderGatewayTests::mutatingToolsAreNeverReadOnly() {
+    // The fail-closed default (requires_confirmation unless read_only||high_risk) only protects a
+    // tool that is MISSING from every classifier. It cannot protect a MUTATING tool wrongly added
+    // to the read-only allowlist -- that would set requires_confirmation=false and auto-run
+    // unattended. Pin the dangerous direction: none of these state-changing / sensitive tools may
+    // be read-only, so a future mis-classification fails this test instead of shipping ungated.
+    for (const QString& t : {QStringLiteral("clipboard_write"),
+                             QStringLiteral("close_window"),
+                             QStringLiteral("mouse_click"),
+                             QStringLiteral("click_text"),
+                             QStringLiteral("type_text"),
+                             QStringLiteral("send_keys"),
+                             QStringLiteral("uia_click_control"),
+                             QStringLiteral("dismiss_dialog"),
+                             QStringLiteral("focus_window"),
+                             QStringLiteral("browser_click"),
+                             QStringLiteral("browser_type"),
+                             QStringLiteral("browser_set_value"),
+                             QStringLiteral("browser_cookies"),
+                             QStringLiteral("browser_http_auth"),
+                             QStringLiteral("browser_download"),
+                             QStringLiteral("browser_storage"),
+                             QStringLiteral("browser_permission"),
+                             QStringLiteral("browser_extension_install"),
+                             QStringLiteral("browser_extension_uninstall")}) {
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(t), qPrintable(t));
+    }
+}
 
 void AiProviderGatewayTests::docsQueryRequiresProviderId() {
     const sak::ai::AiProviderGateway gateway;

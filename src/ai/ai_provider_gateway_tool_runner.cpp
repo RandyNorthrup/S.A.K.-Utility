@@ -389,6 +389,19 @@ Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGa
     if (outcome.high_risk) {
         return outcome;  // rejected by executeWin32GuiSteps; do not run
     }
+    // A recipe may only contain read-only tools and the vetted input-tier desktop tools. A
+    // middle-tier tool (planned, not high-risk, but still requires_confirmation via the fail-closed
+    // default -- browser cookies/http-auth/download/storage/permission, extension install/
+    // uninstall, clipboard_write, ...) demands a per-call human confirmation on the direct path, so
+    // it must not auto-run here. Flag it (do not execute) for executeWin32GuiSteps to reject.
+    if (!call_plan.read_only && !AiProviderGateway::isWin32InputTool(call_plan.tool_name)) {
+        outcome.disallowed = true;
+        outcome.error = QStringLiteral(
+                            "tool '%1' is not permitted in a win32_gui recipe; only read-only and "
+                            "input-tier desktop tools may run without a per-call confirmation")
+                            .arg(call_plan.tool_name);
+        return outcome;
+    }
 
     QJsonObject result = gateway->callWin32Mcp(call_plan, &error);
     if (!error.isEmpty()) {
@@ -403,24 +416,12 @@ Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGa
     // failed step even though the tool returned no error: the recipe's expected state was not
     // reached (e.g. a scan-complete marker never appeared before the timeout), so downstream steps
     // would run against the wrong screen. Treat it as a tool error (optional steps still tolerate
-    // it). Non-wait tools have none of these keys, so they are unaffected.
+    // it). The classification lives in the pure, unit-tested win32WaitExpectationFailure.
     if (!outcome.tool_error) {
         const QJsonObject payload = QJsonDocument::fromJson(outcome.result_text.toUtf8()).object();
-        struct WaitFlag {
-            QLatin1String key;
-            QLatin1String message;
-        };
-        for (const WaitFlag& flag :
-             {WaitFlag{QLatin1String("found"), QLatin1String("awaited text did not appear")},
-              WaitFlag{QLatin1String("satisfied"),
-                       QLatin1String("awaited window state was not reached")},
-              WaitFlag{QLatin1String("idle"), QLatin1String("window did not settle")}}) {
-            const QJsonValue value = payload.value(flag.key);
-            if (value.isBool() && !value.toBool()) {
-                outcome.tool_error = true;
-                outcome.error = QStringLiteral("%1 before the timeout").arg(flag.message);
-                break;
-            }
+        if (const std::optional<QString> failure = win32WaitExpectationFailure(payload)) {
+            outcome.tool_error = true;
+            outcome.error = *failure;
         }
     }
     return outcome;

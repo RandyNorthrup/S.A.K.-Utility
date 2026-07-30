@@ -33,6 +33,8 @@ private Q_SLOTS:
     void buildsWin32GuiActionPlan();
     void blocksWin32GuiWithoutSteps();
     void blocksWin32GuiStepMissingTool();
+    void blocksWin32GuiNonObjectStep();
+    void blocksWin32GuiNonObjectArguments();
 };
 
 void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
@@ -168,6 +170,34 @@ void AiAppActionPlannerTests::blocksWin32GuiStepMissingTool() {
 
     QVERIFY(!plan.ok());
     QVERIFY(plan.error_message.contains(QStringLiteral("missing a 'tool'")));
+}
+
+void AiAppActionPlannerTests::blocksWin32GuiNonObjectStep() {
+    // A step that is not an object (a bare value) is a malformed recipe.
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("win32_gui")},
+                                   {QStringLiteral("steps"), QJsonArray{42}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("must be an object")));
+}
+
+void AiAppActionPlannerTests::blocksWin32GuiNonObjectArguments() {
+    // 'arguments', when present, must be an object -- a scalar is rejected.
+    const QJsonObject manifest = actionManifest(
+        QJsonObject{{QStringLiteral("method"), QStringLiteral("win32_gui")},
+                    {QStringLiteral("steps"),
+                     QJsonArray{QJsonObject{{QStringLiteral("tool"), QStringLiteral("click_text")},
+                                            {QStringLiteral("arguments"), 5}}}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("'arguments' must be an object")));
 }
 
 QTEST_GUILESS_MAIN(AiAppActionPlannerTests)

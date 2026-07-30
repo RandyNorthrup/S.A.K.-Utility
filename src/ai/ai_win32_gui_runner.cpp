@@ -25,7 +25,59 @@ QJsonObject stepEntry(int index, const QString& tool, bool optional) {
                        {QStringLiteral("optional"), optional}};
 }
 
+// A fatal pre-execution rejection reason (unplannable tool, high-risk tool, or a disallowed
+// middle-tier tool), else empty when the step may run. .short_error goes on the step record;
+// .detail is the recipe-level failure message.
+struct Rejection {
+    QString short_error;
+    QString detail;
+    bool fatal() const { return !short_error.isEmpty(); }
+};
+
+Rejection rejectionFor(const Win32StepOutcome& outcome, int index, const QString& tool) {
+    if (!outcome.planned) {
+        return {outcome.error,
+                QStringLiteral("Step %1 (%2) could not be planned: %3")
+                    .arg(index)
+                    .arg(tool, outcome.error)};
+    }
+    if (outcome.high_risk) {
+        return {QStringLiteral("high-risk tool not allowed in recipe"),
+                QStringLiteral("Step %1 (%2) uses a high-risk tool, which a win32_gui recipe may "
+                               "not call")
+                    .arg(index)
+                    .arg(tool)};
+    }
+    if (outcome.disallowed) {
+        return {outcome.error.isEmpty() ? QStringLiteral("tool not permitted in recipe")
+                                        : outcome.error,
+                QStringLiteral("Step %1 (%2) uses a tool that is not permitted in a win32_gui "
+                               "recipe (only read-only and input-tier desktop tools are)")
+                    .arg(index)
+                    .arg(tool)};
+    }
+    return {};
+}
+
 }  // namespace
+
+std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload) {
+    struct WaitFlag {
+        QLatin1String key;
+        QLatin1String message;
+    };
+    for (const WaitFlag& flag :
+         {WaitFlag{QLatin1String("found"), QLatin1String("awaited text did not appear")},
+          WaitFlag{QLatin1String("satisfied"),
+                   QLatin1String("awaited window state was not reached")},
+          WaitFlag{QLatin1String("idle"), QLatin1String("window did not settle")}}) {
+        const QJsonValue value = payload.value(flag.key);
+        if (value.isBool() && !value.toBool()) {
+            return QStringLiteral("%1 before the timeout").arg(flag.message);
+        }
+    }
+    return std::nullopt;
+}
 
 QJsonObject executeWin32GuiSteps(const QJsonArray& steps, const Win32StepExecutor& exec) {
     QJsonArray results;
@@ -36,26 +88,11 @@ QJsonObject executeWin32GuiSteps(const QJsonArray& steps, const Win32StepExecuto
         const Win32StepOutcome outcome = exec(step);
 
         QJsonObject entry = stepEntry(index, tool, optional);
-        if (!outcome.planned) {
+        if (const Rejection rejection = rejectionFor(outcome, index, tool); rejection.fatal()) {
             entry[QStringLiteral("ok")] = false;
-            entry[QStringLiteral("error")] = outcome.error;
+            entry[QStringLiteral("error")] = rejection.short_error;
             results.append(entry);
-            return finish(results,
-                          false,
-                          QStringLiteral("Step %1 (%2) could not be planned: %3")
-                              .arg(index)
-                              .arg(tool, outcome.error));
-        }
-        if (outcome.high_risk) {
-            entry[QStringLiteral("ok")] = false;
-            entry[QStringLiteral("error")] = QStringLiteral("high-risk tool not allowed in recipe");
-            results.append(entry);
-            return finish(results,
-                          false,
-                          QStringLiteral("Step %1 (%2) uses a high-risk tool, which a win32_gui "
-                                         "recipe may not call")
-                              .arg(index)
-                              .arg(tool));
+            return finish(results, false, rejection.detail);
         }
 
         entry[QStringLiteral("ok")] = !outcome.tool_error;
