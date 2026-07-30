@@ -330,6 +330,8 @@ async function dispatchCommand(cmd, args) {
       return await handlePrint(await activeTabId(), args);
     case "permission":
       return await handlePermission(args);
+    case "storage":
+      return await handleStorage(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -2082,6 +2084,85 @@ async function handlePermission(args) {
   // surfaces honestly to the caller rather than being swallowed.
   await store.set({ primaryPattern: pattern, setting });
   return { ok: true, name: String(args.name).toLowerCase(), setting, pattern };
+}
+
+// -- web storage (localStorage / sessionStorage) -----------------------------
+//
+// Read or write the active tab's local/session storage: get/set/remove/clear/keys. The op
+// runs as a CONSTANT function via Runtime.callFunctionOn on the page window, with area/action/
+// key/value passed as CDP argument VALUES (never interpolated into code), so a page cannot be
+// made to run injected script. The function returns a structured result by value and never
+// throws across CDP (storage on an opaque/blocked origin comes back as {ok:false,error}).
+// Returned keys and values are capped so a huge store cannot flood the transport.
+
+// eslint-disable-next-line no-unused-vars -- args arrive as CDP callFunctionOn values.
+function storageOp(area, action, key, value) {
+  try {
+    var store = area === "session" ? this.sessionStorage : this.localStorage;
+    if (action === "get") {
+      var v = store.getItem(key);
+      if (v !== null && v.length > 20000) {
+        return { ok: true, present: true, value: v.slice(0, 20000), truncated: true };
+      }
+      return { ok: true, present: v !== null, value: v };
+    }
+    if (action === "set") {
+      store.setItem(key, value);
+      return { ok: true };
+    }
+    if (action === "remove") {
+      store.removeItem(key);
+      return { ok: true };
+    }
+    if (action === "clear") {
+      var n = store.length;
+      store.clear();
+      return { ok: true, cleared: n };
+    }
+    var out = [];
+    for (var i = 0; i < store.length && out.length < 500; i++) {
+      out.push(store.key(i));
+    }
+    return { ok: true, keys: out, count: store.length, capped: store.length > 500 };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+async function handleStorage(tabId, args) {
+  await ensureAttached(tabId);
+  const action = String((args && args.action) || "").toLowerCase();
+  if (["get", "set", "remove", "clear", "keys"].indexOf(action) < 0) {
+    throw new Error("browser_storage action must be get, set, remove, clear, or keys.");
+  }
+  const area = String((args && args.area) || "local").toLowerCase();
+  if (area !== "local" && area !== "session") {
+    throw new Error("browser_storage area must be local or session.");
+  }
+  if ((action === "get" || action === "set" || action === "remove") &&
+      (typeof args.key !== "string" || args.key.length === 0)) {
+    throw new Error("browser_storage " + action + " needs a key.");
+  }
+  if (action === "set" && typeof args.value !== "string") {
+    throw new Error("browser_storage set needs a string value.");
+  }
+  const win = await sendCdp(tabId, "Runtime.evaluate", { expression: "window", returnByValue: false });
+  const objectId = win && win.result && win.result.objectId;
+  if (!objectId) {
+    throw new Error("Could not access the page window.");
+  }
+  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: storageOp.toString(),
+    arguments: [area, action, args.key || "", action === "set" ? args.value : ""].map((v) => ({ value: v })),
+    returnByValue: true,
+  });
+  const result = call && call.result && call.result.value;
+  if (!result || result.ok !== true) {
+    const why = result && result.error ? result.error : "storage unavailable (the page origin may block it)";
+    throw new Error("browser_storage failed: " + why);
+  }
+  return result;
 }
 
 // -- Bring the bridge up -----------------------------------------------------

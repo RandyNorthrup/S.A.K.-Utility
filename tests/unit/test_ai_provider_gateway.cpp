@@ -210,6 +210,11 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // middle tier; the fail-closed default confirms it before granting or blocking.
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_permission")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_permission")));
+
+    // Batch 4: browser_storage can write site storage (and reading it can exfiltrate session
+    // tokens) -> middle tier; the fail-closed default confirms it, reads included.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_storage")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_storage")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

@@ -75,6 +75,7 @@ private slots:
     void buildCommand_emulateToolBuilds();
     void buildCommand_printToolBuilds();
     void buildCommand_permissionToolBuilds();
+    void buildCommand_storageToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -738,6 +739,25 @@ void BrowserContractTests::buildCommand_permissionToolBuilds() {
              QStringLiteral("https://example.com"));
 }
 
+void BrowserContractTests::buildCommand_storageToolBuilds() {
+    // action required; area/key/value copy through.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_storage"), {}, {}).ok);
+
+    const ExtensionCommand st =
+        buildExtensionCommand(QStringLiteral("browser_storage"),
+                              QJsonObject{{QStringLiteral("action"), QStringLiteral("set")},
+                                          {QStringLiteral("area"), QStringLiteral("session")},
+                                          {QStringLiteral("key"), QStringLiteral("token")},
+                                          {QStringLiteral("value"), QStringLiteral("abc123")}},
+                              {});
+    QVERIFY(st.ok);
+    QCOMPARE(st.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("storage"));
+    QCOMPARE(st.command.value(QStringLiteral("action")).toString(), QStringLiteral("set"));
+    QCOMPARE(st.command.value(QStringLiteral("area")).toString(), QStringLiteral("session"));
+    QCOMPARE(st.command.value(QStringLiteral("key")).toString(), QStringLiteral("token"));
+    QCOMPARE(st.command.value(QStringLiteral("value")).toString(), QStringLiteral("abc123"));
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -783,7 +803,8 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_window"),
                                     QStringLiteral("browser_emulate"),
                                     QStringLiteral("browser_print"),
-                                    QStringLiteral("browser_permission")}) {
+                                    QStringLiteral("browser_permission"),
+                                    QStringLiteral("browser_storage")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }

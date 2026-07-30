@@ -374,6 +374,13 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
           {{QStringLiteral("name"), QStringLiteral("string"), true},
            {QStringLiteral("setting"), QStringLiteral("string"), true},
            {QStringLiteral("origin"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_storage"),
+         {QStringLiteral("storage"),
+          QStringLiteral("none"),
+          {{QStringLiteral("action"), QStringLiteral("string"), true},
+           {QStringLiteral("area"), QStringLiteral("string"), false},
+           {QStringLiteral("key"), QStringLiteral("string"), false},
+           {QStringLiteral("value"), QStringLiteral("string"), false}}}},
     };
 }
 
@@ -960,6 +967,26 @@ void appendPermissionTool(QJsonArray& tools) {
             QJsonArray{QStringLiteral("name"), QStringLiteral("setting")})));
 }
 
+void appendStorageTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_storage"),
+        QStringLiteral(
+            "Read or write the active tab's web storage: action is get, set, remove, "
+            "clear, or keys; area is local (default) or session. get/set/remove need a "
+            "key; set needs a string value. Returns the value, the key list, or a count. "
+            "Values/keys are capped to keep results bounded."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("action"),
+                         stringProperty(QStringLiteral("get, set, remove, clear, or keys."))},
+                        {QStringLiteral("area"),
+                         stringProperty(QStringLiteral("local (default) or session."))},
+                        {QStringLiteral("key"),
+                         stringProperty(QStringLiteral("Storage key for get/set/remove."))},
+                        {QStringLiteral("value"),
+                         stringProperty(QStringLiteral("String value to store for set."))}},
+            QJsonArray{QStringLiteral("action")})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1081,6 +1108,7 @@ QJsonArray browserToolCatalog() {
     appendInfraTools(tools);
     appendPrintTool(tools);
     appendPermissionTool(tools);
+    appendStorageTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }
