@@ -74,6 +74,7 @@ private slots:
     void buildCommand_selectMultiValuesPassThrough();
     void buildCommand_emulateToolBuilds();
     void buildCommand_printToolBuilds();
+    void buildCommand_permissionToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -710,6 +711,33 @@ void BrowserContractTests::buildCommand_printToolBuilds() {
     QCOMPARE(bare.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("print"));
 }
 
+void BrowserContractTests::buildCommand_permissionToolBuilds() {
+    // name + setting are required; origin is optional and copies through.
+    QVERIFY(
+        !buildExtensionCommand(QStringLiteral("browser_permission"),
+                               QJsonObject{{QStringLiteral("setting"), QStringLiteral("allow")}},
+                               {})
+             .ok);  // missing name
+    QVERIFY(
+        !buildExtensionCommand(QStringLiteral("browser_permission"),
+                               QJsonObject{{QStringLiteral("name"), QStringLiteral("geolocation")}},
+                               {})
+             .ok);  // missing setting
+
+    const ExtensionCommand pm = buildExtensionCommand(
+        QStringLiteral("browser_permission"),
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("notifications")},
+                    {QStringLiteral("setting"), QStringLiteral("block")},
+                    {QStringLiteral("origin"), QStringLiteral("https://example.com")}},
+        {});
+    QVERIFY(pm.ok);
+    QCOMPARE(pm.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("permission"));
+    QCOMPARE(pm.command.value(QStringLiteral("name")).toString(), QStringLiteral("notifications"));
+    QCOMPARE(pm.command.value(QStringLiteral("setting")).toString(), QStringLiteral("block"));
+    QCOMPARE(pm.command.value(QStringLiteral("origin")).toString(),
+             QStringLiteral("https://example.com"));
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -754,7 +782,8 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_windows"),
                                     QStringLiteral("browser_window"),
                                     QStringLiteral("browser_emulate"),
-                                    QStringLiteral("browser_print")}) {
+                                    QStringLiteral("browser_print"),
+                                    QStringLiteral("browser_permission")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }

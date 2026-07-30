@@ -368,6 +368,12 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
            {QStringLiteral("paper_height"), QStringLiteral("number"), false},
            {QStringLiteral("print_background"), QStringLiteral("bool"), false},
            {QStringLiteral("page_ranges"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_permission"),
+         {QStringLiteral("permission"),
+          QStringLiteral("none"),
+          {{QStringLiteral("name"), QStringLiteral("string"), true},
+           {QStringLiteral("setting"), QStringLiteral("string"), true},
+           {QStringLiteral("origin"), QStringLiteral("string"), false}}}},
     };
 }
 
@@ -934,6 +940,26 @@ void appendPrintTool(QJsonArray& tools) {
             {})));
 }
 
+void appendPermissionTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_permission"),
+        QStringLiteral(
+            "Set a site permission for an origin so automation can pre-answer prompts: "
+            "name is one of geolocation, notifications, camera, microphone, images, "
+            "javascript, popups, automatic_downloads; setting is allow, block, or ask "
+            "(the default). origin defaults to the active tab (e.g. \"https://site.com\")."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("name"),
+                 stringProperty(QStringLiteral("Permission to set, e.g. geolocation or camera."))},
+                {QStringLiteral("setting"),
+                 stringProperty(QStringLiteral("allow, block, or ask (default)."))},
+                {QStringLiteral("origin"),
+                 stringProperty(QStringLiteral("Origin the setting applies to (optional; "
+                                               "defaults to the active tab)."))}},
+            QJsonArray{QStringLiteral("name"), QStringLiteral("setting")})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1054,6 +1080,7 @@ QJsonArray browserToolCatalog() {
     appendWindowTools(tools);
     appendInfraTools(tools);
     appendPrintTool(tools);
+    appendPermissionTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

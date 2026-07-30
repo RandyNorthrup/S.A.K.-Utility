@@ -328,6 +328,8 @@ async function dispatchCommand(cmd, args) {
       return await handleEmulate(await activeTabId(), args);
     case "print":
       return await handlePrint(await activeTabId(), args);
+    case "permission":
+      return await handlePermission(args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -2016,6 +2018,70 @@ async function handlePrint(tabId, args) {
   if (!data) { throw new Error("The browser returned an empty PDF."); }
   const info = await tabInfo(tabId);
   return { data, url: info.url, title: info.title };
+}
+
+// -- site permissions (chrome.contentSettings) -------------------------------
+//
+// Grant/block/reset a site permission (geolocation, notifications, camera, mic, ...) for an
+// origin, so automation can pre-answer the permission prompts that would otherwise block a
+// flow. Uses the native, origin-scoped contentSettings API rather than a tab-attached CDP
+// Browser.* call (which is unreliable through chrome.debugger). Only a fixed allowlist of
+// content types and settings is accepted and the origin is reduced to a validated http(s)
+// pattern, so a page can neither widen its own grants nor steer the pattern.
+const PERMISSION_TYPES = {
+  geolocation: "location",
+  notifications: "notifications",
+  camera: "camera",
+  microphone: "microphone",
+  images: "images",
+  javascript: "javascript",
+  popups: "popups",
+  automatic_downloads: "automaticDownloads",
+};
+const PERMISSION_SETTINGS = ["allow", "block", "ask"];
+
+// Reduce an origin or full URL to an origin match pattern ("https://host:port/*"); returns
+// null for anything that is not http(s).
+function originPattern(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch (e) {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+  return parsed.protocol + "//" + parsed.host + "/*";
+}
+
+async function handlePermission(args) {
+  const typeKey = PERMISSION_TYPES[String((args && args.name) || "").toLowerCase()];
+  if (!typeKey) {
+    throw new Error(
+      "browser_permission name must be one of: " + Object.keys(PERMISSION_TYPES).join(", ") + ".");
+  }
+  const setting = String((args && args.setting) || "").toLowerCase();
+  if (!PERMISSION_SETTINGS.includes(setting)) {
+    throw new Error("browser_permission setting must be allow, block, or ask.");
+  }
+  let origin = args && args.origin ? String(args.origin) : null;
+  if (!origin) {
+    const tab = await activeTab();
+    origin = tab && tab.url ? tab.url : null;
+  }
+  const pattern = origin ? originPattern(origin) : null;
+  if (!pattern) {
+    throw new Error("browser_permission needs a valid http(s) origin (or an active http(s) tab).");
+  }
+  const store = chrome.contentSettings[typeKey];
+  if (!store || typeof store.set !== "function") {
+    throw new Error("This browser cannot set the '" + args.name + "' permission.");
+  }
+  // set() rejects when a setting does not apply to a type (e.g. 'ask' on images); that error
+  // surfaces honestly to the caller rather than being swallowed.
+  await store.set({ primaryPattern: pattern, setting });
+  return { ok: true, name: String(args.name).toLowerCase(), setting, pattern };
 }
 
 // -- Bring the bridge up -----------------------------------------------------

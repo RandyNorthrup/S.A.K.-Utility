@@ -205,6 +205,11 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // read-only nor input); the fail-closed default confirms it before writing a file.
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_print")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_print")));
+
+    // Batch 4: browser_permission changes a site's privacy permissions (geo/cam/mic/...) ->
+    // middle tier; the fail-closed default confirms it before granting or blocking.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_permission")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_permission")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {
