@@ -52,6 +52,7 @@ private slots:
     void renderSnapshot_dropsInlineTextBoxNoise();
     void renderSnapshot_escapesRoleToPreventForgedLines();
     void renderSnapshot_ignoresNonIntegerBackendNodeId();
+    void renderSnapshot_refsValueBearingNonInteractable();
     void catalog_advertisesDomFirstToolsWithStrictSchemas();
     void buildCommand_navigateRequiresUrl();
     void buildCommand_clickResolvesRefToBackendNodeId();
@@ -244,6 +245,28 @@ void BrowserContractTests::renderSnapshot_ignoresNonIntegerBackendNodeId() {
     QVERIFY(view.ref_index.isEmpty());
     QVERIFY(view.outline.contains(QStringLiteral("Trick")));
     QVERIFY(!view.outline.contains(QStringLiteral("[ref=")));
+}
+
+void BrowserContractTests::renderSnapshot_refsValueBearingNonInteractable() {
+    // A progress bar is not interactable but exposes a value/range; it must still get a ref so
+    // the read-only inspection tools (get_value / get_attribute / box) can target it. A plain
+    // valueless non-interactable node stays ref-less (shown for context only).
+    QJsonObject bar = node(51, QStringLiteral("progressbar"), QStringLiteral("Upload"), false);
+    bar.insert(QStringLiteral("value"), QStringLiteral("42"));
+    bar.insert(QStringLiteral("valuemin"), 0);
+    bar.insert(QStringLiteral("valuemax"), 100);
+    const QJsonObject plain = node(52, QStringLiteral("paragraph"), QStringLiteral("hello"), false);
+    const SnapshotView view =
+        renderSnapshot(QJsonObject{{QStringLiteral("nodes"), QJsonArray{bar, plain}}});
+    QCOMPARE(view.element_count, 1);  // only the value-bearing progressbar got a ref
+    QVERIFY(view.ref_index.contains(QStringLiteral("e1")));
+    QCOMPARE(view.ref_index.value(QStringLiteral("e1"))
+                 .toObject()
+                 .value(QStringLiteral("backendNodeId"))
+                 .toInt(),
+             51);
+    QVERIFY(view.outline.contains(QStringLiteral("progressbar")));
+    QVERIFY(view.outline.contains(QStringLiteral("hello")));  // plain node still shown, no ref
 }
 
 void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {

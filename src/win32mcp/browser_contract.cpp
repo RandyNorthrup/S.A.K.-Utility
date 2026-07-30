@@ -94,6 +94,17 @@ bool nodeIsRenderable(const QJsonObject& node, bool interactable, const QString&
     return true;
 }
 
+// A node gets an actionable [ref] if it is interactable, OR if it exposes an inspectable value
+// -- a progress bar, meter, output, or any value/range-bearing node. Without this, a read-only
+// display (e.g. a <progress> or role=progressbar) has no ref, so browser_get_value /
+// get_attribute / box cannot target it even though the model may need to read it.
+bool nodeIsRefWorthy(const QJsonObject& node, bool interactable) {
+    if (interactable || node.contains(QStringLiteral("value"))) {
+        return true;
+    }
+    return node.contains(QStringLiteral("valuemin")) && node.contains(QStringLiteral("valuemax"));
+}
+
 // Append the current value + range for inputs/sliders. The value is page-derived, so it is
 // collapsed to one line and stripped of the paren/comma delimiters that could otherwise forge
 // extra state flags in the outline.
@@ -893,11 +904,12 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
             truncated = true;
             break;
         }
-        // Only an interactable node with a valid integer backendNodeId gets a ref;
+        // An interactable OR value-bearing node with a valid integer backendNodeId gets a ref;
         // otherwise it is shown for context but cannot be acted on.
         qint64 backend_id = 0;
         QString ref;
-        if (interactable && asBackendId(node.value(QStringLiteral("backendNodeId")), &backend_id)) {
+        if (nodeIsRefWorthy(node, interactable) &&
+            asBackendId(node.value(QStringLiteral("backendNodeId")), &backend_id)) {
             ref = QStringLiteral("e%1").arg(++next_ref);
             ref_index.insert(ref,
                              QJsonObject{{QStringLiteral("backendNodeId"), backend_id},
