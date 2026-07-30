@@ -6,7 +6,12 @@
 #include "sak/win32mcp/browser_contract.h"
 
 #include <QByteArray>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
+#include <QStandardPaths>
 
 #include <cstring>
 
@@ -23,6 +28,26 @@ QString compactJson(const QJsonObject& object) {
 // context or the transport; a rejected capture returns an honest error, not a silent
 // truncation. 16 MiB of base64 is ~12 MiB of PNG -- ample for any real viewport.
 constexpr int kMaxScreenshotBase64 = 16 * 1024 * 1024;
+
+// A printed PDF scales with the page; cap the base64 so a pathological document cannot flood
+// the transport. 24 MiB of base64 is ~18 MiB of PDF; a rejected print returns an honest error
+// telling the caller to narrow it with page_ranges.
+constexpr int kMaxPdfBase64 = 24 * 1024 * 1024;
+
+// Where a browser_print PDF lands: the user's Downloads under a SAK-Utility subfolder -- the
+// natural, visible place for a saved page. Falls back to the temp dir if Downloads is
+// unavailable. The name is timestamped and the bytes are written by US (the extension only
+// returns the payload), so a page can steer neither the path nor the filename.
+QString printOutputPath() {
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (dir.isEmpty()) {
+        dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    }
+    dir = QDir(dir).filePath(QStringLiteral("SAK-Utility"));
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss-zzz"));
+    return QDir(dir).filePath(QStringLiteral("page-%1.pdf").arg(stamp));
+}
 
 // Only image types WE emit are honored; anything else is coerced to PNG so a tampered or
 // unexpected mimeType can never turn the image block into an arbitrary content type.
@@ -178,6 +203,10 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
         fillScreenshotResult(payload, incoming);
         return;
     }
+    if (sent_cmd == QLatin1String("print")) {
+        fillPrintResult(payload, incoming);
+        return;
+    }
     // After a navigation/tab-change lands, refs from a prior snapshot no longer map to
     // live nodes; refuse act-by-ref until the next snapshot.
     if (isNavigationCmd(sent_cmd)) {
@@ -203,6 +232,50 @@ void BrowserBridgeSession::fillScreenshotResult(const QJsonObject& payload, Inco
     incoming.image_base64 = data;
     incoming.image_mime = sanitizedImageMime(payload.value(QStringLiteral("mimeType")).toString());
     incoming.text = screenshotSummary(data);
+}
+
+// Decode the printed PDF, verify it is a real PDF, and write it to the output folder. The
+// extension never touches the filesystem: it returns base64, and the bytes land on disk only
+// here, at a path WE choose. A payload that is empty, oversized, or not a "%PDF-" document is
+// refused with an honest error rather than written out.
+void BrowserBridgeSession::fillPrintResult(const QJsonObject& payload, Incoming& incoming) {
+    const QString data = payload.value(QStringLiteral("data")).toString();
+    if (data.isEmpty()) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral("The browser returned an empty PDF.");
+        return;
+    }
+    if (data.size() > kMaxPdfBase64) {
+        incoming.is_error = true;
+        incoming.error =
+            QStringLiteral("The PDF is too large to save; narrow it with page_ranges.");
+        return;
+    }
+    const QByteArray pdf = QByteArray::fromBase64(data.toLatin1());
+    if (!pdf.startsWith("%PDF-")) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral("The browser returned data that is not a valid PDF.");
+        return;
+    }
+    const QString path = printOutputPath();
+    const QFileInfo info(path);
+    if (!QDir().mkpath(info.absolutePath())) {
+        incoming.is_error = true;
+        incoming.error =
+            QStringLiteral("Cannot create the output folder %1.").arg(info.absolutePath());
+        return;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(pdf) != pdf.size()) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral("Cannot write the PDF to %1.").arg(path);
+        return;
+    }
+    file.close();
+    incoming.text =
+        compactJson(QJsonObject{{QStringLiteral("ok"), true},
+                                {QStringLiteral("saved"), QDir::toNativeSeparators(path)},
+                                {QStringLiteral("bytes"), static_cast<int>(pdf.size())}});
 }
 
 BrowserBridgeSession::Incoming BrowserBridgeSession::onReply(const QJsonObject& frame) {

@@ -179,7 +179,7 @@ QString buildNodeLine(const QJsonObject& node, const QString& name, const QStrin
 
 struct ArgSpec {
     QString key;
-    QString type;  // "string" | "int" | "bool"
+    QString type;  // "string" | "int" | "number" | "bool"
     bool required{false};
 };
 
@@ -359,6 +359,15 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
            {QStringLiteral("user_agent"), QStringLiteral("string"), false},
            {QStringLiteral("touch"), QStringLiteral("bool"), false},
            {QStringLiteral("reset"), QStringLiteral("bool"), false}}}},
+        {QStringLiteral("browser_print"),
+         {QStringLiteral("print"),
+          QStringLiteral("none"),
+          {{QStringLiteral("landscape"), QStringLiteral("bool"), false},
+           {QStringLiteral("scale"), QStringLiteral("number"), false},
+           {QStringLiteral("paper_width"), QStringLiteral("number"), false},
+           {QStringLiteral("paper_height"), QStringLiteral("number"), false},
+           {QStringLiteral("print_background"), QStringLiteral("bool"), false},
+           {QStringLiteral("page_ranges"), QStringLiteral("string"), false}}}},
     };
 }
 
@@ -417,6 +426,8 @@ QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& comma
     const QJsonValue value = args.value(spec.key);
     if (spec.type == QLatin1String("int")) {
         command.insert(spec.key, value.toInt());
+    } else if (spec.type == QLatin1String("number")) {
+        command.insert(spec.key, value.toDouble());
     } else if (spec.type == QLatin1String("bool")) {
         command.insert(spec.key, value.toBool());
     } else {
@@ -892,6 +903,37 @@ void appendInfraTools(QJsonArray& tools) {
             {})));
 }
 
+void appendPrintTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_print"),
+        QStringLiteral(
+            "Print the active tab to a PDF file (no printer, no OS dialog) and save it "
+            "to the user's Downloads/SAK-Utility folder; returns the saved path. Options: "
+            "landscape, scale (0.1-2), paper_width/paper_height (inches), print_background "
+            "(default true), and page_ranges like \"1-3\"."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("landscape"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Landscape orientation (optional)."))},
+                {QStringLiteral("scale"),
+                 typedProperty(QStringLiteral("number"),
+                               QStringLiteral("Render scale 0.1-2 (optional, default 1)."))},
+                {QStringLiteral("paper_width"),
+                 typedProperty(QStringLiteral("number"),
+                               QStringLiteral("Paper width in inches (optional)."))},
+                {QStringLiteral("paper_height"),
+                 typedProperty(QStringLiteral("number"),
+                               QStringLiteral("Paper height in inches (optional)."))},
+                {QStringLiteral("print_background"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Print CSS backgrounds (optional, "
+                                              "default true)."))},
+                {QStringLiteral("page_ranges"),
+                 stringProperty(QStringLiteral("Pages to print, e.g. \"1-3\" (optional)."))}},
+            {})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1011,6 +1053,7 @@ QJsonArray browserToolCatalog() {
     appendInspectionTools(tools);
     appendWindowTools(tools);
     appendInfraTools(tools);
+    appendPrintTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

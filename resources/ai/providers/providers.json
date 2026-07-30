@@ -103,6 +103,7 @@
         "browser_windows",
         "browser_window",
         "browser_emulate",
+        "browser_print",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"

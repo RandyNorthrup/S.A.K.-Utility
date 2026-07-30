@@ -200,6 +200,11 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // input); the fail-closed default confirms it.
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_emulate")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_emulate")));
+
+    // Batch 4: browser_print renders the page to a PDF file on disk -> middle tier (neither
+    // read-only nor input); the fail-closed default confirms it before writing a file.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_print")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_print")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

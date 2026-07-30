@@ -73,6 +73,7 @@ private slots:
     void buildCommand_jsClickNeedsRef();
     void buildCommand_selectMultiValuesPassThrough();
     void buildCommand_emulateToolBuilds();
+    void buildCommand_printToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -683,6 +684,32 @@ void BrowserContractTests::buildCommand_emulateToolBuilds() {
     QCOMPARE(rst.command.value(QStringLiteral("reset")).toBool(), true);
 }
 
+void BrowserContractTests::buildCommand_printToolBuilds() {
+    // No args required; the "number" type must preserve fractional scale/paper dims (a plain
+    // int would truncate 0.5 -> 0 and 8.5 -> 8), and page_ranges/print_background copy through.
+    const ExtensionCommand pr =
+        buildExtensionCommand(QStringLiteral("browser_print"),
+                              QJsonObject{{QStringLiteral("landscape"), true},
+                                          {QStringLiteral("scale"), 0.5},
+                                          {QStringLiteral("paper_width"), 8.5},
+                                          {QStringLiteral("paper_height"), 11.0},
+                                          {QStringLiteral("print_background"), false},
+                                          {QStringLiteral("page_ranges"), QStringLiteral("1-3")}},
+                              {});
+    QVERIFY(pr.ok);
+    QCOMPARE(pr.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("print"));
+    QCOMPARE(pr.command.value(QStringLiteral("landscape")).toBool(), true);
+    QCOMPARE(pr.command.value(QStringLiteral("scale")).toDouble(), 0.5);
+    QCOMPARE(pr.command.value(QStringLiteral("paper_width")).toDouble(), 8.5);
+    QCOMPARE(pr.command.value(QStringLiteral("print_background")).toBool(), false);
+    QCOMPARE(pr.command.value(QStringLiteral("page_ranges")).toString(), QStringLiteral("1-3"));
+
+    // With no args it still builds (all optional) and maps to the print command.
+    const ExtensionCommand bare = buildExtensionCommand(QStringLiteral("browser_print"), {}, {});
+    QVERIFY(bare.ok);
+    QCOMPARE(bare.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("print"));
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -725,7 +752,9 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_reveal"),
                                     QStringLiteral("browser_js_click"),
                                     QStringLiteral("browser_windows"),
-                                    QStringLiteral("browser_window")}) {
+                                    QStringLiteral("browser_window"),
+                                    QStringLiteral("browser_emulate"),
+                                    QStringLiteral("browser_print")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }

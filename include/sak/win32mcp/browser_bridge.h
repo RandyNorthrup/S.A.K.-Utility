@@ -85,6 +85,7 @@ private:
                     const QJsonObject& frame,
                     Incoming& incoming);
     static void fillScreenshotResult(const QJsonObject& payload, Incoming& incoming);
+    static void fillPrintResult(const QJsonObject& payload, Incoming& incoming);
 
     bool connected_{false};
     bool ref_index_stale_{false};

@@ -326,6 +326,8 @@ async function dispatchCommand(cmd, args) {
       return await handleWindow(args);
     case "emulate":
       return await handleEmulate(await activeTabId(), args);
+    case "print":
+      return await handlePrint(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -1986,6 +1988,34 @@ async function handleEmulate(tabId, args) {
     throw new Error("browser_emulate needs width+height, user_agent, touch, or reset.");
   }
   return { ok: true, applied };
+}
+
+// -- print to PDF (Page.printToPDF) ------------------------------------------
+//
+// Render the active tab to a PDF at the browser level (no OS print dialog, no printer).
+// The base64 PDF rides back in the reply; the bridge decodes it, size-caps it, and writes
+// the file to disk -- the extension never touches the filesystem. Backgrounds print by
+// default (technicians usually want the page as it looks). Only well-formed numeric/enum
+// options are forwarded, so a page can neither steer the output path nor inject options.
+async function handlePrint(tabId, args) {
+  await ensureAttached(tabId);
+  const opts = { transferMode: "ReturnAsBase64" };
+  if (typeof args.landscape === "boolean") { opts.landscape = args.landscape; }
+  opts.printBackground = args.print_background === false ? false : true;
+  const scale = Number(args.scale);
+  if (Number.isFinite(scale) && scale >= 0.1 && scale <= 2) { opts.scale = scale; }
+  const pw = Number(args.paper_width);
+  const ph = Number(args.paper_height);
+  if (Number.isFinite(pw) && pw > 0) { opts.paperWidth = pw; }
+  if (Number.isFinite(ph) && ph > 0) { opts.paperHeight = ph; }
+  if (typeof args.page_ranges === "string" && args.page_ranges.trim().length > 0) {
+    opts.pageRanges = args.page_ranges.trim().slice(0, 100);
+  }
+  const res = await sendCdp(tabId, "Page.printToPDF", opts);
+  const data = res && typeof res.data === "string" ? res.data : "";
+  if (!data) { throw new Error("The browser returned an empty PDF."); }
+  const info = await tabInfo(tabId);
+  return { data, url: info.url, title: info.title };
 }
 
 // -- Bring the bridge up -----------------------------------------------------
