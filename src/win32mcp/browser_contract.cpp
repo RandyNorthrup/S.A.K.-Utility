@@ -393,6 +393,12 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
            {QStringLiteral("http_only"), QStringLiteral("bool"), false},
            {QStringLiteral("same_site"), QStringLiteral("string"), false},
            {QStringLiteral("expires_days"), QStringLiteral("number"), false}}}},
+        {QStringLiteral("browser_download"),
+         {QStringLiteral("download"),
+          QStringLiteral("none"),
+          {{QStringLiteral("url"), QStringLiteral("string"), true},
+           {QStringLiteral("filename"), QStringLiteral("string"), false},
+           {QStringLiteral("timeout_ms"), QStringLiteral("int"), false}}}},
     };
 }
 
@@ -1032,6 +1038,25 @@ void appendCookiesTool(QJsonArray& tools) {
             QJsonArray{QStringLiteral("action")})));
 }
 
+void appendDownloadTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_download"),
+        QStringLiteral("Download a url to disk and wait for it to finish, returning the saved path "
+                       "and byte size. filename is optional and must be a relative name (no "
+                       "absolute path, no \"..\"); omit it to derive the name from the url. "
+                       "timeout_ms bounds the wait (default 30000)."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("url"), stringProperty(QStringLiteral("http(s) url to download."))},
+                {QStringLiteral("filename"),
+                 stringProperty(QStringLiteral("Relative save name, e.g. \"reports/a.pdf\" "
+                                               "(optional)."))},
+                {QStringLiteral("timeout_ms"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral("Max wait in ms (optional, default 30000)."))}},
+            QJsonArray{QStringLiteral("url")})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1155,6 +1180,7 @@ QJsonArray browserToolCatalog() {
     appendPermissionTool(tools);
     appendStorageTool(tools);
     appendCookiesTool(tools);
+    appendDownloadTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

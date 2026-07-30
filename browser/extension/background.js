@@ -334,6 +334,8 @@ async function dispatchCommand(cmd, args) {
       return await handleStorage(await activeTabId(), args);
     case "cookies":
       return await handleCookies(args);
+    case "download":
+      return await handleDownload(args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -2238,6 +2240,59 @@ async function handleCookies(args) {
     return { ok: true, url, name: String(args.name), removed: !!removed };
   }
   return await cookiesSet(url, args);
+}
+
+// -- downloads (chrome.downloads) --------------------------------------------
+//
+// Download a url to disk via the native chrome.downloads API and wait for it to finish,
+// returning the real saved path + byte size. The op writes a file, so it is gated. filename
+// is optional and must be RELATIVE with no ".." (chrome.downloads rejects absolute/parent
+// paths anyway; we reject early with a clear message), so a page cannot steer the write
+// outside the browser's download tree. Poll to completion under a bounded timeout.
+async function pollDownload(id, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let item = null;
+  while (Date.now() < deadline) {
+    const found = await chrome.downloads.search({ id });
+    item = found && found[0];
+    if (item && item.state !== "in_progress") {
+      return item;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return item;
+}
+
+async function handleDownload(args) {
+  const url = args && args.url ? String(args.url) : "";
+  if (!/^https?:/i.test(url)) {
+    throw new Error("browser_download needs a valid http(s) url.");
+  }
+  const opts = { url, conflictAction: "uniquify", saveAs: false };
+  if (typeof args.filename === "string" && args.filename.trim().length > 0) {
+    const fn = args.filename.trim();
+    if (/^([a-zA-Z]:|\\|\/)/.test(fn) || fn.indexOf("..") >= 0) {
+      throw new Error("browser_download filename must be a relative name without '..'.");
+    }
+    opts.filename = fn;
+  }
+  let timeoutMs = Number(args && args.timeout_ms);
+  if (!Number.isFinite(timeoutMs)) { timeoutMs = 30000; }
+  timeoutMs = Math.min(120000, Math.max(1000, timeoutMs));
+  const id = await chrome.downloads.download(opts);
+  if (typeof id !== "number") {
+    throw new Error("browser_download failed to start.");
+  }
+  const item = await pollDownload(id, timeoutMs);
+  if (!item) {
+    throw new Error("browser_download could not track the download.");
+  }
+  if (item.state !== "complete") {
+    return { ok: false, id, state: item.state, error: item.error || null,
+             path: item.filename || null };
+  }
+  return { ok: true, id, state: item.state, path: item.filename || null,
+           bytes: item.fileSize || item.totalBytes || 0, url };
 }
 
 // -- Bring the bridge up -----------------------------------------------------

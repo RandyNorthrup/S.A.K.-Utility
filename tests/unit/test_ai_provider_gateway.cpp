@@ -222,6 +222,11 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_cookies")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_cookies")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("browser_cookies")));
+
+    // Batch 4: browser_download fetches a url and writes a file to disk -> middle tier; the
+    // fail-closed default confirms it before downloading.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_download")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_download")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

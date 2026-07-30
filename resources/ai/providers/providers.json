@@ -107,6 +107,7 @@
         "browser_permission",
         "browser_storage",
         "browser_cookies",
+        "browser_download",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"

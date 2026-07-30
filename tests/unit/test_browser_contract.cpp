@@ -77,6 +77,7 @@ private slots:
     void buildCommand_permissionToolBuilds();
     void buildCommand_storageToolBuilds();
     void buildCommand_cookiesToolBuilds();
+    void buildCommand_downloadToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -784,6 +785,25 @@ void BrowserContractTests::buildCommand_cookiesToolBuilds() {
     QCOMPARE(ck.command.value(QStringLiteral("expires_days")).toDouble(), 1.5);
 }
 
+void BrowserContractTests::buildCommand_downloadToolBuilds() {
+    // url required; filename/timeout_ms copy through.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_download"), {}, {}).ok);
+
+    const ExtensionCommand dl = buildExtensionCommand(
+        QStringLiteral("browser_download"),
+        QJsonObject{{QStringLiteral("url"), QStringLiteral("https://example.com/a.pdf")},
+                    {QStringLiteral("filename"), QStringLiteral("reports/a.pdf")},
+                    {QStringLiteral("timeout_ms"), 5000}},
+        {});
+    QVERIFY(dl.ok);
+    QCOMPARE(dl.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("download"));
+    QCOMPARE(dl.command.value(QStringLiteral("url")).toString(),
+             QStringLiteral("https://example.com/a.pdf"));
+    QCOMPARE(dl.command.value(QStringLiteral("filename")).toString(),
+             QStringLiteral("reports/a.pdf"));
+    QCOMPARE(dl.command.value(QStringLiteral("timeout_ms")).toInt(), 5000);
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -831,7 +851,8 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_print"),
                                     QStringLiteral("browser_permission"),
                                     QStringLiteral("browser_storage"),
-                                    QStringLiteral("browser_cookies")}) {
+                                    QStringLiteral("browser_cookies"),
+                                    QStringLiteral("browser_download")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }
