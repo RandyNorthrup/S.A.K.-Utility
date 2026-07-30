@@ -70,6 +70,10 @@
         "capture_window",
         "capture_screen",
         "capture_monitor",
+        "uia_inspect_window",
+        "uia_find_control",
+        "uia_get_control_value",
+        "uia_get_focused",
         "clipboard_read",
         "clipboard_write",
         "browser_navigate",
@@ -119,6 +123,7 @@
       "capabilities": [
         "window_observation",
         "screen_capture",
+        "ui_automation",
         "browser_control",
         "clipboard",
         "mouse_keyboard"

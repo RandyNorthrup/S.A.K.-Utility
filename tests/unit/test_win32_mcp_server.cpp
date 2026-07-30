@@ -59,6 +59,12 @@ private slots:
     void invokeTool_clipboardWriteRequiresText();
     void invokeTool_clipboardReadReturnsTextShape();
     void invokeTool_browserExtensionStatusReturnsShape();
+    void invokeTool_uiaInspectWindowRequiresTitle();
+    void invokeTool_uiaInspectWindowUnknownTitleErrors();
+    void invokeTool_uiaFindControlRequiresNameAndTitle();
+    void invokeTool_uiaGetControlValueRequiresRef();
+    void invokeTool_uiaGetControlValueWithoutSnapshotErrors();
+    void invokeTool_uiaGetFocusedReturnsShapeOrError();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -108,7 +114,11 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("browser_extension_status"),
                                     QStringLiteral("capture_window"),
                                     QStringLiteral("capture_screen"),
-                                    QStringLiteral("capture_monitor")}) {
+                                    QStringLiteral("capture_monitor"),
+                                    QStringLiteral("uia_inspect_window"),
+                                    QStringLiteral("uia_find_control"),
+                                    QStringLiteral("uia_get_control_value"),
+                                    QStringLiteral("uia_get_focused")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -230,6 +240,65 @@ void Win32McpServerTests::invokeTool_browserExtensionStatusReturnsShape() {
     QVERIFY(payload.value(QStringLiteral("crx_present")).isBool());
     QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
              QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
+}
+
+void Win32McpServerTests::invokeTool_uiaInspectWindowRequiresTitle() {
+    // Missing window_title is a clean error, not a crash or a walk of some arbitrary window.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_inspect_window"), {});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_uiaInspectWindowUnknownTitleErrors() {
+    // A title that matches no visible window returns a flagged error the model can recover from
+    // (deterministic and side-effect free -- no COM tree is walked). The positive walk path is
+    // covered by the live desktop cert harness against a real application window.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("uia_inspect_window"),
+                   QJsonObject{{QStringLiteral("window_title"),
+                                QStringLiteral("no such window zzq-sak-unit-test-42")}});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_uiaFindControlRequiresNameAndTitle() {
+    // Both window_title and name are required; either alone is a clean error.
+    QVERIFY(invokeTool(QStringLiteral("uia_find_control"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("uia_find_control"),
+                       QJsonObject{{QStringLiteral("window_title"), QStringLiteral("x")}})
+                .is_error);
+    QVERIFY(invokeTool(QStringLiteral("uia_find_control"),
+                       QJsonObject{{QStringLiteral("name"), QStringLiteral("Scan")}})
+                .is_error);
+}
+
+void Win32McpServerTests::invokeTool_uiaGetControlValueRequiresRef() {
+    // No 'ref' argument is an explicit, honest error rather than reading ref 0.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_control_value"),
+                                                        {});
+    QVERIFY(result.is_error);
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    QVERIFY(payload.contains(QStringLiteral("error")));
+}
+
+void Win32McpServerTests::invokeTool_uiaGetControlValueWithoutSnapshotErrors() {
+    // A ref lookup before any uia_inspect_window must refuse (there is no tree to resolve it
+    // against) rather than dereference a stale/empty snapshot.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_control_value"),
+                                                        QJsonObject{{QStringLiteral("ref"), 0}});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_uiaGetFocusedReturnsShapeOrError() {
+    // Focus state depends on the desktop, so accept either a well-formed payload (role present)
+    // or a flagged "no focus / UIA unavailable" error -- never a bare empty success.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_focused"), {});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    QVERIFY(payload.contains(QStringLiteral("role")));
+    QVERIFY(payload.contains(QStringLiteral("name")));
+    QVERIFY(payload.value(QStringLiteral("enabled")).isBool());
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {
