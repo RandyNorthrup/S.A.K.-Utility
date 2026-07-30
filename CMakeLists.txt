@@ -962,6 +962,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_dispatch.cpp
         src/win32mcp/win32_mcp_tools.cpp
         src/win32mcp/win32_mcp_desktop.cpp
+        src/win32mcp/win32_mcp_dialog_choice.cpp
         src/win32mcp/win32_mcp_capture.cpp
         src/win32mcp/win32_mcp_ocr.cpp
         src/win32mcp/win32_mcp_watch.cpp

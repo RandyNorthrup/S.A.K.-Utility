@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_desktop.h"
 
 #include "sak/win32mcp/win32_mcp_capture.h"
+#include "sak/win32mcp/win32_mcp_dialog_choice.h"
 
 #include <QBuffer>
 #include <QByteArray>
@@ -793,124 +794,20 @@ ToolResult toolUiaGetFocused(const QJsonObject&) {
 // robust exit for a completion dialog whose OK/Continue button is custom-drawn and nameless (so
 // uia_click_control has no stable ref to target). Resolves the window (foreground pop-up or
 // title), collects its enabled buttons, and invokes the best affirmative match; a single-button
-// dialog is unambiguous and is invoked even when its button carries no accessible name.
-
-// Affirmative captions, best-first. Only safe "acknowledge / proceed" verbs -- never Cancel / No /
-// Quit / Delete, which change meaning; a caller that must press one of those names it in `button`.
-const char* const kAffirmativeCaptions[] = {
-    "ok",
-    "okay",
-    "close",
-    "continue",
-    "finish",
-    "done",
-    "got it",
-    "dismiss",
-    "accept",
-    "yes",
-    "great",
-    "next",
-};
-
-// Rank a button caption as an affirmative: lower is better, -1 = not affirmative. An exact caption
-// match outranks a substring match, so "OK" beats "OK, don't ask again" when both are present.
-int affirmativeRank(const QString& name_lower) {
-    int i = 0;
-    for (const char* caption : kAffirmativeCaptions) {
-        if (name_lower == QLatin1String(caption)) {
-            return i;  // exact hit -- strongest
-        }
-        ++i;
-    }
-    constexpr int kSubstringBase = 100;
-    i = 0;
-    for (const char* caption : kAffirmativeCaptions) {
-        if (name_lower.contains(QLatin1String(caption))) {
-            return kSubstringBase + i;
-        }
-        ++i;
-    }
-    return -1;
-}
-
-struct ButtonCandidate {
-    int index;  // into the walked node/element vectors
-    QString name;
-};
+// dialog is unambiguous and is invoked even when its button carries no accessible name. The
+// safety-critical selection (which button wins, or refuse) lives in the pure, unit-tested
+// chooseDialogButton (win32_mcp_dialog_choice); here we only gather candidates and invoke.
 
 // Enabled, on-screen buttons of the walked tree, paired with their live-element index.
-QVector<ButtonCandidate> collectButtons(const QVector<UiaNode>& nodes) {
-    QVector<ButtonCandidate> buttons;
+QVector<DialogButton> collectButtons(const QVector<UiaNode>& nodes) {
+    QVector<DialogButton> buttons;
     for (int i = 0; i < nodes.size(); ++i) {
         const UiaNode& node = nodes[i];
         if (node.role == QLatin1String("button") && node.enabled && !node.offscreen) {
-            buttons.append(ButtonCandidate{i, node.name});
+            buttons.append(DialogButton{i, node.name});
         }
     }
     return buttons;
-}
-
-// Index of the first enabled button whose lower-cased name contains `needle`, or -1.
-int buttonMatching(const QVector<ButtonCandidate>& buttons, const QString& needle) {
-    for (const ButtonCandidate& button : buttons) {
-        if (button.name.toLower().contains(needle)) {
-            return button.index;
-        }
-    }
-    return -1;
-}
-
-// Index of the best-ranked affirmative button, or -1 when none of them is affirmative.
-int bestAffirmativeButton(const QVector<ButtonCandidate>& buttons) {
-    int best_index = -1;
-    int best_rank = -1;
-    for (const ButtonCandidate& button : buttons) {
-        const int rank = affirmativeRank(button.name.toLower());
-        if (rank >= 0 && (best_index < 0 || rank < best_rank)) {
-            best_rank = rank;
-            best_index = button.index;
-        }
-    }
-    return best_index;
-}
-
-// Comma-joined button captions (nameless ones shown as "(unnamed)") for an ambiguous-choice error.
-QString buttonListText(const QVector<ButtonCandidate>& buttons) {
-    QStringList names;
-    for (const ButtonCandidate& button : buttons) {
-        names << (button.name.isEmpty() ? QStringLiteral("(unnamed)") : button.name);
-    }
-    return names.join(QStringLiteral(", "));
-}
-
-// Choose which button to invoke. With an explicit `button` caption, take the first enabled button
-// whose name contains it. Otherwise take the best-ranked affirmative; failing that, a lone button
-// (the unambiguous single-button acknowledgement) even if it is nameless. Returns the element
-// index, or -1 with `why` set to a recoverable explanation.
-int chooseButton(const QVector<ButtonCandidate>& buttons,
-                 const QString& explicit_button,
-                 QString& why) {
-    if (buttons.isEmpty()) {
-        why = QStringLiteral("The window has no enabled button to invoke.");
-        return -1;
-    }
-    if (!explicit_button.isEmpty()) {
-        const int index = buttonMatching(buttons, explicit_button.toLower());
-        if (index < 0) {
-            why = QStringLiteral("No enabled button matches '%1'.").arg(explicit_button);
-        }
-        return index;
-    }
-    const int affirmative = bestAffirmativeButton(buttons);
-    if (affirmative >= 0) {
-        return affirmative;
-    }
-    if (buttons.size() == 1) {
-        return buttons.first().index;  // single-button dialog: unambiguous even when nameless
-    }
-    why = QStringLiteral("No affirmative button found; pass 'button' to pick one of: %1")
-              .arg(buttonListText(buttons));
-    return -1;
 }
 
 ToolResult toolDismissDialog(const QJsonObject& args) {
@@ -929,7 +826,7 @@ ToolResult toolDismissDialog(const QJsonObject& args) {
         return errorResult(err);
     }
     QString why;
-    const int index = chooseButton(collectButtons(nodes), explicit_button, why);
+    const int index = chooseDialogButton(collectButtons(nodes), explicit_button, why);
     if (index < 0) {
         return errorResult(why);
     }

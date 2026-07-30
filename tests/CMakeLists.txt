@@ -2021,6 +2021,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_win32_gui_runner.cpp")
     message(STATUS "Added unit test: test_ai_win32_gui_runner")
 endif()
 
+# test_win32_mcp_dialog_choice --- pure, deterministic coverage of the dismiss_dialog button
+# selection: affirmative ranking, never-Cancel safety, lone-nameless fallback, explicit override.
+# No Win32/UIA -- the logic is a pure function seam, so it runs on any platform.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_dialog_choice.cpp")
+    add_executable(test_win32_mcp_dialog_choice
+        unit/test_win32_mcp_dialog_choice.cpp
+        ../src/win32mcp/win32_mcp_dialog_choice.cpp
+        ../include/sak/win32mcp/win32_mcp_dialog_choice.h
+    )
+    set_target_properties(test_win32_mcp_dialog_choice PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_dialog_choice PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_dialog_choice PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_dialog_choice COMMAND test_win32_mcp_dialog_choice
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_dialog_choice")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4292,6 +4316,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dispatch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_desktop.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dialog_choice.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
