@@ -968,6 +968,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_text_match.cpp
         src/win32mcp/win32_mcp_watch.cpp
         src/win32mcp/win32_mcp_input.cpp
+        src/win32mcp/win32_mcp_key_chord.cpp
         src/win32mcp/browser_contract.cpp
         src/win32mcp/browser_bridge.cpp
         src/win32mcp/browser_bridge_security.cpp

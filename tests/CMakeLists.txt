@@ -2070,6 +2070,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_text_match.cpp")
     message(STATUS "Added unit test: test_win32_mcp_text_match")
 endif()
 
+# test_win32_mcp_key_chord --- deterministic coverage of the send_keys chord parser: correct VK
+# mapping, multiple modifiers, named/single keys, and refusal of an unknown modifier or main key so
+# the assistant never injects an unintended keystroke. Windows-only (the parser maps to Win32 VKs).
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.cpp")
+    add_executable(test_win32_mcp_key_chord
+        unit/test_win32_mcp_key_chord.cpp
+        ../src/win32mcp/win32_mcp_key_chord.cpp
+        ../include/sak/win32mcp/win32_mcp_key_chord.h
+    )
+    set_target_properties(test_win32_mcp_key_chord PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_key_chord PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_key_chord PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_key_chord COMMAND test_win32_mcp_key_chord
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_key_chord")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4347,6 +4371,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_key_chord.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
