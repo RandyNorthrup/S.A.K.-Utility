@@ -965,6 +965,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_dialog_choice.cpp
         src/win32mcp/win32_mcp_uia_ref.cpp
         src/win32mcp/win32_mcp_capture.cpp
+        src/win32mcp/win32_mcp_geometry.cpp
         src/win32mcp/win32_mcp_ocr.cpp
         src/win32mcp/win32_mcp_text_match.cpp
         src/win32mcp/win32_mcp_json_clamp.cpp

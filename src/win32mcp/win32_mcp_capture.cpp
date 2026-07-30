@@ -3,6 +3,8 @@
 
 #include "sak/win32mcp/win32_mcp_capture.h"
 
+#include "sak/win32mcp/win32_mcp_geometry.h"
+
 #include <QVector>
 
 #include <algorithm>
@@ -24,18 +26,9 @@ namespace sak::win32mcp {
 
 namespace {
 
-// An absurd raw rect cannot be allowed to allocate gigabytes before downscaling.
-constexpr int kAbsMaxEdge = 16'384;
-
 struct Size {
     int w;
     int h;
-};
-
-struct Scaled {
-    int w;
-    int h;
-    double scale;  // dest/source ratio; < 1 when downscaled
 };
 
 // The GDI objects backing one capture, torn down together in freeSurface.
@@ -78,18 +71,6 @@ bool blitSource(void* hwnd, HDC memDC, HDC screen, const RECT& rect) {
                   SRCCOPY | CAPTUREBLT) != FALSE;
 }
 
-// Compute the downscaled destination size so max(width,height) <= max_edge; scale is dest/src.
-Scaled scaledSize(Size src, int max_edge) {
-    const int longest = std::max(src.w, src.h);
-    if (max_edge <= 0 || longest <= max_edge) {
-        return Scaled{src.w, src.h, 1.0};
-    }
-    const double scale = static_cast<double>(max_edge) / static_cast<double>(longest);
-    return Scaled{std::max(1, static_cast<int>(src.w * scale)),
-                  std::max(1, static_cast<int>(src.h * scale)),
-                  scale};
-}
-
 // Copy a DIB's pixels out to a byte array (width*height*4, top-down BGRA).
 QByteArray copyDibBytes(const void* bits, int width, int height) {
     return QByteArray(static_cast<const char*>(bits), static_cast<qsizetype>(width) * height * 4);
@@ -119,16 +100,6 @@ QByteArray stretchToBytes(HDC screen, HDC src_dc, Size src, Size dst) {
     }
     DeleteDC(dst_dc);
     return out;
-}
-
-QString validateRect(int width, int height) {
-    if (width <= 0 || height <= 0) {
-        return QStringLiteral("The capture region is empty.");
-    }
-    if (width > kAbsMaxEdge || height > kAbsMaxEdge) {
-        return QStringLiteral("The capture region is too large; target a single window.");
-    }
-    return {};
 }
 
 // Allocate the screen DC + a memory DC + a top-down DIB of (w x h). Returns false (and frees
@@ -162,7 +133,7 @@ QString renderToBytes(const Surface& s,
     }
     const Size src{static_cast<int>(rect.right - rect.left),
                    static_cast<int>(rect.bottom - rect.top)};
-    const Scaled sc = scaledSize(src, req.max_edge);
+    const Scaled sc = scaledSize(src.w, src.h, req.max_edge);
     QByteArray bytes = (sc.scale < 1.0) ? stretchToBytes(s.screen, s.memDC, src, Size{sc.w, sc.h})
                                         : copyDibBytes(s.bits, src.w, src.h);
     if (bytes.isEmpty()) {
@@ -176,8 +147,8 @@ QString renderToBytes(const Surface& s,
 
 bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
     const RECT rect{req.left, req.top, req.right, req.bottom};
-    err = validateRect(static_cast<int>(rect.right - rect.left),
-                       static_cast<int>(rect.bottom - rect.top));
+    err = validateCaptureRect(static_cast<int>(rect.right - rect.left),
+                              static_cast<int>(rect.bottom - rect.top));
     if (!err.isEmpty()) {
         return false;
     }

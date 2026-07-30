@@ -2191,6 +2191,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_json_clamp.cpp")
     message(STATUS "Added unit test: test_win32_mcp_json_clamp")
 endif()
 
+# test_win32_mcp_geometry --- deterministic coverage of the capture/OCR geometry math: downscale
+# sizing (aspect + edge floor), capture-rect validation (empty / oversize guard), inverse-scale,
+# and word-box mapping back to absolute screen pixels (a rounding/scale slip mislocates click_text).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_geometry.cpp")
+    add_executable(test_win32_mcp_geometry
+        unit/test_win32_mcp_geometry.cpp
+        ../src/win32mcp/win32_mcp_geometry.cpp
+        ../include/sak/win32mcp/win32_mcp_geometry.h
+    )
+    set_target_properties(test_win32_mcp_geometry PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_geometry PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_geometry PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_geometry COMMAND test_win32_mcp_geometry
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_geometry")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4465,6 +4489,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dialog_choice.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_uia_ref.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_geometry.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_json_clamp.cpp

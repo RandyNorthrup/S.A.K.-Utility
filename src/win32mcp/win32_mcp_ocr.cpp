@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_ocr.h"
 
 #include "sak/win32mcp/win32_mcp_capture.h"
+#include "sak/win32mcp/win32_mcp_geometry.h"
 #include "sak/win32mcp/win32_mcp_json_clamp.h"
 #include "sak/win32mcp/win32_mcp_text_match.h"
 
@@ -134,21 +135,26 @@ QJsonObject buildPlain(const OcrResult& result) {
                        {QStringLiteral("line_count"), static_cast<int>(result.Lines().Size())}};
 }
 
+// The OCR engine's bounding rect as the geometry seam's plain float rect.
+WordRectF toWordRect(const winrt::Windows::Foundation::Rect& rect) {
+    return WordRectF{rect.X, rect.Y, rect.Width, rect.Height};
+}
+
 // Map a recognized word's bounding rect (in downscaled capture pixels) back to absolute
-// virtual-screen coordinates: divide out the capture scale, then add the capture origin.
+// virtual-screen coordinates via the geometry seam (divide out scale, add origin).
 QJsonObject wordBox(const winrt::Windows::Foundation::Rect& rect,
                     long origin_x,
                     long origin_y,
                     double inv_scale) {
-    return QJsonObject{
-        {QStringLiteral("x"), static_cast<int>(std::llround(origin_x + rect.X * inv_scale))},
-        {QStringLiteral("y"), static_cast<int>(std::llround(origin_y + rect.Y * inv_scale))},
-        {QStringLiteral("width"), static_cast<int>(std::llround(rect.Width * inv_scale))},
-        {QStringLiteral("height"), static_cast<int>(std::llround(rect.Height * inv_scale))}};
+    const AbsBox box = mapWordBox(toWordRect(rect), origin_x, origin_y, inv_scale);
+    return QJsonObject{{QStringLiteral("x"), box.x},
+                       {QStringLiteral("y"), box.y},
+                       {QStringLiteral("width"), box.w},
+                       {QStringLiteral("height"), box.h}};
 }
 
 QJsonObject buildStructured(const OcrResult& result, long origin_x, long origin_y, double scale) {
-    const double inv = (scale > 0.0) ? (1.0 / scale) : 1.0;
+    const double inv = inverseScale(scale);
     QJsonArray lines;
     int word_count = 0;
     for (const auto& line : result.Lines()) {
@@ -279,13 +285,9 @@ void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<
     int line_idx = 0;
     for (const auto& line : result.Lines()) {
         for (const auto& word : line.Words()) {
-            const auto rect = word.BoundingRect();
-            out.append(WordHit{hstringToQString(word.Text()),
-                               static_cast<int>(std::llround(ox + rect.X * inv)),
-                               static_cast<int>(std::llround(oy + rect.Y * inv)),
-                               static_cast<int>(std::llround(rect.Width * inv)),
-                               static_cast<int>(std::llround(rect.Height * inv)),
-                               line_idx});
+            const AbsBox box = mapWordBox(toWordRect(word.BoundingRect()), ox, oy, inv);
+            out.append(
+                WordHit{hstringToQString(word.Text()), box.x, box.y, box.w, box.h, line_idx});
         }
         ++line_idx;
     }
@@ -310,7 +312,7 @@ QString ocrCollect(CaptureRequest req, QVector<WordHit>& out) {
     if (!ocr_err.isEmpty()) {
         return ocr_err;
     }
-    appendWords(result, req.left, req.top, (bits.scale > 0.0) ? (1.0 / bits.scale) : 1.0, out);
+    appendWords(result, req.left, req.top, inverseScale(bits.scale), out);
     return {};
 }
 
