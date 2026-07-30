@@ -591,6 +591,15 @@ void BrowserContractTests::buildCommand_inspectionToolsBuild() {
     QCOMPARE(wait.command.value(QStringLiteral("absent")).toBool(), true);
     QCOMPARE(wait.command.value(QStringLiteral("timeout_ms")).toInt(), 5000);
 
+    // network_idle + idle_ms copy through typed.
+    const ExtensionCommand netWait = buildExtensionCommand(
+        QStringLiteral("browser_wait_for"),
+        QJsonObject{{QStringLiteral("network_idle"), true}, {QStringLiteral("idle_ms"), 750}},
+        {});
+    QVERIFY(netWait.ok);
+    QCOMPARE(netWait.command.value(QStringLiteral("network_idle")).toBool(), true);
+    QCOMPARE(netWait.command.value(QStringLiteral("idle_ms")).toInt(), 750);
+
     // The ref-required inspection tools refuse without a ref and resolve it when present.
     for (const auto& pair : {std::pair<QString, QString>{QStringLiteral("browser_get_value"),
                                                          QStringLiteral("getValue")},

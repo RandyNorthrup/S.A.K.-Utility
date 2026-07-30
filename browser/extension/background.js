@@ -111,6 +111,11 @@ const PRESENCE_IDS = [CONTROL_STYLE_ID, CONTROL_FRAME_ID, CONTROL_BADGE_ID, AGEN
 // Where the parked cursor sits until the first real pointer action moves it, and the last point
 // it moved to (so a presence refresh after a navigation re-parks it where it was).
 let lastCursorPoint = { x: 24, y: 24 };
+// Live network-activity tracking for browser_wait_for network_idle: the count of in-flight
+// requests on the attached tab and the timestamp of the last request start/finish. Fed by the
+// CDP Network domain events; reset on navigation/detach so a stalled request cannot wedge idle.
+let inflightRequests = 0;
+let lastNetworkActivityMs = 0;
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
@@ -366,6 +371,10 @@ async function ensureAttached(tabId) {
     await sendCdp(tabId, "DOM.enable");
     await sendCdp(tabId, "Accessibility.enable");
     await sendCdp(tabId, "Page.enable");
+    // Network domain backs browser_wait_for network_idle (in-flight request counting).
+    await sendCdp(tabId, "Network.enable").catch(() => {});
+    inflightRequests = 0;
+    lastNetworkActivityMs = Date.now();
   }
   // Keep the control presence visible on every action (and re-created after a navigation wiped
   // it); cheap + idempotent. This is what makes the assistant's control persistently apparent,
@@ -378,6 +387,7 @@ async function detachAll(_reason) {
   lastShot = null;           // and any screenshot coordinates are against a dead render
   pendingDialogPolicy = null;  // an armed dialog response does not carry across sessions
   lastDialog = null;         // nor does a prior page's dialog report
+  inflightRequests = 0;      // network-idle counting does not carry across sessions
   if (attachedTabId === null) {
     return;
   }
@@ -402,6 +412,7 @@ chrome.debugger.onDetach.addListener((source) => {
     lastShot = null;
     pendingDialogPolicy = null;
     lastDialog = null;
+    inflightRequests = 0;
   }
 });
 
@@ -420,6 +431,19 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!source || source.tabId !== attachedTabId) {
     return;
   }
+  // Network-activity tracking for browser_wait_for network_idle. A request starting increments
+  // the in-flight count; finishing/failing decrements it (floored at 0). Every event stamps the
+  // last-activity time so idle can require a quiet window.
+  if (method === "Network.requestWillBeSent") {
+    inflightRequests++;
+    lastNetworkActivityMs = Date.now();
+    return;
+  }
+  if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
+    if (inflightRequests > 0) { inflightRequests--; }
+    lastNetworkActivityMs = Date.now();
+    return;
+  }
   // A navigation ends the page an armed response was meant for; drop it so an accept armed
   // for page A cannot auto-confirm page B's first dialog. Cover both a real document swap
   // (top-frame Page.frameNavigated) and a client-side/SPA route change
@@ -429,6 +453,12 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     method === "Page.frameNavigated" && params && params.frame && !params.frame.parentId;
   if (topFrameNav || method === "Page.navigatedWithinDocument") {
     pendingDialogPolicy = null;
+    if (topFrameNav) {
+      // A new document: any in-flight count from the old page is moot -- reset so a request
+      // that never reported completion cannot keep network_idle from ever resolving.
+      inflightRequests = 0;
+      lastNetworkActivityMs = Date.now();
+    }
     // A navigation wiped the injected overlay; re-assert the control presence on the new
     // document so the assistant's control stays visible without waiting for the next action.
     refreshControlPresence(source.tabId);
@@ -1406,10 +1436,17 @@ async function handleWaitFor(tabId, args) {
   const text = typeof args.text === "string" && args.text.length > 0 ? args.text : null;
   const urlSub = typeof args.url_contains === "string" && args.url_contains.length > 0 ? args.url_contains : null;
   const selector = typeof args.selector === "string" && args.selector.length > 0 ? args.selector : null;
-  if ((text ? 1 : 0) + (urlSub ? 1 : 0) + (selector ? 1 : 0) !== 1) {
-    throw new Error("browser_wait_for needs exactly one of text, url_contains, or selector.");
+  const netIdle = args.network_idle === true;
+  if ((text ? 1 : 0) + (urlSub ? 1 : 0) + (selector ? 1 : 0) + (netIdle ? 1 : 0) !== 1) {
+    throw new Error(
+      "browser_wait_for needs exactly one of text, url_contains, selector, or network_idle.");
   }
+  // network_idle: no in-flight requests for a quiet window (idle_ms). Not subject to `absent`.
+  const idleMs = Math.min(30000, Math.max(0, Number(args.idle_ms) || 500));
   const holds = async () => {
+    if (netIdle) {
+      return inflightRequests <= 0 && Date.now() - lastNetworkActivityMs >= idleMs;
+    }
     let hit;
     if (text) { hit = (await bodyText(tabId)).includes(text); }
     else if (urlSub) { hit = (await tabInfo(tabId)).url.includes(urlSub); }

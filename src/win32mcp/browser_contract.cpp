@@ -320,6 +320,8 @@ QHash<QString, CmdSpec> inspectionCommandSpecs() {
           {{QStringLiteral("text"), QStringLiteral("string"), false},
            {QStringLiteral("url_contains"), QStringLiteral("string"), false},
            {QStringLiteral("selector"), QStringLiteral("string"), false},
+           {QStringLiteral("network_idle"), QStringLiteral("bool"), false},
+           {QStringLiteral("idle_ms"), QStringLiteral("int"), false},
            {QStringLiteral("absent"), QStringLiteral("bool"), false},
            {QStringLiteral("timeout_ms"), QStringLiteral("int"), false}}}},
         {QStringLiteral("browser_get_value"),
@@ -737,13 +739,14 @@ void appendTabTools(QJsonArray& tools) {
                    {})));
 }
 
-void appendInspectionTools(QJsonArray& tools) {
+void appendWaitForTool(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_wait_for"),
         QStringLiteral("Wait until a condition holds on the active tab, or timeout. Give exactly "
                        "one of text (page text appears), url_contains (URL contains a substring), "
-                       "or selector (a CSS selector matches). Set absent to wait for it to go "
-                       "away instead. Read-only polling."),
+                       "selector (a CSS selector matches, pierces shadow DOM), or network_idle "
+                       "(no in-flight network requests for idle_ms). Set absent to wait for a "
+                       "text/url/selector condition to go away instead. Read-only polling."),
         toolSchema(
             QJsonObject{
                 {QStringLiteral("text"),
@@ -752,6 +755,13 @@ void appendInspectionTools(QJsonArray& tools) {
                  stringProperty(QStringLiteral("Substring the tab URL must contain (optional)."))},
                 {QStringLiteral("selector"),
                  stringProperty(QStringLiteral("CSS selector to wait for (optional)."))},
+                {QStringLiteral("network_idle"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Wait until network activity settles (optional)."))},
+                {QStringLiteral("idle_ms"),
+                 typedProperty(QStringLiteral("integer"),
+                               QStringLiteral(
+                                   "Quiet window for network_idle in ms (default 500)."))},
                 {QStringLiteral("absent"),
                  typedProperty(QStringLiteral("boolean"),
                                QStringLiteral("Wait for the condition to be false (optional)."))},
@@ -759,6 +769,9 @@ void appendInspectionTools(QJsonArray& tools) {
                  typedProperty(QStringLiteral("integer"),
                                QStringLiteral("Max wait in ms (default 8000)."))}},
             {})));
+}
+
+void appendInspectionTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_get_value"),
         QStringLiteral("Read the current state of a control with [ref]: value, checked, selected "
@@ -941,6 +954,7 @@ QJsonArray browserToolCatalog() {
     appendPointerTools(tools);
     appendFormControlTools(tools);
     appendTabTools(tools);
+    appendWaitForTool(tools);
     appendInspectionTools(tools);
     appendWindowTools(tools);
     appendAdvancedInputTools(tools);
