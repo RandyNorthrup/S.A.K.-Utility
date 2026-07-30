@@ -4270,6 +4270,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         unit/test_win32_mcp_server.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dispatch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_tools.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_desktop.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
@@ -4286,7 +4287,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_win32_mcp_server PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS} shcore
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS} shcore gdi32 user32
     )
     target_include_directories(test_win32_mcp_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

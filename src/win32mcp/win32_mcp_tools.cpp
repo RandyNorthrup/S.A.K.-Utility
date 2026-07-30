@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include "sak/win32mcp/browser_extension_installer.h"
+#include "sak/win32mcp/win32_mcp_desktop.h"
 
 #include <QJsonDocument>
 #include <QLatin1String>
@@ -357,7 +358,8 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
 QJsonArray toolCatalog() {
     QJsonArray tools;
     tools.append(toolEntry(QStringLiteral("health_check"),
-                           QStringLiteral("Report native win32 MCP server health and identity."),
+                           QStringLiteral("Report the native Win32 control engine's health and "
+                                          "identity."),
                            toolSchema({}, {})));
     tools.append(toolEntry(
         QStringLiteral("list_windows"),
@@ -412,6 +414,12 @@ QJsonArray toolCatalog() {
             "policy and native host presence, whether the extension package is available, "
             "and the extension id."),
         toolSchema({}, {})));
+    // Desktop-control tools (capture / process / -- later -- UIA, OCR, input) live in their own
+    // module; merge their advertised schemas here so they appear in one catalog.
+    const QJsonArray desktop = desktopToolCatalog();
+    for (const QJsonValue& entry : desktop) {
+        tools.append(entry);
+    }
     return tools;
 }
 
@@ -437,6 +445,9 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
         if (name == entry.name) {
             return entry.fn(arguments);
         }
+    }
+    if (desktopHandles(name)) {
+        return invokeDesktopTool(name, arguments);
     }
     return errorResult(QStringLiteral("Unknown tool: %1").arg(name));
 }

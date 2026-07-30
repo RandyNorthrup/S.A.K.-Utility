@@ -51,7 +51,7 @@
     },
     {
       "id": "win32_mcp",
-      "name": "Win32 MCP Server",
+      "name": "S.A.K. Win32 Control Engine",
       "kind": "desktop_automation",
       "transport": "stdio",
       "command": "sak_utility.exe",
@@ -67,6 +67,9 @@
         "get_window_info",
         "list_monitors",
         "mouse_position",
+        "capture_window",
+        "capture_screen",
+        "capture_monitor",
         "clipboard_read",
         "clipboard_write",
         "browser_navigate",
@@ -115,6 +118,7 @@
       ],
       "capabilities": [
         "window_observation",
+        "screen_capture",
         "browser_control",
         "clipboard",
         "mouse_keyboard"
@@ -126,22 +130,6 @@
         "WIN32_MCP_RESULT_ENVELOPE": "true",
         "WIN32_MCP_REDACT_SENSITIVE_OUTPUT": "true"
       }
-    },
-    {
-      "id": "github",
-      "name": "GitHub Provider",
-      "kind": "source_research",
-      "transport": "planned",
-      "enabled": false,
-      "portable_config": true,
-      "requires_network": true,
-      "requires_local_bundle": false,
-      "capabilities": [
-        "release_notes",
-        "issues",
-        "repository_files"
-      ],
-      "policy": "read_only_default"
     },
     {
       "id": "filesystem",

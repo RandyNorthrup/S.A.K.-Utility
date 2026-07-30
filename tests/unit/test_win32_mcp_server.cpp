@@ -105,12 +105,16 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("clipboard_write"),
                                     QStringLiteral("browser_extension_install"),
                                     QStringLiteral("browser_extension_uninstall"),
-                                    QStringLiteral("browser_extension_status")}) {
+                                    QStringLiteral("browser_extension_status"),
+                                    QStringLiteral("capture_window"),
+                                    QStringLiteral("capture_screen"),
+                                    QStringLiteral("capture_monitor")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
-    // list_processes was dropped: it duplicated the app's own diagnostics/process listing, and the
-    // rule is to use app code for any feature that overlaps. The MCP owns only what the app cannot
-    // do headlessly (live-desktop inspection/automation).
+    // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
+    // run_powershell Get-Process), and the rule is to use app code for any feature that overlaps.
+    // The desktop-control engine owns only what the app cannot do headlessly (live-desktop
+    // inspection/automation: per-window/monitor capture, and -- later -- UIA/OCR/input).
     QVERIFY(!names.contains(QStringLiteral("list_processes")));
 }
 

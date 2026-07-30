@@ -92,8 +92,9 @@ void appendProviderAndPackageGuardrails(QStringList& lines) {
     lines << QStringLiteral(
         "Bundled providers: Microsoft Learn MCP and Context7 are configured as HTTP providers "
         "with no bundled API key and require network access; win32_mcp is the app's built-in "
-        "desktop and browser automation server (the app binary run in a headless stdio mode) and "
-        "reports unavailable if the app binary is missing.");
+        "Win32 control engine for browser and desktop automation (this same app binary run "
+        "headless in-process, not a separate server) and reports unavailable if the app binary "
+        "is missing.");
     lines << QStringLiteral(
         "Package workflow: search by plain product name, choose the best Chocolatey package id, "
         "prefer direct_download for 'download an offline installer', prefer build_bundle for "

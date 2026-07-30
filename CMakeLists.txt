@@ -960,6 +960,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_entry.cpp
         src/win32mcp/win32_mcp_dispatch.cpp
         src/win32mcp/win32_mcp_tools.cpp
+        src/win32mcp/win32_mcp_desktop.cpp
         src/win32mcp/browser_contract.cpp
         src/win32mcp/browser_bridge.cpp
         src/win32mcp/browser_bridge_security.cpp
@@ -968,9 +969,11 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/browser_control.cpp
         src/win32mcp/native_messaging.cpp
         include/sak/win32mcp/win32_mcp_entry.h
+        include/sak/win32mcp/win32_mcp_desktop.h
     )
-    # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors).
-    target_link_libraries(sak_utility PRIVATE shcore)
+    # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors). gdi32/user32: screen capture
+    # (BitBlt/PrintWindow/CreateDIBSection) in the desktop-control tools.
+    target_link_libraries(sak_utility PRIVATE shcore gdi32 user32)
 endif()
 
 # Enable Qt MOC, UIC, and RCC
