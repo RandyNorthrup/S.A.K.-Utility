@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_ocr.h"
 
 #include "sak/win32mcp/win32_mcp_capture.h"
+#include "sak/win32mcp/win32_mcp_json_clamp.h"
 #include "sak/win32mcp/win32_mcp_text_match.h"
 
 #include <QHash>
@@ -384,11 +385,6 @@ ToolResult toolFindText(const QJsonObject& args) {
 
 ToolResult toolAssertText(const QJsonObject& args) {
     return textQuery(args, true);
-}
-
-qint64 clampMs(const QJsonObject& args, const QString& key, qint64 def, qint64 lo, qint64 hi) {
-    const qint64 value = static_cast<qint64>(args.value(key).toDouble(static_cast<double>(def)));
-    return std::min(std::max(value, lo), hi);
 }
 
 ToolResult toolWaitForText(const QJsonObject& args) {

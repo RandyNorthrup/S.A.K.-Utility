@@ -4,6 +4,8 @@
 #include "sak/win32mcp/win32_mcp_watch.h"
 
 #include "sak/win32mcp/win32_mcp_capture.h"
+#include "sak/win32mcp/win32_mcp_fingerprint.h"
+#include "sak/win32mcp/win32_mcp_json_clamp.h"
 
 #include <QHash>
 #include <QJsonDocument>
@@ -24,13 +26,10 @@ namespace sak::win32mcp {
 
 namespace {
 
-// Downscale each capture to a small edge, then a fixed-size grayscale grid, so two fingerprints
-// are always comparable regardless of window size and cheap to diff. A per-cell gray delta over
-// kFpTolerance counts as changed; over kChangedRatio of cells changed = the view changed.
+// Downscale each capture to a small edge before fingerprinting so a huge window is cheap to sample.
+// The grid/tolerance/changed-ratio parameters and the fingerprint math itself live in the pure,
+// unit-tested win32_mcp_fingerprint seam.
 constexpr int kFpMaxEdge = 64;
-constexpr int kFpGrid = 16;
-constexpr int kFpTolerance = 16;
-constexpr double kChangedRatio = 0.02;
 
 // Upper bound for a poll's total wait. Driving real apps means waiting out long operations --
 // an antivirus scan runs for minutes to hours -- so the cap is generous; the default stays short
@@ -72,45 +71,7 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
                        {QStringLiteral("inputSchema"), schema}};
 }
 
-qint64 clampMs(const QJsonObject& args, const QString& key, qint64 def, qint64 lo, qint64 hi) {
-    const qint64 value = static_cast<qint64>(args.value(key).toDouble(static_cast<double>(def)));
-    return std::min(std::max(value, lo), hi);
-}
-
 // -- fingerprints ------------------------------------------------------------
-
-// Sample a kFpGrid x kFpGrid grayscale grid (nearest-neighbour) from a captured BGRA buffer, so
-// the fingerprint is one fixed size regardless of the source resolution.
-QByteArray fingerprint(const CaptureBits& bits) {
-    QByteArray fp(kFpGrid * kFpGrid, 0);
-    const auto* pixels = reinterpret_cast<const unsigned char*>(bits.bgra.constData());
-    for (int gy = 0; gy < kFpGrid; ++gy) {
-        for (int gx = 0; gx < kFpGrid; ++gx) {
-            const int sx = std::min(bits.width - 1, gx * bits.width / kFpGrid);
-            const int sy = std::min(bits.height - 1, gy * bits.height / kFpGrid);
-            const qsizetype idx = (static_cast<qsizetype>(sy) * bits.width + sx) * 4;
-            const int gray = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
-            fp[gy * kFpGrid + gx] = static_cast<char>(gray);
-        }
-    }
-    return fp;
-}
-
-// Fraction of grid cells whose gray value differs by more than kFpTolerance. 1.0 (fully changed)
-// if the fingerprints are missing or mismatched.
-double fingerprintDiff(const QByteArray& a, const QByteArray& b) {
-    if (a.isEmpty() || a.size() != b.size()) {
-        return 1.0;
-    }
-    int changed = 0;
-    for (int i = 0; i < a.size(); ++i) {
-        if (std::abs(static_cast<int>(static_cast<unsigned char>(a[i])) -
-                     static_cast<int>(static_cast<unsigned char>(b[i]))) > kFpTolerance) {
-            ++changed;
-        }
-    }
-    return static_cast<double>(changed) / a.size();
-}
 
 // Capture the window (matched by title) and reduce it to a fingerprint + its on-screen size.
 // Returns an error string on lookup/capture failure, empty on success.
@@ -125,7 +86,7 @@ QString captureFingerprint(const QString& title, QByteArray& fp, int& width, int
     if (!captureBgra(req, bits, err)) {
         return err;
     }
-    fp = fingerprint(bits);
+    fp = fingerprint(bits.bgra, bits.width, bits.height);
     width = static_cast<int>(wr.right - wr.left);
     height = static_cast<int>(wr.bottom - wr.top);
     return {};
@@ -233,7 +194,7 @@ ToolResult toolCompareScreenshots(const QJsonObject& args) {
     }
     const double ratio = fingerprintDiff(baseline, fp);
     return jsonResult(QJsonObject{{QStringLiteral("window"), title},
-                                  {QStringLiteral("changed"), ratio > kChangedRatio},
+                                  {QStringLiteral("changed"), fingerprintChanged(baseline, fp)},
                                   {QStringLiteral("diff_ratio"), ratio}});
 }
 
@@ -279,7 +240,7 @@ ToolResult toolWaitForIdle(const QJsonObject& args) {
             return errorResult(err);
         }
         const ULONGLONG now = GetTickCount64();
-        if (previous.isEmpty() || fingerprintDiff(previous, fp) > kChangedRatio) {
+        if (previous.isEmpty() || fingerprintChanged(previous, fp)) {
             previous = fp;
             stable_since = now;  // the view moved; restart the stability window
         }
@@ -333,7 +294,10 @@ void appendWaitTools(QJsonArray& tools) {
                                 stringProperty(QStringLiteral("'present' (default) or 'absent'."))},
                                {QStringLiteral("timeout_ms"),
                                 intProperty(QStringLiteral(
-                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))}},
+                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))},
+                               {QStringLiteral("poll_ms"),
+                                intProperty(QStringLiteral(
+                                    "Poll interval in ms (default 300, min 100, max 5000)."))}},
                    QJsonArray{QStringLiteral("window_title")})));
     tools.append(toolEntry(
         QStringLiteral("wait_for_idle"),
@@ -348,7 +312,10 @@ void appendWaitTools(QJsonArray& tools) {
                                     "Quiet time required (default 600, min 150, max 30000)."))},
                                {QStringLiteral("timeout_ms"),
                                 intProperty(QStringLiteral(
-                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))}},
+                                    "Max wait in ms (default 10000; up to 7200000 = 2h)."))},
+                               {QStringLiteral("poll_ms"),
+                                intProperty(QStringLiteral(
+                                    "Poll interval in ms (default 200, min 100, max 2000)."))}},
                    QJsonArray{QStringLiteral("window_title")})));
 }
 

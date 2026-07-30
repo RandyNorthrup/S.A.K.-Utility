@@ -2143,6 +2143,54 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_uia_ref.cpp")
     message(STATUS "Added unit test: test_win32_mcp_uia_ref")
 endif()
 
+# test_win32_mcp_fingerprint --- deterministic coverage of the visual-fingerprint oracle behind
+# compare_screenshots + wait_for_idle: grid sampling with a degenerate-buffer guard, the per-cell
+# tolerance boundary, the changed-ratio boundary, and the signed->unsigned gray round-trip. Pure.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_fingerprint.cpp")
+    add_executable(test_win32_mcp_fingerprint
+        unit/test_win32_mcp_fingerprint.cpp
+        ../src/win32mcp/win32_mcp_fingerprint.cpp
+        ../include/sak/win32mcp/win32_mcp_fingerprint.h
+    )
+    set_target_properties(test_win32_mcp_fingerprint PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_fingerprint PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_fingerprint PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_fingerprint COMMAND test_win32_mcp_fingerprint
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_fingerprint")
+endif()
+
+# test_win32_mcp_json_clamp --- deterministic coverage of the wait-loop ms clamp: default fallback,
+# floor/cap clamping, fractional truncation, and the regression where a huge JSON number must pin to
+# the cap instead of overflowing the narrowing cast to the floor. Pure.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_json_clamp.cpp")
+    add_executable(test_win32_mcp_json_clamp
+        unit/test_win32_mcp_json_clamp.cpp
+        ../src/win32mcp/win32_mcp_json_clamp.cpp
+        ../include/sak/win32mcp/win32_mcp_json_clamp.h
+    )
+    set_target_properties(test_win32_mcp_json_clamp PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_json_clamp PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_json_clamp PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_json_clamp COMMAND test_win32_mcp_json_clamp
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_json_clamp")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4419,7 +4467,9 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_json_clamp.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input_plan.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_key_chord.cpp

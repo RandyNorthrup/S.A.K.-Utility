@@ -967,7 +967,9 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_capture.cpp
         src/win32mcp/win32_mcp_ocr.cpp
         src/win32mcp/win32_mcp_text_match.cpp
+        src/win32mcp/win32_mcp_json_clamp.cpp
         src/win32mcp/win32_mcp_watch.cpp
+        src/win32mcp/win32_mcp_fingerprint.cpp
         src/win32mcp/win32_mcp_input.cpp
         src/win32mcp/win32_mcp_input_plan.cpp
         src/win32mcp/win32_mcp_key_chord.cpp
