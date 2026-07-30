@@ -2045,6 +2045,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_dialog_choice.cpp")
     message(STATUS "Added unit test: test_win32_mcp_dialog_choice")
 endif()
 
+# test_win32_mcp_text_match --- pure, deterministic coverage of the OCR whole-word matcher that
+# click_text/find_text/wait_for_text rely on: whole-word (so "OK" != "cookies", "Scan" !=
+# "Scanning"), consecutive same-line phrase runs, exact-over-substring + standalone-over-sentence
+# ranking, and the opt-in contains fallback. No WinRT OCR -- the matcher is a pure function seam.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_text_match.cpp")
+    add_executable(test_win32_mcp_text_match
+        unit/test_win32_mcp_text_match.cpp
+        ../src/win32mcp/win32_mcp_text_match.cpp
+        ../include/sak/win32mcp/win32_mcp_text_match.h
+    )
+    set_target_properties(test_win32_mcp_text_match PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_text_match PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_text_match PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_text_match COMMAND test_win32_mcp_text_match
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_text_match")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4319,6 +4344,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_dialog_choice.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
