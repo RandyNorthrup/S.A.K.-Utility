@@ -148,21 +148,6 @@
       "policy": "workspace_or_artifact_scoped"
     },
     {
-      "id": "browser",
-      "name": "Browser Automation Provider",
-      "kind": "web_automation",
-      "transport": "planned",
-      "enabled": false,
-      "portable_config": true,
-      "requires_network": true,
-      "requires_local_bundle": true,
-      "capabilities": [
-        "vendor_portal_navigation",
-        "js_docs_capture"
-      ],
-      "policy": "evidence_gated_mutation"
-    },
-    {
       "id": "vendor_docs",
       "name": "Vendor Documentation Provider",
       "kind": "docs",
@@ -193,21 +178,6 @@
         "checksum_evidence"
       ],
       "policy": "read_only_default"
-    },
-    {
-      "id": "security_reputation",
-      "name": "Security Reputation Provider",
-      "kind": "file_reputation",
-      "transport": "planned",
-      "enabled": false,
-      "portable_config": true,
-      "requires_network": true,
-      "requires_local_bundle": false,
-      "capabilities": [
-        "hash_reputation",
-        "signature_evidence"
-      ],
-      "policy": "privacy_gated"
     }
   ]
 }
