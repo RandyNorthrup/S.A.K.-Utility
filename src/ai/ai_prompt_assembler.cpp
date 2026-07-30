@@ -109,9 +109,12 @@ void appendAutomationSurfaceGuardrails(QStringList& lines) {
         "extension -- navigate, read the page as an accessibility outline, click/type/select, "
         "screenshot, wait_for content, manage tabs/windows, and gated infrastructure (emulate a "
         "device, print a page to PDF, set site permissions, read/write storage and cookies, "
-        "download a file, answer HTTP auth). Desktop control (the UIA/OCR tools -- list_windows, "
-        "capture_screen, click_text, and the UI-automation read/click tools) drives native Windows "
-        "application windows that have no command line.");
+        "download a file, answer HTTP auth). Desktop control observes native application windows "
+        "(list_windows, get_window_info, list_monitors, mouse_position) and reads/writes the "
+        "clipboard; deeper UIA inspect/click, screen capture, OCR, and input injection are being "
+        "added, so rely on the tools actually advertised to you this session rather than assuming "
+        "a "
+        "desktop capability exists.");
     lines << QStringLiteral(
         "Use browser control when the task lives in a web page or web app: signing into a portal, "
         "filling or reading a web form, navigating a vendor site, downloading a driver or "
@@ -121,9 +124,11 @@ void appendAutomationSurfaceGuardrails(QStringList& lines) {
         "instead of screenshotting and guessing at coordinates.");
     lines << QStringLiteral(
         "Use desktop control when the task lives in a native app's GUI that offers no headless "
-        "path: clicking through an installer or settings dialog, reading a value shown only in a "
-        "window, or operating a legacy tool. Read the window with UIA/OCR first, then act by "
-        "element or by visible text.");
+        "path: reading window/monitor layout, checking which app windows are open, or reading and "
+        "writing the clipboard. When a task needs to actually read a control tree or click inside "
+        "a "
+        "window and no such tool is advertised, say the desktop-control surface does not yet cover "
+        "it rather than faking it with coordinates.");
     lines << QStringLiteral(
         "Headless first: if the same result is reachable through a documented CLI, a "
         "PowerShell/WMI query, a sak_* built-in, or one of the app's own technician features, use "
