@@ -1355,11 +1355,36 @@ function delay(ms) {
 // a CDP DOM.querySelector PARAMETER, never interpolated into evaluated code. Throws on an
 // invalid selector so a mistyped condition fails fast instead of polling until timeout.
 async function selectorPresent(tabId, selector) {
-  const doc = await sendCdp(tabId, "DOM.getDocument", { depth: 0 });
-  const root = doc && doc.root && doc.root.nodeId;
-  if (!root) { return false; }
-  const q = await sendCdp(tabId, "DOM.querySelector", { nodeId: root, selector });
-  return !!(q && q.nodeId);
+  // Deep match that PIERCES open shadow DOM (plain DOM.querySelector stops at a shadow
+  // boundary, so web-component content -- common on real sites -- would never be found). The
+  // selector rides as a callFunctionOn ARGUMENT value, never interpolated into code. An invalid
+  // selector throws inside querySelector; we surface that as an error so a mistyped wait fails
+  // fast instead of silently polling until timeout.
+  const docObj = await sendCdp(tabId, "Runtime.evaluate", { expression: "document", returnByValue: false });
+  const objectId = docObj && docObj.result && docObj.result.objectId;
+  if (!objectId) { return false; }
+  const matchFn = function (sel) {
+    function walk(root) {
+      if (root.querySelector(sel)) { return true; }
+      var all = root.querySelectorAll("*");
+      for (var i = 0; i < all.length; i++) {
+        var sr = all[i].shadowRoot;
+        if (sr && walk(sr)) { return true; }
+      }
+      return false;
+    }
+    return walk(this);  // `this` is the document (the callFunctionOn objectId)
+  };
+  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: matchFn.toString(),
+    arguments: [{ value: selector }],
+    returnByValue: true,
+  });
+  if (call && call.exceptionDetails) {
+    throw new Error("Invalid selector for browser_wait_for: " + selector);
+  }
+  return !!(call && call.result && call.result.value === true);
 }
 
 async function bodyText(tabId) {
