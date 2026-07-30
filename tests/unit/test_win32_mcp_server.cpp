@@ -68,6 +68,8 @@ private slots:
     void invokeTool_ocrWindowRequiresTitle();
     void invokeTool_ocrRegionRequiresBounds();
     void invokeTool_findAndWaitTextRequireQuery();
+    void invokeTool_pixelColorReadsAShape();
+    void invokeTool_watchToolsValidateArgs();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -129,7 +131,12 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("ocr_screen_structured"),
                                     QStringLiteral("find_text_on_screen"),
                                     QStringLiteral("assert_text_visible"),
-                                    QStringLiteral("wait_for_text")}) {
+                                    QStringLiteral("wait_for_text"),
+                                    QStringLiteral("get_pixel_color"),
+                                    QStringLiteral("get_window_snapshot"),
+                                    QStringLiteral("compare_screenshots"),
+                                    QStringLiteral("wait_for_window"),
+                                    QStringLiteral("wait_for_idle")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -338,6 +345,38 @@ void Win32McpServerTests::invokeTool_findAndWaitTextRequireQuery() {
     QVERIFY(invokeTool(QStringLiteral("find_text_on_screen"), {}).is_error);
     QVERIFY(invokeTool(QStringLiteral("assert_text_visible"), {}).is_error);
     QVERIFY(invokeTool(QStringLiteral("wait_for_text"), {}).is_error);
+}
+
+void Win32McpServerTests::invokeTool_pixelColorReadsAShape() {
+    // Reading a pixel at the top-left of the virtual screen is non-destructive and deterministic
+    // in shape: either a well-formed r/g/b/hex payload or a flagged error, never a bare success.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("get_pixel_color"),
+                   QJsonObject{{QStringLiteral("x"), 0}, {QStringLiteral("y"), 0}});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    for (const QString& key : {QStringLiteral("r"), QStringLiteral("g"), QStringLiteral("b")}) {
+        const int channel = payload.value(key).toInt(-1);
+        QVERIFY(channel >= 0 && channel <= 255);
+    }
+    QVERIFY(payload.value(QStringLiteral("hex")).toString().startsWith(QLatin1Char('#')));
+}
+
+void Win32McpServerTests::invokeTool_watchToolsValidateArgs() {
+    // Missing required args are clean errors before any capture/poll. get_pixel_color needs x/y;
+    // the window tools need window_title; compare_screenshots also refuses without a baseline.
+    QVERIFY(invokeTool(QStringLiteral("get_pixel_color"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("get_window_snapshot"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("wait_for_window"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("wait_for_idle"), {}).is_error);
+    const sak::win32mcp::ToolResult no_baseline =
+        invokeTool(QStringLiteral("compare_screenshots"),
+                   QJsonObject{{QStringLiteral("window_title"),
+                                QStringLiteral("zzq-no-baseline-window-xyz")}});
+    QVERIFY(no_baseline.is_error);
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {

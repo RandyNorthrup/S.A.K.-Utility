@@ -963,6 +963,7 @@ if(PLATFORM_WINDOWS)
         src/win32mcp/win32_mcp_desktop.cpp
         src/win32mcp/win32_mcp_capture.cpp
         src/win32mcp/win32_mcp_ocr.cpp
+        src/win32mcp/win32_mcp_watch.cpp
         src/win32mcp/browser_contract.cpp
         src/win32mcp/browser_bridge.cpp
         src/win32mcp/browser_bridge_security.cpp
@@ -974,6 +975,7 @@ if(PLATFORM_WINDOWS)
         include/sak/win32mcp/win32_mcp_desktop.h
         include/sak/win32mcp/win32_mcp_capture.h
         include/sak/win32mcp/win32_mcp_ocr.h
+        include/sak/win32mcp/win32_mcp_watch.h
     )
     # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors). gdi32/user32: screen capture
     # (BitBlt/PrintWindow/CreateDIBSection) in the desktop-control tools. runtimeobject: WinRT

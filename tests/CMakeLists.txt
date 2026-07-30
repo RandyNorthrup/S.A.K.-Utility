@@ -4273,6 +4273,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_desktop.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_capture.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_ocr.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
