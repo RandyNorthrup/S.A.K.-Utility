@@ -670,6 +670,9 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         // All drive the real desktop and must take the same hard gate as browser input.
         QStringLiteral("click_text"),
         QStringLiteral("uia_click_control"),
+        // Invokes a pop-up's affirmative button (OK/Continue/...) -- a real state change on the
+        // live desktop, so it takes the same hard gate as any other UIA activation.
+        QStringLiteral("dismiss_dialog"),
         QStringLiteral("mouse_click"),
         QStringLiteral("type_text"),
         QStringLiteral("send_keys"),

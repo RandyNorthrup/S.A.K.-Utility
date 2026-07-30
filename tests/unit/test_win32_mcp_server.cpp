@@ -141,6 +141,7 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("wait_for_window"),
                                     QStringLiteral("wait_for_idle"),
                                     QStringLiteral("uia_click_control"),
+                                    QStringLiteral("dismiss_dialog"),
                                     QStringLiteral("mouse_click"),
                                     QStringLiteral("click_text"),
                                     QStringLiteral("type_text"),
@@ -406,6 +407,9 @@ void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
     // focus_window needs a target: neither window_title nor foreground is a clean error that
     // raises nothing (a bare success path could steal focus on the test host).
     QVERIFY(invokeTool(QStringLiteral("focus_window"), {}).is_error);
+    // dismiss_dialog needs a target too; without window_title or foreground it must refuse
+    // before walking any tree or invoking a button (a bare success could dismiss a real dialog).
+    QVERIFY(invokeTool(QStringLiteral("dismiss_dialog"), {}).is_error);
 }
 
 void Win32McpServerTests::invokeTool_closeWindowRequiresTitle() {

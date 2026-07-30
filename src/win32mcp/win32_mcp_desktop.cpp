@@ -787,6 +787,167 @@ ToolResult toolUiaGetFocused(const QJsonObject&) {
                                   {QStringLiteral("window"), focusedWindowTitle(element.Get())}});
 }
 
+// -- dialog dismissal --------------------------------------------------------
+//
+// Close an acknowledgement pop-up by invoking its affirmative button WITHOUT a stored ref -- the
+// robust exit for a completion dialog whose OK/Continue button is custom-drawn and nameless (so
+// uia_click_control has no stable ref to target). Resolves the window (foreground pop-up or
+// title), collects its enabled buttons, and invokes the best affirmative match; a single-button
+// dialog is unambiguous and is invoked even when its button carries no accessible name.
+
+// Affirmative captions, best-first. Only safe "acknowledge / proceed" verbs -- never Cancel / No /
+// Quit / Delete, which change meaning; a caller that must press one of those names it in `button`.
+const char* const kAffirmativeCaptions[] = {
+    "ok",
+    "okay",
+    "close",
+    "continue",
+    "finish",
+    "done",
+    "got it",
+    "dismiss",
+    "accept",
+    "yes",
+    "great",
+    "next",
+};
+
+// Rank a button caption as an affirmative: lower is better, -1 = not affirmative. An exact caption
+// match outranks a substring match, so "OK" beats "OK, don't ask again" when both are present.
+int affirmativeRank(const QString& name_lower) {
+    int i = 0;
+    for (const char* caption : kAffirmativeCaptions) {
+        if (name_lower == QLatin1String(caption)) {
+            return i;  // exact hit -- strongest
+        }
+        ++i;
+    }
+    constexpr int kSubstringBase = 100;
+    i = 0;
+    for (const char* caption : kAffirmativeCaptions) {
+        if (name_lower.contains(QLatin1String(caption))) {
+            return kSubstringBase + i;
+        }
+        ++i;
+    }
+    return -1;
+}
+
+struct ButtonCandidate {
+    int index;  // into the walked node/element vectors
+    QString name;
+};
+
+// Enabled, on-screen buttons of the walked tree, paired with their live-element index.
+QVector<ButtonCandidate> collectButtons(const QVector<UiaNode>& nodes) {
+    QVector<ButtonCandidate> buttons;
+    for (int i = 0; i < nodes.size(); ++i) {
+        const UiaNode& node = nodes[i];
+        if (node.role == QLatin1String("button") && node.enabled && !node.offscreen) {
+            buttons.append(ButtonCandidate{i, node.name});
+        }
+    }
+    return buttons;
+}
+
+// Index of the first enabled button whose lower-cased name contains `needle`, or -1.
+int buttonMatching(const QVector<ButtonCandidate>& buttons, const QString& needle) {
+    for (const ButtonCandidate& button : buttons) {
+        if (button.name.toLower().contains(needle)) {
+            return button.index;
+        }
+    }
+    return -1;
+}
+
+// Index of the best-ranked affirmative button, or -1 when none of them is affirmative.
+int bestAffirmativeButton(const QVector<ButtonCandidate>& buttons) {
+    int best_index = -1;
+    int best_rank = -1;
+    for (const ButtonCandidate& button : buttons) {
+        const int rank = affirmativeRank(button.name.toLower());
+        if (rank >= 0 && (best_index < 0 || rank < best_rank)) {
+            best_rank = rank;
+            best_index = button.index;
+        }
+    }
+    return best_index;
+}
+
+// Comma-joined button captions (nameless ones shown as "(unnamed)") for an ambiguous-choice error.
+QString buttonListText(const QVector<ButtonCandidate>& buttons) {
+    QStringList names;
+    for (const ButtonCandidate& button : buttons) {
+        names << (button.name.isEmpty() ? QStringLiteral("(unnamed)") : button.name);
+    }
+    return names.join(QStringLiteral(", "));
+}
+
+// Choose which button to invoke. With an explicit `button` caption, take the first enabled button
+// whose name contains it. Otherwise take the best-ranked affirmative; failing that, a lone button
+// (the unambiguous single-button acknowledgement) even if it is nameless. Returns the element
+// index, or -1 with `why` set to a recoverable explanation.
+int chooseButton(const QVector<ButtonCandidate>& buttons,
+                 const QString& explicit_button,
+                 QString& why) {
+    if (buttons.isEmpty()) {
+        why = QStringLiteral("The window has no enabled button to invoke.");
+        return -1;
+    }
+    if (!explicit_button.isEmpty()) {
+        const int index = buttonMatching(buttons, explicit_button.toLower());
+        if (index < 0) {
+            why = QStringLiteral("No enabled button matches '%1'.").arg(explicit_button);
+        }
+        return index;
+    }
+    const int affirmative = bestAffirmativeButton(buttons);
+    if (affirmative >= 0) {
+        return affirmative;
+    }
+    if (buttons.size() == 1) {
+        return buttons.first().index;  // single-button dialog: unambiguous even when nameless
+    }
+    why = QStringLiteral("No affirmative button found; pass 'button' to pick one of: %1")
+              .arg(buttonListText(buttons));
+    return -1;
+}
+
+ToolResult toolDismissDialog(const QJsonObject& args) {
+    QString err_target;
+    HWND hwnd = resolveTargetHwnd(args, err_target);
+    if (!hwnd) {
+        return errorResult(err_target);
+    }
+    const QString explicit_button = args.value(QStringLiteral("button")).toString().trimmed();
+    ComApartment com;
+    QVector<UiaNode> nodes;
+    bool truncated = false;
+    QVector<ComPtr<IUIAutomationElement>> elements;
+    const QString err = inspectHwnd(hwnd, kDefaultUiaDepth, nodes, truncated, &elements);
+    if (!err.isEmpty()) {
+        return errorResult(err);
+    }
+    QString why;
+    const int index = chooseButton(collectButtons(nodes), explicit_button, why);
+    if (index < 0) {
+        return errorResult(why);
+    }
+    if (index >= elements.size()) {
+        return errorResult(
+            QStringLiteral("The chosen button is no longer available; re-inspect the window."));
+    }
+    QString action;
+    const QString invoke_err = invokeElement(elements[index].Get(), action);
+    if (!invoke_err.isEmpty()) {
+        return errorResult(invoke_err);
+    }
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("action"), action},
+                                  {QStringLiteral("button"), nodes[index].name},
+                                  {QStringLiteral("window"), windowTitleOf(hwnd)}});
+}
+
 void appendUiaTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("uia_inspect_window"),
@@ -850,6 +1011,28 @@ void appendUiaTools(QJsonArray& tools) {
             QJsonArray{QStringLiteral("ref")})));
 }
 
+void appendDialogTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("dismiss_dialog"),
+        QStringLiteral(
+            "Close an acknowledgement pop-up by invoking its affirmative button "
+            "(OK/Close/Continue/Finish/...) via UI Automation, WITHOUT the mouse and WITHOUT a "
+            "stored ref -- the robust exit for a completion dialog whose button is custom-drawn "
+            "and nameless. Target the active pop-up with foreground=true or match by window_title. "
+            "A single-button dialog is invoked even when unnamed; pass 'button' to force a "
+            "specific caption. Never presses Cancel/No/Quit unless you name it in 'button'."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("foreground"),
+                 boolProperty(QStringLiteral("Target the active window (title-less pop-ups)."))},
+                {QStringLiteral("window_title"),
+                 stringProperty(QStringLiteral("Title substring of the target window."))},
+                {QStringLiteral("button"),
+                 stringProperty(QStringLiteral(
+                     "Optional caption substring to invoke instead of the auto affirmative."))}},
+            QJsonArray{})));
+}
+
 // -- catalog + dispatch ------------------------------------------------------
 
 void appendCaptureTools(QJsonArray& tools) {
@@ -893,6 +1076,7 @@ const DesktopHandler kDesktopHandlers[] = {
     {QLatin1String("uia_get_control_value"), toolUiaGetControlValue},
     {QLatin1String("uia_get_focused"), toolUiaGetFocused},
     {QLatin1String("uia_click_control"), toolUiaClickControl},
+    {QLatin1String("dismiss_dialog"), toolDismissDialog},
 };
 
 }  // namespace
@@ -901,6 +1085,7 @@ QJsonArray desktopToolCatalog() {
     QJsonArray tools;
     appendCaptureTools(tools);
     appendUiaTools(tools);
+    appendDialogTools(tools);
     return tools;
 }
 

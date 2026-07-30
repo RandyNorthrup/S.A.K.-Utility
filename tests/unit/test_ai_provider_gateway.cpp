@@ -173,14 +173,19 @@ void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {
     // The live-desktop input tools (UIA activate + text-click, already shipped) and the SendInput
     // physical-input tools (DC batch 5) all inject input and must be in the hard-confirm input
     // tier; none may be on the read-only allowlist.
+    // dismiss_dialog invokes a pop-up's affirmative button (a UIA activation) -- input tier, and
+    // deliberately NOT high-risk so a vetted win32_gui recipe may use it to close a completion
+    // dialog without needing a dynamic ref.
     for (const QString& in : {QStringLiteral("uia_click_control"),
                               QStringLiteral("click_text"),
                               QStringLiteral("mouse_click"),
                               QStringLiteral("type_text"),
                               QStringLiteral("send_keys"),
-                              QStringLiteral("focus_window")}) {
+                              QStringLiteral("focus_window"),
+                              QStringLiteral("dismiss_dialog")}) {
         QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(in), qPrintable(in));
         QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(in), qPrintable(in));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32HighRiskTool(in), qPrintable(in));
     }
 
     // close_window (DC batch 6) is high-risk (confirms in Assisted, restore point in Unattended),
