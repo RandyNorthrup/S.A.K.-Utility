@@ -72,6 +72,7 @@ private slots:
     void buildCommand_inspectionToolsBuild();
     void buildCommand_jsClickNeedsRef();
     void buildCommand_selectMultiValuesPassThrough();
+    void buildCommand_emulateToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -654,6 +655,32 @@ void BrowserContractTests::buildCommand_selectMultiValuesPassThrough() {
     const QJsonArray values = ok.command.value(QStringLiteral("values")).toArray();
     QCOMPARE(values.size(), 2);
     QCOMPARE(values.at(1).toString(), QStringLiteral("blue"));
+}
+
+void BrowserContractTests::buildCommand_emulateToolBuilds() {
+    // No args required; params copy through, and reset is a standalone bool.
+    const ExtensionCommand emu = buildExtensionCommand(
+        QStringLiteral("browser_emulate"),
+        QJsonObject{{QStringLiteral("width"), 390},
+                    {QStringLiteral("height"), 844},
+                    {QStringLiteral("mobile"), true},
+                    {QStringLiteral("user_agent"), QStringLiteral("Mozilla/5.0 (iPhone)")},
+                    {QStringLiteral("touch"), true}},
+        {});
+    QVERIFY(emu.ok);
+    QCOMPARE(emu.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("emulate"));
+    QCOMPARE(emu.command.value(QStringLiteral("width")).toInt(), 390);
+    QCOMPARE(emu.command.value(QStringLiteral("height")).toInt(), 844);
+    QCOMPARE(emu.command.value(QStringLiteral("mobile")).toBool(), true);
+    QCOMPARE(emu.command.value(QStringLiteral("user_agent")).toString(),
+             QStringLiteral("Mozilla/5.0 (iPhone)"));
+    QCOMPARE(emu.command.value(QStringLiteral("touch")).toBool(), true);
+
+    const ExtensionCommand rst = buildExtensionCommand(QStringLiteral("browser_emulate"),
+                                                       QJsonObject{{QStringLiteral("reset"), true}},
+                                                       {});
+    QVERIFY(rst.ok);
+    QCOMPARE(rst.command.value(QStringLiteral("reset")).toBool(), true);
 }
 
 void BrowserContractTests::buildCommand_windowToolsBuild() {

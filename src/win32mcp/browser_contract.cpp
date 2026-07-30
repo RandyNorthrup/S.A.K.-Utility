@@ -346,6 +346,22 @@ QHash<QString, CmdSpec> advancedInputCommandSpecs() {
     };
 }
 
+// Gated infrastructure command specs (Batch 4).
+QHash<QString, CmdSpec> infraCommandSpecs() {
+    return {
+        {QStringLiteral("browser_emulate"),
+         {QStringLiteral("emulate"),
+          QStringLiteral("none"),
+          {{QStringLiteral("width"), QStringLiteral("int"), false},
+           {QStringLiteral("height"), QStringLiteral("int"), false},
+           {QStringLiteral("device_scale_factor"), QStringLiteral("int"), false},
+           {QStringLiteral("mobile"), QStringLiteral("bool"), false},
+           {QStringLiteral("user_agent"), QStringLiteral("string"), false},
+           {QStringLiteral("touch"), QStringLiteral("bool"), false},
+           {QStringLiteral("reset"), QStringLiteral("bool"), false}}}},
+    };
+}
+
 // Browser-window (chrome.windows) command specs.
 QHash<QString, CmdSpec> windowCommandSpecs() {
     return {
@@ -368,6 +384,7 @@ const QHash<QString, CmdSpec>& commandSpecs() {
         merged.insert(inspectionCommandSpecs());
         merged.insert(advancedInputCommandSpecs());
         merged.insert(windowCommandSpecs());
+        merged.insert(infraCommandSpecs());
         return merged;
     }();
     return specs;
@@ -839,6 +856,42 @@ void appendWindowTools(QJsonArray& tools) {
             QJsonArray{QStringLiteral("action")})));
 }
 
+void appendInfraTools(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_emulate"),
+        QStringLiteral("Emulate a device on the active tab for responsive/mobile/UA testing: give "
+                       "width+height (CSS px, with optional device_scale_factor and mobile), a "
+                       "user_agent string, and/or touch. Pass reset:true to clear all emulation "
+                       "and restore the real device. Overrides also clear when you switch tabs."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("width"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Viewport width in CSS "
+                                                      "px (with height)."))},
+                        {QStringLiteral("height"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Viewport height in CSS "
+                                                      "px (with width)."))},
+                        {QStringLiteral("device_scale_factor"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral(
+                                           "Device pixel ratio, e.g. 2 (optional, default 1)."))},
+                        {QStringLiteral("mobile"),
+                         typedProperty(QStringLiteral("boolean"),
+                                       QStringLiteral(
+                                           "Emulate a mobile device (meta viewport, optional)."))},
+                        {QStringLiteral("user_agent"),
+                         stringProperty(QStringLiteral("User-Agent string to send (optional)."))},
+                        {QStringLiteral("touch"),
+                         typedProperty(QStringLiteral("boolean"),
+                                       QStringLiteral("Enable touch input emulation (optional)."))},
+                        {QStringLiteral("reset"),
+                         typedProperty(QStringLiteral("boolean"),
+                                       QStringLiteral(
+                                           "Clear all emulation and restore the real device."))}},
+            {})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -957,6 +1010,7 @@ QJsonArray browserToolCatalog() {
     appendWaitForTool(tools);
     appendInspectionTools(tools);
     appendWindowTools(tools);
+    appendInfraTools(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

@@ -195,6 +195,11 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_windows")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_window")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_window")));
+
+    // Batch 4: browser_emulate mutates rendering/UA state -> middle tier (neither read-only nor
+    // input); the fail-closed default confirms it.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_emulate")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_emulate")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

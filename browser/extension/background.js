@@ -116,6 +116,9 @@ let lastCursorPoint = { x: 24, y: 24 };
 // CDP Network domain events; reset on navigation/detach so a stalled request cannot wedge idle.
 let inflightRequests = 0;
 let lastNetworkActivityMs = 0;
+// The tab's real User-Agent, captured before any browser_emulate override so reset can restore
+// it. Null until first captured; cleared on detach (a new session recaptures its own).
+let originalUserAgent = null;
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
@@ -321,6 +324,8 @@ async function dispatchCommand(cmd, args) {
       return await handleListWindows();
     case "window":
       return await handleWindow(args);
+    case "emulate":
+      return await handleEmulate(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -388,6 +393,7 @@ async function detachAll(_reason) {
   pendingDialogPolicy = null;  // an armed dialog response does not carry across sessions
   lastDialog = null;         // nor does a prior page's dialog report
   inflightRequests = 0;      // network-idle counting does not carry across sessions
+  originalUserAgent = null;  // emulation overrides are per-session; recapture on the next tab
   if (attachedTabId === null) {
     return;
   }
@@ -1930,6 +1936,56 @@ async function handleWindow(args) {
   }
   await chrome.windows.remove(windowId);  // action === "close"
   return { ok: true, window_id: windowId, closed: true };
+}
+
+// -- device emulation (Emulation domain) -------------------------------------
+//
+// Emulate a device viewport / user-agent / touch for the active tab (responsive testing, UA
+// gating, mobile layouts). Overrides are per-CDP-session, so they clear automatically when we
+// detach (tab switch / disconnect); reset clears them explicitly and restores the real UA.
+async function handleEmulate(tabId, args) {
+  await ensureAttached(tabId);
+  if (originalUserAgent === null) {
+    const r = await sendCdp(tabId, "Runtime.evaluate", { expression: "navigator.userAgent", returnByValue: true }).catch(() => null);
+    if (r && r.result && typeof r.result.value === "string") { originalUserAgent = r.result.value; }
+  }
+  if (args.reset === true) {
+    await sendCdp(tabId, "Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await sendCdp(tabId, "Emulation.setTouchEmulationEnabled", { enabled: false }).catch(() => {});
+    if (originalUserAgent) {
+      await sendCdp(tabId, "Emulation.setUserAgentOverride", { userAgent: originalUserAgent }).catch(() => {});
+    }
+    return { ok: true, reset: true };
+  }
+  const applied = {};
+  const w = Number(args.width);
+  const h = Number(args.height);
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    const dsf = Number(args.device_scale_factor);
+    await sendCdp(tabId, "Emulation.setDeviceMetricsOverride", {
+      width: Math.round(w), height: Math.round(h),
+      deviceScaleFactor: Number.isFinite(dsf) && dsf > 0 ? dsf : 1,
+      mobile: args.mobile === true,
+    });
+    applied.width = Math.round(w);
+    applied.height = Math.round(h);
+    applied.mobile = args.mobile === true;
+  }
+  if (typeof args.user_agent === "string" && args.user_agent.length > 0) {
+    await sendCdp(tabId, "Emulation.setUserAgentOverride", { userAgent: args.user_agent });
+    applied.user_agent = args.user_agent.slice(0, 120);
+  }
+  if (typeof args.touch === "boolean") {
+    // maxTouchPoints makes navigator.maxTouchPoints reflect touch live (the 'ontouchstart' in
+    // window feature flag is fixed at page load, so it only flips after a reload).
+    await sendCdp(tabId, "Emulation.setTouchEmulationEnabled",
+      { enabled: args.touch, maxTouchPoints: args.touch ? 5 : 0 });
+    applied.touch = args.touch;
+  }
+  if (Object.keys(applied).length === 0) {
+    throw new Error("browser_emulate needs width+height, user_agent, touch, or reset.");
+  }
+  return { ok: true, applied };
 }
 
 // -- Bring the bridge up -----------------------------------------------------
