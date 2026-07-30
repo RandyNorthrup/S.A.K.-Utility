@@ -2094,6 +2094,31 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.c
     message(STATUS "Added unit test: test_win32_mcp_key_chord")
 endif()
 
+# test_win32_mcp_input_plan --- deterministic coverage of the SendInput decision logic: absolute-
+# coordinate mapping, virtual-screen bounds check (reject a click the OS would clamp to a desktop
+# edge), mouse-button mapping, and the type_text keystroke plan (CRLF collapse, surrogate pairs).
+# Windows-only (maps to Win32 MOUSEEVENTF_*/VK_* constants).
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.cpp")
+    add_executable(test_win32_mcp_input_plan
+        unit/test_win32_mcp_input_plan.cpp
+        ../src/win32mcp/win32_mcp_input_plan.cpp
+        ../include/sak/win32mcp/win32_mcp_input_plan.h
+    )
+    set_target_properties(test_win32_mcp_input_plan PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_win32_mcp_input_plan PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_win32_mcp_input_plan PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_win32_mcp_input_plan COMMAND test_win32_mcp_input_plan
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_win32_mcp_input_plan")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
     add_executable(test_ai_command_guard
         unit/test_ai_command_guard.cpp
@@ -4371,6 +4396,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_text_match.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_watch.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input.cpp
+        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_input_plan.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_key_chord.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_control.cpp

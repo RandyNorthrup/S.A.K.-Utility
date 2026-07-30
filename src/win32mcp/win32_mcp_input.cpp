@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_input.h"
 
 #include "sak/win32mcp/win32_mcp_capture.h"
+#include "sak/win32mcp/win32_mcp_input_plan.h"
 #include "sak/win32mcp/win32_mcp_key_chord.h"
 #include "sak/win32mcp/win32_mcp_ocr.h"
 
@@ -71,15 +72,23 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
 
 // -- SendInput primitives ----------------------------------------------------
 
-// Map a virtual-screen point to the 0..65535 absolute space SendInput uses across the whole
-// virtual desktop (MOUSEEVENTF_VIRTUALDESK).
-void absCoord(int x, int y, LONG& nx, LONG& ny) {
-    const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    const int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    nx = static_cast<LONG>(std::llround((x - vx) * 65535.0 / std::max(1, vw - 1)));
-    ny = static_cast<LONG>(std::llround((y - vy) * 65535.0 / std::max(1, vh - 1)));
+ScreenBox virtualScreen() {
+    return ScreenBox{GetSystemMetrics(SM_XVIRTUALSCREEN),
+                     GetSystemMetrics(SM_YVIRTUALSCREEN),
+                     GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                     GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+}
+
+// Send an input sequence; true only when EVERY event was accepted. SendInput returns the count it
+// actually inserted -- 0 or a short count when a higher-integrity foreground window (UIPI), the
+// secure desktop, or BlockInput refuses the injection -- so a mismatch means the input did not land
+// and the tool must report failure instead of a false success.
+bool sendInputAll(QVector<INPUT>& seq) {
+    if (seq.isEmpty()) {
+        return true;
+    }
+    const UINT sent = SendInput(static_cast<UINT>(seq.size()), seq.data(), sizeof(INPUT));
+    return sent == static_cast<UINT>(seq.size());
 }
 
 INPUT mouseInput(DWORD flags, LONG nx, LONG ny) {
@@ -107,39 +116,28 @@ INPUT keyVk(WORD vk, bool key_up) {
     return in;
 }
 
-// Move the pointer to (x, y) then press+release `clicks` times with the given button flags.
-void clickAt(int x, int y, DWORD down, DWORD up, int clicks) {
-    LONG nx = 0;
-    LONG ny = 0;
-    absCoord(x, y, nx, ny);
+// Move the pointer to (x, y) then press+release `clicks` times with the given button flags. Returns
+// false when SendInput could not deliver the whole sequence (blocked / elevated target).
+bool clickAt(int x, int y, DWORD down, DWORD up, int clicks) {
+    const ScreenBox vs = virtualScreen();
+    const AbsPoint p = toAbsCoord(x, y, vs);
     QVector<INPUT> seq;
     seq.append(
-        mouseInput(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny));
+        mouseInput(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, p.nx, p.ny));
     for (int i = 0; i < clicks; ++i) {
         seq.append(mouseInput(down, 0, 0));
         seq.append(mouseInput(up, 0, 0));
     }
-    SendInput(static_cast<UINT>(seq.size()), seq.data(), sizeof(INPUT));
+    return sendInputAll(seq);
 }
 
-bool buttonFlags(const QString& button, DWORD& down, DWORD& up) {
-    const QString value = button.trimmed().isEmpty() ? QStringLiteral("left") : button.toLower();
-    if (value == QLatin1String("left")) {
-        down = MOUSEEVENTF_LEFTDOWN;
-        up = MOUSEEVENTF_LEFTUP;
-        return true;
-    }
-    if (value == QLatin1String("right")) {
-        down = MOUSEEVENTF_RIGHTDOWN;
-        up = MOUSEEVENTF_RIGHTUP;
-        return true;
-    }
-    if (value == QLatin1String("middle")) {
-        down = MOUSEEVENTF_MIDDLEDOWN;
-        up = MOUSEEVENTF_MIDDLEUP;
-        return true;
-    }
-    return false;
+// Standard message when an injection is refused (usually a higher-integrity/elevated foreground
+// window, the secure desktop, or an active BlockInput), so the model does not proceed as if the
+// input landed.
+QString injectionBlockedError() {
+    return QStringLiteral(
+        "Input was not delivered; the target window may be elevated (higher integrity), on the "
+        "secure desktop, or blocking input.");
 }
 
 // Bring a top-level window to the foreground so the next input actuates its control instead of
@@ -197,12 +195,30 @@ ToolResult toolMouseClick(const QJsonObject& args) {
     const int y = args.value(QStringLiteral("y")).toInt();
     DWORD down = 0;
     DWORD up = 0;
-    if (!buttonFlags(args.value(QStringLiteral("button")).toString(), down, up)) {
+    unsigned long down_flags = 0;
+    unsigned long up_flags = 0;
+    if (!mouseButtonFlags(args.value(QStringLiteral("button")).toString(), down_flags, up_flags)) {
         return errorResult(QStringLiteral("button must be left, right, or middle"));
+    }
+    down = static_cast<DWORD>(down_flags);
+    up = static_cast<DWORD>(up_flags);
+    const ScreenBox vs = virtualScreen();
+    if (!pointInVirtualScreen(x, y, vs)) {
+        // A coordinate outside the virtual screen would otherwise be clamped by the OS to a
+        // desktop-edge control (Start button, close box, another monitor) and fire a wrong click.
+        return errorResult(QStringLiteral("(%1, %2) is outside the virtual screen [%3,%4)+%5x%6.")
+                               .arg(x)
+                               .arg(y)
+                               .arg(vs.x)
+                               .arg(vs.y)
+                               .arg(vs.w)
+                               .arg(vs.h));
     }
     activateTarget(args);  // optional window_title / foreground raises the target first
     const int clicks = args.value(QStringLiteral("double")).toBool() ? 2 : 1;
-    clickAt(x, y, down, up, clicks);
+    if (!clickAt(x, y, down, up, clicks)) {
+        return errorResult(injectionBlockedError());
+    }
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
                                   {QStringLiteral("x"), x},
                                   {QStringLiteral("y"), y},
@@ -222,7 +238,9 @@ ToolResult toolClickText(const QJsonObject& args) {
         return errorResult(err);
     }
     const int clicks = args.value(QStringLiteral("double")).toBool() ? 2 : 1;
-    clickAt(cx, cy, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, clicks);
+    if (!clickAt(cx, cy, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, clicks)) {
+        return errorResult(injectionBlockedError());
+    }
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
                                   {QStringLiteral("text"), text},
                                   {QStringLiteral("x"), cx},
@@ -238,26 +256,20 @@ ToolResult toolTypeText(const QJsonObject& args) {
     if (text.size() > kMaxTypeChars) {
         return errorResult(QStringLiteral("text exceeds the type limit"));
     }
+    const QVector<KeyStroke> strokes = planTypeText(text);
     QVector<INPUT> seq;
-    seq.reserve(text.size() * 2);
-    for (const QChar ch : text) {
-        if (ch == QLatin1Char('\r')) {
-            continue;  // treat CRLF as one newline
-        }
-        if (ch == QLatin1Char('\n')) {
-            seq.append(keyVk(VK_RETURN, false));
-            seq.append(keyVk(VK_RETURN, true));
-            continue;
-        }
-        const wchar_t unit = static_cast<wchar_t>(ch.unicode());
-        seq.append(keyUnicode(unit, false));
-        seq.append(keyUnicode(unit, true));
+    seq.reserve(strokes.size());
+    for (const KeyStroke& stroke : strokes) {
+        seq.append(stroke.is_vk ? keyVk(static_cast<WORD>(stroke.code), stroke.key_up)
+                                : keyUnicode(static_cast<wchar_t>(stroke.code), stroke.key_up));
     }
-    if (!seq.isEmpty()) {
-        SendInput(static_cast<UINT>(seq.size()), seq.data(), sizeof(INPUT));
+    if (!sendInputAll(seq)) {
+        return errorResult(injectionBlockedError());
     }
+    // Each typed unit is a down+up pair; report units actually sent (excludes dropped CRs), not the
+    // raw text length, so the count is honest.
     return jsonResult(
-        QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("typed"), text.size()}});
+        QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("typed"), strokes.size() / 2}});
 }
 
 ToolResult toolSendKeys(const QJsonObject& args) {
@@ -279,7 +291,9 @@ ToolResult toolSendKeys(const QJsonObject& args) {
     for (int i = modifiers.size() - 1; i >= 0; --i) {
         seq.append(keyVk(modifiers[i], true));
     }
-    SendInput(static_cast<UINT>(seq.size()), seq.data(), sizeof(INPUT));
+    if (!sendInputAll(seq)) {
+        return errorResult(injectionBlockedError());
+    }
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("keys"), keys}});
 }
 
