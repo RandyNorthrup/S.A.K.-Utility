@@ -3,6 +3,8 @@
 
 #include "sak/win32mcp/win32_mcp_desktop.h"
 
+#include "sak/win32mcp/win32_mcp_capture.h"
+
 #include <QBuffer>
 #include <QByteArray>
 #include <QImage>
@@ -27,10 +29,6 @@
 #include <oleauto.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
-
-#ifndef PW_RENDERFULLCONTENT
-#define PW_RENDERFULLCONTENT 0x00'00'00'02
-#endif
 
 namespace sak::win32mcp {
 
@@ -117,10 +115,10 @@ HWND findVisibleWindowByTitle(const QString& needle_lower) {
 // -- screen capture ----------------------------------------------------------
 
 // A capture scales with the surface; cap the base64 so a multi-monitor grab cannot flood the
-// transport (16 MiB matches the browser screenshot cap). Bound raw dimensions too so an absurd
-// window rect cannot allocate gigabytes before encoding.
+// transport (16 MiB matches the browser screenshot cap). kCaptureFullEdge asks captureBgra for
+// full-resolution pixels (no downscale) up to its own hard bound.
 constexpr int kMaxCaptureBase64 = 16 * 1024 * 1024;
-constexpr int kMaxCaptureEdge = 16'384;
+constexpr int kCaptureFullEdge = 16'384;
 
 // Encode a top-down 32bpp buffer as base64 PNG. Format_RGB32 reads the B,G,R,X bytes a screen
 // DIB holds (little-endian) and ignores the unused 4th byte, so an opaque capture round-trips.
@@ -138,44 +136,16 @@ QString encodePng(const uchar* bits, int width, int height) {
     return QString::fromLatin1(png.toBase64());
 }
 
-// What + where to capture. When hwnd is non-null PrintWindow renders it first (so an occluded
-// or DWM-composited window like Chrome still captures); otherwise a BitBlt from srcDC of `rect`
-// is used.
-struct CaptureSpec {
-    HWND hwnd;
-    HDC srcDC;
-    RECT rect;
-};
-
-QString validateCaptureDims(int width, int height) {
-    if (width <= 0 || height <= 0) {
-        return QStringLiteral("The capture region is empty.");
+// Capture a window (hwnd non-null -> PrintWindow) or screen rect to a base64 PNG via the shared
+// grab primitive. Returns empty and sets *err on failure or an over-cap result.
+QString captureToBase64(void* hwnd, const RECT& rect, QString* err) {
+    CaptureBits bits;
+    const CaptureRequest req{hwnd, rect.left, rect.top, rect.right, rect.bottom, kCaptureFullEdge};
+    if (!captureBgra(req, bits, *err)) {
+        return {};
     }
-    if (width > kMaxCaptureEdge || height > kMaxCaptureEdge) {
-        return QStringLiteral("The capture region is too large; target a single window.");
-    }
-    return {};
-}
-
-// Render the spec into memDC (which already has the target DIB selected). PrintWindow first for
-// a window; BitBlt otherwise (also the fallback when PrintWindow fails).
-bool blitCapture(const CaptureSpec& spec, HDC memDC, int width, int height) {
-    if (spec.hwnd != nullptr && PrintWindow(spec.hwnd, memDC, PW_RENDERFULLCONTENT) != FALSE) {
-        return true;
-    }
-    return BitBlt(memDC,
-                  0,
-                  0,
-                  width,
-                  height,
-                  spec.srcDC,
-                  spec.rect.left,
-                  spec.rect.top,
-                  SRCCOPY | CAPTUREBLT) != FALSE;
-}
-
-QString encodeCapped(const uchar* bits, int width, int height, QString* err) {
-    const QString base64 = encodePng(bits, width, height);
+    const QString base64 =
+        encodePng(reinterpret_cast<const uchar*>(bits.bgra.constData()), bits.width, bits.height);
     if (base64.isEmpty()) {
         *err = QStringLiteral("Failed to encode the capture as PNG.");
         return {};
@@ -185,50 +155,6 @@ QString encodeCapped(const uchar* bits, int width, int height, QString* err) {
         return {};
     }
     return base64;
-}
-
-// Capture the spec to base64 PNG, releasing every GDI object on every path. Returns empty and
-// sets *err on any failure (bad dims, GDI failure, blit failure, or an over-cap result).
-QString captureToBase64(const CaptureSpec& spec, QString* err) {
-    const int width = spec.rect.right - spec.rect.left;
-    const int height = spec.rect.bottom - spec.rect.top;
-    *err = validateCaptureDims(width, height);
-    if (!err->isEmpty()) {
-        return {};
-    }
-    HDC memDC = CreateCompatibleDC(spec.srcDC);
-    if (memDC == nullptr) {
-        *err = QStringLiteral("CreateCompatibleDC failed.");
-        return {};
-    }
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height;  // top-down so scanlines match QImage's order
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP dib = CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (dib == nullptr || bits == nullptr) {
-        if (dib != nullptr) {
-            DeleteObject(dib);
-        }
-        DeleteDC(memDC);
-        *err = QStringLiteral("CreateDIBSection failed.");
-        return {};
-    }
-    HGDIOBJ old = SelectObject(memDC, dib);
-    QString result;
-    if (blitCapture(spec, memDC, width, height)) {
-        result = encodeCapped(static_cast<const uchar*>(bits), width, height, err);
-    } else {
-        *err = QStringLiteral("The capture failed (the window may be minimized or protected).");
-    }
-    SelectObject(memDC, old);
-    DeleteObject(dib);
-    DeleteDC(memDC);
-    return result;
 }
 
 ToolResult toolCaptureWindow(const QJsonObject& args) {
@@ -249,10 +175,8 @@ ToolResult toolCaptureWindow(const QJsonObject& args) {
     }
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
-    HDC screen = GetDC(nullptr);
     QString err;
-    const QString b64 = captureToBase64(CaptureSpec{hwnd, screen, rc}, &err);
-    ReleaseDC(nullptr, screen);
+    const QString b64 = captureToBase64(hwnd, rc, &err);
     if (b64.isEmpty()) {
         return errorResult(err);
     }
@@ -268,11 +192,9 @@ ToolResult toolCaptureScreen(const QJsonObject&) {
     const int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    HDC screen = GetDC(nullptr);
     QString err;
     const RECT rc{x, y, x + w, y + h};
-    const QString b64 = captureToBase64(CaptureSpec{nullptr, screen, rc}, &err);
-    ReleaseDC(nullptr, screen);
+    const QString b64 = captureToBase64(nullptr, rc, &err);
     if (b64.isEmpty()) {
         return errorResult(err);
     }
@@ -304,10 +226,8 @@ ToolResult toolCaptureMonitor(const QJsonObject& args) {
     const RECT rc = rects[index];
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
-    HDC screen = GetDC(nullptr);
     QString err;
-    const QString b64 = captureToBase64(CaptureSpec{nullptr, screen, rc}, &err);
-    ReleaseDC(nullptr, screen);
+    const QString b64 = captureToBase64(nullptr, rc, &err);
     if (b64.isEmpty()) {
         return errorResult(err);
     }

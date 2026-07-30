@@ -5,6 +5,7 @@
 
 #include "sak/win32mcp/browser_extension_installer.h"
 #include "sak/win32mcp/win32_mcp_desktop.h"
+#include "sak/win32mcp/win32_mcp_ocr.h"
 
 #include <QJsonDocument>
 #include <QLatin1String>
@@ -353,6 +354,17 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
                        {QStringLiteral("inputSchema"), schema}};
 }
 
+// Desktop-control tools (capture + UIA read, and -- later -- input) and OCR tools live in their
+// own modules; merge their advertised schemas so they appear in the one catalog.
+void appendModuleCatalogs(QJsonArray& tools) {
+    for (const QJsonValue& entry : desktopToolCatalog()) {
+        tools.append(entry);
+    }
+    for (const QJsonValue& entry : ocrToolCatalog()) {
+        tools.append(entry);
+    }
+}
+
 }  // namespace
 
 QJsonArray toolCatalog() {
@@ -414,12 +426,7 @@ QJsonArray toolCatalog() {
             "policy and native host presence, whether the extension package is available, "
             "and the extension id."),
         toolSchema({}, {})));
-    // Desktop-control tools (capture / process / -- later -- UIA, OCR, input) live in their own
-    // module; merge their advertised schemas here so they appear in one catalog.
-    const QJsonArray desktop = desktopToolCatalog();
-    for (const QJsonValue& entry : desktop) {
-        tools.append(entry);
-    }
+    appendModuleCatalogs(tools);
     return tools;
 }
 
@@ -448,6 +455,9 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
     }
     if (desktopHandles(name)) {
         return invokeDesktopTool(name, arguments);
+    }
+    if (ocrHandles(name)) {
+        return invokeOcrTool(name, arguments);
     }
     return errorResult(QStringLiteral("Unknown tool: %1").arg(name));
 }

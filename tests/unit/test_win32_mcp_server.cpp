@@ -65,6 +65,8 @@ private slots:
     void invokeTool_uiaGetControlValueRequiresRef();
     void invokeTool_uiaGetControlValueWithoutSnapshotErrors();
     void invokeTool_uiaGetFocusedReturnsShapeOrError();
+    void invokeTool_ocrWindowRequiresTitle();
+    void invokeTool_ocrRegionRequiresBounds();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -118,7 +120,12 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("uia_inspect_window"),
                                     QStringLiteral("uia_find_control"),
                                     QStringLiteral("uia_get_control_value"),
-                                    QStringLiteral("uia_get_focused")}) {
+                                    QStringLiteral("uia_get_focused"),
+                                    QStringLiteral("ocr_window"),
+                                    QStringLiteral("ocr_region"),
+                                    QStringLiteral("ocr_region_structured"),
+                                    QStringLiteral("ocr_screen"),
+                                    QStringLiteral("ocr_screen_structured")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -299,6 +306,25 @@ void Win32McpServerTests::invokeTool_uiaGetFocusedReturnsShapeOrError() {
     QVERIFY(payload.contains(QStringLiteral("role")));
     QVERIFY(payload.contains(QStringLiteral("name")));
     QVERIFY(payload.value(QStringLiteral("enabled")).isBool());
+}
+
+void Win32McpServerTests::invokeTool_ocrWindowRequiresTitle() {
+    // Missing window_title is a clean error before any capture/OCR work.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("ocr_window"), {});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_ocrRegionRequiresBounds() {
+    // ocr_region needs all of x/y/width/height, and a non-positive size is rejected -- both are
+    // deterministic validation errors that never reach the OCR engine (so no language pack is
+    // required to run this). The success path is covered by the live desktop cert harness.
+    QVERIFY(invokeTool(QStringLiteral("ocr_region"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("ocr_region"),
+                       QJsonObject{{QStringLiteral("x"), 0},
+                                   {QStringLiteral("y"), 0},
+                                   {QStringLiteral("width"), 0},
+                                   {QStringLiteral("height"), 10}})
+                .is_error);
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {
