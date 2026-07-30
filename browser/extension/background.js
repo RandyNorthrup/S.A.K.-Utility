@@ -119,6 +119,10 @@ let lastNetworkActivityMs = 0;
 // The tab's real User-Agent, captured before any browser_emulate override so reset can restore
 // it. Null until first captured; cleared on detach (a new session recaptures its own).
 let originalUserAgent = null;
+// Credentials armed for HTTP auth challenges via browser_http_auth. Null = disarmed (no Fetch
+// interception). When set, the Fetch domain is enabled and the onEvent handler answers auth
+// challenges with these; cleared on detach (Fetch is per-session, so it auto-disables too).
+let httpAuthCreds = null;
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
@@ -336,6 +340,8 @@ async function dispatchCommand(cmd, args) {
       return await handleCookies(args);
     case "download":
       return await handleDownload(args);
+    case "httpAuth":
+      return await handleHttpAuth(await activeTabId(), args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -404,6 +410,7 @@ async function detachAll(_reason) {
   lastDialog = null;         // nor does a prior page's dialog report
   inflightRequests = 0;      // network-idle counting does not carry across sessions
   originalUserAgent = null;  // emulation overrides are per-session; recapture on the next tab
+  httpAuthCreds = null;      // armed HTTP-auth credentials do not carry across sessions
   if (attachedTabId === null) {
     return;
   }
@@ -429,6 +436,7 @@ chrome.debugger.onDetach.addListener((source) => {
     pendingDialogPolicy = null;
     lastDialog = null;
     inflightRequests = 0;
+    httpAuthCreds = null;
   }
 });
 
@@ -458,6 +466,22 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
     if (inflightRequests > 0) { inflightRequests--; }
     lastNetworkActivityMs = Date.now();
+    return;
+  }
+  // HTTP-auth interception (browser_http_auth). While Fetch is enabled we MUST answer every
+  // paused request or the page wedges: an auth challenge gets the armed credentials (or the
+  // browser default when disarmed), and every other paused request is continued untouched.
+  if (method === "Fetch.authRequired") {
+    const response = httpAuthCreds
+      ? { response: "ProvideCredentials", username: httpAuthCreds.username,
+          password: httpAuthCreds.password }
+      : { response: "Default" };
+    sendCdp(source.tabId, "Fetch.continueWithAuth",
+      { requestId: params.requestId, authChallengeResponse: response }).catch(() => {});
+    return;
+  }
+  if (method === "Fetch.requestPaused") {
+    sendCdp(source.tabId, "Fetch.continueRequest", { requestId: params.requestId }).catch(() => {});
     return;
   }
   // A navigation ends the page an armed response was meant for; drop it so an accept armed
@@ -2293,6 +2317,32 @@ async function handleDownload(args) {
   }
   return { ok: true, id, state: item.state, path: item.filename || null,
            bytes: item.fileSize || item.totalBytes || 0, url };
+}
+
+// -- HTTP auth (Fetch domain) ------------------------------------------------
+//
+// Arm credentials to auto-answer HTTP Basic/Digest 401 challenges on the active tab, so
+// automation can reach password-protected pages without a native auth dialog wedging the
+// browser. Enables the Fetch domain (handleAuthRequests); the onEvent handler answers each
+// challenge and continues every other paused request. clear:true (or a tab switch/detach)
+// disarms + disables Fetch. The password is used only to answer challenges and is never
+// echoed back in the result.
+async function handleHttpAuth(tabId, args) {
+  await ensureAttached(tabId);
+  if (args && args.clear === true) {
+    httpAuthCreds = null;
+    await sendCdp(tabId, "Fetch.disable").catch(() => {});
+    return { ok: true, armed: false };
+  }
+  const username = args && typeof args.username === "string" ? args.username : "";
+  const password = args && typeof args.password === "string" ? args.password : "";
+  if (!username) {
+    throw new Error("browser_http_auth needs a username (or clear:true to disarm).");
+  }
+  httpAuthCreds = { username, password };
+  await sendCdp(tabId, "Fetch.enable",
+    { handleAuthRequests: true, patterns: [{ urlPattern: "*" }] });
+  return { ok: true, armed: true, username };
 }
 
 // -- Bring the bridge up -----------------------------------------------------

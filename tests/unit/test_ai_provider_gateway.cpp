@@ -227,6 +227,12 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // fail-closed default confirms it before downloading.
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_download")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_download")));
+
+    // Batch 4: browser_http_auth feeds credentials to sites -> middle tier; never read-only,
+    // never high-risk (must not auto-run unattended). The fail-closed default confirms it.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_http_auth")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_http_auth")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("browser_http_auth")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

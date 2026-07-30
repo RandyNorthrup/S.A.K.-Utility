@@ -11,7 +11,7 @@ namespace sak::win32mcp {
 // signing key of browser/dist/sak_browser_control.crx, so the unpacked-load id, the
 // CRX id, and this constant are provably identical (see the installer unit test).
 inline constexpr char kBrowserExtensionId[] = "ofodhfbipljnhenjjjpbdaglkjdphoec";
-inline constexpr char kBrowserExtensionVersion[] = "0.3.10";
+inline constexpr char kBrowserExtensionVersion[] = "0.3.11";
 inline constexpr char kBrowserExtensionCrxName[] = "sak_browser_control.crx";
 inline constexpr char kNativeHostName[] = "com.sak.browsercontrol";
 

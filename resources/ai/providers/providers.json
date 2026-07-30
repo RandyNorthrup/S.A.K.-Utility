@@ -108,6 +108,7 @@
         "browser_storage",
         "browser_cookies",
         "browser_download",
+        "browser_http_auth",
         "browser_extension_install",
         "browser_extension_uninstall",
         "browser_extension_status"

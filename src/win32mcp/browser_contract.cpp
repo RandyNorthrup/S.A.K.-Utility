@@ -399,6 +399,12 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
           {{QStringLiteral("url"), QStringLiteral("string"), true},
            {QStringLiteral("filename"), QStringLiteral("string"), false},
            {QStringLiteral("timeout_ms"), QStringLiteral("int"), false}}}},
+        {QStringLiteral("browser_http_auth"),
+         {QStringLiteral("httpAuth"),
+          QStringLiteral("none"),
+          {{QStringLiteral("username"), QStringLiteral("string"), false},
+           {QStringLiteral("password"), QStringLiteral("string"), false},
+           {QStringLiteral("clear"), QStringLiteral("bool"), false}}}},
     };
 }
 
@@ -1057,6 +1063,25 @@ void appendDownloadTool(QJsonArray& tools) {
             QJsonArray{QStringLiteral("url")})));
 }
 
+void appendHttpAuthTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_http_auth"),
+        QStringLiteral("Arm HTTP Basic/Digest credentials so 401 auth challenges on the active tab "
+                       "are answered automatically (no native auth dialog). Give username + "
+                       "password before navigating to a protected page; pass clear:true to disarm. "
+                       "Credentials clear on a tab switch. The password is never echoed back."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("username"),
+                 stringProperty(QStringLiteral("Auth username (required unless clear)."))},
+                {QStringLiteral("password"),
+                 stringProperty(QStringLiteral("Auth password (used only to answer challenges)."))},
+                {QStringLiteral("clear"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Disarm and stop intercepting auth."))}},
+            {})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1181,6 +1206,7 @@ QJsonArray browserToolCatalog() {
     appendStorageTool(tools);
     appendCookiesTool(tools);
     appendDownloadTool(tools);
+    appendHttpAuthTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

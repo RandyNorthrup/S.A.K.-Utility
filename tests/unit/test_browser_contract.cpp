@@ -78,6 +78,7 @@ private slots:
     void buildCommand_storageToolBuilds();
     void buildCommand_cookiesToolBuilds();
     void buildCommand_downloadToolBuilds();
+    void buildCommand_httpAuthToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -804,6 +805,26 @@ void BrowserContractTests::buildCommand_downloadToolBuilds() {
     QCOMPARE(dl.command.value(QStringLiteral("timeout_ms")).toInt(), 5000);
 }
 
+void BrowserContractTests::buildCommand_httpAuthToolBuilds() {
+    // All args optional at the contract layer (the extension enforces username-or-clear);
+    // username/password/clear copy through with correct JSON types.
+    const ExtensionCommand ha =
+        buildExtensionCommand(QStringLiteral("browser_http_auth"),
+                              QJsonObject{{QStringLiteral("username"), QStringLiteral("admin")},
+                                          {QStringLiteral("password"), QStringLiteral("s3cret")}},
+                              {});
+    QVERIFY(ha.ok);
+    QCOMPARE(ha.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("httpAuth"));
+    QCOMPARE(ha.command.value(QStringLiteral("username")).toString(), QStringLiteral("admin"));
+    QCOMPARE(ha.command.value(QStringLiteral("password")).toString(), QStringLiteral("s3cret"));
+
+    const ExtensionCommand clr = buildExtensionCommand(QStringLiteral("browser_http_auth"),
+                                                       QJsonObject{{QStringLiteral("clear"), true}},
+                                                       {});
+    QVERIFY(clr.ok);
+    QCOMPARE(clr.command.value(QStringLiteral("clear")).toBool(), true);
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -852,7 +873,8 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_permission"),
                                     QStringLiteral("browser_storage"),
                                     QStringLiteral("browser_cookies"),
-                                    QStringLiteral("browser_download")}) {
+                                    QStringLiteral("browser_download"),
+                                    QStringLiteral("browser_http_auth")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }
