@@ -8,6 +8,17 @@
 
 namespace sak::win32mcp {
 
+QVector<DialogButton> collectButtons(const QVector<ButtonNode>& nodes) {
+    QVector<DialogButton> buttons;
+    for (int i = 0; i < nodes.size(); ++i) {
+        const ButtonNode& node = nodes.at(i);
+        if (node.role == QLatin1String("button") && node.enabled && !node.offscreen) {
+            buttons.append(DialogButton{i, node.name});
+        }
+    }
+    return buttons;
+}
+
 namespace {
 
 // Affirmative captions, best-first. Only safe "acknowledge / proceed" verbs -- never Cancel / No /

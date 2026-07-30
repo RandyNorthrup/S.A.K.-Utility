@@ -817,16 +817,15 @@ ToolResult toolUiaGetFocused(const QJsonObject&) {
 // safety-critical selection (which button wins, or refuse) lives in the pure, unit-tested
 // chooseDialogButton (win32_mcp_dialog_choice); here we only gather candidates and invoke.
 
-// Enabled, on-screen buttons of the walked tree, paired with their live-element index.
-QVector<DialogButton> collectButtons(const QVector<UiaNode>& nodes) {
-    QVector<DialogButton> buttons;
-    for (int i = 0; i < nodes.size(); ++i) {
-        const UiaNode& node = nodes[i];
-        if (node.role == QLatin1String("button") && node.enabled && !node.offscreen) {
-            buttons.append(DialogButton{i, node.name});
-        }
+// Map the walked tree to the button-candidate view and let the pure, unit-tested collectButtons
+// seam pick the enabled, on-screen buttons (preserving each node's index as element_index).
+QVector<DialogButton> buttonsFromNodes(const QVector<UiaNode>& nodes) {
+    QVector<ButtonNode> views;
+    views.reserve(nodes.size());
+    for (const UiaNode& node : nodes) {
+        views.append(ButtonNode{node.role, node.name, node.enabled, node.offscreen});
     }
-    return buttons;
+    return collectButtons(views);
 }
 
 ToolResult toolDismissDialog(const QJsonObject& args) {
@@ -845,7 +844,7 @@ ToolResult toolDismissDialog(const QJsonObject& args) {
         return errorResult(err);
     }
     QString why;
-    const int index = chooseDialogButton(collectButtons(nodes), explicit_button, why);
+    const int index = chooseDialogButton(buttonsFromNodes(nodes), explicit_button, why);
     if (index < 0) {
         return errorResult(why);
     }

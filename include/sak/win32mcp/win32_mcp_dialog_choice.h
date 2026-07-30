@@ -18,6 +18,20 @@ struct DialogButton {
     QString name;
 };
 
+// One control from a UIA walk, as seen by collectButtons. `role` is the friendly control-type name
+// (only "button" is a candidate); enabled/offscreen gate whether it can be invoked.
+struct ButtonNode {
+    QString role;
+    QString name;
+    bool enabled{true};
+    bool offscreen{false};
+};
+
+// Select the invokable candidates from a walked control list: the enabled, on-screen buttons, each
+// paired with its position in `nodes` as DialogButton.element_index. A disabled or off-screen
+// button, or any non-button control, is excluded so dismiss_dialog never invokes it.
+QVector<DialogButton> collectButtons(const QVector<ButtonNode>& nodes);
+
 // Choose which button dismiss_dialog should invoke, given the enabled/on-screen candidates.
 //
 // Selection order:

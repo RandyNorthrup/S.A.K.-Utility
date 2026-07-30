@@ -5,7 +5,9 @@
 
 #include <QtTest/QtTest>
 
+using sak::win32mcp::ButtonNode;
 using sak::win32mcp::chooseDialogButton;
+using sak::win32mcp::collectButtons;
 using sak::win32mcp::DialogButton;
 
 namespace {
@@ -17,6 +19,10 @@ QVector<DialogButton> buttons(const QStringList& names) {
         out.append(DialogButton{i, names.at(i)});
     }
     return out;
+}
+
+ButtonNode btn(const QString& role, const QString& name, bool enabled, bool offscreen) {
+    return ButtonNode{role, name, enabled, offscreen};
 }
 
 }  // namespace
@@ -36,7 +42,28 @@ private Q_SLOTS:
     void explicitButtonCanSelectCancelDeliberately();
     void explicitButtonNoMatchRefuses();
     void affirmativeRankingPrefersEarlierCaption();
+    void collectButtonsFiltersToEnabledOnScreenButtons();
 };
+
+void Win32McpDialogChoiceTests::collectButtonsFiltersToEnabledOnScreenButtons() {
+    const QVector<ButtonNode> nodes{
+        btn(QStringLiteral("window"), QStringLiteral("App"), true, false),    // 0: not a button
+        btn(QStringLiteral("button"), QStringLiteral("OK"), true, false),     // 1: keep
+        btn(QStringLiteral("button"), QStringLiteral("Grey"), false, false),  // 2: disabled -> drop
+        btn(QStringLiteral("button"),
+            QStringLiteral("Hidden"),
+            true,
+            true),                                                       // 3: offscreen -> drop
+        btn(QStringLiteral("text"), QStringLiteral("OK"), true, false),  // 4: not a button
+        btn(QStringLiteral("button"), QString(), true, false),           // 5: keep (nameless)
+    };
+    const QVector<DialogButton> got = collectButtons(nodes);
+    QCOMPARE(got.size(), 2);
+    QCOMPARE(got[0].element_index, 1);  // index preserved from the source list
+    QCOMPARE(got[0].name, QStringLiteral("OK"));
+    QCOMPARE(got[1].element_index, 5);  // the nameless enabled on-screen button
+    QVERIFY(got[1].name.isEmpty());
+}
 
 void Win32McpDialogChoiceTests::emptySetRefuses() {
     QString why;
