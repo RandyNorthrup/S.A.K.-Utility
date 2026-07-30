@@ -167,6 +167,30 @@ ToolResult toolGetWindowInfo(const QJsonObject& args) {
     return jsonResult(describeWindow(hwnd));
 }
 
+ToolResult toolCloseWindow(const QJsonObject& args) {
+    const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
+    if (title.isEmpty()) {
+        return errorResult(QStringLiteral("window_title is required"));
+    }
+    HWND hwnd = findWindowByTitle(title.toLower());
+    if (!hwnd) {
+        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+    }
+    // WM_CLOSE is the graceful request a window's own close button sends: the app can still run
+    // its shutdown path and prompt to save. We never TerminateProcess, so no unsaved-work loss
+    // beyond what a user clicking [X] would cause.
+    const QString actual = windowTitle(hwnd);
+    const bool posted = PostMessageW(hwnd, WM_CLOSE, 0, 0) != FALSE;
+    if (!posted) {
+        return errorResult(QStringLiteral("Could not deliver the close request to the window."));
+    }
+    return jsonResult(
+        QJsonObject{{QStringLiteral("ok"), true},
+                    {QStringLiteral("window"), actual},
+                    {QStringLiteral("note"),
+                     QStringLiteral("Sent WM_CLOSE; the app may still prompt to save.")}});
+}
+
 BOOL CALLBACK collectMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
     auto* monitors = reinterpret_cast<QJsonArray*>(param);
     MONITORINFO info{};
@@ -395,6 +419,14 @@ QJsonArray toolCatalog() {
         toolSchema(QJsonObject{{QStringLiteral("window_title"),
                                 stringProperty(QStringLiteral("Title substring to match."))}},
                    QJsonArray{QStringLiteral("window_title")})));
+    tools.append(toolEntry(
+        QStringLiteral("close_window"),
+        QStringLiteral("Ask the first visible window matching the title to close (sends WM_CLOSE, "
+                       "like clicking its X -- the app may prompt to save). High-risk: confirms in "
+                       "Assisted and offers a restore point in Unattended."),
+        toolSchema(QJsonObject{{QStringLiteral("window_title"),
+                                stringProperty(QStringLiteral("Title substring to match."))}},
+                   QJsonArray{QStringLiteral("window_title")})));
     tools.append(toolEntry(QStringLiteral("list_monitors"),
                            QStringLiteral("List monitors with bounds, work area, DPI, and which "
                                           "is primary."),
@@ -448,6 +480,7 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
         {QLatin1String("health_check"), toolHealthCheck},
         {QLatin1String("list_windows"), toolListWindows},
         {QLatin1String("get_window_info"), toolGetWindowInfo},
+        {QLatin1String("close_window"), toolCloseWindow},
         {QLatin1String("list_monitors"), toolListMonitors},
         {QLatin1String("mouse_position"), toolMousePosition},
         {QLatin1String("clipboard_read"), toolClipboardRead},

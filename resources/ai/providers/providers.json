@@ -65,6 +65,7 @@
         "health_check",
         "list_windows",
         "get_window_info",
+        "close_window",
         "list_monitors",
         "mouse_position",
         "capture_window",

@@ -34,6 +34,7 @@ private Q_SLOTS:
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
+    void classifiesDesktopInputAndCloseToolRisk();
     void classifiesBatch3BrowserTools();
     void planWin32McpCallFlagsBrowserInputForConfirmation();
     void planWin32McpCallGatesExtensionTools();
@@ -147,20 +148,6 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_click_at")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_dialog")));
 
-    // The live-desktop input tools already shipped in the win32_mcp manifest must be in
-    // the input tier too (they were fail-open ungated before).
-    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("uia_click_control")));
-    QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("click_text")));
-
-    // The SendInput physical-input tools (DC batch 5) inject real mouse/keyboard events and must
-    // be hard-gated too; none may be on the read-only allowlist.
-    for (const QString& in : {QStringLiteral("mouse_click"),
-                              QStringLiteral("type_text"),
-                              QStringLiteral("send_keys")}) {
-        QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(in), qPrintable(in));
-        QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(in), qPrintable(in));
-    }
-
     // Clipboard: writing injects content (input tier); reading exposes cross-app data, so it
     // must not be on the read-only allowlist -- the fail-closed default then gates it.
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("clipboard_write")));
@@ -180,6 +167,26 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
         QStringLiteral("browser_extension_uninstall")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(
         QStringLiteral("browser_extension_install")));
+}
+
+void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {
+    // The live-desktop input tools (UIA activate + text-click, already shipped) and the SendInput
+    // physical-input tools (DC batch 5) all inject input and must be in the hard-confirm input
+    // tier; none may be on the read-only allowlist.
+    for (const QString& in : {QStringLiteral("uia_click_control"),
+                              QStringLiteral("click_text"),
+                              QStringLiteral("mouse_click"),
+                              QStringLiteral("type_text"),
+                              QStringLiteral("send_keys")}) {
+        QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(in), qPrintable(in));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(in), qPrintable(in));
+    }
+
+    // close_window (DC batch 6) is high-risk (confirms in Assisted, restore point in Unattended),
+    // not read-only and not an input tool.
+    QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("close_window")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("close_window")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("close_window")));
 }
 
 void AiProviderGatewayTests::classifiesBatch3BrowserTools() {

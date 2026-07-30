@@ -71,6 +71,7 @@ private slots:
     void invokeTool_pixelColorReadsAShape();
     void invokeTool_watchToolsValidateArgs();
     void invokeTool_inputToolsValidateArgsWithoutInjecting();
+    void invokeTool_closeWindowRequiresTitle();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -118,6 +119,7 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("browser_extension_install"),
                                     QStringLiteral("browser_extension_uninstall"),
                                     QStringLiteral("browser_extension_status"),
+                                    QStringLiteral("close_window"),
                                     QStringLiteral("capture_window"),
                                     QStringLiteral("capture_screen"),
                                     QStringLiteral("capture_monitor"),
@@ -400,6 +402,17 @@ void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
     QVERIFY(invokeTool(QStringLiteral("uia_click_control"), {}).is_error);  // needs ref
     QVERIFY(invokeTool(QStringLiteral("uia_click_control"), QJsonObject{{QStringLiteral("ref"), 0}})
                 .is_error);  // no prior uia_inspect_window -> refuse
+}
+
+void Win32McpServerTests::invokeTool_closeWindowRequiresTitle() {
+    // Missing/unmatched title is a clean error that closes nothing. We deliberately do NOT
+    // exercise the success path -- it would close a real window on the test host; the live
+    // desktop cert harness covers actually closing a throwaway window.
+    QVERIFY(invokeTool(QStringLiteral("close_window"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("close_window"),
+                       QJsonObject{{QStringLiteral("window_title"),
+                                    QStringLiteral("zzq-no-such-window-to-close-42")}})
+                .is_error);
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {
