@@ -5,6 +5,7 @@
 
 #include "sak/win32mcp/browser_extension_installer.h"
 #include "sak/win32mcp/win32_mcp_desktop.h"
+#include "sak/win32mcp/win32_mcp_input.h"
 #include "sak/win32mcp/win32_mcp_ocr.h"
 #include "sak/win32mcp/win32_mcp_watch.h"
 
@@ -367,6 +368,9 @@ void appendModuleCatalogs(QJsonArray& tools) {
     for (const QJsonValue& entry : watchToolCatalog()) {
         tools.append(entry);
     }
+    for (const QJsonValue& entry : inputToolCatalog()) {
+        tools.append(entry);
+    }
 }
 
 }  // namespace
@@ -465,6 +469,9 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
     }
     if (watchHandles(name)) {
         return invokeWatchTool(name, arguments);
+    }
+    if (inputHandles(name)) {
+        return invokeInputTool(name, arguments);
     }
     return errorResult(QStringLiteral("Unknown tool: %1").arg(name));
 }

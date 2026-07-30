@@ -532,4 +532,36 @@ ToolResult invokeOcrTool(const QString& name, const QJsonObject& args) {
     return errorResult(QStringLiteral("Unknown OCR tool: %1").arg(name));
 }
 
+QString ocrLocateText(const QString& text,
+                      const QString& window_title,
+                      int& center_x,
+                      int& center_y) {
+    if (text.trimmed().isEmpty()) {
+        return QStringLiteral("text is required");
+    }
+    QJsonObject args;
+    if (!window_title.trimmed().isEmpty()) {
+        args.insert(QStringLiteral("window_title"), window_title);
+    }
+    CaptureRequest req{};
+    QString err;
+    if (!resolveTextTarget(args, req, err)) {
+        return err;
+    }
+    QVector<WordHit> hits;
+    const QString ocr_err = ocrCollect(req, hits);
+    if (!ocr_err.isEmpty()) {
+        return ocr_err;
+    }
+    const QString needle = text.toLower();
+    for (const auto& hit : hits) {
+        if (hit.text.toLower().contains(needle)) {
+            center_x = hit.x + hit.w / 2;
+            center_y = hit.y + hit.h / 2;
+            return {};
+        }
+    }
+    return QStringLiteral("Text not found on screen: %1").arg(text.trimmed());
+}
+
 }  // namespace sak::win32mcp

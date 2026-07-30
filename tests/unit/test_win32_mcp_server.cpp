@@ -70,6 +70,7 @@ private slots:
     void invokeTool_findAndWaitTextRequireQuery();
     void invokeTool_pixelColorReadsAShape();
     void invokeTool_watchToolsValidateArgs();
+    void invokeTool_inputToolsValidateArgsWithoutInjecting();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
@@ -136,7 +137,12 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                     QStringLiteral("get_window_snapshot"),
                                     QStringLiteral("compare_screenshots"),
                                     QStringLiteral("wait_for_window"),
-                                    QStringLiteral("wait_for_idle")}) {
+                                    QStringLiteral("wait_for_idle"),
+                                    QStringLiteral("uia_click_control"),
+                                    QStringLiteral("mouse_click"),
+                                    QStringLiteral("click_text"),
+                                    QStringLiteral("type_text"),
+                                    QStringLiteral("send_keys")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
     // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
@@ -377,6 +383,23 @@ void Win32McpServerTests::invokeTool_watchToolsValidateArgs() {
                    QJsonObject{{QStringLiteral("window_title"),
                                 QStringLiteral("zzq-no-baseline-window-xyz")}});
     QVERIFY(no_baseline.is_error);
+}
+
+void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
+    // The physical-input tools must reject bad/missing args BEFORE calling SendInput, so these
+    // are safe to run in a test (they never move the mouse or press a key). We deliberately do
+    // NOT exercise any success path -- that would inject real input into the test host; the live
+    // desktop cert harness covers actual injection against a throwaway window.
+    QVERIFY(invokeTool(QStringLiteral("mouse_click"), {}).is_error);  // needs x/y
+    QVERIFY(invokeTool(QStringLiteral("click_text"), {}).is_error);   // needs text
+    QVERIFY(invokeTool(QStringLiteral("type_text"), {}).is_error);    // needs text
+    QVERIFY(invokeTool(QStringLiteral("send_keys"), {}).is_error);    // needs keys
+    QVERIFY(invokeTool(QStringLiteral("send_keys"),
+                       QJsonObject{{QStringLiteral("keys"), QStringLiteral("NotARealKey")}})
+                .is_error);  // unknown key rejected, no injection
+    QVERIFY(invokeTool(QStringLiteral("uia_click_control"), {}).is_error);  // needs ref
+    QVERIFY(invokeTool(QStringLiteral("uia_click_control"), QJsonObject{{QStringLiteral("ref"), 0}})
+                .is_error);  // no prior uia_inspect_window -> refuse
 }
 
 void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {

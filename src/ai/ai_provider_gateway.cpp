@@ -661,10 +661,14 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         QStringLiteral("browser_ungroup_tabs"),
         // Writing the system clipboard injects content the user may later paste elsewhere.
         QStringLiteral("clipboard_write"),
-        // Live desktop input injection (physical text-click / arbitrary UIA invoke).
-        // These are already in the win32_mcp manifest and must take the same hard gate.
+        // Live desktop input injection: physical mouse/keyboard via SendInput (mouse_click,
+        // click_text, type_text, send_keys) and programmatic UIA activation (uia_click_control).
+        // All drive the real desktop and must take the same hard gate as browser input.
         QStringLiteral("click_text"),
         QStringLiteral("uia_click_control"),
+        QStringLiteral("mouse_click"),
+        QStringLiteral("type_text"),
+        QStringLiteral("send_keys"),
     };
     return input_tools.contains(tool_name.trimmed());
 }

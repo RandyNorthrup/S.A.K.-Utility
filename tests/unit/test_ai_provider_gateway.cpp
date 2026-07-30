@@ -152,6 +152,15 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("uia_click_control")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("click_text")));
 
+    // The SendInput physical-input tools (DC batch 5) inject real mouse/keyboard events and must
+    // be hard-gated too; none may be on the read-only allowlist.
+    for (const QString& in : {QStringLiteral("mouse_click"),
+                              QStringLiteral("type_text"),
+                              QStringLiteral("send_keys")}) {
+        QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(in), qPrintable(in));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(in), qPrintable(in));
+    }
+
     // Clipboard: writing injects content (input tier); reading exposes cross-app data, so it
     // must not be on the read-only allowlist -- the fail-closed default then gates it.
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("clipboard_write")));

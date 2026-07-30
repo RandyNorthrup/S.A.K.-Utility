@@ -422,6 +422,9 @@ struct WalkState {
     IUIAutomationTreeWalker* walker;
     int max_depth;
     bool truncated;
+    // Optional parallel list of the live elements (same index as nodes), retained so a ref can be
+    // invoked. Null when only the read-only outline is needed (inspect/find/get_value).
+    QVector<ComPtr<IUIAutomationElement>>* elements;
 };
 
 // Depth-first pre-order walk of the control view, appending each element as a flat node. The
@@ -432,6 +435,9 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
         return;
     }
     state.nodes->append(describeElement(element, depth));
+    if (state.elements != nullptr) {
+        state.elements->append(ComPtr<IUIAutomationElement>(element));
+    }
     if (depth >= state.max_depth) {
         return;
     }
@@ -453,9 +459,14 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
     }
 }
 
-// Walk `hwnd`'s control tree into `out`. Precondition: a ComApartment is live on this thread.
-// Returns an error string on any COM failure, empty on success.
-QString inspectHwnd(HWND hwnd, int max_depth, QVector<UiaNode>& out, bool& truncated) {
+// Walk `hwnd`'s control tree into `out` (and, if `elements` is non-null, the live element behind
+// each node). Precondition: a ComApartment is live on this thread. Returns an error string on any
+// COM failure, empty on success.
+QString inspectHwnd(HWND hwnd,
+                    int max_depth,
+                    QVector<UiaNode>& out,
+                    bool& truncated,
+                    QVector<ComPtr<IUIAutomationElement>>* elements = nullptr) {
     ComPtr<IUIAutomation> automation;
     if (FAILED(CoCreateInstance(
             __uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))) ||
@@ -470,7 +481,7 @@ QString inspectHwnd(HWND hwnd, int max_depth, QVector<UiaNode>& out, bool& trunc
     if (FAILED(automation->get_ControlViewWalker(&walker)) || !walker) {
         return QStringLiteral("The UI Automation control view is unavailable.");
     }
-    WalkState state{&out, walker.Get(), max_depth, false};
+    WalkState state{&out, walker.Get(), max_depth, false, elements};
     walkElement(state, root.Get(), 0);
     truncated = state.truncated;
     return {};
@@ -642,6 +653,89 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
                                   {QStringLiteral("offscreen"), node.offscreen}});
 }
 
+// Programmatic activation via UI Automation patterns (no cursor movement): Invoke a button/menu
+// item, else Toggle a checkbox, else Select a list/tab item. Each returns true only if the
+// control exposes that pattern and the call succeeds.
+bool tryInvoke(IUIAutomationElement* element) {
+    ComPtr<IUnknown> unknown;
+    if (FAILED(element->GetCurrentPattern(UIA_InvokePatternId, &unknown)) || !unknown) {
+        return false;
+    }
+    ComPtr<IUIAutomationInvokePattern> pattern;
+    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Invoke());
+}
+
+bool tryToggle(IUIAutomationElement* element) {
+    ComPtr<IUnknown> unknown;
+    if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || !unknown) {
+        return false;
+    }
+    ComPtr<IUIAutomationTogglePattern> pattern;
+    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Toggle());
+}
+
+bool trySelect(IUIAutomationElement* element) {
+    ComPtr<IUnknown> unknown;
+    if (FAILED(element->GetCurrentPattern(UIA_SelectionItemPatternId, &unknown)) || !unknown) {
+        return false;
+    }
+    ComPtr<IUIAutomationSelectionItemPattern> pattern;
+    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Select());
+}
+
+QString invokeElement(IUIAutomationElement* element, QString& action) {
+    if (tryInvoke(element)) {
+        action = QStringLiteral("invoke");
+        return {};
+    }
+    if (tryToggle(element)) {
+        action = QStringLiteral("toggle");
+        return {};
+    }
+    if (trySelect(element)) {
+        action = QStringLiteral("select");
+        return {};
+    }
+    return QStringLiteral("This control cannot be invoked (no Invoke/Toggle/Select pattern).");
+}
+
+ToolResult toolUiaClickControl(const QJsonObject& args) {
+    if (!args.contains(QStringLiteral("ref"))) {
+        return errorResult(QStringLiteral("ref is required (from uia_inspect_window)"));
+    }
+    const int ref = args.value(QStringLiteral("ref")).toInt(-1);
+    const QString stale = uiaSnapshotPrecheck();
+    if (!stale.isEmpty()) {
+        return errorResult(stale);
+    }
+    ComApartment com;
+    QVector<UiaNode> nodes;
+    bool truncated = false;
+    QVector<ComPtr<IUIAutomationElement>> elements;
+    const QString err =
+        inspectHwnd(g_uia_snapshot.hwnd, kDefaultUiaDepth, nodes, truncated, &elements);
+    if (!err.isEmpty()) {
+        return errorResult(err);
+    }
+    if (uiaRefDrifted(nodes, ref) || ref >= elements.size()) {
+        return errorResult(
+            QStringLiteral("That ref no longer points at the same control; call "
+                           "uia_inspect_window again."));
+    }
+    QString action;
+    const QString invoke_err = invokeElement(elements[ref].Get(), action);
+    if (!invoke_err.isEmpty()) {
+        return errorResult(invoke_err);
+    }
+    g_uia_snapshot.nodes = nodes;
+    const UiaNode& node = nodes[ref];
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("ref"), ref},
+                                  {QStringLiteral("action"), action},
+                                  {QStringLiteral("role"), node.role},
+                                  {QStringLiteral("name"), node.name}});
+}
+
 QString focusedWindowTitle(IUIAutomationElement* element) {
     UIA_HWND native = nullptr;
     if (FAILED(element->get_CurrentNativeWindowHandle(&native)) || native == nullptr) {
@@ -716,6 +810,18 @@ void appendUiaTools(QJsonArray& tools) {
         QStringLiteral("Report the control that currently has keyboard focus (role, name, value, "
                        "and its top-level window), useful for confirming where typed input lands."),
         toolSchema(QJsonObject{}, QJsonArray{})));
+    tools.append(toolEntry(
+        QStringLiteral("uia_click_control"),
+        QStringLiteral("Activate a control by its ref from the most recent uia_inspect_window: "
+                       "Invoke a button/menu item, else Toggle a checkbox, else Select a list/tab "
+                       "item -- programmatically via UI Automation, WITHOUT moving the mouse. "
+                       "Re-checks the tree and refuses if the ref drifted. Preferred over "
+                       "click_text/mouse_click when the target has a ref."),
+        toolSchema(
+            QJsonObject{{QStringLiteral("ref"),
+                         typedProperty(QStringLiteral("integer"),
+                                       QStringLiteral("Ref index from uia_inspect_window."))}},
+            QJsonArray{QStringLiteral("ref")})));
 }
 
 // -- catalog + dispatch ------------------------------------------------------
@@ -756,6 +862,7 @@ const DesktopHandler kDesktopHandlers[] = {
     {QLatin1String("uia_find_control"), toolUiaFindControl},
     {QLatin1String("uia_get_control_value"), toolUiaGetControlValue},
     {QLatin1String("uia_get_focused"), toolUiaGetFocused},
+    {QLatin1String("uia_click_control"), toolUiaClickControl},
 };
 
 }  // namespace

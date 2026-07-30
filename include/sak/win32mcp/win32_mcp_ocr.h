@@ -23,4 +23,13 @@ namespace sak::win32mcp {
 [[nodiscard]] bool ocrHandles(const QString& name);
 [[nodiscard]] ToolResult invokeOcrTool(const QString& name, const QJsonObject& args);
 
+// Locate the first on-screen occurrence of `text` (within `window_title`, or the full screen if
+// it is empty) and report the CENTER of its bounding box in virtual-screen coordinates. Used by
+// the input module's click_text. Returns an error string when OCR is unavailable, the window is
+// missing, or the text is not found; empty on success.
+[[nodiscard]] QString ocrLocateText(const QString& text,
+                                    const QString& window_title,
+                                    int& center_x,
+                                    int& center_y);
+
 }  // namespace sak::win32mcp
