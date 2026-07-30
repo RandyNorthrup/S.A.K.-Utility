@@ -53,13 +53,6 @@ Before testing:
 13. Confirm the chat header shows `Agents: active/completed`.
 14. Confirm the composer shows exact `Ctx: x/y` context usage immediately to
    the left of Send after the OpenAI key/model are loaded.
-15. Select several workflows and confirm the right-rail Session role text changes
-   before pressing Add; after Add, confirm the role stays with that workflow.
-16. Start a fresh chat without a workflow using a focused prompt such as
-   `fix Windows Update errors`, and confirm the session role is inferred from
-   the first prompt.
-17. In the same chat, send `act as a report writer for the final handoff` and
-   confirm later turns use the directed role until another explicit role change.
 
 Expected:
 

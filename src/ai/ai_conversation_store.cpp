@@ -513,21 +513,6 @@ bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
     return false;
 }
 
-struct SessionRoleMetadata {
-    QString role;
-    QString source;
-};
-
-SessionRoleMetadata sessionRoleMetadataFromLine(const QByteArray& raw_line) {
-    const auto obj = parseJsonLineObject(raw_line);
-    if (!obj.has_value()) {
-        return {};
-    }
-    const QJsonObject metadata = obj->value(QStringLiteral("metadata")).toObject();
-    return {.role = metadata.value(QStringLiteral("session_role")).toString().trimmed(),
-            .source = metadata.value(QStringLiteral("session_role_source")).toString().trimmed()};
-}
-
 struct SearchHitCandidate {
     QString source;
     QString text;
@@ -746,31 +731,6 @@ QString ConversationStore::latestAssistantResponseId(const QString& session_id,
         error_message->clear();
     }
     return latest;
-}
-
-QString ConversationStore::latestSessionRole(const QString& session_id,
-                                             QString* source,
-                                             QString* error_message) const {
-    if (source) {
-        source->clear();
-    }
-    QFile file(QDir(sessionPath(session_id)).filePath(QString::fromLatin1(kTranscriptFile)));
-    if (!openOptionalTranscriptFile(&file, error_message)) {
-        return {};
-    }
-
-    SessionRoleMetadata latest;
-    while (!file.atEnd()) {
-        const SessionRoleMetadata candidate = sessionRoleMetadataFromLine(file.readLine());
-        latest = candidate.role.isEmpty() ? latest : candidate;
-    }
-    if (source) {
-        *source = latest.source;
-    }
-    if (error_message) {
-        error_message->clear();
-    }
-    return latest.role;
 }
 
 QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& query,

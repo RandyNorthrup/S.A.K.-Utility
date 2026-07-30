@@ -243,7 +243,6 @@ constexpr ushort kStatusMarkerError = 0x2718;
 constexpr int kActivityTimerIntervalMs = 450;
 constexpr int kCommandIdWidth = 3;
 constexpr int kCommandIdBase = 10;
-constexpr int kWorkflowInferenceWordMinChars = 4;
 constexpr qsizetype kSafetyIdentifierDigestChars = 32;
 constexpr int kFieldLabelFontWeight = 400;
 constexpr qint64 kTokenCompactMillion = 1'000'000;
@@ -319,346 +318,6 @@ bool containsAny(const QString& value, std::initializer_list<const char*> needle
         }
     }
     return false;
-}
-
-void appendUniqueProfile(QStringList* profiles, const QString& profile) {
-    const QString clean = profile.trimmed();
-    if (clean.isEmpty()) {
-        return;
-    }
-    for (const auto& existing : std::as_const(*profiles)) {
-        if (existing.compare(clean, Qt::CaseInsensitive) == 0) {
-            return;
-        }
-    }
-    profiles->append(clean);
-}
-
-constexpr const char* kDefaultSessionRole = "PC Technician";
-constexpr const char* kSessionRoleSourcePending = "pending";
-constexpr const char* kSessionRoleSourceDefault = "default";
-constexpr const char* kSessionRoleSourcePrompt = "prompt";
-constexpr const char* kSessionRoleSourceWorkflow = "workflow";
-constexpr const char* kSessionRoleSourceWorkflowSelection = "workflow_selection";
-constexpr const char* kSessionRoleSourceUser = "user";
-
-QStringList defaultAgentProfiles() {
-    return {QStringLiteral("PC Technician")};
-}
-
-QStringList agentProfilesForWorkflowStore(const ai::WorkflowStore* store) {
-    QStringList profiles;
-    if (!store) {
-        return defaultAgentProfiles();
-    }
-    const QStringList roles = store->roles();
-    for (const auto& role : roles) {
-        appendUniqueProfile(&profiles, role);
-    }
-    if (profiles.isEmpty()) {
-        profiles = defaultAgentProfiles();
-    }
-    return profiles;
-}
-
-QString normalizedRolePromptText(QString text) {
-    text = text.toLower();
-    text.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral(" "));
-    return text.simplified();
-}
-
-bool roleDirectivePresent(const QString& normalized) {
-    return containsAny(normalized,
-                       {"act as",
-                        "assume",
-                        "switch to",
-                        "be a",
-                        "be an",
-                        "become",
-                        "serve as",
-                        "work as",
-                        "from now on",
-                        "role",
-                        "profile",
-                        "persona"});
-}
-
-void appendRoleAlias(QVector<QPair<QString, QString>>* aliases,
-                     const QStringList& available_roles,
-                     const QString& role,
-                     const QString& alias) {
-    if (!aliases || alias.trimmed().isEmpty()) {
-        return;
-    }
-    const auto role_it = std::find_if(available_roles.cbegin(),
-                                      available_roles.cend(),
-                                      [&](const QString& available) {
-                                          return available.compare(role, Qt::CaseInsensitive) == 0;
-                                      });
-    if (role_it == available_roles.cend()) {
-        return;
-    }
-    aliases->append({*role_it, normalizedRolePromptText(alias)});
-}
-
-QVector<QPair<QString, QStringList>> roleAliasGroups() {
-    return {
-        {QStringLiteral("PC Technician"),
-         {QStringLiteral("it technician"),
-          QStringLiteral("desktop support"),
-          QStringLiteral("help desk")}},
-        {QStringLiteral("Diagnostic Technician"),
-         {QStringLiteral("health check technician"), QStringLiteral("system diagnostic")}},
-        {QStringLiteral("Storage Diagnostic Technician"),
-         {QStringLiteral("drive technician"),
-          QStringLiteral("storage technician"),
-          QStringLiteral("disk health")}},
-        {QStringLiteral("Driver and Device Technician"),
-         {QStringLiteral("hardware technician"),
-          QStringLiteral("driver technician"),
-          QStringLiteral("device technician")}},
-        {QStringLiteral("Audio Device Technician"), {QStringLiteral("audio technician")}},
-        {QStringLiteral("Printer Technician"), {QStringLiteral("printer technician")}},
-        {QStringLiteral("Battery Health Technician"), {QStringLiteral("battery technician")}},
-        {QStringLiteral("Browser Support Technician"), {QStringLiteral("browser technician")}},
-        {QStringLiteral("Performance Technician"), {QStringLiteral("performance technician")}},
-        {QStringLiteral("Windows Repair Technician"),
-         {QStringLiteral("windows technician"),
-          QStringLiteral("windows repair"),
-          QStringLiteral("windows repair technician"),
-          QStringLiteral("network technician"),
-          QStringLiteral("repair technician")}},
-        {QStringLiteral("System Cleanup Technician"),
-         {QStringLiteral("cleanup technician"), QStringLiteral("system optimizer")}},
-        {QStringLiteral("Software Deployment Technician"),
-         {QStringLiteral("software deployment"), QStringLiteral("installer")}},
-        {QStringLiteral("Security Technician"),
-         {QStringLiteral("security analyst"),
-          QStringLiteral("malware analyst"),
-          QStringLiteral("incident responder")}},
-        {QStringLiteral("Research Assistant"),
-         {QStringLiteral("researcher"), QStringLiteral("web researcher")}},
-        {QStringLiteral("Customer Report Writer"),
-         {QStringLiteral("service writer"),
-          QStringLiteral("documentation specialist"),
-          QStringLiteral("handoff writer"),
-          QStringLiteral("report writer")}},
-    };
-}
-
-QVector<QPair<QString, QString>> roleAliases(const ai::WorkflowStore* store) {
-    const QStringList roles = agentProfilesForWorkflowStore(store);
-    QVector<QPair<QString, QString>> aliases;
-    for (const auto& role : roles) {
-        appendRoleAlias(&aliases, roles, role, role);
-    }
-    for (const auto& group : roleAliasGroups()) {
-        for (const auto& alias : group.second) {
-            appendRoleAlias(&aliases, roles, group.first, alias);
-        }
-    }
-    std::sort(aliases.begin(), aliases.end(), [](const auto& left, const auto& right) {
-        return left.second.size() > right.second.size();
-    });
-    return aliases;
-}
-
-QString explicitRoleFromPrompt(const QString& message, const ai::WorkflowStore* store) {
-    const QString normalized = normalizedRolePromptText(message);
-    if (!roleDirectivePresent(normalized)) {
-        return {};
-    }
-    for (const auto& alias : roleAliases(store)) {
-        if (normalized.contains(alias.second)) {
-            return alias.first;
-        }
-    }
-    return {};
-}
-
-int promptKeywordScore(const QString& normalized, const QStringList& needles) {
-    int score = 0;
-    for (const auto& needle : needles) {
-        const QString term = normalizedRolePromptText(needle);
-        if (normalized.contains(term)) {
-            score += std::max(
-                1, static_cast<int>(term.split(QLatin1Char(' '), Qt::SkipEmptyParts).size()));
-        }
-    }
-    return score;
-}
-
-QVector<QPair<QString, QStringList>> reportAndSecurityRoleKeywordGroups() {
-    return {
-        {QStringLiteral("Customer Report Writer"),
-         {QStringLiteral("report"),
-          QStringLiteral("handoff"),
-          QStringLiteral("write up"),
-          QStringLiteral("customer ready")}},
-        {QStringLiteral("Research Assistant"),
-         {QStringLiteral("research"),
-          QStringLiteral("look up"),
-          QStringLiteral("latest"),
-          QStringLiteral("documentation"),
-          QStringLiteral("compare"),
-          QStringLiteral("advisory")}},
-        {QStringLiteral("Security Technician"),
-         {QStringLiteral("malware"),
-          QStringLiteral("virus"),
-          QStringLiteral("ransomware"),
-          QStringLiteral("infected"),
-          QStringLiteral("suspicious"),
-          QStringLiteral("defender"),
-          QStringLiteral("antivirus"),
-          QStringLiteral("threat"),
-          QStringLiteral("quarantine"),
-          QStringLiteral("vulnerability")}},
-    };
-}
-
-QVector<QPair<QString, QStringList>> deploymentAndRepairRoleKeywordGroups() {
-    return {
-        {QStringLiteral("Software Deployment Technician"),
-         {QStringLiteral("install"),
-          QStringLiteral("uninstall"),
-          QStringLiteral("upgrade"),
-          QStringLiteral("package"),
-          QStringLiteral("offline installer"),
-          QStringLiteral("deployment bundle"),
-          QStringLiteral("chocolatey"),
-          QStringLiteral("winget")}},
-        {QStringLiteral("System Cleanup Technician"),
-         {QStringLiteral("cleanup"),
-          QStringLiteral("clean up"),
-          QStringLiteral("optimize"),
-          QStringLiteral("disk space"),
-          QStringLiteral("storage full"),
-          QStringLiteral("bloatware"),
-          QStringLiteral("adware"),
-          QStringLiteral("temporary files"),
-          QStringLiteral("startup clutter")}},
-        {QStringLiteral("Windows Repair Technician"),
-         {QStringLiteral("windows update"),
-          QStringLiteral("blue screen"),
-          QStringLiteral("bsod"),
-          QStringLiteral("network"),
-          QStringLiteral("wifi"),
-          QStringLiteral("dns"),
-          QStringLiteral("time sync"),
-          QStringLiteral("search index"),
-          QStringLiteral("profile"),
-          QStringLiteral("login"),
-          QStringLiteral("sfc"),
-          QStringLiteral("dism"),
-          QStringLiteral("service"),
-          QStringLiteral("registry"),
-          QStringLiteral("repair windows")}},
-    };
-}
-
-QVector<QPair<QString, QStringList>> diagnosticRoleKeywordGroups() {
-    return {
-        {QStringLiteral("Diagnostic Technician"),
-         {QStringLiteral("health check"),
-          QStringLiteral("diagnose pc"),
-          QStringLiteral("full diagnostic")}},
-        {QStringLiteral("Storage Diagnostic Technician"),
-         {QStringLiteral("hard drive"),
-          QStringLiteral("disk health"),
-          QStringLiteral("smart"),
-          QStringLiteral("ssd"),
-          QStringLiteral("storage")}},
-        {QStringLiteral("Driver and Device Technician"),
-         {QStringLiteral("driver"),
-          QStringLiteral("device"),
-          QStringLiteral("hardware"),
-          QStringLiteral("pnp"),
-          QStringLiteral("usb")}},
-    };
-}
-
-QVector<QPair<QString, QStringList>> peripheralAndPerformanceRoleKeywordGroups() {
-    return {
-        {QStringLiteral("Audio Device Technician"),
-         {QStringLiteral("audio"),
-          QStringLiteral("sound"),
-          QStringLiteral("microphone"),
-          QStringLiteral("speaker")}},
-        {QStringLiteral("Printer Technician"),
-         {QStringLiteral("printer"), QStringLiteral("print spooler"), QStringLiteral("printing")}},
-        {QStringLiteral("Battery Health Technician"),
-         {QStringLiteral("battery"), QStringLiteral("laptop battery"), QStringLiteral("powercfg")}},
-        {QStringLiteral("Browser Support Technician"),
-         {QStringLiteral("browser"),
-          QStringLiteral("chrome"),
-          QStringLiteral("edge"),
-          QStringLiteral("firefox"),
-          QStringLiteral("proxy")}},
-        {QStringLiteral("Performance Technician"),
-         {QStringLiteral("performance"),
-          QStringLiteral("startup"),
-          QStringLiteral("slow boot"),
-          QStringLiteral("slow pc")}},
-        {QStringLiteral("PC Technician"),
-         {QStringLiteral("general pc"),
-          QStringLiteral("pc technician"),
-          QStringLiteral("technician task")}},
-    };
-}
-
-QVector<QPair<QString, QStringList>> roleKeywordGroups() {
-    QVector<QPair<QString, QStringList>> groups;
-    groups.append(reportAndSecurityRoleKeywordGroups());
-    groups.append(deploymentAndRepairRoleKeywordGroups());
-    groups.append(diagnosticRoleKeywordGroups());
-    groups.append(peripheralAndPerformanceRoleKeywordGroups());
-    return groups;
-}
-
-QString bestRoleFromScores(const QHash<QString, int>& scores) {
-    QString best_role;
-    int best_score = 0;
-    for (auto it = scores.cbegin(); it != scores.cend(); ++it) {
-        if (it.value() > best_score) {
-            best_score = it.value();
-            best_role = it.key();
-        }
-    }
-    return best_score > 0 ? best_role : QString{};
-}
-
-QString inferredRoleFromPrompt(const QString& message, const ai::WorkflowStore* store) {
-    const QString normalized = normalizedRolePromptText(message);
-    if (normalized.isEmpty()) {
-        return QString::fromLatin1(kDefaultSessionRole);
-    }
-
-    QHash<QString, int> scores;
-    for (const auto& group : roleKeywordGroups()) {
-        scores[group.first] += promptKeywordScore(normalized, group.second);
-    }
-
-    if (store) {
-        for (const auto& workflow : store->workflows()) {
-            const QString role = workflow.role.trimmed();
-            if (role.isEmpty()) {
-                continue;
-            }
-            const QString corpus = normalizedRolePromptText(
-                QStringLiteral("%1 %2 %3 %4")
-                    .arg(workflow.id, workflow.title, workflow.category, workflow.description));
-            int workflow_score = 0;
-            for (const auto& word : corpus.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
-                if (word.size() >= kWorkflowInferenceWordMinChars && normalized.contains(word)) {
-                    ++workflow_score;
-                }
-            }
-            scores[role] += workflow_score;
-        }
-    }
-
-    const QString scored = bestRoleFromScores(scores);
-    return scored.isEmpty() ? QString::fromLatin1(kDefaultSessionRole) : scored;
 }
 
 QString safetyIdentifierFromSeed(const QString& seed) {
@@ -3891,17 +3550,6 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     });
     layout->addWidget(m_modelCombo);
 
-    layout->addWidget(makeFieldLabel(pane, tr("Session role")));
-    m_sessionRoleValueLabel = new QLabel(pane);
-    m_sessionRoleValueLabel->setWordWrap(true);
-    m_sessionRoleValueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_sessionRoleValueLabel->setStyleSheet(
-        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextBody, sak::ui::kFontSizeBody));
-    setAccessible(m_sessionRoleValueLabel,
-                  tr("Session role"),
-                  tr("Technician role inferred from workflow or first prompt"));
-    layout->addWidget(m_sessionRoleValueLabel);
-    resetSessionRole();
     setupContextPaneWorkflowPicker(layout, pane);
     setupContextPaneWorkflowDetails(layout, pane);
 
@@ -3977,19 +3625,9 @@ void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
 
 void AiAssistantPanel::clearWorkflowSelectionPreview() {
     hideWorkflowDetails();
-    if (m_sessionRoleSource == QLatin1String(kSessionRoleSourceWorkflowSelection)) {
-        resetSessionRole();
-        return;
-    }
-    updateSessionRoleDisplay();
 }
 
 void AiAssistantPanel::previewWorkflowTemplateSelection(const ai::WorkflowTemplate& workflow) {
-    if (!workflow.role.trimmed().isEmpty()) {
-        setSessionRole(workflow.role.trimmed(),
-                       QString::fromLatin1(kSessionRoleSourceWorkflowSelection),
-                       false);
-    }
     showWorkflowDetails(workflow);
 }
 
@@ -5116,159 +4754,6 @@ void AiAssistantPanel::refreshPromptTemplates() {
     m_promptTemplateCombo->setEnabled(false);
 }
 
-void AiAssistantPanel::syncSessionRoleForWorkflow(const ai::WorkflowTemplate* workflow) {
-    if (workflow && !workflow->role.trimmed().isEmpty()) {
-        setSessionRole(workflow->role.trimmed(),
-                       QString::fromLatin1(kSessionRoleSourceWorkflow),
-                       true);
-        return;
-    }
-    if (m_sessionRoleSource == QLatin1String(kSessionRoleSourceWorkflow)) {
-        resetSessionRole();
-    } else {
-        updateSessionRoleDisplay();
-    }
-}
-
-void AiAssistantPanel::updateSessionRoleDisplay() {
-    if (!m_sessionRoleValueLabel) {
-        return;
-    }
-    const QString role = currentWorkflowRole();
-    const QString source = m_sessionRoleSource.trimmed();
-    QString source_label;
-    if (source == QLatin1String(kSessionRoleSourceWorkflow)) {
-        source_label = tr("workflow");
-    } else if (source == QLatin1String(kSessionRoleSourceWorkflowSelection)) {
-        source_label = tr("selected workflow");
-    } else if (source == QLatin1String(kSessionRoleSourcePrompt)) {
-        source_label = tr("first prompt");
-    } else if (source == QLatin1String(kSessionRoleSourceUser)) {
-        source_label = tr("user directed");
-    } else if (source == QLatin1String(kSessionRoleSourcePending) || m_sessionRole.isEmpty()) {
-        source_label = tr("pending first prompt");
-    } else {
-        source_label = tr("default");
-    }
-    m_sessionRoleValueLabel->setText(tr("%1 (%2)").arg(role, source_label));
-    m_sessionRoleValueLabel->setToolTip(
-        tr("Role is selected from the workflow, the first prompt, or an explicit user request to "
-           "assume another role."));
-}
-
-void AiAssistantPanel::resetSessionRole() {
-    m_sessionRole.clear();
-    m_sessionRoleSource = QString::fromLatin1(kSessionRoleSourcePending);
-    updateSessionRoleDisplay();
-}
-
-void AiAssistantPanel::restoreSessionRoleForSession(const QString& session_id) {
-    if (!m_conversationStore || session_id.trimmed().isEmpty()) {
-        resetSessionRole();
-        return;
-    }
-    QString source;
-    QString error;
-    const QString role = m_conversationStore->latestSessionRole(session_id, &source, &error);
-    if (!error.isEmpty()) {
-        appendLocalEvent(tr("Could not restore AI session role: %1").arg(error));
-    }
-    if (role.trimmed().isEmpty()) {
-        resetSessionRole();
-        return;
-    }
-    setSessionRole(role,
-                   source.trimmed().isEmpty() ? QString::fromLatin1(kSessionRoleSourcePrompt)
-                                              : source.trimmed(),
-                   false);
-}
-
-void AiAssistantPanel::updateSessionRoleForPrompt(const QString& message) {
-    const QString explicit_role = explicitRoleFromPrompt(message, m_workflowStore.get());
-    if (!explicit_role.isEmpty()) {
-        setSessionRole(explicit_role, QString::fromLatin1(kSessionRoleSourceUser), true);
-        return;
-    }
-
-    if (const auto* workflow = attachedWorkflow()) {
-        if (!workflow->role.trimmed().isEmpty()) {
-            setSessionRole(workflow->role.trimmed(),
-                           QString::fromLatin1(kSessionRoleSourceWorkflow),
-                           true);
-            return;
-        }
-    }
-
-    if (const auto* workflow = selectedWorkflowTemplate()) {
-        if (!workflow->role.trimmed().isEmpty()) {
-            setSessionRole(workflow->role.trimmed(),
-                           QString::fromLatin1(kSessionRoleSourceWorkflowSelection),
-                           true);
-            return;
-        }
-    }
-
-    const bool role_pending = m_sessionRole.trimmed().isEmpty() ||
-                              m_sessionRoleSource == QLatin1String(kSessionRoleSourcePending);
-    const bool creating_session = !m_conversationStore ||
-                                  m_conversationStore->currentSessionId().isEmpty();
-    if (role_pending || creating_session) {
-        setSessionRole(inferredRoleFromPrompt(message, m_workflowStore.get()),
-                       QString::fromLatin1(kSessionRoleSourcePrompt),
-                       true);
-    } else {
-        updateSessionRoleDisplay();
-    }
-}
-
-void AiAssistantPanel::setSessionRole(const QString& role, const QString& source, bool persist) {
-    const QString clean_role = role.trimmed().isEmpty() ? QString::fromLatin1(kDefaultSessionRole)
-                                                        : role.trimmed();
-    const QString clean_source = source.trimmed().isEmpty()
-                                     ? QString::fromLatin1(kSessionRoleSourceDefault)
-                                     : source.trimmed();
-    const bool changed = clean_role.compare(m_sessionRole, Qt::CaseInsensitive) != 0 ||
-                         clean_source.compare(m_sessionRoleSource, Qt::CaseInsensitive) != 0;
-    m_sessionRole = clean_role;
-    m_sessionRoleSource = clean_source;
-    updateSessionRoleDisplay();
-    if (changed && persist) {
-        persistSessionRoleChoice();
-    }
-}
-
-void AiAssistantPanel::persistSessionRoleChoice() {
-    if (!m_conversationStore || m_conversationStore->currentSessionId().isEmpty()) {
-        return;
-    }
-    appendSessionMemory(
-        QStringLiteral("Session"),
-        QStringLiteral("Role"),
-        tr("Active AI role: %1\nRole source: %2").arg(currentWorkflowRole(), m_sessionRoleSource));
-}
-
-QString AiAssistantPanel::currentWorkflowRole() const {
-    if (!m_sessionRole.trimmed().isEmpty()) {
-        return m_sessionRole.trimmed();
-    }
-    return QString::fromLatin1(kDefaultSessionRole);
-}
-
-const ai::WorkflowTemplate* AiAssistantPanel::selectedWorkflowTemplate() const {
-    if (!m_promptTemplateCombo || !m_workflowStore) {
-        return nullptr;
-    }
-    const int index = m_promptTemplateCombo->currentIndex();
-    if (index <= 0) {
-        return nullptr;
-    }
-    const QString workflow_id = m_promptTemplateCombo->itemData(index).toString();
-    if (workflow_id.trimmed().isEmpty()) {
-        return nullptr;
-    }
-    return m_workflowStore->workflowById(workflow_id);
-}
-
 void AiAssistantPanel::applyPromptTemplate(const QString& title, const QString& prompt) {
     if (!m_messageEdit || prompt.trimmed().isEmpty()) {
         return;
@@ -5288,7 +4773,6 @@ void AiAssistantPanel::applyPromptTemplate(const QString& title, const QString& 
 }
 
 void AiAssistantPanel::applyWorkflowTemplate(const ai::WorkflowTemplate& workflow) {
-    syncSessionRoleForWorkflow(&workflow);
     applyPromptTemplate(workflow.title, workflow.promptSummary());
     addWorkflowContextChip(workflow);
 
@@ -5376,7 +4860,6 @@ QString AiAssistantPanel::messageText() const {
 QString AiAssistantPanel::buildInstructions() const {
     ai::AiPromptAssemblyInput input;
     input.access_mode_label = currentAccessModeLabel();
-    input.agent_profile = currentWorkflowRole();
     input.workflow_catalog = workflowCatalogInstructions(m_workflowStore.get());
     input.skill_catalog = skillCatalogInstructions(m_skillStore.get());
     input.context_notes = contextInstructions();
@@ -8197,7 +7680,6 @@ void AiAssistantPanel::refreshContextList() {
     if (m_clearContextButton) {
         m_clearContextButton->setEnabled(!m_contextItems.isEmpty());
     }
-    syncSessionRoleForWorkflow(attachedWorkflow());
     scheduleContextTokenRefresh();
     updateRunTelemetryLabels();
 }
@@ -8358,7 +7840,6 @@ void AiAssistantPanel::loadSessionTranscript(const QString& session_id) {
     QString response_error;
     m_previousResponseId = m_conversationStore->latestAssistantResponseId(session_id,
                                                                           &response_error);
-    restoreSessionRoleForSession(session_id);
     renderTranscriptMessages(true);
     if (!error.isEmpty()) {
         appendLocalEvent(tr("Could not load AI transcript: %1").arg(error));
@@ -10979,7 +10460,6 @@ void AiAssistantPanel::onNewSessionClicked() {
     m_contextPressureLevel = 0;
     m_currentRunId.clear();
     m_pendingWorkflowRunId.clear();
-    resetSessionRole();
     m_activeUserMessage.clear();
     m_activeWorkflowUserMessage.clear();
     m_activeWorkflowInputValues = {};
@@ -11157,7 +10637,6 @@ void AiAssistantPanel::onSendClicked() {
     m_toolNamesThisMessage.clear();
     m_toolFailureClassesThisMessage.clear();
     m_toolLoopDetector.reset();
-    updateSessionRoleForPrompt(message);
 
     if (startAttachedWorkflowFromPrompt(message) == WorkflowSendResult::Handled) {
         return;
@@ -11222,7 +10701,6 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
     if (creating_session) {
         (void)ensurePersistentSession(m_pendingSessionTitle);
         autoRenameDefaultChatFromFirstPrompt(message, workflow_id);
-        persistSessionRoleChoice();
         for (const auto& item : std::as_const(m_contextItems)) {
             persistContextItem(item);
         }
@@ -11237,8 +10715,6 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
     if (m_conversationStore) {
         QJsonObject metadata;
         metadata[QStringLiteral("context_items")] = m_contextItems.size();
-        metadata[QStringLiteral("session_role")] = currentWorkflowRole();
-        metadata[QStringLiteral("session_role_source")] = m_sessionRoleSource;
         if (!workflow_id.isEmpty()) {
             metadata[QStringLiteral("workflow_id")] = workflow_id;
             metadata[QStringLiteral("workflow_inputs")] = workflow_inputs;

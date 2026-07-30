@@ -22,7 +22,6 @@ private Q_SLOTS:
     void startSession_writesManifestAndListsSession();
     void appendTranscript_loadsDisplayLines();
     void latestAssistantResponseId_returnsLastAssistantMetadata();
-    void latestSessionRole_returnsLastUserRoleMetadata();
     void listPromptedSessions_filtersUnpromptedSessions();
     void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
@@ -96,33 +95,6 @@ void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMet
 
     QCOMPARE(store.latestAssistantResponseId(store.currentSessionId(), &error),
              QStringLiteral("resp_new"));
-    QVERIFY(error.isEmpty());
-}
-
-void AiConversationStoreTests::latestSessionRole_returnsLastUserRoleMetadata() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-
-    sak::ai::ConversationStore store(temp.path());
-    QString error;
-    QVERIFY(store.startSession(QStringLiteral("Chat"), &error));
-    QVERIFY(store.appendTranscript(
-        QStringLiteral("You"),
-        QStringLiteral("fix updates"),
-        QJsonObject{{QStringLiteral("session_role"), QStringLiteral("Windows Repair Technician")},
-                    {QStringLiteral("session_role_source"), QStringLiteral("prompt")}},
-        &error));
-    QVERIFY(store.appendTranscript(
-        QStringLiteral("You"),
-        QStringLiteral("act as report writer"),
-        QJsonObject{{QStringLiteral("session_role"), QStringLiteral("Customer Report Writer")},
-                    {QStringLiteral("session_role_source"), QStringLiteral("user")}},
-        &error));
-
-    QString source;
-    QCOMPARE(store.latestSessionRole(store.currentSessionId(), &source, &error),
-             QStringLiteral("Customer Report Writer"));
-    QCOMPARE(source, QStringLiteral("user"));
     QVERIFY(error.isEmpty());
 }
 

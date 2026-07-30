@@ -300,15 +300,6 @@ private:
     void updateTokenLabels();
     void refreshPromptTemplates();
     void resetPromptTemplatePicker();
-    void syncSessionRoleForWorkflow(const ai::WorkflowTemplate* workflow);
-    void updateSessionRoleDisplay();
-    void resetSessionRole();
-    void restoreSessionRoleForSession(const QString& session_id);
-    void updateSessionRoleForPrompt(const QString& message);
-    void setSessionRole(const QString& role, const QString& source, bool persist);
-    void persistSessionRoleChoice();
-    [[nodiscard]] QString currentWorkflowRole() const;
-    [[nodiscard]] const ai::WorkflowTemplate* selectedWorkflowTemplate() const;
     [[nodiscard]] QString workflowTemplateComboLabel(const ai::WorkflowTemplate& workflow) const;
     [[nodiscard]] QString workflowTemplateTooltip(const ai::WorkflowTemplate& workflow,
                                                   const QString& label) const;
@@ -891,7 +882,6 @@ private:
 
     QPushButton* m_loadKeyButton{nullptr};
     QComboBox* m_modelCombo{nullptr};
-    QLabel* m_sessionRoleValueLabel{nullptr};
     QComboBox* m_promptTemplateCombo{nullptr};
     QComboBox* m_reasoningEffortCombo{nullptr};
     QComboBox* m_sessionCombo{nullptr};
@@ -963,8 +953,6 @@ private:
     QString m_apiKey;
     QString m_taskStatus;
     QString m_previousResponseId;
-    QString m_sessionRole;
-    QString m_sessionRoleSource;
     QString m_currentRunId;
     QString m_pendingWorkflowRunId;
     QString m_pendingSessionTitle;

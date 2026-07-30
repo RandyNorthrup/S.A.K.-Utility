@@ -17,12 +17,10 @@ private Q_SLOTS:
 void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Unattended Full Access");
-    input.agent_profile = QStringLiteral("PC Technician");
     input.local_execution_enabled = true;
     input.unattended_full_access = true;
 
     const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
-    QVERIFY(prompt.contains(QStringLiteral("Session role: PC Technician")));
     QVERIFY(prompt.contains(QStringLiteral("Scan workflow")));
     QVERIFY(prompt.contains(
         QStringLiteral("first check whether that product/tool is already installed")));
@@ -34,7 +32,6 @@ void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
 void AiPromptAssemblerTests::assembleIncludesDynamicSections() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Chat");
-    input.agent_profile = QStringLiteral("Tester");
     input.workflow_catalog = QStringLiteral("Workflow catalog body");
     input.context_notes = QStringLiteral("Context body");
     input.session_memory = QStringLiteral("Memory body");
@@ -51,7 +48,6 @@ void AiPromptAssemblerTests::assembleIncludesDynamicSections() {
 void AiPromptAssemblerTests::assembleIncludesInjectionAndMutationGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.agent_profile = QStringLiteral("Windows Repair Technician");
     input.local_execution_enabled = true;
     input.assisted_full_access = true;
 
@@ -67,7 +63,6 @@ void AiPromptAssemblerTests::assembleIncludesInjectionAndMutationGuardrails() {
 void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.agent_profile = QStringLiteral("PC Technician");
     input.local_execution_enabled = true;
     input.assisted_full_access = true;
 
@@ -86,7 +81,6 @@ void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
 void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.agent_profile = QStringLiteral("PC Technician");
     input.local_execution_enabled = true;
     input.assisted_full_access = true;
 
@@ -104,7 +98,6 @@ void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
 void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
     input.access_mode_label = QStringLiteral("Unattended Full Access");
-    input.agent_profile = QStringLiteral("PC Technician");
     input.local_execution_enabled = true;
     input.unattended_full_access = true;
 

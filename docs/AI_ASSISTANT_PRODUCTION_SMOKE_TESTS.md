@@ -126,10 +126,6 @@ Expected:
 - Confirm the header exposes background agent activity as active/completed.
 - Confirm the composer exposes exact `Ctx: x/y` context usage immediately to
   the left of Send for the selected model.
-- Confirm the right-side Session role is plain text, not a dropdown. Selecting a
-  workflow updates it before Add; first prompt inference handles no-workflow
-  chats; explicit requests such as `act as a report writer` change it for later
-  turns.
 
 ## Harmless SAK Tool Smoke
 

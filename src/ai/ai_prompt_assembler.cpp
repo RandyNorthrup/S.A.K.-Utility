@@ -322,7 +322,6 @@ void appendAccessModeGuidance(QStringList& lines, const AiPromptAssemblyInput& i
 QString AiPromptAssembler::assemble(const AiPromptAssemblyInput& input) {
     QStringList lines = baseGuardrails();
     lines << QStringLiteral("Access mode selected by user: %1.").arg(input.access_mode_label);
-    lines << QStringLiteral("Session role: %1.").arg(input.agent_profile);
     appendContextSections(lines, input);
     appendAccessModeGuidance(lines, input);
     return lines.join(QLatin1Char('\n'));

@@ -138,10 +138,7 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 - Human approval prompts for risky or destructive actions, with restore-point offers when rollback may be needed
 - Stop/cancel handling across model calls, local tools, workflows, and subagents
 
-**Workflow Roles and Workflows**
-- Workflow-selected technician roles so the right prompt stance previews immediately when a workflow is selected, then stays with the workflow after Add
-- First-prompt role inference when no workflow is selected, with explicit user role changes such as "act as a report writer" honored for later turns
-- The plain Session role text is populated from the workflow catalog so user-added workflow roles appear without editing panel code
+**Workflows**
 - The assistant is aware of the workflow catalog and can describe what each workflow does, when to use it, required inputs, risk level, verification, reporting, cleanup, and expected artifacts
 - Multi-agent workflow orchestration with a main overseer, specialized subagents, shared session memory, phase tracking, cancellation, recovery policy, and human handoff when needed
 - Codex-inspired workflow policy keeps the main chat as overseer, runs workflow-declared read-only subagents in parallel with per-subagent OpenAI client isolation, serializes mutating phases, and summarizes subagent evidence instead of flooding the transcript with raw logs
