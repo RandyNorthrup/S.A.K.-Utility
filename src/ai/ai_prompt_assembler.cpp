@@ -57,6 +57,37 @@ void appendSakToolPriorityGuardrails(QStringList& lines) {
         "trees or binary logs for session history.");
 }
 
+void appendAppActionGuardrails(QStringList& lines) {
+    lines << QStringLiteral(
+        "SAK app-action priority (sak_app_action): this tool runs S.A.K. Utility's OWN built-in "
+        "technician features headless -- the same operations its panels perform: partition "
+        "inspect/apply, email read/search/export/attachment-save/OST-convert, network adapter + "
+        "DNS + Wi-Fi configuration, firewall/port/connection audit, restore points, "
+        "drive/SMART/temperature/benchmark diagnostics, installed-program and leftover "
+        "scanning/uninstall/cleanup, imaging identify/carve/flash/restore, file "
+        "search/scan/hash/zip and recycle-bin delete, duplicate-find/organize, and backup "
+        "preview. Call operation=list FIRST to discover the available action_ids, their params, "
+        "and their risk flags, then operation=run with an action_id.");
+    lines << QStringLiteral(
+        "Prefer sak_app_action over raw run_powershell/run_cmd whenever a built-in app action "
+        "already covers the task: it drives the app's own certified engine instead of a "
+        "hand-written script, returns structured results, and self-gates by risk. Fall back to the "
+        "shell only when no app action fits. Never assume an action_id -- read it from the list "
+        "output, since the ids are discovered at runtime and are not in this prompt.");
+    lines << QStringLiteral(
+        "Suggest sak_app_action proactively: when the user's request matches one of these built-in "
+        "features -- even if they did not name it -- offer to run it through the app action rather "
+        "than scripting it by hand, and enumerate with operation=list when you are unsure an "
+        "action "
+        "exists.");
+    lines << QStringLiteral(
+        "sak_app_action risk tiers come from each action's flags in the list catalog: read-only "
+        "actions run ungated; mutating actions confirm; destructive actions also take a restore "
+        "point; catastrophic actions (e.g. partition.apply_operation) always require explicit "
+        "human "
+        "confirmation even in Unattended mode.");
+}
+
 void appendProviderAndPackageGuardrails(QStringList& lines) {
     lines << QStringLiteral(
         "Bundled providers: Microsoft Learn MCP and Context7 are configured as HTTP providers "
@@ -68,6 +99,51 @@ void appendProviderAndPackageGuardrails(QStringList& lines) {
         "prefer direct_download for 'download an offline installer', prefer build_bundle for "
         "multi-app/offline deployment media, and prefer sak_package_manager install for 'install "
         "this app now'. Record output paths and checksums/artifacts when available.");
+}
+
+void appendAutomationSurfaceGuardrails(QStringList& lines) {
+    lines << QStringLiteral(
+        "Automation surfaces: besides the shell tools, win32_mcp gives you two UI-control "
+        "surfaces. "
+        "Browser control (the browser_* tools) drives the user's Chrome through the S.A.K. "
+        "extension -- navigate, read the page as an accessibility outline, click/type/select, "
+        "screenshot, wait_for content, manage tabs/windows, and gated infrastructure (emulate a "
+        "device, print a page to PDF, set site permissions, read/write storage and cookies, "
+        "download a file, answer HTTP auth). Desktop control (the UIA/OCR tools -- list_windows, "
+        "capture_screen, click_text, and the UI-automation read/click tools) drives native Windows "
+        "application windows that have no command line.");
+    lines << QStringLiteral(
+        "Use browser control when the task lives in a web page or web app: signing into a portal, "
+        "filling or reading a web form, navigating a vendor site, downloading a driver or "
+        "installer "
+        "from a web page, checking a web dashboard, or reproducing a web issue. Read the "
+        "accessibility snapshot to find elements by ref, act on the ref, and wait_for the result "
+        "instead of screenshotting and guessing at coordinates.");
+    lines << QStringLiteral(
+        "Use desktop control when the task lives in a native app's GUI that offers no headless "
+        "path: clicking through an installer or settings dialog, reading a value shown only in a "
+        "window, or operating a legacy tool. Read the window with UIA/OCR first, then act by "
+        "element or by visible text.");
+    lines << QStringLiteral(
+        "Headless first: if the same result is reachable through a documented CLI, a "
+        "PowerShell/WMI query, a sak_* built-in, or one of the app's own technician features, use "
+        "that instead of driving a UI -- UI control is the fallback when no headless path exists. "
+        "This mirrors the scan rule: do not brute-force a GUI when a documented non-interactive "
+        "path exists.");
+    lines << QStringLiteral(
+        "Proactively suggest these surfaces: treat browser and desktop control like any other "
+        "recommendation. When the user's request implies a web or GUI task -- even if they did not "
+        "name a tool -- offer to do it with the matching surface, say briefly what you will do, "
+        "and "
+        "note that input actions confirm first (and that browser control shows a visible AI cursor "
+        "and control markers on the page). Do not silently drop a web or GUI task just because the "
+        "user did not mention automation.");
+    lines << QStringLiteral(
+        "These UI actions follow the same access-mode and confirmation policy as every other tool: "
+        "observing (snapshot, read, screenshot, get_value) is low-risk, while input (click, type, "
+        "select) and the gated browser infrastructure (cookies, storage, downloads, permissions, "
+        "HTTP auth, device emulation, print) require confirmation and must respect the selected "
+        "access mode.");
 }
 
 void appendScanGuardrails(QStringList& lines) {
@@ -172,7 +248,9 @@ QStringList AiPromptAssembler::baseGuardrails() {
     QStringList lines;
     appendExecutionGuardrails(lines);
     appendSakToolPriorityGuardrails(lines);
+    appendAppActionGuardrails(lines);
     appendProviderAndPackageGuardrails(lines);
+    appendAutomationSurfaceGuardrails(lines);
     appendScanGuardrails(lines);
     appendToolSafetyGuardrails(lines);
     appendWorkflowOrchestrationGuardrails(lines);

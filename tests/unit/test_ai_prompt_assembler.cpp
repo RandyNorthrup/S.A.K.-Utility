@@ -10,6 +10,8 @@ private Q_SLOTS:
     void assembleIncludesDynamicSections();
     void assembleIncludesInjectionAndMutationGuardrails();
     void assembleIncludesWorkflowOrchestrationGuardrails();
+    void assembleIncludesAutomationSurfaceGuardrails();
+    void assembleIncludesAppActionGuardrails();
 };
 
 void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
@@ -79,6 +81,41 @@ void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
     QVERIFY(prompt.contains(QStringLiteral("Read-only subagents may run in parallel")));
     QVERIFY(prompt.contains(QStringLiteral("Subagent conflict rule")));
     QVERIFY(prompt.contains(QStringLiteral("critic/verification step")));
+}
+
+void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
+    sak::ai::AiPromptAssemblyInput input;
+    input.access_mode_label = QStringLiteral("Assisted Full Access");
+    input.agent_profile = QStringLiteral("PC Technician");
+    input.local_execution_enabled = true;
+    input.assisted_full_access = true;
+
+    const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
+    // The model is told the two UI-control surfaces exist, when each applies, that a headless
+    // path is preferred, and that it should proactively suggest them from the user's request.
+    QVERIFY(prompt.contains(QStringLiteral("Automation surfaces")));
+    QVERIFY(prompt.contains(QStringLiteral("Browser control")));
+    QVERIFY(prompt.contains(QStringLiteral("Desktop control")));
+    QVERIFY(prompt.contains(QStringLiteral("Use browser control when the task lives in a web")));
+    QVERIFY(prompt.contains(QStringLiteral("Headless first")));
+    QVERIFY(prompt.contains(QStringLiteral("Proactively suggest these surfaces")));
+}
+
+void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
+    sak::ai::AiPromptAssemblyInput input;
+    input.access_mode_label = QStringLiteral("Unattended Full Access");
+    input.agent_profile = QStringLiteral("PC Technician");
+    input.local_execution_enabled = true;
+    input.unattended_full_access = true;
+
+    const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
+    // The model is told the app's own headless features live behind sak_app_action, to list
+    // before running, to prefer it over raw shell, to suggest it proactively, and how it gates.
+    QVERIFY(prompt.contains(QStringLiteral("sak_app_action")));
+    QVERIFY(prompt.contains(QStringLiteral("operation=list FIRST")));
+    QVERIFY(prompt.contains(QStringLiteral("Prefer sak_app_action over raw run_powershell")));
+    QVERIFY(prompt.contains(QStringLiteral("Suggest sak_app_action proactively")));
+    QVERIFY(prompt.contains(QStringLiteral("catastrophic actions")));
 }
 
 QTEST_GUILESS_MAIN(AiPromptAssemblerTests)
