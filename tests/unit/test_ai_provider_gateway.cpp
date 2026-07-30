@@ -215,6 +215,13 @@ void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
     // tokens) -> middle tier; the fail-closed default confirms it, reads included.
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_storage")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_storage")));
+
+    // Batch 4: browser_cookies reads/sets cookies (session tokens) -> middle tier; never
+    // read-only (reading a cookie value is itself sensitive) and never high-risk (must not
+    // auto-run unattended). The fail-closed default confirms every call.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_cookies")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_cookies")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("browser_cookies")));
 }
 
 void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() {

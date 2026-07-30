@@ -381,6 +381,18 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
            {QStringLiteral("area"), QStringLiteral("string"), false},
            {QStringLiteral("key"), QStringLiteral("string"), false},
            {QStringLiteral("value"), QStringLiteral("string"), false}}}},
+        {QStringLiteral("browser_cookies"),
+         {QStringLiteral("cookies"),
+          QStringLiteral("none"),
+          {{QStringLiteral("action"), QStringLiteral("string"), true},
+           {QStringLiteral("url"), QStringLiteral("string"), false},
+           {QStringLiteral("name"), QStringLiteral("string"), false},
+           {QStringLiteral("value"), QStringLiteral("string"), false},
+           {QStringLiteral("path"), QStringLiteral("string"), false},
+           {QStringLiteral("secure"), QStringLiteral("bool"), false},
+           {QStringLiteral("http_only"), QStringLiteral("bool"), false},
+           {QStringLiteral("same_site"), QStringLiteral("string"), false},
+           {QStringLiteral("expires_days"), QStringLiteral("number"), false}}}},
     };
 }
 
@@ -987,6 +999,39 @@ void appendStorageTool(QJsonArray& tools) {
             QJsonArray{QStringLiteral("action")})));
 }
 
+void appendCookiesTool(QJsonArray& tools) {
+    tools.append(toolEntry(
+        QStringLiteral("browser_cookies"),
+        QStringLiteral(
+            "Read, set, or remove cookies for a url (defaults to the active tab). "
+            "action=get returns the cookies including their values (may include session "
+            "tokens); set needs name+value (options: path, secure, http_only, same_site, "
+            "expires_days -- a set is confined to the url's domain); remove needs name."),
+        toolSchema(
+            QJsonObject{
+                {QStringLiteral("action"), stringProperty(QStringLiteral("get, set, or remove."))},
+                {QStringLiteral("url"),
+                 stringProperty(
+                     QStringLiteral("Cookie url (optional; defaults to the active tab)."))},
+                {QStringLiteral("name"),
+                 stringProperty(QStringLiteral("Cookie name for set/remove."))},
+                {QStringLiteral("value"), stringProperty(QStringLiteral("Cookie value for set."))},
+                {QStringLiteral("path"),
+                 stringProperty(QStringLiteral("Cookie path for set (optional)."))},
+                {QStringLiteral("secure"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("Secure flag (optional)."))},
+                {QStringLiteral("http_only"),
+                 typedProperty(QStringLiteral("boolean"),
+                               QStringLiteral("HttpOnly flag (optional)."))},
+                {QStringLiteral("same_site"),
+                 stringProperty(QStringLiteral("no_restriction, lax, or strict (optional)."))},
+                {QStringLiteral("expires_days"),
+                 typedProperty(QStringLiteral("number"),
+                               QStringLiteral("Lifetime in days; omit for a session cookie."))}},
+            QJsonArray{QStringLiteral("action")})));
+}
+
 void appendAdvancedInputTools(QJsonArray& tools) {
     tools.append(toolEntry(
         QStringLiteral("browser_js_click"),
@@ -1109,6 +1154,7 @@ QJsonArray browserToolCatalog() {
     appendPrintTool(tools);
     appendPermissionTool(tools);
     appendStorageTool(tools);
+    appendCookiesTool(tools);
     appendAdvancedInputTools(tools);
     return tools;
 }

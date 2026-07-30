@@ -332,6 +332,8 @@ async function dispatchCommand(cmd, args) {
       return await handlePermission(args);
     case "storage":
       return await handleStorage(await activeTabId(), args);
+    case "cookies":
+      return await handleCookies(args);
     default:
       throw new Error("Unknown command: " + cmd);
   }
@@ -2163,6 +2165,79 @@ async function handleStorage(tabId, args) {
     throw new Error("browser_storage failed: " + why);
   }
   return result;
+}
+
+// -- cookies (chrome.cookies) ------------------------------------------------
+//
+// Read/set/remove cookies for an origin via the native chrome.cookies API (reliable + covers
+// httpOnly cookies a page's document.cookie cannot). SENSITIVE: get returns cookie VALUES,
+// which can include session tokens, and set can install a session cookie -- the tool is gated
+// (confirmed each call) and its scope is bound to a validated http(s) url; a set is confined by
+// the API to that url's domain, so it cannot forge a cookie for an unrelated site. Values and
+// the returned list are capped so a large jar cannot flood the transport.
+const COOKIE_SAME_SITE = { no_restriction: "no_restriction", lax: "lax", strict: "strict" };
+
+function cookieView(c) {
+  return {
+    name: c.name,
+    value: c.value && c.value.length > 4096 ? c.value.slice(0, 4096) : c.value,
+    domain: c.domain,
+    path: c.path,
+    secure: !!c.secure,
+    http_only: !!c.httpOnly,
+    same_site: c.sameSite || null,
+    session: !!c.session,
+    expires: c.expirationDate || null,
+  };
+}
+
+async function cookiesSet(url, args) {
+  if (typeof args.value !== "string") {
+    throw new Error("browser_cookies set needs a string value.");
+  }
+  const details = { url, name: String(args.name), value: args.value };
+  if (typeof args.path === "string" && args.path) { details.path = args.path; }
+  if (typeof args.secure === "boolean") { details.secure = args.secure; }
+  if (typeof args.http_only === "boolean") { details.httpOnly = args.http_only; }
+  const ss = typeof args.same_site === "string" ? COOKIE_SAME_SITE[args.same_site.toLowerCase()] : null;
+  if (ss) { details.sameSite = ss; }
+  const days = Number(args.expires_days);
+  if (Number.isFinite(days) && days > 0) {
+    details.expirationDate = Math.floor(Date.now() / 1000) + Math.round(days * 86400);
+  }
+  const cookie = await chrome.cookies.set(details);
+  if (!cookie) {
+    throw new Error("browser_cookies set failed (the browser rejected the cookie).");
+  }
+  return { ok: true, url, name: details.name, set: true, domain: cookie.domain };
+}
+
+async function handleCookies(args) {
+  const action = String((args && args.action) || "").toLowerCase();
+  if (["get", "set", "remove"].indexOf(action) < 0) {
+    throw new Error("browser_cookies action must be get, set, or remove.");
+  }
+  let url = args && args.url ? String(args.url) : null;
+  if (!url) {
+    const tab = await activeTab();
+    url = tab && tab.url ? tab.url : null;
+  }
+  if (!url || !/^https?:/i.test(url)) {
+    throw new Error("browser_cookies needs a valid http(s) url (or an active http(s) tab).");
+  }
+  if (action === "get") {
+    const all = await chrome.cookies.getAll({ url });
+    return { ok: true, url, count: all.length, capped: all.length > 100,
+             cookies: all.slice(0, 100).map(cookieView) };
+  }
+  if (!args || typeof args.name !== "string" || args.name.length === 0) {
+    throw new Error("browser_cookies " + action + " needs a name.");
+  }
+  if (action === "remove") {
+    const removed = await chrome.cookies.remove({ url, name: String(args.name) });
+    return { ok: true, url, name: String(args.name), removed: !!removed };
+  }
+  return await cookiesSet(url, args);
 }
 
 // -- Bring the bridge up -----------------------------------------------------

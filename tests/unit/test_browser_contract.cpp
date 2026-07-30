@@ -76,6 +76,7 @@ private slots:
     void buildCommand_printToolBuilds();
     void buildCommand_permissionToolBuilds();
     void buildCommand_storageToolBuilds();
+    void buildCommand_cookiesToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
 };
@@ -758,6 +759,31 @@ void BrowserContractTests::buildCommand_storageToolBuilds() {
     QCOMPARE(st.command.value(QStringLiteral("value")).toString(), QStringLiteral("abc123"));
 }
 
+void BrowserContractTests::buildCommand_cookiesToolBuilds() {
+    // action required; string/bool/number options copy through with the right JSON types.
+    QVERIFY(!buildExtensionCommand(QStringLiteral("browser_cookies"), {}, {}).ok);
+
+    const ExtensionCommand ck = buildExtensionCommand(
+        QStringLiteral("browser_cookies"),
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("set")},
+                    {QStringLiteral("url"), QStringLiteral("https://example.com/")},
+                    {QStringLiteral("name"), QStringLiteral("sid")},
+                    {QStringLiteral("value"), QStringLiteral("xyz")},
+                    {QStringLiteral("secure"), true},
+                    {QStringLiteral("http_only"), true},
+                    {QStringLiteral("same_site"), QStringLiteral("lax")},
+                    {QStringLiteral("expires_days"), 1.5}},
+        {});
+    QVERIFY(ck.ok);
+    QCOMPARE(ck.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("cookies"));
+    QCOMPARE(ck.command.value(QStringLiteral("action")).toString(), QStringLiteral("set"));
+    QCOMPARE(ck.command.value(QStringLiteral("name")).toString(), QStringLiteral("sid"));
+    QCOMPARE(ck.command.value(QStringLiteral("secure")).toBool(), true);
+    QCOMPARE(ck.command.value(QStringLiteral("http_only")).toBool(), true);
+    QCOMPARE(ck.command.value(QStringLiteral("same_site")).toString(), QStringLiteral("lax"));
+    QCOMPARE(ck.command.value(QStringLiteral("expires_days")).toDouble(), 1.5);
+}
+
 void BrowserContractTests::buildCommand_windowToolsBuild() {
     // browser_windows: no args, maps to listWindows.
     const ExtensionCommand ls = buildExtensionCommand(QStringLiteral("browser_windows"), {}, {});
@@ -804,7 +830,8 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_emulate"),
                                     QStringLiteral("browser_print"),
                                     QStringLiteral("browser_permission"),
-                                    QStringLiteral("browser_storage")}) {
+                                    QStringLiteral("browser_storage"),
+                                    QStringLiteral("browser_cookies")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
 }
