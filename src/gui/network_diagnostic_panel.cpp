@@ -236,8 +236,13 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
     connectSignals();
     createResetNetworkAction();
 
-    // Runtime only. Accessibility audit must not launch adapter enumeration side effects.
-    if (!qApp->property("sakAccessibilityAudit").toBool()) {
+    // Runtime only. Non-interactive startup gates (accessibility audit and the
+    // startup smoke test) must not launch adapter enumeration side effects: the
+    // scan runs on a worker thread and the gate tears the panel down moments
+    // later, which would race the scan.
+    const bool non_interactive_gate = qApp->property("sakAccessibilityAudit").toBool() ||
+                                      qApp->property("sakStartupSmokeTest").toBool();
+    if (!non_interactive_gate) {
         QMetaObject::invokeMethod(m_controller.get(),
                                   &NetworkDiagnosticController::scanAdapters,
                                   Qt::QueuedConnection);

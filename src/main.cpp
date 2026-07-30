@@ -283,8 +283,22 @@ int runAccessibilityAudit(sak::MainWindow& main_window) {
 /// being scanned by real-time antivirus. QFontDatabase is thread-safe; if the
 /// GUI thread needs fonts before the warmup finishes it simply blocks on the
 /// shared mutex for the remaining time instead of the full cost.
+// The warmup thread is owned, never detached: it calls into the Qt font
+// database, and a detached copy still running during QApplication teardown would
+// touch those internals as they are destroyed (observed as a heap-corruption
+// crash at process exit). joinFontDatabaseWarmup() is registered with
+// qAddPostRoutine so it is joined at the very start of ~QCoreApplication, before
+// any font-database teardown, and normally the thread has long since finished.
+std::thread g_font_warmup_thread;
+
+void joinFontDatabaseWarmup() {
+    if (g_font_warmup_thread.joinable()) {
+        g_font_warmup_thread.join();
+    }
+}
+
 void startFontDatabaseWarmup() {
-    std::thread([]() {
+    g_font_warmup_thread = std::thread([]() {
         QFontDatabase::families();
         // Force a full font MATCH for a family that is not installed: the
         // first such miss builds the alias table by walking every installed
@@ -292,7 +306,7 @@ void startFontDatabaseWarmup() {
         // and style-sheet font stacks trigger exactly that miss. Fonts are
         // thread-safe in Qt 6, so pay it here instead of on the GUI thread.
         QFontMetrics(QFont(QStringLiteral("sak-alias-warmup-probe"))).height();
-    }).detach();
+    });
 }
 
 #if defined(_WIN32)
@@ -325,6 +339,7 @@ QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& option
 #endif
     static QApplication app(argc, argv);
     startFontDatabaseWarmup();
+    qAddPostRoutine(joinFontDatabaseWarmup);
     app.setApplicationName(sak::get_product_name());
     app.setApplicationVersion(sak::get_version());
     app.setOrganizationName(SAK_ORGANIZATION_NAME);

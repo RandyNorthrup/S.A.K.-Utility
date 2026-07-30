@@ -251,6 +251,14 @@ private:
     QTabWidget* m_tab_widget{nullptr};
     QTabWidget* m_application_tabs{nullptr};
 
+    // Set at the very start of ~MainWindow. The unique_ptr tool panels are freed
+    // in the member-destruction phase, but the tab widgets are raw QObject
+    // children freed later in the base destructor; as they tear down they emit
+    // currentChanged, whose status-bar handlers would otherwise dereference the
+    // already-freed panels (via findPanelTabIndex). The handlers check this flag
+    // and do nothing once teardown has begun.
+    bool m_shutting_down{false};
+
     // Lazy tool-tab registry; index is aligned with the tab slot it occupies.
     std::vector<LazyTab> m_lazyTabs;
     bool m_lazyDefaultBuilt{false};

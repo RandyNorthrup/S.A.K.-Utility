@@ -445,6 +445,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    // Must be first: stops the tab-change status-bar handlers from running while
+    // the window is being destroyed (they would dereference freed tool panels).
+    m_shutting_down = true;
     if (!IsAccessibilityAuditMode()) {
         saveWindowState();
     }
@@ -1449,7 +1452,7 @@ bool MainWindow::isVulnerabilityPanelActive() const {
 }
 
 void MainWindow::updateVulnerabilityStatusBarVisibility() {
-    if (!m_vulnerability_summary_label) {
+    if (m_shutting_down || !m_vulnerability_summary_label) {
         return;
     }
 
@@ -1470,7 +1473,7 @@ bool MainWindow::isAiAssistantPanelActive() const {
 }
 
 void MainWindow::updateAiStatusBarVisibility() {
-    if (!m_ai_status_label) {
+    if (m_shutting_down || !m_ai_status_label) {
         return;
     }
 
@@ -1643,6 +1646,9 @@ void MainWindow::setProgressVisible(bool visible) {
 
 
 void MainWindow::onTabChanged(int index) {
+    if (m_shutting_down) {
+        return;
+    }
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(index >= -1 && index < m_tab_widget->count());
     updateVulnerabilityStatusBarVisibility();
