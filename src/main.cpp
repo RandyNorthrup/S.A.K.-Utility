@@ -295,8 +295,34 @@ void startFontDatabaseWarmup() {
     }).detach();
 }
 
+#if defined(_WIN32)
+/// @brief Force Qt onto the GDI font database instead of the DirectWrite backend.
+///
+/// Qt 6 defaults to the DirectWrite font database on Windows. Its enumeration
+/// re-reads every installed font file on each launch unless the DirectWrite font
+/// cache service (FontCache3.0.0.0) is running; where that service is stopped,
+/// real-time antivirus scans each of those thousands of reads and the first font
+/// query blocks the GUI thread for tens of seconds (measured 31 s here with 2491
+/// families and the service stopped). The GDI font database instead uses the
+/// always-on FontCache service, populates the identical family set in about a
+/// second, and does not depend on any per-machine service state. Must run before
+/// QApplication is constructed so the platform plugin reads it during init.
+void forceGdiFontDatabase() {
+    // Escape hatch: a machine whose DirectWrite font cache service is healthy can
+    // set SAK_USE_DIRECTWRITE=1 to keep Qt's default DirectWrite backend and its
+    // rendering. Left off, the GDI database is forced (the safe default above).
+    if (qEnvironmentVariableIntValue("SAK_USE_DIRECTWRITE") == 1) {
+        return;
+    }
+    qputenv("QT_NO_DIRECTWRITE", "1");
+}
+#endif
+
 /// @brief Initialize the Qt application and apply theming.
 QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& options) {
+#if defined(_WIN32)
+    forceGdiFontDatabase();
+#endif
     static QApplication app(argc, argv);
     startFontDatabaseWarmup();
     app.setApplicationName(sak::get_product_name());
@@ -531,9 +557,6 @@ int runApplication(int argc, char* argv[]) {
     }
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("logger-initialized"));
-    }
-
-    if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("startup-banner-skipped"));
     } else {
         logStartupBanner();
