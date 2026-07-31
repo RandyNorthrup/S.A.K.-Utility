@@ -18,6 +18,7 @@ private Q_SLOTS:
     void construction_nonCopyable();
     void isElevated_returnsBool();
     void isSystemRestoreEnabled_returnsBool();
+    void restoreEnabledFromProbe_failsClosed();
     void listRestorePoints_doesNotCrash();
 };
 
@@ -44,6 +45,22 @@ void TestRestorePointManager::isSystemRestoreEnabled_returnsBool() {
     const bool enabled = manager.isSystemRestoreEnabled();
     // Verify deterministic — same result on repeated call
     QCOMPARE(manager.isSystemRestoreEnabled(), enabled);
+}
+
+// B5-10: the enabled decision must fail closed. A failed probe is NOT enabled,
+// and only an explicit "ENABLED" from a successful probe counts (the old VSS
+// fallback reported enabled whenever VSS was running).
+void TestRestorePointManager::restoreEnabledFromProbe_failsClosed() {
+    // Successful probe, explicit answers.
+    QVERIFY(RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("ENABLED")));
+    QVERIFY(RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("ENABLED\r\n")));
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("DISABLED")));
+    // Failed probe -> never enabled, regardless of stray output.
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(false, QStringLiteral("ENABLED")));
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(false, QString()));
+    // Unexpected/garbage output on a successful probe -> not enabled.
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("VSS Running")));
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QString()));
 }
 
 void TestRestorePointManager::listRestorePoints_doesNotCrash() {

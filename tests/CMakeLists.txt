@@ -248,6 +248,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_catalog.cpp")
     message(STATUS "Added unit test: test_ai_model_catalog")
 endif()
 
+# test_restore_point_manager - System Restore enablement (B5-10 fail-closed)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_restore_point_manager.cpp")
+    add_executable(test_restore_point_manager
+        unit/test_restore_point_manager.cpp
+        ../src/core/restore_point_manager.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/process_runner.cpp
+        ../src/core/logger.cpp
+        ../include/sak/restore_point_manager.h
+    )
+    set_target_properties(test_restore_point_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_restore_point_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_restore_point_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_restore_point_manager COMMAND test_restore_point_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_restore_point_manager")
+endif()
+
 # test_diagnostic_types ??? struct defaults and value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     add_executable(test_diagnostic_types

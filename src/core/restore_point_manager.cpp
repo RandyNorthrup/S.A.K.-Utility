@@ -22,33 +22,35 @@ namespace sak {
 RestorePointManager::RestorePointManager(QObject* parent) : QObject(parent) {}
 
 bool RestorePointManager::isSystemRestoreEnabled() const {
+    // Authoritative check: Enable-ComputerRestore sets RPSessionInterval to 1 and
+    // Disable-ComputerRestore sets it to 0, so RPSessionInterval > 0 iff System
+    // Protection is on. Do NOT fall back to the VSS service state -- VSS runs for
+    // shadow copies/backups independently of System Restore, so a running VSS
+    // would falsely report "enabled" (a safety-check failing OPEN, letting a
+    // destructive op skip its restore point).
     const auto result = sak::runProcess(
         QStringLiteral("powershell.exe"),
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-NonInteractive"),
          QStringLiteral("-Command"),
-         QStringLiteral("try { "
-                        "  $status = Get-ComputerRestorePoint -ErrorAction Stop; "
-                        "  Write-Output 'ENABLED'; "
-                        "} catch { "
-                        "  try { "
-                        "    $vss = Get-Service -Name VSS -ErrorAction Stop; "
-                        "    if ($vss.Status -eq 'Running' -or $vss.StartType -ne 'Disabled') { "
-                        "      Write-Output 'ENABLED'; "
-                        "    } else { "
-                        "      Write-Output 'DISABLED'; "
-                        "    } "
-                        "  } catch { "
-                        "    Write-Output 'DISABLED'; "
-                        "  } "
-                        "}")},
+         QStringLiteral(
+             "try { "
+             "  $k = Get-ItemProperty "
+             "    -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' "
+             "    -Name 'RPSessionInterval' -ErrorAction Stop; "
+             "  if ([int]$k.RPSessionInterval -gt 0) { Write-Output 'ENABLED'; } "
+             "  else { Write-Output 'DISABLED'; } "
+             "} catch { "
+             "  Write-Output 'DISABLED'; "  // fail closed: cannot confirm -> not enabled
+             "}")},
         kCheckTimeoutMs);
-    if (!result.succeeded()) {
-        return false;
-    }
 
-    QString output = result.std_out.trimmed();
-    return output.contains("ENABLED");
+    return restoreEnabledFromProbe(result.succeeded(), result.std_out);
+}
+
+bool RestorePointManager::restoreEnabledFromProbe(bool probeSucceeded, const QString& output) {
+    // Fail closed: only a successful probe that explicitly reports ENABLED counts.
+    return probeSucceeded && output.trimmed() == QStringLiteral("ENABLED");
 }
 
 bool RestorePointManager::createRestorePoint(const QString& description) {

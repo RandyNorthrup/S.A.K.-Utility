@@ -36,6 +36,15 @@ public:
     /// @brief Check if System Restore is enabled on the system drive
     [[nodiscard]] bool isSystemRestoreEnabled() const;
 
+    /// @brief Decide the System-Restore-enabled state from a probe result.
+    /// @param probeSucceeded whether the probe process ran to completion.
+    /// @param output the probe's stdout.
+    /// @return true ONLY when the probe succeeded AND reported "ENABLED".
+    /// @note Fail-closed: a failed probe (non-zero exit / timeout) is reported as
+    ///       NOT enabled, never guessed from an unrelated signal (e.g. the VSS
+    ///       service state, which is independent of System Protection).
+    [[nodiscard]] static bool restoreEnabledFromProbe(bool probeSucceeded, const QString& output);
+
     /// @brief Create a system restore point
     /// @param description Description for the restore point (max 64 chars)
     /// @return true if created successfully
