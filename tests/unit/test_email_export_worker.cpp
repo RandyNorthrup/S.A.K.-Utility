@@ -7,10 +7,12 @@
 #include "sak/email_constants.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
+#include "sak/mbox_parser.h"
 
 #include <QDir>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QtTest/QtTest>
 
 class TestEmailExportWorker : public QObject {
@@ -43,6 +45,9 @@ private Q_SLOTS:
 
     // -- Format Coverage -------------------------------------------------
     void allExportFormatsHaveNames();
+
+    // -- B7-25/27: real MBOX export with a readable attachment -----------
+    void mboxExportWithAttachmentSucceeds();
 };
 
 // ============================================================================
@@ -233,6 +238,63 @@ void TestEmailExportWorker::allExportFormatsHaveNames() {
     QSet<int> unique_values(format_values.begin(), format_values.end());
     QCOMPARE(unique_values.size(), format_values.size());
     QCOMPARE(unique_values.size(), 12);
+}
+
+// A readable attachment must NOT mark the message a partial export, and paging the
+// whole mailbox must record no read-failure -- items_exported=1, items_failed=0.
+// Exercises the refactored collectMboxIndices / collectMboxAttachmentData /
+// exportOneMboxItem wiring (B7-25, B7-27).
+void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Subject: Has Attachment\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "MIME-Version: 1.0\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n";
+    content += "\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: text/plain; charset=UTF-8\r\n";
+    content += "\r\n";
+    content += "Body text.\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: application/octet-stream; name=\"data.bin\"\r\n";
+    content += "Content-Transfer-Encoding: base64\r\n";
+    content += "Content-Disposition: attachment; filename=\"data.bin\"\r\n";
+    content += "\r\n";
+    content += "SGVsbG8gQXR0YWNo\r\n";  // "Hello Attach"
+    content += "--BOUND--\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    QTemporaryDir out_dir;
+    QVERIFY(out_dir.isValid());
+
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::Eml;
+    config.output_path = out_dir.path();  // item_ids empty -> page the whole mailbox
+
+    EmailExportWorker worker;
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+    worker.exportMboxItems(&parser, config);
+
+    QVERIFY(complete_spy.count() > 0);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 1);
+    QCOMPARE(result.items_failed, 0);  // readable attachment -> not a partial export
+
+    // One .eml file was written.
+    const QStringList eml = QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files);
+    QCOMPARE(eml.size(), 1);
+    parser.close();
 }
 
 QTEST_MAIN(TestEmailExportWorker)

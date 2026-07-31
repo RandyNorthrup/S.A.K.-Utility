@@ -193,20 +193,24 @@ void prepareMessageWriters(sak::ExportFormat format,
 }
 
 /// Append every item node id in a folder to `out`, paging past the per-call
-/// kMaxItemsPerLoad cap so no item beyond the first page is dropped.
-void pageFolderItemIds(PstParser* parser, uint64_t folder_id, QVector<uint64_t>& out) {
+/// kMaxItemsPerLoad cap so no item beyond the first page is dropped. Returns false
+/// if a page read FAILED (the caller must then record a partial-export error rather
+/// than trust the truncated id list); true if the folder was fully enumerated.
+[[nodiscard]] bool pageFolderItemIds(PstParser* parser,
+                                     uint64_t folder_id,
+                                     QVector<uint64_t>& out) {
     for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
         auto items_result =
             parser->readFolderItems(folder_id, offset, sak::email::kMaxItemsPerLoad);
         if (!items_result.has_value()) {
-            break;
+            return false;  // read error: enumeration is incomplete
         }
         const auto& page = items_result.value();
         for (const auto& item : page) {
             out.append(item.node_id);
         }
         if (page.size() < sak::email::kMaxItemsPerLoad) {
-            break;
+            return true;  // last (short) page reached cleanly
         }
     }
 }
@@ -233,8 +237,12 @@ bool passesAttachmentFilter(const sak::PstAttachmentInfo& att,
     return filter.match(name).hasMatch();
 }
 
-/// Collect MBOX message indices to export
-QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& item_ids) {
+/// Collect MBOX message indices to export. A read failure while paging the whole
+/// mailbox is recorded in result.errors (and counted as a failure) so a truncated
+/// export is not reported as clean (B7-27).
+QVector<int> collectMboxIndices(MboxParser* parser,
+                                const QVector<uint64_t>& item_ids,
+                                sak::EmailExportResult& result) {
     QVector<int> indices;
     for (auto nid : item_ids) {
         indices.append(static_cast<int>(nid));
@@ -247,6 +255,10 @@ QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& ite
     for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
         auto messages = parser->readMessages(offset, sak::email::kMaxItemsPerLoad);
         if (!messages.has_value()) {
+            result.errors.append(
+                QStringLiteral("MBOX read error at offset %1; message list is incomplete")
+                    .arg(offset));
+            ++result.items_failed;
             break;
         }
         const auto& page = messages.value();
@@ -454,7 +466,7 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
         return;
     }
 
-    QVector<uint64_t> item_ids = collectItemIds(parser, config);
+    QVector<uint64_t> item_ids = collectItemIds(parser, config, result);
     if (item_ids.isEmpty()) {
         emitEarlyFailure(QStringLiteral("No items to export"));
         return;
@@ -465,7 +477,8 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
 }
 
 QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
-                                                    const sak::EmailExportConfig& config) {
+                                                    const sak::EmailExportConfig& config,
+                                                    sak::EmailExportResult& result) {
     QVector<uint64_t> item_ids = config.item_ids;
     if (!item_ids.isEmpty()) {
         return item_ids;
@@ -479,7 +492,11 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
         folders.append(config.folder_id);
     }
     for (uint64_t folder : folders) {
-        pageFolderItemIds(parser, folder, item_ids);
+        if (!pageFolderItemIds(parser, folder, item_ids)) {
+            result.errors.append(
+                QStringLiteral("Folder %1 read error; item list is incomplete").arg(folder));
+            ++result.items_failed;
+        }
     }
     return item_ids;
 }
@@ -539,39 +556,47 @@ bool EmailExportWorker::exportOnePstItem(const PstItemExportContext& context,
         return false;
     }
 
-    auto attachment_data =
+    const AttachmentCollection attachments =
         isMessageFileFormat(context.config.format)
             ? collectAttachmentData(context.parser, detail.value(), context.config, context.result)
-            : QVector<QPair<QString, QByteArray>>{};
+            : AttachmentCollection{};
+
+    const bool written = writePstItemFormat(context, detail.value(), attachments.data, index);
+
+    // A message that wrote but lost an embedded attachment is a PARTIAL export, so it
+    // is counted as a failure (with the specific loss in result.errors), not a clean
+    // success (B7-25).
+    return written && attachments.dropped == 0;
+}
+
+bool EmailExportWorker::writePstItemFormat(
+    const PstItemExportContext& context,
+    const sak::PstItemDetail& detail,
+    const QVector<QPair<QString, QByteArray>>& attachment_data,
+    int index) {
     switch (context.config.format) {
     case sak::ExportFormat::Eml:
-        return writeEml(
-            *context.writers.eml, detail.value(), attachment_data, context.result.total_bytes);
+        return writeEml(*context.writers.eml, detail, attachment_data, context.result.total_bytes);
     case sak::ExportFormat::Html:
         return writeHtml(
-            *context.writers.html, detail.value(), attachment_data, context.result.total_bytes);
+            *context.writers.html, detail, attachment_data, context.result.total_bytes);
     case sak::ExportFormat::Text:
-        return writePlainText({detail.value(),
+        return writePlainText({detail,
                                context.config.output_path,
                                index,
                                attachment_data,
                                context.config.save_attachments_with_messages},
                               context.result.total_bytes);
     case sak::ExportFormat::Pdf:
-        return writePdf(
-            *context.writers.pdf, detail.value(), attachment_data, context.result.total_bytes);
+        return writePdf(*context.writers.pdf, detail, attachment_data, context.result.total_bytes);
     case sak::ExportFormat::Vcf:
-        return writeVcf(detail.value(), context.config.output_path, index);
+        return writeVcf(detail, context.config.output_path, index);
     case sak::ExportFormat::PlainTextNotes:
-        return writePlainText(
-            {detail.value(), context.config.output_path, index, attachment_data, false},
-            context.result.total_bytes);
+        return writePlainText({detail, context.config.output_path, index, attachment_data, false},
+                              context.result.total_bytes);
     case sak::ExportFormat::Attachments:
-        return exportAttachments(context.parser,
-                                 detail.value(),
-                                 context.config.output_path,
-                                 context.config,
-                                 context.result);
+        return exportAttachments(
+            context.parser, detail, context.config.output_path, context.config, context.result);
     default:
         return false;
     }
@@ -681,7 +706,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
         return;
     }
 
-    QVector<int> indices = collectMboxIndices(parser, config.item_ids);
+    QVector<int> indices = collectMboxIndices(parser, config.item_ids, result);
 
     Q_EMIT exportStarted(indices.size());
 
@@ -723,21 +748,31 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
     const auto item = mboxDetailAsPstItem(detail.value());
     // Previously an empty vector, so every MBOX attachment was silently discarded.
     // Read the real bytes so message-file writers embed/save them like the PST path.
-    const auto attachment_data = collectMboxAttachmentData(
+    const AttachmentCollection attachments = collectMboxAttachmentData(
         context.parser, message_index, item, context.config, context.result);
-    switch (context.effective_format) {
-    case sak::ExportFormat::Html:
-        return writeHtml(*context.writers.html, item, attachment_data, context.result.total_bytes);
-    case sak::ExportFormat::Text:
-        return writePlainText(
-            {item, context.config.output_path, loop_index, attachment_data, false},
-            context.result.total_bytes);
-    case sak::ExportFormat::Pdf:
-        return writePdf(*context.writers.pdf, item, attachment_data, context.result.total_bytes);
-    case sak::ExportFormat::Eml:
-    default:
-        return writeEml(*context.writers.eml, item, attachment_data, context.result.total_bytes);
-    }
+    const auto& attachment_data = attachments.data;
+
+    const bool written = [&]() -> bool {
+        switch (context.effective_format) {
+        case sak::ExportFormat::Html:
+            return writeHtml(
+                *context.writers.html, item, attachment_data, context.result.total_bytes);
+        case sak::ExportFormat::Text:
+            return writePlainText(
+                {item, context.config.output_path, loop_index, attachment_data, false},
+                context.result.total_bytes);
+        case sak::ExportFormat::Pdf:
+            return writePdf(
+                *context.writers.pdf, item, attachment_data, context.result.total_bytes);
+        case sak::ExportFormat::Eml:
+        default:
+            return writeEml(
+                *context.writers.eml, item, attachment_data, context.result.total_bytes);
+        }
+    }();
+
+    // A lost attachment makes this a partial export -> counted as failure (B7-25).
+    return written && attachments.dropped == 0;
 }
 
 void EmailExportWorker::exportSingleMboxMessage(MboxParser* parser,
@@ -1064,26 +1099,19 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
 
 bool EmailExportWorker::extractAttachment(PstParser* parser,
                                           uint64_t msg_nid,
-                                          int att_index,
+                                          const sak::PstAttachmentInfo& att,
                                           const QString& output_dir) {
-    auto data = parser->readAttachmentData(msg_nid, att_index);
+    // Fetch by att.index (the attachment's real index property), NOT its position in
+    // the attachments vector: a filtered/sparse list makes the two differ, and the
+    // old code passed the loop position, extracting the WRONG blob (B7-26).
+    auto data = parser->readAttachmentData(msg_nid, att.index);
     if (!data.has_value()) {
         return false;
     }
 
-    // Get attachment info for filename
-    auto detail = parser->readItemDetail(msg_nid);
-    if (!detail.has_value()) {
-        return false;
-    }
-
-    QString filename;
-    if (att_index < detail.value().attachments.size()) {
-        const auto& att = detail.value().attachments[att_index];
-        filename = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-    }
+    QString filename = att.long_filename.isEmpty() ? att.filename : att.long_filename;
     if (filename.isEmpty()) {
-        filename = QStringLiteral("attachment_%1_%2").arg(msg_nid).arg(att_index);
+        filename = QStringLiteral("attachment_%1_%2").arg(msg_nid).arg(att.index);
     }
     filename = sanitizeFilename(filename, kMaxFilenameLength);
     filename = resolveFilenameConflict(output_dir, filename);
@@ -1092,7 +1120,11 @@ bool EmailExportWorker::extractAttachment(PstParser* parser,
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    file.write(data.value());
+    // Full write or fail: a truncated attachment must not count as extracted (B7-18).
+    if (!sak::writeFully(file, data.value())) {
+        file.close();
+        return false;
+    }
     file.close();
     return true;
 }
@@ -1204,16 +1236,16 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
 // Helper: Export all attachments for a message
 // ============================================================================
 
-QVector<QPair<QString, QByteArray>> EmailExportWorker::collectAttachmentData(
+EmailExportWorker::AttachmentCollection EmailExportWorker::collectAttachmentData(
     PstParser* parser,
     const sak::PstItemDetail& item,
     const sak::EmailExportConfig& config,
     sak::EmailExportResult& result) {
-    QVector<QPair<QString, QByteArray>> attachment_data;
+    AttachmentCollection out;
     if (parser == nullptr || item.attachments.isEmpty()) {
-        return attachment_data;
+        return out;
     }
-    attachment_data.reserve(item.attachments.size());
+    out.data.reserve(item.attachments.size());
 
     for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
         const auto& att = item.attachments.at(att_idx);
@@ -1223,31 +1255,32 @@ QVector<QPair<QString, QByteArray>> EmailExportWorker::collectAttachmentData(
         const QString name = attachmentDisplayName(att, att_idx);
         auto data = parser->readAttachmentData(item.node_id, att.index);
         if (!data.has_value()) {
-            // Surface the loss: an unreadable attachment is dropped from the message
-            // body, but the message was previously reported as fully exported.
+            // Surface the loss AND count it so the caller marks the message a partial
+            // export rather than a clean one (B7-25).
             result.errors.append(
                 QStringLiteral("Attachment '%1' in item NID %2 could not be read and was omitted")
                     .arg(name)
                     .arg(item.node_id));
+            ++out.dropped;
             continue;
         }
-        attachment_data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+        out.data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
     }
 
-    return attachment_data;
+    return out;
 }
 
-QVector<QPair<QString, QByteArray>> EmailExportWorker::collectMboxAttachmentData(
+EmailExportWorker::AttachmentCollection EmailExportWorker::collectMboxAttachmentData(
     MboxParser* parser,
     int message_index,
     const sak::PstItemDetail& item,
     const sak::EmailExportConfig& config,
     sak::EmailExportResult& result) {
-    QVector<QPair<QString, QByteArray>> attachment_data;
+    AttachmentCollection out;
     if (parser == nullptr || item.attachments.isEmpty()) {
-        return attachment_data;
+        return out;
     }
-    attachment_data.reserve(item.attachments.size());
+    out.data.reserve(item.attachments.size());
 
     for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
         const auto& att = item.attachments.at(att_idx);
@@ -1261,12 +1294,13 @@ QVector<QPair<QString, QByteArray>> EmailExportWorker::collectMboxAttachmentData
                 QStringLiteral("Attachment '%1' in message %2 could not be read and was omitted")
                     .arg(name)
                     .arg(message_index));
+            ++out.dropped;
             continue;
         }
-        attachment_data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+        out.data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
     }
 
-    return attachment_data;
+    return out;
 }
 
 bool EmailExportWorker::saveSidecarAttachments(
@@ -1325,7 +1359,7 @@ bool EmailExportWorker::exportAttachments(PstParser* parser,
             continue;
         }
         ++eligible;
-        if (extractAttachment(parser, item.node_id, att_idx, output_dir)) {
+        if (extractAttachment(parser, item.node_id, att, output_dir)) {
             ++succeeded;
         } else {
             failed_names.append(attachmentDisplayName(att, att_idx));

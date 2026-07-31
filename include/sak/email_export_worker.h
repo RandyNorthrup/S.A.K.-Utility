@@ -76,6 +76,13 @@ private:
         bool save_attachments{false};
     };
 
+    /// Collected attachment payloads plus how many eligible attachments could not
+    /// be read (so the caller can mark a message a partial export -- B7-25).
+    struct AttachmentCollection {
+        QVector<QPair<QString, QByteArray>> data;
+        int dropped{0};
+    };
+
     std::atomic<bool> m_cancelled{false};
 
     // Format writers
@@ -102,7 +109,7 @@ private:
                                 QChar delimiter);
     [[nodiscard]] bool extractAttachment(PstParser* parser,
                                          uint64_t msg_nid,
-                                         int att_index,
+                                         const sak::PstAttachmentInfo& att,
                                          const QString& output_dir);
 
     // Content builders
@@ -118,17 +125,24 @@ private:
                                          const QString& output_dir,
                                          const sak::EmailExportConfig& config,
                                          sak::EmailExportResult& result);
-    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachmentData(
-        PstParser* parser,
-        const sak::PstItemDetail& item,
-        const sak::EmailExportConfig& config,
-        sak::EmailExportResult& result);
-    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectMboxAttachmentData(
+    // Returns the readable attachment payloads plus a dropped count (unreadable
+    // eligible attachments), so the caller can mark a partial vs clean export.
+    [[nodiscard]] AttachmentCollection collectAttachmentData(PstParser* parser,
+                                                             const sak::PstItemDetail& item,
+                                                             const sak::EmailExportConfig& config,
+                                                             sak::EmailExportResult& result);
+    [[nodiscard]] AttachmentCollection collectMboxAttachmentData(
         MboxParser* parser,
         int message_index,
         const sak::PstItemDetail& item,
         const sak::EmailExportConfig& config,
         sak::EmailExportResult& result);
+    // Write one already-read PST item's body in the configured per-item format.
+    [[nodiscard]] bool writePstItemFormat(
+        const PstItemExportContext& context,
+        const sak::PstItemDetail& detail,
+        const QVector<QPair<QString, QByteArray>>& attachment_data,
+        int index);
     [[nodiscard]] bool saveSidecarAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& exported_file_path,
@@ -137,9 +151,11 @@ private:
     // Early-failure helper: emits an exportComplete result carrying a single error.
     void emitEarlyFailure(const QString& error_message);
 
-    // Resolve effective item-id list (explicit ids or derived from folder).
+    // Resolve effective item-id list (explicit ids or derived from folder). Records
+    // an error into result if folder paging stopped early on a read failure (B7-27).
     [[nodiscard]] static QVector<uint64_t> collectItemIds(PstParser* parser,
-                                                          const sak::EmailExportConfig& config);
+                                                          const sak::EmailExportConfig& config,
+                                                          sak::EmailExportResult& result);
 
     // Dispatch to ICS / CSV / per-item export helpers based on config.format.
     void dispatchExportFormat(PstParser* parser,
