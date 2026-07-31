@@ -103,6 +103,18 @@ protected:
     virtual auto execute() -> std::expected<void, sak::error_code> = 0;
 
     /**
+     * @brief Stop the worker and join its thread. Idempotent (a no-op once the
+     *        thread has finished).
+     *
+     * MUST be called from the destructor of every derived worker, BEFORE that
+     * class's own members are destroyed. ~WorkerBase runs as the base subobject,
+     * i.e. AFTER the derived members are gone, so relying on it alone leaves a
+     * still-running execute() touching freed derived state (use-after-free). This
+     * helper lets each derived dtor join the thread while its state is still alive.
+     */
+    void stopAndJoin() noexcept;
+
+    /**
      * @brief Check if stop requested and emit cancelled if true
      * @return True if stop requested
      */

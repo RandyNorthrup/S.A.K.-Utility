@@ -128,6 +128,10 @@ public:
     explicit FileExplorerTransferWorker(FileExplorerTransferRequest request,
                                         QObject* parent = nullptr);
 
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~FileExplorerTransferWorker() override { stopAndJoin(); }
+
     /// Safe to read after QThread::finished (the worker thread has exited).
     [[nodiscard]] const QStringList& blockers() const { return m_blockers; }
     [[nodiscard]] const QStringList& warnings() const { return m_warnings; }

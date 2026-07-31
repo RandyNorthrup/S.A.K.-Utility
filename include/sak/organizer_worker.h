@@ -59,6 +59,10 @@ public:
      */
     explicit OrganizerWorker(const Config& config, QObject* parent = nullptr);
 
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~OrganizerWorker() override { stopAndJoin(); }
+
     /**
      * @brief Number of files actually relocated by the last run
      *

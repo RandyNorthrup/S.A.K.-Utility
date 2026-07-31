@@ -40,7 +40,9 @@ public:
     /// @brief Construct a DiskBenchmarkWorker
     /// @param parent Parent QObject
     explicit DiskBenchmarkWorker(QObject* parent = nullptr);
-    ~DiskBenchmarkWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~DiskBenchmarkWorker() override { stopAndJoin(); }
 
     /// @brief Set the benchmark configuration
     /// @param config Benchmark parameters (drive, sizes, queue depth, etc.)

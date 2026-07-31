@@ -16,13 +16,21 @@
 WorkerBase::WorkerBase(QObject* parent) : QThread(parent) {}
 
 WorkerBase::~WorkerBase() {
-    if (isRunning()) {
-        requestStop();
-        if (!wait(sak::kTimeoutThreadShutdownMs)) {
-            sak::logError("Worker thread did not stop within 15s -- forcing termination");
-            terminate();
-            wait(sak::kTimeoutThreadTerminateMs);
-        }
+    // Last-resort join. Derived workers should have already called stopAndJoin()
+    // from their own destructor (while their members were still alive); this is
+    // the safety net for a direct WorkerBase or a derived dtor that forgot.
+    stopAndJoin();
+}
+
+void WorkerBase::stopAndJoin() noexcept {
+    if (!isRunning()) {
+        return;
+    }
+    requestStop();
+    if (!wait(sak::kTimeoutThreadShutdownMs)) {
+        sak::logError("Worker thread did not stop within 15s -- forcing termination");
+        terminate();
+        wait(sak::kTimeoutThreadTerminateMs);
     }
 }
 
@@ -41,7 +49,9 @@ bool WorkerBase::isExecuting() const noexcept {
 
 void WorkerBase::run() {
     m_is_running.store(true, std::memory_order_release);
-    m_stop_requested.store(false, std::memory_order_release);
+    // Do NOT clear m_stop_requested here: a requestStop() issued between start()
+    // and the thread actually entering run() would otherwise be lost. It defaults
+    // to false at construction, so a fresh worker starts un-cancelled either way.
 
     Q_EMIT started();
 

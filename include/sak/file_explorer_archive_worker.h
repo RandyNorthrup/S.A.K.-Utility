@@ -65,6 +65,10 @@ public:
     explicit FileExplorerArchiveWorker(FileExplorerArchiveRequest request,
                                        QObject* parent = nullptr);
 
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~FileExplorerArchiveWorker() override { stopAndJoin(); }
+
     [[nodiscard]] const FileExplorerArchiveRequest& request() const { return m_request; }
     /// Safe to read after QThread::finished (the worker thread has exited).
     [[nodiscard]] const QStringList& blockers() const { return m_blockers; }

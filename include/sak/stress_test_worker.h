@@ -45,7 +45,9 @@ public:
     /// @brief Construct a StressTestWorker
     /// @param parent Parent QObject
     explicit StressTestWorker(QObject* parent = nullptr);
-    ~StressTestWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~StressTestWorker() override { stopAndJoin(); }
 
     // Non-copyable, non-movable
     StressTestWorker(const StressTestWorker&) = delete;

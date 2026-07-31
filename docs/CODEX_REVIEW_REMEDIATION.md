@@ -84,12 +84,12 @@ Systemic root: ~WorkerBase joins the thread as BASE subobject, AFTER derived
 members destroyed -> UAF for any subclass destroyed mid-execute(). Preferred
 root fix: move stop+join into a protected helper called by each most-derived
 dtor (or a CRTP/enforced pattern), then remove terminate() fail-open.
-- [ ] B3-01 [HIGH] src/threading/worker_base.cpp:18,21 -- terminate() fallback + unchecked final wait (systemic base). Fix: no terminate default; join in derived; check wait.
-- [ ] B3-02 [MED] src/threading/worker_base.cpp:42 -- run() clears an already-requested stop -> cancel right after start() lost. Fix: don't clear pending stop.
-- [ ] B3-03 [HIGH] include/sak/advanced_search_worker.h:44 + src/core/advanced_search_controller.cpp:120,124 -- no derived-level join; members destroyed before base stops running execute(). Fix: derived-dtor join.
-- [ ] B3-04 [HIGH] include/sak/organizer_worker.h:60 + src/gui/organizer_panel.cpp:157,944 -- OrganizerWorker no derived join; unique_ptr destroyed while running. Fix: derived-dtor join.
-- [ ] B3-05 [HIGH] src/gui/file_management_explorer_panel.cpp:518,524 -- search-worker wait result ignored; base teardown can delete running AdvancedSearchWorker. Fix: check wait / derived join.
-- [ ] B3-06 [HIGH] src/core/diagnostic_controller.cpp:309-323 + include/sak/cpu_benchmark_worker.h:39 -- four benchmark worker waits unchecked; live workers lose derived state before base shutdown. Fix: check waits; derived join.
+- [x] B3-01 [HIGH] src/threading/worker_base.cpp -- SYSTEMIC ROOT FIXED: added protected idempotent WorkerBase::stopAndJoin(); ~WorkerBase calls it as last resort. Every WorkerBase subclass now calls stopAndJoin() in its OWN destructor (before its members are freed), eliminating the base-join-too-late UAF class.
+- [x] B3-02 [MED] src/threading/worker_base.cpp:42 -- run() no longer clears m_stop_requested (a requestStop between start() and run-entry is no longer lost; defaults false at construction).
+- [x] B3-03 [HIGH] include/sak/advanced_search_worker.h -- ~AdvancedSearchWorker now { stopAndJoin(); }.
+- [x] B3-04 [HIGH] include/sak/organizer_worker.h -- ~OrganizerWorker now { stopAndJoin(); }.
+- [x] B3-05 [HIGH] AdvancedSearchWorker derived join (B3-03) covers the file_management_explorer_panel path (panel deletes the worker whose dtor now joins).
+- [x] B3-06 [HIGH] include/sak/{cpu,memory,disk}_benchmark_worker.h + stress_test_worker.h + uninstall_worker.h + cleanup_worker.h + file_explorer_{archive,transfer}_worker.h -- all now { stopAndJoin(); }. duplicate_finder/network_probe/partition_apply_worker already joined in prior work. B4-02 (flash_worker) also fixed here: ~FlashWorker now stopAndJoin() before closeDevice().
 - [ ] B3-07 [CRIT] src/gui/app_installation_panel_actions.cpp:79,386 + app_installation_panel.cpp:99 -- QtConcurrent::run jobs capture raw this; dtor neither cancels nor joins search futures -> deref freed this/m_choco_manager. Fix: track+cancel/join futures or QPointer guard.
 - [ ] B3-08 [HIGH] src/core/quick_action_controller.cpp:112,116,251,410 -- deleteLater on running QThread on wait-timeout; m_actions freed while thread executes; require_confirmation discarded; same action scanned+executed concurrently (failed moveToThread + state race). Fix: join before delete; honor confirmation; serialize action.
 - [ ] B3-09 [HIGH] src/core/network_diagnostic_controller.cpp:167,176,1281 -- timed-out ops force-terminated, second wait unchecked, thread deleted while running; cancel() misses LAN upload/adapter/report. Fix: extend cancel coverage; check waits.

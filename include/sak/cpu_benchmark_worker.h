@@ -36,7 +36,9 @@ public:
     /// @brief Construct a CpuBenchmarkWorker
     /// @param parent Parent QObject
     explicit CpuBenchmarkWorker(QObject* parent = nullptr);
-    ~CpuBenchmarkWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~CpuBenchmarkWorker() override { stopAndJoin(); }
 
     /// @brief Get the result from the last completed benchmark
     /// @return Benchmark result (valid only after benchmarkComplete signal)

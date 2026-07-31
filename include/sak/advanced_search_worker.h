@@ -41,7 +41,9 @@ public:
     /// @param parent Optional parent QObject
     explicit AdvancedSearchWorker(SearchConfig config, QObject* parent = nullptr);
 
-    ~AdvancedSearchWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~AdvancedSearchWorker() override { stopAndJoin(); }
 
     // Disable copy/move (inherited from WorkerBase)
     AdvancedSearchWorker(const AdvancedSearchWorker&) = delete;

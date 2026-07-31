@@ -38,7 +38,9 @@ public:
                              ScanLevel scanLevel,
                              bool createRestorePoint = true,
                              QObject* parent = nullptr);
-    ~UninstallWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~UninstallWorker() override { stopAndJoin(); }
 
     UninstallWorker(const UninstallWorker&) = delete;
     UninstallWorker& operator=(const UninstallWorker&) = delete;

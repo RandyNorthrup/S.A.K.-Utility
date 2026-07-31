@@ -34,7 +34,9 @@ public:
     explicit CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                            bool useRecycleBin = false,
                            QObject* parent = nullptr);
-    ~CleanupWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~CleanupWorker() override { stopAndJoin(); }
 
     CleanupWorker(const CleanupWorker&) = delete;
     CleanupWorker& operator=(const CleanupWorker&) = delete;

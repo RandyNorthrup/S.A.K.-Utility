@@ -70,6 +70,11 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
 }
 
 FlashWorker::~FlashWorker() {
+    // Join the flash thread BEFORE closing the device or freeing the image source.
+    // ~WorkerBase joins too late (after these members are gone), so on a coordinator
+    // wait-timeout a still-running execute() would touch a closed handle / freed
+    // source -> use-after-free and corrupted media. stopAndJoin() is idempotent.
+    stopAndJoin();
     closeDevice();
 }
 
