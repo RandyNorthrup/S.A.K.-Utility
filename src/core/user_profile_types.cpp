@@ -201,6 +201,7 @@ QJsonObject UserProfile::toJson() const {
     obj["sid"] = sid;
     obj["profile_path"] = profile_path;
     obj["is_current_user"] = is_current_user;
+    obj["is_selected"] = is_selected;  // UI selection state was lost on round-trip (B7-34)
     obj["total_size_estimated"] = static_cast<double>(total_size_estimated);
 
     QJsonArray selections;
@@ -218,6 +219,7 @@ UserProfile UserProfile::fromJson(const QJsonObject& json) {
     profile.sid = json["sid"].toString();
     profile.profile_path = json["profile_path"].toString();
     profile.is_current_user = json["is_current_user"].toBool();
+    profile.is_selected = json["is_selected"].toBool();
     profile.total_size_estimated = qint64FromJson(json, "total_size_estimated");
 
     QJsonArray selections = json["folder_selections"].toArray();

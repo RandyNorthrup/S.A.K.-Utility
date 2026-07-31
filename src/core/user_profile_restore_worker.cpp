@@ -151,6 +151,8 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     m_filesRestored = 0;
     m_filesSkipped = 0;
     m_filesErrored = 0;
+    m_lastProgressFileCount = 0;
+    m_lastProgressByteCount = 0;
 
     start();
 }
@@ -739,15 +741,12 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
     Q_ASSERT(bytesAdded >= 0);
     m_bytesRestored += bytesAdded;
 
-    static int lastFileCount = 0;
-    static qint64 lastByteCount = 0;
-
-    if (m_filesRestored - lastFileCount >= kRestoreProgressFileInterval ||
-        m_bytesRestored - lastByteCount >= kRestoreProgressByteInterval) {
+    if (m_filesRestored - m_lastProgressFileCount >= kRestoreProgressFileInterval ||
+        m_bytesRestored - m_lastProgressByteCount >= kRestoreProgressByteInterval) {
         Q_EMIT fileProgress(m_filesRestored, m_totalFilesToRestore);
 
-        lastFileCount = m_filesRestored;
-        lastByteCount = m_bytesRestored;
+        m_lastProgressFileCount = m_filesRestored;
+        m_lastProgressByteCount = m_bytesRestored;
     }
 }
 

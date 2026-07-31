@@ -180,6 +180,13 @@ private:
     int m_filesSkipped{0};
     int m_filesErrored{0};
     int m_filesElevationSkipped{0};
+    // Progress-throttle watermarks. Members, not function-static locals, so two
+    // worker instances (or a reused one) never share/race the throttle state (B7-34).
+    int m_lastProgressFileCount{0};
+    qint64 m_lastProgressByteCount{0};
+    // profile_path of the user currently being backed up, so smart-filter exclusion
+    // rules key on the RIGHT user's profile instead of always m_users[0] (B7-34).
+    QString m_currentUserProfile;
 
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};

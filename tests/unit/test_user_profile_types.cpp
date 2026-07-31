@@ -76,6 +76,7 @@ private Q_SLOTS:
         profile.sid = "S-1-5-21-123456789";
         profile.profile_path = "X:\\Profiles\\TestUser";
         profile.is_current_user = true;
+        profile.is_selected = true;  // was dropped on round-trip (B7-34)
 
         QJsonObject json = profile.toJson();
         UserProfile restored = UserProfile::fromJson(json);
@@ -84,6 +85,7 @@ private Q_SLOTS:
         QCOMPARE(restored.sid, profile.sid);
         QCOMPARE(restored.profile_path, profile.profile_path);
         QCOMPARE(restored.is_current_user, profile.is_current_user);
+        QCOMPARE(restored.is_selected, profile.is_selected);
     }
 
     // --- SmartFilter ---

@@ -92,6 +92,9 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_filesSkipped = 0;
     m_filesErrored = 0;
     m_filesElevationSkipped = 0;
+    m_lastProgressFileCount = 0;
+    m_lastProgressByteCount = 0;
+    m_currentUserProfile.clear();
 
     // Apply filter settings
     m_fileFilter->setRules(smartFilter);
@@ -117,6 +120,14 @@ void UserProfileBackupWorker::run() {
         Q_EMIT logMessage(tr("Encrypted backup is not supported; aborting"), true);
         Q_EMIT backupComplete(false, tr("Encrypted backup is not supported"), m_manifest);
         return;
+    }
+
+    // Compression is offered in the wizard but this worker copies files verbatim.
+    // An uncompressed backup is still valid, so don't abort -- but surface the gap so
+    // the user is not misled into believing the output is compressed (B7-34).
+    if (m_compressionLevel > 0) {
+        Q_EMIT logMessage(tr("Note: compression is not applied; files are copied uncompressed."),
+                          true);
     }
 
     // Validate inputs
@@ -227,6 +238,8 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
 bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString& userBackupPath) {
     Q_ASSERT(!userBackupPath.isEmpty());
+    // Filter exclusion rules are keyed on THIS user's profile path (B7-34).
+    m_currentUserProfile = user.profile_path;
     // Create user backup directory
     QDir dir;
     if (!dir.mkpath(userBackupPath)) {
@@ -316,7 +329,7 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
     Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     // Check if folder should be excluded
     QFileInfo sourceDirInfo(sourceDir);
-    QString currentUserProfile = m_users.isEmpty() ? QString() : m_users[0].profile_path;
+    const QString& currentUserProfile = m_currentUserProfile;
 
     if (m_fileFilter->shouldExcludeFolder(sourceDirInfo, currentUserProfile)) {
         QString reason = m_fileFilter->getExclusionReason(sourceDirInfo);
@@ -388,7 +401,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     Q_ASSERT_X(!destPath.isEmpty(), "copyFileWithFiltering", "destPath must not be empty");
     Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
     QFileInfo sourceInfo(sourcePath);
-    QString currentUserProfile = m_users.isEmpty() ? QString() : m_users[0].profile_path;
+    const QString& currentUserProfile = m_currentUserProfile;
 
     // Apply smart filtering
     if (m_fileFilter->shouldExcludeFile(sourceInfo, currentUserProfile)) {
@@ -570,19 +583,16 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
     Q_ASSERT(bytesAdded >= 0);
     m_bytesCopied += bytesAdded;
 
-    static int lastFileCount = 0;
-    static qint64 lastByteCount = 0;
-
-    if (m_filesCopied - lastFileCount >= kProgressEmitFileInterval ||
-        m_bytesCopied - lastByteCount >= kProgressEmitByteInterval) {
+    if (m_filesCopied - m_lastProgressFileCount >= kProgressEmitFileInterval ||
+        m_bytesCopied - m_lastProgressByteCount >= kProgressEmitByteInterval) {
         int currentUser = 0, totalUsers = 0;
         countSelectedUsers(currentUser, totalUsers);
 
         Q_EMIT overallProgress(currentUser, totalUsers, m_bytesCopied, m_totalBytesToCopy);
         Q_EMIT fileProgress(m_filesCopied, m_totalFilesToCopy);
 
-        lastFileCount = m_filesCopied;
-        lastByteCount = m_bytesCopied;
+        m_lastProgressFileCount = m_filesCopied;
+        m_lastProgressByteCount = m_bytesCopied;
     }
 }
 

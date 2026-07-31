@@ -188,6 +188,10 @@ private:
     int m_filesRestored{0};
     int m_filesSkipped{0};
     int m_filesErrored{0};
+    // Progress-throttle watermarks as members, not function-static locals, so two
+    // restore instances never share/race the throttle state (B7-34).
+    int m_lastProgressFileCount{0};
+    qint64 m_lastProgressByteCount{0};
 
     // Instances
     SmartFileFilter* m_fileFilter;
