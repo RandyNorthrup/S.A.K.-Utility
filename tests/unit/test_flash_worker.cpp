@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <QtTest>
 
+#include <limits>
 #include <memory>
 
 // ===========================================================================
@@ -117,6 +118,15 @@ private slots:
     void padToSectorSizePads4Kn();
     void padToSectorSizeAlreadyAligned4Kn();
     void padToSectorSizeRejectsBogusSectorSize();
+
+    // ---- B4-04/06: device-capacity fit + sector-aligned read length ----
+    void alignUpToSectorSizeAlreadyAligned();
+    void alignUpToSectorSizeRoundsUp();
+    void alignUpToSectorSizeRejectsBogusSectorSize();
+    void alignUpToSectorSizeRejectsOverflow();
+    void imageFitsDeviceUnderAndExact();
+    void imageFitsDeviceRejectsOversize();
+    void imageFitsDeviceUnknownCapacityAllows();
 };
 
 // ===========================================================================
@@ -382,6 +392,54 @@ void FlashWorkerTests::padToSectorSizeRejectsBogusSectorSize() {
     qint64 bytesRead = 500;
     QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, 0));
     QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, -512));
+}
+
+// ===========================================================================
+// B4-04 / B4-06: an unbuffered device read length must be sector-aligned, and
+// an oversized image must be rejected before the write clobbers the device.
+// ===========================================================================
+
+void FlashWorkerTests::alignUpToSectorSizeAlreadyAligned() {
+    QCOMPARE(FlashWorker::alignUpToSectorSize(4096, 512), static_cast<qint64>(4096));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(0, 512), static_cast<qint64>(0));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(8192, 4096), static_cast<qint64>(8192));
+}
+
+void FlashWorkerTests::alignUpToSectorSizeRoundsUp() {
+    QCOMPARE(FlashWorker::alignUpToSectorSize(513, 512), static_cast<qint64>(1024));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(1, 512), static_cast<qint64>(512));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(4097, 4096), static_cast<qint64>(8192));
+}
+
+void FlashWorkerTests::alignUpToSectorSizeRejectsBogusSectorSize() {
+    QCOMPARE(FlashWorker::alignUpToSectorSize(1024, 0), static_cast<qint64>(-1));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(1024, -512), static_cast<qint64>(-1));
+    QCOMPARE(FlashWorker::alignUpToSectorSize(-1, 512), static_cast<qint64>(-1));
+}
+
+void FlashWorkerTests::alignUpToSectorSizeRejectsOverflow() {
+    // (max/512) sectors already occupy the whole range; rounding a non-aligned
+    // value above that must fail rather than wrap negative.
+    const qint64 huge = std::numeric_limits<qint64>::max() - 1;
+    QCOMPARE(FlashWorker::alignUpToSectorSize(huge, 512), static_cast<qint64>(-1));
+}
+
+void FlashWorkerTests::imageFitsDeviceUnderAndExact() {
+    QVERIFY(FlashWorker::imageFitsDevice(1000, 2000));  // fits
+    QVERIFY(FlashWorker::imageFitsDevice(2000, 2000));  // exact fit
+    QVERIFY(FlashWorker::imageFitsDevice(0, 0));        // empty image on empty device
+}
+
+void FlashWorkerTests::imageFitsDeviceRejectsOversize() {
+    QVERIFY(!FlashWorker::imageFitsDevice(2001, 2000));
+    QVERIFY(!FlashWorker::imageFitsDevice(1LL << 40, (1LL << 40) - 1));
+}
+
+void FlashWorkerTests::imageFitsDeviceUnknownCapacityAllows() {
+    // A device whose capacity cannot be queried (-1) is allowed through:
+    // best-effort, the raw write fails safely at the device boundary.
+    QVERIFY(FlashWorker::imageFitsDevice(1LL << 40, -1));
+    QVERIFY(FlashWorker::imageFitsDevice(0, -1));
 }
 
 // ===========================================================================

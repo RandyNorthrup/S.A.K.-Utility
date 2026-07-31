@@ -4,6 +4,7 @@
 #include "sak/flash_coordinator.h"
 
 #include <QSignalSpy>
+#include <QTemporaryFile>
 #include <QTest>
 
 /**
@@ -35,6 +36,7 @@ private Q_SLOTS:
 
     // ── startFlash guards ───────────────────────────────────
     void testStartFlashEmptyDrives();
+    void testStartFlashRejectsDuplicateTargets();
     void testCancelWhenIdle();
 
 private:
@@ -113,6 +115,30 @@ void TestFlashCoordinator::testStartFlashEmptyDrives() {
     bool result = m_coord->startFlash("C:/test.iso", QStringList{});
     QVERIFY(!result);
     QVERIFY(spy.count() >= 1);
+}
+
+void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
+    // Two workers writing the SAME physical disk concurrently corrupt each
+    // other. A real (readable) image is needed so validateImagePath passes and
+    // execution reaches the duplicate-target guard in validateTargets.
+    QTemporaryFile img;
+    QVERIFY(img.open());
+    img.write("dummy image payload");
+    img.flush();
+
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
+    const QString drive = QStringLiteral("\\\\.\\PhysicalDrive99");
+    const bool result = m_coord->startFlash(img.fileName(), QStringList{drive, drive});
+
+    QVERIFY(!result);
+    bool sawDuplicate = false;
+    for (const QList<QVariant>& args : spy) {
+        if (!args.isEmpty() &&
+            args.first().toString().contains(QStringLiteral("Duplicate"), Qt::CaseInsensitive)) {
+            sawDuplicate = true;
+        }
+    }
+    QVERIFY2(sawDuplicate, "expected a Duplicate target device flashError");
 }
 
 void TestFlashCoordinator::testCancelWhenIdle() {

@@ -10,6 +10,7 @@
 #include "sak/logger.h"
 
 #include <QMutexLocker>
+#include <QSet>
 #include <QThread>
 
 #include <vector>
@@ -64,6 +65,21 @@ bool physicalDriveHostsSystemVolume(int driveNumber) {
         }
     }
     return false;
+}
+
+// Returns the first target path that appears more than once (case-insensitive,
+// since Windows device paths are not case-sensitive), or an empty string if all
+// targets are distinct.
+QString firstDuplicateTarget(const QStringList& targetDrives) {
+    QSet<QString> seen;
+    for (const QString& devicePath : targetDrives) {
+        const QString key = devicePath.trimmed().toLower();
+        if (seen.contains(key)) {
+            return devicePath;
+        }
+        seen.insert(key);
+    }
+    return QString();
 }
 }  // namespace
 
@@ -427,72 +443,86 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
 
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
     Q_ASSERT(!targetDrives.isEmpty());
-    // cppcheck-suppress useStlAlgorithm ; early-return with per-device error reporting
-    for (const QString& devicePath : targetDrives) {
-        // Open device handle to verify it exists and is accessible
-        HANDLE hDevice = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
-                                     GENERIC_READ,
-                                     FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                     nullptr,
-                                     OPEN_EXISTING,
-                                     0,
-                                     nullptr);
 
-        if (hDevice == INVALID_HANDLE_VALUE) {
-            DWORD error = GetLastError();
-            sak::logError(QString("Failed to open device %1: Error %2")
-                              .arg(devicePath)
-                              .arg(error)
-                              .toStdString());
-            Q_EMIT flashError(
-                QString("Cannot access device %1. Error: %2").arg(devicePath).arg(error));
-            return false;
-        }
-
-        // Get device geometry to verify it's a valid disk
-        DISK_GEOMETRY geometry;
-        DWORD bytesReturned = 0;
-        if (!DeviceIoControl(hDevice,
-                             IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                             nullptr,
-                             0,
-                             &geometry,
-                             sizeof(geometry),
-                             &bytesReturned,
-                             nullptr)) {
-            DWORD error = GetLastError();
-            CloseHandle(hDevice);
-            sak::logError(QString("Failed to get geometry for %1: Error %2")
-                              .arg(devicePath)
-                              .arg(error)
-                              .toStdString());
-            Q_EMIT flashError(
-                QString("Device %1 is not a valid disk. Error: %2").arg(devicePath).arg(error));
-            return false;
-        }
-
-        CloseHandle(hDevice);
-
-        // Engine-level safety gate: never raw-write the current OS disk. Parse
-        // the physical drive number and refuse if it backs the system volume.
-        QString driveNumStr = devicePath;
-        const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
-        driveNumStr.remove(
-            0, driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
-        bool numOk = false;
-        const int driveNumber = driveNumStr.toInt(&numOk);
-        if (numOk && physicalDriveHostsSystemVolume(driveNumber)) {
-            sak::logError(QString("Refusing raw write to %1: it backs the OS system volume")
-                              .arg(devicePath)
-                              .toStdString());
-            Q_EMIT flashError(
-                QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
-            return false;
-        }
-
-        sak::logInfo(QString("Validated device: %1").arg(devicePath).toStdString());
+    // Reject duplicate target paths: two workers writing the SAME physical disk
+    // concurrently interleave their raw writes and corrupt each other.
+    const QString duplicate = firstDuplicateTarget(targetDrives);
+    if (!duplicate.isEmpty()) {
+        sak::logError(QString("Duplicate target device rejected: %1").arg(duplicate).toStdString());
+        Q_EMIT flashError(QString("Duplicate target device: %1").arg(duplicate));
+        return false;
     }
 
+    // cppcheck-suppress useStlAlgorithm ; early-return with per-device error reporting
+    for (const QString& devicePath : targetDrives) {
+        if (!validateSingleTarget(devicePath)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
+    // Open device handle to verify it exists and is accessible
+    HANDLE hDevice = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
+                                 GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 nullptr,
+                                 OPEN_EXISTING,
+                                 0,
+                                 nullptr);
+
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        sak::logError(
+            QString("Failed to open device %1: Error %2").arg(devicePath).arg(error).toStdString());
+        Q_EMIT flashError(QString("Cannot access device %1. Error: %2").arg(devicePath).arg(error));
+        return false;
+    }
+
+    // Get device geometry to verify it's a valid disk
+    DISK_GEOMETRY geometry;
+    DWORD bytesReturned = 0;
+    if (!DeviceIoControl(hDevice,
+                         IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                         nullptr,
+                         0,
+                         &geometry,
+                         sizeof(geometry),
+                         &bytesReturned,
+                         nullptr)) {
+        DWORD error = GetLastError();
+        CloseHandle(hDevice);
+        sak::logError(QString("Failed to get geometry for %1: Error %2")
+                          .arg(devicePath)
+                          .arg(error)
+                          .toStdString());
+        Q_EMIT flashError(
+            QString("Device %1 is not a valid disk. Error: %2").arg(devicePath).arg(error));
+        return false;
+    }
+
+    CloseHandle(hDevice);
+
+    // Engine-level safety gate: never raw-write the current OS disk. Parse the
+    // physical drive number and refuse if it backs the system volume.
+    QString driveNumStr = devicePath;
+    const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
+    driveNumStr.remove(0,
+                       driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
+    bool numOk = false;
+    const int driveNumber = driveNumStr.toInt(&numOk);
+    if (numOk && physicalDriveHostsSystemVolume(driveNumber)) {
+        sak::logError(QString("Refusing raw write to %1: it backs the OS system volume")
+                          .arg(devicePath)
+                          .toStdString());
+        Q_EMIT flashError(
+            QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
+        return false;
+    }
+
+    sak::logInfo(QString("Validated device: %1").arg(devicePath).toStdString());
     return true;
 }
 
@@ -574,11 +604,21 @@ void FlashCoordinator::cleanupWorkers() {
         sak::logInfo("Requesting worker thread to stop...");
         worker->requestStop();
 
-        if (!worker->wait(kWorkerShutdownTimeoutMs)) {
-            sak::logError("Worker thread did not stop within 15s -- potential resource leak");
-        } else {
+        if (worker->wait(kWorkerShutdownTimeoutMs)) {
             sak::logInfo("Worker thread stopped gracefully");
+            continue;
         }
+
+        // Refuse-to-stop (wedged in a long WriteFile). Do NOT destroy it here:
+        // ~FlashWorker would terminate() a live raw-disk write -> corrupted media
+        // and a leaked handle. Detach it as a bounded, intentional leak so it
+        // finishes its current write and self-cleans, instead of being killed
+        // mid-write.
+        sak::logError(
+            "Worker thread did not stop within 15s -- detaching (bounded leak) "
+            "to avoid terminating a live disk write");
+        worker->setParent(nullptr);
+        static_cast<void>(worker.release());
     }
 
     m_workers.clear();

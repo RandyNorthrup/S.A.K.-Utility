@@ -137,6 +137,24 @@ public:
                                               qint64& bytesRead,
                                               qint64 sectorSize);
 
+    /// @brief Round a byte count up to a whole multiple of the sector size.
+    /// @param bytes Byte count to align (must be >= 0).
+    /// @param sectorSize Device logical sector size (> 0).
+    /// @return The aligned length, or -1 on a bogus sector size, a negative
+    ///         input, or a multiply overflow.
+    /// @note Unbuffered raw-device reads must be a whole multiple of the logical
+    ///       sector size; a short read length is rejected by ReadFile.
+    [[nodiscard]] static qint64 alignUpToSectorSize(qint64 bytes, qint64 sectorSize);
+
+    /// @brief Does an image fit on the target device?
+    /// @param imageBytes Total image size in bytes.
+    /// @param deviceBytes Device capacity in bytes, or < 0 when it cannot be
+    ///        queried.
+    /// @return false ONLY when the capacity is known and the image exceeds it.
+    ///         An unknown capacity (deviceBytes < 0) returns true -- best-effort,
+    ///         since the raw write itself fails safely at the device boundary.
+    [[nodiscard]] static bool imageFitsDevice(qint64 imageBytes, qint64 deviceBytes);
+
 Q_SIGNALS:
     /**
      * @brief Emitted periodically during write
@@ -179,18 +197,33 @@ private:
     bool openDevice();
     void closeDevice();
     void cleanupFlashResources();
+    /// @brief Fail-closed capacity gate: emits error()+cleans up and returns
+    ///        false when the image is larger than the (known) device capacity.
+    bool ensureImageFitsTarget();
+    /// @brief Best-effort lock+dismount; non-fatal (coordinator owns the
+    ///        authoritative fail-closed dismount before the worker starts).
+    void lockAndDismountBestEffort();
     bool lockVolume();
     bool unlockVolume();
     bool dismountVolume();
 
     bool writeImage();
+    /// @brief Flush + fail-closed completeness check after the write loop.
+    bool finalizeWrite();
     bool writeChunk(const QByteArray& buffer, qint64 bytesRead);
     bool prepareSourceChecksum();
     /// @brief Query the target's logical sector size (IOCTL_DISK_GET_DRIVE_GEOMETRY)
     /// @note Sets m_sectorSize; keeps the 512-byte default if the query fails
     void queryDeviceSectorSize();
+    /// @brief Query the target device's total capacity (IOCTL_DISK_GET_LENGTH_INFO)
+    /// @return Capacity in bytes, or -1 if it cannot be determined
+    qint64 queryDeviceCapacity();
     bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) const;
     sak::ValidationResult verifyImage();
+    /// @brief Whole-image compare for images smaller than one sample block
+    /// @note Fail-closed: mutates @p result to passed=false on any read failure
+    ///       or byte mismatch, rather than auto-passing with nothing compared.
+    void verifySmallImage(sak::ValidationResult& result);
     QString calculateChecksum(HANDLE handle, qint64 size);
     sak::ValidationResult verifyFull();
     sak::ValidationResult verifySample();
@@ -208,6 +241,15 @@ private:
                            const VerifyBlocksConfig& config,
                            QByteArray& sourceBuffer,
                            QByteArray& targetBuffer);
+    /// @brief Read one block back from the device at @p offset_bytes and compare
+    ///        it to @p sourceBuffer. Fails closed on a short device read.
+    /// @return true if the block was fully read back (counts as a verified
+    ///         sample, match or mismatch); false if it must be skipped.
+    bool compareDeviceBlock(sak::ValidationResult& result,
+                            qint64 offset_bytes,
+                            qint64 compareLen,
+                            const QByteArray& sourceBuffer,
+                            QByteArray& targetBuffer);
 
     void updateProgress(qint64 bytesWritten);
     void updateSpeed(qint64 bytesWritten);

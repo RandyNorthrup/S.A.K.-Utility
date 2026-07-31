@@ -241,6 +241,9 @@ private:
     bool unmountAndFlash(const QString& imagePath, const QStringList& targetDrives);
 
     bool validateTargets(const QStringList& targetDrives);
+    /// @brief Validate one target device (accessible, valid disk, not the OS disk).
+    /// @note Emits flashError() on rejection.
+    bool validateSingleTarget(const QString& devicePath);
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();
     /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at
