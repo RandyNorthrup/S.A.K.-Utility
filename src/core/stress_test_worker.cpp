@@ -181,6 +181,18 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
+int StressTestWorker::resolveCpuThreadCount(int configThreads, unsigned int hwConcurrency) {
+    if (configThreads > 0) {
+        return configThreads;
+    }
+    // configThreads <= 0 means "use all logical CPUs". hardware_concurrency()
+    // returns 0 when it cannot detect the count -- fall back to one worker so a
+    // requested CPU stress never launches zero threads (which would silently
+    // skip the component yet still report PASSED).
+    const int detected = static_cast<int>(hwConcurrency);
+    return detected > 0 ? detected : 1;
+}
+
 bool StressTestWorker::computeStressPassed(const StressTestResult& result) {
     // Disk-stress failures are recorded in disk_errors but never feed errors_detected, so a total
     // disk-write failure previously still reported PASSED. Fail closed on any recorded error.
@@ -191,9 +203,11 @@ bool StressTestWorker::computeStressPassed(const StressTestResult& result) {
 
 void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futures) {
     if (m_config.stress_cpu) {
-        const int threads = m_config.cpu_threads > 0
-                                ? m_config.cpu_threads
-                                : static_cast<int>(std::thread::hardware_concurrency());
+        // resolveCpuThreadCount() guarantees >= 1: hardware_concurrency() can
+        // report 0, which previously launched zero threads -- a requested CPU
+        // stress that silently did nothing yet still reported PASSED.
+        const int threads = resolveCpuThreadCount(m_config.cpu_threads,
+                                                  std::thread::hardware_concurrency());
 
         for (int thread_index = 0; thread_index < threads; ++thread_index) {
             futures.push_back(std::async(std::launch::async, [this]() { runCpuStress(); }));
@@ -363,8 +377,12 @@ int StressTestWorker::runMemoryStress() {
 
     auto* data = allocateStressMemory(alloc_size);
     if (!data) {
-        logError("Memory stress: allocation failed");
-        return 0;
+        // A requested memory stress that could not allocate did NO work: count it
+        // as one error (the caller folds this into errors_detected) so a memory
+        // component that never ran cannot report PASSED. Return before any
+        // pattern test, so memory_pattern_errors stays a pure mismatch count.
+        logError("Memory stress: allocation failed -- marking memory stress failed");
+        return 1;
     }
 
     const size_t count = alloc_size / sizeof(uint64_t);
@@ -466,7 +484,11 @@ void StressTestWorker::runDiskStress() {
     // Allocate aligned buffer
     auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
     if (!buf) {
-        logError("Disk stress: buffer allocation failed");
+        // Requested disk stress that could not allocate its buffer did no work:
+        // record a disk error so the run cannot report PASSED (mirrors the
+        // could-not-claim-file guard above).
+        logError("Disk stress: buffer allocation failed -- marking disk stress failed");
+        m_result.disk_errors = 1;
         DeleteFileW(wpath.c_str());  // remove the file we just claimed
         return;
     }
@@ -802,20 +824,21 @@ void StressTestWorker::runGpuStress() {
 #ifdef SAK_PLATFORM_WINDOWS
     GpuStressContext ctx;
 
-    if (!initGpuDevice(ctx)) {
-        return;
-    }
-    if (!compileGpuShader(ctx)) {
-        return;
-    }
-    if (!createGpuUavBuffer(ctx)) {
+    // A requested GPU stress that cannot initialize (no D3D11 device, shader
+    // compile/create, or UAV buffer) did no work: record a GPU error so the run
+    // cannot report PASSED. Previously each init failure returned silently.
+    if (!initGpuDevice(ctx) || !compileGpuShader(ctx) || !createGpuUavBuffer(ctx)) {
+        logError("GPU stress: initialization failed -- marking GPU stress failed");
+        m_result.gpu_errors = 1;
         return;
     }
 
     runGpuDispatchLoop(ctx);
     // ~GpuStressContext releases all D3D11 resources
 #else
-    logWarning("GPU stress: not supported on this platform");
+    // Requested but unsupported here -> not a pass.
+    logWarning("GPU stress: not supported on this platform -- marking GPU stress failed");
+    m_result.gpu_errors = 1;
 #endif
 }
 

@@ -30,6 +30,9 @@ private Q_SLOTS:
     void computeStressPassed_memoryErrors_fails();
     void computeStressPassed_gpuErrors_fails();
     void computeStressPassed_abortReason_fails();
+    // B5-13: a requested component that could not run must not report PASSED.
+    void computeStressPassed_errorsDetected_fails();
+    void resolveCpuThreadCount_neverZero();
 };
 
 void TestStressTestWorker::construction_default() {
@@ -172,6 +175,27 @@ void TestStressTestWorker::computeStressPassed_abortReason_fails() {
     result.errors_detected = 0;
     result.abort_reason = "thermal limit exceeded";
     QVERIFY(!StressTestWorker::computeStressPassed(result));
+}
+
+// B5-13: a memory allocation failure folds into errors_detected; the verdict
+// must fail closed on it (the memory component never actually ran).
+void TestStressTestWorker::computeStressPassed_errorsDetected_fails() {
+    StressTestResult result;
+    result.errors_detected = 1;
+    QVERIFY(!StressTestWorker::computeStressPassed(result));
+}
+
+// B5-13: hardware_concurrency() can report 0; a requested CPU stress must still
+// launch at least one thread rather than skipping the component and passing.
+void TestStressTestWorker::resolveCpuThreadCount_neverZero() {
+    // Explicit positive request is honored verbatim.
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(4, 8), 4);
+    // "All CPUs" (<=0) uses the detected count when known.
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(0, 8), 8);
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(-1, 8), 8);
+    // Detection failure (0) must never yield 0 threads -> clamp to 1.
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(0, 0), 1);
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(-5, 0), 1);
 }
 
 QTEST_MAIN(TestStressTestWorker)

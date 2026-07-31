@@ -68,6 +68,14 @@ public:
     ///          errors_detected, so they must be checked here for the verdict to be authoritative.
     [[nodiscard]] static bool computeStressPassed(const StressTestResult& result);
 
+    /// @brief Resolve the number of CPU stress worker threads to launch.
+    /// @param configThreads requested count; <= 0 means "use all logical CPUs".
+    /// @param hwConcurrency std::thread::hardware_concurrency() (0 if unknown).
+    /// @return at least 1. A requested CPU stress must never launch zero threads
+    ///         -- that would skip the component while still reporting PASSED.
+    /// @note Pure + static for unit testing.
+    [[nodiscard]] static int resolveCpuThreadCount(int configThreads, unsigned int hwConcurrency);
+
 Q_SIGNALS:
     /// @brief Emitted when the stress test completes (or is aborted)
     /// @param result Complete stress test results
