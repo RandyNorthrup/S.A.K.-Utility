@@ -2028,6 +2028,42 @@ private Q_SLOTS:
         QVERIFY2(after.isEmpty(), qPrintable(after.join(QStringLiteral(", "))));
     }
 
+    void compressRefusesToClobberExistingArchive() {
+        // B8-07 (already remediated by B6-19/20 exclusive-create): compressToZip must
+        // never truncate a file that already occupies the archive path, and its
+        // remove-on-failure must never delete that pre-existing file. Certifies the
+        // NewOnly guard so a re-Compress onto an existing name cannot destroy it.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile payload(root.filePath(QStringLiteral("payload.txt")));
+            QVERIFY(payload.open(QIODevice::WriteOnly));
+            QVERIFY(payload.write("to be archived") > 0);
+        }
+
+        // A precious file already sits where the archive would be written.
+        const QString zip = root.filePath(QStringLiteral("out.zip"));
+        const QByteArray precious = QByteArrayLiteral("PRECIOUS pre-existing archive bytes");
+        {
+            QFile existing(zip);
+            QVERIFY(existing.open(QIODevice::WriteOnly));
+            QCOMPARE(existing.write(precious), static_cast<qint64>(precious.size()));
+        }
+
+        const auto blocked = sak::FileExplorerArchiveService::compressToZip(
+            zip, {root.filePath(QStringLiteral("payload.txt"))});
+        QVERIFY(!blocked.ok);  // refused: the path is occupied
+        QVERIFY(!blocked.blockers.isEmpty());
+
+        // The pre-existing file is byte-for-byte intact -- neither truncated by the
+        // writer nor deleted by the failure cleanup.
+        QVERIFY(QFileInfo(zip).isFile());
+        QFile survivor(zip);
+        QVERIFY(survivor.open(QIODevice::ReadOnly));
+        QCOMPARE(survivor.readAll(), precious);
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not
