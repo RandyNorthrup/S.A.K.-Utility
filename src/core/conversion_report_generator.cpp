@@ -51,28 +51,41 @@ QString ConversionReportGenerator::generateHtmlReport(const OstConversionBatchRe
     return report_path;
 }
 
+QString ConversionReportGenerator::csvSafeCell(const QString& value) {
+    QString cell = value;
+
+    // Formula-injection guard: email subjects/senders/message-ids are attacker-controlled. A cell
+    // a spreadsheet would evaluate as a formula (leading = + - @, or a leading tab/CR that some
+    // parsers strip to reveal one) gets a single-quote prefix so Excel/Calc treat it as text.
+    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r");
+    if (!cell.isEmpty() && kFormulaLeads.contains(cell.at(0))) {
+        cell.prepend(QLatin1Char('\''));
+    }
+
+    // RFC 4180 quoting: wrap and double internal quotes if the cell contains a comma, quote,
+    // newline, or carriage return.
+    static const QString kMustQuote = QStringLiteral(",\"\n\r");
+    const bool needs_quote =
+        std::any_of(cell.cbegin(), cell.cend(), [](QChar c) { return kMustQuote.contains(c); });
+    if (needs_quote) {
+        cell.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+        return QStringLiteral("\"%1\"").arg(cell);
+    }
+    return cell;
+}
+
 int ConversionReportGenerator::writeCsvDataRows(
     QTextStream& out,
     const QVector<PstItemDetail>& items,
     const QVector<QVector<MapiProperty>>& all_properties,
     const QList<QString>& sorted_names) {
-    auto csvEscape = [](const QString& str) -> QString {
-        if (str.contains(QLatin1Char(',')) || str.contains(QLatin1Char('"')) ||
-            str.contains(QLatin1Char('\n'))) {
-            QString escaped = str;
-            escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-            return QStringLiteral("\"%1\"").arg(escaped);
-        }
-        return str;
-    };
-
     int count = qMin(items.size(), all_properties.size());
     for (int i = 0; i < count; ++i) {
         const auto& item = items[i];
 
-        out << item.node_id << "," << csvEscape(item.subject) << "," << csvEscape(item.sender_name)
-            << "," << csvEscape(item.sender_email) << ","
-            << csvEscape(item.date.toString(Qt::ISODate)) << "," << csvEscape(item.message_id);
+        out << item.node_id << "," << csvSafeCell(item.subject) << ","
+            << csvSafeCell(item.sender_name) << "," << csvSafeCell(item.sender_email) << ","
+            << csvSafeCell(item.date.toString(Qt::ISODate)) << "," << csvSafeCell(item.message_id);
 
         const auto& props = all_properties[i];
         QHash<QString, QString> prop_map;
@@ -81,7 +94,7 @@ int ConversionReportGenerator::writeCsvDataRows(
         }
 
         for (const auto& name : sorted_names) {
-            out << "," << csvEscape(prop_map.value(name));
+            out << "," << csvSafeCell(prop_map.value(name));
         }
 
         out << "\n";
@@ -123,7 +136,7 @@ QString ConversionReportGenerator::generateCsvManifest(
     std::sort(sorted_names.begin(), sorted_names.end());
 
     for (const auto& name : sorted_names) {
-        out << "," << name;
+        out << "," << csvSafeCell(name);  // property names come from data -> escape them too
     }
     out << "\n";
 

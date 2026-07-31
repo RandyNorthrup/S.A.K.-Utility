@@ -151,6 +151,62 @@ private Q_SLOTS:
         QVERIFY(content.contains("bad.ost"));
         QVERIFY(content.contains("Corrupted") || content.contains("fail"));
     }
+
+    // ====================================================================
+    // B7-17: CSV cells are attacker-controlled -- neutralize spreadsheet
+    // formula injection and quote per RFC 4180.
+    // ====================================================================
+
+    void csvSafeCell_neutralizesFormulaInjection() {
+        using sak::ConversionReportGenerator;
+        // Leading =/+/-/@ (and tab/CR) get a single-quote prefix so a spreadsheet treats them as
+        // text; a comma also forces quoting around the now-prefixed value.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("=cmd|'/c calc'!A1")),
+                 QStringLiteral("'=cmd|'/c calc'!A1"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("+1+2")),
+                 QStringLiteral("'+1+2"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("-2+3")),
+                 QStringLiteral("'-2+3"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("@SUM(A1)")),
+                 QStringLiteral("'@SUM(A1)"));
+    }
+
+    void csvSafeCell_quotesButDoesNotPrefixSafeText() {
+        using sak::ConversionReportGenerator;
+        // Ordinary text passes through unchanged.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("Hello World")),
+                 QStringLiteral("Hello World"));
+        // A comma forces RFC 4180 quoting; an internal quote is doubled.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("a,b")),
+                 QStringLiteral("\"a,b\""));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("say \"hi\"")),
+                 QStringLiteral("\"say \"\"hi\"\"\""));
+        // Empty stays empty (no prefix).
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QString()), QString());
+    }
+
+    void csvManifest_neutralizesFormulaInSubject() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::PstItemDetail item;
+        item.node_id = 1;
+        item.subject = QStringLiteral("=HYPERLINK(\"http://evil\")");
+        item.sender_email = QStringLiteral("a@b.com");
+        QVector<sak::PstItemDetail> items = {item};
+        QVector<QVector<sak::MapiProperty>> props = {{}};
+
+        const QString path =
+            sak::ConversionReportGenerator::generateCsvManifest(items, props, temp_dir.path());
+        QVERIFY(!path.isEmpty());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray csv = file.readAll();
+        // The dangerous subject must appear single-quote-prefixed and quoted, never as a raw
+        // leading '=' cell.
+        QVERIFY(csv.contains("\"'=HYPERLINK"));
+        QVERIFY(!csv.contains(",=HYPERLINK"));
+    }
 };
 
 QTEST_MAIN(TestConversionReportGenerator)
