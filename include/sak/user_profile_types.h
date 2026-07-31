@@ -141,6 +141,12 @@ struct SmartFilter {
     void initializeDefaults();
     QJsonObject toJson() const;
     static SmartFilter fromJson(const QJsonObject& json);
+
+    /// The registry-hive and lock files that MUST always be excluded from a
+    /// profile backup (copying a live NTUSER.DAT corrupts it / locks the run).
+    /// This set is non-negotiable: initializeDefaults() seeds it and fromJson()
+    /// re-unions it, so no supplied/edited manifest can drop it.
+    [[nodiscard]] static QStringList mandatoryDangerousFiles();
 };
 
 /**

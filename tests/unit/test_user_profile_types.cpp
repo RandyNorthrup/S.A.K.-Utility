@@ -7,6 +7,8 @@
 #include "sak/user_profile_types.h"
 
 #include <QDir>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
@@ -270,6 +272,66 @@ private Q_SLOTS:
         writeFile(b.filePath("name2.txt"), "same");
         QVERIFY(BackupManifest::hashDirectoryTree(a.path()) !=
                 BackupManifest::hashDirectoryTree(b.path()));
+    }
+
+    // --- SmartFilter defaults preservation (B7-14) ---
+
+    void filterFromEmptyJsonKeepsDefaults() {
+        // A missing/empty filter_rules object must degrade to the safe defaults,
+        // not clear them (and must not abort).
+        SmartFilter f = SmartFilter::fromJson(QJsonObject{});
+        for (const QString& mandatory : SmartFilter::mandatoryDangerousFiles()) {
+            QVERIFY2(f.dangerous_files.contains(mandatory, Qt::CaseInsensitive),
+                     qPrintable("missing mandatory exclusion: " + mandatory));
+        }
+        QVERIFY(!f.exclude_patterns.isEmpty());
+        QVERIFY(!f.exclude_folders.isEmpty());
+    }
+
+    void filterEmptyDangerousArrayStillMandatory() {
+        // Even an EXPLICIT empty dangerous_files array cannot drop the mandatory set.
+        QJsonObject json;
+        json["dangerous_files"] = QJsonArray{};
+        SmartFilter f = SmartFilter::fromJson(json);
+        for (const QString& mandatory : SmartFilter::mandatoryDangerousFiles()) {
+            QVERIFY(f.dangerous_files.contains(mandatory, Qt::CaseInsensitive));
+        }
+    }
+
+    void filterCustomDangerousUnionsMandatory() {
+        QJsonObject json;
+        json["dangerous_files"] = QJsonArray{QStringLiteral("custom_secret.dat")};
+        SmartFilter f = SmartFilter::fromJson(json);
+        QVERIFY(f.dangerous_files.contains(QStringLiteral("custom_secret.dat")));
+        QVERIFY(f.dangerous_files.contains(QStringLiteral("NTUSER.DAT"), Qt::CaseInsensitive));
+    }
+
+    void filterSizeDefaultPreservedWhenMissing() {
+        SmartFilter f = SmartFilter::fromJson(QJsonObject{});
+        QCOMPARE(f.max_single_file_size_bytes, kDefaultMaxSingleFileSizeBytes);
+        QCOMPARE(f.max_folder_size_bytes, kDefaultMaxFolderSizeBytes);
+    }
+
+    void filterExplicitListOverridesDefault() {
+        QJsonObject json;
+        json["exclude_folders"] = QJsonArray{QStringLiteral("OnlyThis")};
+        SmartFilter f = SmartFilter::fromJson(json);
+        QCOMPARE(f.exclude_folders, QStringList{QStringLiteral("OnlyThis")});
+    }
+
+    // --- Empty-object fromJson degrades to defaults, never aborts (B7-14) ---
+
+    void emptyJsonDegradesGracefully() {
+        // Previously each of these asserted !json.isEmpty() and aborted in debug.
+        const BackupManifest m = BackupManifest::fromJson(QJsonObject{});
+        QVERIFY(m.users.isEmpty());
+        // filter_rules defaulted -> mandatory exclusions present.
+        QVERIFY(m.filter_rules.dangerous_files.contains(QStringLiteral("NTUSER.DAT"),
+                                                        Qt::CaseInsensitive));
+        const FolderSelection fs = FolderSelection::fromJson(QJsonObject{});
+        QVERIFY(fs.relative_path.isEmpty());
+        const BackupUserData ud = BackupUserData::fromJson(QJsonObject{});
+        QVERIFY(ud.username.isEmpty());
     }
 };
 

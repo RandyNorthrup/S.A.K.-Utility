@@ -55,15 +55,19 @@ InstalledAppInfo InstalledAppInfo::fromJson(const QJsonObject& json) {
 }
 
 
+QStringList SmartFilter::mandatoryDangerousFiles() {
+    return {"NTUSER.DAT",
+            "NTUSER.DAT.LOG1",
+            "NTUSER.DAT.LOG2",
+            "ntuser.ini",
+            "UsrClass.dat",
+            "UsrClass.dat.LOG1",
+            "UsrClass.dat.LOG2"};
+}
+
 void SmartFilter::initializeDefaults() {
     // Dangerous files that MUST be excluded
-    dangerous_files = {"NTUSER.DAT",
-                       "NTUSER.DAT.LOG1",
-                       "NTUSER.DAT.LOG2",
-                       "ntuser.ini",
-                       "UsrClass.dat",
-                       "UsrClass.dat.LOG1",
-                       "UsrClass.dat.LOG2"};
+    dangerous_files = mandatoryDangerousFiles();
 
     // Pattern exclusions (case-insensitive)
     exclude_patterns = {".*\\.tmp$",
@@ -110,12 +114,17 @@ QJsonObject SmartFilter::toJson() const {
 }
 
 SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a missing/malformed "filter_rules" object must degrade to
+    // the safe defaults (which the ctor already seeded), never abort or clear the
+    // mandatory exclusions (B7-14).
     SmartFilter filter;
     filter.enable_file_size_limit = json.value("enable_file_size_limit").toBool(false);
     filter.enable_folder_size_limit = json.value("enable_folder_size_limit").toBool(false);
-    filter.max_single_file_size_bytes = qint64FromJson(json, "max_single_file_size");
-    filter.max_folder_size_bytes = qint64FromJson(json, "max_folder_size");
+    // Preserve the seeded default when the key is absent, rather than zeroing it.
+    filter.max_single_file_size_bytes =
+        qint64FromJson(json, "max_single_file_size", filter.max_single_file_size_bytes);
+    filter.max_folder_size_bytes =
+        qint64FromJson(json, "max_folder_size", filter.max_folder_size_bytes);
 
     auto arrayToStringList = [](const QJsonArray& arr) {
         QStringList list;
@@ -125,9 +134,26 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
         return list;
     };
 
-    filter.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
-    filter.exclude_folders = arrayToStringList(json["exclude_folders"].toArray());
-    filter.dangerous_files = arrayToStringList(json["dangerous_files"].toArray());
+    // Only override a list when the JSON actually carries an array for it; a missing
+    // or non-array value keeps the default so partial/legacy manifests don't clear
+    // the exclusion rules.
+    auto loadListIfPresent = [&](const char* key, QStringList& target) {
+        const QJsonValue value = json.value(QLatin1String(key));
+        if (value.isArray()) {
+            target = arrayToStringList(value.toArray());
+        }
+    };
+    loadListIfPresent("exclude_patterns", filter.exclude_patterns);
+    loadListIfPresent("exclude_folders", filter.exclude_folders);
+    loadListIfPresent("dangerous_files", filter.dangerous_files);
+
+    // dangerous_files are mandatory: re-add any built-in the supplied list omitted so
+    // a hand-edited/hostile manifest can never expose a live registry hive.
+    for (const QString& mandatory : mandatoryDangerousFiles()) {
+        if (!filter.dangerous_files.contains(mandatory, Qt::CaseInsensitive)) {
+            filter.dangerous_files.append(mandatory);
+        }
+    }
 
     return filter;
 }
@@ -146,7 +172,7 @@ QJsonObject FolderSelection::toJson() const {
 }
 
 FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a malformed entry degrades to defaults, never aborts (B7-14).
     FolderSelection sel;
     sel.type = stringToFolderType(json["type"].toString());
     sel.display_name = json["display_name"].toString();
@@ -223,7 +249,7 @@ QJsonObject BackupUserData::toJson() const {
 }
 
 BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a malformed entry degrades to defaults, never aborts (B7-14).
     BackupUserData data;
     data.username = json["username"].toString();
     data.sid = json["sid"].toString();
@@ -302,7 +328,8 @@ QJsonObject BackupManifest::toJson() const {
 }
 
 BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: loadFromFile of a truncated/corrupt manifest yields an
+    // empty object; degrade to an all-default manifest instead of aborting (B7-14).
     BackupManifest manifest;
 
     QJsonObject metadata = json["backup_metadata"].toObject();
