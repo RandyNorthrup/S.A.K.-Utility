@@ -7,6 +7,7 @@
 #include "sak/html_email_writer.h"
 
 #include "sak/email_attachment_saver.h"
+#include "sak/email_html_sanitizer.h"
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/report_style_constants.h"
@@ -196,6 +197,15 @@ QString HtmlEmailWriter::buildHtmlPage(
 
     ts << QStringLiteral("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     ts << QStringLiteral("<meta charset=\"utf-8\">\n");
+    // The body is untrusted email HTML. A strict CSP is the hard guarantee: default-src 'none'
+    // blocks scripts, frames, and ALL remote loads (no tracker/beacon/SSRF on open); img-src data:
+    // permits only the inline data-URI images we embed; style-src 'unsafe-inline' allows our own
+    // <style> and inline style attributes but no remote CSS. Belt-and-suspenders with the body
+    // sanitizer below.
+    ts << QStringLiteral(
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+        "img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; "
+        "form-action 'none'\">\n");
     ts << QStringLiteral(
         "<meta name=\"viewport\" "
         "content=\"width=device-width, initial-scale=1\">\n");
@@ -212,8 +222,10 @@ QString HtmlEmailWriter::buildHtmlPage(
     // Body section
     ts << QStringLiteral("<div class=\"body\">\n");
     if (!item.body_html.isEmpty()) {
+        // Strip active content (script/handlers/js: URIs/framing tags) from the untrusted body
+        // before it is written; the CSP above is the hard backstop for anything that slips past.
+        QString body_html = sanitizeEmailBodyHtml(item.body_html);
         // Embed images inline using data URIs
-        QString body_html = item.body_html;
         for (const auto& [name, data] : attachments) {
             QString mime = detectImageMime(data);
             if (!mime.isEmpty()) {

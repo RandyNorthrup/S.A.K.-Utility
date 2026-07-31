@@ -178,6 +178,48 @@ private Q_SLOTS:
         QVERIFY(QFile::exists(r2.value()));
         QVERIFY(QFile::exists(r3.value()));
     }
+
+    // ====================================================================
+    // B7-06: a hostile body that references a local file (or remote URL) must
+    // render through the resource-denying document -- no disk/network load, no
+    // hang, still a valid PDF. Disclosure prevention itself is via the
+    // loadResource() override; this proves the render path is exercised safely.
+    // ====================================================================
+
+    void hostileBodyRendersWithoutResourceLoad() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        // A "secret" the body tries to pull into the PDF.
+        const QString secret = temp_dir.path() + QStringLiteral("/secret.txt");
+        {
+            QFile f(secret);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("TOP-SECRET-CONTENTS");
+            f.close();
+        }
+
+        sak::PdfEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Exfil");
+        item.sender_email = QStringLiteral("evil@test.com");
+        item.body_html = QStringLiteral(
+                             "<p>See image</p>"
+                             "<img src=\"file:///%1\">"
+                             "<img src=\"http://tracker/beacon.gif\">"
+                             "<script>fetch('http://evil')</script>")
+                             .arg(secret);
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(file.size() > 0);
+        QVERIFY(file.read(5).startsWith("%PDF"));
+    }
 };
 
 QTEST_MAIN(TestPdfEmailWriter)

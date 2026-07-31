@@ -6,6 +6,7 @@
 
 #include "sak/pdf_email_writer.h"
 
+#include "sak/email_html_sanitizer.h"
 #include "sak/report_style_constants.h"
 
 #include <QDateTime>
@@ -19,6 +20,8 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTextDocument>
+#include <QUrl>
+#include <QVariant>
 
 #include <algorithm>
 
@@ -32,6 +35,24 @@ namespace {
 constexpr int kPdfDpi = 300;
 constexpr int kPdfMarginMm = 15;
 constexpr int kMaxSubjectLength = 80;
+
+/// A QTextDocument that refuses to load ANY external resource. An email body's
+/// <img src="file:///C:/secret"> (or a relative/UNC/remote ref) would otherwise be resolved by
+/// QTextDocument::loadResource and its bytes embedded into the rendered PDF -- a local-file
+/// disclosure. Only self-contained data: URIs are allowed through; everything else returns empty,
+/// so no disk or network access ever happens during rendering.
+class ResourceDenyingTextDocument : public QTextDocument {
+public:
+    using QTextDocument::QTextDocument;
+
+protected:
+    QVariant loadResource(int type, const QUrl& name) override {
+        if (name.scheme().compare(QLatin1String("data"), Qt::CaseInsensitive) == 0) {
+            return QTextDocument::loadResource(type, name);
+        }
+        return {};  // deny file://, http(s)://, cid:, absolute/UNC paths -- no resource load
+    }
+};
 }  // namespace
 
 // ======================================================================
@@ -100,11 +121,12 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
         writer.setTitle(item.subject);
         writer.setCreator(QStringLiteral("S.A.K. Utility"));
 
-        QTextDocument doc;
+        // ResourceDenyingTextDocument refuses external resource loads (no local-file disclosure).
+        ResourceDenyingTextDocument doc;
         doc.setHtml(html_content);
         doc.setPageSize(QSizeF(writer.width(), writer.height()));
         doc.print(&writer);
-    }  // writer destroyed here: the PDF is fully flushed to out_file before commit
+    }  // writer destroyed here: PDF fully flushed to out_file before commit
 
     if (!out_file.commit()) {
         return std::unexpected(error_code::write_error);
@@ -152,8 +174,10 @@ QString PdfEmailWriter::buildHtmlForPdf(
 
     // Body
     if (!item.body_html.isEmpty()) {
+        // Strip active content from the untrusted body first; loadResource denial (above) is the
+        // hard guarantee against local-file disclosure, this removes script/handlers as well.
+        QString body = sanitizeEmailBodyHtml(item.body_html);
         // Strip outer html/head/body tags if present and use inner content
-        QString body = item.body_html;
         int body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
         if (body_start >= 0) {
             int close = body.indexOf(QStringLiteral(">"), body_start);

