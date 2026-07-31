@@ -41,7 +41,13 @@ owning subsystem batch:
 12. AI harness                           -- 8 items
 13. win32 / browser control              -- 10 items
 
-Progress: 5 batches DONE (B0, B1, B2, B3 crash-fixes, B4). B3 part 3 (deferred
+Progress: 6 batches DONE (B0, B1, B2, B3 crash-fixes, B4, B5). B5 FULLY CLOSED:
+01/02/03 ACL + 04 pipe-PID-gate + 05 PS-success + 06 pipe-handle-atomic + 07
+bounded-output + 08 write-probe-unique + 09 disk-bench-unique + 10 restore + 11
+SMART + 12 hw-scan + 13 stress + 14 diag-suite + 15 reparse-walk + 16
+report-atomic, plus tail (thermal-interval-floor, input_validator empty-asserts,
+config QSettings-status). Each fixed+unit-tested+committed; remaining B5 tail =
+deferred pure-quality items only (listed in Batch-5 section). B3 part 3 (deferred
 quality/lifetime items) still open. All cert in RELEASE (repo standard; Debug has
 pre-existing Debug-only test crashes -- see docs note under Batch 4). B4 also has
 a guarded live-USB certifier (tests/certification/flash_live_certifier.cpp): its
