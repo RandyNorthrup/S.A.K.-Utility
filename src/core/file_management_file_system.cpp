@@ -768,6 +768,21 @@ bool FileManagementFileSystemBridge::isReadableNonNativeFileSystem(const QString
            fs == QStringLiteral("hfsx") || fs == QStringLiteral("apfs");
 }
 
+bool FileManagementFileSystemBridge::isUnsafeLocalDeletePath(const QString& path) {
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) {
+        return true;  // QDir("") resolves to the current working directory
+    }
+    const QDir dir(trimmed);
+    // A filesystem root ("C:/", "/", "\\server\share") must never be recursively
+    // deleted. Check both the given path and its resolved absolute form.
+    if (dir.isRoot()) {
+        return true;
+    }
+    const QString absolute = QDir::cleanPath(dir.absolutePath());
+    return absolute.isEmpty() || QDir(absolute).isRoot();
+}
+
 QString FileManagementFileSystemBridge::normalizedFileSystem(const QString& file_system) {
     QString fs = file_system.trimmed().toLower();
     fs.replace(QLatin1Char('_'), QLatin1Char('-'));
@@ -1448,6 +1463,17 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
         FileManagementMutationResult result;
         result.file_system = target.file_system;
         result.path = path;
+        // Refuse a catastrophic delete before touching the filesystem: an empty path
+        // makes QDir the current working directory and a root would wipe the whole
+        // volume (B8-01).
+        if (isUnsafeLocalDeletePath(path)) {
+            result.ok = false;
+            result.blockers.append(
+                QStringLiteral("Refusing to recursively delete an empty path or filesystem root: "
+                               "%1")
+                    .arg(path));
+            return result;
+        }
         QDir dir(path);
         result.ok = dir.removeRecursively();
         if (!result.ok) {

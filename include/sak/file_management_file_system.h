@@ -192,6 +192,11 @@ public:
     [[nodiscard]] static bool isNativeFileSystem(const QString& file_system);
     [[nodiscard]] static bool isReadableNonNativeFileSystem(const QString& file_system);
     [[nodiscard]] static QString normalizedFileSystem(const QString& file_system);
+    /// True when a local recursive delete of `path` would be catastrophic and must
+    /// be refused: an empty/whitespace path (QDir treats it as the CWD) or a
+    /// filesystem root ("C:/", "/") -- either would wipe far more than intended
+    /// (B8-01).
+    [[nodiscard]] static bool isUnsafeLocalDeletePath(const QString& path);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
     /// File-system-specific label for an entry's on-disk identifier (APFS Object
     /// ID, HFS Catalog ID, ext Inode, else generic Identifier).

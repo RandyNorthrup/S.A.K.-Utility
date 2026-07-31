@@ -911,6 +911,36 @@ private Q_SLOTS:
         QVERIFY(it->can_browse);
         QVERIFY(!it->can_organize);
     }
+
+    // B8-01: a local recursive directory delete must refuse an empty path (which
+    // QDir treats as the CWD) or a filesystem root, before touching the disk.
+    void deleteDirectoryRefusesUnsafePaths() {
+        using B = sak::FileManagementFileSystemBridge;
+        QVERIFY(B::isUnsafeLocalDeletePath(QString()));
+        QVERIFY(B::isUnsafeLocalDeletePath(QStringLiteral("   ")));
+        QVERIFY(B::isUnsafeLocalDeletePath(QStringLiteral("C:/")));
+        QVERIFY(B::isUnsafeLocalDeletePath(QStringLiteral("C:\\")));
+        QVERIFY(B::isUnsafeLocalDeletePath(QStringLiteral("/")));
+
+        // A real nested directory is NOT flagged (so normal deletes still work).
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString nested = QDir(temp.path()).filePath(QStringLiteral("victim"));
+        QVERIFY(QDir().mkpath(nested));
+        QVERIFY(!B::isUnsafeLocalDeletePath(nested));
+
+        // The bridge refuses an empty path and does NOT delete the CWD contents.
+        const auto target = B::localTarget(temp.path());
+        const auto result = B::deleteDirectory(target, QString());
+        QVERIFY(!result.ok);
+        QVERIFY(!result.blockers.isEmpty());
+        QVERIFY(QDir(nested).exists());  // nothing was deleted
+
+        // A real nested delete still succeeds.
+        const auto ok_result = B::deleteDirectory(target, nested);
+        QVERIFY(ok_result.ok);
+        QVERIFY(!QDir(nested).exists());
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)
