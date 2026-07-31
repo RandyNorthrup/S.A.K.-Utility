@@ -29,6 +29,22 @@ public:
     void scan() override;
     void execute() override;
 
+    // ------------------------------------------------------------------
+    // Pure decision seams (public for unit testing; no I/O, no state)
+    // ------------------------------------------------------------------
+
+    /// @brief Decide whether DISM CheckHealth/ScanHealth output reports actual
+    /// component-store corruption. The healthy verdict string ("No component
+    /// store corruption detected.") itself contains the substring "corruption",
+    /// so a naive contains("corruption") flips every clean machine to
+    /// needs-repair; this matches the corruption-PRESENT states instead.
+    static bool dismReportsCorruption(const QString& dism_output);
+
+    /// @brief Build an unpredictable per-run temp filename for SFC's redirected
+    /// stdout, so concurrent runs cannot overwrite each other and a planted
+    /// reparse point at a fixed name cannot redirect the write.
+    static QString makeUniqueSfcOutputName(qint64 pid, qint64 msecs, unsigned counter);
+
 private:
     enum class ScanPhase {
         CheckHealth,

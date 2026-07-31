@@ -10,7 +10,11 @@
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QRegularExpression>
+
+#include <atomic>
 
 namespace sak {
 
@@ -25,20 +29,46 @@ bool dismProbeCompleted(const ProcessResult& proc) {
 }
 }  // namespace
 
+bool VerifySystemFilesAction::dismReportsCorruption(const QString& dism_output) {
+    // "No component store corruption detected." is the HEALTHY verdict, yet it
+    // contains "corruption" -- so exclude it first, then treat a repairable
+    // store or any other corruption-detected phrasing as corruption present.
+    if (dism_output.contains("No component store corruption", Qt::CaseInsensitive)) {
+        return false;
+    }
+    return dism_output.contains("repairable", Qt::CaseInsensitive) ||
+           dism_output.contains("corruption", Qt::CaseInsensitive);
+}
+
+QString VerifySystemFilesAction::makeUniqueSfcOutputName(qint64 pid,
+                                                         qint64 msecs,
+                                                         unsigned counter) {
+    return QStringLiteral("sak_sfc_output_%1_%2_%3.txt").arg(pid).arg(msecs).arg(counter);
+}
+
 VerifySystemFilesAction::VerifySystemFilesAction(QObject* parent) : QuickAction(parent) {}
 
 void VerifySystemFilesAction::runSFC() {
     Q_EMIT executionProgress("Running System File Checker (SFC)...", progress::kStep10);
 
-    // Enterprise approach: Run SFC with real-time progress monitoring and accumulated output
+    // Enterprise approach: Run SFC with real-time progress monitoring and accumulated output.
+    // Redirect to an unpredictable per-run temp file (not a fixed name) so concurrent runs
+    // cannot clobber each other and a planted reparse point cannot redirect the write.
+    static std::atomic<unsigned> s_sfc_counter{0};
+    const QString sfc_out_name =
+        makeUniqueSfcOutputName(QCoreApplication::applicationPid(),
+                                QDateTime::currentMSecsSinceEpoch(),
+                                s_sfc_counter.fetch_add(1, std::memory_order_relaxed));
     QString ps_script =
-        "$sfcOutput = Join-Path $env:TEMP 'sak_sfc_output.txt'; "
-        "$process = Start-Process -FilePath 'sfc' -ArgumentList '/scannow' -PassThru -NoNewWindow "
-        "-Wait -RedirectStandardOutput $sfcOutput; "
-        "Get-Content $sfcOutput | Write-Output; "
-        "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
-        "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
-        "Remove-Item $sfcOutput -ErrorAction SilentlyContinue";
+        QStringLiteral(
+            "$sfcOutput = Join-Path $env:TEMP '%1'; "
+            "$process = Start-Process -FilePath 'sfc' -ArgumentList '/scannow' -PassThru "
+            "-NoNewWindow -Wait -RedirectStandardOutput $sfcOutput; "
+            "Get-Content $sfcOutput | Write-Output; "
+            "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
+            "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
+            "Remove-Item $sfcOutput -ErrorAction SilentlyContinue")
+            .arg(sfc_out_name);
 
     Q_EMIT executionProgress("SFC scanning...", progress::kStep25);
     ProcessResult proc = runPowerShell(
@@ -89,7 +119,7 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     if (dismProbeCompleted(proc)) {
         m_dism_assessed = true;
     }
-    return proc.std_out.contains("corruption", Qt::CaseInsensitive);
+    return dismReportsCorruption(proc.std_out);
 }
 
 bool VerifySystemFilesAction::runDismScanHealth() {
@@ -108,8 +138,7 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     if (dismProbeCompleted(proc)) {
         m_dism_assessed = true;
     }
-    return proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
-           proc.std_out.contains("corruption", Qt::CaseInsensitive);
+    return dismReportsCorruption(proc.std_out);
 }
 
 void VerifySystemFilesAction::runDismRestoreHealth() {

@@ -3824,6 +3824,60 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_backup_bitlocker_keys_a
     message(STATUS "Added unit test: test_backup_bitlocker_keys_action")
 endif()
 
+# test_verify_system_files_action -- B6-07/08 pure seams (DISM corruption
+# detection must not fire on a clean machine; SFC temp filename is unique)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_verify_system_files_action.cpp")
+    add_executable(test_verify_system_files_action
+        unit/actions/test_verify_system_files_action.cpp
+
+        # Base class
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+
+        # Dependencies used by the action
+        ../src/core/process_runner.cpp
+        ../include/sak/process_runner.h
+        ../src/core/logger.cpp
+        ../include/sak/logger.h
+        ../src/core/bundled_tools_manager.cpp
+        ../include/sak/bundled_tools_manager.h
+        ../src/core/path_utils.cpp
+        ../include/sak/path_utils.h
+        ../src/core/windows_user_scanner.cpp
+        ../include/sak/windows_user_scanner.h
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_types.h
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+
+        # Action under test
+        ../src/actions/verify_system_files_action.cpp
+        ../include/sak/actions/verify_system_files_action.h
+    )
+
+    set_target_properties(test_verify_system_files_action PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+
+    target_link_libraries(test_verify_system_files_action PRIVATE
+        Qt6::Core
+        Qt6::Test
+        Qt6::Widgets
+        ${PLATFORM_LIBS}
+    )
+
+    target_include_directories(test_verify_system_files_action PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    add_test(NAME test_verify_system_files_action
+             COMMAND test_verify_system_files_action
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+
+    message(STATUS "Added unit test: test_verify_system_files_action")
+endif()
+
 # ============================================================================
 # Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
 # ============================================================================
