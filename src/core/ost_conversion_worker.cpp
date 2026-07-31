@@ -57,6 +57,21 @@ QString sanitizeFolderSegment(const QString& raw) {
     return out;
 }
 
+/// Human-readable label for a gated-off output format, used in the error surfaced
+/// to the user when they somehow request one.
+QString unsupportedFormatLabel(sak::OstOutputFormat format) {
+    switch (format) {
+    case sak::OstOutputFormat::Pst:
+        return QStringLiteral("PST");
+    case sak::OstOutputFormat::Msg:
+        return QStringLiteral("MSG");
+    case sak::OstOutputFormat::Dbx:
+        return QStringLiteral("Outlook Express DBX");
+    default:
+        return QStringLiteral("Selected");
+    }
+}
+
 }  // namespace
 
 namespace sak {
@@ -251,15 +266,14 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
     m_pst_folder_nids.clear();
 
     // Reject formats whose writers are not spec-conformant, upfront and once,
-    // instead of writing per-message garbage: DBX (no OE5/6 B-tree index) and MSG
-    // (broken CFB directory tree, no mini-stream). Both can only produce files no
-    // reader can open. (PST is gated below via create().)
-    if (config.format == OstOutputFormat::Dbx || config.format == OstOutputFormat::Msg) {
-        const QString label = config.format == OstOutputFormat::Dbx
-                                  ? QStringLiteral("Outlook Express DBX")
-                                  : QStringLiteral("MSG");
-        const QString msg =
-            QStringLiteral("%1 output is not supported (no spec-conformant writer)").arg(label);
+    // instead of writing per-message garbage: MSG (broken CFB directory tree, no
+    // mini-stream) and DBX (no OE5/6 B-tree index) can only produce files no
+    // reader can open, and have no partial output worth attempting. PST is the
+    // one unsupported format still routed to create() below so its in-progress
+    // NDB/LTP writer path stays exercised; create() fails closed there.
+    if (!isOutputFormatSupported(config.format) && config.format != OstOutputFormat::Pst) {
+        const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
+                                .arg(unsupportedFormatLabel(config.format));
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
         return false;

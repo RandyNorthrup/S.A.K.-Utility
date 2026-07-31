@@ -41,6 +41,31 @@ enum class OstOutputFormat {
     ImapUpload  ///< Direct IMAP upload (not a file format)
 };
 
+/// @brief True when the format's writer emits files a real reader can open.
+///
+/// PST (no ROOT/BREF pointers, no page/block trailers, no CRCs), MSG (broken
+/// CFB directory tree, no mini-stream allocation) and DBX (no OE5/6 B-tree
+/// index) writers cannot produce output Outlook / MAPI / Outlook Express can
+/// mount, so they are gated off until spec-conformant writers exist. EML, MBOX,
+/// HTML, PDF and IMAP upload are fully supported. Single source of truth shared
+/// by the worker (which rejects unsupported formats before touching the source)
+/// and the GUI (which disables them in the format picker).
+inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
+    switch (format) {
+    case OstOutputFormat::Eml:
+    case OstOutputFormat::Mbox:
+    case OstOutputFormat::Html:
+    case OstOutputFormat::Pdf:
+    case OstOutputFormat::ImapUpload:
+        return true;
+    case OstOutputFormat::Pst:
+    case OstOutputFormat::Msg:
+    case OstOutputFormat::Dbx:
+        return false;
+    }
+    return false;
+}
+
 // ============================================================================
 // Recovery Mode
 // ============================================================================
@@ -136,8 +161,10 @@ struct OstConversionJob {
 
 /// @brief Global conversion configuration
 struct OstConversionConfig {
-    // Output
-    OstOutputFormat format = OstOutputFormat::Pst;
+    // Output. Defaults to EML: it is the widest-compatibility format with a
+    // spec-conformant writer, so a convert launched without changing the format
+    // produces readable output instead of failing on the gated PST writer.
+    OstOutputFormat format = OstOutputFormat::Eml;
     QString output_directory;
 
     // Threading
@@ -184,7 +211,7 @@ struct OstConversionConfig {
 struct OstConversionResult {
     QString source_path;
     QString output_path;
-    OstOutputFormat format = OstOutputFormat::Pst;
+    OstOutputFormat format = OstOutputFormat::Eml;
     int items_converted = 0;
     int items_failed = 0;
     int items_recovered = 0;  ///< Deleted items recovered

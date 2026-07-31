@@ -2930,8 +2930,17 @@ AppActionResult convertOst(const QJsonObject& args) {
         convertFormatFromArg(args.value(QStringLiteral("format")).toString());
     if (!format) {
         return {false,
-                QStringLiteral("format must be one of pst/eml/msg/mbox/dbx/html/pdf (direct IMAP "
-                               "upload is not available in this headless tool)"),
+                QStringLiteral("format must be one of eml/mbox/html/pdf (direct IMAP upload is not "
+                               "available in this headless tool)"),
+                {}};
+    }
+    // Refuse gated-off formats up front with a precise reason instead of letting the
+    // worker attempt and fail: PST/MSG/DBX writers are not spec-conformant, so their
+    // output cannot be opened by any reader (B7-12).
+    if (!isOutputFormatSupported(*format)) {
+        return {false,
+                QStringLiteral("PST/MSG/DBX output is not supported (no spec-conformant writer); "
+                               "use eml, mbox, html, or pdf"),
                 {}};
     }
 

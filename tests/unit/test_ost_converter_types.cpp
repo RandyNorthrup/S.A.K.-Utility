@@ -54,7 +54,11 @@ private Q_SLOTS:
 
     void testConfigDefaults() {
         sak::OstConversionConfig config;
-        QCOMPARE(config.format, sak::OstOutputFormat::Pst);
+        // Default must be a format with a spec-conformant writer so an untouched
+        // convert produces readable output instead of failing on the gated PST
+        // writer (B7-12).
+        QCOMPARE(config.format, sak::OstOutputFormat::Eml);
+        QVERIFY(sak::isOutputFormatSupported(config.format));
         QVERIFY(config.output_directory.isEmpty());
         QCOMPARE(config.max_threads, 2);
         QVERIFY(config.date_from.isNull());
@@ -82,6 +86,34 @@ private Q_SLOTS:
     // ====================================================================
     // OstConversionResult Defaults
     // ====================================================================
+
+    // ====================================================================
+    // Output Format Support Table (B7-12)
+    // ====================================================================
+
+    void testUnsupportedFormatsGated() {
+        // Writers that cannot emit a reader-openable file must report unsupported
+        // so the worker rejects them up front and the GUI disables them.
+        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Pst));
+        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Msg));
+        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Dbx));
+    }
+
+    void testSupportedFormats() {
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Eml));
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Mbox));
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Html));
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Pdf));
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::ImapUpload));
+    }
+
+    void testAtLeastOneFileFormatSupported() {
+        // At least one on-disk (non-IMAP) format must work, or the tab is useless.
+        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Eml) ||
+                sak::isOutputFormatSupported(sak::OstOutputFormat::Mbox) ||
+                sak::isOutputFormatSupported(sak::OstOutputFormat::Html) ||
+                sak::isOutputFormatSupported(sak::OstOutputFormat::Pdf));
+    }
 
     void testResultDefaults() {
         sak::OstConversionResult result;

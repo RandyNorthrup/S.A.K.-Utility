@@ -30,6 +30,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardItemModel>
 #include <QTableWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -230,7 +231,12 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
     m_format_combo->addItem(tr("HTML (Web Pages)"), static_cast<int>(OstOutputFormat::Html));
     m_format_combo->addItem(tr("PDF (Documents)"), static_cast<int>(OstOutputFormat::Pdf));
     m_format_combo->addItem(tr("IMAP Upload"), static_cast<int>(OstOutputFormat::ImapUpload));
-    m_format_combo->setCurrentIndex(0);
+    // PST / MSG / DBX writers are not spec-conformant (see isOutputFormatSupported):
+    // grey them out so a user cannot pick a format whose conversion is guaranteed to
+    // fail, and default to EML, which has a working writer.
+    markUnsupportedFormats();
+    m_format_combo->setCurrentIndex(
+        m_format_combo->findData(static_cast<int>(OstOutputFormat::Eml)));
     m_format_combo->setToolTip(tr("Output format for converted emails"));
     format_row->addWidget(m_format_combo);
     format_row->addStretch(1);
@@ -266,6 +272,23 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
             &QComboBox::currentIndexChanged,
             this,
             &OstConverterWidget::onFormatChanged);
+}
+
+void OstConverterWidget::markUnsupportedFormats() {
+    auto* model = qobject_cast<QStandardItemModel*>(m_format_combo->model());
+    if (model == nullptr) {
+        return;
+    }
+    for (int i = 0; i < m_format_combo->count(); ++i) {
+        const auto format = static_cast<OstOutputFormat>(m_format_combo->itemData(i).toInt());
+        if (isOutputFormatSupported(format)) {
+            continue;
+        }
+        m_format_combo->setItemText(i, m_format_combo->itemText(i) + tr(" - not supported"));
+        if (QStandardItem* item = model->item(i)) {
+            item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+        }
+    }
 }
 
 void OstConverterWidget::addOutputOptionsRow(QVBoxLayout* layout, QWidget* group) {
@@ -859,7 +882,18 @@ void OstConverterWidget::loadSettings() {
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     m_output_dir_edit->setText(settings.value(QStringLiteral("lastOutputDir")).toString());
-    m_format_combo->setCurrentIndex(settings.value(QStringLiteral("lastFormat"), 0).toInt());
+    // Restore by enum value, not row index, and never restore a gated-off format
+    // (a stale setting pointing at a now-disabled PST/MSG/DBX item falls back to
+    // EML) so the picker never comes up on an unusable selection.
+    const auto saved_format = static_cast<OstOutputFormat>(
+        settings.value(QStringLiteral("lastFormat"), static_cast<int>(OstOutputFormat::Eml))
+            .toInt());
+    int format_index = m_format_combo->findData(static_cast<int>(
+        isOutputFormatSupported(saved_format) ? saved_format : OstOutputFormat::Eml));
+    if (format_index < 0) {
+        format_index = m_format_combo->findData(static_cast<int>(OstOutputFormat::Eml));
+    }
+    m_format_combo->setCurrentIndex(format_index);
     m_threads_spin->setValue(
         settings.value(QStringLiteral("threads"), ost::kDefaultThreads).toInt());
     m_preserve_folders_check->setChecked(
@@ -893,7 +927,7 @@ void OstConverterWidget::saveSettings() {
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     settings.setValue(QStringLiteral("lastOutputDir"), m_output_dir_edit->text());
-    settings.setValue(QStringLiteral("lastFormat"), m_format_combo->currentIndex());
+    settings.setValue(QStringLiteral("lastFormat"), m_format_combo->currentData().toInt());
     settings.setValue(QStringLiteral("threads"), m_threads_spin->value());
     settings.setValue(QStringLiteral("preserveFolders"), m_preserve_folders_check->isChecked());
     settings.setValue(QStringLiteral("prefixDate"), m_prefix_date_check->isChecked());

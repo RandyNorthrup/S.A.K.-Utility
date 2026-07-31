@@ -2131,6 +2131,40 @@ private Q_SLOTS:
             !QDir(dir.filePath(QStringLiteral("out"))).exists());  // never opened/wrote anything
     }
 
+    // PST/MSG/DBX are refused up front with a precise reason (their writers are not
+    // spec-conformant), never attempted and left to fail mid-run (B7-12).
+    void convertOstRefusesUnsupportedFormat() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("not a pst"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        for (const QString& fmt :
+             {QStringLiteral("pst"), QStringLiteral("msg"), QStringLiteral("dbx")}) {
+            const QString out_sub = QStringLiteral("out_") + fmt;
+            const QString args = QString::fromUtf8(
+                QJsonDocument(
+                    QJsonObject{{QStringLiteral("path"), path},
+                                {QStringLiteral("output_directory"), dir.filePath(out_sub)},
+                                {QStringLiteral("format"), fmt}})
+                    .toJson(QJsonDocument::Compact));
+            const QJsonObject result = panel.runAppActionTool(
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                            {QStringLiteral("arguments"), args}});
+            QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QVERIFY(result.value(QStringLiteral("message"))
+                        .toString()
+                        .contains(QStringLiteral("not supported")));
+            // Refused before opening: nothing was ever created in the output path.
+            QVERIFY(!QDir(dir.filePath(out_sub)).exists());
+        }
+    }
+
     // A UNC/network source is refused before opening.
     void convertOstRejectsNetworkPath() {
         QTemporaryDir dir;
