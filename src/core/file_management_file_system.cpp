@@ -412,6 +412,17 @@ QString pathOrRoot(const QString& path) {
     return trimmed.isEmpty() ? QStringLiteral("/") : trimmed;
 }
 
+// One past the read cap for the "read one extra to detect an over-cap / TOCTOU-grown
+// file" probe, saturating so a UINT64_MAX cap does not wrap to 0 -- which would either
+// read nothing (local) or disable the cap entirely (raw readers treat 0 as unlimited).
+// A 0 cap ("no limit") stays 0 (B8-18).
+uint64_t readCapProbe(uint64_t max_bytes) {
+    if (max_bytes == 0 || max_bytes == std::numeric_limits<uint64_t>::max()) {
+        return max_bytes;
+    }
+    return max_bytes + 1;
+}
+
 FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
     FileManagementReadResult result;
     result.file_system = QStringLiteral("Local");
@@ -429,8 +440,14 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
             return result;
         }
         // Read one past the cap so a file that grew between size() and read
-        // (TOCTOU) is rejected rather than returned over-limit.
-        data = file.read(static_cast<qint64>(maxBytes) + 1);
+        // (TOCTOU) is rejected rather than returned over-limit. readCapProbe
+        // saturates so a UINT64_MAX cap does not wrap to read(0). A probe past the
+        // QFile::read/QByteArray argument range means a cap no real file can exceed
+        // (file.size() <= maxBytes was already checked), so read the whole file --
+        // the over-limit check below then never trips, which is correct (B8-18).
+        const uint64_t probe = readCapProbe(maxBytes);
+        const auto qint64Max = static_cast<uint64_t>(std::numeric_limits<qint64>::max());
+        data = probe > qint64Max ? file.readAll() : file.read(static_cast<qint64>(probe));
         if (static_cast<uint64_t>(data.size()) > maxBytes) {
             result.blockers.append(
                 QStringLiteral("File exceeds read limit: %1 bytes").arg(maxBytes));
@@ -991,8 +1008,7 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
     // Raw/non-native targets are read through their reader up to the cap, then hashed.
     // Request one extra byte so a file of exactly max_bytes is provably complete and is
     // not falsely reported as capped.
-    const FileManagementReadResult read =
-        readFile(target, path, max_bytes == 0 ? 0 : max_bytes + 1);
+    const FileManagementReadResult read = readFile(target, path, readCapProbe(max_bytes));
     if (!read.ok) {
         result.blockers = read.blockers;
         return result;
@@ -1103,14 +1119,13 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
 
     QCryptographicHash hash(QCryptographicHash::Sha256);
     const QString local = source_path.trimmed().isEmpty() ? target.root_path : source_path;
-    const bool ok =
-        target.local_file_system
-            ? streamLocalSourceOut(local, dest, hash, result, observer)
-            : writeRawSourceOut(readFile(target, source_path, max_bytes == 0 ? 0 : max_bytes + 1),
-                                dest,
-                                hash,
-                                max_bytes,
-                                result);
+    const bool ok = target.local_file_system
+                        ? streamLocalSourceOut(local, dest, hash, result, observer)
+                        : writeRawSourceOut(readFile(target, source_path, readCapProbe(max_bytes)),
+                                            dest,
+                                            hash,
+                                            max_bytes,
+                                            result);
     if (ok && !target.local_file_system) {
         // Raw sources land as one buffered read; report the whole delta.
         observer.addBytes(static_cast<qint64>(result.bytes_written));

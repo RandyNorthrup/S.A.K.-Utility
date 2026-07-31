@@ -15,6 +15,7 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <limits>
 
 class FileManagementFileSystemTests : public QObject {
     Q_OBJECT
@@ -42,6 +43,30 @@ private Q_SLOTS:
             target, listing.entries.first().path, 1024);
         QVERIFY(read.ok);
         QCOMPARE(QString::fromUtf8(read.data), QStringLiteral("hello target bridge"));
+    }
+
+    void readFileWithMaxUint64CapReadsWholeFile() {
+        // B8-18: a UINT64_MAX cap must not wrap (max_bytes + 1 -> 0) and read nothing;
+        // it must read the whole file. A 0 cap ("no limit") reads all too.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString filePath = QDir(temp.path()).filePath(QStringLiteral("whole.bin"));
+        const QByteArray payload(4096, 'Z');
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        }
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
+
+        const auto uncapped = sak::FileManagementFileSystemBridge::readFile(
+            target, filePath, std::numeric_limits<uint64_t>::max());
+        QVERIFY2(uncapped.ok, qPrintable(uncapped.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(uncapped.data, payload);  // whole file, not empty
+
+        const auto no_cap = sak::FileManagementFileSystemBridge::readFile(target, filePath, 0);
+        QVERIFY(no_cap.ok);
+        QCOMPARE(no_cap.data, payload);
     }
 
     void readFileRejectsFilesOverMaxBytes() {
