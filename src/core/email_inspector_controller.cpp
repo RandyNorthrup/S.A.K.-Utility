@@ -217,6 +217,12 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
         Q_EMIT errorOccurred(QStringLiteral("Cannot search: operation in progress"));
         return;
     }
+    // With no file open, neither branch below launches a task, so the state would
+    // latch at Searching forever. Refuse without changing state (B7-23).
+    if (!isFileOpen()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot search: no file is open"));
+        return;
+    }
 
     setState(State::Searching);
     m_search_count++;
@@ -238,6 +244,12 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
 void EmailInspectorController::exportItems(const sak::EmailExportConfig& config) {
     if (m_state != State::Idle) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot export: operation in progress"));
+        return;
+    }
+    // No open file -> no export task is launched; refuse rather than latch the state
+    // at Exporting forever (B7-23).
+    if (!isFileOpen()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot export: no file is open"));
         return;
     }
 

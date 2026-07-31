@@ -50,6 +50,9 @@ private Q_SLOTS:
     void loadMessagesWhenClosed();
     void loadDetailOutOfRange();
 
+    // -- B7-24: a stale cancel must not block later reads ----------------
+    void cancelDoesNotBlockLaterReads();
+
 private:
     /// Create a temp file with valid MBOX content
     QTemporaryFile* createSampleMboxFile();
@@ -542,6 +545,33 @@ QTemporaryFile* TestMboxParser::createSampleMboxFile() {
     temp_file->write(content);
     temp_file->close();
     return temp_file;
+}
+
+void TestMboxParser::cancelDoesNotBlockLaterReads() {
+    auto* temp_file = createSampleMboxFile();
+    QVERIFY(temp_file);
+
+    MboxParser parser;
+    parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    // Simulate a cancel of a previous operation (e.g. controller cancelOperation()).
+    parser.cancel();
+
+    // A fresh read must succeed, not return operation_cancelled: the stale cancel
+    // flag is cleared at the start of the read (B7-24).
+    auto messages = parser.readMessages(0, 10);
+    QVERIFY2(messages.has_value(),
+             "read after a stale cancel must not fail with operation_cancelled");
+    QVERIFY(messages.value().size() >= 1);
+
+    parser.cancel();
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY2(detail.has_value(), "detail read after a stale cancel must not fail");
+
+    parser.close();
+    delete temp_file;
 }
 
 QTEST_MAIN(TestMboxParser)

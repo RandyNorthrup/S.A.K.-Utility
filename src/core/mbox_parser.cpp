@@ -165,6 +165,9 @@ QString MboxParser::filePath() const {
 std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(int offset,
                                                                               int limit) {
     const QMutexLocker locker(&m_file_mutex);
+    // A new read starts uncancelled: a cancel from a previous, already-finished
+    // operation must not permanently block later reads until reopen (B7-24).
+    m_cancelled.store(false, std::memory_order_relaxed);
     if (!m_is_open) {
         return std::unexpected(error_code::invalid_operation);
     }
@@ -220,6 +223,8 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
 
 std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(int message_index) {
     const QMutexLocker locker(&m_file_mutex);
+    // Clear a stale cancel from a prior operation so this read is not blocked (B7-24).
+    m_cancelled.store(false, std::memory_order_relaxed);
     if (!m_is_open) {
         return std::unexpected(error_code::invalid_operation);
     }
@@ -266,6 +271,10 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
 std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message_index,
                                                                      int attachment_index) {
     const QMutexLocker locker(&m_file_mutex);
+    // Clear a stale cancel so a prior abort does not block this extraction (B7-24).
+    // readAllAttachments (called below) intentionally does NOT reset, so a cancel
+    // that arrives during THIS call still interrupts it.
+    m_cancelled.store(false, std::memory_order_relaxed);
     if (attachment_index < 0) {
         return std::unexpected(error_code::invalid_argument);
     }
