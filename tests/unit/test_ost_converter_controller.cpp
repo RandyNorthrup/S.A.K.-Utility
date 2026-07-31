@@ -230,6 +230,39 @@ private Q_SLOTS:
     }
 
     // ====================================================================
+    // B7-03: cancelling a running batch must stop workers safely -- graceful
+    // quit()+wait() (the worker honors the cancel flag), NEVER terminate() --
+    // finalize the batch, and leave the controller destructible without abort.
+    // ====================================================================
+
+    void testCancelDuringConversionStopsSafely() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+
+        sak::OstConverterController ctrl;
+        for (int i = 0; i < 4; ++i) {
+            ctrl.addFile(createTempFile(temp, QStringLiteral("f%1.ost").arg(i)));
+        }
+
+        QSignalSpy complete_spy(&ctrl, &sak::OstConverterController::allConversionsComplete);
+
+        sak::OstConversionConfig config;
+        config.output_directory = temp.path();
+        config.format = sak::OstOutputFormat::Eml;
+        config.max_threads = 4;  // spin up several worker threads at once
+        ctrl.startConversion(config);
+
+        // Cancel immediately. cancelAll() cancels each worker, joins its thread with a graceful
+        // quit()+wait() (no terminate()), then finalizes the batch synchronously.
+        ctrl.cancelAll();
+
+        QVERIFY(!ctrl.isRunning());
+        QVERIFY2(complete_spy.count() >= 1,
+                 "cancelAll must finalize the batch (completion signal)");
+        // ctrl destructs at end of scope -> cancelAll() again on no active workers: must not abort.
+    }
+
+    // ====================================================================
     // P05-40: a zero/negative max_threads must clamp to one worker, not
     // leave the batch permanently stuck (no worker, no completion signal).
     // ====================================================================

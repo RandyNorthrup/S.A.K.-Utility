@@ -199,10 +199,13 @@ void OstConverterController::startNextFile() {
 
     Q_EMIT fileConversionStarted(file_index);
 
-    // Create worker thread
+    // Create worker thread. The thread is intentionally UNPARENTED: if a worker ever refuses to
+    // stop, disposeWorker() defers its deletion to the thread's own finished signal. Were the
+    // thread parented to this controller, ~QObject would force-delete it while still running
+    // (abort), defeating that deferral. Ownership is instead handled explicitly in disposeWorker.
     ActiveWorker aw;
     aw.file_index = file_index;
-    aw.thread = new QThread(this);
+    aw.thread = new QThread();
     aw.worker = new OstConversionWorker();
     aw.worker->moveToThread(aw.thread);
 
@@ -330,18 +333,21 @@ void OstConverterController::disposeWorker(ActiveWorker& aw) {
         return;
     }
     aw.thread->quit();
-    bool stopped = aw.thread->wait(ost::kTimeoutThreadShutdownMs);
-    if (!stopped) {
-        logWarning("OST Converter: worker thread did not stop gracefully");
-        aw.thread->terminate();
-        stopped = aw.thread->wait(ost::kTimeoutThreadTerminateMs);
-    }
-    if (stopped) {
+    // The worker checks the cancel flag at every folder/item loop, so a cancelled conversion
+    // returns promptly and this graceful wait succeeds. We deliberately do NOT call terminate():
+    // forcibly killing a thread mid-PST-write can corrupt the output file and leave internal locks
+    // held. If the thread still has not stopped after the full budget (e.g. blocked in a stuck
+    // syscall), defer deletion to its own finished signal rather than deleting -- or force-killing
+    // -- a live QThread. Worst case the thread runs to natural completion and self-deletes; that is
+    // a bounded leak, strictly safer than a terminate() that risks data corruption or a crash.
+    const int stop_budget_ms = ost::kTimeoutThreadShutdownMs + ost::kTimeoutThreadTerminateMs;
+    if (aw.thread->wait(stop_budget_ms)) {
         delete aw.worker;
         delete aw.thread;
     } else {
-        // Never delete a live QThread/worker: defer to the thread's own finished
-        // signal so teardown cannot abort or use freed state.
+        logWarning(
+            "OST Converter: worker thread did not stop; deferring cleanup to its finished "
+            "signal (no forced terminate)");
         connect(aw.thread, &QThread::finished, aw.worker, &QObject::deleteLater);
         connect(aw.thread, &QThread::finished, aw.thread, &QObject::deleteLater);
     }
