@@ -41,7 +41,12 @@ owning subsystem batch:
 12. AI harness                           -- 8 items
 13. win32 / browser control              -- 10 items
 
-Progress: 3 batches DONE (B0, B1, B2).
+Progress: 5 batches DONE (B0, B1, B2, B3 crash-fixes, B4). B3 part 3 (deferred
+quality/lifetime items) still open. All cert in RELEASE (repo standard; Debug has
+pre-existing Debug-only test crashes -- see docs note under Batch 4). B4 also has
+a guarded live-USB certifier (tests/certification/flash_live_certifier.cpp): its
+elevation + removable-USB + system-disk guards are verified firing; the live
+destructive run is user-executed (elevated) against a disposable USB stick.
 
 ---
 
