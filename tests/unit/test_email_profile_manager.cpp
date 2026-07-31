@@ -64,6 +64,9 @@ private Q_SLOTS:
     void regContent_rejectsDeletionOutsideSubtree();
     void regContent_rejectsEmpty();
     void decodeRegFile_handlesUtf16Bom();
+
+    // -- B7-16: single-flight guard --------------------------------------
+    void singleFlightRefusesReentry();
 };
 
 // ============================================================================
@@ -414,6 +417,39 @@ void TestEmailProfileManager::decodeRegFile_handlesUtf16Bom() {
     QCOMPARE(EmailProfileManager::decodeRegFile(u16), text);
     QVERIFY(EmailProfileManager::regContentConfinedToEmailHives(
         EmailProfileManager::decodeRegFile(u16)));
+}
+
+void TestEmailProfileManager::singleFlightRefusesReentry() {
+    // discover/backup/restore share m_profiles / m_backup_dest_names / m_cancelled,
+    // so a nested call while one is active must be refused, not run concurrently.
+    // profilesDiscovered fires while discoverProfiles() is still on the stack (the
+    // single-flight flag is not released until it returns), so a nested op launched
+    // from the handler hits the guard deterministically.
+    EmailProfileManager manager;
+    QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+
+    QObject::connect(&manager, &EmailProfileManager::profilesDiscovered, &manager, [&manager]() {
+        // If the guard were absent this would actually run and emit
+        // "Failed to open backup manifest"; with it, "already in
+        // progress" is emitted instead.
+        manager.restoreProfiles(QStringLiteral("C:/nope/manifest.json"));
+    });
+
+    manager.discoverProfiles();
+
+    bool saw_in_progress = false;
+    bool saw_open_failure = false;
+    for (const auto& call : error_spy) {
+        const QString msg = call.at(0).toString();
+        if (msg.contains(QStringLiteral("already in progress"))) {
+            saw_in_progress = true;
+        }
+        if (msg.contains(QStringLiteral("Failed to open backup manifest"))) {
+            saw_open_failure = true;
+        }
+    }
+    QVERIFY2(saw_in_progress, "nested op was not refused by the single-flight guard");
+    QVERIFY2(!saw_open_failure, "nested op actually ran despite the guard");
 }
 
 QTEST_MAIN(TestEmailProfileManager)

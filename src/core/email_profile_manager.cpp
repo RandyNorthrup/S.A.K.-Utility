@@ -28,6 +28,21 @@
 
 namespace {
 
+/// RAII single-flight guard: clears the active flag when it goes out of scope, so
+/// every return path from a guarded operation releases the lock (B7-16).
+class ScopedActiveFlag {
+public:
+    explicit ScopedActiveFlag(std::atomic<bool>& flag) : m_flag(flag) {}
+    ~ScopedActiveFlag() { m_flag.store(false); }
+    ScopedActiveFlag(const ScopedActiveFlag&) = delete;
+    ScopedActiveFlag& operator=(const ScopedActiveFlag&) = delete;
+    ScopedActiveFlag(ScopedActiveFlag&&) = delete;
+    ScopedActiveFlag& operator=(ScopedActiveFlag&&) = delete;
+
+private:
+    std::atomic<bool>& m_flag;
+};
+
 #ifdef Q_OS_WIN
 /// @brief Fully resolve an EXISTING path through every reparse point (junctions AND symlinks) to
 /// its real on-disk location, using GetFinalPathNameByHandleW. QFileInfo::canonicalFilePath does
@@ -246,6 +261,12 @@ void EmailProfileManager::noteSettingsStatus(const QSettings& settings) {
 }
 
 void EmailProfileManager::discoverProfiles() {
+    if (m_operation_active.exchange(true)) {
+        Q_EMIT errorOccurred(QStringLiteral("An email-profile operation is already in progress"));
+        return;
+    }
+    const ScopedActiveFlag active_guard(m_operation_active);
+
     m_cancelled.store(false);
     m_discovery_reliable = true;
     m_profiles.clear();
@@ -268,6 +289,12 @@ void EmailProfileManager::discoverProfiles() {
 
 void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
                                          const QString& backup_path) {
+    if (m_operation_active.exchange(true)) {
+        Q_EMIT errorOccurred(QStringLiteral("An email-profile operation is already in progress"));
+        return;
+    }
+    const ScopedActiveFlag active_guard(m_operation_active);
+
     // Fail closed instead of asserting: an empty path is caller/UI error but must
     // not abort the process in a release build or crash the debug test harness.
     if (backup_path.isEmpty()) {
@@ -372,6 +399,12 @@ QString EmailProfileManager::uniqueBackupDestination(const QString& backup_path,
 }
 
 void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
+    if (m_operation_active.exchange(true)) {
+        Q_EMIT errorOccurred(QStringLiteral("An email-profile operation is already in progress"));
+        return;
+    }
+    const ScopedActiveFlag active_guard(m_operation_active);
+
     m_cancelled.store(false);
 
     QFile file(backup_manifest_path);

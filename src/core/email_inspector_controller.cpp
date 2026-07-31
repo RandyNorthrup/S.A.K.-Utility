@@ -114,6 +114,12 @@ void EmailInspectorController::openFile(const QString& file_path) {
 }
 
 void EmailInspectorController::closeFile() {
+    // Cancel and await any in-flight background task BEFORE tearing down the parser
+    // it may still be reading through: close() otherwise races a QtConcurrent pool
+    // thread still inside the parser (use-after-close). This mirrors the destructor
+    // and the state guards that keep only one operation live at a time. (B7-15)
+    cancelOperation();
+
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->close();
     } else if (m_file_type == FileType::Mbox) {
@@ -248,6 +254,14 @@ void EmailInspectorController::exportItems(const sak::EmailExportConfig& config)
 // ============================================================================
 
 void EmailInspectorController::discoverProfiles() {
+    // Single-flight (B7-16): discovery/backup/restore share the profile manager's
+    // m_profiles / m_backup_dest_names / m_cancelled, so refuse to launch a second
+    // background operation while any is running instead of racing those members.
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot discover profiles: another operation in progress"));
+        return;
+    }
     setState(State::DiscoveringProfiles);
     Q_EMIT logOutput(QStringLiteral("Discovering email client profiles..."));
 
@@ -256,6 +270,11 @@ void EmailInspectorController::discoverProfiles() {
 
 void EmailInspectorController::backupProfiles(const QVector<int>& profile_indices,
                                               const QString& backup_path) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot back up profiles: another operation in progress"));
+        return;
+    }
     setState(State::BackingUp);
     Q_EMIT logOutput(QStringLiteral("Backing up profiles to %1...").arg(backup_path));
 
@@ -265,6 +284,11 @@ void EmailInspectorController::backupProfiles(const QVector<int>& profile_indice
 }
 
 void EmailInspectorController::restoreProfiles(const QString& manifest_path) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot restore profiles: another operation in progress"));
+        return;
+    }
     setState(State::Restoring);
     Q_EMIT logOutput(QStringLiteral("Restoring profiles from %1...").arg(manifest_path));
 
@@ -279,6 +303,11 @@ void EmailInspectorController::generateReport(const QString& output_path,
                                               const QString& technician,
                                               const QString& ticket,
                                               const QString& customer) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot generate report: another operation in progress"));
+        return;
+    }
     setState(State::GeneratingReport);
 
     QDir output_dir(output_path);

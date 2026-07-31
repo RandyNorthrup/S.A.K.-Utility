@@ -60,6 +60,11 @@ private:
     void noteSettingsStatus(const QSettings& settings);
 
     std::atomic<bool> m_cancelled{false};
+    /// Single-flight guard (B7-16): discoverProfiles/backupProfiles/restoreProfiles
+    /// share m_profiles / m_backup_dest_names / m_cancelled, so only one may run at
+    /// a time. A concurrent second call is refused instead of racing those members
+    /// and resetting the first operation's cancel flag.
+    std::atomic<bool> m_operation_active{false};
     /// Set true at the start of each discoverProfiles(); cleared on any read error.
     bool m_discovery_reliable{true};
     QVector<sak::EmailClientProfile> m_profiles;
