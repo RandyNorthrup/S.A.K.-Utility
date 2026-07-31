@@ -7,6 +7,7 @@
 #include "sak/diagnostic_types.h"
 #include "sak/hardware_inventory_scanner.h"
 
+#include <QJsonDocument>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -33,6 +34,11 @@ private Q_SLOTS:
     void volumeDiskMap_dropsNullDiskIndex();
     void volumeDiskMap_dropsEmptyLetter();
     void volumeDiskMap_handlesMalformed();
+    // B5-12: WMI failure must not read as an empty-but-successful result.
+    void wmiFailure_successAndEmptyAreNotFailures();
+    void wmiFailure_timeoutExitParseAreFailures();
+    void wmiFailure_cancelIsNotFailure();
+    void jsonDocToVariantMaps_arrayObjectAndSkips();
 };
 
 void TestHardwareInventoryScanner::construction_default() {
@@ -188,6 +194,51 @@ void TestHardwareInventoryScanner::volumeDiskMap_handlesMalformed() {
     QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap(QByteArray()).isEmpty());
     QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("not json").isEmpty());
     QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("[]").isEmpty());
+}
+
+// B5-12: a successful query (including a legitimately empty result set) is NOT a
+// failure -- the scan must not falsely flag the inventory as incomplete.
+void TestHardwareInventoryScanner::wmiFailure_successAndEmptyAreNotFailures() {
+    // timedOut=false, cancelled=false, exit=0, parse ok -> success.
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 0, false));
+}
+
+// A timeout, a non-zero exit, or a JSON parse error are all genuine failures
+// that must be surfaced rather than swallowed as "no data".
+void TestHardwareInventoryScanner::wmiFailure_timeoutExitParseAreFailures() {
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(true, false, 0, false));   // timeout
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 1, false));  // exit!=0
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 0, true));   // bad JSON
+}
+
+// A user cancellation is not a data-integrity failure, even if the process was
+// torn down with a non-zero exit code.
+void TestHardwareInventoryScanner::wmiFailure_cancelIsNotFailure() {
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(false, true, 1, false));
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(true, true, 0, false));
+}
+
+void TestHardwareInventoryScanner::jsonDocToVariantMaps_arrayObjectAndSkips() {
+    // Array of two objects -> two maps.
+    const auto arr = HardwareInventoryScanner::jsonDocToVariantMaps(
+        QJsonDocument::fromJson(R"([{"A":1},{"B":2}])"));
+    QCOMPARE(arr.size(), 2);
+    QCOMPARE(arr.at(0).value("A").toInt(), 1);
+    QCOMPARE(arr.at(1).value("B").toInt(), 2);
+
+    // Single object -> one map.
+    const auto obj =
+        HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson(R"({"X":9})"));
+    QCOMPARE(obj.size(), 1);
+    QCOMPARE(obj.at(0).value("X").toInt(), 9);
+
+    // Non-object array entries are skipped.
+    const auto mixed = HardwareInventoryScanner::jsonDocToVariantMaps(
+        QJsonDocument::fromJson(R"([{"A":1},7,"str"])"));
+    QCOMPARE(mixed.size(), 1);
 }
 
 QTEST_MAIN(TestHardwareInventoryScanner)

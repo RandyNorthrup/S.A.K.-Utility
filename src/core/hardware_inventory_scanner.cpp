@@ -81,6 +81,36 @@ QString classifyMediaType(const QString& interface_type,
     return QStringLiteral("Unknown");
 }
 
+#ifdef SAK_PLATFORM_WINDOWS
+/// @brief Map a DXGI vendor ID to a human-readable manufacturer name.
+QString dxgiVendorName(unsigned int vendor_id) {
+    switch (vendor_id) {
+    case kVendorIdNvidia:
+        return QStringLiteral("NVIDIA");
+    case kVendorIdAmd:
+        return QStringLiteral("AMD");
+    case kVendorIdIntel:
+        return QStringLiteral("Intel");
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
+
+/// @brief Fill a GpuInfo from a (non-null) DXGI adapter.
+/// @return false if the adapter description is unreadable or is a software
+///         (WARP) adapter that should be skipped.
+bool tryBuildGpuFromAdapter(IDXGIAdapter1* adapter, sak::GpuInfo& out) {
+    DXGI_ADAPTER_DESC1 desc{};
+    if (!SUCCEEDED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+        return false;
+    }
+    out.name = QString::fromWCharArray(desc.Description);
+    out.vram_bytes = desc.DedicatedVideoMemory;
+    out.manufacturer = dxgiVendorName(desc.VendorId);
+    return true;
+}
+#endif
+
 }  // namespace
 
 namespace sak {
@@ -97,6 +127,7 @@ HardwareInventoryScanner::HardwareInventoryScanner(QObject* parent) : QObject(pa
 
 void HardwareInventoryScanner::scan() {
     m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
 
     m_inventory = HardwareInventory{};
@@ -150,46 +181,48 @@ void HardwareInventoryScanner::scan() {
     Q_EMIT scanProgress(kScanProgressOs, "Querying OS information...");
     queryOsInfo();
 
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-
     Q_EMIT scanProgress(kScanProgressComplete, "Scan complete");
-    Q_EMIT scanComplete(m_inventory);
-    logInfo("Hardware inventory scan completed successfully");
+    if (m_wmiQueryFailed) {
+        logWarning("Hardware inventory scan completed with WMI query failure(s)");
+    } else {
+        logInfo("Hardware inventory scan completed successfully");
+    }
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanCpu() {
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.cpu = queryCpu();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanMemory() {
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.memory = queryMemory();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanStorage() {
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.storage = queryStorage();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanGpu() {
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.gpus = queryGpu();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanBattery() {
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.battery = queryBattery();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::cancel() {
@@ -220,34 +253,53 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
                         timeout_ms,
                         [this]() { return m_cancelled.load(std::memory_order_relaxed); });
 
+    bool parse_failed = false;
+    QVector<QVariantMap> results;
+
     if (result.timed_out) {
         logError("WMI query timed out for class {}", wmi_class.toStdString());
-        return {};
-    }
-
-    if (result.exit_code != 0 || result.cancelled) {
+    } else if (result.exit_code != 0 || result.cancelled) {
         logError("WMI query failed for class {} (exit code {})",
                  wmi_class.toStdString(),
                  result.exit_code);
-        return {};
+    } else {
+        const QByteArray output = result.std_out.toUtf8().trimmed();
+        if (!output.isEmpty()) {
+            QJsonParseError parse_error{};
+            const QJsonDocument doc = QJsonDocument::fromJson(output, &parse_error);
+            if (parse_error.error != QJsonParseError::NoError) {
+                parse_failed = true;
+                logError("WMI JSON parse error for class {}: {}",
+                         wmi_class.toStdString(),
+                         parse_error.errorString().toStdString());
+            } else {
+                results = jsonDocToVariantMaps(doc);
+            }
+        }
     }
 
-    const QByteArray output = result.std_out.toUtf8().trimmed();
-    if (output.isEmpty()) {
-        return {};
+    // Record a genuine failure so scan() can report an incomplete inventory
+    // instead of a silent success. An empty-but-successful result is fine.
+    if (wmiQueryIsReportableFailure(
+            result.timed_out, result.cancelled, result.exit_code, parse_failed)) {
+        m_wmiQueryFailed = true;
     }
 
-    QJsonParseError parse_error{};
-    const QJsonDocument doc = QJsonDocument::fromJson(output, &parse_error);
-    if (parse_error.error != QJsonParseError::NoError) {
-        logError("WMI JSON parse error for class {}: {}",
-                 wmi_class.toStdString(),
-                 parse_error.errorString().toStdString());
-        return {};
-    }
+    return results;
+}
 
+bool HardwareInventoryScanner::wmiQueryIsReportableFailure(bool timedOut,
+                                                           bool cancelled,
+                                                           int exitCode,
+                                                           bool jsonParseFailed) {
+    if (cancelled) {
+        return false;  // user aborted the scan -- not a data-integrity failure
+    }
+    return timedOut || exitCode != 0 || jsonParseFailed;
+}
+
+QVector<QVariantMap> HardwareInventoryScanner::jsonDocToVariantMaps(const QJsonDocument& doc) {
     QVector<QVariantMap> results;
-
     if (doc.isArray()) {
         const QJsonArray arr = doc.array();
         results.reserve(arr.size());
@@ -257,11 +309,19 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
             }
         }
     } else if (doc.isObject()) {
-        // Single result comes back as an object, not an array
+        // A single result comes back as an object, not an array.
         results.append(doc.object().toVariantMap());
     }
-
     return results;
+}
+
+void HardwareInventoryScanner::finishScan() {
+    m_inventory.scan_timestamp = QDateTime::currentDateTime();
+    if (m_wmiQueryFailed) {
+        Q_EMIT errorOccurred(
+            "One or more hardware queries failed; the inventory may be incomplete.");
+    }
+    Q_EMIT scanComplete(m_inventory);
 }
 
 // ============================================================================
@@ -633,34 +693,25 @@ void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
     }
 
     Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 desc{};
-        if (!SUCCEEDED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-            adapter.Reset();
-            continue;
+    for (UINT i = 0;; ++i) {
+        const HRESULT hr = factory->EnumAdapters1(i, &adapter);
+        if (hr == DXGI_ERROR_NOT_FOUND) {
+            break;  // enumerated every adapter
+        }
+        // Any other failure leaves `adapter` unpopulated -- stop rather than
+        // dereference a null ComPtr (GetDesc1 would crash). The old loop only
+        // broke on NOT_FOUND, so an error HRESULT fell through to the deref.
+        if (FAILED(hr) || !adapter) {
+            logWarning("DXGI EnumAdapters1 failed at index {} (hr {:#x})",
+                       i,
+                       static_cast<unsigned long>(hr));
+            break;
         }
 
         GpuInfo gpu;
-        gpu.name = QString::fromWCharArray(desc.Description);
-        gpu.vram_bytes = desc.DedicatedVideoMemory;
-
-        // Determine manufacturer from vendor ID
-        switch (desc.VendorId) {
-        case kVendorIdNvidia:
-            gpu.manufacturer = "NVIDIA";
-            break;
-        case kVendorIdAmd:
-            gpu.manufacturer = "AMD";
-            break;
-        case kVendorIdIntel:
-            gpu.manufacturer = "Intel";
-            break;
-        default:
-            gpu.manufacturer = "Unknown";
-            break;
+        if (tryBuildGpuFromAdapter(adapter.Get(), gpu)) {
+            gpus.append(gpu);
         }
-
-        gpus.append(gpu);
         adapter.Reset();
     }
 #endif

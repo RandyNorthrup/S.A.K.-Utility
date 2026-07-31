@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 
 #include <QHash>
+#include <QJsonDocument>
 #include <QObject>
 #include <QStorageInfo>
 #include <QVariant>
@@ -70,6 +71,27 @@ public:
     /// @note Public + static for unit testing; null/non-numeric DiskIndex dropped
     [[nodiscard]] static QHash<QString, uint32_t> parseVolumeDiskMap(const QByteArray& json);
 
+    /// @brief Whether a finished WMI query should count as a reportable failure.
+    /// @param timedOut the query process timed out.
+    /// @param cancelled the query was cancelled by the user.
+    /// @param exitCode the process exit code (0 == success).
+    /// @param jsonParseFailed the (non-empty) output failed to parse as JSON.
+    /// @return true for a genuine failure; false for success or user cancel.
+    /// @note Pure + static for unit testing. A legitimately empty-but-successful
+    ///       result is NOT a failure; a user cancellation is NOT a failure. Lets
+    ///       scan() surface "inventory may be incomplete" instead of silently
+    ///       reporting success over drives it never actually read (fail-open).
+    [[nodiscard]] static bool wmiQueryIsReportableFailure(bool timedOut,
+                                                          bool cancelled,
+                                                          int exitCode,
+                                                          bool jsonParseFailed);
+
+    /// @brief Convert a parsed WMI JSON document into per-instance property maps.
+    /// @param doc A JSON array (multiple instances) or object (single instance).
+    /// @return One QVariantMap per JSON object; non-object array entries skipped.
+    /// @note Pure + static for unit testing.
+    [[nodiscard]] static QVector<QVariantMap> jsonDocToVariantMaps(const QJsonDocument& doc);
+
 Q_SIGNALS:
     void scanStarted();
     void scanProgress(int percent, const QString& component);
@@ -79,6 +101,16 @@ Q_SIGNALS:
 private:
     std::atomic<bool> m_cancelled{false};
     HardwareInventory m_inventory;
+
+    /// @brief Set true when any WMI query in the current scan genuinely failed
+    ///        (timeout, non-zero exit, or malformed JSON) -- distinct from a
+    ///        legitimately empty result. Reset at the start of every scan entry;
+    ///        only touched from the scan thread.
+    bool m_wmiQueryFailed{false};
+
+    /// @brief Emit the terminal signals for a scan: an errorOccurred (only when a
+    ///        WMI query failed) followed by scanComplete with whatever was read.
+    void finishScan();
 
     /// @brief Query CPU via WMI Win32_Processor
     CpuInfo queryCpu();
