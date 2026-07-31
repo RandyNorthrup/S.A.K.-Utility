@@ -1963,6 +1963,71 @@ private Q_SLOTS:
         QVERIFY(QFileInfo(vacant.destination_path).isFile());
     }
 
+    void replaceCopyFailurePreservesOriginalDestination() {
+        // B8-06: a Replace stages the copy and swaps it in only after it lands whole,
+        // so a copy that fails (here: a missing source) must leave the ORIGINAL
+        // destination byte-for-byte intact instead of destroying it up front.
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+
+        const QString occupied = QDir(destination.path()).filePath(QStringLiteral("keep.txt"));
+        {
+            QFile original(occupied);
+            QVERIFY(original.open(QIODevice::WriteOnly));
+            QVERIFY(original.write("precious original contents") > 0);
+        }
+
+        sak::FileExplorerTransferEngine engine(
+            sak::FileManagementFileSystemBridge::localTarget(source.path()),
+            sak::FileManagementFileSystemBridge::localTarget(destination.path()),
+            0);
+        sak::FileExplorerTransferItem item;
+        // A source path that does not exist forces the copy leg to fail.
+        item.source_path = QDir(source.path()).filePath(QStringLiteral("missing.txt"));
+        item.destination_path = occupied;
+        item.replace_destination = true;
+        QVERIFY(!engine.transferEntry(item));  // the copy failed
+        QVERIFY(!engine.blockers().isEmpty());
+
+        // The original destination survived untouched, and no staging/backup cruft
+        // was left behind in the destination folder. (Read via a scoped handle so it
+        // is closed before the next rename -- Windows will not move an open file.)
+        QVERIFY(QFileInfo(occupied).isFile());
+        {
+            QFile survivor(occupied);
+            QVERIFY(survivor.open(QIODevice::ReadOnly));
+            QCOMPARE(survivor.readAll(), QByteArrayLiteral("precious original contents"));
+        }
+        const auto leftovers = QDir(destination.path())
+                                   .entryList(QStringList{QStringLiteral(".sak-*")},
+                                              QDir::Files | QDir::Dirs | QDir::Hidden);
+        QVERIFY2(leftovers.isEmpty(), qPrintable(leftovers.join(QStringLiteral(", "))));
+
+        // A same-kind Replace that succeeds still overwrites the destination whole.
+        {
+            QFile src(QDir(source.path()).filePath(QStringLiteral("new.txt")));
+            QVERIFY(src.open(QIODevice::WriteOnly));
+            QVERIFY(src.write("brand new contents") > 0);
+        }
+        sak::FileExplorerTransferItem good;
+        good.source_path = QDir(source.path()).filePath(QStringLiteral("new.txt"));
+        good.destination_path = occupied;
+        good.replace_destination = true;
+        QVERIFY2(engine.transferEntry(good),
+                 qPrintable(engine.blockers().join(QStringLiteral(" | "))));
+        {
+            QFile replaced(occupied);
+            QVERIFY(replaced.open(QIODevice::ReadOnly));
+            QCOMPARE(replaced.readAll(), QByteArrayLiteral("brand new contents"));
+        }
+        const auto after = QDir(destination.path())
+                               .entryList(QStringList{QStringLiteral(".sak-*")},
+                                          QDir::Files | QDir::Dirs | QDir::Hidden);
+        QVERIFY2(after.isEmpty(), qPrintable(after.join(QStringLiteral(", "))));
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not

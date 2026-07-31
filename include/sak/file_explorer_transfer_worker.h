@@ -71,6 +71,25 @@ public:
 
 private:
     [[nodiscard]] bool removeReplacedDestination(const FileExplorerTransferItem& item);
+    /// Dispatch @p item to the correct copy leg, writing to @p destination.
+    [[nodiscard]] bool transferItemTo(const FileExplorerTransferItem& item,
+                                      const QString& destination,
+                                      const FileManagementTransferObserver& observer);
+    /// Replace an existing destination without ever risking the original: stage the
+    /// copy to a sibling temp, move the original aside to a backup, move the staged
+    /// copy into place, then drop the backup -- rolling back to the original if any
+    /// step fails, so a copy or move failure never destroys the original (B8-06).
+    [[nodiscard]] bool transferReplacing(const FileExplorerTransferItem& item,
+                                         const FileManagementTransferObserver& observer);
+    /// A staging/backup sibling of @p destination_path in its own parent (so the
+    /// final move is a same-directory rename), named with @p prefix and a per-engine
+    /// sequence for uniqueness within the run.
+    [[nodiscard]] QString siblingTempPath(const QString& destination_path, const QString& prefix);
+    // Best-effort cleanup of a staged/backup sibling, resolving its kind at
+    // execution time; the caller reports the real outcome, so the removal result is
+    // advisory (not [[nodiscard]]).
+    bool removeDestinationEntry(const QString& path);
+    [[nodiscard]] bool renameDestination(const QString& from, const QString& to);
     [[nodiscard]] bool transferFromHost(const FileExplorerTransferItem& item,
                                         const QString& destination,
                                         const FileManagementTransferObserver& observer);
@@ -81,6 +100,7 @@ private:
                                                    const QString& destination,
                                                    const FileManagementTransferObserver& observer);
     [[nodiscard]] bool transferRawStaged(const FileExplorerTransferItem& item,
+                                         const QString& destination,
                                          const FileManagementTransferObserver& observer);
 
     FileManagementTarget m_source_target;
@@ -92,6 +112,7 @@ private:
     QString m_last_file_sha256;
     bool m_last_file_hash_capped{false};
     bool m_last_transfer_incomplete{false};
+    int m_replace_seq{0};
 };
 
 /// What one worker run does with its items (Files FileOperationType routing:

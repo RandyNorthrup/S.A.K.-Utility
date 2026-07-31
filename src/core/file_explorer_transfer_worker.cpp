@@ -43,16 +43,90 @@ FileExplorerTransferEngine::FileExplorerTransferEngine(FileManagementTarget sour
 bool FileExplorerTransferEngine::transferEntry(const FileExplorerTransferItem& item,
                                                const FileManagementTransferObserver& observer) {
     m_last_transfer_incomplete = false;
-    if (!removeReplacedDestination(item)) {
-        return false;
+    // A Replace copies into a sibling temp and swaps it in only after it lands whole,
+    // so a copy failure never destroys the original (B8-06). A non-Replace writes to
+    // the final path directly (the backends atomically overwrite their own temp).
+    if (item.replace_destination) {
+        return transferReplacing(item, observer);
     }
+    return transferItemTo(item, item.destination_path, observer);
+}
+
+bool FileExplorerTransferEngine::transferItemTo(const FileExplorerTransferItem& item,
+                                                const QString& destination,
+                                                const FileManagementTransferObserver& observer) {
     if (m_source_target.local_file_system) {
-        return transferFromHost(item, item.destination_path, observer);
+        return transferFromHost(item, destination, observer);
     }
     if (m_destination_target.local_file_system) {
-        return transferRawToLocal(item, item.destination_path, observer);
+        return transferRawToLocal(item, destination, observer);
     }
-    return transferRawStaged(item, observer);
+    return transferRawStaged(item, destination, observer);
+}
+
+QString FileExplorerTransferEngine::siblingTempPath(const QString& destination_path,
+                                                    const QString& prefix) {
+    QString clean = destination_path;
+    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    while (clean.endsWith(QLatin1Char('/'))) {
+        clean.chop(1);
+    }
+    const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
+    const QString parent = slash < 0 ? QString() : clean.left(slash);
+    const QString name = slash < 0 ? clean : clean.mid(slash + 1);
+    const QString temp = QStringLiteral("%1%2.%3").arg(prefix, name).arg(m_replace_seq++);
+    return parent.isEmpty() ? temp : parent + QLatin1Char('/') + temp;
+}
+
+bool FileExplorerTransferEngine::removeDestinationEntry(const QString& path) {
+    // Resolve the entry's kind (file/dir/symlink) at execution time -- a staged copy
+    // matches the source's kind, but a set-aside backup matches the OLD occupant's,
+    // which the item does not describe.
+    return FileManagementFileSystemBridge::removeExistingEntry(m_destination_target,
+                                                               path,
+                                                               kDiscoveryMaxEntriesPerDirectory)
+        .ok;
+}
+
+bool FileExplorerTransferEngine::renameDestination(const QString& from, const QString& to) {
+    return FileManagementFileSystemBridge::renameEntry(m_destination_target, from, to).ok;
+}
+
+bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferItem& item,
+                                                   const FileManagementTransferObserver& observer) {
+    // 1. Stage the whole copy beside the destination. A failure here leaves the
+    //    original completely untouched.
+    const QString staged = siblingTempPath(item.destination_path, QStringLiteral(".sak-stage-"));
+    if (!transferItemTo(item, staged, observer)) {
+        removeDestinationEntry(staged);  // best-effort partial cleanup
+        return false;
+    }
+    // 2. Try to move the current occupant aside. Success means there WAS an occupant
+    //    and we hold a rollback copy; failure means the path was vacant (occupant
+    //    vanished since collision-resolve) OR the occupant is stuck -- both are handled
+    //    by step 3, which only lands on a vacant final name.
+    const QString backup = siblingTempPath(item.destination_path, QStringLiteral(".sak-old-"));
+    const bool occupant_set_aside = renameDestination(item.destination_path, backup);
+    // 3. Move the staged copy into place. If it fails, restore the original (when one
+    //    was set aside) so a stuck occupant never costs the original.
+    if (!renameDestination(staged, item.destination_path)) {
+        if (occupant_set_aside && !renameDestination(backup, item.destination_path)) {
+            m_blockers.append(QStringLiteral("Could not move the replacement into place for %1 AND "
+                                             "could not restore the original; it is kept at %2.")
+                                  .arg(transferItemName(item.destination_path), backup));
+            return false;
+        }
+        m_blockers.append(QStringLiteral("Could not move the replacement into place for %1; the "
+                                         "original was left intact.")
+                              .arg(transferItemName(item.destination_path)));
+        removeDestinationEntry(staged);
+        return false;
+    }
+    // 4. Success: drop the set-aside original, if any (best-effort -- the replace is done).
+    if (occupant_set_aside) {
+        removeDestinationEntry(backup);
+    }
+    return true;
 }
 
 bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferItem& item) {
@@ -175,6 +249,7 @@ bool FileExplorerTransferEngine::transferRawToLocal(
 }
 
 bool FileExplorerTransferEngine::transferRawStaged(const FileExplorerTransferItem& item,
+                                                   const QString& destination,
                                                    const FileManagementTransferObserver& observer) {
     QTemporaryDir staging;
     if (!staging.isValid()) {
@@ -192,7 +267,7 @@ bool FileExplorerTransferEngine::transferRawStaged(const FileExplorerTransferIte
     FileExplorerTransferEngine host_leg(FileManagementFileSystemBridge::localTarget(QString()),
                                         m_destination_target,
                                         m_raw_read_cap);
-    const bool ok = host_leg.transferFromHost(staged_item, item.destination_path, observer);
+    const bool ok = host_leg.transferFromHost(staged_item, destination, observer);
     m_warnings.append(host_leg.warnings());
     m_blockers.append(host_leg.blockers());
     // Either leg dropping entries leaves the raw-to-raw copy incomplete.
