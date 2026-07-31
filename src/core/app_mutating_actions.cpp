@@ -2259,13 +2259,14 @@ AppActionResult setAdapterDhcp(const QJsonObject& args) {
 
     // A DHCP snapshot: isValid() requires a non-empty adapterName + backupTimestamp and
     // (dhcpEnabled || an IP); restoreSettings(dhcp) sets IPv4 to DHCP (authoritative, checked) and
-    // best-effort sets DNS to automatic (restoreDhcpMode discards the DNS-set result), so the
-    // message asserts only the verified IPv4 outcome.
+    // sets DNS to automatic, now reporting whether that DNS step actually succeeded (dns_applied)
+    // rather than implying it always did.
     EthernetConfigSnapshot snapshot;
     snapshot.adapterName = resolved;
     snapshot.dhcpEnabled = true;
     snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
-    if (!manager.restoreSettings(snapshot, resolved)) {
+    bool dns_applied = false;
+    if (!manager.restoreSettings(snapshot, resolved, &dns_applied)) {
         return {false,
                 error_text.isEmpty()
                     ? QStringLiteral("Failed to set adapter '%1' to DHCP (changing network config "
@@ -2274,10 +2275,18 @@ AppActionResult setAdapterDhcp(const QJsonObject& args) {
                     : error_text,
                 {}};
     }
+    const QString message =
+        dns_applied
+            ? QStringLiteral("Set adapter '%1' to automatic (DHCP), including DNS").arg(resolved)
+            : QStringLiteral(
+                  "Set adapter '%1' IPv4 to automatic (DHCP), but DNS could NOT be set "
+                  "to automatic -- set DNS manually")
+                  .arg(resolved);
     return {true,
-            QStringLiteral("Set adapter '%1' to automatic (DHCP)").arg(resolved),
+            message,
             QJsonObject{{QStringLiteral("adapter_name"), resolved},
-                        {QStringLiteral("dhcp_enabled"), true}}};
+                        {QStringLiteral("dhcp_enabled"), true},
+                        {QStringLiteral("dns_automatic"), dns_applied}}};
 }
 
 // ---------------------------------------------------------------------------

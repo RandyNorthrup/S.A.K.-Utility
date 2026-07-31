@@ -4141,6 +4141,38 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_optimize_power_settings
     message(STATUS "Added unit test: test_optimize_power_settings_action")
 endif()
 
+# test_file_explorer_archive_service -- B6-19 exclusive-create (compress does not
+# clobber an existing output; compress/extract round trip still works)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_archive_service.cpp")
+    add_executable(test_file_explorer_archive_service
+        unit/test_file_explorer_archive_service.cpp
+        ../src/core/file_explorer_archive_service.cpp
+        ../include/sak/file_explorer_archive_service.h
+    )
+
+    set_target_properties(test_file_explorer_archive_service PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+
+    target_link_libraries(test_file_explorer_archive_service PRIVATE
+        Qt6::Core
+        Qt6::CorePrivate
+        Qt6::Test
+        ${PLATFORM_LIBS}
+    )
+
+    target_include_directories(test_file_explorer_archive_service PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    add_test(NAME test_file_explorer_archive_service
+             COMMAND test_file_explorer_archive_service
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+
+    message(STATUS "Added unit test: test_file_explorer_archive_service")
+endif()
+
 # ============================================================================
 # Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
 # ============================================================================

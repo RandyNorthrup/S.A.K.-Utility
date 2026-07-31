@@ -78,9 +78,13 @@ public:
     /// @brief Restore adapter settings from a snapshot
     /// @param snapshot     The configuration to apply
     /// @param adapterName  Target adapter name (may differ from snapshot's original)
+    /// @param dnsApplied   Optional out: on the DHCP path, set to whether DNS was
+    ///        also switched to automatic (previously discarded). Lets a caller
+    ///        report the ACTUAL DNS outcome instead of implying it always worked.
     /// @return true if all netsh commands succeeded
     [[nodiscard]] bool restoreSettings(const EthernetConfigSnapshot& snapshot,
-                                       const QString& adapterName);
+                                       const QString& adapterName,
+                                       bool* dnsApplied = nullptr);
 
     /// @brief Set an adapter's IPv4 DNS servers to a static list, leaving the
     /// adapter's IP configuration (DHCP or static) untouched.
@@ -105,7 +109,10 @@ Q_SIGNALS:
     void errorOccurred(const QString& error);
 
 private:
-    [[nodiscard]] bool restoreDhcpMode(const QString& adapterName);
+    /// @param dnsApplied Optional out: whether the DNS-to-automatic (source=dhcp)
+    ///        step succeeded. IPv4 DHCP is the authoritative success; the DNS
+    ///        result is surfaced here instead of being discarded.
+    [[nodiscard]] bool restoreDhcpMode(const QString& adapterName, bool* dnsApplied = nullptr);
     [[nodiscard]] bool restoreStaticIp(const EthernetConfigSnapshot& snapshot,
                                        const QString& adapterName);
     /// @param primaryApplied Optional out: set true once the primary DNS command

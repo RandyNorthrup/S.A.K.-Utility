@@ -176,7 +176,7 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
     return snapshot;
 }
 
-bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName) {
+bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName, bool* dnsApplied) {
     Q_EMIT logOutput("Setting adapter to DHCP mode...");
     bool ok = false;
     QString result = runNetsh(
@@ -187,12 +187,24 @@ bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName) {
         return false;
     }
 
-    static_cast<void>(runNetsh({"interface",
-                                "ip",
-                                "set",
-                                "dnsservers",
-                                QString("name=%1").arg(adapterName),
-                                "source=dhcp"}));
+    // Set DNS to automatic too. IPv4 DHCP above is the authoritative success, but the
+    // DNS result was previously discarded -- capture it so the caller can report the
+    // ACTUAL DNS outcome rather than implying DNS is always automatic.
+    bool dnsOk = false;
+    const QString dnsResult = runNetsh({"interface",
+                                        "ip",
+                                        "set",
+                                        "dnsservers",
+                                        QString("name=%1").arg(adapterName),
+                                        "source=dhcp"},
+                                       &dnsOk);
+    dnsOk = dnsOk && !dnsResult.contains("error", Qt::CaseInsensitive);
+    if (!dnsOk) {
+        Q_EMIT logOutput("Warning: could not set DNS to automatic (DHCP); set DNS manually");
+    }
+    if (dnsApplied != nullptr) {
+        *dnsApplied = dnsOk;
+    }
     return true;
 }
 
@@ -275,7 +287,8 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
 }
 
 bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapshot,
-                                            const QString& adapterName) {
+                                            const QString& adapterName,
+                                            bool* dnsApplied) {
     if (!snapshot.isValid()) {
         Q_EMIT errorOccurred("Cannot restore from invalid snapshot.");
         return false;
@@ -286,7 +299,7 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
         QString("Source: %1 (backed up from %2 on %3)")
             .arg(snapshot.adapterName, snapshot.computerName, snapshot.backupTimestamp));
 
-    bool allSucceeded = snapshot.dhcpEnabled ? restoreDhcpMode(adapterName)
+    bool allSucceeded = snapshot.dhcpEnabled ? restoreDhcpMode(adapterName, dnsApplied)
                                              : restoreStaticIp(snapshot, adapterName);
 
     if (!restoreDnsServers(snapshot, adapterName)) {

@@ -10,7 +10,6 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
-#include <QSaveFile>
 #include <QSet>
 
 #include <private/qzipreader_p.h>
@@ -142,11 +141,24 @@ bool writeExtractedFile(const QZipReader& reader,
                 .arg(info.filePath));
         return false;
     }
-    QSaveFile out(out_path);
-    if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() || !out.commit()) {
+    // Exclusive create (NewOnly): if a file was raced into the (op-layer-verified
+    // new/empty) destination at this entry's path, fail closed rather than clobber
+    // it. Validated entries never collide with each other, so this only trips on a
+    // foreign, raced-in file.
+    QFile out(out_path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        result->blockers.append(
+            QStringLiteral("Could not write %1 (it already exists or is not writable).")
+                .arg(out_path));
+        return false;
+    }
+    if (out.write(data) != data.size()) {
+        out.close();
+        out.remove();
         result->blockers.append(QStringLiteral("Could not write %1.").arg(out_path));
         return false;
     }
+    out.close();
     ++result->entries;
     return true;
 }
@@ -291,9 +303,24 @@ FileExplorerArchiveResult FileExplorerArchiveService::compressToZip(
     const QString& zip_path, const QStringList& source_paths) {
     FileExplorerArchiveResult result;
     result.output_path = zip_path;
-    QZipWriter writer(zip_path);
+
+    // Exclusive create: NewOnly makes open() fail if the path already exists, closing
+    // the TOCTOU window after the op-layer's exists() check -- a file raced in at
+    // zip_path is NOT clobbered. It also guarantees the archive is the file we
+    // created, so the remove-on-failure below can never delete a pre-existing file.
+    QFile zip_file(zip_path);
+    if (!zip_file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        result.blockers.append(
+            QStringLiteral("Could not create archive %1 (it already exists or is not writable).")
+                .arg(zip_path));
+        return result;
+    }
+
+    QZipWriter writer(&zip_file);
     if (writer.status() != QZipWriter::NoError) {
         result.blockers.append(QStringLiteral("Could not create archive %1.").arg(zip_path));
+        zip_file.close();
+        zip_file.remove();
         return result;
     }
     writer.setCompressionPolicy(QZipWriter::AutoCompress);
@@ -320,9 +347,12 @@ FileExplorerArchiveResult FileExplorerArchiveService::compressToZip(
     if (writer.status() != QZipWriter::NoError) {
         result.blockers.append(QStringLiteral("Could not finalize archive %1.").arg(zip_path));
     }
+    zip_file.close();
     result.ok = result.blockers.isEmpty();
     if (!result.ok) {
-        QFile::remove(zip_path);
+        // Safe: zip_file was created exclusively above, so this only ever removes
+        // the archive we just wrote, never a pre-existing/raced-in file.
+        zip_file.remove();
     }
     return result;
 }
