@@ -656,6 +656,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_manager_panel.cpp")
         ../src/third_party/qrcodegen/qrcodegen.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
+        ../src/core/wifi_setup_script.cpp
         ../include/sak/wifi_manager_panel.h
         ../include/sak/detachable_log_window.h
     )
@@ -1356,6 +1357,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_archive_service.cpp
         ../src/gui/file_explorer_properties_dialog.cpp
         ../include/sak/file_explorer_properties_dialog.h
+        ../src/core/file_explorer_properties_calc.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/recycle_bin.cpp
