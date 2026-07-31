@@ -2140,6 +2140,51 @@ private Q_SLOTS:
         QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("a.txt"))).exists());
     }
 
+    void extractRejectsEntryDeclaringOversizeUncompressed() {
+        // B8-10: an entry whose DECLARED uncompressed size exceeds the per-file cap
+        // must be refused before it is decompressed into RAM (QZipReader decodes each
+        // entry whole into one QByteArray). Patch the central-directory record's
+        // uncompressed-size field to ~2 GiB -- which the old 4 GiB cap would have let
+        // through to a 2 GiB allocation.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const QString zip = root.filePath(QStringLiteral("bigdecl.zip"));
+        {
+            QZipWriter writer(zip);
+            writer.addFile(QStringLiteral("a.txt"), QByteArrayLiteral("small real payload"));
+            writer.close();
+            QCOMPARE(writer.status(), QZipWriter::NoError);
+        }
+
+        QByteArray bytes;
+        {
+            QFile f(zip);
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            bytes = f.readAll();
+        }
+        // Central-directory file header: PK\x01\x02; uncompressed size is a LE uint32
+        // at offset +24.
+        const int cd = bytes.indexOf(QByteArrayLiteral("PK\x01\x02"));
+        QVERIFY(cd >= 0);
+        QVERIFY(cd + 28 <= bytes.size());
+        const quint32 declared = 0x7F'00'00'00u;  // ~2.1 GiB, over the 512 MiB cap
+        for (int i = 0; i < 4; ++i) {
+            bytes[cd + 24 + i] = static_cast<char>((declared >> (8 * i)) & 0xFF);
+        }
+        {
+            QFile f(zip);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            QCOMPARE(f.write(bytes), static_cast<qint64>(bytes.size()));
+        }
+
+        const QString out = root.filePath(QStringLiteral("out"));
+        const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
+        QVERIFY(!result.ok);  // refused before decoding into RAM
+        QVERIFY(!result.blockers.isEmpty());
+        QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("a.txt"))).exists());
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not

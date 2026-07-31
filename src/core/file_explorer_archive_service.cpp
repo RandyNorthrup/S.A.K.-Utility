@@ -41,7 +41,12 @@ constexpr qint64 kMaxCentralDirBytes = 64LL * 1024 * 1024;
 // destination volume. A hostile zip commonly declares a small compressed size
 // but a huge expanded size; extraction fails closed before writing past these.
 constexpr qint64 kExtractMaxTotalBytes = 8LL * 1024 * 1024 * 1024;  // 8 GiB expanded
-constexpr qint64 kExtractMaxFileBytes = 4LL * 1024 * 1024 * 1024;   // 4 GiB per file
+// Per-file cap. QZipReader has no streaming decode -- each entry is decompressed
+// whole into one QByteArray before it is written -- so this also bounds the peak
+// RAM one entry can allocate. Held to 512 MiB (was 4 GiB) so a single crafted
+// entry, or several concurrent extractions, cannot exhaust memory; the entry's
+// DECLARED uncompressed size is checked against it before any decode (B8-10).
+constexpr qint64 kExtractMaxFileBytes = 512LL * 1024 * 1024;  // 512 MiB per file
 
 // Byte size of a zip's central directory (from the End-Of-Central-Directory record), or -1 when no
 // EOCD is found (i.e. not a zip). QZipReader::isReadable() only confirms the DEVICE opened and
