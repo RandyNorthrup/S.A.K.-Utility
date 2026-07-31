@@ -6,7 +6,6 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
-#include <QDir>
 #include <QtConcurrentRun>
 #include <QtGlobal>
 #include <QVector>
@@ -105,7 +104,7 @@ DriveScanner::DriveScanner(QObject* parent)
     m_refreshTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &DriveScanner::onRefreshTimer);
     connect(&m_scanWatcher,
-            &QFutureWatcher<QList<sak::DriveInfo>>::finished,
+            &QFutureWatcher<sak::DriveScanResult>::finished,
             this,
             &DriveScanner::onScanFinished);
 }
@@ -185,8 +184,9 @@ void DriveScanner::scanDrives() {
     // Win32 IOCTLs, so doing this inline would freeze the interface. Shares the exact
     // one-shot enumeration used by the headless imaging.list_drives path.
     m_scanWatcher.setFuture(QtConcurrent::run([]() {
-        bool enumeration_ok = false;
-        return DriveScanner::enumerateDrivesOnce(enumeration_ok);
+        sak::DriveScanResult result;
+        result.drives = DriveScanner::enumerateDrivesOnce(result.enumeration_ok);
+        return result;
     }));
 }
 
@@ -203,24 +203,55 @@ QList<sak::DriveInfo> DriveScanner::enumerateDrivesOnce(bool& enumeration_ok) {
 }
 
 void DriveScanner::onScanFinished() {
-    applyDriveScan(m_scanWatcher.result());
+    const sak::DriveScanResult result = m_scanWatcher.result();
+    applyDriveScan(result.drives, result.enumeration_ok);
     m_isScanning = false;
 }
 
-void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives) {
+QList<sak::DriveInfo> DriveScanner::drivesDetached(const QList<sak::DriveInfo>& current,
+                                                   const QList<sak::DriveInfo>& scanned,
+                                                   bool enumeration_ok) {
+    QList<sak::DriveInfo> detached;
+    if (!enumeration_ok) {
+        // The scan was partial/probe-only. Treating a drive missing from it as "detached" would
+        // spuriously drop every real drive on a transient enumeration failure -- fail closed.
+        return detached;
+    }
+    for (const auto& drive : current) {
+        if (!containsDevicePath(scanned, drive.devicePath)) {
+            detached.append(drive);
+        }
+    }
+    return detached;
+}
+
+QList<sak::DriveInfo> DriveScanner::mergeDriveList(const QList<sak::DriveInfo>& current,
+                                                   const QList<sak::DriveInfo>& scanned,
+                                                   bool enumeration_ok) {
+    if (enumeration_ok) {
+        return scanned;  // Authoritative: the scan IS the drive list.
+    }
+    // Non-authoritative: never drop cached drives; only add ones the partial scan newly saw.
+    QList<sak::DriveInfo> merged = current;
+    for (const auto& drive : scanned) {
+        if (!containsDevicePath(merged, drive.devicePath)) {
+            merged.append(drive);
+        }
+    }
+    return merged;
+}
+
+void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives, bool enumeration_ok) {
     bool hasChanges = false;
 
-    // Find removed drives
-    for (const auto& oldDrive : m_drives) {
-        if (containsDevicePath(newDrives, oldDrive.devicePath)) {
-            continue;
-        }
+    // Removed drives -- only when the scan was authoritative (see drivesDetached).
+    for (const auto& oldDrive : drivesDetached(m_drives, newDrives, enumeration_ok)) {
         sak::logInfo(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
         Q_EMIT driveDetached(oldDrive.devicePath);
         hasChanges = true;
     }
 
-    // Find new drives
+    // New drives (a freshly-seen drive is real even under a partial scan -- attach is additive).
     for (const auto& newDrive : newDrives) {
         if (containsDevicePath(m_drives, newDrive.devicePath)) {
             continue;
@@ -232,7 +263,7 @@ void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives) {
         hasChanges = true;
     }
 
-    m_drives = newDrives;
+    m_drives = mergeDriveList(m_drives, newDrives, enumeration_ok);
 
     if (hasChanges) {
         Q_EMIT drivesUpdated(m_drives);
@@ -277,6 +308,27 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
     return info;
 }
 
+QString DriveScanner::descriptorString(const BYTE* buffer,
+                                       DWORD buffer_size,
+                                       DWORD bytes_returned,
+                                       DWORD field_offset) {
+    if (field_offset == 0) {
+        return QString();  // Field absent.
+    }
+    // Never trust the driver's byte count past our own buffer.
+    const DWORD limit = std::min(bytes_returned, buffer_size);
+    if (field_offset >= limit) {
+        return QString();  // Offset points outside the returned data -- would be an OOB read.
+    }
+    const DWORD max_len = limit - field_offset;
+    const char* start = reinterpret_cast<const char*>(buffer + field_offset);
+    DWORD len = 0;
+    while (len < max_len && start[len] != '\0') {
+        ++len;
+    }
+    return QString::fromLatin1(start, static_cast<int>(len));
+}
+
 QString DriveScanner::getDriveName(int driveNumber) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "getDriveName", "driveNumber must be non-negative");
@@ -307,21 +359,17 @@ QString DriveScanner::getDriveName(int driveNumber) {
                         buffer,
                         sizeof(buffer),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) &&
+        bytesReturned >= sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
         const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
-        QString vendor;
-        QString product;
-        if (desc->VendorIdOffset != 0) {
-            vendor =
-                QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->VendorIdOffset))
-                    .trimmed();
-        }
-        if (desc->ProductIdOffset != 0) {
-            product =
-                QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->ProductIdOffset))
-                    .trimmed();
-        }
+        // Vendor/Product are byte offsets into the returned buffer supplied by the driver; a buggy
+        // or hostile driver could point them past the data, so read them bounds-checked, not raw.
+        const QString vendor =
+            descriptorString(buffer, sizeof(buffer), bytesReturned, desc->VendorIdOffset).trimmed();
+        const QString product =
+            descriptorString(buffer, sizeof(buffer), bytesReturned, desc->ProductIdOffset)
+                .trimmed();
 
         CloseHandle(hDrive);
 
@@ -475,36 +523,47 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
     return removable;
 }
 
+bool DriveScanner::driveReadOnlyFromProbe(bool is_writable_ioctl_ok,
+                                          DWORD is_writable_error,
+                                          bool length_ok,
+                                          qint64 length_bytes) {
+    if (is_writable_ioctl_ok) {
+        return false;  // Only path that AFFIRMATIVELY confirms the drive is writable.
+    }
+    if (is_writable_error == ERROR_WRITE_PROTECT) {
+        return true;  // Hardware write-protect.
+    }
+    if (length_ok && length_bytes == 0) {
+        return true;  // No media / zero-length volume.
+    }
+    // Any other failure (access denied, not-ready, unsupported IOCTL) is undeterminable. Report
+    // read-only rather than fail open: IOCTL_DISK_IS_WRITABLE is FILE_ANY_ACCESS, so a genuinely
+    // writable drive succeeds above -- reaching here means we could not confirm writability.
+    return true;
+}
+
 bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
     Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "isDriveReadOnly", "hDrive must be a valid handle");
-    DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(
-            hDrive, IOCTL_DISK_IS_WRITABLE, nullptr, 0, nullptr, 0, &bytesReturned, nullptr)) {
-        return false;
-    }
-
-    DWORD error = GetLastError();
-    if (error == ERROR_WRITE_PROTECT) {
-        return true;
-    }
+    const bool writable_ok =
+        DeviceIoControl(
+            hDrive, IOCTL_DISK_IS_WRITABLE, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) != 0;
+    // Capture the error immediately -- the length IOCTL below would overwrite GetLastError().
+    const DWORD writable_error = writable_ok ? ERROR_SUCCESS : GetLastError();
 
     GET_LENGTH_INFORMATION lengthInfo = {};
-    if (DeviceIoControl(hDrive,
-                        IOCTL_DISK_GET_LENGTH_INFO,
-                        nullptr,
-                        0,
-                        &lengthInfo,
-                        sizeof(lengthInfo),
-                        &bytesReturned,
-                        nullptr)) {
-        if (lengthInfo.Length.QuadPart == 0) {
-            return true;
-        }
-    }
+    const bool length_ok = DeviceIoControl(hDrive,
+                                           IOCTL_DISK_GET_LENGTH_INFO,
+                                           nullptr,
+                                           0,
+                                           &lengthInfo,
+                                           sizeof(lengthInfo),
+                                           &bytesReturned,
+                                           nullptr) != 0;
 
-    return false;
+    return driveReadOnlyFromProbe(
+        writable_ok, writable_error, length_ok, lengthInfo.Length.QuadPart);
 }
 
 QStringList DriveScanner::getMountPoints(int driveNumber) {
@@ -524,18 +583,25 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
         if (len > 0 && volumeName[len - 1] == L'\\') {
             volumeName[len - 1] = L'\0';
         }
-
-        HANDLE hVolume = CreateFileW(
-            volumeName, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-
-        if (hVolume == INVALID_HANDLE_VALUE) {
-            continue;
+        if (volumeMatchesDrive(volumeName, driveNumber)) {
+            collectMountPaths(volumeName, len, mountPoints);
         }
+    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
 
-        STORAGE_DEVICE_NUMBER deviceNumber = {};
-        DWORD bytesReturned = 0;
+    FindVolumeClose(hFind);
+    return mountPoints;
+}
 
-        bool isMatch = DeviceIoControl(hVolume,
+bool DriveScanner::volumeMatchesDrive(const wchar_t* volumeName, int driveNumber) {
+    HANDLE hVolume = CreateFileW(
+        volumeName, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD bytesReturned = 0;
+    const bool match = DeviceIoControl(hVolume,
                                        IOCTL_STORAGE_GET_DEVICE_NUMBER,
                                        nullptr,
                                        0,
@@ -544,18 +610,43 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
                                        &bytesReturned,
                                        nullptr) &&
                        static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
+    CloseHandle(hVolume);
+    return match;
+}
 
-        if (!isMatch) {
-            CloseHandle(hVolume);
+QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
+    Q_ASSERT_X(driveNumber >= 0, "getVolumeRootsForDrive", "driveNumber must be non-negative");
+    QStringList roots;
+
+    wchar_t volumeName[MAX_PATH];
+    HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return roots;
+    }
+
+    do {
+        const QString guidRoot = QString::fromWCharArray(volumeName);  // keeps trailing backslash
+        size_t len = wcslen(volumeName);
+        if (len > 0 && volumeName[len - 1] == L'\\') {
+            volumeName[len - 1] = L'\0';
+        }
+        if (!volumeMatchesDrive(volumeName, driveNumber)) {
             continue;
         }
-
-        collectMountPaths(volumeName, len, mountPoints);
-        CloseHandle(hVolume);
+        QStringList mounts;
+        collectMountPaths(volumeName, len, mounts);
+        if (mounts.isEmpty()) {
+            // Unmounted volume: it has no drive letter, but its \\?\Volume{GUID}\ path is still
+            // inspectable -- so an unmounted Windows partition is not missed by the system check.
+            roots.append(guidRoot);
+        } else {
+            roots += mounts;
+        }
     } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
 
     FindVolumeClose(hFind);
-    return mountPoints;
+    return roots;
 }
 
 void DriveScanner::collectMountPaths(wchar_t* volumeName,
@@ -600,32 +691,51 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
 
 namespace {
 
-bool hasWindowsIndicators(const QDir& mountDir) {
-    if (mountDir.exists("Windows/System32") && mountDir.exists("Windows/System32/ntoskrnl.exe")) {
+/// @brief True if @p rel exists under volume root @p root. Uses GetFileAttributesW on a native
+/// backslash path so it works for BOTH drive-letter roots (E:\) and unmounted volumes addressed by
+/// their \\?\Volume{GUID}\ path (QDir mangles the \\?\ prefix, so it cannot be used here).
+bool nativePathExists(const QString& root, const char* rel) {
+    QString full = root;
+    if (!full.endsWith(QLatin1Char('\\'))) {
+        full += QLatin1Char('\\');
+    }
+    full += QString::fromLatin1(rel);
+    full.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    const DWORD attrs = GetFileAttributesW(reinterpret_cast<LPCWSTR>(full.utf16()));
+    return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+}  // namespace
+
+bool DriveScanner::hasWindowsIndicators(const QString& root) {
+    if (nativePathExists(root, "Windows/System32") &&
+        nativePathExists(root, "Windows/System32/ntoskrnl.exe")) {
         return true;
     }
-    if (mountDir.exists("Windows/explorer.exe") && mountDir.exists("Program Files")) {
+    if (nativePathExists(root, "Windows/explorer.exe") && nativePathExists(root, "Program Files")) {
         return true;
     }
     // Boot files alone don't mean it's a system drive
-    if ((mountDir.exists("bootmgr") || mountDir.exists("BOOTNXT")) && mountDir.exists("Windows")) {
+    if ((nativePathExists(root, "bootmgr") || nativePathExists(root, "BOOTNXT")) &&
+        nativePathExists(root, "Windows")) {
         return true;
     }
-    if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") && mountDir.exists("Windows")) {
+    if (nativePathExists(root, "EFI/Microsoft/Boot/bootmgfw.efi") &&
+        nativePathExists(root, "Windows")) {
         return true;
     }
     return false;
 }
 
-}  // namespace
-
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
-    QStringList mountPoints = getMountPoints(driveNumber);
+    // Inspect EVERY volume on the drive -- including unmounted ones (GUID path) -- so a Windows
+    // partition without a drive letter is still classified as a system drive.
+    const QStringList roots = getVolumeRootsForDrive(driveNumber);
 
-    return std::any_of(mountPoints.begin(), mountPoints.end(), [](const QString& mp) {
-        return hasWindowsIndicators(QDir(mp));
+    return std::any_of(roots.begin(), roots.end(), [](const QString& root) {
+        return hasWindowsIndicators(root);
     });
 }
 

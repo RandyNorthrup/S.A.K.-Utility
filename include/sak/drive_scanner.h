@@ -37,6 +37,18 @@ struct DriveInfo {
     bool isValid() const { return !devicePath.isEmpty() && size > 0; }
 };
 
+/**
+ * @brief Result of one physical-drive enumeration pass.
+ *
+ * Carries the authoritative-ness of the scan alongside the drives so a partial/failed
+ * enumeration (enumeration_ok == false) is never mistaken for "these are all the drives"
+ * and does not spuriously detach the cached ones.
+ */
+struct DriveScanResult {
+    QList<sak::DriveInfo> drives;
+    bool enumeration_ok{false};
+};
+
 }  // namespace sak
 
 /**
@@ -65,8 +77,12 @@ struct DriveInfo {
  * scanner.start();
  * @endcode
  */
+class DriveScannerTests;  // grants the unit test access to the pure decision seams below
+
 class DriveScanner : public QObject {
     Q_OBJECT
+
+    friend class ::DriveScannerTests;
 
 public:
     explicit DriveScanner(QObject* parent = nullptr);
@@ -170,9 +186,39 @@ private Q_SLOTS:
 private:
     void scanDrives();
     /// @brief Diff a fresh scan against the cached list and emit changes (UI thread).
-    void applyDriveScan(const QList<sak::DriveInfo>& newDrives);
+    /// @param enumeration_ok False when the scan was not authoritative (partial/probe-only); a
+    ///        non-authoritative scan never detaches cached drives -- see drivesDetached().
+    void applyDriveScan(const QList<sak::DriveInfo>& newDrives, bool enumeration_ok);
     void registerDeviceNotification();
     void unregisterDeviceNotification();
+
+    // --- Pure decision seams (no Win32/instance state; unit-tested offscreen) ---
+    /// @brief Cached drives that are genuinely gone (in current, absent from scanned). Returns
+    ///        EMPTY when !enumeration_ok, so a partial scan is never read as "these detached".
+    static QList<sak::DriveInfo> drivesDetached(const QList<sak::DriveInfo>& current,
+                                                const QList<sak::DriveInfo>& scanned,
+                                                bool enumeration_ok);
+    /// @brief The drive list to cache after a scan. Authoritative -> the scanned list;
+    ///        non-authoritative -> keep every current drive and union in any newly-seen ones.
+    static QList<sak::DriveInfo> mergeDriveList(const QList<sak::DriveInfo>& current,
+                                                const QList<sak::DriveInfo>& scanned,
+                                                bool enumeration_ok);
+    /// @brief OOB-safe read of a NUL-terminated field from a STORAGE_DEVICE_DESCRIPTOR buffer.
+    ///        Empty when offset is 0 (absent) or outside [0, bytes_returned); never reads past
+    ///        the returned data even if the field is not NUL-terminated.
+    static QString descriptorString(const BYTE* buffer,
+                                    DWORD buffer_size,
+                                    DWORD bytes_returned,
+                                    DWORD field_offset);
+    /// @brief Fail-closed writability decision. True (read-only) unless the drive AFFIRMATIVELY
+    ///        reports writable; an undeterminable probe is never announced as writable.
+    static bool driveReadOnlyFromProbe(bool is_writable_ioctl_ok,
+                                       DWORD is_writable_error,
+                                       bool length_ok,
+                                       qint64 length_bytes);
+    /// @brief True if the given volume root (drive letter OR \\?\Volume{GUID}\ path) holds a
+    ///        Windows installation. Uses GetFileAttributesW so it works for unmounted volumes.
+    static bool hasWindowsIndicators(const QString& root);
 
     // These per-drive queries are pure (no instance state); they are static so the
     // headless enumerateDrivesOnce() path can share them without constructing a scanner.
@@ -187,6 +233,13 @@ private:
     static QString getVolumeLabel(const QString& mountPoint);
     static bool containsWindowsInstallation(int driveNumber);
     static void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
+    /// @brief True if the volume (opened by its \\?\Volume{GUID} path, no trailing backslash)
+    ///        lives on physical drive @p driveNumber.
+    static bool volumeMatchesDrive(const wchar_t* volumeName, int driveNumber);
+    /// @brief Inspectable roots for every volume on @p driveNumber: the mount path(s) when the
+    ///        volume is mounted, otherwise the \\?\Volume{GUID}\ path so an UNMOUNTED Windows
+    ///        partition is still inspected (closes the "system drive missed" hazard).
+    static QStringList getVolumeRootsForDrive(int driveNumber);
 
     static LRESULT CALLBACK deviceNotificationProc(HWND hwnd,
                                                    UINT message,
@@ -199,7 +252,7 @@ private:
     HWND m_notificationWindow;
     HDEVNOTIFY m_deviceNotify;
     std::atomic<bool> m_isScanning;
-    QFutureWatcher<QList<sak::DriveInfo>> m_scanWatcher;
+    QFutureWatcher<sak::DriveScanResult> m_scanWatcher;
 
     static DriveScanner* s_instance;  // For static callback
 };
