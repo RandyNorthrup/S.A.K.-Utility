@@ -198,6 +198,48 @@ validation_result validateStringEncodingPolicy(std::string_view str,
 // Path Validation
 // ============================================
 
+namespace {
+
+#ifdef _WIN32
+bool componentIsReparsePoint(const std::filesystem::path& p) {
+    // Catches BOTH symlinks and junctions (mount points): std::filesystem's
+    // is_symlink does not report a junction, but the reparse-point attribute
+    // does, and a junction ancestor is exactly the traversal we must block.
+    const DWORD attrs = GetFileAttributesW(p.wstring().c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+#else
+bool componentIsReparsePoint(const std::filesystem::path& p) {
+    std::error_code ec;
+    return std::filesystem::is_symlink(p, ec);
+}
+#endif
+
+// True if ANY component along the path (any ancestor, not just the final one) is
+// a reparse point. Non-existent components simply are not reparse points, so this
+// is safe to call on a not-yet-created leaf.
+bool anyComponentIsReparsePoint(const std::filesystem::path& path) {
+    for (const auto& prefix : input_validator::pathPrefixes(path)) {
+        if (componentIsReparsePoint(prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+std::vector<std::filesystem::path> input_validator::pathPrefixes(
+    const std::filesystem::path& path) {
+    std::vector<std::filesystem::path> prefixes;
+    std::filesystem::path current;
+    for (const auto& part : path) {
+        current /= part;
+        prefixes.push_back(current);
+    }
+    return prefixes;
+}
+
 validation_result input_validator::validatePathExistence(const std::filesystem::path& path,
                                                          const path_validation_config& config) {
     std::error_code ec;
@@ -207,14 +249,17 @@ validation_result input_validator::validatePathExistence(const std::filesystem::
         return failure(error_code::file_not_found, "Path must exist but does not");
     }
 
-    if (!exists) {
-        return success();
+    // Reject a symlink/junction ANYWHERE in the path when links are disallowed --
+    // not just the final component. An ancestor junction would otherwise redirect
+    // the whole subtree past this check. Run this even for a not-yet-existing leaf
+    // so a later write cannot be smuggled through an existing ancestor reparse.
+    if (!config.allow_symlinks && anyComponentIsReparsePoint(path)) {
+        return failure(error_code::invalid_path,
+                       "Symbolic links / reparse points are not allowed in the path");
     }
 
-    // Check symlink requirement
-    const bool is_symlink = std::filesystem::is_symlink(path, ec);
-    if (is_symlink && !config.allow_symlinks) {
-        return failure(error_code::invalid_path, "Symbolic links are not allowed");
+    if (!exists) {
+        return success();
     }
 
     // Check directory requirement

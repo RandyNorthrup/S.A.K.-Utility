@@ -29,6 +29,7 @@ private Q_SLOTS:
     void validatePath_traversalSequences();
     void validatePath_suspiciousPatterns();
     void validatePath_maxPathLength();
+    void pathPrefixes_decomposesEveryAncestor();
 
     // Path-within-base validation
     void pathWithinBase_validSubpath();
@@ -152,6 +153,22 @@ void InputValidatorTests::validatePath_maxPathLength() {
     auto result = sak::input_validator::validatePath(
         std::filesystem::path("this_is_a_very_long_path_name.txt"), cfg);
     QVERIFY(!result.is_valid);
+}
+
+// B5-15: the disallow-symlinks check must inspect EVERY ancestor. pathPrefixes
+// is the decomposition it iterates -- verify it yields each cumulative prefix so
+// an ancestor junction is included, not just the final component.
+void InputValidatorTests::pathPrefixes_decomposesEveryAncestor() {
+    const auto prefixes =
+        sak::input_validator::pathPrefixes(std::filesystem::path("a") / "b" / "c");
+    // Every ancestor plus the leaf is present, in root-to-leaf order.
+    QCOMPARE(static_cast<int>(prefixes.size()), 3);
+    QCOMPARE(prefixes.front(), std::filesystem::path("a"));
+    QCOMPARE(prefixes.at(1), std::filesystem::path("a") / "b");
+    QCOMPARE(prefixes.back(), std::filesystem::path("a") / "b" / "c");
+
+    // Empty path -> no prefixes.
+    QVERIFY(sak::input_validator::pathPrefixes(std::filesystem::path()).empty());
 }
 
 // ============================================================================

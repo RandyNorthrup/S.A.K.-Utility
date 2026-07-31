@@ -18,6 +18,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace sak {
 
@@ -101,6 +102,15 @@ public:
     /// @return True if path contains suspicious patterns (UNC paths, device names, etc.)
     [[nodiscard]] static bool containsSuspiciousPatterns(
         const std::filesystem::path& path) noexcept;
+
+    /// @brief Decompose a path into every cumulative prefix, root-to-leaf.
+    /// @param path Path to decompose.
+    /// @return e.g. "C:/a/b" -> {"C:", "C:/", "C:/a", "C:/a/b"}.
+    /// @note Pure + static for unit testing. Used to check EVERY ancestor for a
+    ///       reparse point when symlinks are disallowed -- the final-component-only
+    ///       check could be bypassed by an ancestor junction/symlink.
+    [[nodiscard]] static std::vector<std::filesystem::path> pathPrefixes(
+        const std::filesystem::path& path);
 
     // ============================================
     // String Validation (Injection Prevention)
