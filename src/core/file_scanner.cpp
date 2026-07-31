@@ -335,7 +335,12 @@ bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
     // Never follow a symlinked/junction directory unless explicitly enabled: a
     // link can escape the scan root, and one pointing at an ancestor recurses
     // without bound until the path length errors out (an effective hang).
-    if (entry.is_symlink() && !options.follow_symlinks) {
+    // isReparsePointEntry (not is_symlink()) so a Windows JUNCTION -- which
+    // directory_entry maps to file_type::junction and is_symlink() misses -- is also
+    // refused; otherwise a planted junction steers the default walk out of the scan
+    // root (B8-16). This is the recursion gate even when skip_symlinks is off; the
+    // skip_symlinks path already drops reparse points wholesale before this runs.
+    if (isReparsePointEntry(entry) && !options.follow_symlinks) {
         return false;
     }
     // When following is enabled, break cycles by canonical identity.

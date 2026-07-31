@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -49,6 +50,7 @@ private Q_SLOTS:
 
     // Symlink policy
     void symlink_notFollowedWhenDisabled();
+    void junction_notFollowedByDefault();
 
     // Callback
     void callback_falseStopsScan();
@@ -343,6 +345,50 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
     following.follow_symlinks = true;
     auto followed = following_scanner.scan(root, following);
     QVERIFY(followed.has_value());
+}
+
+void FileScannerTests::junction_notFollowedByDefault() {
+#ifdef _WIN32
+    // B8-16: a Windows JUNCTION is a reparse point that directory_entry maps to
+    // file_type::junction, so is_symlink() misses it. The default scan (follow off)
+    // must still refuse to descend into it -- otherwise a junction pointing at an
+    // ancestor steers the walk out of the scan root and loops. Junctions need no
+    // privilege to create (unlike symlinks), so this always runs on Windows.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path root = dir.path().toStdWString();
+    std::filesystem::create_directory(root / "payload");
+    {
+        QFile f(QString::fromStdWString((root / "payload" / "p.txt").wstring()));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("data");
+        f.close();
+    }
+
+    // Create a junction "jloop" pointing back at the scan root (an ancestor).
+    // mklink needs native backslash separators.
+    const QString link =
+        QDir::toNativeSeparators(QString::fromStdWString((root / "jloop").wstring()));
+    const QString target = QDir::toNativeSeparators(QString::fromStdWString(root.wstring()));
+    QProcess mklink;
+    mklink.start(
+        QStringLiteral("cmd"),
+        {QStringLiteral("/c"), QStringLiteral("mklink"), QStringLiteral("/J"), link, target});
+    QVERIFY(mklink.waitForFinished(10'000));
+    QVERIFY2(mklink.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /J failed: %1")
+                            .arg(QString::fromLocal8Bit(mklink.readAllStandardError()))));
+
+    // Default (follow_symlinks=false): the junction is NOT descended, so the scan
+    // terminates and p.txt is found exactly once (not multiplied by loop levels).
+    sak::file_scanner scanner;
+    sak::scan_options opts;
+    auto result = scanner.scan(root, opts);
+    QVERIFY(result.has_value());
+    QCOMPARE(result.value().files_found, std::size_t{1});
+#else
+    QSKIP("Junctions are a Windows-only concept");
+#endif
 }
 
 QTEST_GUILESS_MAIN(FileScannerTests)
