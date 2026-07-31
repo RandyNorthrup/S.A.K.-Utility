@@ -444,6 +444,45 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certif
     message(STATUS "Added certification helper: file_management_live_certifier")
 endif()
 
+# flash_live_certifier - LIVE, DESTRUCTIVE raw-disk cert of the Batch 4 FlashWorker
+# memory-safety fixes. Built only on Windows; run manually + elevated against a
+# disposable removable USB (it hard-refuses non-USB / system / oversized disks).
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certifier.cpp")
+    add_executable(flash_live_certifier
+        certification/flash_live_certifier.cpp
+        ../src/threading/flash_worker.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/image_source.cpp
+        ../src/core/decompressor_factory.cpp
+        ../src/core/streaming_decompressor.cpp
+        ../src/core/gzip_decompressor.cpp
+        ../src/core/bzip2_decompressor.cpp
+        ../src/core/xz_decompressor.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/keep_awake.cpp
+        ../src/core/logger.cpp
+        ../include/sak/flash_worker.h
+        ../include/sak/image_source.h
+        ../include/sak/worker_base.h
+        ../include/sak/streaming_decompressor.h
+        ../include/sak/decompressor_factory.h
+        ../include/sak/gzip_decompressor.h
+        ../include/sak/bzip2_decompressor.h
+        ../include/sak/xz_decompressor.h
+    )
+    set_target_properties(flash_live_certifier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(flash_live_certifier PRIVATE
+        Qt6::Core ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse ${PLATFORM_LIBS}
+    )
+    target_include_directories(flash_live_certifier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    message(STATUS "Added certification helper: flash_live_certifier")
+endif()
+
 if(TARGET file_management_live_certifier AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1")
     find_program(SAK_LIVE_CERT_TEST_POWERSHELL_PATH
         NAMES pwsh.exe pwsh powershell.exe powershell
