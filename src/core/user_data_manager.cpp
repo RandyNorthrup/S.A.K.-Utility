@@ -298,9 +298,13 @@ bool UserDataManager::restorePayload(const QString& backup_path,
         }
         return true;
     }
-    // Uncompressed backups are a directory payload: copy the tree back in.
+    // Uncompressed backups are a directory payload: copy the tree back in, honoring the
+    // overwrite_existing flag (the old copy always refused to replace existing files). An existing
+    // file is replaced only when overwrite is requested, otherwise it is left in place (Skip).
     Q_EMIT progressUpdate(0, entry.total_size_bytes, "Copying backup...");
-    if (!copyDirectory(backup_path, restore_dir, {})) {
+    const ExistingFilePolicy restore_policy =
+        config.overwrite_existing ? ExistingFilePolicy::Overwrite : ExistingFilePolicy::Skip;
+    if (!copyDirectory(backup_path, restore_dir, {}, restore_policy)) {
         Q_EMIT operationError(entry.app_name, "Failed to copy backup contents");
         return false;
     }
@@ -428,8 +432,12 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
     Q_ASSERT_X(!backup_path.isEmpty(), "deleteBackup", "backup_path must not be empty");
     bool success = true;
 
-    // Delete archive
-    if (QFile::exists(backup_path)) {
+    // Delete the payload. An uncompressed backup is a DIRECTORY, which QFile::remove cannot
+    // delete -- it would leave the backup on disk forever; remove such payloads recursively.
+    QFileInfo payload(backup_path);
+    if (payload.isDir()) {
+        success &= QDir(backup_path).removeRecursively();
+    } else if (payload.exists()) {
         success &= QFile::remove(backup_path);
     }
 
@@ -449,12 +457,18 @@ bool UserDataManager::verifyBackup(const QString& backup_path) {
         return false;
     }
 
+    // Metadata alone is not a valid backup: the payload must actually exist. Otherwise a stray
+    // .json (payload deleted/never written) verifies as good and a restore then finds nothing.
+    if (!QFileInfo::exists(backup_path)) {
+        return false;
+    }
+
     if (entry->checksum.isEmpty()) {
-        return true;  // No checksum to verify
+        return true;  // Payload present but no checksum recorded (e.g. directory payload).
     }
 
     QString current = generateChecksum(backup_path);
-    return current == entry->checksum;
+    return !current.isEmpty() && current == entry->checksum;
 }
 
 qint64 UserDataManager::calculateSize(const QStringList& paths) const {
@@ -485,7 +499,11 @@ QString UserDataManager::generateChecksum(const QString& file_path) const {
 bool UserDataManager::compareChecksums(const QString& file1, const QString& file2) const {
     Q_ASSERT_X(!file1.isEmpty(), "compareChecksums", "file1 must not be empty");
     Q_ASSERT_X(!file2.isEmpty(), "compareChecksums", "file2 must not be empty");
-    return generateChecksum(file1) == generateChecksum(file2);
+    const QString hash1 = generateChecksum(file1);
+    const QString hash2 = generateChecksum(file2);
+    // Two UNREADABLE files both hash to "" -- that must NOT be reported as "equal". Require a real
+    // (non-empty) digest from both before comparing.
+    return !hash1.isEmpty() && hash1 == hash2;
 }
 
 QString UserDataManager::mapCompressionLevel(int level) {
@@ -611,10 +629,11 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
         return {};
     }
 
-    // QTemporaryFile gives us an OS-generated unique name, preventing
-    // adversaries from predicting the path and racing to read the
-    // plaintext (TOCTOU mitigation).
-    QTemporaryFile temp;
+    // QTemporaryFile gives us an OS-generated unique name, preventing adversaries from predicting
+    // the path and racing to read the plaintext (TOCTOU mitigation). The name MUST end in .zip:
+    // Expand-Archive (below) refuses any source whose extension is not .zip, so an extensionless
+    // temp made encrypted backups impossible to restore. The XXXXXX keeps the random unique part.
+    QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/sak_udm_XXXXXX.zip"));
     // AutoRemove is disabled because we must keep the file alive until
     // PowerShell finishes reading it -- cleanup is handled manually on
     // every exit path in extractArchive().
@@ -665,8 +684,12 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     // apostrophes without opening a code-injection vector.
     QString safe_source = QString(file_to_extract).replace("'", "''");
     QString safe_dest = QString(destination).replace("'", "''");
-    QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                          .arg(safe_source, safe_dest);
+    // Honor RestoreConfig::overwrite_existing: -Force overwrites existing files, without it
+    // Expand-Archive refuses to clobber them. The old code hard-coded -Force, silently overwriting
+    // regardless of the flag.
+    const QString force = config.overwrite_existing ? QStringLiteral(" -Force") : QString();
+    QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2'%3")
+                          .arg(safe_source, safe_dest, force);
 
     args << command;
 
@@ -726,7 +749,8 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
 
 bool UserDataManager::copyPlainFiles(const QDir& source_dir,
                                      const QDir& dest_dir,
-                                     const QStringList& exclude_patterns) {
+                                     const QStringList& exclude_patterns,
+                                     ExistingFilePolicy policy) {
     const auto files = source_dir.entryList(QDir::Files);
     for (const auto& file : files) {
         const QString source_file = source_dir.filePath(file);
@@ -735,6 +759,23 @@ bool UserDataManager::copyPlainFiles(const QDir& source_dir,
         }
 
         const QString dest_file = dest_dir.filePath(file);
+        // QFile::copy fails if the destination exists, so an existing file is handled per policy:
+        // Skip leaves it (restore, overwrite_existing=false); Overwrite replaces it; Fail treats it
+        // as a collision (backup creation: two distinct sources must not merge into one name).
+        if (QFileInfo::exists(dest_file)) {
+            if (policy == ExistingFilePolicy::Skip) {
+                continue;
+            }
+            if (policy == ExistingFilePolicy::Fail) {
+                sak::logWarning("[UserDataManager] Destination already exists (collision): {}",
+                                dest_file.toStdString());
+                return false;
+            }
+            if (!QFile::remove(dest_file)) {  // Overwrite
+                sak::logWarning("[UserDataManager] Failed to replace {}", dest_file.toStdString());
+                return false;
+            }
+        }
         if (!QFile::copy(source_file, dest_file)) {
             // Fail closed: a partial copy must not be reported as a complete
             // backup (callers such as the pre-restore safety copy rely on this).
@@ -747,7 +788,8 @@ bool UserDataManager::copyPlainFiles(const QDir& source_dir,
 
 bool UserDataManager::copyDirectory(const QString& source,
                                     const QString& destination,
-                                    const QStringList& exclude_patterns) {
+                                    const QStringList& exclude_patterns,
+                                    ExistingFilePolicy policy) {
     Q_ASSERT_X(!source.isEmpty(), "copyDirectory", "source must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "copyDirectory", "destination must not be empty");
     QDir source_dir(source);
@@ -760,7 +802,7 @@ bool UserDataManager::copyDirectory(const QString& source,
         return false;
     }
 
-    if (!copyPlainFiles(source_dir, dest_dir, exclude_patterns)) {
+    if (!copyPlainFiles(source_dir, dest_dir, exclude_patterns, policy)) {
         return false;
     }
 
@@ -782,7 +824,7 @@ bool UserDataManager::copyDirectory(const QString& source,
         }
 
         QString dest_subdir = dest_dir.filePath(dir);
-        if (!copyDirectory(source_subdir, dest_subdir, exclude_patterns)) {
+        if (!copyDirectory(source_subdir, dest_subdir, exclude_patterns, policy)) {
             return false;
         }
     }

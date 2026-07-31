@@ -186,17 +186,32 @@ private:
      */
     QStringList getStandardDataPaths() const;
 
+    /// @brief What to do when a destination file already exists during a copy.
+    /// Fail = collision is an error (backup creation: two distinct sources must never merge into
+    /// one name). Skip = leave the existing file (restore with overwrite_existing=false).
+    /// Overwrite = replace it (restore with overwrite_existing=true).
+    enum class ExistingFilePolicy {
+        Fail,
+        Skip,
+        Overwrite
+    };
+
     /**
      * @brief Recursively copy directory
+     * @param policy How to treat a destination file that already exists (see ExistingFilePolicy).
+     *        Defaults to Fail so backup-creation collisions stay fail-closed.
      */
     bool copyDirectory(const QString& source,
                        const QString& destination,
-                       const QStringList& exclude_patterns);
+                       const QStringList& exclude_patterns,
+                       ExistingFilePolicy policy = ExistingFilePolicy::Fail);
 
-    /// @brief Copy the plain (non-directory) files of one dir; fail closed on error
+    /// @brief Copy the plain (non-directory) files of one dir; fail closed on error.
+    /// @param policy How an already-existing destination file is handled (see ExistingFilePolicy).
     bool copyPlainFiles(const QDir& source_dir,
                         const QDir& dest_dir,
-                        const QStringList& exclude_patterns);
+                        const QStringList& exclude_patterns,
+                        ExistingFilePolicy policy);
 
     /// @brief Copy all source paths into a single destination directory
     bool copySourcesToDest(const QStringList& source_paths,

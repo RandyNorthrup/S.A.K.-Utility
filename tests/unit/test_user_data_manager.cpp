@@ -7,6 +7,7 @@
 #include "sak/user_data_manager.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -338,6 +339,129 @@ private Q_SLOTS:
         // payload is present in the backup.
         QVERIFY(!QFileInfo::exists(root.filePath("jn")));
         QVERIFY(!QFileInfo::exists(root.filePath("jn/secret.txt")));
+    }
+
+    // --- B7-31: deleteBackup must remove a DIRECTORY payload, not just a file ---
+    void deleteBackupRemovesDirectoryPayload() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "data.txt", "x");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = false;  // uncompressed -> the payload is a directory
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+        QVERIFY(QFileInfo(e->backup_path).isDir());
+
+        QVERIFY(mgr.deleteBackup(e->backup_path));
+        QVERIFY(!QFileInfo::exists(e->backup_path));  // QFile::remove could never delete a dir
+        QVERIFY(!QFileInfo::exists(e->backup_path + ".json"));
+    }
+
+    // --- B7-30: a stray metadata .json without its payload must NOT verify ---
+    void verifyBackupFailsWhenPayloadMissing() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "data.txt", "x");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = true;
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+        QVERIFY(mgr.verifyBackup(e->backup_path));   // valid while the payload is present
+
+        QVERIFY(QFile::remove(e->backup_path));      // delete payload, keep .json
+        QVERIFY(!mgr.verifyBackup(e->backup_path));  // metadata alone must not verify
+    }
+
+    // --- B7-30: two unreadable files both hash to "" -- that is NOT "equal" ---
+    void compareChecksumsRejectsUnreadablePair() {
+        UserDataManager mgr;
+        QVERIFY(!mgr.compareChecksums(QStringLiteral("C:/nope/a.dat"),
+                                      QStringLiteral("C:/nope/b.dat")));
+    }
+
+    // --- B7-09: directory restore must honor overwrite_existing ---
+    void dirRestoreHonorsOverwriteFlag() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "data.txt", "NEW");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = false;
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+
+        const auto seedThenRestore = [&](bool overwrite) -> QByteArray {
+            QTemporaryDir restoreDir;
+            QFile old(QDir(restoreDir.path()).filePath("data.txt"));
+            [&] {
+                QVERIFY(old.open(QIODevice::WriteOnly));
+            }();
+            old.write("OLD");
+            old.close();
+            UserDataManager::RestoreConfig rcfg;
+            rcfg.verify_checksum = false;
+            rcfg.create_backup = false;
+            rcfg.overwrite_existing = overwrite;
+            [&] {
+                QVERIFY(mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
+            }();
+            QFile f(QDir(restoreDir.path()).filePath("data.txt"));
+            [&] {
+                QVERIFY(f.open(QIODevice::ReadOnly));
+            }();
+            return f.readAll();
+        };
+        QCOMPARE(seedThenRestore(false), QByteArray("OLD"));  // existing file preserved
+        QCOMPARE(seedThenRestore(true), QByteArray("NEW"));   // existing file replaced
+    }
+
+    // --- B7-11: an ENCRYPTED backup must round-trip (decrypt temp needs .zip ext) ---
+    void encryptedBackupRestoreRoundTrip() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "secret.txt", "TOP SECRET DATA");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = true;
+        cfg.encrypt = true;
+        cfg.password = QStringLiteral("hunter2");
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+        QVERIFY(e->backup_path.endsWith(".zip"));
+
+        QTemporaryDir restoreDir;
+        QVERIFY(restoreDir.isValid());
+        UserDataManager::RestoreConfig rcfg;
+        rcfg.verify_checksum = false;
+        rcfg.create_backup = false;
+        rcfg.overwrite_existing = true;
+        rcfg.password = QStringLiteral("hunter2");
+        // Before the .zip-suffix fix, Expand-Archive rejected the extensionless decrypted temp and
+        // this returned false -- encrypted backups were unrestorable.
+        QVERIFY(mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
+
+        QDirIterator it(restoreDir.path(),
+                        {QStringLiteral("secret.txt")},
+                        QDir::Files,
+                        QDirIterator::Subdirectories);
+        QVERIFY(it.hasNext());
+        QFile restored(it.next());
+        QVERIFY(restored.open(QIODevice::ReadOnly));
+        QCOMPARE(restored.readAll(), QByteArray("TOP SECRET DATA"));
     }
 };
 
