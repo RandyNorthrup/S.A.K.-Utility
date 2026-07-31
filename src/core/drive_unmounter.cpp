@@ -74,16 +74,31 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     sak::logInfo(QString("Unmounting drive %1").arg(driveNumber).toStdString());
     Q_EMIT statusMessage(QString("Preparing drive %1...").arg(driveNumber));
 
-    // Step 1: Get all volumes on this drive
-    QStringList volumes = getVolumesOnDrive(driveNumber);
+    // Step 1: Get all volumes on this drive. Fail closed if enumeration itself
+    // failed: an empty list from a failed enumeration must not be treated as
+    // "no volumes, safe to proceed" -- that would raw-write a still-mounted disk.
+    bool enumerationOk = true;
+    QStringList volumes = getVolumesOnDrive(driveNumber, &enumerationOk);
+    if (!enumerationOk) {
+        m_lastError = QString("Failed to enumerate volumes on drive %1").arg(driveNumber);
+        Q_EMIT statusMessage("Failed to enumerate volumes; aborting");
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
     if (volumes.isEmpty()) {
         sak::logInfo(QString("No volumes found on drive, proceeding").toStdString());
         return true;
     }
 
-    // Step 2: Prevent auto-mount
+    // Step 2: Prevent auto-mount (fail closed: the persistent offline attribute is
+    // the only guard against remount once volume locks are released in step 4).
     if (!preventAutoMount(driveNumber)) {
-        sak::logWarning(QString("Failed to prevent auto-mount, continuing anyway").toStdString());
+        m_lastError = QString("Failed to prevent auto-mount on drive %1: %2")
+                          .arg(driveNumber)
+                          .arg(m_lastError);
+        Q_EMIT statusMessage("Failed to prevent auto-mount; aborting");
+        sak::logError(m_lastError.toStdString());
+        return false;
     }
 
     // Step 3: Lock and dismount each volume
@@ -101,12 +116,19 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     if (allSucceeded) {
         Q_EMIT statusMessage("Drive prepared successfully");
         sak::logInfo(QString("Drive unmount completed successfully").toStdString());
-    } else {
-        Q_EMIT statusMessage("Drive preparation completed with warnings");
-        sak::logWarning(QString("Drive unmount completed with some failures").toStdString());
+        return true;
     }
 
-    return allSucceeded;
+    // Partial failure: roll back the persistent offline state so the drive is not
+    // left offline with mount points removed and no protection in place.
+    if (!allowAutoMount(driveNumber)) {
+        sak::logWarning(QString("Rollback: failed to bring drive %1 back online")
+                            .arg(driveNumber)
+                            .toStdString());
+    }
+    Q_EMIT statusMessage("Drive preparation failed; drive restored online");
+    sak::logWarning(QString("Drive unmount failed; rolled back offline state").toStdString());
+    return false;
 }
 
 bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
@@ -146,14 +168,22 @@ bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
     return true;
 }
 
-QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber) const {
+QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumerationOk) const {
     Q_ASSERT(driveNumber >= 0);
     QStringList volumes;
+    if (enumerationOk != nullptr) {
+        *enumerationOk = true;
+    }
 
     // Enumerate all volumes using FindFirstVolume/FindNextVolume
     WCHAR volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, ARRAYSIZE(volumeName));
     if (hFind == INVALID_HANDLE_VALUE) {
+        // Distinguish an enumeration failure from a genuinely empty result so the
+        // caller can fail closed instead of proceeding to raw-write a mounted disk.
+        if (enumerationOk != nullptr) {
+            *enumerationOk = false;
+        }
         return volumes;
     }
 
@@ -304,6 +334,51 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
     if (!success) {
         m_lastError =
             QString("IOCTL_DISK_SET_DISK_ATTRIBUTES failed: error %1").arg(GetLastError());
+    }
+
+    CloseHandle(hDrive);
+    return success;
+}
+
+bool DriveUnmounter::allowAutoMount(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
+    // Inverse of preventAutoMount: clear the persistent OFFLINE attribute so a
+    // drive taken offline during a failed unmount is brought back online.
+    QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    std::wstring wDrivePath = drivePath.toStdWString();
+
+    HANDLE hDrive = CreateFileW(wDrivePath.c_str(),
+                                GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
+
+    if (hDrive == INVALID_HANDLE_VALUE) {
+        m_lastError = QString("Failed to open drive: error %1").arg(GetLastError());
+        return false;
+    }
+
+    SET_DISK_ATTRIBUTES attributes = {};
+    attributes.Version = sizeof(SET_DISK_ATTRIBUTES);
+    attributes.Persist = TRUE;
+    attributes.Attributes = 0;
+    attributes.AttributesMask = DISK_ATTRIBUTE_OFFLINE;
+
+    DWORD bytesReturned = 0;
+    bool success = DeviceIoControl(hDrive,
+                                   IOCTL_DISK_SET_DISK_ATTRIBUTES,
+                                   &attributes,
+                                   sizeof(attributes),
+                                   nullptr,
+                                   0,
+                                   &bytesReturned,
+                                   nullptr);
+
+    if (!success) {
+        m_lastError =
+            QString("IOCTL_DISK_SET_DISK_ATTRIBUTES (online) failed: error %1").arg(GetLastError());
     }
 
     CloseHandle(hDrive);

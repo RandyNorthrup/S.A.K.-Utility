@@ -1824,9 +1824,10 @@ QString sakVolumeGuidFunctionScript() {
 QString sakShadowBackupFunctionScript() {
     // P03-11: copy the SOURCE via a VSS shadow so the backup is point-in-time
     // consistent even while apps hold files open. Partition ops run elevated, so
-    // NTFS sources get a real read-only snapshot; FAT/exFAT (no VSS support) and
-    // any non-elevated run fall back to a live copy with a warning -- matching the
-    // prior behaviour rather than failing a legitimate backup closed.
+    // NTFS/ReFS sources get a real read-only snapshot. If VSS is unavailable the
+    // fallback FAILS CLOSED for VSS-capable filesystems (NTFS/ReFS/unknown) rather
+    // than destroying the source after only a torn live copy; only FAT/FAT32/exFAT
+    // (genuinely no VSS support) fall back to a warned live copy.
     return QStringLiteral(
         "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
         "  $volume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n"
@@ -1841,8 +1842,14 @@ QString sakShadowBackupFunctionScript() {
         "    try { Invoke-SakRobocopy ($shadow.DeviceObject + '\\') $backupPath }\n"
         "    finally { Remove-CimInstance -InputObject $shadow -ErrorAction SilentlyContinue }\n"
         "  } else {\n"
-        "    Write-Output 'WARNING: VSS shadow copy unavailable; backing up the live volume (not "
-        "point-in-time consistent)'\n"
+        "    $fsFormat = ''\n"
+        "    try { $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat } catch { }\n"
+        "    if ($fsFormat -notmatch '^(FAT|FAT32|exFAT)$') { throw ('VSS shadow copy unavailable "
+        "for {0} (filesystem {1}); refusing to reformat without a point-in-time-consistent backup. "
+        "Enable the Volume Shadow Copy service and run elevated, then retry.' -f $volume, "
+        "$fsFormat) }\n"
+        "    Write-Output ('WARNING: VSS shadow copy unavailable for {0} ({1}); backing up the "
+        "live volume (not point-in-time consistent)' -f $volume, $fsFormat)\n"
         "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
         "  }\n"
         "}\n");
@@ -2273,6 +2280,31 @@ QString cloneTransferVerifyExecutionScript() {
         "'Running sample clone verification'; Assert-SakSampleCopy $srcVerify $dstVerify "
         "$expectedBytes $sourceOffset $targetOffset } } finally { $dstVerify.Dispose(); "
         "$srcVerify.Dispose() } }\n");
+}
+
+// Runtime authoritative guard for Create Image: the validator's textual
+// destination checks (drive-letter / volume-GUID prefix) cannot resolve a
+// junction, mount point, or directory symlink, so a redirected destination could
+// still land on the source disk. This emitted PowerShell resolves the real volume
+// identity of the destination (Get-SakVolumeGuid follows reparse points) and
+// throws if it matches any volume on the source disk, before any device is opened.
+QString createImageDestinationGuardScript(const QString& target, uint32_t sourceDiskNumber) {
+    return sakVolumeGuidFunctionScript() +
+           QStringLiteral(
+               "$imgDest = %1\n"
+               "$srcDiskNumber = %2\n"
+               "$destGuid = $null\n"
+               "try { $destGuid = (Get-SakVolumeGuid $imgDest).TrimEnd('\\') } catch "
+               "{ $destGuid = $null }\n"
+               "if ($destGuid) {\n"
+               "  $srcVolGuids = @(Get-Partition -DiskNumber $srcDiskNumber -ErrorAction "
+               "SilentlyContinue | Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
+               "{ if ($_.UniqueId) { $_.UniqueId.TrimEnd('\\') } })\n"
+               "  if ($srcVolGuids -contains $destGuid) { throw 'Create Image destination "
+               "resolves onto the source disk; choose an off-disk destination' }\n"
+               "}\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(target)),
+                    QString::number(sourceDiskNumber));
 }
 
 QString cloneTransferScript(const CloneTransferSpec& spec) {
@@ -4628,7 +4660,11 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     PartitionScript out;
     out.preview = toDisplayString(operation.type) + QStringLiteral(" from ") + spec.source +
                   QStringLiteral(" to ") + spec.target;
-    out.script = commonHeader(out.preview) + cloneTransferScript(spec);
+    out.script = commonHeader(out.preview);
+    if (operation.type == PartitionOperationType::CreateImage) {
+        out.script += createImageDestinationGuardScript(spec.target, operation.target.disk_number);
+    }
+    out.script += cloneTransferScript(spec);
     if (operation.type == PartitionOperationType::MigrateOs) {
         out.script += osMigrationBootValidationScript();
     }

@@ -16,6 +16,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -223,6 +224,30 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
         return false;
     }
     return true;
+}
+
+// True when the --output-json path would truncate-write onto the operation's
+// target device/image or its --output-image, which would clobber the filesystem
+// result with JSON. Compares both literally (raw device paths like
+// \\.\PhysicalDriveN) and canonicalized (file paths, case-insensitive).
+bool outputJsonAliasesTarget(const QString& outputJson,
+                             const QString& targetPath,
+                             const QString& outputImagePath) {
+    if (outputJson.trimmed().isEmpty()) {
+        return false;
+    }
+    const auto canon = [](const QString& p) {
+        return QDir::cleanPath(QFileInfo(p).absoluteFilePath());
+    };
+    const QString jsonCanon = canon(outputJson);
+    const auto aliases = [&](const QString& other) {
+        if (other.trimmed().isEmpty()) {
+            return false;
+        }
+        return outputJson.trimmed().compare(other.trimmed(), Qt::CaseInsensitive) == 0 ||
+               jsonCanon.compare(canon(other), Qt::CaseInsensitive) == 0;
+    };
+    return aliases(targetPath) || aliases(outputImagePath);
 }
 
 QString evidenceIdForCommand(const QCommandLineParser& parser,
@@ -688,6 +713,39 @@ QJsonObject buildImportReportObject(const QString& sourcePath,
     return report;
 }
 
+// Atomically publish the staged container to outputPath. Uses QSaveFile so a
+// failure (disk full, permission, read error) never destroys an existing prior
+// output: the temp is committed with an atomic rename only after a full, verified
+// copy, and discarded otherwise. Replaces a remove-then-copy that deleted the old
+// output before writing, leaving nothing if the copy failed.
+bool publishImportedContainer(const QString& stagedPath,
+                              const QString& outputPath,
+                              QString* error) {
+    QFile source(stagedPath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Unable to read staged container %1").arg(stagedPath);
+        return false;
+    }
+    QSaveFile sink(outputPath);
+    if (!sink.open(QIODevice::WriteOnly)) {
+        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+        return false;
+    }
+    constexpr qint64 kImportCopyChunkBytes = 1 << 20;
+    while (!source.atEnd()) {
+        const QByteArray chunk = source.read(kImportCopyChunkBytes);
+        if (chunk.isEmpty() || sink.write(chunk) != chunk.size()) {
+            *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+            return false;
+        }
+    }
+    if (!sink.commit()) {
+        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+        return false;
+    }
+    return true;
+}
+
 std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocation, QString* error) {
     // Arbitrary Apple-media APFS read-modify-write: read every root file from a
     // foreign source container (any block layout the generic reader can walk),
@@ -720,9 +778,7 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
         *error = QStringLiteral("Arbitrary import produced no output");
         return std::nullopt;
     }
-    QFile::remove(outputPath);
-    if (!QFile::copy(*currentPath, outputPath)) {
-        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+    if (!publishImportedContainer(*currentPath, outputPath, error)) {
         return std::nullopt;
     }
     return buildImportReportObject(
@@ -2008,6 +2064,14 @@ int main(int argc, char* argv[]) {
         return kExitInvalidArguments;
     }
 
+    const QString outputJsonPath = parser.value(options.outputJson).trimmed();
+    if (outputJsonAliasesTarget(
+            outputJsonPath, invocation->target_path, invocation->output_image_path)) {
+        QTextStream(stderr) << "--output-json path must not alias the target or output image"
+                            << Qt::endl;
+        return kExitInvalidArguments;
+    }
+
     QString commandError;
     const auto report = buildCommandReport(*invocation, &commandError);
     if (!report.has_value()) {
@@ -2016,7 +2080,7 @@ int main(int argc, char* argv[]) {
     }
 
     QString reportError;
-    if (!writeReport(*report, parser.value(options.outputJson).trimmed(), &reportError)) {
+    if (!writeReport(*report, outputJsonPath, &reportError)) {
         QTextStream(stderr) << "Failed to write report: " << reportError << Qt::endl;
         return kExitReportFailed;
     }

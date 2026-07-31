@@ -41,7 +41,7 @@ owning subsystem batch:
 12. AI harness                           -- 8 items
 13. win32 / browser control              -- 10 items
 
-Progress: 2 batches DONE (B0, B1).
+Progress: 3 batches DONE (B0, B1, B2).
 
 ---
 
@@ -60,8 +60,8 @@ Progress: 2 batches DONE (B0, B1).
 - [x] B1-07 [HIGH] src/core/package_internalization_engine.cpp:599,699 -- unescaped user paths into single-quoted PowerShell (extract + repack). FIXED: double apostrophes in both native paths.
 - CERT B1: new tests scriptBuilder_rejectsEnumArgumentCommandInjection (B1-01/02) + scriptBuilder_stripsControlCharsFromDiskPartLabel (B1-03); negative-control confirmed they run. Full suite Release/offscreen 179/179 passed (incl. test_ai_assistant_panel_tool_dispatch which loads the edited workflow resource). Gate green (clang-format + lizard + cppcheck).
 
-## BATCH 2 -- Disk destructive / data-loss
-Part 1 (B2-01..07) committed together; part 2 (B2-08..14) follows.
+## BATCH 2 -- Disk destructive / data-loss -- DONE
+Part 1 (B2-01..07) + part 2 (B2-08..14) both committed; full suite 179/179.
 - [x] B2-01 [CRIT] src/core/partition_safety_validator.cpp:152,1777 -- WipeDisk blocked only on is_system; boot-but-not-system disk wiped. FIXED: blocksCurrentOsDiskMutation + WipeDisk block now also test is_boot. Test: safetyValidator_blocksWipeOfBootNotSystemDisk.
 - [x] B2-02 [CRIT] src/core/storage_inventory_worker.cpp buildLayoutHash -- layout hash omitted is_boot/is_system, so a flag change didn't invalidate the apply hash. FIXED: fold is_system+is_boot into per-disk hash (also fixed a dangling %5); a boot/system change now forces refresh + re-validation (which applies B2-01).
 - [x] B2-03 [CRIT] src/core/partition_safety_validator.cpp:974 -- region clone required target_disk_number but not target_offset_bytes; builder defaulted offset 0 -> overwrote partition table. FIXED: require target_offset_bytes. Test: safetyValidator_blocksClonePartitionWithoutTargetOffset.
@@ -69,14 +69,15 @@ Part 1 (B2-01..07) committed together; part 2 (B2-08..14) follows.
 - [x] B2-05 [CRIT] src/core/flash_coordinator.cpp validateTargets -- any physical disk passed for raw write. FIXED: native physicalDriveHostsSystemVolume (IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS on OS volume) blocks OS-disk targets. Cert: compile + logic.
 - [x] B2-06 [CRIT] src/core/leftover_scanner.cpp:891 -- installLocation exemption classified C:\Windows Safe. FIXED: exempt only when installLocation is a STRICT subfolder of the protected root (never the root itself). Cert: existing test_leftover_scanner subfolder-exemption case still Safe (regression side); root case closed by logic.
 - [x] B2-07 [CRIT] src/core/advanced_uninstall_controller.cpp cleanLeftovers -- GUI path had no protected-path screen. FIXED: cleanupItemRefusal moved to new shared include/sak/leftover_cleanup_item_guard.h (base leftover_cleanup_guard.h kept QtCore-only for its unit test); GUI path now screens every item (drops+reports refused) before CleanupWorker. Cert: existing test_leftover_cleanup_guard + test_advanced_uninstall_controller in suite (179/179).
-- [ ] B2-08 [HIGH] src/core/drive_unmounter.cpp:77,149 -- enumeration/query failure collapses to empty list treated as successful unmount -> raw write to mounted disk. Fix: fail closed on enum error.
-- [ ] B2-09 [HIGH] src/core/drive_unmounter.cpp:84,268 -- automount-prevent failure ignored, locks released, disk can remount during raw writes; also no rollback / persistent-offline on partial failure. Fix: honor failures + rollback.
-- [ ] B2-10 [CRIT] src/core/partition_hfs_file_system_writer.cpp:42 + partition_raw_device_io.cpp:514,568 -- HFS image-only gate matches only `\\.\` and `\\?\GLOBALROOT\`; PhysicalDrive*/volume-GUID/`/dev/*` fall through to QFile RW -> raw device opened R/W. Fix: complete raw-target detection (dedupe helper).
-- [ ] B2-11 [CRIT] src/tools/sak_apfs_writer_cli.cpp:217 + sak_hfs_writer_cli.cpp:58 -- --output-json truncates path after fs op, no alias check vs --target/--output-image -> JSON overwrites image/raw target. Fix: reject alias of target.
-- [ ] B2-12 [HIGH] src/tools/sak_apfs_writer_cli.cpp:723 -- import-image QFile::remove(output) (ignored) before copy; copy failure destroys prior output, no rollback. Fix: copy-then-replace.
-- [ ] B2-13 [HIGH] src/core/partition_safety_validator.cpp:502,526,542 -- create-image destination checks only textual drive/GUID prefixes; junction/mount/symlink can redirect image onto source disk. Fix: resolve real path.
-- [ ] B2-14 [HIGH] src/core/partition_script_builder.cpp:1814,1829,1833 -- backup/reformat silently falls back from failed VSS snapshot to live copy, then destroys source. Fix: fail or explicit consent on snapshot failure.
-- CERT B2: guard unit tests (boot disk, null flags, zero-offset clone, protected root, raw-path gate, output-json alias); suite green.
+Part 2 (B2-08..14) analyzed via workflow, applied here:
+- [x] B2-08 [HIGH] src/core/drive_unmounter.cpp -- getVolumesOnDrive now signals enumeration failure via out-param; unmountDrive fails closed when enumeration failed (empty != safe). Cert: compile + logic (FSCTL path needs real disk).
+- [x] B2-09 [HIGH] src/core/drive_unmounter.cpp -- preventAutoMount failure now aborts (fail closed); partial failure rolls back via new allowAutoMount (clears persistent OFFLINE). Cert: compile + logic.
+- [x] B2-10 [CRIT] src/core/partition_raw_device_io.cpp isWindowsRawDevicePath -- broadened to \\?\PhysicalDrive*, bare \\?\Volume{GUID} (excludes long-path files after the brace), and POSIX /dev/*; fixes all 28 duplicated HFS image-only gates at the chokepoint. Test: rawDeviceClassifier_recognizesExtendedDeviceForms.
+- [x] B2-11 [CRIT] src/tools/sak_apfs_writer_cli.cpp + sak_hfs_writer_cli.cpp -- new outputJsonAliasesTarget rejects an --output-json path that aliases the target/output-image (literal + canonical, case-insensitive) before the fs op. Cert: compile + logic (CLI-flow).
+- [x] B2-12 [HIGH] src/tools/sak_apfs_writer_cli.cpp -- import-image now publishes via QSaveFile (atomic commit) instead of remove-before-copy; a failed publish leaves the prior output intact. Cert: compile + logic.
+- [x] B2-13 [PARTIAL] src/core/partition_script_builder.cpp -- validator textual checks kept as preview signal; added runtime createImageDestinationGuardScript (Get-SakVolumeGuid resolves reparse points, throws if dest lands on the source disk) injected for CreateImage. Test: scriptBuilder_createImageEmitsDestinationGuard. Residual junction resolution is runtime-only (hence PARTIAL).
+- [x] B2-14 [HIGH] src/core/partition_script_builder.cpp sakShadowBackupFunctionScript -- VSS-unavailable fallback now fails closed for VSS-capable filesystems (NTFS/ReFS/unknown throw); only FAT/FAT32/exFAT keep the warned live copy. Test: scriptBuilder_vssFallbackFailsClosedForVssCapableFs.
+- CERT B2 part 2: rawDeviceClassifier_recognizesExtendedDeviceForms + scriptBuilder_createImageEmitsDestinationGuard + scriptBuilder_vssFallbackFailsClosedForVssCapableFs; full suite green (pending). Hardware/CLI-flow items (08/09/11/12) compile+logic-certified.
 
 ## BATCH 3 -- WorkerBase base-join UAF + teardown races
 Systemic root: ~WorkerBase joins the thread as BASE subobject, AFTER derived

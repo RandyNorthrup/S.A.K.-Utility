@@ -66,6 +66,20 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
     return true;
 }
 
+// True when the --output-json path would truncate-write onto the operation's
+// target image, clobbering the filesystem result with JSON. Compares both
+// literally (raw device paths) and canonicalized (file paths, case-insensitive).
+bool outputJsonAliasesTarget(const QString& outputJson, const QString& targetImagePath) {
+    if (outputJson.trimmed().isEmpty() || targetImagePath.trimmed().isEmpty()) {
+        return false;
+    }
+    const auto canon = [](const QString& p) {
+        return QDir::cleanPath(QFileInfo(p).absoluteFilePath());
+    };
+    return outputJson.trimmed().compare(targetImagePath.trimmed(), Qt::CaseInsensitive) == 0 ||
+           canon(outputJson).compare(canon(targetImagePath), Qt::CaseInsensitive) == 0;
+}
+
 QString evidenceIdForCommand(const QCommandLineParser& parser,
                              const QCommandLineOption& evidenceOption,
                              const QString& command) {
@@ -693,9 +707,15 @@ int main(int argc, char* argv[]) {
         return kExitInvalidArguments;
     }
 
+    const QString outputJsonPath = parser.value(options.output_json).trimmed();
+    if (outputJsonAliasesTarget(outputJsonPath, invocation->target_image_path)) {
+        QTextStream(stderr) << "--output-json path must not alias the target image" << Qt::endl;
+        return kExitInvalidArguments;
+    }
+
     QString reportError;
     const QJsonObject report = invocationReport(*invocation);
-    if (!writeReport(report, parser.value(options.output_json).trimmed(), &reportError)) {
+    if (!writeReport(report, outputJsonPath, &reportError)) {
         QTextStream(stderr) << "Failed to write report: " << reportError << Qt::endl;
         return kExitReportFailed;
     }

@@ -20,6 +20,7 @@
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_queue.h"
+#include "sak/partition_raw_device_io.h"
 #include "sak/partition_script_builder.h"
 #include "sak/storage_inventory_worker.h"
 
@@ -2036,6 +2037,9 @@ private Q_SLOTS:
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_blocksWipeOfBootNotSystemDisk();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
+    void rawDeviceClassifier_recognizesExtendedDeviceForms();
+    void scriptBuilder_createImageEmitsDestinationGuard();
+    void scriptBuilder_vssFallbackFailsClosedForVssCapableFs();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
     void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
     void safetyValidator_restoreImageRequiresSizesAndOverwriteConfirmation();
@@ -17071,6 +17075,79 @@ void PartitionManagerCoreTests::safetyValidator_blocksClonePartitionWithoutTarge
     op.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
     auto withOffset = planner.previewOperation(inventory, op);
     QVERIFY(!withOffset.blockers.join(' ').contains(QStringLiteral("target offset")));
+}
+
+void PartitionManagerCoreTests::rawDeviceClassifier_recognizesExtendedDeviceForms() {
+    // B2-10: the image-only raw-target gate must recognize every raw-device
+    // spelling, not just the \\.\ and GLOBALROOT prefixes.
+#ifdef Q_OS_WIN
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\\\.\\PhysicalDrive0")));
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\PhysicalDrive3")));
+    QVERIFY(sak::isWindowsRawDevicePath(
+        QStringLiteral("\\\\?\\Volume{12345678-1234-1234-1234-1234567890ab}")));
+    // A long-path FILE (separator after the closing brace, or a drive-letter long
+    // path) must NOT be classified raw, or legitimate image writes would be
+    // misrouted through the raw-device writer.
+    QVERIFY(!sak::isWindowsRawDevicePath(
+        QStringLiteral("\\\\?\\Volume{12345678-1234-1234-1234-1234567890ab}\\dir\\x.img")));
+    QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\C:\\images\\x.img")));
+    QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("D:\\images\\x.img")));
+#else
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("/dev/sda")));
+    QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("/home/x/img.dmg")));
+#endif
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard() {
+    // B2-13: Create Image must emit the runtime destination guard that resolves
+    // the real volume identity of the destination and refuses if it lands on the
+    // source disk; a plain clone must not carry that guard.
+    PartitionScriptBuilder builder;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 0;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, payload));
+    QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
+    QVERIFY(image.script.contains(QStringLiteral("Get-SakVolumeGuid")));
+    QVERIFY(image.script.contains(QStringLiteral("$srcDiskNumber = 0")));
+    QVERIFY(image.script.contains(QStringLiteral("resolves onto the source disk")));
+
+    PartitionTarget cloneTarget;
+    cloneTarget.kind = PartitionTargetKind::Disk;
+    cloneTarget.disk_number = 0;
+    QJsonObject clonePayload;
+    clonePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    clonePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    clonePayload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto clone = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CloneDisk, cloneTarget, clonePayload));
+    QVERIFY(!clone.script.contains(QStringLiteral("resolves onto the source disk")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_vssFallbackFailsClosedForVssCapableFs() {
+    // B2-14: on VSS-unavailable, the backup fallback must fail closed for
+    // VSS-capable filesystems rather than doing a torn live copy then destroying
+    // the source.
+    PartitionScriptBuilder builder;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 3;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    QVERIFY(script.script.contains(QStringLiteral("DriveFormat")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("refusing to reformat without a point-in-time-consistent backup")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmation() {

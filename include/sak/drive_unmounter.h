@@ -59,9 +59,11 @@ public:
     /**
      * @brief Get list of volume mount points on a drive
      * @param driveNumber Physical drive number
+     * @param enumerationOk Optional out-param set to false if volume enumeration
+     *        itself failed (so callers can distinguish failure from an empty disk)
      * @return List of mount points (e.g., "C:\", "D:\")
      */
-    QStringList getVolumesOnDrive(int driveNumber) const;
+    QStringList getVolumesOnDrive(int driveNumber, bool* enumerationOk = nullptr) const;
 
     /**
      * @brief Lock a volume for exclusive access
@@ -90,6 +92,14 @@ public:
      * @return true if successful
      */
     bool preventAutoMount(int driveNumber);
+
+    /**
+     * @brief Clear the persistent OFFLINE attribute to bring a drive back online
+     *        (inverse of preventAutoMount; used to roll back a failed unmount)
+     * @param driveNumber Physical drive number
+     * @return true if successful
+     */
+    bool allowAutoMount(int driveNumber);
 
     /**
      * @brief Get last error message

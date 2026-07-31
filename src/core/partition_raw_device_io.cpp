@@ -511,14 +511,37 @@ void markFileSparse(int fileDescriptor) {
 #endif
 }
 
+#ifdef Q_OS_WIN
+namespace {
+// Raw-device spellings the \\.\ and GLOBALROOT prefixes miss: \\?\PhysicalDriveN
+// and a BARE \\?\Volume{GUID} device handle. A \\?\Volume{GUID}\path\file form is
+// an extended-length FILE path (it has a separator after the closing brace), not a
+// raw device, and must stay classified as a file so it is not routed through the
+// aligned raw-device writer. The generic \\?\ prefix is deliberately NOT matched
+// (it is also the long-path prefix for ordinary files, e.g. \\?\C:\dir\x.img).
+[[nodiscard]] bool isExtendedWindowsRawDevice(const QString& path) {
+    if (path.startsWith(QStringLiteral("\\\\?\\PhysicalDrive"), Qt::CaseInsensitive)) {
+        return true;
+    }
+    if (path.startsWith(QStringLiteral("\\\\?\\Volume{"), Qt::CaseInsensitive)) {
+        const int closing = path.indexOf(QLatin1Char('}'));
+        return closing >= 0 && path.indexOf(QLatin1Char('\\'), closing) < 0;
+    }
+    return false;
+}
+}  // namespace
+#endif
+
 bool isWindowsRawDevicePath(const QString& path) {
 #ifdef Q_OS_WIN
     // Device paths are case-insensitive on Windows (e.g. lowercase "globalroot").
     return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
-           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive);
+           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive) ||
+           isExtendedWindowsRawDevice(path);
 #else
-    Q_UNUSED(path);
-    return false;
+    // POSIX device nodes (Linux/macOS) are raw targets too; classify them so the
+    // image-only gate refuses them rather than opening a read-write QFile.
+    return path.startsWith(QStringLiteral("/dev/"));
 #endif
 }
 
