@@ -60,6 +60,9 @@ private Q_SLOTS:
     // to_string for log_level
     void logLevel_toString();
 
+    // B5-08: write-probe must not clobber and must leave no leftover.
+    void ensureLogDirectory_leavesNoProbeFile();
+
 private:
     /// @brief Reads all content from the singleton log file
     std::string readLogContent();
@@ -280,6 +283,41 @@ void LoggerTests::logLevel_toString() {
     QCOMPARE(sak::to_string(sak::log_level::warning), std::string_view("WARNING"));
     QCOMPARE(sak::to_string(sak::log_level::error), std::string_view("ERROR"));
     QCOMPARE(sak::to_string(sak::log_level::critical), std::string_view("CRITICAL"));
+}
+
+// ============================================================================
+// B5-08: write-permission probe hardening
+// ============================================================================
+
+void LoggerTests::ensureLogDirectory_leavesNoProbeFile() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const std::filesystem::path dir(tmp.path().toStdWString());
+
+    // A pre-existing unrelated file must survive the probe untouched (the probe
+    // uses a unique name and an exclusive create, so it never clobbers it).
+    const std::filesystem::path victim = dir / "important.txt";
+    {
+        std::ofstream vf(victim);
+        vf << "keep me";
+    }
+
+    const auto result = sak::logger::ensureLogDirectory(dir);
+    QVERIFY2(result.has_value(), "a writable directory must probe successfully");
+
+    // The victim file is intact.
+    QVERIFY(std::filesystem::exists(victim));
+    std::ifstream vin(victim);
+    const std::string content((std::istreambuf_iterator<char>(vin)),
+                              std::istreambuf_iterator<char>());
+    QCOMPARE(content, std::string("keep me"));
+
+    // No probe file was left behind, and no fixed ".test_write" name is used.
+    QVERIFY(!std::filesystem::exists(dir / ".test_write"));
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        const std::string name = entry.path().filename().string();
+        QVERIFY2(name.rfind(".sak_log_probe_", 0) != 0, "probe file must be cleaned up");
+    }
 }
 
 QTEST_GUILESS_MAIN(LoggerTests)

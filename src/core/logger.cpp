@@ -7,7 +7,9 @@
 #include "sak/logger.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <iomanip>
 #include <iostream>
@@ -166,9 +168,21 @@ auto logger::ensureLogDirectory(const std::filesystem::path& dir)
             return std::unexpected(error_code::not_a_directory);
         }
 
-        // Check write permission
-        auto test_file = dir / ".test_write";
-        std::ofstream test(test_file);
+        // Check write permission with an unpredictable, exclusively-created probe
+        // file. The old fixed ".test_write" name was guessable, so a pre-planted
+        // file or symlink at that path would be truncated (default ofstream) and
+        // then deleted -- destructive when this runs elevated. A unique name plus
+        // std::ios::noreplace (exclusive create: fails if the name already exists,
+        // including a planted link) means we never clobber or follow into a
+        // victim file.
+        static std::atomic<std::uint64_t> probe_counter{0};
+        const auto seq = probe_counter.fetch_add(1, std::memory_order_relaxed);
+        const auto stamp = static_cast<unsigned long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto probe_name = ".sak_log_probe_" + std::to_string(stamp) + "_" +
+                                std::to_string(seq);
+        auto test_file = dir / probe_name;
+        std::ofstream test(test_file, std::ios::out | std::ios::noreplace);
         if (!test.is_open()) {
             return std::unexpected(error_code::permission_denied);
         }

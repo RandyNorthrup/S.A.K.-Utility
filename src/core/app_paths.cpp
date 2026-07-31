@@ -4,9 +4,12 @@
 #include "sak/app_paths.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
+
+#include <atomic>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -22,6 +25,20 @@ QString writableAppLocalDataLocation() {
     return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
 }
 
+// Build an unpredictable, per-call write-probe file name. A fixed name (the old
+// ".sak_write_probe") is guessable, so a pre-planted file or symlink at that path
+// could be truncated (and then deleted) by the probe -- destructive when this
+// check runs from the elevated helper. pid+timestamp+counter makes the name
+// impractical to pre-plant.
+QString makeWriteProbeName() {
+    static std::atomic<quint64> counter{0};
+    const quint64 seq = counter.fetch_add(1, std::memory_order_relaxed);
+    return QStringLiteral(".sak_write_probe_%1_%2_%3")
+        .arg(QCoreApplication::applicationPid())
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(seq);
+}
+
 bool isWritableDirectory(const QString& path) {
     if (path.trimmed().isEmpty()) {
         return false;
@@ -30,9 +47,13 @@ bool isWritableDirectory(const QString& path) {
         return false;
     }
 
-    const QString probe_path = QDir(path).filePath(QStringLiteral(".sak_write_probe"));
+    const QString probe_path = QDir(path).filePath(makeWriteProbeName());
     QFile probe(probe_path);
-    if (!probe.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // NewOnly is an exclusive create: it fails if ANYTHING already exists at the
+    // name (a real file, or a symlink/reparse point planted to redirect us), so
+    // the probe never truncates or follows a link into a victim file. Combined
+    // with the unpredictable name, there is nothing to clobber.
+    if (!probe.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
         return false;
     }
     probe.close();

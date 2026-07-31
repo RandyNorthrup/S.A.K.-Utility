@@ -109,6 +109,15 @@ public:
     /// @return True if initialized
     [[nodiscard]] bool isInitialized() const noexcept;
 
+    /// @brief Create the log directory (if needed) and verify it is writable.
+    /// @param dir Directory path.
+    /// @return Success, or an error code if it cannot be created/written.
+    /// @note Public + static so the write-probe hardening (unique, exclusively
+    ///       created probe file that never clobbers or follows a link) can be
+    ///       unit tested directly.
+    [[nodiscard]] static auto ensureLogDirectory(const std::filesystem::path& dir)
+        -> std::expected<void, error_code>;
+
     // Prevent copying and moving
     logger(const logger&) = delete;
     logger& operator=(const logger&) = delete;
@@ -126,12 +135,6 @@ private:
     void logInternal(log_level level,
                      std::string_view message,
                      const std::source_location& loc) noexcept;
-
-    /// @brief Create log directory if it doesn't exist
-    /// @param dir Directory path
-    /// @return Expected containing success or error code
-    [[nodiscard]] static auto ensureLogDirectory(const std::filesystem::path& dir)
-        -> std::expected<void, error_code>;
 
     /// @brief Generate timestamp string
     /// @return Current timestamp in ISO 8601 format
