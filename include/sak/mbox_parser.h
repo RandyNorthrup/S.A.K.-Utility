@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QMap>
 #include <QObject>
+#include <QRecursiveMutex>
 #include <QString>
 #include <QVector>
 
@@ -103,6 +104,13 @@ Q_SIGNALS:
     void errorOccurred(QString error);
 
 private:
+    // Serializes ALL access to the shared m_file cursor / m_message_offsets / m_attachment_sink.
+    // The GUI thread (open/close/loadMessages/loadMessageDetail) and worker threads (readMessages/
+    // readMessageDetail/readAttachmentData from search/export/attachment tasks) all touch the same
+    // QFile seek position; without this they raced and returned mixed/corrupt data. Recursive so a
+    // public entry point (readAttachmentData) may call another (readAllAttachments) without
+    // self-deadlock. cancel() intentionally does NOT take it -- it only sets the atomic flag.
+    mutable QRecursiveMutex m_file_mutex;
     QFile m_file;
     QVector<qint64> m_message_offsets;
     bool m_is_open = false;

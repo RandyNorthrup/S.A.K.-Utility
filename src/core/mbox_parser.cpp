@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QMutex>
 #include <QRegularExpression>
 #include <QScopeGuard>
 #include <QStringDecoder>
@@ -50,6 +51,7 @@ MboxParser::~MboxParser() {
 // ============================================================================
 
 void MboxParser::open(const QString& file_path) {
+    const QMutexLocker locker(&m_file_mutex);
     close();
     m_cancelled.store(false, std::memory_order_relaxed);
 
@@ -84,6 +86,7 @@ void MboxParser::open(const QString& file_path) {
 }
 
 void MboxParser::close() {
+    const QMutexLocker locker(&m_file_mutex);
     if (m_file.isOpen()) {
         m_file.close();
     }
@@ -93,10 +96,12 @@ void MboxParser::close() {
 }
 
 bool MboxParser::isOpen() const {
+    const QMutexLocker locker(&m_file_mutex);
     return m_is_open;
 }
 
 void MboxParser::indexMessages() {
+    const QMutexLocker locker(&m_file_mutex);
     if (!m_is_open) {
         Q_EMIT errorOccurred(QStringLiteral("No file is open"));
         return;
@@ -118,6 +123,7 @@ void MboxParser::indexMessages() {
 }
 
 void MboxParser::loadMessages(int offset, int limit) {
+    const QMutexLocker locker(&m_file_mutex);
     auto result = readMessages(offset, limit);
     if (result) {
         Q_EMIT messagesLoaded(std::move(*result), m_message_offsets.size());
@@ -128,6 +134,7 @@ void MboxParser::loadMessages(int offset, int limit) {
 }
 
 void MboxParser::loadMessageDetail(int message_index) {
+    const QMutexLocker locker(&m_file_mutex);
     auto result = readMessageDetail(message_index);
     if (result) {
         Q_EMIT messageDetailLoaded(std::move(*result));
@@ -142,10 +149,12 @@ void MboxParser::cancel() {
 }
 
 int MboxParser::messageCount() const {
+    const QMutexLocker locker(&m_file_mutex);
     return m_message_offsets.size();
 }
 
 QString MboxParser::filePath() const {
+    const QMutexLocker locker(&m_file_mutex);
     return m_file.fileName();
 }
 
@@ -155,6 +164,7 @@ QString MboxParser::filePath() const {
 
 std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(int offset,
                                                                               int limit) {
+    const QMutexLocker locker(&m_file_mutex);
     if (!m_is_open) {
         return std::unexpected(error_code::invalid_operation);
     }
@@ -209,6 +219,7 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
 }
 
 std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(int message_index) {
+    const QMutexLocker locker(&m_file_mutex);
     if (!m_is_open) {
         return std::unexpected(error_code::invalid_operation);
     }
@@ -254,6 +265,7 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
 
 std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message_index,
                                                                      int attachment_index) {
+    const QMutexLocker locker(&m_file_mutex);
     if (attachment_index < 0) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -680,6 +692,7 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
 
 std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAttachments(
     int message_index) {
+    const QMutexLocker locker(&m_file_mutex);
     if (!m_is_open) {
         return std::unexpected(error_code::invalid_operation);
     }

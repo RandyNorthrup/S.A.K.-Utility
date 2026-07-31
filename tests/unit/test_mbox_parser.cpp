@@ -7,9 +7,13 @@
 #include "sak/email_constants.h"
 #include "sak/mbox_parser.h"
 
+#include <QFuture>
 #include <QSignalSpy>
+#include <QtConcurrent>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
+
+#include <atomic>
 
 class TestMboxParser : public QObject {
     Q_OBJECT
@@ -35,6 +39,9 @@ private Q_SLOTS:
     void readMessageDetailSync();
     void nestedMultipartRecoversBodyAndAttachment();
     void readAttachmentDataAlignsWithRecursiveEnumeration();
+
+    // -- Concurrency (B7-02) ---------------------------------------------
+    void concurrentReadsDoNotRace();
 
     // -- From Line Detection ---------------------------------------------
     void fromLineDetectsValidSeparator();
@@ -367,6 +374,73 @@ void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
 
     // Out-of-range index is rejected.
     QVERIFY(!parser.readAttachmentData(0, 2).has_value());
+    parser.close();
+}
+
+// ============================================================================
+// Concurrency (B7-02): concurrent attachment/detail reads share one QFile cursor
+// and offsets. Before serialization they raced -> one message's bytes/subject
+// were returned for another's index. The parser now guards all file access with
+// a recursive mutex; every concurrent read must return its OWN index's data.
+// ============================================================================
+
+void TestMboxParser::concurrentReadsDoNotRace() {
+    constexpr int kMsgs = 8;
+    QByteArray content;
+    QVector<QByteArray> expectedPayloads;
+    QVector<QString> expectedSubjects;
+    for (int i = 0; i < kMsgs; ++i) {
+        const QByteArray payload = QByteArray("PAYLOAD-") + QByteArray::number(i) +
+                                   "-0123456789abcdef";
+        expectedPayloads.append(payload);
+        expectedSubjects.append(QStringLiteral("Msg%1").arg(i));
+        content += "From s@e.com Mon Jan  1 00:00:00 2024\r\n";
+        content += "Subject: Msg" + QByteArray::number(i) + "\r\n";
+        content += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+        content += "--B\r\n";
+        content += "Content-Type: application/octet-stream\r\n";
+        content += "Content-Disposition: attachment; filename=\"a" + QByteArray::number(i) +
+                   ".bin\"\r\n";
+        content += "Content-Transfer-Encoding: base64\r\n\r\n";
+        content += payload.toBase64() + "\r\n";
+        content += "--B--\r\n";
+    }
+
+    QTemporaryFile temp;
+    QVERIFY(temp.open());
+    temp.write(content);
+    temp.close();
+
+    MboxParser parser;
+    parser.open(temp.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), kMsgs);
+
+    // Hammer the shared parser from many pool threads. Each task reads a specific message's
+    // attachment AND detail and checks BOTH belong to that same index.
+    std::atomic<int> mismatches{0};
+    QList<QFuture<void>> futures;
+    for (int t = 0; t < 256; ++t) {
+        const int idx = t % kMsgs;
+        futures.append(
+            QtConcurrent::run([&parser, idx, &mismatches, &expectedPayloads, &expectedSubjects]() {
+                const auto bytes = parser.readAttachmentData(idx, 0);
+                if (!bytes || *bytes != expectedPayloads[idx]) {
+                    mismatches.fetch_add(1);
+                    return;
+                }
+                const auto detail = parser.readMessageDetail(idx);
+                if (!detail || detail->subject != expectedSubjects[idx]) {
+                    mismatches.fetch_add(1);
+                }
+            }));
+    }
+    for (auto& f : futures) {
+        f.waitForFinished();
+    }
+
+    QCOMPARE(mismatches.load(), 0);
     parser.close();
 }
 

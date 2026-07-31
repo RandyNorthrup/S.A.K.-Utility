@@ -5531,7 +5531,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_mbox_parser PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_mbox_parser PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
