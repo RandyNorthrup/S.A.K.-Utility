@@ -149,6 +149,27 @@ public:
     /// @brief Get the thermal monitor instance for direct connection
     [[nodiscard]] ThermalMonitor* thermalMonitor() const;
 
+    // -- Pure decision helpers (public + static for unit testing) -----
+
+    /// @brief Whether a completion for @p completedStep may advance the suite.
+    /// @return true only while a suite is running AND the completed step is the
+    ///         one still in progress.
+    /// @note Guards against stale completions: a cancelled/skipped worker can
+    ///       emit its completion after the suite moved on, and skipCurrentStep
+    ///       queues its own advance -- ignoring non-matching completions prevents
+    ///       a double-advance that would silently skip the following step.
+    [[nodiscard]] static bool suiteAdvanceAllowed(bool runningSuite,
+                                                  SuiteState current,
+                                                  SuiteState completedStep);
+
+    /// @brief Downgrade an aggregate status when a suite step failed to run.
+    /// @return @p current when no step failed; otherwise at least Warnings.
+    /// @note Never upgrades (a CriticalIssues status stays critical). Ensures a
+    ///       suite in which a benchmark failed is not reported AllPassed with no
+    ///       successful result.
+    [[nodiscard]] static DiagnosticStatus statusWithStepFailures(DiagnosticStatus current,
+                                                                 bool anyStepFailed);
+
 Q_SIGNALS:
     // -- Scan / Analysis Results ---------------------------------
 
@@ -229,8 +250,19 @@ private:
     void connectThermalMonitor();
     void connectReportGenerator();
 
-    /// @brief Advance to the next step in the full suite
-    void advanceSuiteStep();
+    /// @brief Advance the full suite, but only if @p completedStep is the step
+    ///        currently in progress.
+    /// @param completedStep the suite step whose worker just finished/failed.
+    /// @note Guards against stale completions: a cancelled or skipped worker can
+    ///       still emit its completion signal AFTER the suite has moved on (and
+    ///       skipCurrentStep queues its own advance). Ignoring completions that
+    ///       do not match the current step prevents a double-advance that would
+    ///       silently skip the following step.
+    void advanceSuiteStep(SuiteState completedStep);
+
+    /// @brief Run report generation + emit the terminal Complete state/signals.
+    /// @note Shared by the stress-test and stress-skipped suite-end paths.
+    void finalizeSuiteAndComplete();
 
     /// @brief Aggregate all data and determine overall status
     void aggregateResults();
@@ -252,6 +284,11 @@ private:
     std::atomic<bool> m_running_suite{false};
     std::atomic<bool> m_skipping_step{false};  ///< Guards skipCurrentStep from double-advance
     DiagnosticReportData m_report_data;
+
+    /// @brief Names of suite steps that failed to complete this run. A failed
+    ///        benchmark records no result, so aggregateResults uses this to
+    ///        avoid reporting AllPassed over a run with unsuccessful steps.
+    QStringList m_suite_failures;
 
     // Async operation futures (prevent fire-and-forget)
     QFuture<void> m_hw_scan_future;
