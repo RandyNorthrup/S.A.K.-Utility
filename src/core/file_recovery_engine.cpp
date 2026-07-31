@@ -39,6 +39,12 @@ constexpr int kDriveLetterPathLength = 2;
 constexpr int kDriveLetterSeparatorIndex = 1;
 constexpr uint64_t kMinimumCandidateAdvance = 1;
 constexpr qint64 kHashChunkBytes = 1024 * 1024;
+// Forward-scan work budget (B8-14): a real image scans ~= its data size in total
+// (sparse, terminated signatures); allow a small multiple of that plus a floor so a
+// hostile image of repeated unterminated signatures fails closed to a partial result
+// instead of pinning the CPU on O(n * max_candidate_bytes) work.
+constexpr uint64_t kScanWorkBudgetFactor = 4;
+constexpr uint64_t kScanWorkBudgetFloorBytes = 64ULL * 1024 * 1024;
 constexpr char kPngSignature[kPngSignatureSize] = {'\x89', 'P', 'N', 'G', '\r', '\n', '\x1a', '\n'};
 
 struct CandidateMatch {
@@ -83,12 +89,14 @@ QString candidateId(uint64_t offset, const QString& extension) {
 
 std::optional<uint64_t> pngSizeAt(const QByteArray& data,
                                   qsizetype offset,
-                                  uint64_t maxCandidateBytes) {
+                                  uint64_t maxCandidateBytes,
+                                  uint64_t* work) {
     if (!hasBytesAt(data, offset, QByteArrayView(kPngSignature, kPngSignatureSize))) {
         return std::nullopt;
     }
     qsizetype cursor = offset + kPngSignatureSize;
     while (cursor + kPngChunkHeaderSize <= data.size()) {
+        ++(*work);  // count forward-scan work so the caller can bound it (B8-14)
         const uint32_t length = readBigEndianUInt32(data, cursor);
         const qsizetype chunkEnd = cursor + kPngChunkHeaderSize + length + kPngChunkCrcSize;
         if (chunkEnd < cursor || chunkEnd > data.size()) {
@@ -109,7 +117,8 @@ std::optional<uint64_t> pngSizeAt(const QByteArray& data,
 
 std::optional<uint64_t> jpegSizeAt(const QByteArray& data,
                                    qsizetype offset,
-                                   uint64_t maxCandidateBytes) {
+                                   uint64_t maxCandidateBytes,
+                                   uint64_t* work) {
     const QByteArrayView start("\xff\xd8\xff", kJpegSignatureSize);
     const QByteArrayView end("\xff\xd9", kJpegMarkerSize);
     if (!hasBytesAt(data, offset, start)) {
@@ -118,6 +127,7 @@ std::optional<uint64_t> jpegSizeAt(const QByteArray& data,
     const qsizetype limit = std::min<qsizetype>(data.size(),
                                                 offset + static_cast<qsizetype>(maxCandidateBytes));
     for (qsizetype cursor = offset + start.size(); cursor + end.size() <= limit; ++cursor) {
+        ++(*work);  // count forward-scan work so the caller can bound it (B8-14)
         if (hasBytesAt(data, cursor, end)) {
             return static_cast<uint64_t>(cursor + end.size() - offset);
         }
@@ -127,7 +137,8 @@ std::optional<uint64_t> jpegSizeAt(const QByteArray& data,
 
 std::optional<uint64_t> pdfSizeAt(const QByteArray& data,
                                   qsizetype offset,
-                                  uint64_t maxCandidateBytes) {
+                                  uint64_t maxCandidateBytes,
+                                  uint64_t* work) {
     const QByteArrayView start("%PDF-", kPdfSignatureSize);
     const QByteArrayView end("%%EOF", kPdfEofMarkerSize);
     if (!hasBytesAt(data, offset, start)) {
@@ -136,6 +147,7 @@ std::optional<uint64_t> pdfSizeAt(const QByteArray& data,
     const qsizetype limit = std::min<qsizetype>(data.size(),
                                                 offset + static_cast<qsizetype>(maxCandidateBytes));
     for (qsizetype cursor = offset + start.size(); cursor + end.size() <= limit; ++cursor) {
+        ++(*work);  // count forward-scan work so the caller can bound it (B8-14)
         if (hasBytesAt(data, cursor, end)) {
             return static_cast<uint64_t>(cursor + end.size() - offset);
         }
@@ -145,20 +157,21 @@ std::optional<uint64_t> pdfSizeAt(const QByteArray& data,
 
 std::optional<CandidateMatch> matchAt(const QByteArray& data,
                                       qsizetype offset,
-                                      uint64_t maxCandidateBytes) {
-    if (const auto size = pngSizeAt(data, offset, maxCandidateBytes)) {
+                                      uint64_t maxCandidateBytes,
+                                      uint64_t* work) {
+    if (const auto size = pngSizeAt(data, offset, maxCandidateBytes, work)) {
         return CandidateMatch{QStringLiteral("PNG image"),
                               QStringLiteral("png"),
                               static_cast<uint64_t>(offset),
                               *size};
     }
-    if (const auto size = jpegSizeAt(data, offset, maxCandidateBytes)) {
+    if (const auto size = jpegSizeAt(data, offset, maxCandidateBytes, work)) {
         return CandidateMatch{QStringLiteral("JPEG image"),
                               QStringLiteral("jpg"),
                               static_cast<uint64_t>(offset),
                               *size};
     }
-    if (const auto size = pdfSizeAt(data, offset, maxCandidateBytes)) {
+    if (const auto size = pdfSizeAt(data, offset, maxCandidateBytes, work)) {
         return CandidateMatch{QStringLiteral("PDF document"),
                               QStringLiteral("pdf"),
                               static_cast<uint64_t>(offset),
@@ -169,7 +182,15 @@ std::optional<CandidateMatch> matchAt(const QByteArray& data,
 
 QString restoredFilePath(const QString& destinationDirectory,
                          const FileRecoveryCandidate& candidate) {
-    return QDir(destinationDirectory).filePath(candidate.id);
+    // Confine the candidate id to a bare filename so a crafted id ("../evil", "a/b")
+    // in a caller-supplied candidate cannot write outside the restore directory
+    // (B8-15). QFileInfo::fileName drops any path components; "."/".."/empty are
+    // rejected (empty return => the caller skips the candidate).
+    const QString name = QFileInfo(candidate.id).fileName();
+    if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral("..")) {
+        return {};
+    }
+    return QDir(destinationDirectory).filePath(name);
 }
 
 bool isWindowsRawDevicePath(const QString& path) {
@@ -370,6 +391,11 @@ bool writeRecoveredFile(const QString& outputPath, const QByteArray& bytes, QStr
 
 void restoreCandidate(const RestoreContext& context, const FileRecoveryCandidate& candidate) {
     const QString outputPath = restoredFilePath(context.destination.absolutePath(), candidate);
+    if (outputPath.isEmpty()) {
+        context.result->warnings.append(
+            QStringLiteral("Skipped candidate with an unsafe name: %1").arg(candidate.id));
+        return;
+    }
     if (skippedExistingRestoreFile(
             outputPath, context.overwrite_existing, &context.result->warnings)) {
         return;
@@ -433,21 +459,34 @@ void appendScanCandidates(const QByteArray& data,
                           const FileRecoveryScanOptions& options,
                           FileRecoveryScanResult* result,
                           const std::atomic<bool>* cancel) {
+    // Total forward-scan work bound: matchAt scans forward up to max_candidate_bytes
+    // per signature prefix, so a crafted image of repeated unterminated signatures is
+    // O(n * max_candidate_bytes). A real image (sparse, terminated signatures) scans
+    // ~= its data size in total; bound the cumulative forward-scan to a small multiple
+    // of that so a hostile image fails closed to a partial result instead of pinning
+    // the CPU -- independent of whether a cancel deadline was supplied (B8-14).
+    const uint64_t work_budget = static_cast<uint64_t>(data.size()) * kScanWorkBudgetFactor +
+                                 kScanWorkBudgetFloorBytes;
+    uint64_t work = 0;
     for (qsizetype offset = 0;
          offset < data.size() && result->candidates.size() < options.max_candidates;
          ++offset) {
-        // Poll the cancel flag once per start offset. matchAt scans forward up to
-        // max_candidate_bytes per format, so a signature that repeats with no end marker is
-        // O(n * max_candidate_bytes) work -- without this poll a deadline could not interrupt it
-        // (the flag lives outside the loop that actually spins). Overrun after cancel is at most
-        // one matchAt.
+        // Poll the cancel flag once per start offset (a supplied deadline can still
+        // interrupt), and also stop when the forward-scan work budget is exhausted.
         if (cancel != nullptr && cancel->load()) {
             result->scan_cancelled = true;
             result->warnings.append(
                 QStringLiteral("Scan cancelled before completing (time limit reached)"));
             return;
         }
-        const auto match = matchAt(data, offset, options.max_candidate_bytes);
+        if (work > work_budget) {
+            result->scan_cancelled = true;
+            result->warnings.append(
+                QStringLiteral("Scan bounded before completing: excessive unterminated signatures "
+                               "(possible hostile image); results are partial"));
+            return;
+        }
+        const auto match = matchAt(data, offset, options.max_candidate_bytes, &work);
         if (!match) {
             continue;
         }

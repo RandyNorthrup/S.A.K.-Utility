@@ -2079,6 +2079,8 @@ private Q_SLOTS:
     void operationQueue_redoAvailableOnlyAfterUndo();
     void powershellQuoting_escapesSingleQuotes();
     void fileRecoveryEngine_scansAndRestoresOfflineImage();
+    void fileRecoveryEngine_boundsHostileUnterminatedSignatures();
+    void fileRecoveryEngine_confinesCraftedCandidateNames();
 };
 
 QByteArray fixtureJson() {
@@ -18871,6 +18873,89 @@ void PartitionManagerCoreTests::fileRecoveryEngine_scansAndRestoresOfflineImage(
                  qPrintable(
                      QStringLiteral("restored file %1 is not byte-complete").arg(restoredPath)));
     }
+}
+
+void PartitionManagerCoreTests::fileRecoveryEngine_boundsHostileUnterminatedSignatures() {
+    // B8-14: an image of repeated unterminated signatures ("%PDF-" with no "%%EOF")
+    // is O(n * max_candidate_bytes) forward-scan work. The scan must bound that work
+    // and return a partial result instead of pinning the CPU (the test completing at
+    // all proves it terminated).
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("hostile.bin"));
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        const QByteArray block = QByteArrayLiteral("%PDF-1.7\n");  // "%PDF-" prefix, never "%%EOF"
+        QByteArray payload;
+        while (payload.size() < 2 * 1024 * 1024) {
+            payload.append(block);
+        }
+        QVERIFY(image.write(payload) > 0);
+    }
+
+    FileRecoveryScanOptions options;
+    options.image_path = imagePath;
+    const auto scan = FileRecoveryEngine::scanOfflineImage(options);
+    QVERIFY(scan.scan_cancelled);  // bounded -> partial result flagged
+    bool bounded = false;
+    for (const auto& warning : scan.warnings) {
+        if (warning.contains(QStringLiteral("bounded"))) {
+            bounded = true;
+            break;
+        }
+    }
+    QVERIFY2(bounded, qPrintable(scan.warnings.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::fileRecoveryEngine_confinesCraftedCandidateNames() {
+    // B8-15: a caller-supplied candidate id must be confined to a bare filename so a
+    // traversal id cannot write outside the restore directory.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    const QString restoreDir = root.filePath(QStringLiteral("restore"));
+    QVERIFY(root.mkpath(QStringLiteral("restore")));
+
+    const QString imagePath = root.filePath(QStringLiteral("img.bin"));
+    const QByteArray pdf =
+        QByteArrayLiteral("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        image.write(QByteArrayLiteral("pad"));
+        image.write(pdf);
+    }
+    FileRecoveryScanOptions scanOptions;
+    scanOptions.image_path = imagePath;
+    const auto scan = FileRecoveryEngine::scanOfflineImage(scanOptions);
+    QVERIFY(!scan.candidates.isEmpty());
+
+    // A traversal id is confined to a bare filename INSIDE the restore directory.
+    FileRecoveryCandidate traversal = scan.candidates.first();
+    traversal.id = QStringLiteral("../pwned.bin");
+    FileRecoveryRestoreOptions traversalRestore;
+    traversalRestore.image_path = imagePath;
+    traversalRestore.destination_directory = restoreDir;
+    traversalRestore.candidates = {traversal};
+    const auto restored = FileRecoveryEngine::restoreCandidates(traversalRestore);
+    QVERIFY(!QFileInfo::exists(root.filePath(QStringLiteral("pwned.bin"))));  // never escaped
+    QVERIFY(QFileInfo::exists(QDir(restoreDir).filePath(QStringLiteral("pwned.bin"))));  // confined
+    for (const auto& path : restored.restored_paths) {
+        QVERIFY2(QDir(restoreDir).absolutePath() == QFileInfo(path).absolutePath(),
+                 qPrintable(path));
+    }
+
+    // An id that reduces to nothing safe ("..") is skipped with a warning.
+    FileRecoveryCandidate dots = scan.candidates.first();
+    dots.id = QStringLiteral("..");
+    FileRecoveryRestoreOptions dotsRestore;
+    dotsRestore.image_path = imagePath;
+    dotsRestore.destination_directory = restoreDir;
+    dotsRestore.candidates = {dots};
+    const auto skipped = FileRecoveryEngine::restoreCandidates(dotsRestore);
+    QVERIFY(skipped.restored_paths.isEmpty());
+    QVERIFY(!skipped.warnings.isEmpty());
 }
 
 QTEST_MAIN(PartitionManagerCoreTests)
