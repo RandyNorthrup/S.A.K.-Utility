@@ -18,9 +18,12 @@
 
 class QJsonObject;
 class QSettings;
+class TestEmailProfileManager;  // grants the unit test access to the pure .reg-confinement seams
 
 class EmailProfileManager : public QObject {
     Q_OBJECT
+
+    friend class ::TestEmailProfileManager;
 
 public:
     explicit EmailProfileManager(QObject* parent = nullptr);
@@ -88,6 +91,17 @@ private:
 
     // Restore helpers
     [[nodiscard]] bool importRegistryKey(const QString& reg_file);
+    /// @brief Decode a .reg file's raw bytes to text (UTF-16LE-with-BOM as written by reg.exe
+    /// export, else UTF-8/ANSI). Pure; unit-tested.
+    [[nodiscard]] static QString decodeRegFile(const QByteArray& bytes);
+    /// @brief True iff a single [key] path (brackets stripped, any leading '-' delete marker
+    /// removed) targets the Outlook profile subtree we legitimately back up. Blocks HKLM entirely
+    /// and every other HKCU area (Run keys, shell hooks, ...). Pure; unit-tested.
+    [[nodiscard]] static bool regKeyPathAllowed(const QString& key_path);
+    /// @brief True iff EVERY key section in a .reg file's text targets an allowed prefix (and there
+    /// is at least one). A malicious/corrupt backup whose .reg writes outside the Outlook subtree
+    /// is refused BEFORE reg.exe import. Pure; unit-tested.
+    [[nodiscard]] static bool regContentConfinedToEmailHives(const QString& reg_text);
     void restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir);
     void restoreRegistryFromManifest(const QJsonObject& prof, const QString& backup_dir);
     void restoreOneDataFile(const QJsonObject& file_obj,

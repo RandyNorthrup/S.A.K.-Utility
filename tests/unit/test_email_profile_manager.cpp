@@ -50,6 +50,15 @@ private Q_SLOTS:
     // -- Profile Structure -----------------------------------------------
     void profilePopulation();
     void dataFilePopulation();
+
+    // -- B7-04: .reg content confinement ---------------------------------
+    void regContent_allowsOutlookProfileSubtree();
+    void regContent_rejectsHklmRunKey();
+    void regContent_rejectsHkcuOutsideOutlook();
+    void regContent_rejectsMixedGoodAndBad();
+    void regContent_rejectsDeletionOutsideSubtree();
+    void regContent_rejectsEmpty();
+    void decodeRegFile_handlesUtf16Bom();
 };
 
 // ============================================================================
@@ -275,6 +284,81 @@ void TestEmailProfileManager::dataFilePopulation() {
     QCOMPARE(file.path, QStringLiteral("C:/mail.mbox"));
     QCOMPARE(file.size_bytes, static_cast<qint64>(50 * 1024));
     QVERIFY(!file.is_linked);
+}
+
+// ============================================================================
+// B7-04: a restored .reg is untrusted -- reg.exe import writes EVERY key in it,
+// so the content must be confined to the Outlook profile subtree before import.
+// ============================================================================
+
+void TestEmailProfileManager::regContent_allowsOutlookProfileSubtree() {
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles\\Default]\n"
+        "\"UID\"=hex:01,02\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles\\Default\\9375]\n"
+        "\"Server\"=\"mail\"\n";
+    QVERIFY(EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regContent_rejectsHklmRunKey() {
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\n"
+        "\"Evil\"=\"C:\\\\evil.exe\"\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regContent_rejectsHkcuOutsideOutlook() {
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\n"
+        "\"Evil\"=\"C:\\\\evil.exe\"\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regContent_rejectsMixedGoodAndBad() {
+    // One allowed key does not launder a file that ALSO writes a Run key.
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles\\Default]\n"
+        "\"UID\"=hex:01\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\n"
+        "\"Evil\"=\"C:\\\\evil.exe\"\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regContent_rejectsDeletionOutsideSubtree() {
+    // A key-DELETE ([-HKEY...]) outside the subtree is just as dangerous and is refused.
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[-HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender]\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regContent_rejectsEmpty() {
+    // Header only, no key sections -> not a real Outlook export -> refused.
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(
+        QStringLiteral("Windows Registry Editor Version 5.00\n")));
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(QString()));
+}
+
+void TestEmailProfileManager::decodeRegFile_handlesUtf16Bom() {
+    const QString text =
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles\\P]\n";
+    QByteArray u16;
+    u16.append('\xFF');
+    u16.append('\xFE');  // UTF-16LE BOM as written by reg.exe export
+    u16.append(reinterpret_cast<const char*>(text.utf16()), static_cast<int>(text.size()) * 2);
+
+    QCOMPARE(EmailProfileManager::decodeRegFile(u16), text);
+    QVERIFY(EmailProfileManager::regContentConfinedToEmailHives(
+        EmailProfileManager::decodeRegFile(u16)));
 }
 
 QTEST_MAIN(TestEmailProfileManager)

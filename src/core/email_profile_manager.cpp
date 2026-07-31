@@ -677,7 +677,65 @@ bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QStri
     return result.succeeded();
 }
 
+QString EmailProfileManager::decodeRegFile(const QByteArray& bytes) {
+    // reg.exe export writes UTF-16LE with a BOM (0xFF 0xFE). Older REGEDIT4 files are ANSI.
+    if (bytes.size() >= 2 && static_cast<unsigned char>(bytes[0]) == 0xFF &&
+        static_cast<unsigned char>(bytes[1]) == 0xFE) {
+        return QString::fromUtf16(reinterpret_cast<const char16_t*>(bytes.constData() + 2),
+                                  (bytes.size() - 2) / 2);
+    }
+    return QString::fromUtf8(bytes);
+}
+
+bool EmailProfileManager::regKeyPathAllowed(const QString& key_path) {
+    const QString upper = key_path.trimmed().toUpper();
+    // Only the HKCU Outlook profile subtree that a backup legitimately exports. This blocks HKLM
+    // entirely and every other HKCU location (Run/RunOnce persistence, shell hooks, etc.).
+    return upper.startsWith(QStringLiteral("HKEY_CURRENT_USER\\SOFTWARE\\MICROSOFT\\OFFICE\\")) &&
+           upper.contains(QStringLiteral("\\OUTLOOK\\PROFILES"));
+}
+
+bool EmailProfileManager::regContentConfinedToEmailHives(const QString& reg_text) {
+    int key_sections = 0;
+    const QStringList lines = reg_text.split(QLatin1Char('\n'));
+    for (const QString& raw : lines) {
+        const QString line = raw.trimmed();
+        // Key section headers are the only lines that name a registry path.
+        if (!line.startsWith(QLatin1Char('[')) || !line.endsWith(QLatin1Char(']'))) {
+            continue;
+        }
+        QString key = line.mid(1, line.size() - 2).trimmed();
+        if (key.startsWith(QLatin1Char('-'))) {
+            key = key.mid(1).trimmed();  // [-HKEY...] is a key DELETION -- confine it too
+        }
+        ++key_sections;
+        if (!regKeyPathAllowed(key)) {
+            return false;
+        }
+    }
+    // A legitimate export always contains at least one key; zero keys means it is not a real
+    // Outlook profile export, so refuse it rather than shelling out to reg.exe on unknown content.
+    return key_sections > 0;
+}
+
 bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
+    QFile f(reg_file);
+    if (!f.open(QIODevice::ReadOnly)) {
+        sak::logWarning("Registry import: cannot read {}", reg_file.toStdString());
+        return false;
+    }
+    const QByteArray bytes = f.readAll();
+    f.close();
+
+    // A backup is untrusted input. reg.exe import will write EVERY key in the file, so before we
+    // run it, confirm the .reg touches only the Outlook profile subtree. Otherwise a crafted backup
+    // could import Run-key persistence or overwrite arbitrary HKLM/HKCU settings.
+    if (!regContentConfinedToEmailHives(decodeRegFile(bytes))) {
+        sak::logWarning("Refused .reg import (keys outside the Outlook profile subtree): {}",
+                        reg_file.toStdString());
+        return false;
+    }
+
     const auto result = sak::runProcess(QStringLiteral("reg.exe"),
                                         {QStringLiteral("import"), reg_file},
                                         kRegImportTimeoutMs);
