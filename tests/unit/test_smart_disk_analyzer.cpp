@@ -12,6 +12,8 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 class SmartDiskAnalyzerTests : public QObject {
     Q_OBJECT
 
@@ -33,6 +35,14 @@ private Q_SLOTS:
     void healthAssessment_healthy();
     void healthAssessment_warning();
     void healthAssessment_critical();
+
+    // B5-11: fail-closed assessment of malformed/empty smartctl output
+    void reportHasAssessableData_signalDetection();
+    void assess_malformedJson_isUnknownNotHealthy();
+    void assess_emptyJsonObject_isUnknownNotHealthy();
+    void assess_unknownReport_recommendationsSayUnknown();
+    void assess_validSataPassed_isHealthy();
+    void assess_smartStatusFailed_isCritical();
 
     // Cancel
     void cancel_stopsAnalysis();
@@ -158,6 +168,86 @@ void SmartDiskAnalyzerTests::healthAssessment_critical() {
     report.smart_status = "FAILED";
     report.temperature_celsius = 80.0;
 
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Critical);
+}
+
+// ============================================================================
+// B5-11: fail-closed assessment -- malformed/empty smartctl output must never
+// read as Healthy. Before the fix, assessHealth() unconditionally set Healthy
+// at entry, so a JSON parse error (default, data-less report) came back green.
+// ============================================================================
+
+void SmartDiskAnalyzerTests::reportHasAssessableData_signalDetection() {
+    // No status, no attributes, no NVMe log -> nothing to judge -> false.
+    sak::SmartReport blank;
+    QVERIFY(!sak::SmartDiskAnalyzer::reportHasAssessableData(blank));
+
+    // An overall SMART status alone is enough signal.
+    sak::SmartReport with_status;
+    with_status.smart_status = "PASSED";
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_status));
+
+    // A single SATA attribute is enough signal.
+    sak::SmartReport with_attr;
+    with_attr.attributes.append(sak::SmartAttribute{});
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_attr));
+
+    // An NVMe health log is enough signal.
+    sak::SmartReport with_nvme;
+    with_nvme.nvme_health = sak::NvmeHealthInfo{};
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_nvme));
+}
+
+void SmartDiskAnalyzerTests::assess_malformedJson_isUnknownNotHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray garbage = "{ this is not valid json ";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(garbage, 0);
+    // The old bug: a parse failure came back Healthy. It must be Unknown.
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+    QVERIFY(report.overall_health != sak::SmartHealthStatus::Healthy);
+}
+
+void SmartDiskAnalyzerTests::assess_emptyJsonObject_isUnknownNotHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    // Valid JSON, but no smart_status / attributes / nvme log -> no signal.
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting("{}", 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+}
+
+void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
+    sak::SmartDiskAnalyzer analyzer;
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting("{}", 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+    // Must NOT claim the drive is fine.
+    for (const QString& rec : report.recommendations) {
+        QVERIFY2(!rec.contains("health is good", Qt::CaseInsensitive),
+                 "an indeterminate drive must not be reported as healthy");
+    }
+    // Must say, somewhere, that it could not be determined.
+    const bool says_unknown =
+        std::any_of(report.warnings.begin(), report.warnings.end(), [](const QString& w) {
+            return w.contains("could not be determined", Qt::CaseInsensitive);
+        });
+    QVERIFY(says_unknown);
+}
+
+void SmartDiskAnalyzerTests::assess_validSataPassed_isHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    // A well-formed SATA report with a passing status and a benign attribute.
+    const QByteArray json =
+        R"({"device":{"type":"sat"},"model_name":"Test SATA","smart_status":{"passed":true},)"
+        R"("temperature":{"current":35},"ata_smart_attributes":{"table":[)"
+        R"({"id":5,"name":"Reallocated_Sector_Ct","value":100,"worst":100,"thresh":10,)"
+        R"("raw":{"value":0}}]}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
+    // Regression guard: the fail-closed change must not break a genuine healthy read.
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
+}
+
+void SmartDiskAnalyzerTests::assess_smartStatusFailed_isCritical() {
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray json = R"({"device":{"type":"sat"},"smart_status":{"passed":false}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Critical);
 }
 

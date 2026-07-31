@@ -139,10 +139,27 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     assessHealth(report);
     generateRecommendations(report);
 
+    // Fail-closed surfacing: a malformed or content-free smartctl payload leaves
+    // the drive indeterminate. Report that as an error rather than silently
+    // appending a report that reads as "fine".
+    if (report.overall_health == SmartHealthStatus::Unknown) {
+        Q_EMIT errorOccurred(QString("SMART data for PhysicalDrive%1 is incomplete or unreadable "
+                                     "-- health could not be determined")
+                                 .arg(disk_number));
+    }
+
     report.scan_timestamp = QDateTime::currentDateTime();
     m_reports.append(report);
 
     Q_EMIT driveAnalyzed(report);
+}
+
+SmartReport SmartDiskAnalyzer::parseAndAssessForTesting(const QByteArray& json_data,
+                                                        uint32_t disk_number) {
+    SmartReport report = parseSmartctlOutput(json_data, disk_number);
+    assessHealth(report);
+    generateRecommendations(report);
+    return report;
 }
 
 void SmartDiskAnalyzer::cancel() {
@@ -383,7 +400,25 @@ SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
     return SmartHealthStatus::Healthy;
 }
 
+bool SmartDiskAnalyzer::reportHasAssessableData(const SmartReport& report) {
+    // Fail-closed signal set: an overall SMART status, at least one SATA
+    // attribute, or an NVMe health log. With none of these present the drive
+    // gave us nothing to judge, so health must stay Unknown rather than
+    // defaulting to Healthy (which would hide a failing/unreadable disk).
+    return !report.smart_status.isEmpty() || !report.attributes.isEmpty() ||
+           report.nvme_health.has_value();
+}
+
 void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
+    // Fail closed: a malformed/empty smartctl payload parses into a data-less
+    // report. Without any SMART signal we cannot claim the drive is Healthy --
+    // leave it Unknown so the caller surfaces "could not determine", not a
+    // green result over a disk we never actually read.
+    if (!reportHasAssessableData(report)) {
+        report.overall_health = SmartHealthStatus::Unknown;
+        return;
+    }
+
     report.overall_health = SmartHealthStatus::Healthy;
 
     if (report.smart_status == "FAILED") {
@@ -531,6 +566,17 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
         report.recommendations.prepend(
             "CRITICAL: Drive is reporting imminent failure -- back up all data immediately and "
             "replace drive");
+    }
+
+    // Fail-closed: an indeterminate report must NOT read as "health is good".
+    // Say plainly that health is unknown so a data-less scan is never mistaken
+    // for a clean bill.
+    if (report.overall_health == SmartHealthStatus::Unknown) {
+        report.warnings.append("SMART health could not be determined for this drive");
+        report.recommendations.append(
+            "SMART data was unavailable or unreadable -- verify the drive connection and "
+            "re-run with administrator privileges");
+        return;
     }
 
     // If no issues found, add a positive note

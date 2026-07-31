@@ -62,6 +62,24 @@ public:
     /// @return true if smartctl.exe can be found and executed
     [[nodiscard]] bool isSmartctlAvailable() const;
 
+    /// @brief Whether a report carries any usable SMART signal to assess.
+    /// @return true iff there is an overall SMART status, at least one SATA
+    ///         attribute, or an NVMe health log.
+    /// @note Fail-closed guard: with none of these, health is indeterminate
+    ///       (Unknown) and must never default to Healthy -- otherwise a
+    ///       malformed/empty smartctl payload reads as a clean drive.
+    [[nodiscard]] static bool reportHasAssessableData(const SmartReport& report);
+
+    /// @brief Parse raw smartctl JSON and run the full assessment pipeline.
+    /// @param json_data Raw smartctl JSON bytes.
+    /// @param disk_number The drive number being parsed.
+    /// @return The parsed + assessed report.
+    /// @note Exposed for tests: certifies the fail-closed path (malformed or
+    ///       empty JSON must resolve to Unknown, never Healthy). Does not touch
+    ///       the cached report list or emit signals.
+    [[nodiscard]] SmartReport parseAndAssessForTesting(const QByteArray& json_data,
+                                                       uint32_t disk_number);
+
 Q_SIGNALS:
     /// @brief Emitted when analysis begins
     void analysisStarted();
