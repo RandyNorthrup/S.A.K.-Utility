@@ -125,6 +125,10 @@ private slots:
     void payloadChecksumMismatchFailsValidation();
     void correctChecksumsPassValidation();
 
+    // ---- B7-21: AssignToDestination assigns ownership, not strip ----
+    void assignToDestinationUsesUsername();
+    void effectiveDestUserPrefersDestination();
+
     // ---- Core restore flow ----
     void singleFileRestoreSucceeds();
     void unselectedMappingSkipped();
@@ -357,6 +361,43 @@ void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // valid integrity -> proceeds
     QVERIFY(QFile::exists(destDir.path() + "/Users/TestUser/Documents/hello.txt"));
+}
+
+// ---------------------------------------------------------------------------
+// B7-21: with a real destination user, AssignToDestination assigns ownership
+// (the whole point of the mode); only an empty user falls back to stripping.
+// Before the fix the caller always passed "", so it ALWAYS stripped.
+// ---------------------------------------------------------------------------
+void UserProfileRestoreWorkerTests::assignToDestinationUsesUsername() {
+    using RW = sak::UserProfileRestoreWorker;
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::AssignToDestination,
+                                         QStringLiteral("Bob")),
+             RW::PermissionAction::AssignOwnership);
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::AssignToDestination, QString()),
+             RW::PermissionAction::StripPermissions);
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::StripAll, QStringLiteral("Bob")),
+             RW::PermissionAction::StripPermissions);
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::PreserveOriginal, QString()),
+             RW::PermissionAction::PreserveOriginal);
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::Hybrid, QStringLiteral("Bob")),
+             RW::PermissionAction::StripPermissions);
+}
+
+void UserProfileRestoreWorkerTests::effectiveDestUserPrefersDestination() {
+    using RW = sak::UserProfileRestoreWorker;
+    // An explicit destination user is used; the restore therefore passes a NON-empty
+    // username into AssignToDestination (so it assigns, not strips).
+    auto m1 = makeMapping(QStringLiteral("Alice"), QStringLiteral("Bob"));
+    QCOMPARE(RW::effectiveDestUser(m1), QStringLiteral("Bob"));
+    // A same-name restore falls back to the source username (still non-empty).
+    sak::UserMapping m2;
+    m2.source_username = QStringLiteral("Alice");
+    m2.destination_username.clear();
+    QCOMPARE(RW::effectiveDestUser(m2), QStringLiteral("Alice"));
+    // Combined: an AssignToDestination restore of this mapping resolves to assign.
+    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::AssignToDestination,
+                                         RW::effectiveDestUser(m1)),
+             RW::PermissionAction::AssignOwnership);
 }
 
 // ===========================================================================

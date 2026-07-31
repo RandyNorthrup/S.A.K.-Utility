@@ -247,6 +247,11 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         return false;
     }
 
+    // The effective destination user for permission assignment: an explicit
+    // destination, else the source (a same-name restore). Consumed by
+    // copyFileWithConflictResolution -> applyPermissions (B7-21).
+    m_currentDestUser = effectiveDestUser(mapping);
+
     // Restore each folder
     for (const auto& folder : sourceUser->backed_up_folders) {
         if (m_cancelled) {
@@ -450,8 +455,9 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
         return false;
     }
 
-    // Apply permissions based on mode
-    if (!applyPermissions(finalDestPath, "")) {
+    // Apply permissions based on mode. Pass the current mapping's destination user
+    // so AssignToDestination assigns ownership instead of always stripping (B7-21).
+    if (!applyPermissions(finalDestPath, m_currentDestUser)) {
         Q_EMIT logMessage(tr("Warning: Failed to adjust permissions: %1").arg(finalDestPath), true);
     }
 
@@ -538,49 +544,54 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
     return true;
 }
 
+UserProfileRestoreWorker::PermissionAction UserProfileRestoreWorker::resolvePermissionAction(
+    PermissionMode mode, const QString& destinationUser) {
+    switch (mode) {
+    case PermissionMode::PreserveOriginal:
+        return PermissionAction::PreserveOriginal;
+    case PermissionMode::AssignToDestination:
+        // The whole point of this mode: assign ownership to the target user. Only
+        // fall back to stripping when no user is known (B7-21).
+        return destinationUser.isEmpty() ? PermissionAction::StripPermissions
+                                         : PermissionAction::AssignOwnership;
+    case PermissionMode::StripAll:
+    case PermissionMode::Hybrid:
+        return PermissionAction::StripPermissions;
+    }
+    return PermissionAction::StripPermissions;
+}
+
+QString UserProfileRestoreWorker::effectiveDestUser(const UserMapping& mapping) {
+    return mapping.destination_username.isEmpty() ? mapping.source_username
+                                                  : mapping.destination_username;
+}
+
+bool UserProfileRestoreWorker::assignOwnershipToUser(const QString& filePath,
+                                                     const QString& destinationUser) {
+    const QString userSID = WindowsUserScanner::getUserSID(destinationUser);
+    if (userSID.isEmpty()) {
+        sak::logWarning("Could not resolve SID for user '{}', stripping permissions instead",
+                        destinationUser.toStdString());
+        return m_permissionManager->stripPermissions(filePath);
+    }
+    if (!m_permissionManager->takeOwnership(filePath, userSID)) {
+        sak::logWarning("Failed to take ownership for '{}', stripping permissions",
+                        filePath.toStdString());
+        return m_permissionManager->stripPermissions(filePath);
+    }
+    return m_permissionManager->setStandardUserPermissions(filePath, userSID);
+}
+
 bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
                                                 const QString& destinationUser) {
-    switch (m_permissionMode) {
-    case PermissionMode::StripAll:
-        // Remove all ACLs, inherit from parent
+    switch (resolvePermissionAction(m_permissionMode, destinationUser)) {
+    case PermissionAction::PreserveOriginal:
+        return true;  // Keep permissions already set by the copy.
+    case PermissionAction::StripPermissions:
         return m_permissionManager->stripPermissions(filePath);
-
-    case PermissionMode::PreserveOriginal:
-        // Keep existing permissions from backup (already set by copy)
-        return true;
-
-    case PermissionMode::AssignToDestination:
-        // Assign ownership to destination user
-        if (destinationUser.isEmpty()) {
-            // If no specific user, strip permissions
-            return m_permissionManager->stripPermissions(filePath);
-        }
-        // Look up user SID and apply ownership + standard permissions
-        {
-            QString userSID = WindowsUserScanner::getUserSID(destinationUser);
-            if (userSID.isEmpty()) {
-                sak::logWarning(
-                    "Could not resolve SID for user '{}', stripping permissions "
-                    "instead",
-                    destinationUser.toStdString());
-                return m_permissionManager->stripPermissions(filePath);
-            }
-            if (!m_permissionManager->takeOwnership(filePath, userSID)) {
-                sak::logWarning("Failed to take ownership for '{}', stripping permissions",
-                                filePath.toStdString());
-                return m_permissionManager->stripPermissions(filePath);
-            }
-            return m_permissionManager->setStandardUserPermissions(filePath, userSID);
-        }
-
-    case PermissionMode::Hybrid:
-        // Try to preserve, fall back to strip on error
-        if (!m_permissionManager->stripPermissions(filePath)) {
-            return m_permissionManager->stripPermissions(filePath);
-        }
-        return true;
+    case PermissionAction::AssignOwnership:
+        return assignOwnershipToUser(filePath, destinationUser);
     }
-
     return true;
 }
 

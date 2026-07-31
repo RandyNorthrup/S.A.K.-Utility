@@ -60,6 +60,23 @@ public:
      */
     void cancel();
 
+    /// High-level permission action decided purely from mode + destination user.
+    enum class PermissionAction {
+        StripPermissions,
+        PreserveOriginal,
+        AssignOwnership
+    };
+
+    /// Pure decision (no Win32) for applyPermissions. AssignToDestination with a
+    /// NON-EMPTY user assigns ownership; with an empty user it falls back to
+    /// stripping. Exposed for unit testing (B7-21).
+    [[nodiscard]] static PermissionAction resolvePermissionAction(PermissionMode mode,
+                                                                  const QString& destinationUser);
+
+    /// The username whose ownership a restore assigns: the explicit destination, or
+    /// the source when none is given. Exposed for unit testing (B7-21).
+    [[nodiscard]] static QString effectiveDestUser(const UserMapping& mapping);
+
     // isRunning() is intentionally NOT overridden -- QThread::isRunning() is the source of truth
     // (true from the moment start() returns), so the destructor and the second-start guard cannot
     // race the late member flag that run() used to set.
@@ -126,6 +143,9 @@ private:
                              QString& finalDestPath);
     QString generateConflictRenamePath(const QFileInfo& destInfo);
     bool applyPermissions(const QString& filePath, const QString& destinationUser);
+    /// Win32 ownership assignment for AssignToDestination, with strip fallback if the
+    /// SID cannot be resolved or ownership cannot be taken.
+    bool assignOwnershipToUser(const QString& filePath, const QString& destinationUser);
 
     // Helpers
     bool validateBackup();
@@ -147,6 +167,12 @@ private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_mappings;
+    /// Effective destination username of the mapping currently being restored, set
+    /// at the top of restoreUser(). Passed to applyPermissions so
+    /// PermissionMode::AssignToDestination actually assigns ownership to the target
+    /// user instead of always falling back to stripping permissions (B7-21). Safe as
+    /// a member: restore runs one mapping at a time on the worker thread.
+    QString m_currentDestUser;
     ConflictResolution m_conflictMode{ConflictResolution::SkipDuplicate};
     PermissionMode m_permissionMode{PermissionMode::StripAll};
     bool m_verify{false};
