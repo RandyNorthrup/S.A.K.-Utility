@@ -236,7 +236,7 @@ Part 1 (B3-01..06 root) committed d0f0d72. Part 2 (controller/panel joins) here:
   - [x] HTML From double-escape -> pre-inserted &lt;/&gt; then escapeHtml re-escaped the & into &amp;lt;; now built with literal < > and escaped once; test fromHeaderNotDoubleEscaped (041bfeb).
   - [x] conversion title `???` placeholder -> em-dash mangled to ??? by the ASCII rule; fixed to " - " (041bfeb).
   - [x] inline-image uses filename not Content-ID -> HTML embedder now resolves cid:<Content-ID> from the attachment (filename fallback kept); test inlineImageEmbeddedByContentId (041bfeb).
-- CERT B7: thread start/destroy stress; malicious .reg/junction/`..` path tests; short-write tests; hostile HTML/CSV fixtures; suite green.
+- [x] CERT B7: thread start/destroy stress; malicious .reg/junction/`..` path tests; short-write tests; hostile HTML/CSV fixtures; suite green. DONE: all 34 findings closed (32 fixed + tested, 2 accepted-inherent in B7-34). Thread stress (B7-01/03 start-then-destroy x5, ost cancel-during-conversion), malicious .reg (B7-04 content-confinement) / junction (B7-07 GetFinalPathNameByHandleW) / `..` (B7-08 relative-path guard), short-write (B7-18 writeFully stall-device), hostile HTML (B7-05 CSP+sanitize) / CSV (B7-17/B7-34 formula-injection) fixtures all covered. Full Release ctest 191/191 (0 failed, 191s) -- every email-subsystem target green.
 
 ## BATCH 8 -- Files subsystem
 - [ ] B8-01 [HIGH] src/core/file_management_file_system.cpp:1451 -- local recursive delete no empty/root/containment guard; empty path -> CWD. Fix: guard.
