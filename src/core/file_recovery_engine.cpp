@@ -6,10 +6,13 @@
 
 #include "sak/file_recovery_engine.h"
 
+#include "sak/io_write_utils.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 
 #include <algorithm>
 #include <limits>
@@ -342,13 +345,26 @@ bool candidateBytesMatch(const QByteArray& bytes,
 }
 
 bool writeRecoveredFile(const QString& outputPath, const QByteArray& bytes, QStringList* warnings) {
-    QFile output(outputPath);
-    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // Atomic write: QSaveFile stages to a temporary and only renames into place on
+    // commit(), so a short write (disk full) or a flush failure never leaves a
+    // truncated recovered file reported as a success. writeFully loops over partial
+    // writes; commit() flushes+closes and fails closed on any I/O error (B8-13).
+    QSaveFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly)) {
         warnings->append(QStringLiteral("Could not write recovered file: %1").arg(outputPath));
         return false;
     }
-    output.write(bytes);
-    output.close();
+    if (!sak::writeFully(output, bytes)) {
+        output.cancelWriting();
+        warnings->append(
+            QStringLiteral("Short write recovering file (disk full?): %1").arg(outputPath));
+        return false;
+    }
+    if (!output.commit()) {
+        warnings->append(
+            QStringLiteral("Could not finalize recovered file (disk full?): %1").arg(outputPath));
+        return false;
+    }
     return true;
 }
 

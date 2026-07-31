@@ -18853,9 +18853,23 @@ void PartitionManagerCoreTests::fileRecoveryEngine_scansAndRestoresOfflineImage(
     QCOMPARE(restore.restored_paths.size(), kExpectedRecoveredFixtureCount);
     QCOMPARE(fileSha256(imagePath), beforeHash);
 
+    // B8-13: every restored file must hold its candidate's COMPLETE bytes. A matching
+    // content hash proves byte-completeness, so a truncated (short-write / disk-full)
+    // restore -- writeRecoveredFile now writes atomically via QSaveFile+writeFully+
+    // commit -- could never be reported as a success.
+    QSet<QByteArray> candidateHashes;
+    for (const auto& candidate : scan.candidates) {
+        candidateHashes.insert(candidate.sha256);
+    }
     for (const auto& restoredPath : restore.restored_paths) {
         QVERIFY(QFileInfo::exists(restoredPath));
-        QVERIFY(QFileInfo(restoredPath).size() > 0);
+        QFile out(restoredPath);
+        QVERIFY(out.open(QIODevice::ReadOnly));
+        const QByteArray gotHash = QCryptographicHash::hash(out.readAll(),
+                                                            QCryptographicHash::Sha256);
+        QVERIFY2(candidateHashes.contains(gotHash),
+                 qPrintable(
+                     QStringLiteral("restored file %1 is not byte-complete").arg(restoredPath)));
     }
 }
 
