@@ -35,6 +35,11 @@ private Q_SLOTS:
     // stripPermissions
     void stripPermissions_existingFile();
 
+    // B5 security regressions (ACL round-trips on a user-owned temp file)
+    void stripPermissions_doesNotProduceNullDacl();
+    void setStandardUser_keepsSystemAndAdmins();
+    void setSddl_ownerlessDoesNotNullOwner();
+
     // applyPermissionStrategy
     void applyStrategy_stripAll();
 
@@ -139,6 +144,87 @@ void PermissionManagerTests::stripPermissions_existingFile() {
     // May require elevation; just verify no crash
     Q_UNUSED(result);
     QVERIFY(true);
+}
+
+// ============================================================================
+// B5 security regressions
+// ============================================================================
+
+// B5-01: stripPermissions must NOT set a NULL DACL (which grants everyone full
+// access). A user owns their temp file, so the DACL edit succeeds without
+// elevation, and the resulting SDDL must not be a null DACL.
+void PermissionManagerTests::stripPermissions_doesNotProduceNullDacl() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = m_tempDir.filePath("strip_nulldacl.txt");
+    QFile file(f);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+
+    QVERIFY2(mgr.stripPermissions(f), qPrintable(mgr.getLastError()));
+    const QString sddl = mgr.getSecurityDescriptorSddl(f);
+    QVERIFY(!sddl.isEmpty());
+    // A NULL DACL serializes as "NO_ACCESS_CONTROL"; it must be absent.
+    QVERIFY2(!sddl.contains("NO_ACCESS_CONTROL"),
+             qPrintable(QStringLiteral("strip produced a null DACL: %1").arg(sddl)));
+    // Inheritance must be re-enabled (unprotected), i.e. not a protected "D:P".
+    QVERIFY2(!sddl.contains(QStringLiteral("D:P")),
+             qPrintable(QStringLiteral("strip left a protected DACL: %1").arg(sddl)));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// B5-02: a "standard user" ACL must keep SYSTEM and Administrators, or the OS
+// and admins lose all access to the file.
+void PermissionManagerTests::setStandardUser_keepsSystemAndAdmins() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = m_tempDir.filePath("standarduser.txt");
+    QFile file(f);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+
+    QVERIFY2(mgr.setStandardUserPermissions(f, ownerSid), qPrintable(mgr.getLastError()));
+    const QString sddl = mgr.getSecurityDescriptorSddl(f);
+    QVERIFY(!sddl.isEmpty());
+    // SYSTEM -> "SY", local Administrators -> "BA" in SDDL.
+    QVERIFY2(sddl.contains(QStringLiteral(";SY)")),
+             qPrintable(QStringLiteral("SYSTEM missing from ACL: %1").arg(sddl)));
+    QVERIFY2(sddl.contains(QStringLiteral(";BA)")),
+             qPrintable(QStringLiteral("Administrators missing from ACL: %1").arg(sddl)));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// B5-03: applying an SDDL that specifies ONLY a DACL must not null the owner.
+void PermissionManagerTests::setSddl_ownerlessDoesNotNullOwner() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = m_tempDir.filePath("sddl_ownerless.txt");
+    QFile file(f);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+
+    const QString ownerBefore = mgr.getOwner(f);
+    QVERIFY(!ownerBefore.isEmpty());
+
+    // DACL-only SDDL (no O: / G:), granting the current user full access.
+    const QString dacl = QStringLiteral("D:(A;;FA;;;%1)").arg(ownerBefore);
+    QVERIFY2(mgr.setSecurityDescriptorSddl(f, dacl), qPrintable(mgr.getLastError()));
+
+    const QString ownerAfter = mgr.getOwner(f);
+    QCOMPARE(ownerAfter, ownerBefore);
+#else
+    QVERIFY(true);
+#endif
 }
 
 // ============================================================================

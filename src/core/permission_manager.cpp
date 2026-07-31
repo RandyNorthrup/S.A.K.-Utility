@@ -20,6 +20,82 @@
 
 namespace sak {
 
+#ifdef Q_OS_WIN
+namespace {
+// Builds a DACL granting full control to the destination user PLUS SYSTEM and
+// the local Administrators group. Without SYSTEM/Administrators a "standard
+// user" ACL locks out the OS, services (backup, AV, indexing), and every
+// administrator -- which can render the file unmanageable. On success the caller
+// owns *outAcl and must LocalFree it.
+DWORD buildStandardUserDacl(PSID userSid, PACL* outAcl) {
+    BYTE systemSid[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(systemSid);
+    BYTE adminSid[SECURITY_MAX_SID_SIZE];
+    DWORD adminSize = sizeof(adminSid);
+    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemSize) ||
+        !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &adminSize)) {
+        return GetLastError();
+    }
+
+    const PSID sids[3] = {userSid,
+                          reinterpret_cast<PSID>(systemSid),
+                          reinterpret_cast<PSID>(adminSid)};
+    EXPLICIT_ACCESSW ea[3];
+    ZeroMemory(ea, sizeof(ea));
+    for (int i = 0; i < 3; ++i) {
+        ea[i].grfAccessPermissions = GENERIC_ALL;
+        ea[i].grfAccessMode = SET_ACCESS;
+        ea[i].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+        ea[i].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        ea[i].Trustee.ptstrName = reinterpret_cast<LPWSTR>(sids[i]);
+    }
+    return SetEntriesInAclW(3, ea, nullptr, outAcl);
+}
+
+// Applies ONLY the fields the parsed security descriptor actually specifies
+// (owner if present, DACL if present, protected vs unprotected from the control
+// flag). Returns the SetNamedSecurityInfoW result, or ERROR_INVALID_SECURITY_DESCR
+// when the descriptor specifies neither an owner nor a DACL.
+DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pSD) {
+    SECURITY_INFORMATION si = 0;
+
+    PSID pOwner = nullptr;
+    BOOL ownerDefaulted = FALSE;
+    if (GetSecurityDescriptorOwner(pSD, &pOwner, &ownerDefaulted) && pOwner != nullptr) {
+        si |= OWNER_SECURITY_INFORMATION;
+    }
+
+    PACL pDacl = nullptr;
+    BOOL daclPresent = FALSE;
+    BOOL daclDefaulted = FALSE;
+    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &pDacl, &daclDefaulted)) {
+        return ERROR_INVALID_SECURITY_DESCR;
+    }
+    if (daclPresent) {
+        si |= DACL_SECURITY_INFORMATION;
+        SECURITY_DESCRIPTOR_CONTROL control = 0;
+        DWORD revision = 0;
+        if (GetSecurityDescriptorControl(pSD, &control, &revision)) {
+            si |= (control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION
+                                                : UNPROTECTED_DACL_SECURITY_INFORMATION;
+        }
+    }
+
+    if (si == 0) {
+        return ERROR_INVALID_SECURITY_DESCR;
+    }
+
+    return SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                                 SE_FILE_OBJECT,
+                                 si,
+                                 (si & OWNER_SECURITY_INFORMATION) ? pOwner : nullptr,
+                                 nullptr,
+                                 (si & DACL_SECURITY_INFORMATION) ? pDacl : nullptr,
+                                 nullptr);
+}
+}  // namespace
+#endif
+
 PermissionManager::PermissionManager() {
 #ifdef Q_OS_WIN
     // Enable privileges lazily — only succeeds when running elevated.
@@ -43,20 +119,25 @@ bool PermissionManager::stripPermissions(const QString& path) {
         return false;
     }
 
-    // Get parent directory security to inherit from
-    QString parentPath = fileInfo.absolutePath();
+    // Remove all EXPLICIT ACEs and let the object re-inherit its parent's ACL.
+    // CRITICAL: pass an initialized EMPTY (non-NULL) DACL, NOT nullptr. A nullptr
+    // pDacl with DACL_SECURITY_INFORMATION sets a NULL DACL, which grants
+    // *everyone* full access -- the opposite of stripping. An empty DACL grants
+    // no explicit access; UNPROTECTED_DACL_SECURITY_INFORMATION then re-applies
+    // the parent's inheritable ACEs.
+    ACL emptyDacl;
+    if (!InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION)) {
+        m_lastError = QString("Failed to initialize empty DACL: %1").arg(GetLastError());
+        return false;
+    }
 
-    // Remove all explicit ACEs, keep only inherited
-    // Note: We'll use SetNamedSecurityInfo with NULL DACL to enable inheritance
-
-    // Set the DACL
     DWORD result =
         SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                               SE_FILE_OBJECT,
                               DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
                               nullptr,
                               nullptr,
-                              nullptr,  // Empty DACL = inherit
+                              &emptyDacl,
                               nullptr);
 
     if (result != ERROR_SUCCESS) {
@@ -121,18 +202,10 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
         return false;
     }
 
-    // Create ACL with full control for user
-    EXPLICIT_ACCESSW ea;
-    ZeroMemory(&ea, sizeof(EXPLICIT_ACCESSW));
-
-    ea.grfAccessPermissions = GENERIC_ALL;
-    ea.grfAccessMode = SET_ACCESS;
-    ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
-    ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-    ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(pSid);
-
+    // Grant the user full control, but KEEP SYSTEM + Administrators so the file
+    // stays manageable by the OS and admins.
     PACL pNewAcl = nullptr;
-    DWORD result = SetEntriesInAclW(1, &ea, nullptr, &pNewAcl);
+    DWORD result = buildStandardUserDacl(pSid, &pNewAcl);
 
     if (result != ERROR_SUCCESS) {
         LocalFree(pSid);
@@ -291,30 +364,16 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
         return false;
     }
 
-    PACL pDacl = nullptr;
-    BOOL daclPresent = FALSE;
-    BOOL daclDefaulted = FALSE;
-    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &pDacl, &daclDefaulted)) {
-        LocalFree(pSD);
-        m_lastError = "Failed to read DACL from SDDL";
-        return false;
-    }
-
-    PSID pOwner = nullptr;
-    BOOL ownerDefaulted = FALSE;
-    GetSecurityDescriptorOwner(pSD, &pOwner, &ownerDefaulted);
-
-    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                         SE_FILE_OBJECT,
-                                         OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION |
-                                             PROTECTED_DACL_SECURITY_INFORMATION,
-                                         pOwner,
-                                         nullptr,
-                                         pDacl,
-                                         nullptr);
-
+    // Apply ONLY the fields the SDDL actually specifies (see
+    // applyParsedSecurityDescriptor). Forcing OWNER | DACL | PROTECTED would null
+    // the owner / set a NULL DACL when the SDDL omitted them.
+    const DWORD result = applyParsedSecurityDescriptor(path, pSD);
     LocalFree(pSD);
 
+    if (result == ERROR_INVALID_SECURITY_DESCR) {
+        m_lastError = "SDDL specifies neither an owner nor a valid DACL";
+        return false;
+    }
     if (result != ERROR_SUCCESS) {
         m_lastError = QString("Failed to apply SDDL: %1").arg(result);
         return false;
@@ -341,13 +400,22 @@ auto PermissionManager::tryStripPermissions(const QString& path)
         return std::unexpected(sak::error_code::file_not_found);
     }
 
+    // See stripPermissions(): an EMPTY (non-NULL) DACL strips explicit access and
+    // re-inherits from the parent; a nullptr pDacl would set a NULL DACL that
+    // grants everyone full access.
+    ACL emptyDacl;
+    if (!InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION)) {
+        m_lastError = QString("Failed to initialize empty DACL: %1").arg(GetLastError());
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+
     DWORD result =
         SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                               SE_FILE_OBJECT,
                               DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
                               nullptr,
                               nullptr,
-                              nullptr,
+                              &emptyDacl,
                               nullptr);
 
     if (result == ERROR_ACCESS_DENIED) {
@@ -417,16 +485,9 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
-    EXPLICIT_ACCESSW ea;
-    ZeroMemory(&ea, sizeof(EXPLICIT_ACCESSW));
-    ea.grfAccessPermissions = GENERIC_ALL;
-    ea.grfAccessMode = SET_ACCESS;
-    ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
-    ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-    ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(pSid);
-
+    // Keep SYSTEM + Administrators alongside the user (see buildStandardUserDacl).
     PACL pNewAcl = nullptr;
-    DWORD result = SetEntriesInAclW(1, &ea, nullptr, &pNewAcl);
+    DWORD result = buildStandardUserDacl(pSid, &pNewAcl);
 
     if (result != ERROR_SUCCESS) {
         LocalFree(pSid);
