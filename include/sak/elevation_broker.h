@@ -13,6 +13,7 @@
 #include <QObject>
 #include <QString>
 
+#include <atomic>
 #include <expected>
 #include <memory>
 #include <mutex>
@@ -130,7 +131,14 @@ private:
     std::mutex m_send_mutex;
 
 #ifdef _WIN32
-    HANDLE m_pipe_handle{INVALID_HANDLE_VALUE};
+    // B5-06: the pipe handle is read on the GUI/AI thread (isConnected / cancel /
+    // shutdown) while the worker thread connects, reads, and tears it down.
+    // A plain HANDLE read concurrently with a write is a data race (UB); make it
+    // atomic so every access is well-defined. m_send_mutex still serializes the
+    // WriteFile-vs-CloseHandle sequence in sendRaw()/cleanup() -- the atomic only
+    // makes the lock-free reads (isConnected, readExact/peek) safe; it does not
+    // replace that mutex.
+    std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
 #endif
 };

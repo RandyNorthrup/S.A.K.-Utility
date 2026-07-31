@@ -43,7 +43,7 @@ ElevationBroker::~ElevationBroker() {
 
 bool ElevationBroker::isConnected() const {
 #ifdef _WIN32
-    return m_pipe_handle != INVALID_HANDLE_VALUE;
+    return m_pipe_handle.load(std::memory_order_acquire) != INVALID_HANDLE_VALUE;
 #else
     return false;
 #endif
@@ -252,13 +252,14 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
     int elapsed = 0;
 
     while (elapsed < kPipeConnectTimeoutMs) {
-        m_pipe_handle = CreateFileW(
+        const HANDLE handle = CreateFileW(
             wide_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        m_pipe_handle.store(handle, std::memory_order_release);
 
-        if (m_pipe_handle != INVALID_HANDLE_VALUE) {
+        if (handle != INVALID_HANDLE_VALUE) {
             // Set pipe to message mode
             DWORD mode = PIPE_READMODE_BYTE;
-            SetNamedPipeHandleState(m_pipe_handle, &mode, nullptr, nullptr);
+            SetNamedPipeHandleState(handle, &mode, nullptr, nullptr);
             sak::logInfo("ElevationBroker: connected to pipe");
             return {};
         }
@@ -297,13 +298,14 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
     // the GUI thread may send a cancel frame; interleaved WriteFile calls on a
     // byte-mode pipe would corrupt the framing.
     std::lock_guard<std::mutex> lock(m_send_mutex);
-    if (m_pipe_handle == INVALID_HANDLE_VALUE) {
+    const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
+    if (handle == INVALID_HANDLE_VALUE) {
         return false;
     }
 
     DWORD bytes_written = 0;
     BOOL ok = WriteFile(
-        m_pipe_handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
+        handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
 
     return ok && static_cast<int>(bytes_written) == data.size();
 #else
@@ -345,7 +347,7 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
 
 bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
 #ifdef _WIN32
-    if (m_pipe_handle == INVALID_HANDLE_VALUE) {
+    if (m_pipe_handle.load(std::memory_order_acquire) == INVALID_HANDLE_VALUE) {
         return false;
     }
 
@@ -366,7 +368,10 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
 
         DWORD to_read = qMin(static_cast<DWORD>(size - total_read), available);
         DWORD bytes_read = 0;
-        if (!ReadFile(m_pipe_handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
+        // Load once per read: cleanup() may store INVALID from another thread.
+        const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
+        if (handle == INVALID_HANDLE_VALUE ||
+            !ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
             return false;
         }
         total_read += static_cast<int>(bytes_read);
@@ -384,7 +389,9 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
 
 DWORD ElevationBroker::peekAvailable() const {
     DWORD available = 0;
-    if (!PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr)) {
+    const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
+    if (handle == INVALID_HANDLE_VALUE ||
+        !PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr)) {
         return 0;
     }
     return available;
@@ -413,9 +420,13 @@ void ElevationBroker::cleanup() {
         // WriteFile, writing to a closed (possibly reused) handle -- a data race on a
         // non-atomic HANDLE. Holding m_send_mutex serializes the close against any write.
         std::lock_guard<std::mutex> lock(m_send_mutex);
-        if (m_pipe_handle != INVALID_HANDLE_VALUE) {
-            CloseHandle(m_pipe_handle);
-            m_pipe_handle = INVALID_HANDLE_VALUE;
+        const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
+        if (handle != INVALID_HANDLE_VALUE) {
+            // Invalidate BEFORE closing so a concurrent lock-free reader
+            // (readExact/peek) loads INVALID and bails rather than racing the
+            // close on the same handle value.
+            m_pipe_handle.store(INVALID_HANDLE_VALUE, std::memory_order_release);
+            CloseHandle(handle);
         }
     }
     if (m_helper_process) {
