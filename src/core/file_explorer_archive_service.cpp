@@ -121,13 +121,64 @@ bool traversesReparsePoint(const QString& destination_dir, const QString& out_pa
     return false;
 }
 
+// Records exactly what an extraction created so a mid-extraction failure can be
+// rolled back to the pre-extraction state (B8-08). Only entries WE created are
+// tracked -- writeExtractedFile opens files NewOnly, so every recorded file is one
+// we wrote (never a pre-existing file), and only newly-created directories are
+// recorded -- so rollback never removes pre-existing content.
+struct ExtractionRollback {
+    QStringList files;  // files this extraction created
+    QStringList dirs;   // directories this extraction created
+};
+
+// Per-extraction state threaded through the entry writers: the destination root,
+// the running expanded-byte total (bomb cap), the result being built, and the
+// rollback ledger. Bundled so the entry writers stay within the parameter budget.
+struct ExtractionContext {
+    QString destination_dir;
+    qint64 total_bytes{0};
+    FileExplorerArchiveResult* result{nullptr};
+    ExtractionRollback rollback;
+};
+
+// Undo a partial extraction: delete every file we wrote, then remove the
+// directories we created deepest-first. rmdir is empty-only, so a pre-existing
+// directory that still holds content (or a dir we mkpath'd into a populated tree)
+// is never deleted.
+void performExtractionRollback(const ExtractionRollback& rollback) {
+    for (const QString& file : rollback.files) {
+        QFile::remove(file);
+    }
+    QStringList dirs = rollback.dirs;
+    std::sort(dirs.begin(), dirs.end(), [](const QString& a, const QString& b) {
+        return a.size() > b.size();
+    });
+    for (const QString& dir : dirs) {
+        QDir().rmdir(dir);
+    }
+}
+
+// mkpath @p dir_path, appending it to @p rollback only when it did not already
+// exist, so rollback removes exactly the directories this extraction created.
+bool makeDirRecording(const QString& dir_path, ExtractionRollback* rollback) {
+    const bool existed = QFileInfo::exists(dir_path);
+    if (!QDir().mkpath(dir_path)) {
+        return false;
+    }
+    if (!existed && rollback != nullptr) {
+        rollback->dirs.append(dir_path);
+    }
+    return true;
+}
+
 // Materialize one file entry at @p out_path (parent dirs, corrupt-payload
 // guard, atomic write). Returns false and records a blocker on failure.
 bool writeExtractedFile(const QZipReader& reader,
                         const QString& out_path,
                         const QZipReader::FileInfo& info,
-                        FileExplorerArchiveResult* result) {
-    if (!QDir().mkpath(QFileInfo(out_path).absolutePath())) {
+                        ExtractionContext* ctx) {
+    FileExplorerArchiveResult* result = ctx->result;
+    if (!makeDirRecording(QFileInfo(out_path).absolutePath(), &ctx->rollback)) {
         result->blockers.append(
             QStringLiteral("Could not create directory for %1.").arg(info.filePath));
         return false;
@@ -159,18 +210,19 @@ bool writeExtractedFile(const QZipReader& reader,
         return false;
     }
     out.close();
+    ctx->rollback.files.append(out_path);
     ++result->entries;
     return true;
 }
 
-// Extract one bounded zip entry into @p destination_dir. Returns false (and
+// Extract one bounded zip entry into @p ctx->destination_dir. Returns false (and
 // records a blocker) to abort the whole extraction; true continues.
 // Directories and skipped symlinks return true without writing a file.
 bool extractZipEntry(const QZipReader& reader,
-                     const QString& destination_dir,
                      const QZipReader::FileInfo& info,
-                     qint64* total_bytes,
-                     FileExplorerArchiveResult* result) {
+                     ExtractionContext* ctx) {
+    const QString& destination_dir = ctx->destination_dir;
+    FileExplorerArchiveResult* result = ctx->result;
     if (!info.isValid()) {
         return true;
     }
@@ -192,19 +244,19 @@ bool extractZipEntry(const QZipReader& reader,
         return false;
     }
     if (info.isDir) {
-        if (QDir().mkpath(out_path)) {
+        if (makeDirRecording(out_path, &ctx->rollback)) {
             return true;
         }
         result->blockers.append(QStringLiteral("Could not create directory %1.").arg(out_path));
         return false;
     }
-    *total_bytes += info.size;
-    if (info.size > kExtractMaxFileBytes || *total_bytes > kExtractMaxTotalBytes) {
+    ctx->total_bytes += info.size;
+    if (info.size > kExtractMaxFileBytes || ctx->total_bytes > kExtractMaxTotalBytes) {
         result->blockers.append(
             QStringLiteral("Entry %1 exceeds the extraction size limit.").arg(info.filePath));
         return false;
     }
-    return writeExtractedFile(reader, out_path, info, result);
+    return writeExtractedFile(reader, out_path, info, ctx);
 }
 
 // Add one file to the writer under @p entry_name, streaming from disk.
@@ -380,9 +432,12 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
                                    .arg(kArchiveMaxEntries));
         return result;
     }
-    qint64 total_bytes = 0;
+    ExtractionContext ctx{.destination_dir = destination_dir, .result = &result};
     for (const QZipReader::FileInfo& info : entries) {
-        if (!extractZipEntry(reader, destination_dir, info, &total_bytes, &result)) {
+        if (!extractZipEntry(reader, info, &ctx)) {
+            // Roll the partial extraction back so a mid-extraction failure never
+            // leaves a half-written tree behind (B8-08).
+            performExtractionRollback(ctx.rollback);
             return result;
         }
     }

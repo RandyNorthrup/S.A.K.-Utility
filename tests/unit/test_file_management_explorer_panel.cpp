@@ -2064,6 +2064,38 @@ private Q_SLOTS:
         QCOMPARE(survivor.readAll(), precious);
     }
 
+    void extractRollsBackPartialTreeOnFailure() {
+        // B8-08: when an entry aborts extraction, files written for earlier entries
+        // must be rolled back so no half-extracted tree is left behind.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+
+        // A zip whose first entry is valid and whose second is a zip-slip escape that
+        // aborts the extraction after the first file has already landed.
+        const QString zip = root.filePath(QStringLiteral("partial.zip"));
+        {
+            QZipWriter writer(zip);
+            writer.addFile(QStringLiteral("good.txt"),
+                           QByteArrayLiteral("landed then rolled back"));
+            writer.addFile(QStringLiteral("../escape.txt"), QByteArrayLiteral("evil"));
+            writer.close();
+            QCOMPARE(writer.status(), QZipWriter::NoError);
+        }
+
+        const QString out = root.filePath(QStringLiteral("out"));
+        const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
+        QVERIFY(!result.ok);
+        QVERIFY(!result.blockers.isEmpty());
+
+        // good.txt was written first, then rolled back; nothing we created survives.
+        QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("good.txt"))).exists());
+        QVERIFY(!QFileInfo(root.filePath(QStringLiteral("escape.txt"))).exists());
+        const auto leftover =
+            QDir(out).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
+        QVERIFY2(leftover.isEmpty(), qPrintable(leftover.join(QStringLiteral(", "))));
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not
