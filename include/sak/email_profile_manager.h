@@ -113,11 +113,15 @@ private:
     /// not follow junctions) let a junction under home redirect QFile::copy outside home. Static +
     /// unit-tested with a real junction.
     [[nodiscard]] static bool destinationWithinRoot(const QString& root, const QString& candidate);
-    void restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir);
-    void restoreRegistryFromManifest(const QJsonObject& prof, const QString& backup_dir);
-    void restoreOneDataFile(const QJsonObject& file_obj,
-                            const QString& backup_dir,
-                            const QString& home_root);
+    // Each returns false if a restore step hard-failed (rejected/missing/registry/
+    // copy failure) so restoreProfiles counts only cleanly-restored profiles (B7-29).
+    // An intentional skip (destination already present) is NOT a failure.
+    [[nodiscard]] bool restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir);
+    [[nodiscard]] bool restoreRegistryFromManifest(const QJsonObject& prof,
+                                                   const QString& backup_dir);
+    [[nodiscard]] bool restoreOneDataFile(const QJsonObject& file_obj,
+                                          const QString& backup_dir,
+                                          const QString& home_root);
 
     // Thunderbird helpers
     void scanThunderbirdDir(const QDir& dir, QVector<sak::EmailDataFile>& files);

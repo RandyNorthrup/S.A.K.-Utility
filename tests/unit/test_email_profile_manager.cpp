@@ -67,6 +67,9 @@ private Q_SLOTS:
 
     // -- B7-16: single-flight guard --------------------------------------
     void singleFlightRefusesReentry();
+
+    // -- B7-29: count only cleanly-restored profiles ---------------------
+    void restoreCountsOnlyCleanProfiles();
 };
 
 // ============================================================================
@@ -450,6 +453,42 @@ void TestEmailProfileManager::singleFlightRefusesReentry() {
     }
     QVERIFY2(saw_in_progress, "nested op was not refused by the single-flight guard");
     QVERIFY2(!saw_open_failure, "nested op actually ran despite the guard");
+}
+
+void TestEmailProfileManager::restoreCountsOnlyCleanProfiles() {
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+    const QString backup_dir = backup_root.path() + QStringLiteral("/bk");
+    QVERIFY(QDir().mkpath(backup_dir));
+
+    // A profile whose backed-up data file is MISSING from the backup: it cannot be
+    // restored, so it must NOT be counted (before B7-29 it was counted regardless).
+    QJsonObject file_obj;
+    file_obj[QStringLiteral("original_path")] = QDir::homePath() +
+                                                QStringLiteral("/sak_restore_test/data.dat");
+    file_obj[QStringLiteral("backed_up_name")] = QStringLiteral("data.dat");  // never created
+    QJsonArray files;
+    files.append(file_obj);
+    QJsonObject prof;
+    prof[QStringLiteral("data_files")] = files;
+    QJsonArray profiles;
+    profiles.append(prof);
+    QJsonObject root;
+    root[QStringLiteral("profiles")] = profiles;
+
+    const QString manifest = backup_dir + QStringLiteral("/backup_manifest.json");
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson());
+    }
+
+    EmailProfileManager manager;
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
+    manager.restoreProfiles(manifest);
+
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().first().toInt(), 0);  // failed profile not counted
 }
 
 QTEST_MAIN(TestEmailProfileManager)

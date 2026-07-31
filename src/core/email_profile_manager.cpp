@@ -446,42 +446,56 @@ void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
         if (m_cancelled.load()) {
             break;
         }
-        restoreSingleProfile(prof_val.toObject(), backup_dir);
-        restored++;
+        // Count a profile only when it restored with no rejected/missing/registry/
+        // copy failures, so "profiles restored" reflects reality (B7-29).
+        if (restoreSingleProfile(prof_val.toObject(), backup_dir)) {
+            restored++;
+        }
     }
 
     Q_EMIT restoreComplete(restored);
 }
 
-void EmailProfileManager::restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir) {
-    restoreRegistryFromManifest(prof, backup_dir);
+bool EmailProfileManager::restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir) {
+    bool all_ok = restoreRegistryFromManifest(prof, backup_dir);
 
     const QString home_root = QDir::homePath();
     const QJsonArray files = prof[QStringLiteral("data_files")].toArray();
     for (const auto& file_val : files) {
-        restoreOneDataFile(file_val.toObject(), backup_dir, home_root);
+        // Evaluate every file (don't short-circuit) so all failures are logged.
+        if (!restoreOneDataFile(file_val.toObject(), backup_dir, home_root)) {
+            all_ok = false;
+        }
     }
+    return all_ok;
 }
 
-void EmailProfileManager::restoreRegistryFromManifest(const QJsonObject& prof,
+bool EmailProfileManager::restoreRegistryFromManifest(const QJsonObject& prof,
                                                       const QString& backup_dir) {
     const QString reg_name = prof[QStringLiteral("registry_file")].toString();
     if (reg_name.isEmpty()) {
-        return;
+        return true;  // no registry component -> nothing to fail
     }
     // Confine the .reg to the backup directory: a manifest is untrusted input and
     // "../../payload.reg" would otherwise import an arbitrary registry file.
     const QString full_reg = resolveWithinDirectory(backup_dir, reg_name);
     if (full_reg.isEmpty()) {
         sak::logWarning("Rejected registry file escaping backup dir: {}", reg_name.toStdString());
-        return;
+        return false;
     }
-    if (QFile::exists(full_reg) && !importRegistryKey(full_reg)) {
+    if (!QFile::exists(full_reg)) {
+        // The manifest referenced a registry export that is missing from the backup.
+        sak::logWarning("Registry file missing from backup: {}", full_reg.toStdString());
+        return false;
+    }
+    if (!importRegistryKey(full_reg)) {
         sak::logWarning("Failed to import registry key: {}", full_reg.toStdString());
+        return false;
     }
+    return true;
 }
 
-void EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
+bool EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
                                              const QString& backup_dir,
                                              const QString& home_root) {
     const QString original = file_obj[QStringLiteral("original_path")].toString();
@@ -492,20 +506,27 @@ void EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
     const QString source = resolveWithinDirectory(backup_dir, backed_up);
     if (source.isEmpty()) {
         sak::logWarning("Rejected backup source escaping backup dir: {}", backed_up.toStdString());
-        return;
+        return false;
     }
     if (!destinationWithinRoot(home_root, original)) {
         sak::logWarning("Rejected restore destination outside user home: {}",
                         original.toStdString());
-        return;
+        return false;
     }
-    if (!QFile::exists(source) || QFile::exists(original)) {
-        return;
+    if (!QFile::exists(source)) {
+        // A file the manifest says was backed up is gone from the backup.
+        sak::logWarning("Backup source missing: {}", source.toStdString());
+        return false;
+    }
+    if (QFile::exists(original)) {
+        return true;  // already present -> intentional non-overwrite skip, not a failure
     }
     QDir().mkpath(QFileInfo(original).absolutePath());
     if (!QFile::copy(source, original)) {
         sak::logWarning("Failed to restore file: {}", original.toStdString());
+        return false;
     }
+    return true;
 }
 
 bool EmailProfileManager::destinationWithinRoot(const QString& root, const QString& candidate) {
