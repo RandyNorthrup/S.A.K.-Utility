@@ -20,9 +20,22 @@ struct ProcessResult {
     QString std_out;
     QString std_err;
 
+    /// @brief True if captured output hit the hard accumulation ceiling and some
+    ///        output was dropped from std_out/std_err (memory-exhaustion guard).
+    bool output_truncated{false};
+
     /// @brief Check if the process completed successfully (no timeout, exit code 0)
     [[nodiscard]] bool succeeded() const noexcept { return !timed_out && exit_code == 0; }
 };
+
+/// @brief Append @p chunk to @p target without letting @p target exceed @p cap
+///        characters.
+/// @return true if any characters had to be dropped (target already full, or the
+///         chunk was clipped to fit).
+/// @note Bounds process-output accumulation so a runaway child cannot exhaust
+///       memory; the live on_output stream still receives every chunk in full.
+///       Exposed for unit testing.
+[[nodiscard]] bool appendCappedOutput(QString& target, const QString& chunk, qsizetype cap);
 
 using CancelCheck = std::function<bool()>;
 using ProcessOutputCallback = std::function<void(const QString& chunk, bool is_stderr)>;

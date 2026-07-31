@@ -12,6 +12,14 @@ namespace sak {
 
 namespace {
 
+// Hard per-stream ceiling on retained output. A runaway child (e.g. a script
+// that prints gigabytes) previously grew std_out/std_err without bound until the
+// process exhausted memory; caller-side caps were applied only AFTER the full
+// output had already been accumulated. This bounds accumulation itself. It sits
+// well above the largest caller cap (~64 MiB) so it never clips legitimate
+// captured output, only pathological floods.
+constexpr qsizetype kMaxAccumulatedOutputChars = static_cast<qsizetype>(128) * 1024 * 1024;
+
 struct ProcessRunRequest {
     QString program;
     QStringList args;
@@ -31,10 +39,11 @@ void appendOutput(ProcessResult* result,
         return;
     }
     const QString chunk = QString::fromLocal8Bit(bytes);
-    if (stderr_stream) {
-        result->std_err += chunk;
-    } else {
-        result->std_out += chunk;
+    // Bound the RETAINED buffer only; the live stream below still gets every
+    // chunk in full so streaming consumers are never cut off.
+    QString& target = stderr_stream ? result->std_err : result->std_out;
+    if (appendCappedOutput(target, chunk, kMaxAccumulatedOutputChars)) {
+        result->output_truncated = true;
     }
     if (on_output) {
         on_output(chunk, stderr_stream);
@@ -130,6 +139,22 @@ ProcessResult runProcessInternal(const ProcessRunRequest& request) {
 }
 
 }  // namespace
+
+bool appendCappedOutput(QString& target, const QString& chunk, qsizetype cap) {
+    if (chunk.isEmpty()) {
+        return false;
+    }
+    if (cap <= 0 || target.size() >= cap) {
+        return true;  // no room: the whole chunk is dropped
+    }
+    const qsizetype room = cap - target.size();
+    if (chunk.size() <= room) {
+        target += chunk;
+        return false;
+    }
+    target += chunk.left(room);  // clip to fit exactly at the cap
+    return true;
+}
 
 ProcessResult runProcess(const QString& program,
                          const QStringList& args,

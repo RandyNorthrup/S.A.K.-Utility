@@ -26,6 +26,9 @@ private Q_SLOTS:
     void runPowerShell_simpleScript();
     void runPowerShell_withNoProfile();
     void runPowerShell_scriptError();
+
+    // B5-07: bounded output accumulation
+    void appendCappedOutput_boundsAccumulation();
 };
 
 // ============================================================================
@@ -141,6 +144,35 @@ void ProcessRunnerTests::runPowerShell_scriptError() {
 
     // Should fail with non-zero exit code
     QVERIFY(result.exit_code != 0);
+}
+
+// B5-07: output accumulation must be bounded so a runaway child cannot exhaust
+// memory. The retained buffer stops growing exactly at the cap, reporting the
+// drop, while a chunk that fits is appended in full.
+void ProcessRunnerTests::appendCappedOutput_boundsAccumulation() {
+    // A chunk that fits under the cap is appended whole; nothing dropped.
+    QString buf;
+    QVERIFY(!sak::appendCappedOutput(buf, QStringLiteral("hello"), 10));
+    QCOMPARE(buf, QStringLiteral("hello"));
+
+    // An empty chunk never drops.
+    QVERIFY(!sak::appendCappedOutput(buf, QString(), 10));
+    QCOMPARE(buf.size(), 5);
+
+    // A chunk that overflows the cap is clipped to fit exactly and reports a drop.
+    QVERIFY(sak::appendCappedOutput(buf, QStringLiteral("world!!!"), 10));
+    QCOMPARE(buf.size(), 10);
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+
+    // Once full, further non-empty chunks are dropped entirely (buffer frozen).
+    QVERIFY(sak::appendCappedOutput(buf, QStringLiteral("more"), 10));
+    QCOMPARE(buf.size(), 10);
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+
+    // A non-positive cap drops any non-empty chunk.
+    QString empty;
+    QVERIFY(sak::appendCappedOutput(empty, QStringLiteral("x"), 0));
+    QVERIFY(empty.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)
