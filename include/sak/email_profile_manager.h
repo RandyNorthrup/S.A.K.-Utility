@@ -102,6 +102,12 @@ private:
     /// is at least one). A malicious/corrupt backup whose .reg writes outside the Outlook subtree
     /// is refused BEFORE reg.exe import. Pure; unit-tested.
     [[nodiscard]] static bool regContentConfinedToEmailHives(const QString& reg_text);
+    /// @brief True iff @p candidate resolves to a real location inside @p root. Fully resolves
+    /// junctions/symlinks in the deepest EXISTING ancestor (the leaf may not exist yet) via
+    /// GetFinalPathNameByHandleW -- a lexical-only check (and even canonicalFilePath, which does
+    /// not follow junctions) let a junction under home redirect QFile::copy outside home. Static +
+    /// unit-tested with a real junction.
+    [[nodiscard]] static bool destinationWithinRoot(const QString& root, const QString& candidate);
     void restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir);
     void restoreRegistryFromManifest(const QJsonObject& prof, const QString& backup_dir);
     void restoreOneDataFile(const QJsonObject& file_obj,

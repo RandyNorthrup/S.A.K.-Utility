@@ -20,7 +20,48 @@
 #include <QStandardPaths>
 #include <QTextStream>
 
+#ifdef Q_OS_WIN
+#include <vector>
+
+#include <windows.h>
+#endif
+
 namespace {
+
+#ifdef Q_OS_WIN
+/// @brief Fully resolve an EXISTING path through every reparse point (junctions AND symlinks) to
+/// its real on-disk location, using GetFinalPathNameByHandleW. QFileInfo::canonicalFilePath does
+/// NOT follow directory junctions on Windows, so it cannot detect a junction-based escape. Returns
+/// a forward-slash path with the \\?\ prefix stripped, or empty if the path cannot be opened.
+QString realCanonicalPath(const QString& path) {
+    HANDLE handle = CreateFileW(reinterpret_cast<const wchar_t*>(path.utf16()),
+                                0,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                FILE_FLAG_BACKUP_SEMANTICS,  // required to open a directory handle
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    std::vector<wchar_t> buffer(4096);
+    const DWORD written = GetFinalPathNameByHandleW(
+        handle, buffer.data(), static_cast<DWORD>(buffer.size()), FILE_NAME_NORMALIZED);
+    CloseHandle(handle);
+    if (written == 0 || written >= buffer.size()) {
+        return {};
+    }
+    QString result = QString::fromWCharArray(buffer.data(), static_cast<int>(written));
+    if (result.startsWith(QStringLiteral("\\\\?\\"))) {
+        result = result.mid(4);
+    }
+    return QDir::fromNativeSeparators(result);
+}
+#else
+QString realCanonicalPath(const QString& path) {
+    return QFileInfo(path).canonicalFilePath();
+}
+#endif
 
 constexpr int kRegExportTimeoutMs = 10'000;
 constexpr int kRegImportTimeoutMs = 10'000;
@@ -44,19 +85,20 @@ QString resolveWithinDirectory(const QString& dir, const QString& name) {
     return QDir(dir).absoluteFilePath(bare);
 }
 
-/// True when `candidate` is an absolute path that, once normalized, stays inside
-/// `root`. Used to confine restore destinations to the user's home tree so a
-/// crafted manifest cannot create files in system or other-user locations.
-bool destinationWithinRoot(const QString& root, const QString& candidate) {
-    if (candidate.isEmpty()) {
-        return false;
+/// @brief Deepest existing ancestor directory of @p abs_path (which itself may not exist yet),
+/// or empty if none of its ancestors exist. A junction/symlink can only redirect through an
+/// EXISTING reparse point, so this is the part that must be canonicalized for a real containment
+/// check.
+QString deepestExistingAncestor(const QString& abs_path) {
+    QString existing = abs_path;
+    while (!existing.isEmpty() && !QFileInfo::exists(existing)) {
+        const QString parent = QFileInfo(existing).path();
+        if (parent == existing) {
+            return {};  // reached the filesystem root without finding an existing component
+        }
+        existing = parent;
     }
-    const QString norm = QDir::cleanPath(QFileInfo(candidate).absoluteFilePath());
-    QString root_norm = QDir::cleanPath(QDir(root).absolutePath());
-    if (!root_norm.endsWith(QLatin1Char('/'))) {
-        root_norm += QLatin1Char('/');
-    }
-    return (norm + QLatin1Char('/')).startsWith(root_norm, Qt::CaseInsensitive);
+    return existing;
 }
 
 /// Outlook version keys in order of preference (newest first)
@@ -415,6 +457,38 @@ void EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
     if (!QFile::copy(source, original)) {
         sak::logWarning("Failed to restore file: {}", original.toStdString());
     }
+}
+
+bool EmailProfileManager::destinationWithinRoot(const QString& root, const QString& candidate) {
+    if (candidate.isEmpty()) {
+        return false;
+    }
+    // Real root, resolving any junction/symlink in the home path itself.
+    QString root_real = realCanonicalPath(root);
+    if (root_real.isEmpty()) {
+        root_real = QDir::cleanPath(QDir(root).absolutePath());
+    }
+
+    // A lexical cleanPath collapses "..", but a JUNCTION under the root would still pass a purely
+    // textual prefix check while redirecting the write elsewhere. So fully resolve the deepest
+    // EXISTING ancestor (the leaf may not exist yet) through every reparse point -- that is the
+    // component a junction redirects -- and require IT to sit inside the real root.
+    const QString abs = QDir::cleanPath(QFileInfo(candidate).absoluteFilePath());
+    const QString existing = deepestExistingAncestor(abs);
+    if (existing.isEmpty()) {
+        return false;
+    }
+    const QString existing_real = realCanonicalPath(existing);
+    if (existing_real.isEmpty()) {
+        return false;
+    }
+
+    QString root_slash = root_real;
+    if (!root_slash.endsWith(QLatin1Char('/'))) {
+        root_slash += QLatin1Char('/');
+    }
+    return existing_real.compare(root_real, Qt::CaseInsensitive) == 0 ||
+           (existing_real + QLatin1Char('/')).startsWith(root_slash, Qt::CaseInsensitive);
 }
 
 QSet<QString> EmailProfileManager::linkedFilePaths() const {

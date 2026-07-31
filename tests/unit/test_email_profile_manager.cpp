@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -50,6 +51,10 @@ private Q_SLOTS:
     // -- Profile Structure -----------------------------------------------
     void profilePopulation();
     void dataFilePopulation();
+
+    // -- B7-07: destination confinement resolves junctions ---------------
+    void destinationWithinRoot_allowsInsideRejectsOutside();
+    void destinationWithinRoot_rejectsJunctionEscape();
 
     // -- B7-04: .reg content confinement ---------------------------------
     void regContent_allowsOutlookProfileSubtree();
@@ -284,6 +289,56 @@ void TestEmailProfileManager::dataFilePopulation() {
     QCOMPARE(file.path, QStringLiteral("C:/mail.mbox"));
     QCOMPARE(file.size_bytes, static_cast<qint64>(50 * 1024));
     QVERIFY(!file.is_linked);
+}
+
+// ============================================================================
+// B7-07: restore destination confinement must resolve junctions/symlinks, not
+// just normalize lexically -- a junction under home would otherwise redirect the
+// copy outside home while passing a textual prefix check.
+// ============================================================================
+
+void TestEmailProfileManager::destinationWithinRoot_allowsInsideRejectsOutside() {
+    QTemporaryDir homeDir;
+    QTemporaryDir outsideDir;
+    QVERIFY(homeDir.isValid());
+    QVERIFY(outsideDir.isValid());
+    const QString home = homeDir.path();
+
+    // A not-yet-existing path under home is allowed (leaf need not exist).
+    QVERIFY(EmailProfileManager::destinationWithinRoot(home, home + "/Documents/ok.txt"));
+    // A sibling/outside path is rejected.
+    QVERIFY(!EmailProfileManager::destinationWithinRoot(home, outsideDir.path() + "/evil.txt"));
+    // A lexical ".." escape is rejected (the real existing ancestor lands outside home).
+    QVERIFY(!EmailProfileManager::destinationWithinRoot(home, home + "/../evil.txt"));
+    // Empty candidate is rejected.
+    QVERIFY(!EmailProfileManager::destinationWithinRoot(home, QString()));
+}
+
+void TestEmailProfileManager::destinationWithinRoot_rejectsJunctionEscape() {
+    QTemporaryDir homeDir;
+    QTemporaryDir outsideDir;
+    QVERIFY(homeDir.isValid());
+    QVERIFY(outsideDir.isValid());
+    const QString home = homeDir.path();
+    const QString junction = home + QStringLiteral("/link");
+
+    // Create a directory junction INSIDE home that points OUTSIDE home. mklink /J needs no admin.
+    QProcess mklink;
+    mklink.start(QStringLiteral("cmd"),
+                 {QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(junction),
+                  QDir::toNativeSeparators(outsideDir.path())});
+    mklink.waitForFinished(5000);
+
+    if (!QFileInfo::exists(junction)) {
+        QSKIP("mklink /J unavailable on this host; cannot exercise the junction-escape path");
+    }
+
+    // A path THROUGH the junction lexically begins with home but really lands outside it.
+    QVERIFY2(!EmailProfileManager::destinationWithinRoot(home, junction + "/evil.txt"),
+             "a junction under home must not let the restore destination escape home");
 }
 
 // ============================================================================
