@@ -30,6 +30,7 @@ private Q_SLOTS:
     void testUpdateEntry();
     void testRemoveEntry();
     void testRemoveEntryInvalidIndex();
+    void testGetEntryBoundsChecked();  // B7-22
     void testClear();
 
     // ── Selection ───────────────────────────────────────────
@@ -129,6 +130,26 @@ void TestMigrationReport::testRemoveEntryInvalidIndex() {
     m_report.removeEntry(-1);
     m_report.removeEntry(999);
     QCOMPARE(m_report.getEntryCount(), 0);
+}
+
+// B7-22: getEntry() must be bounds-checked -- std::vector::operator[] on a bad
+// index is UB. An out-of-range/negative index returns a default entry, not a
+// read/write past the vector.
+void TestMigrationReport::testGetEntryBoundsChecked() {
+    m_report.addEntry(makeEntry("Real", "real", 0.9, "exact"));
+
+    // Valid index returns the real entry.
+    QCOMPARE(m_report.getEntry(0).app_name, QStringLiteral("Real"));
+
+    // Out-of-range and negative indices return an empty default -- no crash, no OOB.
+    QVERIFY(m_report.getEntry(1).app_name.isEmpty());
+    QVERIFY(m_report.getEntry(999).app_name.isEmpty());
+    QVERIFY(m_report.getEntry(-1).app_name.isEmpty());
+
+    // A stray write through the non-const OOB overload must not corrupt real entries.
+    m_report.getEntry(999).app_name = QStringLiteral("SHOULD-NOT-STICK");
+    QCOMPARE(m_report.getEntry(0).app_name, QStringLiteral("Real"));
+    QVERIFY(m_report.getEntry(999).app_name.isEmpty());  // scratch reset on each OOB access
 }
 
 void TestMigrationReport::testClear() {

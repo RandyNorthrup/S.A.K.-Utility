@@ -106,8 +106,25 @@ public:
     // Accessors
     const std::vector<MigrationEntry>& getEntries() const { return m_entries; }
     std::vector<MigrationEntry>& getEntries() { return m_entries; }
-    const MigrationEntry& getEntry(int index) const { return m_entries[index]; }
-    MigrationEntry& getEntry(int index) { return m_entries[index]; }
+
+    /// @brief Bounds-checked entry access. std::vector::operator[] is UB on a bad index; an
+    /// out-of-range (or negative) index instead returns a reference to a shared default entry so a
+    /// stale index from the GUI can never read or write past the vector.
+    const MigrationEntry& getEntry(int index) const {
+        static const MigrationEntry kEmptyEntry{};
+        if (index < 0 || index >= static_cast<int>(m_entries.size())) {
+            return kEmptyEntry;
+        }
+        return m_entries[static_cast<size_t>(index)];
+    }
+    MigrationEntry& getEntry(int index) {
+        static MigrationEntry s_scratch_entry;
+        if (index < 0 || index >= static_cast<int>(m_entries.size())) {
+            s_scratch_entry = MigrationEntry{};  // reset so a prior stray write never leaks back
+            return s_scratch_entry;
+        }
+        return m_entries[static_cast<size_t>(index)];
+    }
 
     int getEntryCount() const { return static_cast<int>(m_entries.size()); }
     int getSelectedCount() const;
