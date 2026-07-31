@@ -15,6 +15,7 @@
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_human_gate_store.h"
 #include "sak/ai/ai_lease_manager.h"
+#include "sak/ai/ai_model_catalog.h"
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
 #include "sak/ai/ai_openai_model_client.h"
 #include "sak/ai/ai_orchestrator.h"
@@ -368,7 +369,7 @@ ModelContextWindow modelContextWindowInfo(const QString& model_id) {
         return {};
     }
     const QVector<ModelContextRule> rules{
-        {{QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4")},
+        {{QStringLiteral("gpt-5.6"), QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4")},
          {},
          {QStringLiteral("gpt-5.4-mini"), QStringLiteral("gpt-5.4-nano")},
          kGptFiveFrontierContextWindowTokens},
@@ -3539,10 +3540,12 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     m_modelCombo = new QComboBox(pane);
     configureReadableCombo(m_modelCombo);
     requireFocusForWheel(m_modelCombo, this);
-    m_modelCombo->setEditable(true);
-    m_modelCombo->addItems(
-        {QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4"), QStringLiteral("gpt-5.4-mini")});
-    m_modelCombo->setToolTip(tr("Choose or type the OpenAI model for this session"));
+    // Restricted to the supported GPT-5.6 line (sol/terra/luna); non-editable so
+    // no other model can be typed. The API-fetched list is filtered to match in
+    // onModelsReady().
+    m_modelCombo->setEditable(false);
+    m_modelCombo->addItems(sak::supportedOpenAiModels());
+    m_modelCombo->setToolTip(tr("Choose the OpenAI model for this session"));
     setAccessible(m_modelCombo, tr("AI model"), tr("OpenAI model for the active session"));
     connect(m_modelCombo, &QComboBox::currentTextChanged, this, [this]() {
         scheduleContextTokenRefresh();
@@ -11142,8 +11145,9 @@ void AiAssistantPanel::persistAssistantResponse(const ai::OpenAIResponseResult& 
 
 void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     const QString current = m_modelCombo->currentText();
+    // The API returns the full catalog; offer ONLY the supported GPT-5.6 models.
     for (const auto& model_id : model_ids) {
-        if (m_modelCombo->findText(model_id) < 0) {
+        if (sak::isSupportedOpenAiModel(model_id) && m_modelCombo->findText(model_id) < 0) {
             m_modelCombo->addItem(model_id);
         }
     }
@@ -11162,7 +11166,8 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     if (!saved && !save_error.isEmpty()) {
         appendLocalEvent(tr("OpenAI key valid but credential save failed: %1").arg(save_error));
     }
-    appendLocalEvent(tr("Loaded %1 OpenAI models").arg(model_ids.size()));
+    appendLocalEvent(tr("OpenAI key valid; offering %1 supported models (GPT-5.6)")
+                         .arg(sak::supportedOpenAiModels().size()));
     Q_EMIT statusMessage(tr("OpenAI key valid; models loaded"), sak::kTimerStatusDefaultMs);
 }
 

@@ -228,6 +228,26 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
     message(STATUS "Added unit test: test_error_codes")
 endif()
 
+# test_ai_model_catalog - restricted OpenAI model catalog (GPT-5.6 only)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_catalog.cpp")
+    add_executable(test_ai_model_catalog
+        unit/test_ai_model_catalog.cpp
+    )
+    set_target_properties(test_ai_model_catalog PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_model_catalog PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_model_catalog PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_model_catalog COMMAND test_ai_model_catalog
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_model_catalog")
+endif()
+
 # test_diagnostic_types ??? struct defaults and value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     add_executable(test_diagnostic_types
