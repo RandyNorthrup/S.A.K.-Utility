@@ -1244,11 +1244,23 @@ AppActionResult searchFiles(const QJsonObject& args) {
                      inv.context(),
                      [file_count](const QString&, int) { ++(*file_count); });
     QObject::connect(
-        &worker, &WorkerBase::finished, inv.context(), [&inv, matches, file_count, cap]() {
-            const QString message = QStringLiteral("%1 match(es) across %2 file(s)")
-                                        .arg(matches->size())
-                                        .arg(*file_count);
-            inv.finish({true, message, serializeSearch(*matches, *file_count, cap)});
+        &worker, &WorkerBase::finished, inv.context(), [&inv, &worker, matches, file_count, cap]() {
+            QString message = QStringLiteral("%1 match(es) across %2 file(s)")
+                                  .arg(matches->size())
+                                  .arg(*file_count);
+            QJsonObject data = serializeSearch(*matches, *file_count, cap);
+            // Surface files that could not be read: they produce no matches
+            // indistinguishable from a clean file, so an unqualified success would
+            // hide a false negative.
+            const int unreadable = worker.filesUnreadable();
+            data[QStringLiteral("files_unreadable")] = unreadable;
+            if (unreadable > 0) {
+                message += QStringLiteral(
+                               "; %1 file(s) could not be read and were skipped "
+                               "(results may be incomplete)")
+                               .arg(unreadable);
+            }
+            inv.finish({true, message, data});
         });
     QObject::connect(&worker,
                      &WorkerBase::failed,

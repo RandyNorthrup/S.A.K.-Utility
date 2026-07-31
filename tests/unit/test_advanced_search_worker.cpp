@@ -18,6 +18,10 @@
 
 #include <zlib.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 using sak::AdvancedSearchWorker;
 using sak::SearchConfig;
 using sak::SearchMatch;
@@ -102,6 +106,11 @@ private Q_SLOTS:
 
     // ── Malformed-media hardening ──
     void malformedMedia_doesNotCrash();
+
+    // ── B6-22: surface unreadable files + bad exclude regex ──
+    void firstInvalidExcludePattern_detectsBadRegex();
+    void invalidExcludePattern_failsClosed();
+    void unreadableFile_isCounted();
 
 private:
     void createTextFixtures();
@@ -1242,6 +1251,78 @@ void AdvancedSearchWorkerTests::malformedMedia_doesNotCrash() {
         QVERIFY2(worker.wait(10'000),
                  qPrintable(QStringLiteral("worker hung on malformed %1").arg(fx.name)));
     }
+}
+
+// ============================================================================
+// B6-22: surface unreadable files + bad exclude regex
+// ============================================================================
+
+void AdvancedSearchWorkerTests::firstInvalidExcludePattern_detectsBadRegex() {
+    // All valid -> nullopt.
+    QVERIFY(!AdvancedSearchWorker::firstInvalidExcludePattern(
+                 QStringList{QStringLiteral("\\.git"), QStringLiteral("node_modules")})
+                 .has_value());
+    // An unbalanced bracket is an invalid regex -> returned so the caller fails closed.
+    const auto bad = AdvancedSearchWorker::firstInvalidExcludePattern(
+        QStringList{QStringLiteral("valid"), QStringLiteral("[unterminated")});
+    QVERIFY(bad.has_value());
+    QCOMPARE(*bad, QStringLiteral("[unterminated"));
+}
+
+void AdvancedSearchWorkerTests::invalidExcludePattern_failsClosed() {
+    SearchConfig config;
+    config.root_path = m_temp_dir.path();
+    config.pattern = QStringLiteral("Hello");
+    config.exclude_patterns = QStringList{QStringLiteral("[unterminated")};
+
+    AdvancedSearchWorker worker(config);
+    QSignalSpy failedSpy(&worker, &WorkerBase::failed);
+    worker.start();
+    QVERIFY(worker.wait(10'000));
+
+    // An invalid exclude regex must abort the search (fail closed), not silently
+    // drop the exclusion and search the paths it was meant to exclude.
+    QCOMPARE(failedSpy.count(), 1);
+}
+
+void AdvancedSearchWorkerTests::unreadableFile_isCounted() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // A searchable file plus one we exclusively lock so the worker cannot read it.
+    QFile readable(QDir(dir.path()).filePath(QStringLiteral("readable.txt")));
+    QVERIFY(readable.open(QIODevice::WriteOnly));
+    readable.write("Hello there");
+    readable.close();
+
+    const QString lockedPath = QDir(dir.path()).filePath(QStringLiteral("locked.txt"));
+    QFile locked(lockedPath);
+    QVERIFY(locked.open(QIODevice::WriteOnly));
+    locked.write("Hello secret");
+    locked.close();
+
+    const std::wstring wpath = lockedPath.toStdWString();
+    HANDLE handle = CreateFileW(wpath.c_str(),
+                                GENERIC_READ,
+                                0,  // exclusive
+                                nullptr,
+                                OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL,
+                                nullptr);
+    QVERIFY(handle != INVALID_HANDLE_VALUE);
+
+    SearchConfig config;
+    config.root_path = dir.path();
+    config.pattern = QStringLiteral("Hello");
+
+    AdvancedSearchWorker worker(config);
+    worker.start();
+    const bool finished = worker.wait(10'000);
+    CloseHandle(handle);
+    QVERIFY(finished);
+
+    // The locked file could not be read -> counted, not a silent false negative.
+    QCOMPARE(worker.filesUnreadable(), 1);
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchWorkerTests)

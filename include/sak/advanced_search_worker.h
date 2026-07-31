@@ -51,6 +51,18 @@ public:
     AdvancedSearchWorker(AdvancedSearchWorker&&) = delete;
     AdvancedSearchWorker& operator=(AdvancedSearchWorker&&) = delete;
 
+    /// @brief The first invalid exclude regex in @p patterns, or nullopt if all
+    /// are valid. A silently-dropped invalid exclude would let the search descend
+    /// into paths the user asked to exclude, so the caller fails closed on it.
+    [[nodiscard]] static std::optional<QString> firstInvalidExcludePattern(
+        const QStringList& patterns);
+
+    /// @brief Files that could not be READ (open failed, or over the line cap) on
+    /// the last run. These produce no matches indistinguishable from a clean file,
+    /// so a non-zero count means the results are incomplete (a false-negative risk)
+    /// and must be surfaced, not reported as an authoritative "no matches".
+    [[nodiscard]] int filesUnreadable() const { return m_files_unreadable; }
+
 Q_SIGNALS:
     /// @brief Emitted with accumulated results (batch updates for performance)
     void resultsReady(QVector<sak::SearchMatch> matches);
@@ -219,6 +231,9 @@ private:
 
     /// @brief Compiled exclusion patterns (built once in execute())
     QVector<QRegularExpression> m_compiled_excludes;
+
+    /// @brief Files that could not be read on the last run (see filesUnreadable).
+    int m_files_unreadable{0};
 
     /// @brief Batch size for result emission
     static constexpr int kBatchSize = 50;

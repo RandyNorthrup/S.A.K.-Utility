@@ -195,8 +195,20 @@ bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const
 
 // -- Main Search Execution ---------------------------------------------------
 
+std::optional<QString> AdvancedSearchWorker::firstInvalidExcludePattern(
+    const QStringList& patterns) {
+    for (const auto& pattern : patterns) {
+        if (!QRegularExpression(pattern).isValid()) {
+            return pattern;
+        }
+    }
+    return std::nullopt;
+}
+
 auto AdvancedSearchWorker::prepareSearchConfig()
     -> std::expected<QRegularExpression, sak::error_code> {
+    m_files_unreadable = 0;  // fresh count for this run
+
     auto regexResult = compileRegex();
     if (!regexResult) {
         logError(
@@ -207,13 +219,20 @@ auto AdvancedSearchWorker::prepareSearchConfig()
     }
     const auto& regex = regexResult.value();
 
-    // Compile exclusion patterns once
+    // An invalid exclude pattern used to be silently dropped, so the search would
+    // then descend into paths the user explicitly asked to exclude. Fail closed:
+    // refuse the whole search rather than over-search.
+    if (const std::optional<QString> bad = firstInvalidExcludePattern(m_config.exclude_patterns)) {
+        logError("AdvancedSearchWorker: invalid exclude pattern '{}'; refusing search",
+                 bad->toStdString());
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
+    // Compile exclusion patterns once (all now known valid).
     m_compiled_excludes.clear();
     for (const auto& pattern : m_config.exclude_patterns) {
-        QRegularExpression excl(pattern, QRegularExpression::CaseInsensitiveOption);
-        if (excl.isValid()) {
-            m_compiled_excludes.append(excl);
-        }
+        m_compiled_excludes.append(
+            QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption));
     }
 
     // Check network accessibility
@@ -670,6 +689,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& file
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // Unreadable file: count it so an empty result is not mistaken for a
+        // genuinely clean file (a false negative the caller must surface).
+        ++m_files_unreadable;
         return matches;
     }
 
@@ -685,6 +707,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& file
         if (lines.size() > kMaxTextSearchLines) {
             logWarning("AdvancedSearchWorker: file '{}' exceeds 500k lines, skipping",
                        filePath.toStdString());
+            ++m_files_unreadable;  // over-limit -> only partially searched; surface it
             return matches;
         }
     }
