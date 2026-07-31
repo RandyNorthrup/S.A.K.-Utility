@@ -201,6 +201,15 @@ public:
     /// cannot escape the destination directory (drops path components, rejects
     /// "."/".."/empty). Returns empty when the name is unsafe (B8-02).
     [[nodiscard]] static QString confinedHostName(const QString& raw_name);
+    /// True only when `target` is genuinely writable: it advertises write support
+    /// (`can_write_files`) AND is not read-only (write-protect / read-only mount).
+    /// The certified raw HFS/APFS writer's enable + destructive/hardware
+    /// certification-evidence attestations and the per-op mutation confirmation are
+    /// all derived from this, so a non-writable target makes the writer engine fail
+    /// closed with its own certification blockers instead of mutating the medium.
+    /// Previously those attestations were hard-coded true, so `can_write_files` /
+    /// `read_only` were advisory badges the writer boundary never enforced (B8-04).
+    [[nodiscard]] static bool targetPermitsMutation(const FileManagementTarget& target);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
     /// File-system-specific label for an entry's on-disk identifier (APFS Object
     /// ID, HFS Catalog ID, ext Inode, else generic Identifier).

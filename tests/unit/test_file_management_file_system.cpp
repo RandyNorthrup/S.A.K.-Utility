@@ -994,6 +994,46 @@ private Q_SLOTS:
         QVERIFY(!locked.can_write_files);  // write-protected -> refused (B8-03)
         QVERIFY(!locked.can_organize);
     }
+
+    // B8-04: the certified raw HFS/APFS writer's enable + destructive/hardware
+    // certification-evidence attestations (and the per-op mutation confirmation) are
+    // derived from the target actually being writable. A read-only / non-writable
+    // target must fail closed in the writer engine instead of the bridge asserting
+    // evidence it does not have -- previously every attestation was hard-coded true,
+    // so can_write_files / read_only were advisory badges the writer never enforced.
+    void writerEvidenceGateFollowsTargetWritability() {
+        using B = sak::FileManagementFileSystemBridge;
+
+        // The pure predicate every option builder + confirmation flag is derived from.
+        const auto make = [](bool can_write, bool read_only) {
+            sak::FileManagementTarget t;
+            t.can_write_files = can_write;
+            t.read_only = read_only;
+            return t;
+        };
+        QVERIFY(B::targetPermitsMutation(make(true, false)));    // genuinely writable
+        QVERIFY(!B::targetPermitsMutation(make(false, false)));  // not write-capable
+        QVERIFY(!B::targetPermitsMutation(make(true, true)));    // write-protected
+        QVERIFY(!B::targetPermitsMutation(make(false, true)));
+
+        // End to end: a read-only raw APFS target (never a real device -- a temp path
+        // that is not an APFS container) must have its mutation refused. The bridge no
+        // longer hard-codes the writer attestations, so the read-only flag is enforced.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        sak::FileManagementTarget locked;
+        locked.file_system = QStringLiteral("APFS");
+        locked.root_path = QDir(temp.path()).filePath(QStringLiteral("not-a-device.img"));
+        locked.local_file_system = false;
+        locked.kind = sak::FileManagementTargetKind::ImageFile;
+        locked.size_bytes = 64ULL * 1024ULL * 1024ULL;  // in the certified range
+        locked.read_only = true;
+        locked.can_write_files = false;
+        const auto result =
+            B::writeFile(locked, QStringLiteral("/x.txt"), QByteArrayLiteral("data"));
+        QVERIFY(!result.ok);
+        QVERIFY(!result.blockers.isEmpty());
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)

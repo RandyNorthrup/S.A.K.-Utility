@@ -166,12 +166,17 @@ QString displayPath(const QString& path) {
     return clean;
 }
 
-sak::PartitionApfsWriteOptions apfsRawWriteOptions() {
+sak::PartitionApfsWriteOptions apfsRawWriteOptions(const FileManagementTarget& target) {
+    // The certified writer's enable + destructive/hardware certification-evidence
+    // attestations are derived from the target actually being writable, so a
+    // read-only / non-writable target makes the engine fail closed with its own
+    // certification blockers rather than mutating the medium (B8-04).
+    const bool writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
+    options.enable_experimental_writer = writable;
     options.image_only = false;
-    options.destructive_certification_evidence = true;
-    options.raw_media_hardware_certification_evidence = true;
+    options.destructive_certification_evidence = writable;
+    options.raw_media_hardware_certification_evidence = writable;
     // No artificial payload cap: the APFS write is bounded only by the container's free
     // space (the multi-chunk allocator fails closed when it will not fit). 0 = unbounded.
     options.max_payload_bytes = 0;
@@ -180,9 +185,12 @@ sak::PartitionApfsWriteOptions apfsRawWriteOptions() {
 }
 
 sak::PartitionHfsFileWriteOptions hfsWriteOptions(const FileManagementTarget& target) {
+    // enable_writer + target_write_confirmed track the target's real writability so a
+    // read-only / non-writable target fails closed in the writer engine (B8-04).
+    const bool writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
     sak::PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
+    options.enable_writer = writable;
+    options.target_write_confirmed = writable;
     options.image_only = !isRawDevicePath(target.root_path);
     options.allow_journaled_volume = true;
     options.allow_wrapped_volume = true;
@@ -510,7 +518,7 @@ FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
              .target_mutation_confirmed = true,
              .allow_raw_device_target =
                  PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-             .options = apfsRawWriteOptions()}),
+             .options = apfsRawWriteOptions(target)}),
         cleanPath,
         static_cast<uint64_t>(data.size()));
 }
@@ -542,7 +550,7 @@ FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& t
              .target_mutation_confirmed = true,
              .allow_raw_device_target =
                  PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-             .options = apfsRawWriteOptions()}),
+             .options = apfsRawWriteOptions(target)}),
         cleanPath,
         size);
 }
@@ -794,6 +802,15 @@ bool FileManagementFileSystemBridge::isUnsafeLocalDeletePath(const QString& path
     }
     const QString absolute = QDir::cleanPath(dir.absolutePath());
     return absolute.isEmpty() || QDir(absolute).isRoot();
+}
+
+bool FileManagementFileSystemBridge::targetPermitsMutation(const FileManagementTarget& target) {
+    // A write-protected / read-only-mounted / uncertified target advertises
+    // can_write_files == false (or read_only == true) after applyCapabilities. The
+    // certified writer's enable + destructive/hardware certification-evidence
+    // attestations are derived from this, so a non-writable target fails closed in
+    // the engine instead of the bridge asserting evidence it does not have (B8-04).
+    return target.can_write_files && !target.read_only;
 }
 
 QString FileManagementFileSystemBridge::normalizedFileSystem(const QString& file_system) {
@@ -1466,7 +1483,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target =
                      PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -1532,7 +1549,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target =
                      PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -1746,7 +1763,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target =
                      PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -1875,7 +1892,7 @@ FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
              .target_mutation_confirmed = true,
              .allow_raw_device_target =
                  PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
-             .options = apfsRawWriteOptions()}),
+             .options = apfsRawWriteOptions(target)}),
         cleanDestination,
         0);
 }
