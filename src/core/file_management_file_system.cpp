@@ -268,11 +268,14 @@ FileManagementTarget applyCapabilities(FileManagementTarget target) {
     target.can_organize = target.local_file_system;
     target.can_duplicate_scan = target.local_file_system || readableNonNative;
     target.can_advanced_search = target.local_file_system || readableNonNative;
-    // A local volume the OS reports read-only cannot accept writes or organize
-    // moves; pre-block instead of failing at write time. Non-local certified raw
-    // writes intentionally keep can_write_files even though the target is
-    // surfaced read-only for browsing semantics.
-    if (target.local_file_system && inbound_read_only) {
+    // A volume the inventory reports read-only (hardware write-protect, read-only
+    // mount) cannot accept writes -- whether it is a LOCAL volume or a raw
+    // non-native target the certified engine would otherwise write. Gate on the
+    // INBOUND flag: target.read_only is forced true for every non-local target as a
+    // browsing-semantics badge, so it cannot distinguish a real write-protect;
+    // inbound_read_only can. Previously this was gated on local_file_system, so a
+    // write-protected raw HFS/APFS target was still reported writable (B8-03).
+    if (inbound_read_only) {
         target.can_write_files = false;
         target.can_organize = false;
     }

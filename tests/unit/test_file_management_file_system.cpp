@@ -955,6 +955,45 @@ private Q_SLOTS:
         QVERIFY(B::confinedHostName(QString()).isEmpty());
         QVERIFY(B::confinedHostName(QStringLiteral("a/../..")).isEmpty());
     }
+
+    // B8-03: a raw non-native target the inventory reports read-only (hardware
+    // write-protect) must NOT be reported writable, even though its size is in the
+    // certified engine range.
+    void readOnlyRawTargetIsNotWritable() {
+        using B = sak::FileManagementFileSystemBridge;
+        const uint64_t size = 64ULL * 1024ULL * 1024ULL;  // in the certified APFS range
+        const auto build = [&](bool read_only) {
+            sak::PartitionInventory inv;
+            sak::PartitionDiskInfo disk;
+            disk.disk_number = 7;
+            sak::PartitionInfoEx part;
+            part.disk_number = 7;
+            part.partition_number = 1;
+            part.size_bytes = size;
+            part.is_read_only = read_only;
+            sak::PartitionVolumeInfo vol;
+            vol.file_system = QStringLiteral("APFS");
+            part.volume = vol;
+            disk.partitions.append(part);
+            inv.disks.append(disk);
+            const auto targets = B::targetsFromInventory(inv);
+            for (const auto& t : targets) {
+                if (t.id == QStringLiteral("disk:7:partition:1")) {
+                    return t;
+                }
+            }
+            return sak::FileManagementTarget{};
+        };
+
+        const auto writable = build(false);
+        QVERIFY(!writable.local_file_system);
+        QVERIFY(writable.can_write_files);  // known-size raw APFS is write-capable
+
+        const auto locked = build(true);
+        QVERIFY(locked.read_only);
+        QVERIFY(!locked.can_write_files);  // write-protected -> refused (B8-03)
+        QVERIFY(!locked.can_organize);
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)
