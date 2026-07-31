@@ -12,6 +12,8 @@
 #include <QFileInfo>
 #include <QSet>
 
+#include <optional>
+
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 
@@ -74,6 +76,39 @@ qint64 zipCentralDirectorySize(const QString& path) {
     };
     return static_cast<qint64>(byte_at(12) | (byte_at(13) << 8) | (byte_at(14) << 16) |
                                (byte_at(15) << 24));
+}
+
+// Read a zip's central-directory entry list only AFTER bounding its byte size, so
+// a hostile multi-GB central directory of maximal-length names (packed under a
+// modest file-size cap) cannot force a ~2-3x materialization before the entry
+// count is capped. Returns nullopt and sets *error on a non-zip / unreadable
+// archive, an oversize central directory, or an over-cap entry count. Every path
+// that materializes fileInfoList() must go through this so none skips the bound
+// (B8-09).
+std::optional<QList<QZipReader::FileInfo>> boundedZipEntries(const QString& zip_path,
+                                                             const QZipReader& reader,
+                                                             QString* error) {
+    const qint64 central_dir_size = zipCentralDirectorySize(zip_path);
+    if (!reader.isReadable() || central_dir_size < 0) {
+        *error = QStringLiteral("%1 is not a readable zip archive.").arg(zip_path);
+        return std::nullopt;
+    }
+    if (central_dir_size > kMaxCentralDirBytes) {
+        *error =
+            QStringLiteral("%1 has a central directory too large to read (%2 bytes > %3 limit).")
+                .arg(zip_path)
+                .arg(central_dir_size)
+                .arg(kMaxCentralDirBytes);
+        return std::nullopt;
+    }
+    QList<QZipReader::FileInfo> entries = reader.fileInfoList();
+    if (entries.size() > kArchiveMaxEntries) {
+        *error = QStringLiteral("Archive %1 exceeds the %2-entry limit.")
+                     .arg(zip_path)
+                     .arg(kArchiveMaxEntries);
+        return std::nullopt;
+    }
+    return entries;
 }
 
 // True when @p entry_name would escape @p destination_dir (zip-slip): an
@@ -414,8 +449,13 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
     FileExplorerArchiveResult result;
     result.output_path = destination_dir;
     QZipReader reader(zip_path);
-    if (!reader.isReadable()) {
-        result.blockers.append(QStringLiteral("Could not open archive %1.").arg(zip_path));
+    // Bound the central directory BEFORE materializing it (a hostile multi-GB
+    // central directory would otherwise force a ~2-3x allocation before the entry
+    // cap), then cap the entry count (B8-09).
+    QString entries_error;
+    const auto entries = boundedZipEntries(zip_path, reader, &entries_error);
+    if (!entries) {
+        result.blockers.append(entries_error);
         return result;
     }
     if (!QDir().mkpath(destination_dir)) {
@@ -425,15 +465,8 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
     }
     // Bounded per-entry extraction (Qt's extractAll enforces no caps): reject a
     // zip-bomb or zip-slip before writing, and cap entry count / expanded bytes.
-    const QList<QZipReader::FileInfo> entries = reader.fileInfoList();
-    if (entries.size() > kArchiveMaxEntries) {
-        result.blockers.append(QStringLiteral("Archive %1 exceeds the %2-entry limit.")
-                                   .arg(zip_path)
-                                   .arg(kArchiveMaxEntries));
-        return result;
-    }
     ExtractionContext ctx{.destination_dir = destination_dir, .result = &result};
-    for (const QZipReader::FileInfo& info : entries) {
+    for (const QZipReader::FileInfo& info : *entries) {
         if (!extractZipEntry(reader, info, &ctx)) {
             // Roll the partial extraction back so a mid-extraction failure never
             // leaves a half-written tree behind (B8-08).
@@ -448,38 +481,19 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
 ArchiveListing FileExplorerArchiveService::listEntries(const QString& zip_path) {
     ArchiveListing listing;
     QZipReader reader(zip_path);
-    // Fail closed on a non-zip BEFORE trusting an empty fileInfoList: a garbage file opens readable
-    // and lists as "0 entries" (a dishonest empty-success). A genuinely empty VALID zip has an EOCD
-    // (central-dir size 0) and is honestly reported as 0 entries.
-    const qint64 central_dir_size = zipCentralDirectorySize(zip_path);
-    if (!reader.isReadable() || central_dir_size < 0) {
-        listing.blockers.append(QStringLiteral("%1 is not a readable zip archive.").arg(zip_path));
+    // Fail closed on a non-zip BEFORE trusting an empty fileInfoList (a garbage file opens readable
+    // and lists as a dishonest "0 entries"), and bound the central directory before materializing
+    // it (a hostile multi-GB central directory of maximal-length names). A genuinely empty VALID
+    // zip has an EOCD (central-dir size 0) and is honestly reported as 0 entries.
+    QString entries_error;
+    const auto entries = boundedZipEntries(zip_path, reader, &entries_error);
+    if (!entries) {
+        listing.blockers.append(entries_error);
         return listing;
     }
-    // Bound peak memory BEFORE fileInfoList() materializes the whole central directory (~2-3x its
-    // size): a hostile zip can pack a multi-GB central directory of maximal-length names under the
-    // caller's file-size cap, so the count cap below (checked only after fileInfoList) is not
-    // enough on its own.
-    if (central_dir_size > kMaxCentralDirBytes) {
-        listing.blockers.append(
-            QStringLiteral("%1 has a central directory too large to list (%2 bytes > %3 limit).")
-                .arg(zip_path)
-                .arg(central_dir_size)
-                .arg(kMaxCentralDirBytes));
-        return listing;
-    }
-    // fileInfoList() reads only the central directory (bounded above), so listing is cheap. Still
-    // cap the entry count so a directory with many records cannot run away.
-    const QList<QZipReader::FileInfo> entries = reader.fileInfoList();
-    if (entries.size() > kArchiveMaxEntries) {
-        listing.blockers.append(QStringLiteral("Archive %1 exceeds the %2-entry limit.")
-                                    .arg(zip_path)
-                                    .arg(kArchiveMaxEntries));
-        return listing;
-    }
-    listing.total_entries = static_cast<int>(entries.size());
-    listing.entries.reserve(static_cast<int>(entries.size()));
-    for (const QZipReader::FileInfo& info : entries) {
+    listing.total_entries = static_cast<int>(entries->size());
+    listing.entries.reserve(static_cast<int>(entries->size()));
+    for (const QZipReader::FileInfo& info : *entries) {
         if (!info.isValid()) {
             continue;
         }
@@ -497,15 +511,19 @@ ArchiveListing FileExplorerArchiveService::listEntries(const QString& zip_path) 
 bool FileExplorerArchiveService::hasSingleTopLevelRoot(const QString& zip_path,
                                                        QString* root_name) {
     QZipReader reader(zip_path);
-    if (!reader.isReadable()) {
+    // Bound the central directory before materializing it -- this runs per archive
+    // (once per extraction), so an unbounded fileInfoList() here would repeat the
+    // hostile-central-directory allocation (B8-09).
+    QString entries_error;
+    const auto entries = boundedZipEntries(zip_path, reader, &entries_error);
+    if (!entries) {
         return false;
     }
     QSet<QString> roots;
     // The lone root counts only when it is a folder: a single top-level FILE
     // still needs the wrapper folder (Files GetFirstMeaningfulSegment walk).
     bool root_is_directory = false;
-    const auto entries = reader.fileInfoList();
-    for (const auto& entry : entries) {
+    for (const auto& entry : *entries) {
         const QString segment = meaningfulTopLevelSegment(entry.filePath);
         if (segment.isEmpty()) {
             continue;

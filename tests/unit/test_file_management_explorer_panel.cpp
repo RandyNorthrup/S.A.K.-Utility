@@ -2096,6 +2096,50 @@ private Q_SLOTS:
         QVERIFY2(leftover.isEmpty(), qPrintable(leftover.join(QStringLiteral(", "))));
     }
 
+    void extractRejectsOversizeCentralDirectoryBeforeMaterializing() {
+        // B8-09: extractZip must bound the central directory before fileInfoList()
+        // materializes it (~2-3x), so a zip whose EOCD claims a multi-GB central
+        // directory is refused up front rather than allocated. Build a real zip and
+        // tamper the EOCD "size of central directory" field to a huge value.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const QString zip = root.filePath(QStringLiteral("huge_cd.zip"));
+        {
+            QZipWriter writer(zip);
+            writer.addFile(QStringLiteral("a.txt"), QByteArrayLiteral("payload"));
+            writer.close();
+            QCOMPARE(writer.status(), QZipWriter::NoError);
+        }
+
+        QByteArray bytes;
+        {
+            QFile f(zip);
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            bytes = f.readAll();
+        }
+        const int eocd = bytes.lastIndexOf(QByteArrayLiteral("PK\x05\x06"));
+        QVERIFY(eocd >= 0);
+        QVERIFY(eocd + 16 <= bytes.size());
+        // Size of central directory is a LE uint32 at EOCD+12. Claim ~2 GiB.
+        const quint32 huge = 0x7F'FF'FF'FFu;
+        for (int i = 0; i < 4; ++i) {
+            bytes[eocd + 12 + i] = static_cast<char>((huge >> (8 * i)) & 0xFF);
+        }
+        {
+            QFile f(zip);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            QCOMPARE(f.write(bytes), static_cast<qint64>(bytes.size()));
+        }
+
+        const QString out = root.filePath(QStringLiteral("out"));
+        const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
+        QVERIFY(!result.ok);  // refused before materializing the central directory
+        QVERIFY(!result.blockers.isEmpty());
+        // Nothing was extracted.
+        QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("a.txt"))).exists());
+    }
+
     void extractRejectsZipSlipAndPerFileSizeBomb() {
         // The bounded extractor must fail closed on a path-traversal (zip-slip)
         // entry and on an entry declaring an oversize expansion, and must not
