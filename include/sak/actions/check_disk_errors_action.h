@@ -31,30 +31,46 @@ public:
     void scan() override;
     void execute() override;
 
-private:
-    /// @brief Result of a CHKDSK scan on a single drive
-    struct DriveCheckResult {
-        QString letter;
-        bool has_errors;
-        int errors_found;
-        bool needs_reboot_to_fix;
-        QString statusMessage;
+    // ------------------------------------------------------------------
+    // Pure decision seams (public for unit testing; no I/O, no state)
+    // ------------------------------------------------------------------
+
+    /// @brief Aggregate outcome across every enumerated drive.
+    struct DiskCheckOutcome {
+        bool success;       ///< True only if EVERY drive was scanned successfully.
+        int drives_failed;  ///< Drives that could not be scanned (timeout/error).
     };
 
+    /// @brief Decide the overall outcome. A drive that timed out or failed to
+    /// scan is a failure: success requires all enumerated drives to have been
+    /// scanned, and any shortfall is reported as a failed-drive count rather
+    /// than hidden behind a single successful drive.
+    static DiskCheckOutcome evaluateDiskCheckOutcome(int drives_scanned, int total_drives);
+
+    /// @brief Build the PowerShell that CHECKS a volume for errors. This is a
+    /// read-only online scan (Repair-Volume -Scan): it never schedules an
+    /// offline fix, so a "Check Disk Errors" run does not mutate the disk. When
+    /// corruption is found it reports RepairRecommended, nothing more.
+    static QString buildScanVolumeScript(QChar drive);
+
+private:
     /// @brief Parsed state from a single drive scan output block
     struct ParsedDriveState {
         QString drive_letter;
         QString status;
         bool has_corrupt = false;
         bool scan_success = false;
-        bool reboot_needed = false;
     };
 
-    QVector<DriveCheckResult> m_drive_results;
-    QVector<QString> m_drives;
+    /// @brief Aggregated per-run tallies passed to report building.
+    struct DiskCheckTotals {
+        int drives_scanned = 0;
+        int total_drives = 0;
+        int errors_found = 0;
+        int repairs_recommended = 0;
+    };
 
-    void checkDrive(const QString& drive_letter);
-    void parseChkdskOutput(const QString& output, DriveCheckResult& result);
+    QVector<QString> m_drives;
 
     // TigerStyle helpers for execute() decomposition
     bool executeEnumerateVolumes(const QDateTime& start_time,
@@ -64,22 +80,19 @@ private:
                           QString& report,
                           int& drives_scanned,
                           int& errors_found,
-                          int& errors_fixed);
+                          int& repairs_recommended);
     void executeBuildReport(const QDateTime& start_time,
                             const QString& report,
-                            int drives_scanned,
-                            int errors_found,
-                            int errors_fixed);
-    static QString buildRepairVolumeScript(QChar drive);
+                            const DiskCheckTotals& totals);
     void parseDriveScanResult(const QString& output,
                               QString& report,
                               int& drives_scanned,
                               int& errors_found,
-                              int& errors_fixed);
+                              int& repairs_recommended);
     static void processScanKeyValue(const QString& key,
                                     const QString& value,
                                     ParsedDriveState& state,
-                                    int& errors_fixed);
+                                    int& repairs_recommended);
     void appendDriveScanEntry(const ParsedDriveState& state,
                               QString& report,
                               int& drives_scanned,
