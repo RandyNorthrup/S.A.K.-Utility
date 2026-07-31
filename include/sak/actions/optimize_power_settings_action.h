@@ -30,6 +30,13 @@ public:
     void scan() override;
     void execute() override;
 
+    /// @brief True if the given active-scheme GUID is a high-performance plan
+    /// (Windows High Performance or Ultimate Performance). Matching by GUID -- not
+    /// by a name substring -- prevents a custom plan merely NAMED "...High
+    /// Performance..." from being mistaken for the built-in one (which would skip
+    /// activation of the real plan).
+    static bool isHighPerformanceGuid(const QString& guid);
+
 private:
     /// @brief Represents a Windows power plan with its GUID and active state
     struct PowerPlan {

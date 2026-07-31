@@ -28,9 +28,19 @@ constexpr int kPowerPlanNameCaptureGroup = 2;
 constexpr int kPowerPlanActiveMarkerCaptureGroup = 3;
 constexpr int kReportInnerWidth = 67;
 
+// Built-in high-performance scheme GUIDs (lower-case, canonical).
+constexpr auto kHighPerformanceGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";      // SCHEME_MIN
+constexpr auto kUltimatePerformanceGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";  // Ultimate
+
 }  // namespace
 
 OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent) : QuickAction(parent) {}
+
+bool OptimizePowerSettingsAction::isHighPerformanceGuid(const QString& guid) {
+    const QString normalized = guid.trimmed();
+    return normalized.compare(QLatin1String(kHighPerformanceGuid), Qt::CaseInsensitive) == 0 ||
+           normalized.compare(QLatin1String(kUltimatePerformanceGuid), Qt::CaseInsensitive) == 0;
+}
 
 // ENTERPRISE-GRADE: Enumerate all power plans using powercfg -LIST
 QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans() {
@@ -240,8 +250,10 @@ bool OptimizePowerSettingsAction::activateHighPerformancePlan(const PowerPlan& h
         Q_EMIT executionProgress("Verifying power plan activation...", progress::kStep80);
         PowerPlan new_active = getActivePowerPlan();
 
-        success = (new_active.guid == high_perf_plan.guid) ||
-                  new_active.name.contains("High Performance", Qt::CaseInsensitive);
+        // Verify by GUID: either the exact plan we set, or any built-in
+        // high-performance scheme -- never a mere name-substring match.
+        success = (new_active.guid.compare(high_perf_plan.guid, Qt::CaseInsensitive) == 0) ||
+                  isHighPerformanceGuid(new_active.guid);
 
         if (success) {
             report += QString("| Status:       Power plan activated\n")
@@ -303,9 +315,10 @@ void OptimizePowerSettingsAction::execute() {
               "|\n";
     report += "+================================================================+\n";
 
-    bool already_optimized = current_plan.name.contains("High Performance", Qt::CaseInsensitive) ||
-                             current_plan.name.contains("Ultimate Performance",
-                                                        Qt::CaseInsensitive);
+    // Match by GUID, not by name substring: a custom plan named e.g. "My High
+    // Performance Rig" must NOT be treated as the built-in plan (which would skip
+    // switching to the real one).
+    bool already_optimized = isHighPerformanceGuid(current_plan.guid);
     bool success = true;
 
     if (already_optimized) {

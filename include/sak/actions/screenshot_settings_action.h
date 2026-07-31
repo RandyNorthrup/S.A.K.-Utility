@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QString>
 
+class ScreenshotSettingsActionTests;  // unit-test friend (global namespace)
+
 namespace sak {
 
 /**
@@ -18,6 +20,8 @@ namespace sak {
  */
 class ScreenshotSettingsAction : public QuickAction {
     Q_OBJECT
+
+    friend class ::ScreenshotSettingsActionTests;
 
 public:
     explicit ScreenshotSettingsAction(const QString& output_location, QObject* parent = nullptr);
@@ -61,10 +65,23 @@ private:
     bool captureSettingsWindow(const QDir& output_dir,
                                const QString& page_name,
                                const QString& timestamp);
-    void generateReport(const QString& output_dir_path,
+    /// @brief Write the screenshot report to disk.
+    /// @return true only if the report was fully written and committed; a write
+    /// failure is surfaced (the report path is not advertised as if it exists).
+    bool generateReport(const QString& output_dir_path,
                         const QString& timestamp,
                         int monitor_count,
-                        const CaptureResult& capture) const;
+                        const CaptureResult& capture);
+
+    /// @brief Build the full screenshot report text (pure; no I/O).
+    static QString buildScreenshotReportText(int monitor_count,
+                                             const CaptureResult& capture,
+                                             const QString& output_dir_path,
+                                             const QString& timestamp);
+
+    /// @brief Structured-log line for the report: the real path only when the
+    /// report was actually written, otherwise a write-failure marker.
+    static QString reportPathLine(bool report_written, const QString& report_path);
 
     /// @brief Context needed to assemble the final execution result
     struct CaptureContext {
@@ -72,6 +89,7 @@ private:
         int monitor_count{0};
         QString timestamp;
         QDateTime start_time;
+        bool report_written{false};
     };
 
     /// @brief Assemble structured log and ExecutionResult from capture outcome

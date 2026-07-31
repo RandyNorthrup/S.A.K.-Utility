@@ -15,7 +15,9 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QProcess>
+#include <QSaveFile>
 #include <QScreen>
+#include <QTextStream>
 #include <QThread>
 
 #include <Windows.h>
@@ -118,11 +120,15 @@ void ScreenshotSettingsAction::execute() {
     }
 
     Q_EMIT executionProgress("Generating report...", progress::kStep95);
-    generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
+    const bool report_written =
+        generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
     Q_EMIT executionProgress("Screenshots complete", progress::kComplete);
 
-    const CaptureContext context{
-        static_cast<int>(settings_pages.size()), monitor_count, timestamp, start_time};
+    const CaptureContext context{static_cast<int>(settings_pages.size()),
+                                 monitor_count,
+                                 timestamp,
+                                 start_time,
+                                 report_written};
     buildExecutionResult(capture, output_dir, context);
 }
 
@@ -143,9 +149,9 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     structured_log += QString("TOTAL_PAGES:%1\n").arg(context.total_pages);
     structured_log += QString("SUCCESS_RATE:%1%\n")
                           .arg(capture.captured_pages.size() * kPercentMax / context.total_pages);
-    structured_log +=
-        QString("REPORT_PATH:%1\n")
-            .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp)));
+    const QString report_path =
+        output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp));
+    structured_log += reportPathLine(context.report_written, report_path);
 
     if (capture.screenshots_taken > 0) {
         result.success = true;
@@ -153,6 +159,9 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
                              .arg(capture.captured_pages.size())
                              .arg(context.total_pages)
                              .arg(context.monitor_count);
+        if (!context.report_written) {
+            result.message += " (report not written)";
+        }
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     } else {
         result.success = false;
@@ -277,19 +286,15 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
     return false;
 }
 
-void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
-                                              const QString& timestamp,
-                                              int monitor_count,
-                                              const CaptureResult& capture) const {
-    QDir output_dir(output_dir_path);
-    int total_pages = capture.captured_pages.size() + capture.failed_pages.size();
-    QString report_path = output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp));
-    QFile report_file(report_path);
-    if (!report_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return;
-    }
+QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
+                                                            const CaptureResult& capture,
+                                                            const QString& output_dir_path,
+                                                            const QString& timestamp) {
+    Q_UNUSED(timestamp);
+    const int total_pages = capture.captured_pages.size() + capture.failed_pages.size();
 
-    QTextStream report(&report_file);
+    QString text;
+    QTextStream report(&text);
     report.setEncoding(QStringConverter::Utf8);
 
     report << "+==============================================================+\n";
@@ -326,12 +331,49 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
 
     report << "+==============================================================+\n";
     report << QString("| Output Location: %1")
-                  .arg(output_dir.absolutePath())
+                  .arg(QDir(output_dir_path).absolutePath())
                   .leftJustified(kScreenshotReportFieldWidth, ' ')
            << "|\n";
     report << "+==============================================================+\n";
+    report.flush();
+    return text;
+}
 
-    report_file.close();
+QString ScreenshotSettingsAction::reportPathLine(bool report_written, const QString& report_path) {
+    // Only advertise the report path when the file actually exists; otherwise
+    // surface the write failure instead of pointing at a file that was not saved.
+    if (report_written) {
+        return QString("REPORT_PATH:%1\n").arg(report_path);
+    }
+    return QStringLiteral("REPORT_WRITE_FAILED:1\n");
+}
+
+bool ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
+                                              const QString& timestamp,
+                                              int monitor_count,
+                                              const CaptureResult& capture) {
+    QDir output_dir(output_dir_path);
+    const QString report_path =
+        output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp));
+
+    QSaveFile report_file(report_path);
+    if (!report_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        Q_EMIT logMessage("Failed to open screenshot report for writing: " + report_path);
+        return false;
+    }
+
+    const QByteArray data =
+        buildScreenshotReportText(monitor_count, capture, output_dir_path, timestamp).toUtf8();
+    if (report_file.write(data) != data.size()) {
+        report_file.cancelWriting();
+        Q_EMIT logMessage("Incomplete write of screenshot report: " + report_path);
+        return false;
+    }
+    if (!report_file.commit()) {
+        Q_EMIT logMessage("Failed to commit screenshot report: " + report_path);
+        return false;
+    }
+    return true;
 }
 
 // Helper method: Detect monitor count for multi-monitor support
