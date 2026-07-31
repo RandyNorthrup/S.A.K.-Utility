@@ -66,9 +66,10 @@ bool createRestoreRecoveryCopy(const QString& finalDestPath) {
 }
 
 // Replace an existing destination file only after the new copy is fully written.
-// The original is removed after a temporary sibling holds the replacement, so
-// any failure leaves the original destination intact. When backupExisting is
-// set, the original is preserved to a `.sakbak` recovery copy before removal.
+// The original is moved aside by RENAME (never deleted) before the replacement is
+// swapped in, and restored if the swap fails, so no failure can lose the original
+// destination. When backupExisting is set, the original is also preserved to a
+// `.sakbak` recovery copy for user-visible undo.
 bool copyFileReplacingExisting(const QString& source,
                                const QString& finalDestPath,
                                bool backupExisting) {
@@ -84,11 +85,24 @@ bool copyFileReplacingExisting(const QString& source,
         QFile::remove(tempPath);
         return false;  // Never overwrite without a recovery copy in place.
     }
-    if (!QFile::remove(finalDestPath)) {
+
+    // Move the ORIGINAL aside by rename (not delete). QFile::rename cannot overwrite an existing
+    // target, so the destination must be vacated first -- but by relocating the original, not
+    // destroying it, so a failed swap can roll back. The old code removed the original THEN
+    // renamed, and a rename failure between the two left the destination gone.
+    const QString oldPath = finalDestPath + QStringLiteral(".sakold.tmp");
+    QFile::remove(oldPath);
+    if (!QFile::rename(finalDestPath, oldPath)) {
+        QFile::remove(tempPath);
+        return false;  // Could not move the original aside -- leave everything intact.
+    }
+    if (!QFile::rename(tempPath, finalDestPath)) {
+        QFile::rename(oldPath, finalDestPath);  // Roll back: the original is restored in place.
         QFile::remove(tempPath);
         return false;
     }
-    return QFile::rename(tempPath, finalDestPath);
+    QFile::remove(oldPath);  // Replacement is in place; drop the moved-aside original.
+    return true;
 }
 }  // namespace
 

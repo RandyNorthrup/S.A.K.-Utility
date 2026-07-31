@@ -142,6 +142,9 @@ private slots:
 
     // ---- B7-01: lifetime uses QThread state, not a late member flag ----
     void startThenImmediateDestroyIsSafe();
+
+    // ---- B7-10: overwrite replaces via rename-aside, leaving no temp artifacts ----
+    void overwriteRestoreLeavesNoTempArtifacts();
 };
 
 // ===========================================================================
@@ -868,6 +871,65 @@ void UserProfileRestoreWorkerTests::startThenImmediateDestroyIsSafe() {
         // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
     }
     QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
+}
+
+// ===========================================================================
+// B7-10: replacing an existing file must move the original aside by RENAME and
+// only remove it once the replacement is swapped in -- so no failure loses the
+// destination -- and the success path must leave no .sakold.tmp/.sakrestore.tmp
+// artifacts behind (with create_backup, a .sakbak recovery copy is kept).
+// ===========================================================================
+
+void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("OUser"),
+                     {QStringLiteral("Documents/data.txt")},
+                     QByteArray(5000, 'X'));  // large -> KeepLarger replaces the small dest
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    const QString destBase = destDir.path() + "/Users/OUser/Documents/";
+    QVERIFY(writeFile(destBase + "data.txt", "tiny"));  // small existing file
+
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             5000,
+                             1);
+    auto manifest = buildManifest(QStringLiteral("OUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("OUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    // create_backup = true (4th field) so the original is preserved to .sakbak.
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::KeepLarger, sak::PermissionMode::PreserveOriginal, false, true});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.first().at(0).toBool(), true);
+
+    // The larger backup replaced the small original.
+    QFile result(destBase + "data.txt");
+    QVERIFY(result.open(QIODevice::ReadOnly));
+    QCOMPARE(result.readAll().size(), 5000);
+
+    // No swap temporaries left behind.
+    QVERIFY(!QFile::exists(destBase + "data.txt.sakold.tmp"));
+    QVERIFY(!QFile::exists(destBase + "data.txt.sakrestore.tmp"));
+
+    // The pre-overwrite original was preserved to a recovery copy (holds "tiny").
+    QFile recovery(destBase + "data.txt.sakbak");
+    QVERIFY(recovery.open(QIODevice::ReadOnly));
+    QCOMPARE(recovery.readAll(), QByteArray("tiny"));
 }
 
 QTEST_MAIN(UserProfileRestoreWorkerTests)
