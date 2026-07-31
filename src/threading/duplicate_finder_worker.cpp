@@ -85,6 +85,13 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
     const auto& hashed_files = hashed_result.value();
     sak::logInfo("Hashed {} files successfully", hashed_files.size());
 
+    // Files that failed to hash were dropped from the comparison set; record how many so a caller
+    // can report that the results are incomplete instead of a clean success.
+    m_files_unhashed = static_cast<int>(files.size() - hashed_files.size());
+    if (m_files_unhashed > 0) {
+        sak::logWarning("{} file(s) could not be hashed and were skipped", m_files_unhashed);
+    }
+
     // Group files by hash and find duplicates
     auto hash_groups = groupByHash(hashed_files);
 
@@ -127,6 +134,8 @@ auto DuplicateFinderWorker::executeFileSystemTarget() -> std::expected<void, sak
     if (!hashed_result) {
         return std::unexpected(hashed_result.error());
     }
+
+    m_files_unhashed = static_cast<int>(files.size() - hashed_result.value().size());
 
     int total_duplicates = 0;
     qint64 total_wasted = 0;

@@ -11,6 +11,10 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 class DuplicateFinderWorkerTests : public QObject {
     Q_OBJECT
 
@@ -52,6 +56,46 @@ private Q_SLOTS:
 
         QCOMPARE(duplicateCount, 1);
         QCOMPARE(wastedSpace, static_cast<qint64>(content.size()));
+        // A clean scan hashed every file: nothing dropped (no false-positive count).
+        QCOMPARE(worker.filesUnhashed(), 0);
+    }
+
+    // B6-21: a file that cannot be hashed (here: exclusively locked) must be
+    // COUNTED as unhashed, not silently dropped so the scan looks complete.
+    // (Windows-only mechanism; this codebase targets Windows/MSVC.)
+    void unhashableLockedFileIsCounted() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+
+        createFile(tmpDir.path(), "readable.txt", "readable content here");
+        const QString lockedPath = QDir(tmpDir.path()).filePath("locked.bin");
+        createFile(tmpDir.path(), "locked.bin", "locked payload xyz");
+
+        // Open with NO sharing, so any subsequent read open (the hasher's) fails.
+        const std::wstring wpath = lockedPath.toStdWString();
+        HANDLE handle = CreateFileW(wpath.c_str(),
+                                    GENERIC_READ,
+                                    0,  // dwShareMode = 0 -> exclusive
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+        QVERIFY(handle != INVALID_HANDLE_VALUE);
+
+        DuplicateFinderWorker::Config config;
+        config.scanDirectories << tmpDir.path();
+        config.minimum_file_size = 0;
+        config.recursive_scan = false;
+        DuplicateFinderWorker worker(config);
+
+        QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
+        worker.start();
+        const bool finished = spy.wait(10'000);
+        CloseHandle(handle);
+        QVERIFY(finished);
+
+        // The locked file could not be hashed -> surfaced, not hidden.
+        QCOMPARE(worker.filesUnhashed(), 1);
     }
 
     void noDuplicatesWhenAllUnique() {

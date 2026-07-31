@@ -95,6 +95,17 @@ public:
         return m_duplicate_groups;
     }
 
+    /**
+     * @brief Number of scanned files that could NOT be hashed on the last run.
+     *
+     * Files that fail to hash (unreadable, locked, vanished mid-scan) are dropped
+     * from the comparison set, so a non-zero count means the duplicate results are
+     * INCOMPLETE. A caller must surface this rather than report a clean success.
+     * Populated on the worker thread before finished is emitted (race-free from a
+     * finished-slot, like duplicateGroups()).
+     */
+    [[nodiscard]] int filesUnhashed() const { return m_files_unhashed; }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when scanning progresses
@@ -219,7 +230,8 @@ private:
     Config m_config;
     sak::file_hasher m_hasher;
     std::vector<DuplicateGroup>
-        m_duplicate_groups;  ///< Result of the last run (see duplicateGroups)
+        m_duplicate_groups;   ///< Result of the last run (see duplicateGroups)
+    int m_files_unhashed{0};  ///< Scanned files that could not be hashed (see filesUnhashed)
     std::stop_source
-        m_hash_stop;         ///< Cancels in-flight file hashing (fed by startHashCancelMonitor)
+        m_hash_stop;          ///< Cancels in-flight file hashing (fed by startHashCancelMonitor)
 };

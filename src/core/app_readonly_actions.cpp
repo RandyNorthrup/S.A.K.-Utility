@@ -1385,14 +1385,23 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
         int total_dupes = 0;
         qint64 total_wasted = 0;
-        const QJsonObject data =
-            serializeDuplicates(worker.duplicateGroups(), total_dupes, total_wasted);
-        const QString message =
+        QJsonObject data = serializeDuplicates(worker.duplicateGroups(), total_dupes, total_wasted);
+        QString message =
             QStringLiteral(
                 "Found %1 duplicate group(s), %2 redundant file(s), %3 bytes reclaimable")
                 .arg(static_cast<int>(worker.duplicateGroups().size()))
                 .arg(total_dupes)
                 .arg(total_wasted);
+        // Surface files that could not be hashed: they were dropped from the comparison, so the
+        // duplicate set is incomplete. Reporting a bare success would hide that.
+        const int unhashed = worker.filesUnhashed();
+        data[QStringLiteral("files_unhashed")] = unhashed;
+        if (unhashed > 0) {
+            message += QStringLiteral(
+                           "; %1 file(s) could not be read/hashed and were skipped "
+                           "(results may be incomplete)")
+                           .arg(unhashed);
+        }
         inv.finish({true, message, data});
     });
     QObject::connect(&worker,
