@@ -129,6 +129,7 @@ private:
 
     // Helpers
     bool validateBackup();
+    bool verifyUserPayloadChecksums();
     bool createRestoreStructure();
     /// @brief Create standard user profile subdirectories inside a destination dir
     void createStandardSubfolders(const QDir& destDir);

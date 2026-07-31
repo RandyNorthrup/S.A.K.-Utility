@@ -3,6 +3,9 @@
 
 #include "sak/user_profile_types.h"
 
+#include <QCryptographicHash>
+#include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -10,6 +13,11 @@
 #include <algorithm>
 
 namespace sak {
+
+namespace {
+// Streaming read size for directory-tree hashing (B7-13).
+constexpr qint64 kDirHashChunkBytes = 64 * 1024;
+}  // namespace
 
 // Helper function to safely convert JSON number to qint64
 static qint64 qint64FromJson(const QJsonObject& json, const QString& key, qint64 defaultValue = 0) {
@@ -353,6 +361,65 @@ BackupManifest BackupManifest::loadFromFile(const QString& path) {
     QByteArray data = file.readAll();
     QJsonDocument doc = QJsonDocument::fromJson(data);
     return fromJson(doc.object());
+}
+
+QString BackupManifest::checksumOfManifestJson(QJsonObject obj) {
+    // Never let the digest cover itself: drop the checksum field before hashing so
+    // save-side (field absent) and load-side (field present, then removed) agree.
+    obj.remove(QStringLiteral("manifest_checksum"));
+    const QByteArray canonical = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    return QString::fromLatin1(
+        QCryptographicHash::hash(canonical, QCryptographicHash::Sha256).toHex());
+}
+
+QString BackupManifest::computeManifestChecksum() const {
+    return checksumOfManifestJson(toJson());
+}
+
+bool BackupManifest::verifyManifestChecksum() const {
+    // A legacy backup with no stored checksum is unverifiable, not corrupt.
+    if (manifest_checksum.isEmpty()) {
+        return true;
+    }
+    return computeManifestChecksum() == manifest_checksum;
+}
+
+QString BackupManifest::hashDirectoryTree(const QString& dir_path) {
+    QDir root(dir_path);
+    if (!root.exists()) {
+        return QString();
+    }
+
+    // Collect every regular file as a forward-slash relative path, then hash in a
+    // stable sorted order so the digest is independent of filesystem enumeration
+    // order (which differs between the backup source and the restored copy).
+    QStringList relative_files;
+    QDirIterator it(dir_path,
+                    QDir::Files | QDir::Hidden | QDir::System,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        relative_files.append(root.relativeFilePath(it.filePath()));
+    }
+    relative_files.sort();
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    for (const QString& rel : relative_files) {
+        QFile file(root.filePath(rel));
+        if (!file.open(QIODevice::ReadOnly)) {
+            // An unreadable file is folded in by path + a sentinel so it still
+            // affects the digest (and a later readable/unreadable flip is caught).
+            hasher.addData(rel.toUtf8());
+            hasher.addData(QByteArrayLiteral("\0<unreadable>"));
+            continue;
+        }
+        hasher.addData(rel.toUtf8());
+        hasher.addData(QByteArrayLiteral("\0"));
+        while (!file.atEnd()) {
+            hasher.addData(file.read(kDirHashChunkBytes));
+        }
+    }
+    return QString::fromLatin1(hasher.result().toHex());
 }
 
 QString OperationResult::getSummary() const {

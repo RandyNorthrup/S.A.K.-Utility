@@ -6,6 +6,8 @@
 
 #include "sak/user_profile_types.h"
 
+#include <QDir>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
@@ -162,6 +164,112 @@ private Q_SLOTS:
         QCOMPARE(restored.username, data.username);
         QCOMPARE(restored.sid, data.sid);
         QCOMPARE(restored.profile_path, data.profile_path);
+    }
+
+    // --- Manifest integrity checksum (B7-13) ---
+
+    static BackupManifest sampleManifest() {
+        BackupManifest m;
+        m.source_machine = "PC-1";
+        BackupUserData u;
+        u.username = "Alice";
+        u.sid = "S-1-5-21-1";
+        m.users.append(u);
+        return m;
+    }
+
+    void manifestChecksumMatchesAfterCompute() {
+        BackupManifest m = sampleManifest();
+        m.manifest_checksum = m.computeManifestChecksum();
+        QVERIFY(!m.manifest_checksum.isEmpty());
+        QVERIFY(m.verifyManifestChecksum());
+    }
+
+    void manifestChecksumExcludesItself() {
+        // Recomputing after storing the digest must not change the digest (the
+        // field is removed before hashing), so verify stays true.
+        BackupManifest m = sampleManifest();
+        m.manifest_checksum = m.computeManifestChecksum();
+        const QString again = m.computeManifestChecksum();
+        QCOMPARE(again, m.manifest_checksum);
+    }
+
+    void manifestChecksumDetectsTamper() {
+        BackupManifest m = sampleManifest();
+        m.manifest_checksum = m.computeManifestChecksum();
+        // Mutate a covered field without updating the stored digest.
+        m.source_machine = "PC-EVIL";
+        QVERIFY(!m.verifyManifestChecksum());
+    }
+
+    void manifestLegacyEmptyChecksumAccepted() {
+        BackupManifest m = sampleManifest();
+        m.manifest_checksum.clear();
+        QVERIFY(m.verifyManifestChecksum());  // nothing stored -> unverifiable, not a failure
+    }
+
+    void manifestChecksumSurvivesSaveLoad() {
+        BackupManifest m = sampleManifest();
+        m.manifest_checksum = m.computeManifestChecksum();
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath("manifest.json");
+        QVERIFY(m.saveToFile(path));
+        BackupManifest loaded = BackupManifest::loadFromFile(path);
+        QCOMPARE(loaded.manifest_checksum, m.manifest_checksum);
+        QVERIFY(loaded.verifyManifestChecksum());
+    }
+
+    // --- Directory-tree payload digest (B7-13) ---
+
+    static void writeFile(const QString& path, const QByteArray& bytes) {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(bytes);
+        f.close();
+    }
+
+    void dirHashMissingPathIsEmpty() {
+        QCOMPARE(BackupManifest::hashDirectoryTree("X:/no/such/dir/here"), QString());
+    }
+
+    void dirHashDeterministicAndOrderIndependent() {
+        QTemporaryDir a;
+        QTemporaryDir b;
+        QVERIFY(a.isValid() && b.isValid());
+        QVERIFY(QDir(a.path()).mkpath("sub"));
+        QVERIFY(QDir(b.path()).mkpath("sub"));
+        // Same content, files created in a different order in each tree.
+        writeFile(a.filePath("one.txt"), "hello");
+        writeFile(a.filePath("sub/two.txt"), "world");
+        writeFile(b.filePath("sub/two.txt"), "world");
+        writeFile(b.filePath("one.txt"), "hello");
+        const QString ha = BackupManifest::hashDirectoryTree(a.path());
+        const QString hb = BackupManifest::hashDirectoryTree(b.path());
+        QVERIFY(!ha.isEmpty());
+        QCOMPARE(ha, hb);
+    }
+
+    void dirHashDetectsContentChange() {
+        QTemporaryDir d;
+        QVERIFY(d.isValid());
+        writeFile(d.filePath("f.txt"), "original");
+        const QString before = BackupManifest::hashDirectoryTree(d.path());
+        writeFile(d.filePath("f.txt"), "tampered");
+        const QString after = BackupManifest::hashDirectoryTree(d.path());
+        QVERIFY(before != after);
+    }
+
+    void dirHashDetectsNameChange() {
+        // Same bytes under a different relative path must change the digest (path is
+        // folded in), so a rename inside the payload is caught.
+        QTemporaryDir a;
+        QTemporaryDir b;
+        QVERIFY(a.isValid() && b.isValid());
+        writeFile(a.filePath("name1.txt"), "same");
+        writeFile(b.filePath("name2.txt"), "same");
+        QVERIFY(BackupManifest::hashDirectoryTree(a.path()) !=
+                BackupManifest::hashDirectoryTree(b.path()));
     }
 };
 

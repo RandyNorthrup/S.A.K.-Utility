@@ -120,6 +120,11 @@ private slots:
     void invalidBackupNoManifest();
     void emptyMappingsCompleteSuccessfully();
 
+    // ---- B7-13: manifest + per-user payload integrity checksums ----
+    void manifestChecksumMismatchFailsValidation();
+    void payloadChecksumMismatchFailsValidation();
+    void correctChecksumsPassValidation();
+
     // ---- Core restore flow ----
     void singleFileRestoreSucceeds();
     void unselectedMappingSkipped();
@@ -238,6 +243,120 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // success
+}
+
+// ---------------------------------------------------------------------------
+// B7-13: a manifest whose stored checksum does not match its content is rejected
+// before any file is touched.
+// ---------------------------------------------------------------------------
+void UserProfileRestoreWorkerTests::manifestChecksumMismatchFailsValidation() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
+                     {QStringLiteral("Documents/hello.txt")});
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto manifest = buildManifest(QStringLiteral("TestUser"), {});
+    manifest.manifest_checksum = QStringLiteral("deadbeefdeadbeef");  // wrong, non-empty
+    auto mapping = makeMapping(QStringLiteral("TestUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.count(), 1);
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);  // integrity failure -> refuse
+}
+
+// ---------------------------------------------------------------------------
+// A per-user payload whose recomputed digest does not match the manifest's
+// checksum_sha256 is rejected (detects tampered/corrupt stored files).
+// ---------------------------------------------------------------------------
+void UserProfileRestoreWorkerTests::payloadChecksumMismatchFailsValidation() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
+                     {QStringLiteral("Documents/hello.txt")});
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto manifest = buildManifest(QStringLiteral("TestUser"), {});
+    // Non-empty but wrong payload digest -> mismatch on recompute.
+    manifest.users[0].checksum_sha256 = QStringLiteral("00ff00ff00ff00ff");
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+    auto mapping = makeMapping(QStringLiteral("TestUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.count(), 1);
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
+}
+
+// ---------------------------------------------------------------------------
+// Correct manifest + payload digests must NOT false-fail: the restore proceeds.
+// ---------------------------------------------------------------------------
+void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
+                     {QStringLiteral("Documents/hello.txt")},
+                     "hello from backup");
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             17,
+                             1);
+    auto manifest = buildManifest(QStringLiteral("TestUser"), {folder});
+    // Seal with the ACTUAL payload + manifest digests, as the backup worker does.
+    manifest.users[0].checksum_sha256 =
+        sak::BackupManifest::hashDirectoryTree(backupDir.path() + "/TestUser");
+    QVERIFY(!manifest.users[0].checksum_sha256.isEmpty());
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+    auto mapping = makeMapping(QStringLiteral("TestUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.count(), 1);
+    QCOMPARE(completeSpy.first().at(0).toBool(), true);  // valid integrity -> proceeds
+    QVERIFY(QFile::exists(destDir.path() + "/Users/TestUser/Documents/hello.txt"));
 }
 
 // ===========================================================================

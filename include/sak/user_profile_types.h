@@ -236,6 +236,32 @@ struct BackupManifest {
 
     bool saveToFile(const QString& path) const;
     static BackupManifest loadFromFile(const QString& path);
+
+    // ---- Integrity checksums (B7-13) ---------------------------------------
+    // The manifest and each user's backed-up payload are protected by SHA-256
+    // digests that are actually computed at backup time and verified at restore
+    // time (previously the fields were serialized but never populated/checked).
+
+    /// SHA-256 hex over this manifest's JSON with the "manifest_checksum" key
+    /// removed, so the digest never covers itself. Deterministic: QJsonObject
+    /// serializes keys in sorted order.
+    [[nodiscard]] QString computeManifestChecksum() const;
+
+    /// True if manifest_checksum matches the recomputed digest. An empty stored
+    /// checksum (a legacy backup made before this field was populated) is treated
+    /// as unverifiable-but-acceptable and returns true; a NON-empty checksum that
+    /// does not match returns false (corruption/tamper -> caller fails closed).
+    [[nodiscard]] bool verifyManifestChecksum() const;
+
+    /// Pure digest helper: SHA-256 hex of the given object after removing the
+    /// self-referential "manifest_checksum" key. Exposed for unit testing.
+    [[nodiscard]] static QString checksumOfManifestJson(QJsonObject obj);
+
+    /// Deterministic SHA-256 hex over every regular file under dir_path (sorted by
+    /// forward-slash relative path; path + size + bytes folded in). Returns an
+    /// empty string when dir_path does not exist. Used for per-user payload
+    /// checksum_sha256 at backup and its verification at restore.
+    [[nodiscard]] static QString hashDirectoryTree(const QString& dir_path);
 };
 
 /**

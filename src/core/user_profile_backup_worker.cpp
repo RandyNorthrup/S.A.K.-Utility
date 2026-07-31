@@ -489,9 +489,19 @@ bool UserProfileBackupWorker::saveManifest() {
         userData.profile_path = user.profile_path;
         userData.backed_up_folders = user.folder_selections;
         userData.permissions_mode = m_permissionMode;
+        // Digest the user's backed-up payload so restore can detect corruption or
+        // tampering of the stored files (B7-13).
+        userData.checksum_sha256 =
+            BackupManifest::hashDirectoryTree(m_destinationPath + "/" + user.username);
 
         m_manifest.users.append(userData);
     }
+
+    // Seal the manifest with a self-excluding digest over its final content (users
+    // + their checksums must already be set) so a modified manifest.json is caught
+    // at restore.
+    m_manifest.manifest_checksum.clear();
+    m_manifest.manifest_checksum = m_manifest.computeManifestChecksum();
 
     // Save to JSON file
     QString manifestPath = m_destinationPath + "/manifest.json";

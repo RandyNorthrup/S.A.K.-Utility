@@ -591,7 +591,44 @@ bool UserProfileRestoreWorker::validateBackup() {
         return false;
     }
 
+    // Integrity: a populated manifest checksum that does not match means the
+    // manifest.json was corrupted or tampered with -> refuse (B7-13). A legacy
+    // backup with no stored checksum verifies as true (nothing to check).
+    if (!m_manifest.verifyManifestChecksum()) {
+        Q_EMIT logMessage(tr("Manifest integrity check failed (checksum mismatch)"), true);
+        return false;
+    }
+    if (m_manifest.manifest_checksum.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("Manifest has no integrity checksum (legacy backup); skipping verification"), false);
+    }
+
+    if (!verifyUserPayloadChecksums()) {
+        return false;
+    }
+
     Q_EMIT logMessage(tr("Backup validation passed"), false);
+    return true;
+}
+
+bool UserProfileRestoreWorker::verifyUserPayloadChecksums() {
+    for (const auto& mapping : m_mappings) {
+        if (!mapping.selected) {
+            continue;
+        }
+        const auto* user = findManifestUser(mapping.source_username);
+        if (user == nullptr || user->checksum_sha256.isEmpty()) {
+            continue;  // Unmapped, or a legacy payload with no recorded digest.
+        }
+        const QString actual =
+            BackupManifest::hashDirectoryTree(m_backupPath + "/" + user->username);
+        if (actual != user->checksum_sha256) {
+            Q_EMIT logMessage(tr("Payload integrity check failed for user '%1' (checksum mismatch)")
+                                  .arg(user->username),
+                              true);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -717,8 +754,9 @@ bool UserProfileRestoreWorker::verifyFile(const QString& filePath) {
         return false;
     }
 
-    // Basic verification - file exists and is readable
-    // Could add checksum verification if checksums were stored in manifest
+    // Per-file existence + readability. Content integrity of the stored payload is
+    // covered upstream by validateBackup(), which recomputes each user's directory
+    // digest against the manifest's checksum_sha256 before any file is restored.
     return true;
 }
 
