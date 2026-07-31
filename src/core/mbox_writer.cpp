@@ -119,8 +119,12 @@ QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
 
     QDir().mkpath(QFileInfo(file_path).absolutePath());
 
+    // Truncate, not Append: each file is opened exactly ONCE per run (guarded by
+    // m_open_files above) and then written sequentially through the kept-open handle,
+    // so within-run messages still accumulate. Append would instead MERGE this run's
+    // output onto a stale file left by a previous run, duplicating old mail (B7-32).
     auto* file = new QFile(file_path);
-    if (!file->open(QIODevice::WriteOnly | QIODevice::Append)) {
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         logError("MboxWriter: failed to open mbox file: {}", file_path.toStdString());
         delete file;
         return nullptr;

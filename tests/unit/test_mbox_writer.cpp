@@ -222,6 +222,43 @@ private Q_SLOTS:
     }
 
     // ====================================================================
+    // Rerun must not merge onto a previous run's file (B7-32)
+    // ====================================================================
+
+    void rerunTruncatesStaleOutput() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        const auto make = [](const QString& subject) {
+            sak::PstItemDetail item;
+            item.subject = subject;
+            item.sender_email = QStringLiteral("s@test.com");
+            item.body_plain = QStringLiteral("body");
+            item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+            return item;
+        };
+
+        // First run writes "OLD_SUBJECT".
+        {
+            sak::MboxWriter writer(temp_dir.path(), false);
+            std::ignore = writer.writeMessage(make(QStringLiteral("OLD_SUBJECT")), {}, QString());
+            writer.finalize();
+        }
+        // Second run to the SAME directory writes only "NEW_SUBJECT".
+        {
+            sak::MboxWriter writer(temp_dir.path(), false);
+            std::ignore = writer.writeMessage(make(QStringLiteral("NEW_SUBJECT")), {}, QString());
+            writer.finalize();
+        }
+
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(content.contains("NEW_SUBJECT"));
+        QVERIFY(!content.contains("OLD_SUBJECT"));  // stale run truncated, not merged
+    }
+
+    // ====================================================================
     // writeFully() short-write safety (B7-18)
     // ====================================================================
 
