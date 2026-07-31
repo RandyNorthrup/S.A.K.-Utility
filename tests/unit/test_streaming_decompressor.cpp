@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <lzma.h>
 #include <zlib.h>
 
 class StreamingDecompressorTests : public QObject {
@@ -45,12 +46,16 @@ private Q_SLOTS:
     void completeGzip_readsAllBytes();
     void truncatedGzip_reportsError();
 
+    // A normal xz stream still decodes under the bounded decoder memory limit.
+    void realXzStreamDecodesUnderMemLimit();
+
 private:
     QTemporaryDir m_tempDir;
 
     void writeFile(const QString& name, const QByteArray& content);
     QString filePath(const QString& name) const;
     static QByteArray gzipCompress(const QByteArray& input);
+    static QByteArray xzCompress(const QByteArray& input);
     static qint64 readFully(sak::StreamingDecompressor& decomp);
 };
 
@@ -283,6 +288,46 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
     // A truncated stream must fail closed (return -1), not report a clean EOF
     // over the partial output.
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
+}
+
+// Encode @p input as a real .xz stream (default preset -> 8 MiB dictionary).
+QByteArray StreamingDecompressorTests::xzCompress(const QByteArray& input) {
+    const size_t bound = lzma_stream_buffer_bound(static_cast<size_t>(input.size()));
+    QByteArray out(static_cast<qsizetype>(bound), Qt::Uninitialized);
+    size_t out_pos = 0;
+    const lzma_ret ret =
+        lzma_easy_buffer_encode(LZMA_PRESET_DEFAULT,
+                                LZMA_CHECK_CRC64,
+                                nullptr,
+                                reinterpret_cast<const uint8_t*>(input.constData()),
+                                static_cast<size_t>(input.size()),
+                                reinterpret_cast<uint8_t*>(out.data()),
+                                &out_pos,
+                                bound);
+    if (ret != LZMA_OK) {
+        return {};
+    }
+    out.truncate(static_cast<qsizetype>(out_pos));
+    return out;
+}
+
+void StreamingDecompressorTests::realXzStreamDecodesUnderMemLimit() {
+    // B8-11: the bounded decoder memory limit (512 MiB) must still admit a normal
+    // xz stream (default preset needs an 8 MiB dictionary), so capping memory does
+    // not break real files -- only a crafted oversized-dictionary header fails
+    // closed (LZMA_MEMLIMIT_ERROR).
+    QByteArray payload(300'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 37 + 11) & 0xFF);
+    }
+    const QByteArray xz = xzCompress(payload);
+    QVERIFY(!xz.isEmpty());
+    writeFile("real.xz", xz);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("real.xz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("real.xz")));
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(payload.size()));
 }
 
 QTEST_GUILESS_MAIN(StreamingDecompressorTests)
