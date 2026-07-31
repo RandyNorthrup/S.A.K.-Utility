@@ -22,6 +22,10 @@ private Q_SLOTS:
     // B5-14: stale-completion guard and fail-open aggregate status.
     void suiteAdvanceAllowed_onlyForCurrentStep();
     void statusWithStepFailures_failClosed();
+
+    // B5-16: report format require-output + collision-free names.
+    void requestedReportFormats_requiresKnownFormat();
+    void uniqueReportBaseName_neverCollides();
 };
 
 void DiagnosticControllerTests::initialState() {
@@ -106,6 +110,33 @@ void DiagnosticControllerTests::statusWithStepFailures_failClosed() {
     // An existing warning stays a warning.
     QCOMPARE(DiagnosticController::statusWithStepFailures(DiagnosticStatus::Warnings, true),
              DiagnosticStatus::Warnings);
+}
+
+// B5-16: an empty/unknown format spec must produce NO output and must not be
+// reported as success. requestedReportFormats is what generateReport requires
+// to be non-empty.
+void DiagnosticControllerTests::requestedReportFormats_requiresKnownFormat() {
+    // Known formats are recognized, case-insensitively, in html/json/csv order.
+    const auto all = DiagnosticController::requestedReportFormats("HTML,json,Csv");
+    QCOMPARE(all, QStringList({"html", "json", "csv"}));
+
+    const auto one = DiagnosticController::requestedReportFormats("json");
+    QCOMPARE(one, QStringList({"json"}));
+
+    // No known format -> empty, so generateReport refuses instead of "succeeding".
+    QVERIFY(DiagnosticController::requestedReportFormats("").isEmpty());
+    QVERIFY(DiagnosticController::requestedReportFormats("pdf").isEmpty());
+    QVERIFY(DiagnosticController::requestedReportFormats("   ").isEmpty());
+}
+
+// B5-16: two reports produced in the same second must not share a base name.
+void DiagnosticControllerTests::uniqueReportBaseName_neverCollides() {
+    const QDateTime when = QDateTime::fromString("2026-07-30T12:00:00.500", Qt::ISODateWithMs);
+    const QString a = DiagnosticController::uniqueReportBaseName("C:/out", when, 0);
+    const QString b = DiagnosticController::uniqueReportBaseName("C:/out", when, 1);
+    QVERIFY(a != b);                             // same instant, different counter -> distinct
+    QVERIFY(a.startsWith("C:/out/SAK_Diagnostic_"));
+    QVERIFY(a.contains("20260730_120000_500"));  // millisecond resolution present
 }
 
 QTEST_MAIN(DiagnosticControllerTests)

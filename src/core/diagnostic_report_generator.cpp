@@ -13,9 +13,11 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QTextStream>
 #include <QtGlobal>
 
@@ -81,7 +83,10 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
         logWarning("Failed to create directory: {}", json_dir.toStdString());
     }
 
-    QFile file(output_path);
+    // QSaveFile writes to a temp sibling and atomically renames on commit(). A
+    // short write / disk-full / crash therefore never leaves a truncated report
+    // at output_path -- any previous good report there is preserved.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         if (error) {
             *error = QString("Failed to open %1: %2").arg(output_path, file.errorString());
@@ -90,7 +95,7 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
     }
 
     const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (file.write(data) != data.size()) {
+    if (file.write(data) != data.size() || !file.commit()) {
         if (error) {
             *error = QString("Incomplete write to %1").arg(output_path);
         }
@@ -99,18 +104,18 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
     return true;
 }
 
-/// @brief Flush a QTextStream + its QFile and report whether the full write reached disk.
-/// Catches both encoding/short-write failures (stream status) and disk-full flush failures.
-bool flushAndClose(QTextStream& stream, QFile& file) {
+/// @brief Flush a QTextStream and atomically commit its QSaveFile.
+/// @return true only if the full write reached disk and the atomic rename
+///         succeeded. Catches encoding/short-write failures (stream status) and
+///         disk-full/rename failures (commit()); on failure the temp is discarded
+///         and any prior file at the target is left intact.
+bool flushAndCommit(QTextStream& stream, QSaveFile& file) {
     stream.flush();
     if (stream.status() != QTextStream::Ok) {
+        file.cancelWriting();
         return false;
     }
-    if (!file.flush()) {
-        return false;
-    }
-    file.close();
-    return file.error() == QFileDevice::NoError;
+    return file.commit();
 }
 
 }  // anonymous namespace
@@ -140,7 +145,7 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
         logWarning("Failed to create directory: {}", html_dir.toStdString());
     }
 
-    QFile file(output_path);
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         const QString err =
             QString("Failed to open %1 for writing: %2").arg(output_path, file.errorString());
@@ -152,7 +157,7 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
     stream << html;
-    if (!flushAndClose(stream, file)) {
+    if (!flushAndCommit(stream, file)) {
         const QString err = QString("Incomplete write to %1").arg(output_path);
         Q_EMIT errorOccurred(err);
         logError("{}", err.toStdString());
@@ -363,7 +368,7 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
     if (!QDir().mkpath(csv_dir)) {
         logWarning("Failed to create directory: {}", csv_dir.toStdString());
     }
-    QFile file(output_path);
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Failed to open %1: %2").arg(output_path, file.errorString()));
         return false;
@@ -376,7 +381,7 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
     writeCsvSmartHealth(out);
     writeCsvBenchmarks(out);
 
-    if (!flushAndClose(out, file)) {
+    if (!flushAndCommit(out, file)) {
         Q_EMIT errorOccurred(QString("Incomplete write to %1").arg(output_path));
         return false;
     }

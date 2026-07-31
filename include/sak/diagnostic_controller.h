@@ -170,6 +170,26 @@ public:
     [[nodiscard]] static DiagnosticStatus statusWithStepFailures(DiagnosticStatus current,
                                                                  bool anyStepFailed);
 
+    /// @brief Which report formats a comma/anything-separated spec requests.
+    /// @param formats free-form text (e.g. "html,json"); matched case-insensitively.
+    /// @return the subset of {"html","json","csv"} present, in that order.
+    /// @note Lets generateReport require at least one real output instead of
+    ///       reporting success when the spec names no known format. Pure + static
+    ///       for unit testing.
+    [[nodiscard]] static QStringList requestedReportFormats(const QString& formats);
+
+    /// @brief Build a collision-free base path for a report set.
+    /// @param output_dir destination directory.
+    /// @param when the report timestamp.
+    /// @param counter a per-run monotonically increasing value.
+    /// @return "<dir>/SAK_Diagnostic_<yyyyMMdd_HHmmss_zzz>_<counter>".
+    /// @note Millisecond resolution + a counter so two reports generated in the
+    ///       same second (previously second-resolution) never overwrite each
+    ///       other. Pure + static for unit testing.
+    [[nodiscard]] static QString uniqueReportBaseName(const QString& output_dir,
+                                                      const QDateTime& when,
+                                                      quint64 counter);
+
 Q_SIGNALS:
     // -- Scan / Analysis Results ---------------------------------
 

@@ -22,6 +22,8 @@
 #include <QDir>
 #include <QtConcurrent>
 
+#include <atomic>
+
 namespace sak {
 
 namespace {
@@ -414,11 +416,40 @@ ThermalMonitor* DiagnosticController::thermalMonitor() const {
 // Report Generation
 // ============================================================================
 
+QStringList DiagnosticController::requestedReportFormats(const QString& formats) {
+    QStringList requested;
+    for (const auto& fmt :
+         {QStringLiteral("html"), QStringLiteral("json"), QStringLiteral("csv")}) {
+        if (formats.contains(fmt, Qt::CaseInsensitive)) {
+            requested.append(fmt);
+        }
+    }
+    return requested;
+}
+
+QString DiagnosticController::uniqueReportBaseName(const QString& output_dir,
+                                                   const QDateTime& when,
+                                                   quint64 counter) {
+    return QString("%1/SAK_Diagnostic_%2_%3")
+        .arg(output_dir, when.toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")))
+        .arg(counter);
+}
+
 void DiagnosticController::generateReport(const QString& output_dir,
                                           const QString& technician,
                                           const QString& ticket,
                                           const QString& notes,
                                           const QString& formats) {
+    // Require at least one real output. Previously a spec naming no known format
+    // wrote nothing yet still reported success.
+    const QStringList requested = requestedReportFormats(formats);
+    if (requested.isEmpty()) {
+        logError("Report generation requested with no valid format: '{}'", formats.toStdString());
+        Q_EMIT errorOccurred(
+            QString("No report format requested (expected html/json/csv): '%1'").arg(formats));
+        return;
+    }
+
     aggregateResults();
 
     m_report_data.technician_name = technician;
@@ -431,18 +462,21 @@ void DiagnosticController::generateReport(const QString& output_dir,
     if (!QDir().mkpath(output_dir)) {
         sak::logWarning("Failed to create report output directory: {}", output_dir.toStdString());
     }
-    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    const QString base_name = QString("%1/SAK_Diagnostic_%2").arg(output_dir, timestamp);
+    // Millisecond timestamp + a monotonic counter so reports generated in quick
+    // succession never collide on a second-resolution name.
+    static std::atomic<quint64> s_report_counter{0};
+    const QString base_name = uniqueReportBaseName(output_dir,
+                                                   m_report_data.report_timestamp,
+                                                   s_report_counter.fetch_add(1));
 
     bool success = true;
-
-    if (formats.contains("html", Qt::CaseInsensitive)) {
+    if (requested.contains("html")) {
         success &= m_report_generator->generateHtml(base_name + ".html");
     }
-    if (formats.contains("json", Qt::CaseInsensitive)) {
+    if (requested.contains("json")) {
         success &= m_report_generator->generateJson(base_name + ".json");
     }
-    if (formats.contains("csv", Qt::CaseInsensitive)) {
+    if (requested.contains("csv")) {
         success &= m_report_generator->generateCsv(base_name + ".csv");
     }
 
