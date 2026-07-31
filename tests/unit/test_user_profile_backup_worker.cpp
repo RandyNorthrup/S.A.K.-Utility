@@ -30,6 +30,9 @@ private Q_SLOTS:
 
     // ── Encryption not supported (P06-25) ───────────────────
     void testEncryptedBackupRefusedFailsClosed();
+
+    // ── B7-01: lifetime uses QThread state, not a late member flag ──
+    void testStartThenImmediateDestroyIsSafe();
 };
 
 // ============================================================================
@@ -101,6 +104,33 @@ void TestUserProfileBackupWorker::testEncryptedBackupRefusedFailsClosed() {
     worker.wait();
     QVERIFY(!successFlag);
     QVERIFY(message.contains("not supported"));
+}
+
+// ============================================================================
+// B7-01: isRunning() now reflects QThread state (true the instant start()
+// returns), so destroying a worker right after startBackup() -- with NO prior
+// wait() -- cancels and joins the live thread instead of tearing it down
+// mid-run. The old late-set member flag left a window where the destructor saw
+// "not running" and aborted with "QThread: Destroyed while thread is running".
+// ============================================================================
+
+void TestUserProfileBackupWorker::testStartThenImmediateDestroyIsSafe() {
+    for (int i = 0; i < 5; ++i) {
+        UserProfileBackupWorker worker;
+        UserProfile user;
+        user.username = "tester";
+        user.profile_path = QDir::tempPath();
+        user.is_selected = true;
+        UserProfileBackupWorker::BackupOptions options;
+        options.encrypt = true;  // run() self-terminates quickly -- keeps the test fast
+        worker.startBackup(BackupManifest{},
+                           {user},
+                           QDir::tempPath() + "/sak_up_b7_01_dest",
+                           SmartFilter{},
+                           options);
+        // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
+    }
+    QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
 }
 
 QTEST_MAIN(TestUserProfileBackupWorker)

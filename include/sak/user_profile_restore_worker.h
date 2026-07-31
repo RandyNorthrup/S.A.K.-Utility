@@ -60,10 +60,9 @@ public:
      */
     void cancel();
 
-    /**
-     * @brief Check if worker is currently running
-     */
-    bool isRunning() const { return m_running; }
+    // isRunning() is intentionally NOT overridden -- QThread::isRunning() is the source of truth
+    // (true from the moment start() returns), so the destructor and the second-start guard cannot
+    // race the late member flag that run() used to set.
 
 Q_SIGNALS:
     /**
@@ -154,7 +153,6 @@ private:
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};
-    std::atomic<bool> m_running{false};
     QMutex m_mutex;
 
     qint64 m_totalBytesToRestore{0};

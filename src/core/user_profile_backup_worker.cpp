@@ -70,7 +70,7 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                    options.compression_level <= kBackupWorkerMaxCompressionLevel,
                "startBackup",
                "compressionLevel must be 0-9");
-    if (m_running) {
+    if (isRunning()) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
     }
@@ -106,7 +106,6 @@ void UserProfileBackupWorker::cancel() {
 
 void UserProfileBackupWorker::run() {
     Q_ASSERT(!m_users.isEmpty());
-    m_running = true;
 
     Q_EMIT logMessage(tr("=== Backup Started ==="), false);
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
@@ -117,14 +116,12 @@ void UserProfileBackupWorker::run() {
     if (m_encrypt) {
         Q_EMIT logMessage(tr("Encrypted backup is not supported; aborting"), true);
         Q_EMIT backupComplete(false, tr("Encrypted backup is not supported"), m_manifest);
-        m_running = false;
         return;
     }
 
     // Validate inputs
     if (!validateSourcePaths()) {
         Q_EMIT backupComplete(false, tr("Invalid source paths"), m_manifest);
-        m_running = false;
         return;
     }
 
@@ -140,14 +137,12 @@ void UserProfileBackupWorker::run() {
     // Check disk space
     if (!checkDiskSpace()) {
         Q_EMIT backupComplete(false, tr("Insufficient disk space"), m_manifest);
-        m_running = false;
         return;
     }
 
     // Create backup directory structure
     if (!createBackupStructure()) {
         Q_EMIT backupComplete(false, tr("Failed to create backup structure"), m_manifest);
-        m_running = false;
         return;
     }
 
@@ -158,14 +153,11 @@ void UserProfileBackupWorker::run() {
     // through to the success summary (exactly one terminal signal is emitted).
     if (m_cancelled) {
         Q_EMIT backupComplete(false, tr("Backup cancelled"), m_manifest);
-        m_running = false;
         return;
     }
 
     // Save manifest and emit summary
     emitBackupSummary();
-
-    m_running = false;
 }
 
 void UserProfileBackupWorker::backupAllUsers() {

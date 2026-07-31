@@ -117,7 +117,7 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             const RestoreConfig& config) {
     Q_ASSERT_X(!backupPath.isEmpty(), "startRestore", "backupPath must not be empty");
     Q_ASSERT_X(!mappings.isEmpty(), "startRestore", "mappings must not be empty");
-    if (m_running) {
+    if (isRunning()) {
         Q_EMIT logMessage(tr("Restore already in progress"), true);
         return;
     }
@@ -148,7 +148,6 @@ void UserProfileRestoreWorker::cancel() {
 
 void UserProfileRestoreWorker::run() {
     Q_ASSERT(!m_mappings.isEmpty());
-    m_running = true;
 
     Q_EMIT logMessage(tr("=== Restore Started ==="), false);
     Q_EMIT logMessage(tr("Backup: %1").arg(m_backupPath), false);
@@ -157,7 +156,6 @@ void UserProfileRestoreWorker::run() {
     // Validate backup
     if (!validateBackup()) {
         Q_EMIT restoreComplete(false, tr("Invalid backup"));
-        m_running = false;
         return;
     }
 
@@ -171,7 +169,6 @@ void UserProfileRestoreWorker::run() {
         if (m_cancelled) {
             Q_EMIT logMessage(tr("Restore cancelled by user"), true);
             Q_EMIT restoreComplete(false, tr("Restore cancelled"));
-            m_running = false;
             return;
         }
 
@@ -210,8 +207,6 @@ void UserProfileRestoreWorker::run() {
     // refused reparse point); a partial restore must not read as clean success.
     const bool success = (m_filesErrored == 0);
     Q_EMIT restoreComplete(success, summary);
-
-    m_running = false;
 }
 
 bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {

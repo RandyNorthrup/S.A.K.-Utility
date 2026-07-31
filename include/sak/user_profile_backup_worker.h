@@ -56,10 +56,10 @@ public:
      */
     void cancel();
 
-    /**
-     * @brief Check if backup is currently running
-     */
-    bool isRunning() const { return m_running; }
+    // isRunning() is intentionally NOT overridden -- QThread::isRunning() is the source of truth.
+    // It is true from the moment start() returns (Qt sets the running state inside start(), before
+    // run() begins), closing the window where a late-set member flag let the destructor tear down
+    // a live thread or a second startBackup() slip past the guard.
 
     /// @brief Check if current process can read the given path
     [[nodiscard]] static bool canReadPath(const QString& path);
@@ -161,7 +161,6 @@ private:
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};
-    std::atomic<bool> m_running{false};
     QMutex m_mutex;
 
     qint64 m_totalBytesToCopy{0};

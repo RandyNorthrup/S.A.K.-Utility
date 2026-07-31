@@ -139,6 +139,9 @@ private slots:
     // ---- Signals ----
     void restoreCompleteSignalEmitted();
     void logMessageSignalEmitted();
+
+    // ---- B7-01: lifetime uses QThread state, not a late member flag ----
+    void startThenImmediateDestroyIsSafe();
 };
 
 // ===========================================================================
@@ -823,6 +826,49 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
 }
 
 // ===========================================================================
+
+// ===========================================================================
+// Tests -- B7-01 lifetime
+// ===========================================================================
+
+// isRunning() now reflects QThread state (true the instant start() returns), so
+// destroying a worker right after startRestore() -- with NO prior wait() -- cancels
+// and joins the live thread instead of aborting with "QThread: Destroyed while
+// thread is still running" (the old late-set member flag left that window open).
+void UserProfileRestoreWorkerTests::startThenImmediateDestroyIsSafe() {
+    for (int i = 0; i < 5; ++i) {
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        const QString username = QStringLiteral("DestroyUser");
+        for (int f = 0; f < 40; ++f) {
+            writeFile(backupDir.path() + "/" + username + "/Documents/f" + QString::number(f) +
+                          ".txt",
+                      QByteArray(4096, 'Z'));
+        }
+        writeFile(backupDir.path() + "/manifest.json", "{}");
+
+        QTemporaryDir destDir;
+        QVERIFY(destDir.isValid());
+        qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+        auto folder = makeFolder(sak::FolderType::Documents,
+                                 QStringLiteral("Documents"),
+                                 QStringLiteral("Documents"),
+                                 40 * 4096,
+                                 40);
+        auto manifest = buildManifest(username, {folder});
+        auto mapping = makeMapping(username);
+
+        sak::UserProfileRestoreWorker worker;
+        worker.startRestore(
+            backupDir.path(),
+            manifest,
+            {mapping},
+            {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+        // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
+    }
+    QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
+}
 
 QTEST_MAIN(UserProfileRestoreWorkerTests)
 #include "test_user_profile_restore_worker.moc"
