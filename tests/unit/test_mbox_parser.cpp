@@ -53,6 +53,10 @@ private Q_SLOTS:
     // -- B7-24: a stale cancel must not block later reads ----------------
     void cancelDoesNotBlockLaterReads();
 
+    // -- B7-33: MIME boundary + single-part attachment parsing -----------
+    void singlePartAttachmentNotTreatedAsBody();
+    void boundaryPrefixLineNotTreatedAsBoundary();
+
 private:
     /// Create a temp file with valid MBOX content
     QTemporaryFile* createSampleMboxFile();
@@ -572,6 +576,70 @@ void TestMboxParser::cancelDoesNotBlockLaterReads() {
 
     parser.close();
     delete temp_file;
+}
+
+// A single-part message that is itself a file (application/pdf marked as an
+// attachment) must surface as an attachment, not as garbled body text (B7-33).
+void TestMboxParser::singlePartAttachmentNotTreatedAsBody() {
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    QByteArray c;
+    c += "From x@example.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: A PDF\r\n";
+    c += "MIME-Version: 1.0\r\n";
+    c += "Content-Type: application/pdf; name=\"doc.pdf\"\r\n";
+    c += "Content-Transfer-Encoding: base64\r\n";
+    c += "Content-Disposition: attachment; filename=\"doc.pdf\"\r\n";
+    c += "\r\n";
+    c += "SGVsbG8gUERG\r\n";  // "Hello PDF"
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("doc.pdf"));
+    QVERIFY(detail->body_plain.isEmpty());  // NOT dumped into the body
+    parser.close();
+}
+
+// A body line that merely shares the boundary PREFIX ("--ABCDEF" vs boundary
+// "ABC") must not be treated as a MIME boundary and split the message (B7-33).
+void TestMboxParser::boundaryPrefixLineNotTreatedAsBoundary() {
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    QByteArray c;
+    c += "From x@example.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: Multipart\r\n";
+    c += "MIME-Version: 1.0\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"ABC\"\r\n";
+    c += "\r\n";
+    c += "--ABC\r\n";
+    c += "Content-Type: text/plain\r\n";
+    c += "\r\n";
+    c += "Line one.\r\n";
+    c += "--ABCDEF is not a boundary.\r\n";
+    c += "Line three.\r\n";
+    c += "--ABC--\r\n";
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    // The whole part body survived: the prefix-sharing line stayed in the text.
+    QVERIFY(detail->body_plain.contains(QStringLiteral("--ABCDEF is not a boundary.")));
+    QVERIFY(detail->body_plain.contains(QStringLiteral("Line three.")));
+    parser.close();
 }
 
 QTEST_MAIN(TestMboxParser)

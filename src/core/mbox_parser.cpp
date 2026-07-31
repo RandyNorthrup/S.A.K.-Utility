@@ -456,6 +456,20 @@ std::pair<int, int> findBodyBoundary(const QByteArray& data) {
     return {header_end, body_start};
 }
 
+/// True only for a real MIME boundary delimiter line (RFC 2046 §5.1.1): the line
+/// is exactly "--<boundary>" (opening) or "--<boundary>--" (closing), allowing
+/// only trailing linear whitespace. A body line that merely SHARES the delimiter
+/// prefix (e.g. delimiter "--sep" and content line "--separator") is not a
+/// boundary, so it must not split the message (B7-33). `line` is already stripped
+/// of a trailing CR.
+bool isBoundaryDelimiterLine(const QByteArray& line, const QByteArray& delimiter) {
+    if (!line.startsWith(delimiter)) {
+        return false;
+    }
+    const QByteArray rest = line.mid(delimiter.size()).trimmed();
+    return rest.isEmpty() || rest == QByteArrayLiteral("--");
+}
+
 /// Split a multipart body into MIME parts using the delimiter
 QVector<QByteArray> splitMimeParts(const QByteArray& body, const QByteArray& delimiter) {
     QVector<QByteArray> mime_parts;
@@ -468,12 +482,14 @@ QVector<QByteArray> splitMimeParts(const QByteArray& body, const QByteArray& del
         if (trimmed.endsWith('\r')) {
             trimmed.chop(1);
         }
-        if (trimmed.startsWith(delimiter)) {
+        if (isBoundaryDelimiterLine(trimmed, delimiter)) {
             if (in_part && !current_part.isEmpty()) {
                 mime_parts.append(current_part);
                 current_part.clear();
             }
-            in_part = !trimmed.endsWith(QByteArrayLiteral("--"));
+            // A closing delimiter ("--<boundary>--") ends the multipart; an opening
+            // one ("--<boundary>") starts the next part.
+            in_part = !trimmed.trimmed().endsWith(QByteArrayLiteral("--"));
             continue;
         }
         if (!in_part) {
@@ -680,6 +696,20 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
     QString charset = extractCharset(content_type);
 
     if (!content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
+        const QString disposition = headers.value(QStringLiteral("content-disposition"));
+        const bool is_attachment = disposition.startsWith(QLatin1String("attachment"),
+                                                          Qt::CaseInsensitive);
+        const bool is_non_text = !content_type.startsWith(QLatin1String("text/"),
+                                                          Qt::CaseInsensitive);
+        if (is_attachment || is_non_text) {
+            // A single-part message that is itself a file (e.g. a lone PDF, or one
+            // marked Content-Disposition: attachment) must be exposed as an
+            // attachment, not decoded into garbled body text (B7-33).
+            MimePartInfo mime_part{body, content_type, transfer_enc, disposition, headers};
+            int attachment_idx = 0;
+            appendAttachment(mime_part, detail, attachment_idx);
+            return;
+        }
         parseSinglePart(body, content_type, transfer_enc, charset, detail);
         return;
     }
