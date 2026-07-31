@@ -12,6 +12,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryFile>
 #include <QThread>
 
@@ -23,57 +24,26 @@ constexpr qsizetype kAdapterCountPrefixLength = 9;
 
 ResetNetworkAction::ResetNetworkAction(QObject* parent) : QuickAction(parent) {}
 
-void ResetNetworkAction::flushDNS() {
-    Q_EMIT executionProgress("Flushing DNS cache...", progress::kStep20);
-    ProcessResult proc =
-        runProcess("ipconfig", QStringList() << "/flushdns", sak::kTimeoutNetworkReadMs);
-    if (!proc.succeeded()) {
-        Q_EMIT logMessage("Flush DNS warning: " + proc.std_err.trimmed());
-    }
+QString ResetNetworkAction::buildAdapterResetScript() {
+    // Restart-NetAdapter is non-terminating: a per-adapter failure would leave
+    // $LASTEXITCODE 0 and read as success. Force Stop + try/catch so any adapter
+    // error terminates the pipeline and the process exits 1 (recorded as a
+    // failure by the caller).
+    return QStringLiteral(
+        "$ErrorActionPreference = 'Stop'\n"
+        "try {\n"
+        "    Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {\n"
+        "        Restart-NetAdapter -Name $_.Name -Confirm:$false -ErrorAction Stop\n"
+        "    }\n"
+        "    exit 0\n"
+        "} catch {\n"
+        "    Write-Error $_.Exception.Message\n"
+        "    exit 1\n"
+        "}\n");
 }
 
-void ResetNetworkAction::resetWinsock() {
-    Q_EMIT executionProgress("Resetting Winsock catalog...", progress::kStep40);
-    ProcessResult proc =
-        runProcess("netsh", QStringList() << "winsock" << "reset", sak::kTimeoutNetworkReadMs);
-    if (!proc.succeeded()) {
-        Q_EMIT logMessage("Winsock reset warning: " + proc.std_err.trimmed());
-    }
-    m_requires_reboot = true;
-}
-
-void ResetNetworkAction::resetTCPIP() {
-    Q_EMIT executionProgress("Resetting TCP/IP stack...", progress::kStep60);
-    ProcessResult proc =
-        runProcess("netsh", QStringList() << "int" << "ip" << "reset", sak::kTimeoutNetworkReadMs);
-    if (!proc.succeeded()) {
-        Q_EMIT logMessage("TCP/IP reset warning: " + proc.std_err.trimmed());
-    }
-    m_requires_reboot = true;
-}
-
-void ResetNetworkAction::releaseRenewIP() {
-    Q_EMIT executionProgress("Releasing and renewing IP address...", progress::kStep80);
-    ProcessResult release_proc =
-        runProcess("ipconfig", QStringList() << "/release", sak::kTimeoutNetworkReadMs);
-    if (!release_proc.succeeded()) {
-        Q_EMIT logMessage("IP release warning: " + release_proc.std_err.trimmed());
-    }
-    QThread::msleep(sak::kTimerProgressPollMs);
-    ProcessResult renew_proc =
-        runProcess("ipconfig", QStringList() << "/renew", sak::kTimeoutNetworkReadMs);
-    if (!renew_proc.succeeded()) {
-        Q_EMIT logMessage("IP renew warning: " + renew_proc.std_err.trimmed());
-    }
-}
-
-void ResetNetworkAction::resetFirewall() {
-    Q_EMIT executionProgress("Resetting firewall to defaults...", progress::kStep90);
-    ProcessResult proc =
-        runProcess("netsh", QStringList() << "advfirewall" << "reset", sak::kTimeoutNetworkReadMs);
-    if (!proc.succeeded()) {
-        Q_EMIT logMessage("Firewall reset warning: " + proc.std_err.trimmed());
-    }
+bool ResetNetworkAction::stepFailed(bool timed_out, int exit_code) {
+    return timed_out || exit_code != 0;
 }
 
 void ResetNetworkAction::scan() {
@@ -118,8 +88,14 @@ void ResetNetworkAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     m_requires_reboot = false;
     m_winsock_backup_path.clear();
+    m_firewall_backup_path.clear();
     QStringList errors;
 
+    // Capture a Winsock backup before touching anything destructive; abort the
+    // whole reset if it cannot be captured (emits its own failed result).
+    if (!executeBackupWinsock(errors, start_time)) {
+        return;
+    }
     if (!executeFlushDns(errors)) {
         emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
@@ -136,13 +112,14 @@ void ResetNetworkAction::execute() {
     executeBuildReport(errors, start_time);
 }
 
-bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
-    // Step 1: Backup current Winsock configuration
+bool ResetNetworkAction::executeBackupWinsock(QStringList& errors, const QDateTime& start_time) {
+    // Step 1: Backup current Winsock configuration BEFORE any destructive reset.
     Q_EMIT executionProgress("Backing up Winsock catalog...", progress::kStep5);
 
     QTemporaryFile backupFile(QDir::temp().filePath(QStringLiteral("sak_winsock_XXXXXX.txt")));
+    QString backupError;
     if (!backupFile.open()) {
-        errors << "Failed to create temp file for Winsock backup";
+        backupError = "Failed to create temp file for Winsock backup";
     } else {
         const QString backupPath = backupFile.fileName();
         backupFile.close();
@@ -153,10 +130,8 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
         ProcessResult proc = runProcess("netsh",
                                         QStringList() << "winsock" << "show" << "catalog",
                                         sak::kTimeoutNetworkReadMs);
-        if (proc.timed_out) {
-            errors << "Winsock backup timed out";
-        } else if (proc.exit_code != 0) {
-            errors << QString("Winsock backup failed (exit %1)").arg(proc.exit_code);
+        if (stepFailed(proc.timed_out, proc.exit_code)) {
+            backupError = QString("Winsock backup failed (exit %1)").arg(proc.exit_code);
         } else {
             // Only retain and report a backup that actually wrote successfully; on any
             // failure the QTemporaryFile auto-removes so no empty/false backup survives.
@@ -164,7 +139,7 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
             const QByteArray bytes = proc.std_out.toUtf8();
             if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
                 out.write(bytes) != bytes.size() || !out.flush()) {
-                errors << "Failed to write Winsock backup file";
+                backupError = "Failed to write Winsock backup file";
             } else {
                 out.close();
                 backupFile.setAutoRemove(false);
@@ -173,6 +148,26 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
         }
     }
 
+    if (!backupError.isEmpty()) {
+        // Fail closed: do not run a destructive network reset with no rollback
+        // reference captured.
+        errors << backupError;
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Network reset aborted: Winsock backup failed";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        result.log =
+            "Aborted before any change because the pre-reset Winsock backup could not "
+            "be captured:\n" +
+            backupError;
+        finishWithResult(result, ActionStatus::Failed);
+        return false;
+    }
+
+    return true;
+}
+
+bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     if (isCancelled()) {
         return false;
     }
@@ -182,9 +177,7 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     {
         ProcessResult proc =
             runProcess("ipconfig", QStringList() << "/flushdns", sak::kTimeoutNetworkReadMs);
-        if (proc.timed_out) {
-            errors << "DNS flush timed out";
-        } else if (proc.exit_code != 0) {
+        if (stepFailed(proc.timed_out, proc.exit_code)) {
             errors << QString("DNS flush failed (exit %1)").arg(proc.exit_code);
         }
     }
@@ -266,18 +259,8 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
         return false;
     }
 
-    // Step 6: Reset Windows Firewall to defaults
-    Q_EMIT executionProgress("Resetting Windows Firewall...", progress::kStep80);
-    {
-        ProcessResult proc = runProcess("netsh",
-                                        QStringList() << "advfirewall" << "reset",
-                                        sak::kTimeoutNetworkReadMs);
-        if (proc.timed_out) {
-            errors << "Firewall reset timed out";
-        } else if (proc.exit_code != 0) {
-            errors << QString("Firewall reset failed (exit %1)").arg(proc.exit_code);
-        }
-    }
+    // Step 6: Export custom firewall rules, then reset (only if export succeeded)
+    executeResetFirewall(errors);
 
     if (isCancelled()) {
         return false;
@@ -286,18 +269,58 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
     return executeResetAdaptersAndCache(errors);
 }
 
+void ResetNetworkAction::executeResetFirewall(QStringList& errors) {
+    Q_EMIT executionProgress("Backing up firewall rules...", progress::kStep75);
+    const QString backup = exportFirewallRules(errors);
+    if (backup.isEmpty()) {
+        // Fail closed for the firewall specifically: without a rules backup, do
+        // NOT wipe potentially custom rules. Recorded as an error so overall
+        // success reflects it; the rest of the reset still proceeds.
+        errors << "Firewall reset skipped: rules backup failed (custom rules preserved)";
+        return;
+    }
+
+    Q_EMIT executionProgress("Resetting Windows Firewall...", progress::kStep80);
+    ProcessResult proc =
+        runProcess("netsh", QStringList() << "advfirewall" << "reset", sak::kTimeoutNetworkReadMs);
+    if (stepFailed(proc.timed_out, proc.exit_code)) {
+        errors << QString("Firewall reset failed (exit %1)").arg(proc.exit_code);
+    }
+}
+
+QString ResetNetworkAction::exportFirewallRules(QStringList& errors) {
+    QTemporaryFile backupFile(QDir::temp().filePath(QStringLiteral("sak_fw_XXXXXX.wfw")));
+    if (!backupFile.open()) {
+        errors << "Failed to create temp file for firewall backup";
+        return {};
+    }
+    const QString backupPath = backupFile.fileName();
+    backupFile.close();
+    // netsh writes the .wfw itself; remove the placeholder so export creates it
+    // fresh and we can verify it is non-empty afterwards.
+    QFile::remove(backupPath);
+
+    ProcessResult proc = runProcess("netsh",
+                                    QStringList() << "advfirewall" << "export" << backupPath,
+                                    sak::kTimeoutNetworkReadMs);
+    if (stepFailed(proc.timed_out, proc.exit_code) || QFileInfo(backupPath).size() <= 0) {
+        errors << QString("Firewall rules export failed (exit %1)").arg(proc.exit_code);
+        QFile::remove(backupPath);
+        return {};
+    }
+
+    backupFile.setAutoRemove(false);
+    m_firewall_backup_path = backupPath;
+    return backupPath;
+}
+
 bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     // Step 7: Reset network adapter settings
     Q_EMIT executionProgress("Resetting network adapters...", progress::kStep85);
-    QString resetAdapterScript =
-        "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { "
-        "  Restart-NetAdapter -Name $_.Name -Confirm:$false "
-        "}";
     {
-        ProcessResult adapterReset = runPowerShell(resetAdapterScript, sak::kTimeoutNetworkReadMs);
-        if (adapterReset.timed_out) {
-            errors << "Adapter restart timed out";
-        } else if (adapterReset.exit_code != 0) {
+        ProcessResult adapterReset = runPowerShell(buildAdapterResetScript(),
+                                                   sak::kTimeoutNetworkReadMs);
+        if (stepFailed(adapterReset.timed_out, adapterReset.exit_code)) {
             errors << QString("Adapter restart failed (exit %1)").arg(adapterReset.exit_code);
         }
         if (!adapterReset.std_err.trimmed().isEmpty()) {
@@ -350,29 +373,33 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
     }
     QString verifyOutput = verifyProc.std_out;
 
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    // Gate success on the verify probe: a timed-out / non-zero verification means
+    // we could not confirm the reset landed, so it must not be reported as a clean
+    // success. (Previously the verify result was logged but ignored.)
+    QStringList all_errors = errors;
+    if (stepFailed(verifyProc.timed_out, verifyProc.exit_code)) {
+        all_errors << QString("Network verification failed (exit %1)").arg(verifyProc.exit_code);
+    }
 
     ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.success = errors.isEmpty();
-    result.message = errors.isEmpty()
-                         ? "Network settings reset successfully"
-                         : QString("Network reset completed with %1 issue(s)").arg(errors.size());
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    result.success = all_errors.isEmpty();
+    result.message =
+        all_errors.isEmpty()
+            ? "Network settings reset successfully"
+            : QString("Network reset completed with %1 issue(s)").arg(all_errors.size());
 
     if (m_requires_reboot) {
         result.message += " - REBOOT REQUIRED for Winsock/TCP-IP changes";
     }
 
-    if (!m_winsock_backup_path.isEmpty()) {
-        result.log = QString("Winsock backup saved to: %1\n\nVerification:\n%2")
-                         .arg(m_winsock_backup_path)
-                         .arg(verifyOutput);
-    } else {
-        result.log = QString("Winsock backup unavailable\n\nVerification:\n%1").arg(verifyOutput);
-    }
+    result.log = QString("Winsock backup: %1\nFirewall rules backup: %2\n\nVerification:\n%3")
+                     .arg(m_winsock_backup_path.isEmpty() ? "unavailable" : m_winsock_backup_path,
+                          m_firewall_backup_path.isEmpty() ? "unavailable" : m_firewall_backup_path,
+                          verifyOutput);
 
-    if (!errors.isEmpty()) {
-        result.log += "\nErrors:\n" + errors.join("\n");
+    if (!all_errors.isEmpty()) {
+        result.log += "\nErrors:\n" + all_errors.join("\n");
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
