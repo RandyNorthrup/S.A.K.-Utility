@@ -55,6 +55,10 @@ private Q_SLOTS:
 
     // Clear
     void clear_removesAllKeys();
+
+    // B5 tail: settings-store health is checked, not silently ignored.
+    void sync_reportsHealthy();
+    void describeSettingsStatus_mapsErrors();
 };
 
 void ConfigManagerTests::cleanup() {
@@ -230,6 +234,27 @@ void ConfigManagerTests::clear_removesAllKeys() {
 
     mgr.clear();
     QVERIFY(!mgr.contains("test/clear_me"));
+}
+
+// ============================================================================
+// B5 tail: settings-store health
+// ============================================================================
+
+// A normal writable config syncs successfully and reports healthy; previously
+// sync() ignored QSettings::status() entirely (a failed disk write looked ok).
+void ConfigManagerTests::sync_reportsHealthy() {
+    auto& mgr = sak::ConfigManager::instance();
+    mgr.setValue("test/sync_probe", 7);
+    QVERIFY(mgr.sync());
+    QVERIFY(mgr.isHealthy());
+}
+
+// The status->message mapping used by sync()/init is well-formed: NoError is
+// empty (no error to report); real errors carry a non-empty message.
+void ConfigManagerTests::describeSettingsStatus_mapsErrors() {
+    QVERIFY(sak::ConfigManager::describeSettingsStatus(QSettings::NoError).isEmpty());
+    QVERIFY(!sak::ConfigManager::describeSettingsStatus(QSettings::AccessError).isEmpty());
+    QVERIFY(!sak::ConfigManager::describeSettingsStatus(QSettings::FormatError).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ConfigManagerTests)

@@ -80,9 +80,25 @@ public:
     void resetToDefaults();
 
     /**
-     * @brief Sync settings to disk
+     * @brief Sync settings to disk.
+     * @return true if the store is healthy after the flush; false if QSettings
+     *         reported an access/format error (the persist did not fully succeed).
+     * @note Previously this ignored QSettings::status(), so a failed write to
+     *       disk (permission/full-disk) looked like a successful save.
      */
-    void sync();
+    bool sync();
+
+    /**
+     * @brief Whether the settings store is currently healthy.
+     * @return true iff QSettings::status() == NoError (no access/format error).
+     */
+    [[nodiscard]] bool isHealthy() const;
+
+    /**
+     * @brief Human-readable message for a QSettings status (empty for NoError).
+     * @note Pure + static for unit testing.
+     */
+    [[nodiscard]] static QString describeSettingsStatus(QSettings::Status status);
 
     // Backup settings
     [[nodiscard]] int getBackupThreadCount() const;

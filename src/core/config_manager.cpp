@@ -38,6 +38,15 @@ ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
     m_settings = std::make_unique<QSettings>(sak::app_paths::configFilePath(),
                                              QSettings::IniFormat);
     // make_unique throws on allocation failure, so m_settings is always valid here.
+    // Surface a corrupt/unreadable config at load rather than silently proceeding
+    // on an empty store: getValue() would then hand back defaults as if the file
+    // were simply new.
+    const QString load_error = describeSettingsStatus(m_settings->status());
+    if (!load_error.isEmpty()) {
+        logError("ConfigManager: {} at '{}'",
+                 load_error.toStdString(),
+                 m_settings->fileName().toStdString());
+    }
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
 }
@@ -144,8 +153,32 @@ void ConfigManager::resetToDefaults() {
     logInfo("Settings reset to defaults");
 }
 
-void ConfigManager::sync() {
+QString ConfigManager::describeSettingsStatus(QSettings::Status status) {
+    switch (status) {
+    case QSettings::NoError:
+        return {};
+    case QSettings::AccessError:
+        return QStringLiteral("settings access error (permission denied or file locked)");
+    case QSettings::FormatError:
+        return QStringLiteral("settings format error (config file is corrupt)");
+    }
+    return QStringLiteral("unknown settings error");
+}
+
+bool ConfigManager::isHealthy() const {
+    return m_settings->status() == QSettings::NoError;
+}
+
+bool ConfigManager::sync() {
     m_settings->sync();
+    // Check status: sync() itself is void in Qt, so a failed disk write is only
+    // observable here. Report it instead of pretending the save succeeded.
+    const QSettings::Status status = m_settings->status();
+    if (status != QSettings::NoError) {
+        logError("ConfigManager::sync failed: {}", describeSettingsStatus(status).toStdString());
+        return false;
+    }
+    return true;
 }
 
 // Backup settings
