@@ -22,6 +22,20 @@ constexpr int kByteSizePrecisionSmall = 1;
 constexpr int kByteSizePrecisionLarge = 2;
 constexpr int kFolderTreeIndentSpacesPerLevel = 2;
 
+/// Quote a value as one RFC 4180 CSV cell: neutralize spreadsheet formula
+/// injection (a leading = + - @ or tab/CR is prefixed with a single quote) and
+/// double any embedded quotes. The file path was previously interpolated raw into
+/// a "%1" slot, so a value containing a quote broke the row (B7-34).
+QString csvCell(const QString& value) {
+    QString out = value;
+    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r");
+    if (!out.isEmpty() && kFormulaLeads.contains(out.at(0))) {
+        out.prepend(QLatin1Char('\''));
+    }
+    out.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    return QLatin1Char('"') + out + QLatin1Char('"');
+}
+
 /// Format bytes into a human-readable string
 QString formatBytes(qint64 bytes) {
     if (bytes < sak::kBytesPerKB) {
@@ -351,9 +365,9 @@ QString EmailReportGenerator::generateCsv(const ReportData& data) {
     // Summary section
     stream << QStringLiteral("\"Email Inspection Report Summary\"\r\n\r\n");
     stream << QStringLiteral("\"Metric\",\"Value\"\r\n");
-    stream << QStringLiteral("\"File\",\"%1\"\r\n").arg(data.file_info.file_path);
-    stream
-        << QStringLiteral("\"Size\",\"%1\"\r\n").arg(formatBytes(data.file_info.file_size_bytes));
+    stream << QStringLiteral("\"File\",%1\r\n").arg(csvCell(data.file_info.file_path));
+    stream << QStringLiteral("\"Size\",%1\r\n")
+                  .arg(csvCell(formatBytes(data.file_info.file_size_bytes)));
     stream << QStringLiteral("\"Total Emails\",%1\r\n").arg(data.total_emails);
     stream << QStringLiteral("\"Total Contacts\",%1\r\n").arg(data.total_contacts);
     stream << QStringLiteral("\"Total Calendar Items\",%1\r\n").arg(data.total_calendar_items);

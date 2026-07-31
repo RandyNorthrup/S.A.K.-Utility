@@ -327,34 +327,39 @@ bool MigrationReport::importFromJson(const QString& file_path) {
 
     QJsonObject root = doc.object();
 
-    // Metadata
-    if (root.contains("metadata")) {
-        QJsonObject metadata = root["metadata"].toObject();
-        m_metadata.source_machine = metadata["source_machine"].toString();
-        m_metadata.source_os = metadata["source_os"].toString();
-        m_metadata.source_os_version = metadata["source_os_version"].toString();
-        m_metadata.created_by = metadata["created_by"].toString();
-        m_metadata.created_at = QDateTime::fromString(metadata["created_at"].toString(),
-                                                      Qt::ISODate);
-        m_metadata.total_apps = metadata["total_apps"].toInt();
-        m_metadata.matched_apps = metadata["matched_apps"].toInt();
-        m_metadata.selected_apps = metadata["selected_apps"].toInt();
-        m_metadata.match_rate = metadata["match_rate"].toDouble();
-        m_metadata.report_version = metadata["report_version"].toString();
-    }
-
-    // Entries: validate and parse into a local vector, committing only on
-    // success so a malformed import never silently wipes the current report.
+    // Validate the entries array BEFORE mutating ANY member: previously the metadata
+    // was written straight into m_metadata and only then were entries validated, so a
+    // rejected import left the report half-updated (new metadata, old entries) (B7-34).
     if (!root.contains("entries") || !root["entries"].isArray()) {
         sak::logWarning("[MigrationReport] Missing or invalid 'entries' array; import rejected");
         return false;
     }
+
+    // Parse metadata + entries into LOCALS; commit only after both succeed.
+    ReportMetadata meta = m_metadata;  // keep current values for any field the import omits
+    if (root.contains("metadata")) {
+        QJsonObject metadata = root["metadata"].toObject();
+        meta.source_machine = metadata["source_machine"].toString();
+        meta.source_os = metadata["source_os"].toString();
+        meta.source_os_version = metadata["source_os_version"].toString();
+        meta.created_by = metadata["created_by"].toString();
+        meta.created_at = QDateTime::fromString(metadata["created_at"].toString(), Qt::ISODate);
+        meta.total_apps = metadata["total_apps"].toInt();
+        meta.matched_apps = metadata["matched_apps"].toInt();
+        meta.selected_apps = metadata["selected_apps"].toInt();
+        meta.match_rate = metadata["match_rate"].toDouble();
+        meta.report_version = metadata["report_version"].toString();
+    }
+
     std::vector<MigrationEntry> parsed;
     const QJsonArray entries = root["entries"].toArray();
     std::transform(entries.begin(),
                    entries.end(),
                    std::back_inserter(parsed),
                    [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
+
+    // Atomic commit: the report is only updated once everything parsed cleanly.
+    m_metadata = meta;
     m_entries = std::move(parsed);
 
     return true;

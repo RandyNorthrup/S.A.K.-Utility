@@ -272,6 +272,65 @@ private Q_SLOTS:
         QVERIFY(saw_second);
     }
 
+    // The From line must be escaped exactly once: the angle brackets around the
+    // address render as brackets, not as literal "&lt;" text (B7-34).
+    void fromHeaderNotDoubleEscaped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("From test");
+        item.sender_name = QStringLiteral("Bob");
+        item.sender_email = QStringLiteral("bob@example.com");
+        item.body_plain = QStringLiteral("hi");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+
+        QVERIFY(content.contains("Bob &lt;bob@example.com&gt;"));  // single escape
+        QVERIFY(!content.contains("&amp;lt;"));                    // not double-escaped
+    }
+
+    // An inline image referenced by cid:<Content-ID> is embedded as a data URI; the
+    // cid: reference is resolved via the attachment's Content-ID, not its filename
+    // (B7-34).
+    void inlineImageEmbeddedByContentId() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Inline");
+        item.sender_email = QStringLiteral("a@test.com");
+        item.body_html = QStringLiteral("<p><img src=\"cid:img001\"></p>");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        sak::PstAttachmentInfo att;
+        att.filename = QStringLiteral("logo.png");
+        att.long_filename = QStringLiteral("logo.png");
+        att.content_id = QStringLiteral("img001");  // referenced by the body, not by filename
+        item.attachments.append(att);
+
+        QByteArray png = QByteArrayLiteral("\x89PNG\r\n\x1a\n");
+        png.append(64, '\0');
+        QVector<QPair<QString, QByteArray>> pairs;
+        pairs.append({QStringLiteral("logo.png"), png});
+
+        auto result = writer.writeMessage(item, pairs, QString());
+        QVERIFY(result.has_value());
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+
+        QVERIFY(content.contains("data:image/png;base64,"));  // embedded
+        QVERIFY(!content.contains("cid:img001"));             // reference resolved
+    }
+
     // ====================================================================
     // B7-05: untrusted email HTML must not carry active content into the
     // saved page, and the page must ship a strict CSP.

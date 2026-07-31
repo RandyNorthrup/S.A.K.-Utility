@@ -73,6 +73,13 @@ private:
                                                           const sak::EmailSearchCriteria& criteria,
                                                           PstParser* parser) const;
 
+    /// Field matchers below each check their own enable flag and return nullopt when
+    /// disabled, so matchPstItem stays a flat first-hit chain.
+    [[nodiscard]] std::optional<MatchResult> matchPstSubject(
+        const sak::PstItemSummary& item, const sak::EmailSearchCriteria& criteria) const;
+    [[nodiscard]] std::optional<MatchResult> matchPstSender(
+        const sak::PstItemSummary& item, const sak::EmailSearchCriteria& criteria) const;
+
     /// Match PST item body text
     [[nodiscard]] std::optional<MatchResult> matchPstItemBody(
         const sak::PstItemSummary& item,
@@ -81,6 +88,20 @@ private:
 
     /// Match PST item attachment filenames
     [[nodiscard]] std::optional<MatchResult> matchPstItemAttachments(
+        const sak::PstItemSummary& item,
+        const sak::EmailSearchCriteria& criteria,
+        PstParser* parser) const;
+
+    /// Match PST item recipient fields (To/Cc/Bcc) -- criteria.search_recipients
+    /// was never evaluated before (B7-34).
+    [[nodiscard]] std::optional<MatchResult> matchPstItemRecipients(
+        const sak::PstItemSummary& item,
+        const sak::EmailSearchCriteria& criteria,
+        PstParser* parser) const;
+
+    /// Match a specific MAPI property value (advanced search) -- criteria's
+    /// mapi_property_id / mapi_property_value were never evaluated before (B7-34).
+    [[nodiscard]] std::optional<MatchResult> matchPstItemMapiProperty(
         const sak::PstItemSummary& item,
         const sak::EmailSearchCriteria& criteria,
         PstParser* parser) const;

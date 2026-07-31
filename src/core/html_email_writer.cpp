@@ -28,6 +28,24 @@ constexpr qsizetype kWebpRiffMinimumBytes = 8;
 constexpr qsizetype kWebpSignatureOffset = 8;
 constexpr qsizetype kWebpSignatureLength = 4;
 
+/// Content-ID of the attachment whose filename matches `name`, or empty if none.
+/// HTML inline images reference cid:<Content-ID>, not cid:<filename>, so the
+/// embedder needs the real Content-ID to substitute the data URI (B7-34).
+QString contentIdForAttachmentName(const PstItemDetail& item, const QString& name) {
+    for (const auto& att : item.attachments) {
+        const QString att_name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        if (att_name == name && !att.content_id.isEmpty()) {
+            return att.content_id;
+        }
+    }
+    return QString();
+}
+
+/// Sanitize the untrusted email HTML, then substitute any cid: inline-image
+/// references (by Content-ID, filename fallback) with embedded data URIs.
+QString embedInlineImages(const PstItemDetail& item,
+                          const QVector<QPair<QString, QByteArray>>& attachments);
+
 /// Escape HTML special characters
 QString escapeHtml(const QString& text) {
     QString escaped = text;
@@ -54,6 +72,29 @@ QString detectImageMime(const QByteArray& data) {
         return QStringLiteral("image/webp");
     }
     return QString();
+}
+
+QString embedInlineImages(const PstItemDetail& item,
+                          const QVector<QPair<QString, QByteArray>>& attachments) {
+    // Strip active content (script/handlers/js: URIs/framing tags) before writing;
+    // the page CSP is the hard backstop for anything that slips past.
+    QString body_html = sanitizeEmailBodyHtml(item.body_html);
+    for (const auto& [name, data] : attachments) {
+        const QString mime = detectImageMime(data);
+        if (mime.isEmpty()) {
+            continue;
+        }
+        const QString data_uri = QStringLiteral("data:") + mime + QStringLiteral(";base64,") +
+                                 QString::fromLatin1(data.toBase64());
+        // Primary: replace by the attachment's real Content-ID (how inline images are
+        // actually referenced); fall back to the filename for malformed messages.
+        const QString cid = contentIdForAttachmentName(item, name);
+        if (!cid.isEmpty()) {
+            body_html.replace(QStringLiteral("cid:") + cid, data_uri);
+        }
+        body_html.replace(QStringLiteral("cid:") + name, data_uri);
+    }
+    return body_html;
 }
 
 }  // namespace
@@ -173,9 +214,12 @@ void HtmlEmailWriter::buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail
         ts << QStringLiteral(
             "<div class=\"field\"><span class=\"label\">"
             "From:</span> ");
+        // Build with literal < > and escape ONCE: pre-inserting &lt;/&gt; here made
+        // escapeHtml re-escape the ampersands into "&amp;lt;", so the brackets showed
+        // as literal text instead of angle brackets (B7-34).
         ts << escapeHtml(item.sender_name.isEmpty()
                              ? item.sender_email
-                             : item.sender_name + " &lt;" + item.sender_email + "&gt;");
+                             : item.sender_name + " <" + item.sender_email + ">");
         ts << QStringLiteral("</div>\n");
     }
     if (!item.display_to.isEmpty()) {
@@ -231,20 +275,7 @@ QString HtmlEmailWriter::buildHtmlPage(
     // Body section
     ts << QStringLiteral("<div class=\"body\">\n");
     if (!item.body_html.isEmpty()) {
-        // Strip active content (script/handlers/js: URIs/framing tags) from the untrusted body
-        // before it is written; the CSP above is the hard backstop for anything that slips past.
-        QString body_html = sanitizeEmailBodyHtml(item.body_html);
-        // Embed images inline using data URIs
-        for (const auto& [name, data] : attachments) {
-            QString mime = detectImageMime(data);
-            if (!mime.isEmpty()) {
-                QString data_uri = QStringLiteral("data:") + mime + QStringLiteral(";base64,") +
-                                   QString::fromLatin1(data.toBase64());
-                // Replace CID references
-                body_html.replace(QStringLiteral("cid:") + name, data_uri);
-            }
-        }
-        ts << body_html;
+        ts << embedInlineImages(item, attachments);
     } else {
         ts << QStringLiteral("<pre>") << escapeHtml(item.body_plain) << QStringLiteral("</pre>\n");
     }

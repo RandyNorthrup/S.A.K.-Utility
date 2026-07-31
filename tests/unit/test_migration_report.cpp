@@ -60,6 +60,7 @@ private Q_SLOTS:
     void testHtmlEscapesMarkup();
     void testCsvNeutralizesFormula();
     void testImportRejectsInvalidPreservesEntries();
+    void testImportRejectPreservesMetadata();  // B7-34
     void testExportSuccessReportsTrue();
 
 private:
@@ -374,6 +375,26 @@ void TestMigrationReport::testImportRejectsInvalidPreservesEntries() {
     }
     QVERIFY(!m_report.importFromJson(bad));
     QCOMPARE(m_report.getEntryCount(), 2);
+}
+
+void TestMigrationReport::testImportRejectPreservesMetadata() {
+    // A rejected import must not half-apply: the metadata carried in an otherwise
+    // invalid file (no entries array) must NOT overwrite the current metadata (B7-34).
+    m_report.getMetadata().source_machine = QStringLiteral("ORIGINAL-PC");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("meta_no_entries.json");
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // Valid metadata but a missing "entries" array -> the import must be rejected.
+        const QByteArray payload = "{\"metadata\": {\"source_machine\": \"EVIL-PC\"}}";
+        QCOMPARE(f.write(payload), payload.size());
+    }
+
+    QVERIFY(!m_report.importFromJson(path));
+    QCOMPARE(m_report.getMetadata().source_machine, QStringLiteral("ORIGINAL-PC"));
 }
 
 // P06-40: a successful export returns true and writes a non-empty file.

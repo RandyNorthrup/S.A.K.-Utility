@@ -286,7 +286,7 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
     html.reserve(kReportHtmlReserveChars);
 
     html += QString::fromLatin1(report::kEnterpriseReportDocumentOpen)
-                .arg(QStringLiteral("S.A.K. Utility ??? Conversion Report"),
+                .arg(QStringLiteral("S.A.K. Utility - Conversion Report"),
                      report::enterpriseReportStyleSheet());
 
     html += QStringLiteral("<h1>Conversion Report</h1>");

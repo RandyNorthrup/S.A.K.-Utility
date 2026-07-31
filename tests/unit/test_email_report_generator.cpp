@@ -46,6 +46,7 @@ private Q_SLOTS:
     void csvReportContainsHeader();
     void csvReportContainsMetrics();
     void csvReportEmptyDataProducesValidCsv();
+    void csvEscapesFilePathQuote();  // B7-34
 
 private:
     EmailReportGenerator::ReportData createSampleData();
@@ -294,6 +295,17 @@ void TestEmailReportGenerator::csvReportEmptyDataProducesValidCsv() {
 
     QVERIFY(!csv.isEmpty());
     QVERIFY(csv.contains(QStringLiteral("Metric")));
+}
+
+void TestEmailReportGenerator::csvEscapesFilePathQuote() {
+    // A file path with an embedded quote must be escaped (doubled) so it cannot
+    // break the CSV row -- it was interpolated raw into a "%1" slot before (B7-34).
+    EmailReportGenerator generator;
+    EmailReportGenerator::ReportData data;
+    data.file_info.file_path = QStringLiteral("C:/od\"d/mail.pst");
+    const QString csv = generator.generateCsv(data);
+
+    QVERIFY(csv.contains(QStringLiteral("\"C:/od\"\"d/mail.pst\"")));  // quote doubled
 }
 
 // ============================================================================
