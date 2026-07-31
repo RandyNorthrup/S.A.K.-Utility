@@ -49,6 +49,12 @@ private Q_SLOTS:
     // A normal xz stream still decodes under the bounded decoder memory limit.
     void realXzStreamDecodesUnderMemLimit();
 
+    // Concatenated members (pigz multi-member gzip, cat'd xz) decode in full,
+    // and trailing garbage after a member fails closed.
+    void concatenatedGzipMembersDecodeFully();
+    void concatenatedXzMembersDecodeFully();
+    void trailingGarbageAfterMemberFailsClosed();
+
 private:
     QTemporaryDir m_tempDir;
 
@@ -328,6 +334,70 @@ void StreamingDecompressorTests::realXzStreamDecodesUnderMemLimit() {
     QVERIFY(decomp != nullptr);
     QVERIFY(decomp->open(filePath("real.xz")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(payload.size()));
+}
+
+void StreamingDecompressorTests::concatenatedGzipMembersDecodeFully() {
+    // B8-12: pigz emits multi-member gzip -- two members concatenated in one file.
+    // The decoder must decode BOTH, not stop after the first (which would flash a
+    // truncated image).
+    QByteArray a(120'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        a[i] = static_cast<char>((i * 13 + 5) & 0xFF);
+    }
+    QByteArray b(90'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < b.size(); ++i) {
+        b[i] = static_cast<char>((i * 29 + 17) & 0xFF);
+    }
+    const QByteArray ga = gzipCompress(a);
+    const QByteArray gb = gzipCompress(b);
+    QVERIFY(!ga.isEmpty());
+    QVERIFY(!gb.isEmpty());
+    writeFile("multi.gz", ga + gb);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("multi.gz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("multi.gz")));
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(a.size() + b.size()));
+}
+
+void StreamingDecompressorTests::concatenatedXzMembersDecodeFully() {
+    // B8-12: two .xz streams concatenated (cat a.xz b.xz) must both decode.
+    QByteArray a(80'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        a[i] = static_cast<char>((i * 7 + 3) & 0xFF);
+    }
+    QByteArray b(50'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < b.size(); ++i) {
+        b[i] = static_cast<char>((i * 19 + 23) & 0xFF);
+    }
+    const QByteArray xa = xzCompress(a);
+    const QByteArray xb = xzCompress(b);
+    QVERIFY(!xa.isEmpty());
+    QVERIFY(!xb.isEmpty());
+    writeFile("multi.xz", xa + xb);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("multi.xz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("multi.xz")));
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(a.size() + b.size()));
+}
+
+void StreamingDecompressorTests::trailingGarbageAfterMemberFailsClosed() {
+    // B8-12: bytes after the last member that are not a valid next member must fail
+    // closed, not be silently accepted as a clean end.
+    QByteArray a(60'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        a[i] = static_cast<char>((i * 11 + 2) & 0xFF);
+    }
+    const QByteArray ga = gzipCompress(a);
+    QVERIFY(!ga.isEmpty());
+    // Append clearly non-gzip trailing bytes (gzip magic is 1F 8B).
+    writeFile("garbage.gz", ga + QByteArray(4096, static_cast<char>(0xFF)));
+
+    auto decomp = sak::DecompressorFactory::create(filePath("garbage.gz"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("garbage.gz")));
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));  // fail closed
 }
 
 QTEST_GUILESS_MAIN(StreamingDecompressorTests)

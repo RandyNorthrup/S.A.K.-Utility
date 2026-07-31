@@ -97,6 +97,39 @@ qint64 StreamingDecompressor::decompressedBytesProduced() const {
     return m_decompressedBytesProduced;
 }
 
+StreamingDecompressor::MemberBoundary StreamingDecompressor::onMemberEnd() {
+    // A compressed member ended. Concatenated formats put more members after it
+    // (pigz emits multi-member gzip; cat'd .xz/.bz2 streams), so only a true end of
+    // input is EOF. When input remains (buffered leftover or more on disk), reset the
+    // decoder and keep decoding so members are never dropped and trailing bytes are
+    // not silently accepted -- if what follows is not a valid next member, the
+    // continued decode fails closed (B8-12).
+    if (inputEmpty() && m_file.atEnd()) {
+        m_eof = true;
+        return MemberBoundary::finished;
+    }
+    if (!resetStreamForNextMember()) {
+        logError(m_lastError.toStdString());
+        return MemberBoundary::failed;
+    }
+    return MemberBoundary::continued;
+}
+
+bool StreamingDecompressor::isTruncatedStream(size_t output_before) {
+    // The decoder reported ok but made no progress and there is no more compressed
+    // input to give it: the stream ended before the decoder reached end-of-stream,
+    // i.e. it is truncated. Fail closed rather than returning the partial output as a
+    // clean EOF (which would, e.g., flash a truncated disk image with no warning).
+    if (!(m_input_exhausted && inputEmpty() && outputRemaining() == output_before)) {
+        return false;
+    }
+    m_lastError = QStringLiteral(
+        "Compressed stream is truncated: the input ended before the decoder "
+        "reached end-of-stream");
+    logError(m_lastError.toStdString());
+    return true;
+}
+
 bool StreamingDecompressor::pumpDecoder() {
     while (outputRemaining() > 0 && !m_eof) {
         if (!tryRefillInput()) {
@@ -106,24 +139,20 @@ bool StreamingDecompressor::pumpDecoder() {
         const size_t output_before = outputRemaining();
         const StepResult result = decompressStep();
         if (result == StepResult::stream_end) {
-            m_eof = true;
-            return true;
+            const MemberBoundary boundary = onMemberEnd();
+            if (boundary == MemberBoundary::failed) {
+                return false;
+            }
+            if (boundary == MemberBoundary::finished) {
+                return true;
+            }
+            continue;
         }
         if (result == StepResult::error) {
             logError(m_lastError.toStdString());
             return false;
         }
-
-        // The decoder reported ok but made no progress and there is no more
-        // compressed input to give it: the stream ended before the decoder
-        // reached end-of-stream, i.e. it is truncated. Fail closed rather than
-        // returning the partial output as a clean EOF (which would, e.g., flash a
-        // truncated disk image with no warning).
-        if (m_input_exhausted && inputEmpty() && outputRemaining() == output_before) {
-            m_lastError = QStringLiteral(
-                "Compressed stream is truncated: the input ended before the decoder "
-                "reached end-of-stream");
-            logError(m_lastError.toStdString());
+        if (isTruncatedStream(output_before)) {
             return false;
         }
     }

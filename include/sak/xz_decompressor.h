@@ -32,6 +32,7 @@ protected:
     [[nodiscard]] size_t outputRemaining() const override;
     [[nodiscard]] bool inputEmpty() const override;
     StepResult decompressStep() override;
+    bool resetStreamForNextMember() override;
 
 private:
     lzma_stream m_lzmaStream{};

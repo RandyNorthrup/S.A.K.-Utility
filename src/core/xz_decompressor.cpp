@@ -74,4 +74,19 @@ XzDecompressor::StepResult XzDecompressor::decompressStep() {
     return StepResult::ok;
 }
 
+bool XzDecompressor::resetStreamForNextMember() {
+    // liblzma has no in-place reset: end and re-init the auto decoder. lzma_end frees
+    // only the internal coder state, leaving next_in/avail_in/next_out/avail_out
+    // untouched, so the bytes after the previous stream feed the next one. The memory
+    // limit is re-applied so a later concatenated member is bounded too (B8-12).
+    lzma_end(&m_lzmaStream);
+    lzma_ret ret = lzma_auto_decoder(&m_lzmaStream, kXzDecoderMemLimitBytes, 0);
+    if (ret != LZMA_OK) {
+        m_lastError = QString("Failed to reset lzma for the next member: error code %1")
+                          .arg(static_cast<int>(ret));
+        return false;
+    }
+    return true;
+}
+
 }  // namespace sak

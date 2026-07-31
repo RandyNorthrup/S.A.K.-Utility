@@ -68,4 +68,17 @@ GzipDecompressor::StepResult GzipDecompressor::decompressStep() {
     return StepResult::ok;
 }
 
+bool GzipDecompressor::resetStreamForNextMember() {
+    // inflateReset restarts the inflate state for a new gzip member without freeing
+    // the allocated window, and leaves next_in/avail_in/next_out/avail_out untouched
+    // so the bytes after the previous member feed the next one (B8-12).
+    int ret = inflateReset(&m_zstream);
+    if (ret != Z_OK) {
+        m_lastError = QString("Failed to reset zlib for the next member: %1")
+                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
+        return false;
+    }
+    return true;
+}
+
 }  // namespace sak

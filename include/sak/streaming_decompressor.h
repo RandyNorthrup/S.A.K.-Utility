@@ -101,6 +101,13 @@ protected:
     /// @brief Run one decompression step; update stream pointers
     virtual StepResult decompressStep() = 0;
 
+    /// @brief Reset the library stream to decode the NEXT concatenated member,
+    ///        preserving the current input/output pointers so leftover bytes feed
+    ///        the new member. Called by the base loop after a member's stream-end
+    ///        when more input remains (concatenated gzip/xz/bz2). Returns false on a
+    ///        library reset failure. See @ref pumpDecoder (B8-12).
+    virtual bool resetStreamForNextMember() = 0;
+
     // ---- Common state (available to derived classes) ----
 
     static constexpr int CHUNK_SIZE = 128 * 1024;  ///< 128 KB input buffer
@@ -108,10 +115,25 @@ protected:
     QString m_lastError;
 
 private:
+    /// @brief What a decoder-reported member end resolved to.
+    enum class MemberBoundary {
+        finished,   ///< No more input: a true end of stream (EOF).
+        continued,  ///< More input remains: reset done, keep decoding the next member.
+        failed,     ///< The library reset failed.
+    };
+
     /// @brief Decode into the current output buffer until it fills or the stream
     ///        ends.
     /// @return false on a decode/read error or a detected truncated stream.
     bool pumpDecoder();
+
+    /// @brief Resolve a decoder-reported member end: EOF when no input remains,
+    ///        otherwise reset for the next concatenated member (B8-12).
+    MemberBoundary onMemberEnd();
+
+    /// @brief True (and records the error) when the decoder stalled with input
+    ///        exhausted before end-of-stream: a truncated stream.
+    bool isTruncatedStream(size_t output_before);
 
     /// @brief Attempt to refill input; marks the input exhausted at end of file
     /// @return true if input available or file exhausted, false on read error

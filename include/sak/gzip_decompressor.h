@@ -31,6 +31,7 @@ protected:
     [[nodiscard]] size_t outputRemaining() const override;
     [[nodiscard]] bool inputEmpty() const override;
     StepResult decompressStep() override;
+    bool resetStreamForNextMember() override;
 
 private:
     z_stream m_zstream{};
