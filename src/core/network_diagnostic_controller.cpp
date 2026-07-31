@@ -170,16 +170,24 @@ void NetworkDiagnosticController::cleanupThread(State op) {
         return;
     }
     QThread* thread = it.value();
+    bool joined = true;
     if (thread->isRunning()) {
         thread->quit();
         constexpr int kThreadQuitTimeoutMs = 5000;
         if (!thread->wait(kThreadQuitTimeoutMs)) {
             thread->terminate();
             constexpr int kThreadTermTimeoutMs = 2000;
-            thread->wait(kThreadTermTimeoutMs);
+            joined = thread->wait(kThreadTermTimeoutMs);
         }
     }
-    thread->deleteLater();
+    if (joined) {
+        thread->deleteLater();
+    } else {
+        // The thread is parented to this controller; letting ~QObject destroy a
+        // still-running QThread would abort. Detach it as a bounded safe leak so
+        // teardown completes instead of crashing.
+        thread->setParent(nullptr);
+    }
     m_workerThreads.erase(it);
 }
 

@@ -102,18 +102,20 @@ QuickActionController::~QuickActionController() {
         m_current_execution_action->cancel();
     }
 
-    // Gracefully shut down threads -- use deleteLater for safe cleanup
+    // Join before freeing. The owned QuickActions (m_actions) are destroyed right
+    // after this dtor body, so a thread still running scan()/execute() would use
+    // freed state. Block until the thread actually stops, then delete it directly
+    // (deleteLater would never fire -- the event loop does not run during teardown).
     auto cleanupThread = [](QThread*& thread) {
         if (!thread) {
             return;
         }
-        if (thread->isRunning()) {
-            thread->quit();
-            if (!thread->wait(kThreadShutdownWaitMs)) {
-                sak::logError("QuickAction thread did not stop within 10s");
-            }
+        thread->quit();
+        if (!thread->wait(kThreadShutdownWaitMs)) {
+            sak::logError("QuickAction thread slow to stop; blocking until joined");
+            thread->wait();
         }
-        thread->deleteLater();
+        delete thread;
         thread = nullptr;
     };
 

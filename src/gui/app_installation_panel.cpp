@@ -103,6 +103,12 @@ AppInstallationPanel::~AppInstallationPanel() {
     if (m_offline_worker && m_offline_worker->isRunning()) {
         m_offline_worker->cancel();
     }
+    // Join the background search jobs before members are destroyed: their pool-
+    // thread lambdas capture raw `this` and deref m_choco_manager, so a search
+    // still running at teardown would use freed state. QtConcurrent::run futures
+    // are not cancelable; waitForFinished() on a finished/null future is a no-op.
+    m_searchFuture.waitForFinished();
+    m_offlineSearchFuture.waitForFinished();
 }
 
 void AppInstallationPanel::setupUi() {

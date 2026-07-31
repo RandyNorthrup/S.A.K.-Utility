@@ -132,20 +132,9 @@ void OstConverterController::cancelAll() {
         }
     }
 
-    // Shut down all worker threads
+    // Shut down all worker threads (join before delete; defer on refuse-to-stop).
     for (auto& aw : m_active_workers) {
-        if (aw.thread) {
-            aw.thread->quit();
-            if (!aw.thread->wait(ost::kTimeoutThreadShutdownMs)) {
-                logWarning("OST Converter: worker thread did not stop gracefully");
-                aw.thread->terminate();
-                aw.thread->wait(ost::kTimeoutThreadTerminateMs);
-            }
-            delete aw.worker;
-            aw.worker = nullptr;
-            delete aw.thread;
-            aw.thread = nullptr;
-        }
+        disposeWorker(aw);
     }
     m_active_workers.clear();
 
@@ -332,14 +321,32 @@ void OstConverterController::destroyActiveWorker(int worker_index) {
     // The worker was created without a parent and never deleted, leaking on every
     // completed conversion; delete it once its thread has stopped, then the thread.
     auto& aw = m_active_workers[worker_index];
-    if (aw.thread) {
-        aw.thread->quit();
-        aw.thread->wait(ost::kTimeoutThreadShutdownMs);
-        delete aw.worker;
-        aw.worker = nullptr;
-        aw.thread->deleteLater();
-    }
+    disposeWorker(aw);
     m_active_workers.removeAt(worker_index);
+}
+
+void OstConverterController::disposeWorker(ActiveWorker& aw) {
+    if (!aw.thread) {
+        return;
+    }
+    aw.thread->quit();
+    bool stopped = aw.thread->wait(ost::kTimeoutThreadShutdownMs);
+    if (!stopped) {
+        logWarning("OST Converter: worker thread did not stop gracefully");
+        aw.thread->terminate();
+        stopped = aw.thread->wait(ost::kTimeoutThreadTerminateMs);
+    }
+    if (stopped) {
+        delete aw.worker;
+        delete aw.thread;
+    } else {
+        // Never delete a live QThread/worker: defer to the thread's own finished
+        // signal so teardown cannot abort or use freed state.
+        connect(aw.thread, &QThread::finished, aw.worker, &QObject::deleteLater);
+        connect(aw.thread, &QThread::finished, aw.thread, &QObject::deleteLater);
+    }
+    aw.worker = nullptr;
+    aw.thread = nullptr;
 }
 
 void OstConverterController::onWorkerProgress(int items_done, int items_total, QString folder) {

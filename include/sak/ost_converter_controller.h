@@ -106,6 +106,12 @@ private:
         OstConversionWorker* worker = nullptr;
         int file_index = -1;
     };
+
+    /// Stop and dispose one active worker/thread. Deletes both only once the
+    /// thread has actually stopped; if it refuses to stop, defers deletion to the
+    /// thread's finished signal instead of deleting a live thread (abort/UAF).
+    void disposeWorker(ActiveWorker& aw);
+
     QVector<ActiveWorker> m_active_workers;
     int m_next_queued_index = 0;
 

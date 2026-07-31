@@ -47,41 +47,39 @@ QString runtimeFilesystemManifestPath() {
         QDir::current().filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());
     return cwdManifest;
 }
+
+// Cancel-then-JOIN a future watcher and delete it, instead of detaching it. The
+// caller must have already issued any cooperative cancel so waitForFinished()
+// returns promptly. Disconnecting before the wait keeps the finished slot from
+// firing on a half-destroyed owner; waitForFinished() does not spin the event
+// loop, so no re-entrancy.
+template <typename ResultT>
+void cancelJoinDeleteWatcher(QFutureWatcher<ResultT>*& watcher, QObject* owner) {
+    if (!watcher) {
+        return;
+    }
+    QObject::disconnect(watcher, nullptr, owner, nullptr);
+    watcher->waitForFinished();
+    delete watcher;
+    watcher = nullptr;
+}
 }  // namespace
 
 PartitionManagerController::PartitionManagerController(QObject* parent) : QObject(parent) {}
 
 PartitionManagerController::~PartitionManagerController() {
+    // JOIN the outstanding apply/check futures instead of detaching them, so
+    // destructive disk work (elevated diskpart/format) cannot keep mutating the
+    // disk after the controller and its panel are gone. cancel() first so the
+    // in-flight op / elevated broker is interrupted and the join returns promptly.
     if (m_apply_executor) {
         m_apply_executor->cancel();
     }
-    if (m_apply_watcher) {
-        auto* watcher = m_apply_watcher;
-        m_apply_watcher = nullptr;
-        QObject::disconnect(watcher, nullptr, this, nullptr);
-        watcher->setParent(nullptr);
-        connect(watcher,
-                &QFutureWatcher<PartitionExecutionResult>::finished,
-                watcher,
-                &QObject::deleteLater);
-        if (watcher->isFinished()) {
-            watcher->deleteLater();
-        }
-    }
+    cancelJoinDeleteWatcher(m_apply_watcher, this);
+    // The apply run lambda has released its executor shared_ptr copy by now, so
+    // the executor is destroyed here on the GUI thread.
     m_apply_executor.reset();
-    if (m_file_system_check_watcher) {
-        auto* watcher = m_file_system_check_watcher;
-        m_file_system_check_watcher = nullptr;
-        QObject::disconnect(watcher, nullptr, this, nullptr);
-        watcher->setParent(nullptr);
-        connect(watcher,
-                &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
-                watcher,
-                &QObject::deleteLater);
-        if (watcher->isFinished()) {
-            watcher->deleteLater();
-        }
-    }
+    cancelJoinDeleteWatcher(m_file_system_check_watcher, this);
 }
 
 const PartitionInventory& PartitionManagerController::inventory() const noexcept {

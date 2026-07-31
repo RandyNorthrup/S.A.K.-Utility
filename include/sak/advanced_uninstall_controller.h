@@ -236,6 +236,11 @@ private:
     /// @brief Clean up all workers
     void cleanupWorkers();
 
+    /// Stop and join the enumeration thread, deleting it only after a confirmed
+    /// join so ~AdvancedUninstallController never leaves a live thread using the
+    /// freed m_enumerator (or lets ~QObject abort on a still-running QThread).
+    void stopEnumThread();
+
     void connectUninstallWorkerSignals(bool includeNativeSignals);
     void connectBatchUninstallWorkerSignals();
     void finishBatchUninstall();

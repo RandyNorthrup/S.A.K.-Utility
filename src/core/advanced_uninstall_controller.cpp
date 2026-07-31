@@ -10,6 +10,7 @@
 #include "sak/config_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_item_guard.h"
+#include "sak/logger.h"
 #include "sak/program_enumerator.h"
 #include "sak/restore_point_manager.h"
 #include "sak/uninstall_worker.h"
@@ -577,17 +578,29 @@ void AdvancedUninstallController::setState(State newState) {
     }
 }
 
-void AdvancedUninstallController::cleanupWorkers() {
-    // Clean up enumeration thread
-    if (m_enumThread) {
-        m_enumerator->requestCancel();
-        m_enumThread->quit();
-        if (!m_enumThread->wait(kStatusTimeoutShortMs)) {
-            m_enumThread->terminate();
-            m_enumThread->wait(kStatusTimeoutShortMs);
-        }
-        m_enumThread = nullptr;
+void AdvancedUninstallController::stopEnumThread() {
+    if (!m_enumThread) {
+        return;
     }
+    m_enumerator->requestCancel();
+    m_enumThread->quit();
+    if (!m_enumThread->wait(kThreadWaitMs)) {
+        m_enumThread->terminate();
+        if (!m_enumThread->wait(kThreadWaitMs)) {
+            // Cannot safely delete a still-running QThread: leave the (parented)
+            // handle rather than abort. This is the inherent unkillable-thread case.
+            sak::logError("Enumeration thread refused to stop");
+            return;
+        }
+    }
+    // Join confirmed: delete here, before ~AdvancedUninstallController destroys the
+    // m_enumerator unique_ptr that a running enumerateAll() would otherwise use.
+    delete m_enumThread;
+    m_enumThread = nullptr;
+}
+
+void AdvancedUninstallController::cleanupWorkers() {
+    stopEnumThread();
 
     if (m_uninstall_worker) {
         if (m_uninstall_worker->isExecuting()) {
