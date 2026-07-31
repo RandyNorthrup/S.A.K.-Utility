@@ -1,0 +1,148 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file test_backup_bitlocker_keys_action.cpp
+/// @brief Unit tests for the fail-closed seams of BackupBitlockerKeysAction
+///        (Codex remediation batch B6-01..06). Verifies the recovery-key gate,
+///        unique backup-directory naming, the key-protector parse failure
+///        signal, and the recovery-password accounting helpers.
+
+#include "sak/actions/backup_bitlocker_keys_action.h"
+
+#include <QRegularExpression>
+#include <QtTest/QtTest>
+
+using sak::BackupBitlockerKeysAction;
+
+/// Friend of BackupBitlockerKeysAction: reaches its private fail-closed seams
+/// without widening the production class's public surface.
+class BackupBitlockerKeysActionTests : public QObject {
+    Q_OBJECT
+
+    using Action = BackupBitlockerKeysAction;
+    using KeyGate = BackupBitlockerKeysAction::KeyGate;
+    using KeyProtectorInfo = BackupBitlockerKeysAction::KeyProtectorInfo;
+
+private Q_SLOTS:
+    // B6-05: gate requires a recovery password, not merely any protector.
+    void evaluateKeyGate_requiresRecoveryPassword();
+    // B6-03: backup dir names are unique and well-formed.
+    void uniqueBackupDirName_distinctPerCounter();
+    void backupTimestamp_hasMillisecondResolution();
+    // B6-04: a malformed protector response is signalled, not treated as empty.
+    void parseKeyProtectorResponse_signalsParseFailure();
+    void parseKeyProtectorResponse_parsesValidPayload();
+    // Recovery-password accounting used by the gate and per-volume file writer.
+    void recoveryPasswordHelpers_countAndDetect();
+    // Enum formatters the recovery document depends on.
+    void formatters_mapKnownCodes();
+};
+
+// ============================================================================
+// B6-05 -- recovery-key gate
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::evaluateKeyGate_requiresRecoveryPassword() {
+    // No protectors read at all -> needs admin, fail closed.
+    QCOMPARE(Action::evaluateKeyGate(0, 0), KeyGate::NoProtectors);
+    // Protectors exist (e.g. TPM-only) but none is a recovery password ->
+    // there is nothing usable to back up; must not report success.
+    QCOMPARE(Action::evaluateKeyGate(3, 0), KeyGate::NoRecoveryPasswords);
+    // At least one recovery password -> proceed.
+    QCOMPARE(Action::evaluateKeyGate(3, 1), KeyGate::Ok);
+    QCOMPARE(Action::evaluateKeyGate(1, 1), KeyGate::Ok);
+}
+
+// ============================================================================
+// B6-03 -- unique backup directory naming
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::uniqueBackupDirName_distinctPerCounter() {
+    const QString ts = QStringLiteral("20260730_141530_123");
+    const QString a = Action::uniqueBackupDirName(ts, 0);
+    const QString b = Action::uniqueBackupDirName(ts, 1);
+
+    QCOMPARE(a, QStringLiteral("BitLocker_Keys_20260730_141530_123_0"));
+    QVERIFY(a != b);  // same-second, same timestamp, different counter -> distinct
+    QVERIFY(a.startsWith(QStringLiteral("BitLocker_Keys_")));
+}
+
+void BackupBitlockerKeysActionTests::backupTimestamp_hasMillisecondResolution() {
+    // yyyyMMdd_HHmmss_zzz -- the trailing _zzz is what defeats same-second
+    // collisions; assert the shape rather than an exact (time-dependent) value.
+    const QString ts = Action::backupTimestamp();
+    const QRegularExpression shape(QStringLiteral("^\\d{8}_\\d{6}_\\d{3}$"));
+    QVERIFY2(shape.match(ts).hasMatch(), qPrintable(ts));
+}
+
+// ============================================================================
+// B6-04 -- key-protector query failure is surfaced
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_signalsParseFailure() {
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    bool parse_ok = true;  // must be flipped to false
+    const QVector<KeyProtectorInfo> result =
+        action.parseKeyProtectorResponse(QStringLiteral("{ this is not json"), parse_ok);
+
+    QVERIFY2(!parse_ok, "malformed JSON must report parse failure, not empty success");
+    QVERIFY(result.isEmpty());
+}
+
+void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_parsesValidPayload() {
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    const QString json = QStringLiteral(
+        "[{\"ProtectorID\":\"{guid-1}\",\"ProtectorType\":3,"
+        "\"RecoveryPassword\":\"111111-222222-333333\",\"KeyFileName\":\"\"},"
+        "{\"ProtectorID\":\"{guid-2}\",\"ProtectorType\":1,"
+        "\"RecoveryPassword\":\"\",\"KeyFileName\":\"\"}]");
+
+    bool parse_ok = false;
+    const QVector<KeyProtectorInfo> result = action.parseKeyProtectorResponse(json, parse_ok);
+
+    QVERIFY(parse_ok);
+    QCOMPARE(result.size(), 2);
+    QCOMPARE(result[0].protector_id, QStringLiteral("{guid-1}"));
+    QCOMPARE(result[0].recovery_password, QStringLiteral("111111-222222-333333"));
+    QCOMPARE(result[0].protector_type, Action::formatProtectorType(3));
+    QVERIFY(result[1].recovery_password.isEmpty());
+}
+
+// ============================================================================
+// Recovery-password accounting
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::recoveryPasswordHelpers_countAndDetect() {
+    QVector<KeyProtectorInfo> protectors;
+    KeyProtectorInfo tpm;
+    tpm.recovery_password = QString();  // TPM protector, no password
+    KeyProtectorInfo rec;
+    rec.recovery_password = QStringLiteral("111111-222222-333333");
+
+    protectors << tpm;
+    QCOMPARE(Action::countRecoveryPasswords(protectors), 0);
+    QVERIFY(!Action::volumeHasRecoveryPassword(protectors));
+
+    protectors << rec;
+    QCOMPARE(Action::countRecoveryPasswords(protectors), 1);
+    QVERIFY(Action::volumeHasRecoveryPassword(protectors));
+}
+
+// ============================================================================
+// Enum formatters
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::formatters_mapKnownCodes() {
+    QCOMPARE(Action::formatProtectorType(3),
+             QStringLiteral("Numerical Password (Recovery Password)"));
+    QCOMPARE(Action::formatEncryptionMethod(7), QStringLiteral("XTS-AES-256"));
+    QCOMPARE(Action::formatVolumeType(0), QStringLiteral("Operating System"));
+    // Out-of-range codes fall through to a labelled Unknown, never a crash.
+    QVERIFY(Action::formatProtectorType(-1).startsWith(QStringLiteral("Unknown")));
+    QVERIFY(Action::formatEncryptionMethod(999).startsWith(QStringLiteral("Unknown")));
+}
+
+QTEST_GUILESS_MAIN(BackupBitlockerKeysActionTests)
+#include "test_backup_bitlocker_keys_action.moc"

@@ -10,6 +10,7 @@
 #include <QVector>
 
 class QTextStream;
+class BackupBitlockerKeysActionTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
@@ -31,6 +32,8 @@ namespace sak {
  */
 class BackupBitlockerKeysAction : public QuickAction {
     Q_OBJECT
+
+    friend class ::BackupBitlockerKeysActionTests;
 
 public:
     explicit BackupBitlockerKeysAction(const QString& backup_location, QObject* parent = nullptr);
@@ -89,14 +92,18 @@ private:
     /**
      * @brief Retrieve key protectors for a specific volume
      * @param drive_letter Drive letter (e.g., "C:")
+     * @param query_ok Set true only when the query ran successfully (an empty
+     *        result is still a success); false on process/parse failure so the
+     *        caller can fail closed rather than silently omitting the volume.
      * @return Vector of key protector details
      */
-    QVector<KeyProtectorInfo> getKeyProtectors(const QString& drive_letter);
+    QVector<KeyProtectorInfo> getKeyProtectors(const QString& drive_letter, bool& query_ok);
 
     /// @brief Build the PowerShell script to query key protectors for a volume.
     QString buildKeyProtectorScript(const QString& drive_letter) const;
     /// @brief Parse JSON response from key protector query into KeyProtectorInfo vector.
-    QVector<KeyProtectorInfo> parseKeyProtectorResponse(const QString& output);
+    /// @param parse_ok Set true on valid JSON, false on a parse error.
+    QVector<KeyProtectorInfo> parseKeyProtectorResponse(const QString& output, bool& parse_ok);
 
     /**
      * @brief Write recovery keys to the master backup document
@@ -115,9 +122,15 @@ private:
     /**
      * @brief Write individual per-volume key files
      * @param backup_dir Target directory for the backup
-     * @return Number of key files written
+     * @param files_written Out: number of key files successfully written
+     * @return True if every applicable key file was written and committed;
+     *         false (fail closed) if any recovery key file could not be
+     *         durably written -- a truncated key file is never left behind.
      */
-    int writePerVolumeKeyFiles(const QString& backup_dir);
+    bool writePerVolumeKeyFiles(const QString& backup_dir, int& files_written);
+
+    /// @brief Write and atomically commit one volume's recovery key file.
+    bool writeOneVolumeKeyFile(const QString& backup_dir, const VolumeInfo& vol);
 
     /**
      * @brief Set restrictive file permissions on the backup directory
@@ -149,9 +162,27 @@ private:
 
     /**
      * @brief Generate a timestamp string for file naming
-     * @return Formatted timestamp (yyyyMMdd_HHmmss)
+     * @return Formatted timestamp (yyyyMMdd_HHmmss_zzz, millisecond resolution)
      */
     static QString backupTimestamp();
+
+    /// @brief Build a collision-resistant backup directory name. The millisecond
+    /// timestamp plus a monotonic counter makes two same-second backups distinct.
+    static QString uniqueBackupDirName(const QString& timestamp, unsigned counter);
+
+    /// @brief Outcome of the recovery-key gate that decides whether a backup has
+    /// anything worth persisting.
+    enum class KeyGate {
+        Ok,                  ///< At least one recovery password was captured.
+        NoProtectors,        ///< No key protectors could be read (needs admin).
+        NoRecoveryPasswords  ///< Protectors exist but none is a recovery password.
+    };
+
+    /// @brief Decide the backup gate. A backup is only meaningful when at least
+    /// one numerical recovery password was captured; TPM-only protectors cannot
+    /// be used as a standalone recovery secret, so they must not gate the
+    /// operation to "success" with zero recovery keys saved.
+    static KeyGate evaluateKeyGate(int total_keys_found, int total_recovery_passwords);
 
     /// @brief Aggregated BitLocker backup result data for report generation
     struct BitlockerReportData {
@@ -167,10 +198,22 @@ private:
     bool executeExtractKeys(const QDateTime& start_time,
                             int& total_keys_found,
                             int& total_recovery_passwords);
+    /// @brief Evaluate the recovery-key gate and emit the matching failure.
+    bool extractKeysGatePassed(const QDateTime& start_time,
+                               int total_keys_found,
+                               int total_recovery_passwords);
     bool executeSaveKeyFiles(const QDateTime& start_time,
                              QString& backup_dir_path,
                              int& key_files_written,
                              bool& permissions_set);
+    /// @brief Create a fresh, uniquely named backup directory (fail closed on
+    /// any collision so a prior backup is never reopened and truncated).
+    bool createBackupDirectory(const QDateTime& start_time, QString& backup_dir_path);
+    /// @brief Harden the backup directory ACL; on failure, delete the exposed
+    /// key backup and fail closed rather than leaving plaintext keys readable.
+    bool secureBackupDirectory(const QDateTime& start_time,
+                               const QString& backup_dir_path,
+                               bool& permissions_set);
     void executeBuildReport(const QDateTime& start_time, const BitlockerReportData& data);
     bool writeJsonBackup(const QString& backup_dir_path);
 
