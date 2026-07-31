@@ -91,7 +91,7 @@ private:
 
     /// Try to match an MBOX message against query criteria
     [[nodiscard]] std::optional<MatchResult> matchMboxItem(const sak::MboxMessage& msg,
-                                                           int msg_idx,
+                                                           int message_index,
                                                            const sak::EmailSearchCriteria& criteria,
                                                            MboxParser* parser) const;
 

@@ -7,8 +7,10 @@
 #include "sak/email_constants.h"
 #include "sak/email_search_worker.h"
 #include "sak/email_types.h"
+#include "sak/mbox_parser.h"
 
 #include <QSignalSpy>
+#include <QTemporaryFile>
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
@@ -37,6 +39,9 @@ private Q_SLOTS:
     // -- Search Hit Structure --------------------------------------------
     void searchHitDefaults();
     void searchHitFields();
+
+    // -- B7-28: body search maps a hit to the correct message index ------
+    void mboxBodySearchUsesMessageIndex();
 };
 
 // ============================================================================
@@ -199,6 +204,54 @@ void TestEmailSearchWorker::searchHitFields() {
     QCOMPARE(hit.subject, QStringLiteral("Budget Report"));
     QCOMPARE(hit.match_field, QStringLiteral("body"));
     QCOMPARE(hit.folder_path, QStringLiteral("Inbox/Work"));
+}
+
+// A body-only search must map its hit to the message whose body actually matched,
+// keyed on msg.message_index (the same value reported as item_node_id), not the
+// loop position (B7-28).
+void TestEmailSearchWorker::mboxBodySearchUsesMessageIndex() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    // Message 0: keyword NOT present in body.
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "Subject: First\r\n";
+    content += "\r\n";
+    content += "Ordinary body text.\r\n";
+    content += "\r\n";
+    // Message 1: the unique keyword lives only in THIS body.
+    content += "From b@example.com Tue Jan  2 00:00:00 2024\r\n";
+    content += "From: B <b@example.com>\r\n";
+    content += "Subject: Second\r\n";
+    content += "\r\n";
+    content += "This body contains ZEBRACODE only.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 2);
+
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("ZEBRACODE");
+    criteria.search_subject = false;
+    criteria.search_sender = false;
+    criteria.search_body = true;
+
+    EmailSearchWorker worker;
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(hit_spy.count(), 1);  // exactly the one message whose body matched
+    const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
+    QCOMPARE(hit.item_node_id, static_cast<uint64_t>(1));  // the SECOND message
+    QCOMPARE(hit.match_field, QStringLiteral("body"));
+    parser.close();
 }
 
 QTEST_MAIN(TestEmailSearchWorker)

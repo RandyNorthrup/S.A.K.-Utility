@@ -189,7 +189,10 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
             continue;
         }
 
-        auto match = matchMboxItem(msg, msg_idx, criteria, parser);
+        // Use the message's REAL index, not the loop position: readMessages() skips
+        // unreadable messages, so a skip shifts every later position and the body
+        // lookup in matchMboxItem would fetch the wrong message (B7-28).
+        auto match = matchMboxItem(msg, msg.message_index, criteria, parser);
         if (match) {
             sak::EmailSearchHit hit;
             hit.item_node_id = static_cast<uint64_t>(msg.message_index);
@@ -368,7 +371,7 @@ bool EmailSearchWorker::passesMboxFilters(const sak::MboxMessage& msg,
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
     const sak::MboxMessage& msg,
-    int msg_idx,
+    int message_index,
     const sak::EmailSearchCriteria& criteria,
     MboxParser* parser) const {
     if (criteria.search_subject &&
@@ -385,7 +388,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
     }
 
     if (criteria.search_body) {
-        auto detail = parser->readMessageDetail(msg_idx);
+        auto detail = parser->readMessageDetail(message_index);
         if (detail) {
             const QString& body = detail->body_plain.isEmpty() ? detail->body_html
                                                                : detail->body_plain;
