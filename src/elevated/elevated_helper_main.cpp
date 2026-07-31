@@ -301,6 +301,9 @@ QString elevatedPowerShellResultError(const sak::ProcessResult& result) {
     if (result.cancelled) {
         return QStringLiteral("Command cancelled");
     }
+    if (result.exit_code != 0) {
+        return QStringLiteral("Command exited with code %1").arg(result.exit_code);
+    }
     return {};
 }
 
@@ -426,11 +429,17 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     }
 
     fillElevatedPowerShellResult(&data, result, timer.elapsed(), config.half_cap);
-    data[QStringLiteral("error_message")] = elevatedPowerShellResultError(result);
+    const QString result_error = elevatedPowerShellResultError(result);
+    data[QStringLiteral("error_message")] = result_error;
 
     progress(kPowerShellFinishedProgress, QStringLiteral("Elevated PowerShell finished"));
     sak::TaskHandlerResult task;
-    task.success = true;
+    // B5-05: gate success on the actual outcome. The process starting is not
+    // success -- a timeout, a cancellation, or a non-zero exit is a failure and
+    // must be reported as one (previously success was hard-coded true once the
+    // process started).
+    task.success = result.completedSuccessfully();
+    task.error_message = result_error;
     task.data = data;
     return task;
 }

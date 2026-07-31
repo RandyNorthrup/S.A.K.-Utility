@@ -25,7 +25,18 @@ struct ProcessResult {
     bool output_truncated{false};
 
     /// @brief Check if the process completed successfully (no timeout, exit code 0)
+    /// @note Does NOT consider cancellation -- see completedSuccessfully().
     [[nodiscard]] bool succeeded() const noexcept { return !timed_out && exit_code == 0; }
+
+    /// @brief Check if the process ran fully to a clean finish: not timed out,
+    ///        NOT cancelled, and exit code 0.
+    /// @note Stricter than succeeded(): a cancelled process (which may still
+    ///       report exit_code 0 depending on how it was torn down) is NOT a
+    ///       success. Use this when reporting an operation's outcome so a
+    ///       cancelled/aborted run is never reported as having succeeded.
+    [[nodiscard]] bool completedSuccessfully() const noexcept {
+        return !timed_out && !cancelled && exit_code == 0;
+    }
 };
 
 /// @brief Append @p chunk to @p target without letting @p target exceed @p cap

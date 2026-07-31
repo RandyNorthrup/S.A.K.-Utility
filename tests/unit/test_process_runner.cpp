@@ -29,6 +29,9 @@ private Q_SLOTS:
 
     // B5-07: bounded output accumulation
     void appendCappedOutput_boundsAccumulation();
+
+    // B5-05: strict success (cancellation counts as failure)
+    void completedSuccessfully_strictOutcome();
 };
 
 // ============================================================================
@@ -173,6 +176,32 @@ void ProcessRunnerTests::appendCappedOutput_boundsAccumulation() {
     QString empty;
     QVERIFY(sak::appendCappedOutput(empty, QStringLiteral("x"), 0));
     QVERIFY(empty.isEmpty());
+}
+
+// B5-05: reporting an operation's outcome must treat a cancelled or timed-out or
+// non-zero-exit run as a failure. succeeded() ignores cancellation;
+// completedSuccessfully() must not.
+void ProcessRunnerTests::completedSuccessfully_strictOutcome() {
+    sak::ProcessResult clean;
+    clean.exit_code = 0;
+    QVERIFY(clean.completedSuccessfully());
+
+    sak::ProcessResult nonzero;
+    nonzero.exit_code = 1;
+    QVERIFY(!nonzero.completedSuccessfully());
+
+    sak::ProcessResult timed;
+    timed.exit_code = 0;
+    timed.timed_out = true;
+    QVERIFY(!timed.completedSuccessfully());
+
+    // The key case: a cancelled process that still reports exit_code 0 is NOT a
+    // success under completedSuccessfully(), even though succeeded() says it is.
+    sak::ProcessResult cancelled;
+    cancelled.exit_code = 0;
+    cancelled.cancelled = true;
+    QVERIFY(cancelled.succeeded());  // documents the weaker check
+    QVERIFY(!cancelled.completedSuccessfully());
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)
