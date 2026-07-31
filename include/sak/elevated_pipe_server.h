@@ -69,6 +69,19 @@ public:
     /// @brief Close the pipe
     void stop();
 
+    /// @brief Whether a connecting client's PID is the authorized parent.
+    /// @param expectedParentPid the parent PID the helper was launched with.
+    /// @param clientPid the PID reported for the connected client.
+    /// @return true ONLY when expectedParentPid is valid (>0) AND clientPid
+    ///         equals it.
+    /// @note Fail-closed: a missing/invalid expected PID (<=0) authorizes NOBODY.
+    ///       Previously the helper skipped validation entirely when no parent PID
+    ///       was supplied, accepting any client. Pure + static (inline) for unit
+    ///       testing without linking the server implementation.
+    [[nodiscard]] static bool clientPidMatchesParent(qint64 expectedParentPid, qint64 clientPid) {
+        return expectedParentPid > 0 && clientPid == expectedParentPid;
+    }
+
 private:
     /// @brief Send raw bytes
     [[nodiscard]] bool sendRaw(const QByteArray& data);

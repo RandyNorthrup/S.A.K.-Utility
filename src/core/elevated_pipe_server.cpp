@@ -26,6 +26,13 @@ bool createPipeSecurityAttributes(SECURITY_ATTRIBUTES& attributes,
     attributes.nLength = sizeof(attributes);
     attributes.bInheritHandle = FALSE;
 
+    // Administrators get full control; Builtin Users get read/write. The BU ACE
+    // CANNOT be dropped: the client (the main app) ships an asInvoker manifest,
+    // so it connects with a NON-elevated (Users) token and needs GRGW to open the
+    // pipe. The per-process gate is validateClient(), which is fail-closed on a
+    // missing parent PID (B5-04) and pins the exact launching process by PID --
+    // a stronger control than any user-level DACL. The pipe name is also a
+    // per-session nonce.
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
             "D:(A;;GA;;;BA)(A;;GRGW;;;BU)", SDDL_REVISION_1, &descriptor, nullptr)) {
         sak::logError("ElevatedPipeServer: failed to create security descriptor: {}",
@@ -314,7 +321,13 @@ bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
 bool ElevatedPipeServer::validateClient() const {
 #ifdef _WIN32
     if (m_parent_pid <= 0) {
-        return true;  // No parent PID specified — skip validation
+        // B5-04: fail closed. Previously a missing/invalid parent PID skipped
+        // validation and accepted ANY client -- combined with a pipe DACL that
+        // permits Builtin Users, that disabled the only per-process gate. A
+        // legitimate launch always passes --parent-pid, so refusing here closes
+        // the gap without affecting the real flow.
+        sak::logError("ElevatedPipeServer: no valid parent PID -- refusing client");
+        return false;
     }
 
     // Get the client process ID from the pipe
@@ -324,7 +337,7 @@ bool ElevatedPipeServer::validateClient() const {
         return false;
     }
 
-    if (static_cast<qint64>(client_pid) != m_parent_pid) {
+    if (!clientPidMatchesParent(m_parent_pid, static_cast<qint64>(client_pid))) {
         sak::logError(
             "ElevatedPipeServer: client PID {} does not match "
             "expected parent PID {}",

@@ -10,6 +10,7 @@
 ///  - Pipe name generation (uniqueness, format)
 
 #include "sak/elevated_pipe_protocol.h"
+#include "sak/elevated_pipe_server.h"
 
 #include <QTest>
 
@@ -224,6 +225,24 @@ private Q_SLOTS:
         QVERIFY(sak::kHelperTimeoutMs > 0);
         QVERIFY(sak::kPipeConnectTimeoutMs > 0);
         QVERIFY(sak::kPipeIoTimeoutMs > 0);
+    }
+
+    // ======================================================================
+    // B5-04: client PID gate fails closed
+    // ======================================================================
+
+    void testClientPidGateFailsClosed() {
+        using S = sak::ElevatedPipeServer;
+        // The matching case: a valid parent PID and an equal client PID.
+        QVERIFY(S::clientPidMatchesParent(4321, 4321));
+        // A different client PID is rejected.
+        QVERIFY(!S::clientPidMatchesParent(4321, 9999));
+        // Fail closed: a missing/invalid expected PID authorizes nobody, even if
+        // the client reports the same (invalid) value. Previously <=0 SKIPPED the
+        // check and accepted any client.
+        QVERIFY(!S::clientPidMatchesParent(0, 0));
+        QVERIFY(!S::clientPidMatchesParent(-1, -1));
+        QVERIFY(!S::clientPidMatchesParent(0, 1234));
     }
 };
 
