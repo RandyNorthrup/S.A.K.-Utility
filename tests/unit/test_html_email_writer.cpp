@@ -231,6 +231,47 @@ private Q_SLOTS:
         QVERIFY(f1.readAll().contains("BODY-ONE"));
     }
 
+    // Regression (B7-19): two attachments with the SAME name must both be written
+    // as distinct files, not truncate/overwrite each other.
+    void collidingAttachmentNamesDeduped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("AttColl");
+        item.sender_email = QStringLiteral("a@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        QVector<QPair<QString, QByteArray>> attachments;
+        attachments.append({QStringLiteral("photo.png"), QByteArray("FIRST")});
+        attachments.append({QStringLiteral("photo.png"), QByteArray("SECOND")});
+
+        auto result = writer.writeMessage(item, attachments, QString());
+        QVERIFY(result.has_value());
+
+        // Locate the per-message _files directory.
+        QDir base(temp_dir.path());
+        const QStringList dirs = base.entryList(QStringList{QStringLiteral("*_files")}, QDir::Dirs);
+        QCOMPARE(dirs.size(), 1);
+        QDir att_dir(base.filePath(dirs.first()));
+        const QStringList files = att_dir.entryList(QDir::Files);
+        QCOMPARE(files.size(), 2);  // both written, neither clobbered
+
+        bool saw_first = false;
+        bool saw_second = false;
+        for (const QString& f : files) {
+            QFile fh(att_dir.filePath(f));
+            QVERIFY(fh.open(QIODevice::ReadOnly));
+            const QByteArray c = fh.readAll();
+            saw_first = saw_first || (c == QByteArray("FIRST"));
+            saw_second = saw_second || (c == QByteArray("SECOND"));
+        }
+        QVERIFY(saw_first);
+        QVERIFY(saw_second);
+    }
+
     // ====================================================================
     // B7-05: untrusted email HTML must not carry active content into the
     // saved page, and the page must ship a strict CSP.

@@ -140,19 +140,21 @@ QString HtmlEmailWriter::saveFileAttachments(
         if (attachments_dir.isEmpty()) {
             continue;
         }
-        // Reduce to a bare, sanitized filename so a hostile PidTagAttachLongFilename
-        // like "../../../pwned.html" cannot escape the per-message _files directory.
-        const QString safe_name = sanitizeAttachmentFilename(QFileInfo(name).fileName());
-        QFile att_file(attachments_dir + QStringLiteral("/") + safe_name);
-        if (att_file.open(QIODevice::WriteOnly) &&
-            att_file.write(data) == static_cast<qint64>(data.size())) {
+        // saveAttachmentToDirectory sanitizes the bare filename (QFileInfo::fileName
+        // first, so a hostile "../../../pwned.html" cannot escape the _files dir),
+        // DEDUPES colliding names (a second "image.png" becomes "image_1.png" instead
+        // of truncating the first), and writes via QSaveFile so a short write never
+        // leaves a truncated file reported as saved (B7-19).
+        const AttachmentSaveResult result =
+            saveAttachmentToDirectory(attachments_dir, QFileInfo(name).fileName(), data);
+        if (result.success) {
             m_bytes_written += data.size();
         } else {
-            // Do not silently drop: the generated HTML lists this attachment, so
-            // a failed write must at least be logged.
+            // Do not silently drop: the generated HTML lists this attachment, so a
+            // failed write must at least be logged.
             logError("HtmlEmailWriter: failed to write attachment '{}': {}",
-                     safe_name.toStdString(),
-                     att_file.errorString().toStdString());
+                     name.toStdString(),
+                     result.error_message.toStdString());
         }
     }
 
