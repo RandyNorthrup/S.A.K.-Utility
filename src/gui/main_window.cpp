@@ -629,6 +629,12 @@ void MainWindow::createPanels() {
     // Build each tool panel only when its tab is first activated. Connected
     // before setupLogRouting so the panel exists before onTabChanged runs.
     connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int index) {
+        // currentChanged also fires while tabs are torn down during ~MainWindow
+        // (panels removed/destroyed). Building a panel then would assign a member
+        // unique_ptr mid-teardown; skip lazy materialization once shutting down.
+        if (m_shutting_down) {
+            return;
+        }
         materializeTab(index);
     });
     setupLogRouting();
@@ -1631,6 +1637,11 @@ void MainWindow::hideProgressBarIfComplete() {
 }
 
 void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
+    // m_panelLogs is declared last and destroyed first; a panel destructor that
+    // emits logOutput during ~MainWindow would write into a destroyed QMap.
+    if (m_shutting_down) {
+        return;
+    }
     Q_ASSERT(m_tab_widget);
     m_panelLogs[tabIdx].append(formatted);
     if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
