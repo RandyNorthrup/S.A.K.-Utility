@@ -77,7 +77,14 @@ struct scan_options {
 };
 
 /// @brief High-performance recursive directory scanner
-/// @details Thread-safe scanner with filtering, pattern matching, and cancellation support
+/// @details Filtering, pattern matching, and cooperative cancellation.
+/// @warning NOT thread-safe: one scan() call at a time PER INSTANCE. Each scan
+///          mutates per-scan instance state (the m_visited_dirs cycle set is a plain
+///          unordered_set cleared at scan start and written during recursion; the
+///          progress counters are reset per scan), so running two scans concurrently
+///          on the same instance is a data race. Use a separate instance per thread.
+///          The counters are std::atomic only so a DIFFERENT thread may read live
+///          progress while a single scan runs -- not to permit concurrent scans.
 class file_scanner {
 public:
     /// @brief Default constructor
