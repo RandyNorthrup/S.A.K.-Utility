@@ -11,6 +11,7 @@
 #include "sak/process_runner.h"
 
 #include <QDir>
+#include <QFile>
 #include <QTemporaryFile>
 #include <QThread>
 
@@ -145,9 +146,13 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     } else {
         const QString backupPath = backupFile.fileName();
         backupFile.close();
-        QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
-        ProcessResult proc =
-            runProcess("cmd.exe", QStringList() << "/C" << backupCmd, sak::kTimeoutNetworkReadMs);
+        // Run netsh directly and write its captured stdout to the backup file in
+        // process. Wrapping this as `cmd.exe /C "netsh ... > <path>"` would let
+        // cmd perform %VAR% expansion and metacharacter (& | < >) parsing on the
+        // environment-derived TEMP path, an elevated command-injection vector.
+        ProcessResult proc = runProcess("netsh",
+                                        QStringList() << "winsock" << "show" << "catalog",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "Winsock backup timed out";
         } else if (proc.exit_code != 0) {
@@ -155,8 +160,16 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
         } else {
             // Only retain and report a backup that actually wrote successfully; on any
             // failure the QTemporaryFile auto-removes so no empty/false backup survives.
-            backupFile.setAutoRemove(false);
-            m_winsock_backup_path = backupPath;
+            QFile out(backupPath);
+            const QByteArray bytes = proc.std_out.toUtf8();
+            if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                out.write(bytes) != bytes.size() || !out.flush()) {
+                errors << "Failed to write Winsock backup file";
+            } else {
+                out.close();
+                backupFile.setAutoRemove(false);
+                m_winsock_backup_path = backupPath;
+            }
         }
     }
 

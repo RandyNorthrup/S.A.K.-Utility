@@ -2031,6 +2031,8 @@ private Q_SLOTS:
     void scriptBuilder_buildsClearLevelDiskWipeScript();
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
+    void scriptBuilder_rejectsEnumArgumentCommandInjection();
+    void scriptBuilder_stripsControlCharsFromDiskPartLabel();
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
     void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
@@ -16944,6 +16946,73 @@ void PartitionManagerCoreTests::scriptBuilder_buildsEmptyDataDiskStyleConversion
     QVERIFY(script.script.contains(QStringLiteral("Clear-Disk -Number 4 -RemoveData")));
     QVERIFY(
         script.script.contains(QStringLiteral("Initialize-Disk -Number 4 -PartitionStyle MBR")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_rejectsEnumArgumentCommandInjection() {
+    PartitionScriptBuilder builder;
+
+    // B1-01: Split new_file_system is an enum argument (Format-Volume
+    // -FileSystem). A crafted value must be rejected, never injected unquoted.
+    PartitionTarget split_target;
+    split_target.kind = PartitionTargetKind::Partition;
+    split_target.disk_number = 2;
+    split_target.partition_number = 1;
+    split_target.size_bytes = 100 * 1024 * 1024;
+    QJsonObject split_payload;
+    split_payload[QStringLiteral("first_size_bytes")] = QStringLiteral("52428800");
+    split_payload[QStringLiteral("new_file_system")] =
+        QStringLiteral("NTFS; Remove-Item C:\\ -Recurse");
+    auto split_bad = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Split, split_target, split_payload));
+    QVERIFY(!split_bad.valid());
+    QVERIFY(!split_bad.script.contains(QStringLiteral("Remove-Item")));
+    split_payload[QStringLiteral("new_file_system")] = QStringLiteral("exFAT");
+    auto split_ok = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Split, split_target, split_payload));
+    QVERIFY2(split_ok.valid(), qPrintable(split_ok.blockers.join(QStringLiteral("; "))));
+    QVERIFY(split_ok.script.contains(
+        QStringLiteral("Format-Volume -Partition $new -FileSystem EXFAT")));
+
+    // B1-02: ConvertPartitionStyle target_style is an enum argument
+    // (Initialize-Disk -PartitionStyle). Only GPT/MBR are accepted.
+    PartitionTarget conv_target;
+    conv_target.kind = PartitionTargetKind::Disk;
+    conv_target.disk_number = 4;
+    QJsonObject conv_payload;
+    conv_payload[QStringLiteral("target_style")] = QStringLiteral("GPT; calc.exe");
+    auto conv_bad = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPartitionStyle, conv_target, conv_payload));
+    QVERIFY(!conv_bad.valid());
+    QVERIFY(!conv_bad.script.contains(QStringLiteral("calc.exe")));
+    conv_payload[QStringLiteral("target_style")] = QStringLiteral("GPT");
+    auto conv_ok = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPartitionStyle, conv_target, conv_payload));
+    QVERIFY2(conv_ok.valid(), qPrintable(conv_ok.blockers.join(QStringLiteral("; "))));
+    QVERIFY(
+        conv_ok.script.contains(QStringLiteral("Initialize-Disk -Number 4 -PartitionStyle GPT")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_stripsControlCharsFromDiskPartLabel() {
+    // B1-03: a diskpart label must not carry CR/LF. An embedded newline would
+    // otherwise become an additional diskpart command line (select/clean).
+    PartitionScriptBuilder builder;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 3;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    payload[QStringLiteral("label")] = QStringLiteral("SAK\r\nselect disk 9\r\nclean");
+    auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    // The control characters are stripped and the label collapses to a single
+    // token; no newline-prefixed injected diskpart command survives.
+    QVERIFY(!script.script.contains(QStringLiteral("\nselect disk 9")));
+    QVERIFY(script.script.contains(QStringLiteral("SAKselect disk 9clean")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmation() {

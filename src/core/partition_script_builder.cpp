@@ -1774,9 +1774,19 @@ QString dismountSelectedPartitionVolumeScript() {
 }
 
 QString diskPartLabel(QString label) {
-    label = label.trimmed().left(kDiskPartLabelMaxChars);
-    label.replace(QStringLiteral("\""), QString());
-    return label.isEmpty() ? QStringLiteral("SAKDATA") : label;
+    // A diskpart label is a single-line command token. Strip every control
+    // character (< 0x20 and DEL) as well as the wrapping double-quote: an
+    // embedded CR/LF would otherwise be parsed as an additional diskpart
+    // command line (e.g. select/clean another disk).
+    QString cleaned;
+    cleaned.reserve(label.size());
+    for (const QChar ch : label) {
+        if (ch.unicode() >= 0x20 && ch.unicode() != 0x7F && ch != QLatin1Char('"')) {
+            cleaned.append(ch);
+        }
+    }
+    cleaned = cleaned.trimmed().left(kDiskPartLabelMaxChars);
+    return cleaned.isEmpty() ? QStringLiteral("SAKDATA") : cleaned;
 }
 
 QString sizeMbArg(uint64_t bytes) {
@@ -4446,6 +4456,12 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
     const PartitionOperation& operation) const {
     const QString target_style =
         payloadString(operation, QStringLiteral("target_style"), QStringLiteral("GPT")).toUpper();
+    // target_style is substituted unquoted into Initialize-Disk -PartitionStyle
+    // (a GPT/MBR enum argument). Allowlist it so a crafted value cannot inject
+    // additional PowerShell after the enum token.
+    if (target_style != QStringLiteral("GPT") && target_style != QStringLiteral("MBR")) {
+        return invalidScript(QStringLiteral("Convert requires target_style of GPT or MBR"));
+    }
     PartitionScript out;
     out.preview =
         QStringLiteral("Convert Disk %1 to %2").arg(operation.target.disk_number).arg(target_style);
@@ -4535,6 +4551,13 @@ PartitionScript PartitionScriptBuilder::buildSplitScript(
         payloadString(operation, QStringLiteral("new_file_system"), QStringLiteral("NTFS"));
     if (first_size == 0) {
         return invalidScript(QStringLiteral("Split requires first_size_bytes"));
+    }
+    // fs is substituted unquoted into Format-Volume -FileSystem (an enum
+    // argument). Allowlist it so a crafted new_file_system cannot inject
+    // additional PowerShell after the enum token.
+    if (!isSupportedFileSystem(fs)) {
+        return invalidScript(QStringLiteral(
+            "Split requires a supported new_file_system (NTFS, FAT32, exFAT, ReFS)"));
     }
 
     PartitionScript out;

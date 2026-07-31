@@ -596,6 +596,10 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
     // Use .NET ZipFile for reliable extraction with native path separators
     QString native_nupkg = QDir::toNativeSeparators(nupkg_path);
     QString native_extract = QDir::toNativeSeparators(extract_dir);
+    // Escape apostrophes for the single-quoted PowerShell string literals below;
+    // a path containing ' would otherwise close the literal and inject commands.
+    native_nupkg.replace(QLatin1Char('\''), QStringLiteral("''"));
+    native_extract.replace(QLatin1Char('\''), QStringLiteral("''"));
     QString ps_command = QString(
                              "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
                              "[System.IO.Compression.ZipFile]::ExtractToDirectory('%1', '%2')")
@@ -694,6 +698,10 @@ bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
     // Use .NET ZipFile to create the archive (Compress-Archive rejects .nupkg)
     QString native_src = QDir::toNativeSeparators(source_dir);
     QString native_out = QDir::toNativeSeparators(output_path);
+    // Escape apostrophes for the single-quoted PowerShell string literals below;
+    // a path containing ' would otherwise close the literal and inject commands.
+    native_src.replace(QLatin1Char('\''), QStringLiteral("''"));
+    native_out.replace(QLatin1Char('\''), QStringLiteral("''"));
     QString ps_command = QString(
                              "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
                              "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")

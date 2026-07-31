@@ -111,7 +111,14 @@ public:
             // Release the parent handle so the writer child can open the file; the
             // QTemporaryFile object keeps the path alive until this guard is destroyed.
             file->close();
-            m_script.replace(credential.placeholder, QDir::toNativeSeparators(file->fileName()));
+            // The placeholder is embedded inside a single-quoted PowerShell literal
+            // (e.g. -VolumePasswordFile '<placeholder>'). Only the apostrophe is
+            // special there, so double it: a temp path under a username such as
+            // O'Brien, or an attacker-crafted TEMP directory, would otherwise close
+            // the literal and inject into the elevated RunPowerShell command.
+            const QString stagedPath = QString(QDir::toNativeSeparators(file->fileName()))
+                                           .replace(QLatin1Char('\''), QStringLiteral("''"));
+            m_script.replace(credential.placeholder, stagedPath);
             m_secret_sizes.push_back(secret.size());
             m_files.push_back(std::move(file));
         }
