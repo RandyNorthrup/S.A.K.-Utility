@@ -30,6 +30,7 @@ private Q_SLOTS:
     void validatePath_suspiciousPatterns();
     void validatePath_maxPathLength();
     void pathPrefixes_decomposesEveryAncestor();
+    void emptyInput_handledGracefully();
 
     // Path-within-base validation
     void pathWithinBase_validSubpath();
@@ -169,6 +170,18 @@ void InputValidatorTests::pathPrefixes_decomposesEveryAncestor() {
 
     // Empty path -> no prefixes.
     QVERIFY(sak::input_validator::pathPrefixes(std::filesystem::path()).empty());
+}
+
+// B5 tail: these public helpers previously asserted non-empty input, crashing
+// debug builds on a legitimate empty query. They must now return the sensible
+// result for empty input.
+void InputValidatorTests::emptyInput_handledGracefully() {
+    // An empty string is vacuously valid UTF-8 and sanitizes to empty.
+    QVERIFY(sak::input_validator::isValidUtf8(std::string_view{}));
+    QVERIFY(sak::input_validator::sanitizeString(std::string_view{}, true).empty());
+    // An empty path has no traversal / suspicious pattern.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path()));
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path()));
 }
 
 // ============================================================================

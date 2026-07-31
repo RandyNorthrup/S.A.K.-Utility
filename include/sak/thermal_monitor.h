@@ -18,6 +18,11 @@ namespace sak {
 
 inline constexpr int kDefaultThermalPollIntervalMs = kTimerBroadcastMs;
 
+/// @brief Floor for the poll interval. A zero interval makes QTimer fire
+///        continuously (busy-spinning the sensor query); a negative interval is
+///        invalid. Callers passing <= 0 are clamped up to this.
+inline constexpr int kMinThermalPollIntervalMs = 250;
+
 /// @brief Polls system thermal sensors at a configurable interval
 ///
 /// Uses a single PowerShell process per poll cycle to query CPU (WMI ACPI
@@ -52,8 +57,14 @@ public:
     ThermalMonitor& operator=(ThermalMonitor&&) = delete;
 
     /// @brief Start periodic temperature polling
-    /// @param interval_ms Poll interval in milliseconds (default: 2000)
+    /// @param interval_ms Poll interval in milliseconds (default: 2000). Values
+    ///        <= 0 are clamped up to kMinThermalPollIntervalMs.
     void start(int interval_ms = kDefaultThermalPollIntervalMs);
+
+    /// @brief Clamp a requested poll interval to a safe, non-busy floor.
+    /// @return @p requested when it is >= kMinThermalPollIntervalMs, else the
+    ///         floor. Pure + static for unit testing.
+    [[nodiscard]] static int clampPollIntervalMs(int requested);
 
     /// @brief Stop temperature polling
     void stop();

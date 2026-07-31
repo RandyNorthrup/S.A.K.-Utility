@@ -444,7 +444,8 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
 }
 
 bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
-    Q_ASSERT(!path.empty());
+    // An empty path contains no traversal sequence; do not assert non-empty
+    // (debug-only crash on a legitimate empty query).
     const auto path_str = path.string();
 
     // Check for common traversal patterns
@@ -497,7 +498,8 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
 }
 
 bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& path) noexcept {
-    Q_ASSERT(!path.empty());
+    // An empty path has no suspicious pattern; do not assert non-empty (debug-only
+    // crash on a legitimate empty query).
     const auto path_str = path.string();
 
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
@@ -553,8 +555,9 @@ bool input_validator::containsControlChars(std::string_view str) noexcept {
 }
 
 bool input_validator::isValidUtf8(std::string_view str) noexcept {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(str.data());
+    // An empty string is vacuously valid UTF-8; do not assert non-empty (that
+    // crashed debug builds on a legitimate empty input). The loop below handles
+    // an empty view correctly.
     std::size_t i = 0;
 
     while (i < str.length()) {
@@ -576,8 +579,8 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
 }
 
 std::string input_validator::sanitizeString(std::string_view str, bool allow_unicode) {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(str.data());
+    // Sanitizing an empty string yields an empty string; do not assert non-empty
+    // (a debug-only crash on legitimate input). The loop handles an empty view.
     std::string result;
     result.reserve(str.length());
 

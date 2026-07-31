@@ -45,14 +45,20 @@ ThermalMonitor::~ThermalMonitor() {
 // Public API
 // ============================================================================
 
+int ThermalMonitor::clampPollIntervalMs(int requested) {
+    return requested >= kMinThermalPollIntervalMs ? requested : kMinThermalPollIntervalMs;
+}
+
 void ThermalMonitor::start(int interval_ms) {
     if (m_timer.isActive()) {
         m_timer.stop();
     }
 
-    m_interval_ms = interval_ms;
+    // Clamp: a zero interval busy-spins the sensor query; a negative one is
+    // invalid. Never arm the timer with a non-positive interval.
+    m_interval_ms = clampPollIntervalMs(interval_ms);
     m_active = true;
-    logInfo("Thermal monitor started ({}ms interval)", interval_ms);
+    logInfo("Thermal monitor started ({}ms interval)", m_interval_ms);
 
     // Fire initial poll immediately
     onTimerTick();

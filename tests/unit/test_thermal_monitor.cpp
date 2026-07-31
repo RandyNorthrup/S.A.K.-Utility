@@ -19,6 +19,7 @@ private Q_SLOTS:
     void pollOnceReturnsReadings();
     void clearHistory();
     void singleShotTimerBehavior();
+    void clampPollInterval_flooring();
 };
 
 void ThermalMonitorTests::initialState() {
@@ -75,6 +76,18 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     const int history_size = monitor.history().size();
     QVERIFY2(history_size <= 30,
              qPrintable(QString("History too large: %1 entries").arg(history_size)));
+}
+
+// B5 tail: a non-positive poll interval must never arm the timer (0 busy-spins,
+// negative is invalid). start() clamps through clampPollIntervalMs.
+void ThermalMonitorTests::clampPollInterval_flooring() {
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(1000), 1000);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kMinThermalPollIntervalMs),
+             sak::kMinThermalPollIntervalMs);
+    // Below the floor / zero / negative all clamp up to the floor.
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(10), sak::kMinThermalPollIntervalMs);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(0), sak::kMinThermalPollIntervalMs);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(-5), sak::kMinThermalPollIntervalMs);
 }
 
 QTEST_MAIN(ThermalMonitorTests)
