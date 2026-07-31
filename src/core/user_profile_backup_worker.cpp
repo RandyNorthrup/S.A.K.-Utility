@@ -217,9 +217,11 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
-    // Report success only when every file copied and the restore manifest was
-    // written; otherwise the backup is partial/unrestorable.
-    const bool success = (m_filesErrored == 0) && manifestSaved;
+    // Report success only when the manifest was written AND nothing was left out:
+    // any hard error OR an elevation-required skip means the backup is incomplete
+    // (some selected data was not captured), so it must not read as a clean success
+    // (B7-20). Intentional filter skips (m_filesSkipped: caches, *.tmp) do not count.
+    const bool success = (m_filesErrored == 0) && (m_filesElevationSkipped == 0) && manifestSaved;
     Q_EMIT backupComplete(success, summary, m_manifest);
 }
 
@@ -229,6 +231,9 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
     QDir dir;
     if (!dir.mkpath(userBackupPath)) {
         Q_EMIT logMessage(tr("Failed to create directory: %1").arg(userBackupPath), true);
+        // A user whose backup root cannot be created backed up nothing; count it as
+        // an error so the run is not reported as a clean success (B7-20).
+        ++m_filesErrored;
         return false;
     }
 
@@ -275,6 +280,9 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
 
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source does not exist: %1").arg(sourcePath), true);
+        // A selected folder that is missing at backup time is an error, not a silent
+        // success: the resulting backup omits data the user asked to keep (B7-20).
+        ++m_filesErrored;
         return false;
     }
 
@@ -294,6 +302,10 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
         return copyFileWithFiltering(sourcePath, destPath, sourceInfo.size());
     }
 
+    // Exists but is neither a regular file nor a directory (device/pipe/etc.): it
+    // could not be backed up, so record it rather than returning a silent failure.
+    Q_EMIT logMessage(tr("Unsupported source type: %1").arg(sourcePath), true);
+    ++m_filesErrored;
     return false;
 }
 
@@ -323,6 +335,9 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
 
     // Create destination directory
     if (!createDirectory(destDir)) {
+        // Counted here (once) as the leaf failure; callers only log/propagate so the
+        // error is not double-counted (B7-20).
+        ++m_filesErrored;
         return false;
     }
 
@@ -409,6 +424,9 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     // Ensure destination directory exists
     QFileInfo destInfo(destPath);
     if (!createDirectory(destInfo.absolutePath())) {
+        // The file cannot be written without its parent dir; count it (B7-20).
+        Q_EMIT logMessage(tr("Failed to create directory for: %1").arg(destPath), true);
+        ++m_filesErrored;
         return false;
     }
 

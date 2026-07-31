@@ -4,6 +4,8 @@
 #include "sak/user_profile_backup_worker.h"
 
 #include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <atomic>
@@ -37,7 +39,97 @@ private Q_SLOTS:
     // ── B7-08: username / relative-path traversal validation ──
     void isSafePathSegment_acceptsNamesRejectsTraversal();
     void isSafeRelativePath_acceptsRelativeRejectsEscapes();
+
+    // ── B7-20: incomplete backups must not report a clean success ──
+    void backupMissingSelectedFolderReportsFailure();
+    void backupExistingFolderReportsSuccess();
+
+private:
+    struct BackupOutcome {
+        std::atomic<bool> done{false};
+        bool success{true};
+    };
+    // Run a one-user backup to completion and return whether it reported success.
+    static bool runBackup(const QString& profilePath,
+                          const sak::FolderSelection& folder,
+                          const QString& destPath);
 };
+
+bool TestUserProfileBackupWorker::runBackup(const QString& profilePath,
+                                            const sak::FolderSelection& folder,
+                                            const QString& destPath) {
+    UserProfileBackupWorker worker;
+
+    UserProfile user;
+    user.username = QStringLiteral("tester");
+    user.profile_path = profilePath;
+    user.is_selected = true;
+    user.folder_selections = {folder};
+
+    // Pre-create the destination so the disk-space check (which runs before the
+    // backup creates the tree) sees a valid storage volume.
+    QDir().mkpath(destPath);
+
+    BackupOutcome outcome;
+    QObject::connect(
+        &worker,
+        &UserProfileBackupWorker::backupComplete,
+        &worker,
+        [&outcome](bool ok, const QString&, const BackupManifest&) {
+            outcome.success = ok;
+            outcome.done.store(true);
+        },
+        Qt::DirectConnection);
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;  // no ACL ops in the test
+    worker.startBackup(BackupManifest{}, {user}, destPath, SmartFilter{}, options);
+
+    // QTRY macros cannot return a value from a static helper; poll then join.
+    for (int i = 0; i < 500 && !outcome.done.load(); ++i) {
+        QTest::qWait(10);
+    }
+    worker.wait();
+    return outcome.success;
+}
+
+void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
+    QTemporaryDir srcDir;  // profile root WITHOUT a "Documents" subfolder
+    QVERIFY(srcDir.isValid());
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");  // missing on disk
+    folder.selected = true;
+
+    // A selected folder that does not exist means the backup omitted requested data;
+    // it must NOT report a clean success (B7-20).
+    QVERIFY(!runBackup(srcDir.path(), folder, destParent.filePath(QStringLiteral("dest"))));
+}
+
+void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(QDir(srcDir.path()).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(srcDir.filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+        f.close();
+    }
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+
+    // A real, readable folder backs up cleanly -> success (no false failure).
+    QVERIFY(runBackup(srcDir.path(), folder, destParent.filePath(QStringLiteral("dest"))));
+}
 
 // ============================================================================
 // Construction
