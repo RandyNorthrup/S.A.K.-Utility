@@ -22,6 +22,8 @@ private Q_SLOTS:
     void result_initialDefaults();
     void result_scores_initiallyZero();
     void result_fieldAssignment();
+    // B5-09: unique per-run temp file name (no fixed-name TOCTOU).
+    void uniqueBenchmarkFileName_isUniqueAndWellFormed();
 };
 
 void TestDiskBenchmarkWorker::construction_default() {
@@ -90,6 +92,25 @@ void TestDiskBenchmarkWorker::result_fieldAssignment() {
     QCOMPARE(result.rand_4k_read_mbps, 75.0);
     QCOMPARE(result.rand_4k_write_mbps, 65.0);
     QCOMPARE(result.overall_score, 95);
+}
+
+// B5-09: the benchmark temp file must have a unique per-run name so the fixed
+// "sak_disk_benchmark.tmp" TOCTOU (check-then-CREATE_ALWAYS) is gone.
+void TestDiskBenchmarkWorker::uniqueBenchmarkFileName_isUniqueAndWellFormed() {
+    const QString a = DiskBenchmarkWorker::makeUniqueBenchmarkFileName(1234, 1000, 0);
+    const QString b = DiskBenchmarkWorker::makeUniqueBenchmarkFileName(1234, 1000, 1);
+    const QString c = DiskBenchmarkWorker::makeUniqueBenchmarkFileName(1234, 2000, 0);
+
+    // A different counter (or timestamp) yields a different name -> no collision.
+    QVERIFY(a != b);
+    QVERIFY(a != c);
+    // Well-formed: keeps the benchmark prefix and the .tmp suffix, and embeds all
+    // three discriminators.
+    QVERIFY(a.startsWith("sak_disk_benchmark_"));
+    QVERIFY(a.endsWith(".tmp"));
+    QVERIFY(a.contains("1234"));
+    QVERIFY(b.contains("1000"));
+    QVERIFY(c.contains("2000"));
 }
 
 QTEST_MAIN(TestDiskBenchmarkWorker)

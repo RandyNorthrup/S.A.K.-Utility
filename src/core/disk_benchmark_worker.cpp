@@ -12,12 +12,14 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QStorageInfo>
 #include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
 #include <numeric>
 #include <random>
 #include <vector>
@@ -107,6 +109,37 @@ void finalizeLatencies(std::vector<double>& latencies,
     if (latencies_out) {
         *latencies_out = std::move(latencies);
     }
+}
+
+// Fill a freshly-created benchmark file with @p total_bytes of reproducible
+// pseudo-random data via direct, sector-aligned writes. Closes @p h on failure.
+bool fillTestFileWithRandom(HANDLE h, size_t total_bytes) {
+    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+    if (!buf.valid()) {
+        CloseHandle(h);
+        return false;
+    }
+
+    std::mt19937 rng(kCreateFileSeed);
+    auto* data32 = reinterpret_cast<uint32_t*>(buf.data());
+    const size_t count32 = buf.size() / sizeof(uint32_t);
+    for (size_t i = 0; i < count32; ++i) {
+        data32[i] = rng();
+    }
+
+    size_t written_total = 0;
+    while (written_total < total_bytes) {
+        DWORD bytes_written = 0;
+        const DWORD to_write =
+            static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
+        if (!WriteFile(h, buf.data(), to_write, &bytes_written, nullptr)) {
+            logError("Failed to write test file at offset {}", written_total);
+            CloseHandle(h);
+            return false;
+        }
+        written_total += bytes_written;
+    }
+    return true;
 }
 #endif
 
@@ -276,64 +309,54 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
 // Test File Management
 // ============================================================================
 
+QString DiskBenchmarkWorker::makeUniqueBenchmarkFileName(quint32 pid,
+                                                         qint64 msecs,
+                                                         quint64 counter) {
+    return QStringLiteral("sak_disk_benchmark_%1_%2_%3.tmp").arg(pid).arg(msecs).arg(counter);
+}
+
 QString DiskBenchmarkWorker::testFilePath() const {
-    return QDir(m_config.drive_path).filePath("sak_disk_benchmark.tmp");
+    return m_test_file_path;
 }
 
 bool DiskBenchmarkWorker::createTestFile() {
 #ifdef SAK_PLATFORM_WINDOWS
-    const QString path = testFilePath();
-    // Fail closed if a file of the benchmark's fixed name already exists: CREATE_ALWAYS below
-    // would truncate it and cleanupTestFile() would later delete it, destroying user data. On
-    // this early return execute() bails before cleanup, so the pre-existing file is untouched.
-    if (QFile::exists(path)) {
-        logError("Disk benchmark: refusing to overwrite existing file: {}", path.toStdString());
-        return false;
-    }
+    // Claim a UNIQUE per-run file with an exclusive CREATE_NEW: this removes the
+    // old fixed-name TOCTOU (QFile::exists() check then CREATE_ALWAYS), where a
+    // file or symlink planted at the guessable path between the check and the
+    // create would be truncated here and deleted by cleanupTestFile(). CREATE_NEW
+    // fails closed if anything already exists at the name, and the unique name
+    // also keeps concurrent runs from colliding.
+    static std::atomic<quint64> s_counter{0};
+    const quint64 seq = s_counter.fetch_add(1, std::memory_order_relaxed);
+    const QString name = makeUniqueBenchmarkFileName(GetCurrentProcessId(),
+                                                     QDateTime::currentMSecsSinceEpoch(),
+                                                     seq);
+    const QString path = QDir(m_config.drive_path).filePath(name);
     const std::wstring wpath = path.toStdWString();
 
-    // Create with direct I/O flags
+    // Create exclusively with direct I/O flags -- one call is both the atomic
+    // claim (CREATE_NEW) and the open, so there is no check-then-open window.
     HANDLE h =
         CreateFileW(wpath.c_str(),
                     GENERIC_WRITE,
                     0,
                     nullptr,
-                    CREATE_ALWAYS,
+                    CREATE_NEW,
                     FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_SEQUENTIAL_SCAN,
                     nullptr);
 
     if (h == INVALID_HANDLE_VALUE) {
-        logError("Failed to create test file: {}", path.toStdString());
+        logError("Disk benchmark: failed to exclusively create test file: {}", path.toStdString());
         return false;
     }
+    // Record the claimed path only after a successful exclusive create, so every
+    // read/write/cleanup targets exactly the file we own.
+    m_test_file_path = path;
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
-    if (!buf.valid()) {
-        CloseHandle(h);
-        return false;
-    }
-
-    // Fill with pseudo-random data (fixed seed for reproducibility)
-    std::mt19937 rng(kCreateFileSeed);
-    auto* data32 = reinterpret_cast<uint32_t*>(buf.data());
-    const size_t count32 = buf.size() / sizeof(uint32_t);
-    for (size_t i = 0; i < count32; ++i) {
-        data32[i] = rng();
-    }
-
-    size_t written_total = 0;
-    while (written_total < total_bytes) {
-        DWORD bytes_written = 0;
-        const DWORD to_write =
-            static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
-
-        if (!WriteFile(h, buf.data(), to_write, &bytes_written, nullptr)) {
-            logError("Failed to write test file at offset {}", written_total);
-            CloseHandle(h);
-            return false;
-        }
-        written_total += bytes_written;
+    if (!fillTestFileWithRandom(h, total_bytes)) {
+        return false;  // helper closed the handle
     }
 
     CloseHandle(h);
@@ -346,10 +369,14 @@ bool DiskBenchmarkWorker::createTestFile() {
 
 void DiskBenchmarkWorker::cleanupTestFile() {
     const QString path = testFilePath();
+    if (path.isEmpty()) {
+        return;  // nothing was ever claimed this run
+    }
     if (QFile::exists(path)) {
         QFile::remove(path);
         logInfo("Test file removed: {}", path.toStdString());
     }
+    m_test_file_path.clear();  // do not delete the same path twice
 }
 
 // ============================================================================

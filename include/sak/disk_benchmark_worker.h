@@ -52,6 +52,19 @@ public:
     /// @return Benchmark result (valid only after benchmarkComplete signal)
     [[nodiscard]] const DiskBenchmarkResult& result() const { return m_result; }
 
+    /// @brief Build a unique, per-run benchmark temp-file name.
+    /// @param pid current process id.
+    /// @param msecs a millisecond timestamp.
+    /// @param counter a monotonically increasing per-run counter.
+    /// @return e.g. "sak_disk_benchmark_<pid>_<msecs>_<counter>.tmp".
+    /// @note Pure + static for unit testing. A unique name (plus exclusive
+    ///       CREATE_NEW) removes the fixed-name TOCTOU: no pre-existing file or
+    ///       planted link at a guessable path is truncated/deleted, and
+    ///       concurrent runs do not collide.
+    [[nodiscard]] static QString makeUniqueBenchmarkFileName(quint32 pid,
+                                                             qint64 msecs,
+                                                             quint64 counter);
+
 Q_SIGNALS:
     /// @brief Emitted when the benchmark suite completes
     /// @param result Complete disk benchmark results
@@ -174,11 +187,18 @@ private:
     /// @brief Calculate a normalized score
     void calculateScore();
 
-    /// @brief Resolve test file path
+    /// @brief The claimed test file path for this run (set by createTestFile).
+    /// @return The unique path createTestFile exclusively claimed, or an empty
+    ///         string before a file has been claimed.
     [[nodiscard]] QString testFilePath() const;
 
     DiskBenchmarkConfig m_config;
     DiskBenchmarkResult m_result;
+
+    /// @brief Path exclusively claimed by createTestFile for this run. Empty
+    ///        until a file is claimed; every read/write/cleanup uses it so the
+    ///        benchmark never touches a fixed, guessable path.
+    QString m_test_file_path;
 };
 
 }  // namespace sak
