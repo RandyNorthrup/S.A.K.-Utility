@@ -174,6 +174,15 @@ void UserProfileBackupWorker::backupAllUsers() {
             continue;
         }
 
+        // The username becomes a backup subdirectory. Reject a crafted name ("..\\..\\Windows",
+        // "C:\\evil") so it can never escape the destination root -- fail closed (counts as an
+        // error so the backup is not reported as a clean success).
+        if (!isSafePathSegment(user.username)) {
+            Q_EMIT logMessage(tr("Skipping user with unsafe name: %1").arg(user.username), true);
+            ++m_filesErrored;
+            continue;
+        }
+
         Q_EMIT statusUpdate(user.username, tr("Starting backup..."));
         Q_EMIT logMessage(tr("=== Backing up user: %1 ===").arg(user.username), false);
 
@@ -233,6 +242,15 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
             continue;
         }
 
+        // relative_path is joined onto BOTH the source profile and the destination roots; a "../"
+        // in it would read outside the profile and write outside the backup. Reject traversal.
+        if (!isSafeRelativePath(folder.relative_path)) {
+            Q_EMIT logMessage(tr("Skipping folder with unsafe path: %1").arg(folder.relative_path),
+                              true);
+            ++m_filesErrored;
+            continue;
+        }
+
         Q_EMIT statusUpdate(user.username, tr("Backing up: %1").arg(folder.display_name));
 
         QString sourcePath = user.profile_path + "/" + folder.relative_path;
@@ -258,6 +276,15 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source does not exist: %1").arg(sourcePath), true);
         return false;
+    }
+
+    // A reparse point (symlink/junction) must never be followed: a directory one loops or escapes
+    // the profile, and a FILE one would copy the content of whatever it targets (e.g. a symlink to
+    // a privileged system file) into the backup. Skip both, not just directories.
+    if (isReparsePoint(sourcePath)) {
+        Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourcePath), false);
+        m_filesSkipped++;
+        return true;
     }
 
     if (sourceInfo.isDir()) {
@@ -319,14 +346,15 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
     QFileInfo itemInfo(sourceItem);
     QString destItem = destDir + "/" + itemInfo.fileName();
 
+    // Never follow a reparse point (junction/symlink), whether it is a directory OR a file: a
+    // directory one can loop back into the profile or point outside it (foreign/privileged data),
+    // and a FILE symlink would pull the content of its target (e.g. a system file) into the backup.
+    if (isReparsePoint(sourceItem)) {
+        Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourceItem), false);
+        return;
+    }
+
     if (itemInfo.isDir()) {
-        // Never recurse into a junction/symlink directory: it can loop back
-        // into the same profile (unbounded recursion) or point outside it
-        // (foreign, possibly privileged data pulled into the backup).
-        if (isReparsePoint(sourceItem)) {
-            Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourceItem), false);
-            return;
-        }
         if (!copyDirectory(sourceItem, destItem, folderConfig)) {
             Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
         }
@@ -562,6 +590,36 @@ bool UserProfileBackupWorker::canReadPath(const QString& path) {
 #else
     return QFileInfo(path).isReadable();
 #endif
+}
+
+bool UserProfileBackupWorker::isSafePathSegment(const QString& segment) {
+    if (segment.isEmpty() || segment == QStringLiteral(".") || segment == QStringLiteral("..")) {
+        return false;
+    }
+    static const QString kForbidden = QStringLiteral("/\\:*?\"<>|");
+    for (const QChar c : segment) {
+        if (kForbidden.contains(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool UserProfileBackupWorker::isSafeRelativePath(const QString& rel) {
+    if (rel.isEmpty() || QDir::isAbsolutePath(rel) || rel.contains(QLatin1Char(':'))) {
+        return false;  // absolute (C:\ or /x) or drive-relative (C:foo)
+    }
+    if (rel.startsWith(QLatin1Char('/')) || rel.startsWith(QLatin1Char('\\'))) {
+        return false;  // leading slash / UNC
+    }
+    const QStringList parts = QDir::fromNativeSeparators(rel).split(QLatin1Char('/'),
+                                                                    Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        if (part == QStringLiteral(".") || part == QStringLiteral("..")) {
+            return false;  // traversal component
+        }
+    }
+    return true;
 }
 
 bool UserProfileBackupWorker::validateSourcePaths() {

@@ -64,6 +64,16 @@ public:
     /// @brief Check if current process can read the given path
     [[nodiscard]] static bool canReadPath(const QString& path);
 
+    /// @brief True if @p segment is a single safe path component: non-empty, not "."/".." and free
+    /// of separators, drive colons, and wildcards. Validates an untrusted username before it
+    /// becomes a backup subdirectory (a name like "..\\..\\Windows" must never escape the root).
+    [[nodiscard]] static bool isSafePathSegment(const QString& segment);
+
+    /// @brief True if @p rel is a safe RELATIVE path: non-empty, not absolute (no drive letter, no
+    /// leading slash/UNC), and containing no "." or ".." component. Validates an untrusted
+    /// folder.relative_path before it is joined onto the source profile and destination roots.
+    [[nodiscard]] static bool isSafeRelativePath(const QString& rel);
+
 Q_SIGNALS:
     /**
      * @brief Overall backup progress

@@ -33,6 +33,10 @@ private Q_SLOTS:
 
     // ── B7-01: lifetime uses QThread state, not a late member flag ──
     void testStartThenImmediateDestroyIsSafe();
+
+    // ── B7-08: username / relative-path traversal validation ──
+    void isSafePathSegment_acceptsNamesRejectsTraversal();
+    void isSafeRelativePath_acceptsRelativeRejectsEscapes();
 };
 
 // ============================================================================
@@ -131,6 +135,40 @@ void TestUserProfileBackupWorker::testStartThenImmediateDestroyIsSafe() {
         // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
     }
     QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
+}
+
+// ============================================================================
+// B7-08: an untrusted username becomes a backup subdirectory and an untrusted
+// folder.relative_path is joined onto both roots -- traversal must be rejected.
+// ============================================================================
+
+void TestUserProfileBackupWorker::isSafePathSegment_acceptsNamesRejectsTraversal() {
+    QVERIFY(UserProfileBackupWorker::isSafePathSegment(QStringLiteral("Alice")));
+    QVERIFY(UserProfileBackupWorker::isSafePathSegment(QStringLiteral("john.doe")));
+
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QString()));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral(".")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("..")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a/b")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a\\b")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("..\\..\\Windows")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("C:")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a*b")));
+}
+
+void TestUserProfileBackupWorker::isSafeRelativePath_acceptsRelativeRejectsEscapes() {
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("AppData/Roaming")));
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("Documents")));
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("sub/dir/file.txt")));
+
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QString()));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("../x")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a/../b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a\\..\\b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a/./b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("/etc/passwd")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("C:/Windows")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("\\\\server\\share")));
 }
 
 QTEST_MAIN(TestUserProfileBackupWorker)
