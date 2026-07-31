@@ -25,7 +25,7 @@
 #include "sak/file_recovery_engine.h"
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
-#include "sak/leftover_cleanup_guard.h"
+#include "sak/leftover_cleanup_item_guard.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
 #include "sak/ost_conversion_worker.h"
@@ -1918,36 +1918,6 @@ std::optional<LeftoverItem::Type> leftoverTypeFromString(const QString& raw) {
         return std::nullopt;
     }
     return *it;
-}
-
-// The fail-closed refusal for an already-resolved item (empty = allowed). The dispatch mirrors
-// CleanupWorker::cleanSingleItem exactly so the item the guard clears is the item the worker acts
-// on (StartupEntry with a value name routes to a registry-value delete; without, to a file delete;
-// ShellExtension routes to a registry-key delete).
-QString cleanupItemRefusal(const LeftoverItem& item) {
-    using Type = LeftoverItem::Type;
-    const Type type = item.type;
-    if (type == Type::RegistryKey || type == Type::ShellExtension) {
-        return registryKeyDeletionRefusal(item.path);
-    }
-    if (type == Type::RegistryValue) {
-        return registryValueDeletionRefusal(item.path, item.registryValueName);
-    }
-    if (type == Type::Service) {
-        return serviceDeletionRefusal(item.path);
-    }
-    if (type == Type::ScheduledTask) {
-        return scheduledTaskDeletionRefusal(item.path);
-    }
-    if (type == Type::FirewallRule) {
-        return firewallRuleDeletionRefusal(item.path);
-    }
-    // A registry-backed StartupEntry deletes a value; a file-backed one deletes a file.
-    if (type == Type::StartupEntry && !item.registryValueName.isEmpty()) {
-        return registryValueDeletionRefusal(item.path, item.registryValueName);
-    }
-    // File, Folder, and a file-backed StartupEntry all delete a filesystem path.
-    return filePathDeletionRefusal(item.path);
 }
 
 // Parse + validate ONE model-supplied item and fill @p out. Returns a refusal reason (empty =

@@ -2034,6 +2034,8 @@ private Q_SLOTS:
     void scriptBuilder_rejectsEnumArgumentCommandInjection();
     void scriptBuilder_stripsControlCharsFromDiskPartLabel();
     void safetyValidator_requiresCloneOverwriteConfirmation();
+    void safetyValidator_blocksWipeOfBootNotSystemDisk();
+    void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
     void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
     void safetyValidator_restoreImageRequiresSizesAndOverwriteConfirmation();
@@ -17013,6 +17015,62 @@ void PartitionManagerCoreTests::scriptBuilder_stripsControlCharsFromDiskPartLabe
     // token; no newline-prefixed injected diskpart command survives.
     QVERIFY(!script.script.contains(QStringLiteral("\nselect disk 9")));
     QVERIFY(script.script.contains(QStringLiteral("SAKselect disk 9clean")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksWipeOfBootNotSystemDisk() {
+    // B2-01: a boot (OS) disk that is not the system (ESP) disk -- the multi-disk
+    // boot case -- must still block WipeDisk. Guarding is_system alone let it wipe.
+    PartitionInventory inventory;
+    appendDisposableTargetDisk(&inventory, 1);
+    inventory.disks.first().is_boot = true;
+    inventory.disks.first().is_system = false;
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 1;
+    QJsonObject payload;
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto op =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk, target, payload);
+
+    PartitionOperationPlanner planner;
+    auto blocked = planner.previewOperation(inventory, op);
+    QVERIFY(!blocked.canApply());
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("wipe is blocked")));
+
+    // A pure data disk (neither boot nor system) is not blocked by the OS-disk rule.
+    inventory.disks.first().is_boot = false;
+    auto dataDisk = planner.previewOperation(inventory, op);
+    QVERIFY(!dataDisk.blockers.join(' ').contains(QStringLiteral("wipe is blocked")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksClonePartitionWithoutTargetOffset() {
+    // B2-03: a region clone that names a target disk but no target_offset_bytes
+    // must be blocked; the builder would otherwise default the offset to 0 and
+    // overwrite the target disk's partition table.
+    PartitionInventory inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    appendDisposableTargetDisk(&inventory, 1);
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 0;
+    target.partition_number = 1;
+    QJsonObject payload;
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    payload[QStringLiteral("target_disk_number")] = 1;
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto op = PartitionOperationPlanner::makeOperation(PartitionOperationType::ClonePartition,
+                                                       target,
+                                                       payload);
+
+    PartitionOperationPlanner planner;
+    auto missing = planner.previewOperation(inventory, op);
+    QVERIFY(!missing.canApply());
+    QVERIFY(missing.blockers.join(' ').contains(QStringLiteral("target offset")));
+
+    op.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+    auto withOffset = planner.previewOperation(inventory, op);
+    QVERIFY(!withOffset.blockers.join(' ').contains(QStringLiteral("target offset")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmation() {

@@ -92,6 +92,11 @@ private:
     /// @brief Validate ISO and disk number inputs before USB creation
     bool validateUSBInputs(const QString& isoPath, const QString& diskNumber);
 
+    /// @brief Engine-level guard: refuse to clean/format a disk that is the
+    /// current OS boot or system disk, or is read-only. Defense in depth behind
+    /// the GUI's removable-only selection so a bad caller cannot wipe the OS disk.
+    bool guardTargetDiskSafe(const QString& diskNumber);
+
     /// @brief Format drive, wait for partition, and verify NTFS filesystem (Step 1)
     QString formatAndVerifyDrive(const QString& diskNumber);
 

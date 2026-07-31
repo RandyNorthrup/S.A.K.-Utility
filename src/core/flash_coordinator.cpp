@@ -12,6 +12,8 @@
 #include <QMutexLocker>
 #include <QThread>
 
+#include <vector>
+
 #include <windows.h>
 
 #include <winioctl.h>
@@ -21,6 +23,48 @@ constexpr qint64 kDefaultFlashBufferSizeMb = 256;
 constexpr int kDefaultFlashBufferCount = 16;
 constexpr int kMaxPhysicalDriveNumber = 99;
 constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
+
+// Returns true when the given physical-drive number backs the current OS
+// (system) volume. Used as an engine-level guard so a bad caller cannot raw
+// write the running OS disk. Determined natively (no elevation needed); if the
+// OS disk cannot be identified this returns false and the GUI's removable-only
+// selection remains the gate.
+bool physicalDriveHostsSystemVolume(int driveNumber) {
+    wchar_t winDir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+        return false;
+    }
+    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
+    HANDLE hVol = CreateFileW(
+        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVol == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    constexpr DWORD kMaxExtents = 16;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(hVol,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(hVol);
+    if (!ok) {
+        return false;
+    }
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
+        if (static_cast<int>(extents->Extents[i].DiskNumber) == driveNumber) {
+            return true;
+        }
+    }
+    return false;
+}
 }  // namespace
 
 FlashCoordinator::FlashCoordinator(QObject* parent)
@@ -428,6 +472,24 @@ bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
         }
 
         CloseHandle(hDevice);
+
+        // Engine-level safety gate: never raw-write the current OS disk. Parse
+        // the physical drive number and refuse if it backs the system volume.
+        QString driveNumStr = devicePath;
+        const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
+        driveNumStr.remove(
+            0, driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
+        bool numOk = false;
+        const int driveNumber = driveNumStr.toInt(&numOk);
+        if (numOk && physicalDriveHostsSystemVolume(driveNumber)) {
+            sak::logError(QString("Refusing raw write to %1: it backs the OS system volume")
+                              .arg(devicePath)
+                              .toStdString());
+            Q_EMIT flashError(
+                QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
+            return false;
+        }
+
         sak::logInfo(QString("Validated device: %1").arg(devicePath).toStdString());
     }
 

@@ -17,6 +17,7 @@
 #include <QMutexLocker>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QStringList>
 #include <QTemporaryFile>
 #include <QThread>
 
@@ -126,6 +127,45 @@ bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString&
         return false;
     }
 
+    // Engine-level safety gate: never DiskPart-clean the OS boot/system disk.
+    if (!guardTargetDiskSafe(diskNumber)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool WindowsUSBCreator::guardTargetDiskSafe(const QString& diskNumber) {
+    // diskNumber is already validated as a pure integer by the caller.
+    const QString query =
+        QString(
+            "try { $d = Get-Disk -Number %1 -ErrorAction Stop; "
+            "Write-Output ('{0}|{1}|{2}' -f $d.IsBoot, $d.IsSystem, $d.IsReadOnly) } "
+            "catch { Write-Output 'ERROR' }")
+            .arg(diskNumber);
+    const auto result = sak::runPowerShell(
+        query, sak::kTimeoutProcessShortMs, true, false, [this]() { return m_cancelled.load(); });
+    const QString out = result.std_out.trimmed();
+    // Fail closed: if the disk cannot be verified, refuse to erase it.
+    if (result.timed_out || result.cancelled || out.isEmpty() || out == QStringLiteral("ERROR")) {
+        setError(QString("Could not verify target disk %1 is safe to erase").arg(diskNumber));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    const QStringList parts = out.split(QLatin1Char('|'));
+    const auto isTrue = [&parts](int index) {
+        return parts.value(index).trimmed().compare(QStringLiteral("True"), Qt::CaseInsensitive) ==
+               0;
+    };
+    if (isTrue(0) || isTrue(1) || isTrue(2)) {
+        setError(QString("Refusing to erase disk %1: it is the current OS boot/system disk or is "
+                         "read-only")
+                     .arg(diskNumber));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
     return true;
 }
 

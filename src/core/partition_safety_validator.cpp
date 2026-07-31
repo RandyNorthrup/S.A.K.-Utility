@@ -150,7 +150,12 @@ void addWarningIf(PartitionValidationResult* result, bool warned, const QString&
 }
 
 bool blocksCurrentOsDiskMutation(const PartitionDiskInfo& disk, PartitionOperationType type) {
-    return disk.is_system && isDestructiveDiskOperation(type) && !isSystemAllowedOperation(type);
+    // Block destructive mutation of BOTH the system (ESP) disk and the boot (OS)
+    // disk. On a multi-disk boot config these are different disks: the OS lives
+    // on the is_boot disk while the ESP is on the is_system disk, so guarding
+    // is_system alone would let a WipeDisk destroy the running OS disk.
+    return (disk.is_system || disk.is_boot) && isDestructiveDiskOperation(type) &&
+           !isSystemAllowedOperation(type);
 }
 
 bool allowsDynamicDiskOperation(PartitionOperationType type) {
@@ -972,7 +977,11 @@ bool clonePartitionRegionMissingFields(const PartitionOperation& operation) {
     }
     const QString targetPath =
         operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
+    // target_offset_bytes must be supplied explicitly: the builder defaults an
+    // absent offset to 0, which would write the source over the target disk's
+    // partition table (GPT/MBR) at sector 0 instead of into the intended region.
     return !operation.payload.contains(QStringLiteral("target_disk_number")) ||
+           !operation.payload.contains(QStringLiteral("target_offset_bytes")) ||
            !targetPath.startsWith(QStringLiteral("\\\\.\\PhysicalDrive"), Qt::CaseInsensitive) ||
            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0;
 }
@@ -1594,7 +1603,7 @@ void validatePartitionCloneRegionBlockers(const PartitionOperation& operation,
     addBlockerIf(result,
                  clonePartitionRegionMissingFields(operation),
                  QStringLiteral("Partition clone target region requires a physical disk path, "
-                                "target disk, and target size"));
+                                "target disk, target offset, and target size"));
     addBlockerIf(result,
                  clonePartitionPhysicalTargetMissingRegion(operation),
                  QStringLiteral("Partition clone raw physical disk targets require an explicit "
@@ -1774,7 +1783,8 @@ void validateDiskStateBlockers(const PartitionDiskInfo& disk,
                  blocksCurrentOsDiskMutation(disk, operation.type),
                  QStringLiteral("Current OS disk destructive mutation is blocked in v1"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::WipeDisk && disk.is_system,
+                 operation.type == PartitionOperationType::WipeDisk &&
+                     (disk.is_system || disk.is_boot),
                  QStringLiteral("Current OS disk wipe is blocked"));
 }
 

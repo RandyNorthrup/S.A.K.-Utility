@@ -149,10 +149,16 @@ void appendUnallocatedRegions(PartitionDiskInfo* disk) {
 QString buildLayoutHash(const PartitionInventory& inventory) {
     QCryptographicHash hash(QCryptographicHash::Sha256);
     for (const auto& disk : inventory.disks) {
-        hash.addData(QStringLiteral("%1|%2|%3|%4|%5\n")
+        // is_system/is_boot are folded in so that a change to a disk's boot or
+        // system status since planning invalidates the queue's apply hash and
+        // forces a refresh + re-validation (which then applies the OS-disk block)
+        // rather than dispatching a destructive op against a now-bootable disk.
+        hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
                          .arg(disk.disk_number)
                          .arg(disk.serial_number, disk.partition_style)
                          .arg(disk.size_bytes)
+                         .arg(disk.is_system ? 1 : 0)
+                         .arg(disk.is_boot ? 1 : 0)
                          .toUtf8());
         for (const auto& partition : disk.partitions) {
             hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")

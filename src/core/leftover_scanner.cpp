@@ -869,6 +869,25 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,
     return classifyTypeRisk(type);
 }
 
+namespace {
+// A leftover is exempted from a protected root ONLY when it lives inside the
+// program's own install folder AND that folder is a strict subdirectory of the
+// protected root (e.g. C:\Program Files\MyApp under C:\Program Files). It is
+// never exempted when installLocation IS the protected root itself (e.g.
+// installLocation set to C:\Windows), which would classify the entire OS
+// directory as Safe and auto-select it for recursive deletion.
+bool leftoverInsideOwnInstallSubfolder(const QString& path_native,
+                                       const QString& install_native,
+                                       const QString& protected_path) {
+    const int len = protected_path.length();
+    const bool install_below_protected =
+        !install_native.isEmpty() && install_native.length() > len &&
+        install_native.startsWith(protected_path, Qt::CaseInsensitive) &&
+        install_native[len] == '\\';
+    return install_below_protected && path_native.startsWith(install_native, Qt::CaseInsensitive);
+}
+}  // namespace
+
 bool LeftoverScanner::isProtectedPath(const QString& path) const {
     if (path.isEmpty()) {
         return false;
@@ -888,11 +907,7 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const {
         if (!direct && !child) {
             continue;
         }
-        if (!install_native.isEmpty() &&
-            path_native.startsWith(install_native, Qt::CaseInsensitive)) {
-            return false;
-        }
-        return true;
+        return !leftoverInsideOwnInstallSubfolder(path_native, install_native, protected_path);
     }
     return false;
 }

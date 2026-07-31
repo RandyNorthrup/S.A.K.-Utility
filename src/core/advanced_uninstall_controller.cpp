@@ -9,6 +9,7 @@
 #include "sak/cleanup_worker.h"
 #include "sak/config_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/leftover_cleanup_item_guard.h"
 #include "sak/program_enumerator.h"
 #include "sak/restore_point_manager.h"
 #include "sak/uninstall_worker.h"
@@ -212,6 +213,30 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
     m_uninstall_worker->start();
 }
 
+QVector<LeftoverItem> AdvancedUninstallController::screenCleanupItems(
+    const QVector<LeftoverItem>& selectedItems, int* refusedCount) {
+    QVector<LeftoverItem> screenedItems;
+    screenedItems.reserve(selectedItems.size());
+    int refused = 0;
+    for (const auto& item : selectedItems) {
+        if (!item.selected) {
+            continue;
+        }
+        const QString refusal = cleanupItemRefusal(item);
+        if (refusal.isEmpty()) {
+            screenedItems.append(item);
+        } else {
+            ++refused;
+            Q_EMIT statusMessage(QString("Skipped protected item %1: %2").arg(item.path, refusal),
+                                 kStatusTimeoutShortMs);
+        }
+    }
+    if (refusedCount != nullptr) {
+        *refusedCount = refused;
+    }
+    return screenedItems;
+}
+
 void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& selectedItems) {
     if (selectedItems.isEmpty()) {
         Q_EMIT statusMessage("No leftover items selected.", kStatusTimeoutShortMs);
@@ -224,19 +249,30 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
         return;
     }
 
-    setState(State::Cleaning);
+    // Second, independent safety layer (the same fail-closed screens the AI
+    // clean-leftovers op uses): refuse OS-critical / unrecoverable / injection
+    // targets before any item reaches CleanupWorker, even if the user selected
+    // one. Without this the GUI path could hand CleanupWorker a protected root
+    // (e.g. a C:\Windows leftover misclassified Safe) for permanent deletion.
+    int refused = 0;
+    const QVector<LeftoverItem> screenedItems = screenCleanupItems(selectedItems, &refused);
 
-    int total = 0;
-    for (const auto& item : selectedItems) {
-        if (item.selected) {
-            ++total;
-        }
+    if (screenedItems.isEmpty()) {
+        setState(State::Idle);
+        Q_EMIT statusMessage(QString(
+                                 "No cleanable leftover items after safety screening (%1 refused).")
+                                 .arg(refused),
+                             kStatusTimeoutShortMs);
+        return;
     }
 
+    setState(State::Cleaning);
+
+    const int total = static_cast<int>(screenedItems.size());
     Q_EMIT cleanupStarted(total);
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
-    m_cleanup_worker = std::make_unique<CleanupWorker>(selectedItems, m_useRecycleBin, this);
+    m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, m_useRecycleBin, this);
 
     connect(m_cleanup_worker.get(),
             &CleanupWorker::itemCleaned,

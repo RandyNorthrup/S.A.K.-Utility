@@ -224,6 +224,12 @@ private Q_SLOTS:
     void onCleanupWorkerFailed(int errorCode, const QString& message);
 
 private:
+    /// @brief Apply the fail-closed clean-leftovers screens to the selected items,
+    /// returning only the allowed ones and reporting/counting the refused. Keeps
+    /// OS-critical / unrecoverable / injection targets from reaching CleanupWorker.
+    QVector<LeftoverItem> screenCleanupItems(const QVector<LeftoverItem>& selectedItems,
+                                             int* refusedCount);
+
     /// @brief Transition to a new state
     void setState(State newState);
 
