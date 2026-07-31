@@ -179,6 +179,20 @@ struct FileManagementDirectoryImportResult {
     QStringList warnings;
 };
 
+/// How a raw-target "Replace" must treat an occupant that matches the destination
+/// name only by CASE, when no exact (case-correct) name match exists. Collisions
+/// are detected case-insensitively upstream, so a differing-case occupant can reach
+/// the replace path; whether it is "the same file" depends on the volume's
+/// case-sensitivity (B8-05).
+enum class RawReplaceCaseAction {
+    DeleteDifferingCase,  ///< Known case-insensitive (HFS+): it IS the same file; replace it.
+    TreatAsVacant,        ///< No case match, or known case-sensitive (HFSX): the exact name
+                          ///< is vacant, so create it without touching the differing-case file.
+    RefuseAmbiguous,      ///< Case-sensitivity unknown (APFS): cannot tell if it is the same
+                          ///< file; refuse rather than risk deleting the wrong one.
+    RefuseMultipleCase,   ///< Two+ case-only matches: a case-sensitive volume; refuse.
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -201,6 +215,14 @@ public:
     /// cannot escape the destination directory (drops path components, rejects
     /// "."/".."/empty). Returns empty when the name is unsafe (B8-02).
     [[nodiscard]] static QString confinedHostName(const QString& raw_name);
+    /// Data-loss-safe decision for a raw-target "Replace" whose destination name has
+    /// no exact (case-correct) occupant: given the normalized file system and the
+    /// number of case-insensitive matches, decide whether a lone differing-case
+    /// occupant is the same file to replace (HFS+), a distinct file to leave alone
+    /// (HFSX), or an ambiguous case the bridge must refuse (APFS, whose per-volume
+    /// case-sensitivity is not surfaced here). Pure; the core of B8-05.
+    [[nodiscard]] static RawReplaceCaseAction rawReplaceCaseAction(const QString& normalized_fs,
+                                                                   int case_insensitive_matches);
     /// True only when `target` is genuinely writable: it advertises write support
     /// (`can_write_files`) AND is not read-only (write-protect / read-only mount).
     /// The certified raw HFS/APFS writer's enable + destructive/hardware

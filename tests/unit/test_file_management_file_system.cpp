@@ -1034,6 +1034,31 @@ private Q_SLOTS:
         QVERIFY(!result.ok);
         QVERIFY(!result.blockers.isEmpty());
     }
+
+    // B8-05: a raw-target "Replace" whose destination has no exact (case-correct)
+    // occupant must not delete a differing-case file on a case-sensitive volume.
+    // Collisions are detected case-insensitively upstream, so "foo" can be asked to
+    // replace "Foo"; only a known case-insensitive volume may treat them as one file.
+    void rawReplaceCaseActionIsDataLossSafe() {
+        using B = sak::FileManagementFileSystemBridge;
+        using A = sak::RawReplaceCaseAction;
+
+        // Two+ case-only matches prove a case-sensitive volume -> refuse (any fs).
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("apfs"), 2), A::RefuseMultipleCase);
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("hfsplus"), 3), A::RefuseMultipleCase);
+
+        // No case match at all -> the exact name is vacant (any fs).
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("apfs"), 0), A::TreatAsVacant);
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("hfsx"), 0), A::TreatAsVacant);
+
+        // Exactly one differing-case occupant: the volume's case-sensitivity decides.
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("hfsplus"), 1),
+                 A::DeleteDifferingCase);  // case-insensitive -> same file, replace it
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("hfsx"), 1),
+                 A::TreatAsVacant);        // case-sensitive -> a distinct file, leave it
+        QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("apfs"), 1),
+                 A::RefuseAmbiguous);      // case-sensitivity unknown -> refuse, no data loss
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)

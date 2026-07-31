@@ -804,6 +804,26 @@ bool FileManagementFileSystemBridge::isUnsafeLocalDeletePath(const QString& path
     return absolute.isEmpty() || QDir(absolute).isRoot();
 }
 
+RawReplaceCaseAction FileManagementFileSystemBridge::rawReplaceCaseAction(
+    const QString& normalized_fs, int case_insensitive_matches) {
+    if (case_insensitive_matches > 1) {
+        return RawReplaceCaseAction::RefuseMultipleCase;
+    }
+    if (case_insensitive_matches <= 0) {
+        return RawReplaceCaseAction::TreatAsVacant;
+    }
+    // Exactly one occupant that differs from the target only by case.
+    if (normalized_fs == QStringLiteral("hfsplus")) {
+        return RawReplaceCaseAction::DeleteDifferingCase;  // HFS+ is case-insensitive: same file.
+    }
+    if (normalized_fs == QStringLiteral("hfsx")) {
+        return RawReplaceCaseAction::TreatAsVacant;  // HFSX is case-sensitive: a distinct file.
+    }
+    // APFS per-volume case-sensitivity is not surfaced to the bridge, so we cannot
+    // tell whether this is the same file. Refuse rather than delete the wrong one.
+    return RawReplaceCaseAction::RefuseAmbiguous;
+}
+
 bool FileManagementFileSystemBridge::targetPermitsMutation(const FileManagementTarget& target) {
     // A write-protected / read-only-mounted / uncertified target advertises
     // can_write_files == false (or read_only == true) after applyCapabilities. The
@@ -1800,11 +1820,13 @@ const FileManagementEntry* uniqueCaseInsensitiveMatch(const QVector<FileManageme
 
 // Raw-target occupant removal for removeExistingEntry: the occupant is found in
 // a fresh listing one past the bound so truncation is detectable. An exact
-// (case-sensitive) name match is deleted directly since it is unambiguous on
-// both case-sensitive and case-insensitive volumes. When only a differing-case
-// occupant exists (case-insensitive volume) it is deleted, but two differing-case
-// matches signal a case-sensitive volume where deleting either would remove the
-// wrong file, so that fails closed rather than risking silent data loss.
+// (case-correct) name match is deleted directly since it is unambiguous on both
+// case-sensitive and case-insensitive volumes. When no exact match exists, a
+// differing-case occupant is handled per rawReplaceCaseAction: replaced only on a
+// known case-insensitive volume (HFS+), left alone on a known case-sensitive one
+// (HFSX, where the exact name is simply vacant), and refused when the volume's
+// case-sensitivity is unknown (APFS) or two case-only matches prove the volume is
+// case-sensitive -- deleting the wrong file would be silent data loss (B8-05).
 FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& target,
                                                     const QString& path,
                                                     const int max_entries,
@@ -1815,21 +1837,31 @@ FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& 
     if (listing.ok) {
         for (const FileManagementEntry& entry : listing.entries) {
             if (entry.name == name) {
-                return deleteRawEntry(target, entry);
+                return deleteRawEntry(target, entry);  // exact (case-correct) match
             }
         }
         int ci_count = 0;
         const FileManagementEntry* ci_match =
             uniqueCaseInsensitiveMatch(listing.entries, name, ci_count);
-        if (ci_count == 1) {
+        switch (FileManagementFileSystemBridge::rawReplaceCaseAction(
+            FileManagementFileSystemBridge::normalizedFileSystem(target.file_system), ci_count)) {
+        case RawReplaceCaseAction::DeleteDifferingCase:
             return deleteRawEntry(target, *ci_match);
-        }
-        if (ci_count > 1) {
+        case RawReplaceCaseAction::RefuseMultipleCase:
             result.blockers.append(
                 QStringLiteral("Multiple entries match %1 only by case; refusing to delete on a "
                                "case-sensitive volume to avoid removing the wrong file.")
                     .arg(name));
             return result;
+        case RawReplaceCaseAction::RefuseAmbiguous:
+            result.blockers.append(
+                QStringLiteral("An entry (%1) matches %2 only by case and this volume's "
+                               "case-sensitivity is unknown; refusing to replace to avoid "
+                               "removing the wrong file.")
+                    .arg(ci_match ? ci_match->name : QString(), name));
+            return result;
+        case RawReplaceCaseAction::TreatAsVacant:
+            break;  // exact name is vacant -> fall through to the nothing-occupies path
         }
         if (listing.entries.size() <= max_entries) {
             result.ok = true;
