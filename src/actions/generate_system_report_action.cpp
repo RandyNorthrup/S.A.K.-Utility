@@ -33,6 +33,14 @@ GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_loc
                                                        QObject* parent)
     : QuickAction(parent), m_output_location(output_location) {}
 
+bool GenerateSystemReportAction::collectorFailed(bool timed_out, int exit_code) {
+    return timed_out || exit_code != 0;
+}
+
+bool GenerateSystemReportAction::reportGenerationSucceeded(bool save_ok, bool all_collectors_ok) {
+    return save_ok && all_collectors_ok;
+}
+
 void GenerateSystemReportAction::scan() {
     setStatus(ActionStatus::Scanning);
 
@@ -54,6 +62,7 @@ void GenerateSystemReportAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    m_collector_errors.clear();
     Q_EMIT executionProgress("Gathering comprehensive system information...", progress::kStep5);
 
     // Phase 1: Report header
@@ -119,7 +128,9 @@ void GenerateSystemReportAction::execute() {
 void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                                                      const QString& filepath,
                                                      const QDateTime& start_time) {
-    bool save_success = saveReport(report, filepath);
+    const bool save_success = saveReport(report, filepath);
+    const bool all_collectors_ok = m_collector_errors.isEmpty();
+    const bool overall_success = reportGenerationSucceeded(save_success, all_collectors_ok);
 
     Q_EMIT executionProgress("Report complete", progress::kComplete);
 
@@ -128,9 +139,9 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.bytes_processed = report.size();
+    result.success = overall_success;
 
-    if (save_success) {
-        result.success = true;
+    if (overall_success) {
         result.message = QString("Comprehensive system report generated: %1")
                              .arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
@@ -139,13 +150,20 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                 .arg(filepath)
                 .arg(report.size() / sak::kBytesPerKBf, 0, 'f', kReportSizeDisplayPrecision)
                 .arg(duration_ms / kMillisecondsPerSecondF, 0, 'f', kDurationDisplayPrecision);
-    } else {
-        result.success = false;
+    } else if (!save_success) {
         result.message = "Failed to save system report";
         result.log = QString("Could not write to: %1").arg(filepath);
+    } else {
+        // Saved, but one or more collectors failed to run: surface it rather than
+        // pass off an empty/partial report as a complete success.
+        result.message = QString("System report incomplete: %1 data could not be collected")
+                             .arg(m_collector_errors.join(", "));
+        result.output_path = filepath;
+        result.log = QString("Partial report saved to: %1\nFailed collectors: %2")
+                         .arg(filepath, m_collector_errors.join(", "));
     }
 
-    finishWithResult(result, save_success ? ActionStatus::Success : ActionStatus::Failed);
+    finishWithResult(result, overall_success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 // ============================================================================
@@ -226,6 +244,9 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
            "Write-Output \"BIOS Version: $($info.BiosVersion)\"\n"
            "Write-Output \"BIOS Manufacturer: $($info.BiosManufacturer)\"\n"
            "Write-Output \"BIOS Release Date: $($info.BiosReleaseDate)\"\n"
+           // NB: "BiosSeralNumber" is intentionally misspelled -- Get-ComputerInfo
+           // itself exposes the property with the missing 'i' (a documented
+           // Microsoft typo). Correcting it to BiosSerialNumber returns $null.
            "Write-Output \"BIOS Serial Number: $($info.BiosSeralNumber)\"\n"
            "Write-Output \"BIOS UEFI: $($info.BiosFirmwareType)\"\n"
            "Write-Output \"\"\n"
@@ -259,10 +280,11 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
 
-    if (!proc_info.timed_out) {
-        return proc_info.std_out + "\n";
+    if (collectorFailed(proc_info.timed_out, proc_info.exit_code)) {
+        m_collector_errors << QStringLiteral("OS/hardware");
+        return "=== OPERATING SYSTEM ===\n[collection failed: OS/hardware data unavailable]\n\n";
     }
-    return "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
+    return proc_info.std_out + "\n";
 }
 
 QString GenerateSystemReportAction::gatherStorageInfo() {
@@ -296,10 +318,11 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
 
-    if (!proc_storage.timed_out) {
-        return proc_storage.std_out + "\n";
+    if (collectorFailed(proc_storage.timed_out, proc_storage.exit_code)) {
+        m_collector_errors << QStringLiteral("storage");
+        return "=== STORAGE DEVICES ===\n[collection failed: storage data unavailable]\n\n";
     }
-    return QString();
+    return proc_storage.std_out + "\n";
 }
 
 QString GenerateSystemReportAction::gatherNetworkInfo() {
@@ -330,10 +353,11 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
 
-    if (!proc_network.timed_out) {
-        return proc_network.std_out + "\n";
+    if (collectorFailed(proc_network.timed_out, proc_network.exit_code)) {
+        m_collector_errors << QStringLiteral("network");
+        return "=== NETWORK ADAPTERS ===\n[collection failed: network data unavailable]\n\n";
     }
-    return QString();
+    return proc_network.std_out + "\n";
 }
 
 QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {

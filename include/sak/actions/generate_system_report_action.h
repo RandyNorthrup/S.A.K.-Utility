@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 
 #include <QString>
+#include <QStringList>
 
 namespace sak {
 
@@ -29,9 +30,24 @@ public:
     void scan() override;
     void execute() override;
 
+    // ------------------------------------------------------------------
+    // Pure decision seams (public for unit testing; no I/O, no state)
+    // ------------------------------------------------------------------
+
+    /// @brief A PowerShell collector failed if it timed out or exited non-zero.
+    /// Such a run yields empty/partial output that must not be silently saved as
+    /// a complete report.
+    static bool collectorFailed(bool timed_out, int exit_code);
+
+    /// @brief Report generation only succeeds when the file was written AND
+    /// every collector ran; a saved-but-empty report is a failure to surface.
+    static bool reportGenerationSucceeded(bool save_ok, bool all_collectors_ok);
+
 private:
     QString m_output_location;
     QString m_report_path;
+    /// @brief Names of collectors that failed to run during the current execute().
+    QStringList m_collector_errors;
 
     /// @brief Builds the report header with box-drawing frame and timestamp.
     /// @return Formatted report header string.
