@@ -768,6 +768,16 @@ bool FileManagementFileSystemBridge::isReadableNonNativeFileSystem(const QString
            fs == QStringLiteral("hfsx") || fs == QStringLiteral("apfs");
 }
 
+QString FileManagementFileSystemBridge::confinedHostName(const QString& raw_name) {
+    // QFileInfo::fileName drops any path components (a crafted "../../evil" or "a\b"
+    // collapses to its last segment); "."/".."/empty are then rejected (B8-02).
+    const QString base = QFileInfo(raw_name).fileName();
+    if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..")) {
+        return QString();
+    }
+    return base;
+}
+
 bool FileManagementFileSystemBridge::isUnsafeLocalDeletePath(const QString& path) {
     const QString trimmed = path.trimmed();
     if (trimmed.isEmpty()) {
@@ -1150,14 +1160,22 @@ void exportEntryToHost(const DirectoryExportContext& ctx,
             QStringLiteral("Skipped symlink %1 (links are not exported).").arg(entry.path));
         return;
     }
+    // The entry name comes verbatim from a parsed (untrusted) foreign image; confine
+    // it to a bare host filename so it cannot escape the export directory (B8-02).
+    const QString host_name = FileManagementFileSystemBridge::confinedHostName(entry.name);
+    if (host_name.isEmpty()) {
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped entry with unsafe name %1.").arg(entry.path));
+        return;
+    }
     if (entry.directory) {
-        if (!host_dir.mkpath(entry.name)) {
+        if (!host_dir.mkpath(host_name)) {
             ctx.result.blockers.append(QStringLiteral("Could not create host directory %1.")
-                                           .arg(host_dir.filePath(entry.name)));
+                                           .arg(host_dir.filePath(host_name)));
             return;
         }
         ++ctx.result.directories_created;
-        exportDirectoryLevel(ctx, entry.path, QDir(host_dir.filePath(entry.name)), depth + 1);
+        exportDirectoryLevel(ctx, entry.path, QDir(host_dir.filePath(host_name)), depth + 1);
         return;
     }
     if (!entry.regular_file) {
@@ -1165,7 +1183,7 @@ void exportEntryToHost(const DirectoryExportContext& ctx,
         return;
     }
     const FileManagementExportResult exported = FileManagementFileSystemBridge::copyFileToHost(
-        ctx.target, entry.path, host_dir.filePath(entry.name), ctx.max_file_bytes, ctx.observer);
+        ctx.target, entry.path, host_dir.filePath(host_name), ctx.max_file_bytes, ctx.observer);
     if (!exported.ok) {
         ctx.result.blockers.append(exported.blockers.isEmpty()
                                        ? QStringLiteral("Could not export %1.").arg(entry.path)

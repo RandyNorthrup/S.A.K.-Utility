@@ -197,6 +197,10 @@ public:
     /// filesystem root ("C:/", "/") -- either would wipe far more than intended
     /// (B8-01).
     [[nodiscard]] static bool isUnsafeLocalDeletePath(const QString& path);
+    /// Confine a raw foreign-filesystem entry name to a bare host filename that
+    /// cannot escape the destination directory (drops path components, rejects
+    /// "."/".."/empty). Returns empty when the name is unsafe (B8-02).
+    [[nodiscard]] static QString confinedHostName(const QString& raw_name);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
     /// File-system-specific label for an entry's on-disk identifier (APFS Object
     /// ID, HFS Catalog ID, ext Inode, else generic Identifier).

@@ -941,6 +941,20 @@ private Q_SLOTS:
         QVERIFY(ok_result.ok);
         QVERIFY(!QDir(nested).exists());
     }
+
+    // B8-02: a raw foreign-filesystem entry name must be confined to a bare host
+    // filename so it cannot escape the export directory.
+    void confinedHostNameStripsTraversal() {
+        using B = sak::FileManagementFileSystemBridge;
+        QCOMPARE(B::confinedHostName(QStringLiteral("report.txt")), QStringLiteral("report.txt"));
+        QCOMPARE(B::confinedHostName(QStringLiteral("../../evil.sh")), QStringLiteral("evil.sh"));
+        QCOMPARE(B::confinedHostName(QStringLiteral("sub/dir/leaf")), QStringLiteral("leaf"));
+        // Names that collapse to a traversal token or empty are rejected.
+        QVERIFY(B::confinedHostName(QStringLiteral("..")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral(".")).isEmpty());
+        QVERIFY(B::confinedHostName(QString()).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("a/../..")).isEmpty());
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)
