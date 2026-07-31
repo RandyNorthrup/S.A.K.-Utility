@@ -6,10 +6,13 @@
 
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
+#include "sak/io_write_utils.h"
 #include "sak/mbox_writer.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
+#include <QIODevice>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -217,6 +220,66 @@ private Q_SLOTS:
         QByteArray content = file.readAll();
         QVERIFY(content.contains(">From ") || content.contains("From "));
     }
+
+    // ====================================================================
+    // writeFully() short-write safety (B7-18)
+    // ====================================================================
+
+    void writeFullyWritesEveryByte() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        const QString path = temp_dir.filePath(QStringLiteral("full.bin"));
+        const QByteArray payload("The quick brown fox jumps over the lazy dog.", 44);
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            QVERIFY(sak::writeFully(f, payload));
+        }
+        QFile r(path);
+        QVERIFY(r.open(QIODevice::ReadOnly));
+        QCOMPARE(r.readAll(), payload);
+    }
+
+    void writeFullyEmptyPayloadSucceeds() {
+        QBuffer buf;
+        QVERIFY(buf.open(QIODevice::WriteOnly));
+        QVERIFY(sak::writeFully(buf, QByteArray()));
+        QCOMPARE(buf.data().size(), 0);
+    }
+
+    void writeFullyFailsOnShortWrite() {
+        // A device that accepts only `cap` bytes then stalls (returns 0) must make
+        // writeFully report failure instead of silently truncating.
+        CappedDevice dev(3);
+        QVERIFY(!sak::writeFully(dev, QByteArrayLiteral("hello")));
+
+        CappedDevice ok(100);
+        QVERIFY(sak::writeFully(ok, QByteArrayLiteral("hello")));
+        QCOMPARE(ok.accepted(), static_cast<qint64>(5));
+    }
+
+private:
+    // Test double: accepts at most `cap` bytes, then every further write stalls at 0.
+    class CappedDevice : public QIODevice {
+    public:
+        explicit CappedDevice(qint64 cap) : m_cap(cap) { open(QIODevice::WriteOnly); }
+        [[nodiscard]] qint64 accepted() const { return m_written; }
+
+    protected:
+        qint64 writeData(const char* /*data*/, qint64 len) override {
+            if (m_written >= m_cap) {
+                return 0;  // stalled
+            }
+            const qint64 n = qMin(len, m_cap - m_written);
+            m_written += n;
+            return n;
+        }
+        qint64 readData(char* /*data*/, qint64 /*len*/) override { return -1; }
+
+    private:
+        qint64 m_cap;
+        qint64 m_written = 0;
+    };
 };
 
 QTEST_MAIN(TestMboxWriter)

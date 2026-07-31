@@ -8,6 +8,7 @@
 
 #include "sak/email_attachment_saver.h"
 #include "sak/email_html_sanitizer.h"
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/report_style_constants.h"
@@ -110,7 +111,13 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
     }
 
     QByteArray content = html.toUtf8();
-    file.write(content);
+    if (!writeFully(file, content)) {
+        // A short/failed write leaves a truncated .html the user would trust as a
+        // complete message; fail closed instead of counting it as success.
+        logError("HtmlEmailWriter: incomplete write to: {}", full_path.toStdString());
+        file.close();
+        return std::unexpected(error_code::write_error);
+    }
     m_bytes_written += content.size();
     file.close();
 

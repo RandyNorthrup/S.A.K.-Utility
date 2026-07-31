@@ -6,6 +6,7 @@
 
 #include "sak/mbox_writer.h"
 
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
 
 #include <QDir>
@@ -68,13 +69,14 @@ std::expected<void, error_code> MboxWriter::writeMessage(
     }
 
     QByteArray entry = formatMboxEntry(item, attachment_data);
-    qint64 written = file->write(entry);
-    if (written < 0) {
-        logError("MboxWriter: write failed for folder: {}", folder_path.toStdString());
+    if (!writeFully(*file, entry)) {
+        // A short write splits one message mid-stream and corrupts the mbox (the
+        // next From_ line lands inside the previous body); fail closed.
+        logError("MboxWriter: incomplete write for folder: {}", folder_path.toStdString());
         return std::unexpected(error_code::write_error);
     }
 
-    m_bytes_written += written;
+    m_bytes_written += entry.size();
     return {};
 }
 

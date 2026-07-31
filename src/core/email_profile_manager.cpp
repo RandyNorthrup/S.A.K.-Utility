@@ -7,6 +7,7 @@
 #include "sak/email_profile_manager.h"
 
 #include "sak/email_constants.h"
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
@@ -27,6 +28,21 @@
 #endif
 
 namespace {
+
+/// Stable manifest label for an email client type.
+QString clientTypeManifestName(sak::EmailClientType type) {
+    switch (type) {
+    case sak::EmailClientType::Outlook:
+        return QStringLiteral("Outlook");
+    case sak::EmailClientType::Thunderbird:
+        return QStringLiteral("Thunderbird");
+    case sak::EmailClientType::WindowsMail:
+        return QStringLiteral("WindowsMail");
+    case sak::EmailClientType::Other:
+        break;
+    }
+    return QStringLiteral("Other");
+}
 
 /// RAII single-flight guard: clears the active flag when it goes out of scope, so
 /// every return path from a guarded operation releases the lock (B7-16).
@@ -862,20 +878,7 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
         prof[QStringLiteral("profile_name")] = profile.profile_name;
         prof[QStringLiteral("profile_path")] = profile.profile_path;
 
-        switch (profile.client_type) {
-        case sak::EmailClientType::Outlook:
-            prof[QStringLiteral("client_type")] = QStringLiteral("Outlook");
-            break;
-        case sak::EmailClientType::Thunderbird:
-            prof[QStringLiteral("client_type")] = QStringLiteral("Thunderbird");
-            break;
-        case sak::EmailClientType::WindowsMail:
-            prof[QStringLiteral("client_type")] = QStringLiteral("WindowsMail");
-            break;
-        case sak::EmailClientType::Other:
-            prof[QStringLiteral("client_type")] = QStringLiteral("Other");
-            break;
-        }
+        prof[QStringLiteral("client_type")] = clientTypeManifestName(profile.client_type);
 
         // Registry file reference
         if (profile.client_type == sak::EmailClientType::Outlook) {
@@ -914,7 +917,11 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!sak::writeFully(file, QJsonDocument(root).toJson(QJsonDocument::Indented))) {
+        // A truncated manifest cannot be trusted to restore; fail closed.
+        file.close();
+        return false;
+    }
     file.close();
     return true;
 }

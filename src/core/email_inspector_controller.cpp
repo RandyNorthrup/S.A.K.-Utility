@@ -10,6 +10,7 @@
 #include "sak/email_profile_manager.h"
 #include "sak/email_report_generator.h"
 #include "sak/email_search_worker.h"
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
@@ -29,9 +30,11 @@ bool writeReportFile(const QString& path, const QByteArray& content, const char*
         return false;
     }
 
-    const qint64 bytes = file.write(content);
+    // Reject a short write, not just an error return: a partial report file read as
+    // a completed one is worse than none (B7-18).
+    const bool ok = sak::writeFully(file, content);
     file.close();
-    if (bytes < 0) {
+    if (!ok) {
         sak::logWarning("Report: {} write error: {}", label, path.toStdString());
         return false;
     }

@@ -9,6 +9,7 @@
 #include "sak/email_constants.h"
 #include "sak/eml_writer.h"
 #include "sak/html_email_writer.h"
+#include "sak/io_write_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/pdf_email_writer.h"
@@ -917,7 +918,10 @@ bool EmailExportWorker::writeVcf(const sak::PstItemDetail& contact,
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    file.write(content);
+    if (!sak::writeFully(file, content)) {
+        file.close();
+        return false;  // A truncated .vcf is not a successful export.
+    }
     file.close();
     return true;
 }
@@ -967,7 +971,10 @@ bool EmailExportWorker::writeIcs(const QVector<sak::PstItemDetail>& events,
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    file.write(content);
+    if (!sak::writeFully(file, content)) {
+        file.close();
+        return false;  // A truncated .ics is not a successful export.
+    }
     file.close();
     return true;
 }
