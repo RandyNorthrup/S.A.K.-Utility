@@ -73,7 +73,17 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
         Q_EMIT rebootPendingItems(m_rebootPendingPaths);
     }
 
+    if (!m_recycleFallbackPaths.isEmpty()) {
+        Q_EMIT recycleFallbackItems(m_recycleFallbackPaths);
+    }
+
     return {};
+}
+
+void CleanupWorker::noteRecycleFallback(bool fallback, const QString& path) {
+    if (fallback) {
+        m_recycleFallbackPaths.append(path);
+    }
 }
 
 bool CleanupWorker::cleanSingleItem(const LeftoverItem& item) {
@@ -114,15 +124,21 @@ bool CleanupWorker::deleteFile(const QString& path) {
         return true;  // Already gone
     }
 
-    // If recycle bin mode is enabled, try that first
+    // If recycle bin mode is enabled, try that first.
+    bool recycleFallback = false;
     if (m_useRecycleBin) {
         if (sendPathToRecycleBin(path)) {
             return true;
         }
-        // Fall through to direct deletion if recycle bin fails
+        // Recycle failed: every path below deletes PERMANENTLY despite the user's
+        // recycle-bin choice. Record it so the silent escalation is surfaced.
+        recycleFallback = true;
+        sak::logWarning("Recycle bin failed for " + path.toStdString() +
+                        "; falling back to permanent deletion");
     }
 
     if (QFile::remove(path)) {
+        noteRecycleFallback(recycleFallback, path);
         return true;
     }
 
@@ -130,12 +146,14 @@ bool CleanupWorker::deleteFile(const QString& path) {
     QFile file(path);
     file.setPermissions(QFile::ReadOther | QFile::WriteOther);
     if (file.remove()) {
+        noteRecycleFallback(recycleFallback, path);
         return true;
     }
 
     // File is locked -- schedule removal on next reboot
     if (scheduleRebootRemoval(path)) {
         m_rebootPendingPaths.append(path);
+        noteRecycleFallback(recycleFallback, path);
         return true;  // Counted as success; actual removal happens on reboot
     }
 
@@ -158,11 +176,19 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         return unlinkReparsePoint(path);
     }
 
-    if (m_useRecycleBin && sendPathToRecycleBin(path)) {
-        return true;
+    bool recycleFallback = false;
+    if (m_useRecycleBin) {
+        if (sendPathToRecycleBin(path)) {
+            return true;
+        }
+        // Recycle failed: the folder is about to be deleted PERMANENTLY.
+        recycleFallback = true;
+        sak::logWarning("Recycle bin failed for folder " + path.toStdString() +
+                        "; falling back to permanent deletion");
     }
 
     if (dir.removeRecursively()) {
+        noteRecycleFallback(recycleFallback, path);
         return true;
     }
 
@@ -172,6 +198,9 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         all_handled = tryScheduleReboot(path) && all_handled;
     }
 
+    if (all_handled) {
+        noteRecycleFallback(recycleFallback, path);
+    }
     return all_handled;
 }
 

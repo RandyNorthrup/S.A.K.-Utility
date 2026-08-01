@@ -7,6 +7,10 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/cleanup_worker.h"
 
+#include <QDir>
+#include <QFile>
+#include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -21,6 +25,9 @@ private Q_SLOTS:
     void construction_withRecycleBin();
     void leftoverItem_type_values();
     void leftoverItem_riskLevel_values();
+
+    // Recycle-fallback surfacing (B10-23)
+    void permanentMode_deletesAndEmitsNoRecycleFallback();
 };
 
 void TestCleanupWorker::construction_emptyItems() {
@@ -67,6 +74,37 @@ void TestCleanupWorker::leftoverItem_riskLevel_values() {
     QCOMPARE(static_cast<int>(LeftoverItem::RiskLevel::Safe), 0);
     QCOMPARE(static_cast<int>(LeftoverItem::RiskLevel::Review), 1);
     QCOMPARE(static_cast<int>(LeftoverItem::RiskLevel::Risky), 2);
+}
+
+void TestCleanupWorker::permanentMode_deletesAndEmitsNoRecycleFallback() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("leftover.txt");
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+    }
+
+    QVector<LeftoverItem> items;
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::File;
+    item.path = path;
+    item.selected = true;
+    items.append(item);
+
+    CleanupWorker worker(items, /*useRecycleBin=*/false);
+    QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
+    QSignalSpy fallbackSpy(&worker, &CleanupWorker::recycleFallbackItems);
+
+    worker.start();
+    QVERIFY(completeSpy.wait(5000));
+
+    QVERIFY(!QFile::exists(path));     // permanently deleted
+    QCOMPARE(fallbackSpy.count(), 0);  // recycle-fallback signal only fires in recycle mode
+    const auto args = completeSpy.takeFirst();
+    QCOMPARE(args.at(0).toInt(), 1);   // one succeeded
 }
 
 QTEST_MAIN(TestCleanupWorker)

@@ -50,13 +50,22 @@ Q_SIGNALS:
     /// @brief Emitted when locked files are scheduled for removal on next reboot
     void rebootPendingItems(QStringList paths);
 
+    /// @brief Emitted when recycle-bin mode was requested but recycling failed and
+    ///        the items were removed permanently instead. Surfaces the silent
+    ///        escalation so the user knows these items are NOT recoverable.
+    void recycleFallbackItems(QStringList paths);
+
 protected:
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
     QVector<LeftoverItem> m_items;
     bool m_useRecycleBin = false;
-    QStringList m_rebootPendingPaths;  ///< Paths scheduled for removal on reboot
+    QStringList m_rebootPendingPaths;    ///< Paths scheduled for removal on reboot
+    QStringList m_recycleFallbackPaths;  ///< Recycle failed -> deleted permanently instead
+
+    /// @brief Record @p path as a recycle->permanent fallback when @p fallback.
+    void noteRecycleFallback(bool fallback, const QString& path);
 
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);

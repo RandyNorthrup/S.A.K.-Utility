@@ -5339,6 +5339,33 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     message(STATUS "Added unit test: test_advanced_uninstall_types")
 endif()
 
+# test_cleanup_worker --- construction, enum coverage, recycle-fallback surfacing (B10-23)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cleanup_worker.cpp")
+    add_executable(test_cleanup_worker
+        unit/test_cleanup_worker.cpp
+        ../src/core/cleanup_worker.cpp
+        ../src/core/recycle_bin.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/threading/worker_base.cpp
+        ../src/core/logger.cpp
+        ../include/sak/cleanup_worker.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(test_cleanup_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_cleanup_worker PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_cleanup_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_cleanup_worker COMMAND test_cleanup_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_cleanup_worker")
+endif()
+
 # test_advanced_uninstall_controller ??? state machine, queue, settings, input validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.cpp")
     add_executable(test_advanced_uninstall_controller
