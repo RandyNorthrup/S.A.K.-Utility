@@ -129,6 +129,7 @@ private slots:
     void silentPeer_deadlineResetsConnection();
     void reconnect_secondClientServedWithNewGeneration();
     void doubleStop_isSafe();
+    void restartAfterStopWorksAndDoubleStartRefused();
 };
 
 void BrowserBridgePipeTests::send_beforeAnyClientReturnsNotConnected() {
@@ -291,6 +292,27 @@ void BrowserBridgePipeTests::doubleStop_isSafe() {
     server.stop();
     server.stop();  // second stop (and the destructor's) must be a safe no-op, not a crash
     QVERIFY(true);
+}
+
+void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
+    // B13-05: start -> stop -> start must tear down each cycle (the old std::once_flag disabled
+    // every stop() after the first), and a second start() while running must be refused rather
+    // than move-assign onto a joinable std::thread (which would std::terminate).
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+
+    // A second start while running is refused (not a crash).
+    QString busy;
+    QVERIFY(!server.start(&busy));
+    QVERIFY(busy.contains(QStringLiteral("already running")));
+
+    server.stop();
+    // A fresh cycle starts and tears down cleanly (the once_flag would have blocked this stop()).
+    QVERIFY2(server.start(&error), qPrintable(error));
+    server.stop();
+    QVERIFY(true);  // no terminate, no deadlock, no leaked thread across the destructor
 }
 
 QTEST_MAIN(BrowserBridgePipeTests)

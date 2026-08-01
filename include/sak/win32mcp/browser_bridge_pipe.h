@@ -86,6 +86,10 @@ public:
     [[nodiscard]] QString token() const { return token_; }
 
 private:
+    // Create the named pipe + shutdown event and publish the rendezvous record. Sets pipe_,
+    // shutdown_event_, token_ on success; on any failure frees whatever it created and returns
+    // false with @p error set. Extracted from start() so its lifecycle guard stays small.
+    [[nodiscard]] bool createPipeResources(QString* error);
     void run();
     bool handshake();
     void serveConnected();
@@ -99,7 +103,13 @@ private:
     HANDLE pipe_{INVALID_HANDLE_VALUE};
     HANDLE shutdown_event_{nullptr};
     std::thread thread_;
-    std::once_flag stop_once_;  // single-winner teardown, even under concurrent stop()
+    // Serializes start()/stop() so a concurrent stop() (or the destructor) BLOCKS until an
+    // in-progress teardown finishes, and so start() never move-assigns over a joinable thread.
+    // stop_done_ makes stop() idempotent WITHIN a start/stop cycle while start() re-arms it, so
+    // a start -> stop -> start sequence tears down each cycle (the old std::once_flag fired once
+    // for the object's whole life, disabling every later stop()).
+    std::mutex lifecycle_mutex_;
+    bool stop_done_{true};  // true until start() arms a cycle: a pre-start stop() is a no-op
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;

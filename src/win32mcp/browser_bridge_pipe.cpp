@@ -216,7 +216,7 @@ BrowserBridgePipeServer::~BrowserBridgePipeServer() {
     stop();
 }
 
-bool BrowserBridgePipeServer::start(QString* error) {
+bool BrowserBridgePipeServer::createPipeResources(QString* error) {
     pipe_name_ = browserBridgePipeName(error);
     if (pipe_name_.isEmpty()) {
         return false;
@@ -263,38 +263,62 @@ bool BrowserBridgePipeServer::start(QString* error) {
         }
         return false;
     }
+    return true;
+}
+
+bool BrowserBridgePipeServer::start(QString* error) {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    // Refuse a second start while a session is live: move-assigning a std::thread onto a still
+    // joinable thread_ would call std::terminate. A prior stopped cycle left thread_ joined
+    // (not joinable); join any leftover defensively before it is reassigned below.
+    if (running_) {
+        if (error) {
+            *error = QStringLiteral("Bridge pipe server is already running");
+        }
+        return false;
+    }
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    if (!createPipeResources(error)) {
+        return false;
+    }
     running_ = true;
+    stop_done_ = false;  // arm teardown for this cycle
     thread_ = std::thread([this] { run(); });
     return true;
 }
 
 void BrowserBridgePipeServer::stop() {
-    // Single-winner teardown: concurrent stop() calls (and the destructor after an
-    // explicit stop()) must not double-join the thread or double-close the handles.
-    // std::call_once runs the body exactly once and blocks any concurrent caller
-    // until it finishes.
-    std::call_once(stop_once_, [this] {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            running_ = false;
-        }
-        if (shutdown_event_ != nullptr) {
-            SetEvent(shutdown_event_);
-        }
-        cv_.notify_all();
-        if (thread_.joinable()) {
-            thread_.join();
-        }
-        if (pipe_ != INVALID_HANDLE_VALUE) {
-            CloseHandle(pipe_);
-            pipe_ = INVALID_HANDLE_VALUE;
-        }
-        if (shutdown_event_ != nullptr) {
-            CloseHandle(shutdown_event_);
-            shutdown_event_ = nullptr;
-        }
-        QFile::remove(rendezvous_path_);
-    });
+    // Hold lifecycle_mutex_ for the whole teardown so a concurrent stop() (or the destructor)
+    // BLOCKS until this finishes, then sees stop_done_ and returns -- no double-join or
+    // double-close. Unlike the old std::once_flag, stop_done_ is re-armed by start(), so a later
+    // start/stop cycle tears down again instead of being permanently disabled.
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    if (stop_done_) {
+        return;  // already torn down this cycle (or never started)
+    }
+    stop_done_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        running_ = false;
+    }
+    if (shutdown_event_ != nullptr) {
+        SetEvent(shutdown_event_);
+    }
+    cv_.notify_all();
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    if (pipe_ != INVALID_HANDLE_VALUE) {
+        CloseHandle(pipe_);
+        pipe_ = INVALID_HANDLE_VALUE;
+    }
+    if (shutdown_event_ != nullptr) {
+        CloseHandle(shutdown_event_);
+        shutdown_event_ = nullptr;
+    }
+    QFile::remove(rendezvous_path_);
 }
 
 bool BrowserBridgePipeServer::clientConnected() const {
