@@ -6,12 +6,14 @@
 
 #include "sak/offline_deployment_worker.h"
 
+#include "sak/bundled_tools_manager.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/process_runner.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
@@ -22,6 +24,7 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
@@ -98,6 +101,15 @@ QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
     if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..") ||
         base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\'))) {
         return fallback;
+    }
+    return base;
+}
+
+QString OfflineDeploymentWorker::sanitizeManifestFilename(const QString& raw_name) {
+    const QString base = QFileInfo(raw_name).fileName();
+    if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..") ||
+        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\'))) {
+        return {};
     }
     return base;
 }
@@ -440,6 +452,66 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
         this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
 }
 
+QString OfflineDeploymentWorker::resolveChocoExecutable() {
+    // Prefer the bundled portable choco, then an absolute path off PATH. Never a
+    // bare "choco": runProcess would let the OS resolve it via cwd/PATH, so a
+    // planted choco.exe (e.g. in the working dir) could run with the app's rights.
+    const auto& tools = BundledToolsManager::instance();
+    if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
+        return tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
+    }
+    return QStandardPaths::findExecutable(QStringLiteral("choco"));
+}
+
+bool OfflineDeploymentWorker::verifyBundledPackage(const DeploymentManifestEntry& entry,
+                                                   const QString& source_dir,
+                                                   QString& error_out) {
+    const QString safe_name = sanitizeManifestFilename(entry.nupkg_filename);
+    if (safe_name.isEmpty()) {
+        error_out = "Manifest entry has no valid package filename";
+        return false;
+    }
+
+    QFile file(QDir(source_dir).filePath(safe_name));
+    if (!file.open(QIODevice::ReadOnly)) {
+        error_out = "Bundled package missing: " + safe_name;
+        return false;
+    }
+
+    if (entry.size_bytes > 0 && file.size() != entry.size_bytes) {
+        error_out = QString("Size mismatch for %1 (%2 vs manifest %3)")
+                        .arg(safe_name)
+                        .arg(file.size())
+                        .arg(entry.size_bytes);
+        return false;
+    }
+
+    if (!entry.checksum.isEmpty()) {
+        QCryptographicHash hash(QCryptographicHash::Sha256);  // as written by the build side
+        if (!hash.addData(&file)) {
+            error_out = "Cannot read bundled package for checksum: " + safe_name;
+            return false;
+        }
+        const QString actual = QString::fromLatin1(hash.result().toHex());
+        if (actual.compare(entry.checksum, Qt::CaseInsensitive) != 0) {
+            error_out = "Checksum mismatch for " + safe_name;
+            return false;
+        }
+    }
+    return true;
+}
+
+void OfflineDeploymentWorker::emitPackageOutcome(const DeploymentManifestEntry& entry,
+                                                 bool success,
+                                                 const QString& message) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, entry, success, message]() {
+            Q_EMIT packageProgress(entry.package_id, success, message);
+        },
+        Qt::QueuedConnection);
+}
+
 bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry& entry,
                                                    int completed,
                                                    int total,
@@ -452,7 +524,21 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
         },
         Qt::QueuedConnection);
 
-    const auto process = runProcess(QStringLiteral("choco"),
+    const QString choco_exe = resolveChocoExecutable();
+    if (choco_exe.isEmpty()) {
+        emitPackageOutcome(entry, false, QStringLiteral("Chocolatey (choco.exe) not found"));
+        return false;
+    }
+
+    // Verify the bundled artifact against the manifest before install, so a
+    // tampered/substituted .nupkg in the source dir is never handed to choco.
+    QString verify_error;
+    if (!verifyBundledPackage(entry, choco_source_dir, verify_error)) {
+        emitPackageOutcome(entry, false, verify_error);
+        return false;
+    }
+
+    const auto process = runProcess(choco_exe,
                                     {QStringLiteral("install"),
                                      entry.package_id,
                                      QStringLiteral("--version"),
@@ -472,12 +558,7 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
                                ? QStringLiteral("Installed")
                                : (process.std_out.isEmpty() ? process.std_err : process.std_out)
                                      .left(kInstallErrorPreviewChars);
-    QMetaObject::invokeMethod(
-        this,
-        [this, entry, success, output]() {
-            Q_EMIT packageProgress(entry.package_id, success, output);
-        },
-        Qt::QueuedConnection);
+    emitPackageOutcome(entry, success, output);
     return success;
 }
 

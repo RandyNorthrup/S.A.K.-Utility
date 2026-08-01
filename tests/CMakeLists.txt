@@ -5949,6 +5949,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/bundled_tools_manager.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         ../src/core/logger.cpp
@@ -5983,6 +5984,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/bundled_tools_manager.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         ../src/core/logger.cpp

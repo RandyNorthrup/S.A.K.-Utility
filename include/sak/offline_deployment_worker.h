@@ -142,6 +142,19 @@ public:
     [[nodiscard]] static QString safeInstallerFilename(const QString& raw_name,
                                                        const QString& fallback);
 
+    /// @brief Confine a manifest-declared filename to a bare basename (defense in
+    ///        depth against a hostile manifest). Empty/"."/".."/separator -> empty.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static QString sanitizeManifestFilename(const QString& raw_name);
+
+    /// @brief Verify the bundled .nupkg named by @p entry exists in @p source_dir
+    ///        and matches the manifest size and SHA-256 checksum before it is
+    ///        handed to choco. Returns false + @p error_out on any mismatch; a
+    ///        declared checksum that does not match fails closed. Unit-testable.
+    [[nodiscard]] static bool verifyBundledPackage(const DeploymentManifestEntry& entry,
+                                                   const QString& source_dir,
+                                                   QString& error_out);
+
 Q_SIGNALS:
     /// @brief Batch operation started
     void operationStarted(int total_packages);
@@ -210,6 +223,16 @@ private:
                                             int completed,
                                             int total,
                                             const QString& choco_source_dir);
+
+    /// @brief Resolve an absolute path to choco.exe (bundled portable first,
+    ///        then PATH). Empty if not found -- callers must NOT fall back to a
+    ///        bare "choco" (PATH/cwd binary hijack).
+    [[nodiscard]] static QString resolveChocoExecutable();
+
+    /// @brief Emit a terminal packageProgress signal to the UI thread.
+    void emitPackageOutcome(const DeploymentManifestEntry& entry,
+                            bool success,
+                            const QString& message);
 
     /// @brief Download installer binaries for a single package
     /// @return Number of files successfully downloaded (0 on failure)
