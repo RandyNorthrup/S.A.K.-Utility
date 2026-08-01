@@ -45,6 +45,11 @@ private Q_SLOTS:
     void bssSecurity_wpa3RsnSae();
     void bssSecurity_evilTwinOpenStaysInsecure();
     void bssSecurity_truncatedIeNoCrash();
+
+    // ── lookupVendor (once-init OUI table, B9-14) ─────────────────
+    void lookupVendor_knownFallbackPrefix();
+    void lookupVendor_unknownPrefixEmpty();
+    void lookupVendor_shortInputEmpty();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -239,6 +244,26 @@ void TestWiFiAnalyzer::bssSecurity_truncatedIeNoCrash() {
     const auto sec = WiFiAnalyzer::deriveBssSecurity(false, ie, sizeof(ie));
     QVERIFY(!sec.isSecure);
     QCOMPARE(sec.authentication, QStringLiteral("Open"));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// lookupVendor -- once-initialized OUI table (B9-14 thread-safe init)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestWiFiAnalyzer::lookupVendor_knownFallbackPrefix() {
+    // With no oui_database.txt beside the test exe, the built-in fallback set is
+    // seeded once. A known fallback OUI must resolve -- proving the once-init
+    // table populated.
+    QCOMPARE(WiFiAnalyzer::lookupVendor(QStringLiteral("00:50:56:AA:BB:CC")),
+             QStringLiteral("VMware"));
+}
+
+void TestWiFiAnalyzer::lookupVendor_unknownPrefixEmpty() {
+    QVERIFY(WiFiAnalyzer::lookupVendor(QStringLiteral("FE:DC:BA:00:11:22")).isEmpty());
+}
+
+void TestWiFiAnalyzer::lookupVendor_shortInputEmpty() {
+    QVERIFY(WiFiAnalyzer::lookupVendor(QStringLiteral("00:50")).isEmpty());
 }
 
 QTEST_MAIN(TestWiFiAnalyzer)

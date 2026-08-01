@@ -340,68 +340,78 @@ void scanInterface(HANDLE handle,
     }
 }
 
-/// @brief Cached OUI database for vendor lookups
-[[nodiscard]] const QHash<QString, QString>& ouiDatabase() {
-    static QHash<QString, QString> db;
-    static bool loaded = false;
+// Parse the OUI text database ("AA:BB:CC<tab>Vendor") from the first candidate
+// path that opens; leaves @p db untouched if none is present.
+void loadOuiDatabaseFile(QHash<QString, QString>& db) {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/resources/network/oui_database.txt"),
+        appDir + QStringLiteral("/../resources/network/oui_database.txt"),
+    };
 
-    if (!loaded) {
-        loaded = true;
-
-        const QString appDir = QCoreApplication::applicationDirPath();
-        const QStringList candidates = {
-            appDir + QStringLiteral("/resources/network/oui_database.txt"),
-            appDir + QStringLiteral("/../resources/network/oui_database.txt"),
-        };
-
-        for (const auto& path : candidates) {
-            QFile file(path);
-            if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                QTextStream in(&file);
-                while (!in.atEnd()) {
-                    const auto line = in.readLine().trimmed();
-                    if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
-                        continue;
-                    }
-                    // Expected format: "AA:BB:CC<tab>Vendor Name"
-                    const auto parts = line.split(QLatin1Char('\t'));
-                    if (parts.size() >= kOuiDatabaseMinimumFields) {
-                        db.insert(parts[0].toUpper(), parts[1]);
-                    }
-                }
-                break;
+    for (const auto& path : candidates) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            continue;
+        }
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            const auto line = in.readLine().trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+                continue;
+            }
+            const auto parts = line.split(QLatin1Char('\t'));
+            if (parts.size() >= kOuiDatabaseMinimumFields) {
+                db.insert(parts[0].toUpper(), parts[1]);
             }
         }
-
-        // Fallback common vendors
-        if (db.isEmpty()) {
-            db.insert(QStringLiteral("00:1A:2B"), QStringLiteral("Ayecom Technology"));
-            db.insert(QStringLiteral("00:50:56"), QStringLiteral("VMware"));
-            db.insert(QStringLiteral("00:0C:29"), QStringLiteral("VMware"));
-            db.insert(QStringLiteral("B8:27:EB"), QStringLiteral("Raspberry Pi"));
-            db.insert(QStringLiteral("DC:A6:32"), QStringLiteral("Raspberry Pi"));
-            db.insert(QStringLiteral("00:25:00"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("3C:22:FB"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("AC:DE:48"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("54:60:09"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("F4:F5:D8"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("30:B5:C2"), QStringLiteral("TP-Link"));
-            db.insert(QStringLiteral("50:C7:BF"), QStringLiteral("TP-Link"));
-            db.insert(QStringLiteral("2C:F0:5D"), QStringLiteral("Micro-Star"));
-            db.insert(QStringLiteral("00:14:BF"), QStringLiteral("Linksys"));
-            db.insert(QStringLiteral("C0:56:27"), QStringLiteral("Belkin"));
-            db.insert(QStringLiteral("20:E5:2A"), QStringLiteral("NETGEAR"));
-            db.insert(QStringLiteral("00:1F:33"), QStringLiteral("NETGEAR"));
-            db.insert(QStringLiteral("F8:32:E4"), QStringLiteral("ASUSTek"));
-            db.insert(QStringLiteral("04:D4:C4"), QStringLiteral("ASUSTek"));
-            db.insert(QStringLiteral("00:1E:58"), QStringLiteral("D-Link"));
-            db.insert(QStringLiteral("1C:7E:E5"), QStringLiteral("D-Link"));
-            db.insert(QStringLiteral("E4:F0:42"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("3C:5A:B4"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("88:71:B1"), QStringLiteral("Intel"));
-            db.insert(QStringLiteral("8C:EC:4B"), QStringLiteral("Dell"));
-        }
+        return;
     }
+}
+
+// Minimal built-in vendor set used only when no OUI text database ships.
+void seedFallbackVendors(QHash<QString, QString>& db) {
+    db.insert(QStringLiteral("00:1A:2B"), QStringLiteral("Ayecom Technology"));
+    db.insert(QStringLiteral("00:50:56"), QStringLiteral("VMware"));
+    db.insert(QStringLiteral("00:0C:29"), QStringLiteral("VMware"));
+    db.insert(QStringLiteral("B8:27:EB"), QStringLiteral("Raspberry Pi"));
+    db.insert(QStringLiteral("DC:A6:32"), QStringLiteral("Raspberry Pi"));
+    db.insert(QStringLiteral("00:25:00"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("3C:22:FB"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("AC:DE:48"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("54:60:09"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("F4:F5:D8"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("30:B5:C2"), QStringLiteral("TP-Link"));
+    db.insert(QStringLiteral("50:C7:BF"), QStringLiteral("TP-Link"));
+    db.insert(QStringLiteral("2C:F0:5D"), QStringLiteral("Micro-Star"));
+    db.insert(QStringLiteral("00:14:BF"), QStringLiteral("Linksys"));
+    db.insert(QStringLiteral("C0:56:27"), QStringLiteral("Belkin"));
+    db.insert(QStringLiteral("20:E5:2A"), QStringLiteral("NETGEAR"));
+    db.insert(QStringLiteral("00:1F:33"), QStringLiteral("NETGEAR"));
+    db.insert(QStringLiteral("F8:32:E4"), QStringLiteral("ASUSTek"));
+    db.insert(QStringLiteral("04:D4:C4"), QStringLiteral("ASUSTek"));
+    db.insert(QStringLiteral("00:1E:58"), QStringLiteral("D-Link"));
+    db.insert(QStringLiteral("1C:7E:E5"), QStringLiteral("D-Link"));
+    db.insert(QStringLiteral("E4:F0:42"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("3C:5A:B4"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("88:71:B1"), QStringLiteral("Intel"));
+    db.insert(QStringLiteral("8C:EC:4B"), QStringLiteral("Dell"));
+}
+
+/// @brief Cached OUI database for vendor lookups.
+///
+/// The table is built once into a function-local static; C++11 guarantees the
+/// initializer runs exactly once even under concurrent first calls, so parallel
+/// scans can no longer race the previous hand-rolled `loaded` flag / QHash fill.
+[[nodiscard]] const QHash<QString, QString>& ouiDatabase() {
+    static const QHash<QString, QString> db = [] {
+        QHash<QString, QString> table;
+        loadOuiDatabaseFile(table);
+        if (table.isEmpty()) {
+            seedFallbackVendors(table);
+        }
+        return table;
+    }();
     return db;
 }
 }  // namespace
