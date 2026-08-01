@@ -5510,6 +5510,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bandwidth_tester.cpp")
     message(STATUS "Added unit test: test_bandwidth_tester")
 endif()
 
+# test_connectivity_tester -- ping/traceroute/MTR config structs, a live localhost
+# ping, and the B9-17 sanitizeConfig bounds seams (clamp count/ttl/packet/etc.).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_connectivity_tester.cpp")
+    add_executable(test_connectivity_tester
+        unit/test_connectivity_tester.cpp
+        ../src/core/connectivity_tester.cpp
+        ../include/sak/connectivity_tester.h
+    )
+    set_target_properties(test_connectivity_tester PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_connectivity_tester PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_connectivity_tester PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_connectivity_tester COMMAND test_connectivity_tester
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_connectivity_tester")
+endif()
+
 # test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report

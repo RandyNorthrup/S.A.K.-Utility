@@ -28,6 +28,12 @@ private Q_SLOTS:
     void mtrHopStats_defaults();
     void cancel_doesNotCrash();
     void ping_localhost_completesSuccessfully();
+
+    // ── sanitizeConfig bounds (B9-17) ─────────────────────────────
+    void sanitizePing_clampsOutOfRange();
+    void sanitizePing_passesValidThrough();
+    void sanitizeTraceroute_clampsOutOfRange();
+    void sanitizeMtr_clampsOutOfRange();
 };
 
 void TestConnectivityTester::construction_default() {
@@ -163,6 +169,81 @@ void TestConnectivityTester::ping_localhost_completesSuccessfully() {
     QCOMPARE(result.sent, 3);
     QVERIFY(result.received > 0);
     QCOMPARE(result.resolvedIP, QStringLiteral("127.0.0.1"));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// sanitizeConfig -- clamp every numeric field to a safe range (B9-17)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestConnectivityTester::sanitizePing_clampsOutOfRange() {
+    ConnectivityTester::PingConfig config;
+    config.count = 5'000'000;            // absurd -> loop cap
+    config.intervalMs = -100;            // negative -> would be a huge unsigned msleep
+    config.timeoutMs = -1;               // negative -> huge DWORD
+    config.packetSizeBytes = 1'000'000;  // overflows the WORD cast + giant alloc
+    config.ttl = 9999;                   // overflows the UCHAR cast
+
+    const auto s = ConnectivityTester::sanitizeConfig(config);
+    QCOMPARE(s.count, netdiag::kMaxPingCount);
+    QCOMPARE(s.intervalMs, netdiag::kMinIntervalMs);
+    QCOMPARE(s.timeoutMs, netdiag::kMinPingTimeoutMs);
+    QCOMPARE(s.packetSizeBytes, netdiag::kMaxPacketSizeBytes);
+    QCOMPARE(s.ttl, netdiag::kMaxTtl);
+
+    // Low end: zero/negative clamps up to the minimums.
+    ConnectivityTester::PingConfig low;
+    low.count = 0;
+    low.ttl = 0;
+    const auto sl = ConnectivityTester::sanitizeConfig(low);
+    QCOMPARE(sl.count, netdiag::kMinPingCount);
+    QCOMPARE(sl.ttl, netdiag::kMinTtl);
+}
+
+void TestConnectivityTester::sanitizePing_passesValidThrough() {
+    ConnectivityTester::PingConfig config;
+    config.count = 5;
+    config.intervalMs = 500;
+    config.timeoutMs = 2000;
+    config.packetSizeBytes = 64;
+    config.ttl = 64;
+
+    const auto s = ConnectivityTester::sanitizeConfig(config);
+    QCOMPARE(s.count, 5);
+    QCOMPARE(s.intervalMs, 500);
+    QCOMPARE(s.timeoutMs, 2000);
+    QCOMPARE(s.packetSizeBytes, 64);
+    QCOMPARE(s.ttl, 64);
+}
+
+void TestConnectivityTester::sanitizeTraceroute_clampsOutOfRange() {
+    ConnectivityTester::TracerouteConfig config;
+    config.maxHops = 9999;
+    config.timeoutMs = -1;
+    config.probesPerHop = 500;
+    const auto s = ConnectivityTester::sanitizeConfig(config);
+    QCOMPARE(s.maxHops, netdiag::kMaxHops);
+    QCOMPARE(s.timeoutMs, netdiag::kMinPingTimeoutMs);
+    QCOMPARE(s.probesPerHop, netdiag::kMaxProbesPerHop);
+
+    ConnectivityTester::TracerouteConfig low;
+    low.maxHops = 0;
+    low.probesPerHop = 0;
+    const auto sl = ConnectivityTester::sanitizeConfig(low);
+    QCOMPARE(sl.maxHops, netdiag::kMinHops);
+    QCOMPARE(sl.probesPerHop, netdiag::kMinProbesPerHop);
+}
+
+void TestConnectivityTester::sanitizeMtr_clampsOutOfRange() {
+    ConnectivityTester::MtrConfig config;
+    config.cycles = 5'000'000;
+    config.intervalMs = -50;
+    config.maxHops = 9999;
+    config.timeoutMs = 10'000'000;
+    const auto s = ConnectivityTester::sanitizeConfig(config);
+    QCOMPARE(s.cycles, netdiag::kMaxMtrCycles);
+    QCOMPARE(s.intervalMs, netdiag::kMinIntervalMs);
+    QCOMPARE(s.maxHops, netdiag::kMaxHops);
+    QCOMPARE(s.timeoutMs, netdiag::kMaxPingTimeoutMs);
 }
 
 QTEST_MAIN(TestConnectivityTester)

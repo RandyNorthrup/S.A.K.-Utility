@@ -69,6 +69,15 @@ public:
     /// @brief Cancel current operation
     void cancel();
 
+    /// @name Config sanitizers -- clamp every numeric field to a safe range.
+    /// Pure and deterministic so they can be unit-tested directly; ping/traceroute/
+    /// mtr each run their config through the matching overload before use.
+    /// @{
+    [[nodiscard]] static PingConfig sanitizeConfig(PingConfig config);
+    [[nodiscard]] static TracerouteConfig sanitizeConfig(TracerouteConfig config);
+    [[nodiscard]] static MtrConfig sanitizeConfig(MtrConfig config);
+    /// @}
+
 Q_SIGNALS:
     void pingReply(sak::PingReply reply);
     void pingComplete(sak::PingResult result);

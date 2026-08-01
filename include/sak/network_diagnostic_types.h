@@ -42,6 +42,27 @@ constexpr int kDefaultConnRefreshMs = 2000;
 constexpr int kBannerGrabTimeoutMs = 2000;
 constexpr int kBannerMaxBytes = 512;
 
+// -- Connectivity-test config bounds (ping / traceroute / MTR) --
+// Callers (incl. headless tools and IPC) can supply arbitrary config; these
+// clamp every field to a sane range so a hostile/typo'd value cannot spin an
+// unbounded loop, overflow a WORD/UCHAR cast, or request a giant allocation.
+constexpr int kMinPingCount = 1;
+constexpr int kMaxPingCount = 100'000;
+constexpr int kMinIntervalMs = 0;
+constexpr int kMaxIntervalMs = 60'000;
+constexpr int kMinPingTimeoutMs = 1;
+constexpr int kMaxPingTimeoutMs = 60'000;
+constexpr int kMinPacketSizeBytes = 0;
+constexpr int kMaxPacketSizeBytes = 65'500;  // fits the WORD size passed to IcmpSendEcho
+constexpr int kMinTtl = 1;
+constexpr int kMaxTtl = 255;                 // TTL is a UCHAR
+constexpr int kMinHops = 1;
+constexpr int kMaxHops = 255;                // hop == TTL, so same UCHAR ceiling
+constexpr int kMinProbesPerHop = 1;
+constexpr int kMaxProbesPerHop = 10;
+constexpr int kMinMtrCycles = 1;
+constexpr int kMaxMtrCycles = 100'000;
+
 // -- WiFi frequency boundaries (kHz) --
 constexpr uint32_t kFreq2GHzStart = 2'412'000;
 constexpr uint32_t kFreq2GHzEnd = 2'484'000;

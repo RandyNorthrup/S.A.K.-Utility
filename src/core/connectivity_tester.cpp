@@ -350,8 +350,38 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
     return reply;
 }
 
-void ConnectivityTester::ping(const PingConfig& config) {
+ConnectivityTester::PingConfig ConnectivityTester::sanitizeConfig(PingConfig config) {
+    namespace nd = netdiag;
+    config.count = std::clamp(config.count, nd::kMinPingCount, nd::kMaxPingCount);
+    config.intervalMs = std::clamp(config.intervalMs, nd::kMinIntervalMs, nd::kMaxIntervalMs);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    config.packetSizeBytes =
+        std::clamp(config.packetSizeBytes, nd::kMinPacketSizeBytes, nd::kMaxPacketSizeBytes);
+    config.ttl = std::clamp(config.ttl, nd::kMinTtl, nd::kMaxTtl);
+    return config;
+}
+
+ConnectivityTester::TracerouteConfig ConnectivityTester::sanitizeConfig(TracerouteConfig config) {
+    namespace nd = netdiag;
+    config.maxHops = std::clamp(config.maxHops, nd::kMinHops, nd::kMaxHops);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    config.probesPerHop =
+        std::clamp(config.probesPerHop, nd::kMinProbesPerHop, nd::kMaxProbesPerHop);
+    return config;
+}
+
+ConnectivityTester::MtrConfig ConnectivityTester::sanitizeConfig(MtrConfig config) {
+    namespace nd = netdiag;
+    config.cycles = std::clamp(config.cycles, nd::kMinMtrCycles, nd::kMaxMtrCycles);
+    config.intervalMs = std::clamp(config.intervalMs, nd::kMinIntervalMs, nd::kMaxIntervalMs);
+    config.maxHops = std::clamp(config.maxHops, nd::kMinHops, nd::kMaxHops);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    return config;
+}
+
+void ConnectivityTester::ping(const PingConfig& rawConfig) {
     m_cancelled.store(false);
+    const PingConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Ping");
     if (targetIP.isEmpty()) {
@@ -443,8 +473,9 @@ TracerouteHop ConnectivityTester::probeHop(
     return hop;
 }
 
-void ConnectivityTester::traceroute(const TracerouteConfig& config) {
+void ConnectivityTester::traceroute(const TracerouteConfig& rawConfig) {
     m_cancelled.store(false);
+    const TracerouteConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Traceroute");
     if (targetIP.isEmpty()) {
@@ -477,8 +508,9 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config) {
     Q_EMIT tracerouteComplete(result);
 }
 
-void ConnectivityTester::mtr(const MtrConfig& config) {
+void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
     m_cancelled.store(false);
+    const MtrConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "MTR");
     if (targetIP.isEmpty()) {
