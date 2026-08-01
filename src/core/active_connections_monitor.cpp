@@ -115,6 +115,15 @@ void ActiveConnectionsMonitor::refreshNow() {
         connections.append(enumerateUdpListeners(processNames, udpError));
     }
     m_lastRefreshError = tcpError || udpError;
+    if (m_lastRefreshError) {
+        // A TCP/UDP table read failed, so `connections` is empty or missing a
+        // whole protocol. Diffing against it would report every baseline
+        // connection as closed and then wipe the baseline, and the next
+        // successful refresh would re-report them all as new. Preserve the last
+        // good snapshot and skip the diff on a read failure (B9-08).
+        Q_EMIT connectionsUpdated(m_lastConnections);
+        return;
+    }
 
     applyFilters(connections);
     detectChanges(connections);
