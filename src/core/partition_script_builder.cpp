@@ -17,6 +17,8 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace sak {
@@ -136,7 +138,15 @@ QString payloadString(const PartitionOperation& operation,
 uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) {
     const auto value = operation.payload.value(key);
     if (value.isDouble()) {
-        return static_cast<uint64_t>(value.toDouble());
+        // A JSON number is a double; casting a non-finite, negative, or >= 2^64 value straight
+        // to uint64 is undefined behavior. Accept only a finite value in [0, 2^64) and treat
+        // anything else as absent (0), rather than materializing a garbage size/offset.
+        const double number = value.toDouble();
+        if (std::isfinite(number) && number >= 0.0 &&
+            number < static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+            return static_cast<uint64_t>(number);
+        }
+        return 0;
     }
     bool ok = false;
     const uint64_t parsed = value.toString().toULongLong(&ok);

@@ -9580,7 +9580,11 @@ private:
         }
         const auto attributes = scanAttributeRecords(kPartitionHfsDefaultCheckRecordLimit);
         if (!attributes.has_value()) {
-            m_blockers.append(QStringLiteral("Unable to scan HFS+ attributes before write"));
+            // Fail CLOSED, by design: the mutation callers block when this returns true, so an
+            // unscannable attributes tree must read as "assume the attribute is present" and
+            // refuse the risky mutation rather than clobber a file whose attributes we could
+            // not verify. (A blocker is recorded so the caller also fails on the scan error.)
+            m_blockers.append(QStringLiteral("Unable to scan HFS+ attributes"));
             return true;
         }
         return std::any_of(attributes->parsed_records.cbegin(),
@@ -9597,7 +9601,11 @@ private:
         }
         const auto attributes = scanAttributeRecords(kPartitionHfsDefaultCheckRecordLimit);
         if (!attributes.has_value()) {
-            m_blockers.append(QStringLiteral("Unable to scan HFS+ attributes before delete"));
+            // Fail CLOSED, by design (see fileHasAttribute): the delete caller blocks when this
+            // returns true, so an unscannable attributes tree reads as "assume attributes exist"
+            // and refuses the delete rather than dropping a file whose attribute records we
+            // could not enumerate.
+            m_blockers.append(QStringLiteral("Unable to scan HFS+ attributes"));
             return true;
         }
         return std::any_of(attributes->parsed_records.cbegin(),

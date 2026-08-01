@@ -10,6 +10,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -243,7 +244,15 @@ bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType typ
 uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) {
     const auto value = operation.payload.value(key);
     if (value.isDouble()) {
-        return static_cast<uint64_t>(value.toDouble());
+        // Casting a non-finite, negative, or >= 2^64 JSON number straight to uint64 is
+        // undefined behavior; accept only a finite value in [0, 2^64) and treat anything else
+        // as absent so the validator never reasons about a garbage size/offset.
+        const double number = value.toDouble();
+        if (std::isfinite(number) && number >= 0.0 &&
+            number < static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+            return static_cast<uint64_t>(number);
+        }
+        return 0;
     }
     bool ok = false;
     const auto parsed = value.toString().toULongLong(&ok);

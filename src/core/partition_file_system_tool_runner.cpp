@@ -54,11 +54,18 @@ bool containsUnsafeText(const QString& value) {
 }
 
 void appendTargetBlockers(const QString& targetPath, QStringList* blockers) {
-    if (targetPath.trimmed().isEmpty()) {
+    const QString trimmed = targetPath.trimmed();
+    if (trimmed.isEmpty()) {
         blockers->append(QStringLiteral("Target device or image path is required"));
     }
     if (containsUnsafeText(targetPath)) {
         blockers->append(QStringLiteral("Target path contains unsafe control characters"));
+    }
+    // A real device or image path never begins with '-'. Reject one that does so it can never
+    // be smuggled to fsck as an option instead of the positional target (argument injection);
+    // this is tool-agnostic, unlike a '--' separator that not every bundled fsck accepts.
+    if (trimmed.startsWith(QLatin1Char('-'))) {
+        blockers->append(QStringLiteral("Target path must not begin with '-'"));
     }
 }
 

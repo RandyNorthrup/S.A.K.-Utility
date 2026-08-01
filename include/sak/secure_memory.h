@@ -16,6 +16,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 
 namespace sak {
 
@@ -113,6 +114,13 @@ using secure_string = std::basic_string<char, std::char_traits<char>, secure_all
 /// @tparam T Element type
 template <typename T>
 class secure_buffer {
+    // The buffer is zeroed with memset and wiped with secure_wiper::wipe over its whole byte
+    // extent, which is well-defined only for a trivially-copyable element type; overwriting the
+    // object representation of a non-trivial T (then running its destructor) is undefined
+    // behavior. Enforce the invariant at compile time rather than relying on callers.
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "secure_buffer requires a trivially-copyable element type");
+
 public:
     /// @brief Construct secure buffer with specified size
     /// @param size Number of elements

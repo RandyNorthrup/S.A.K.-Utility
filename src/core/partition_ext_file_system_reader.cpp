@@ -240,7 +240,10 @@ QString cleanEntryName(const QByteArray& bytes) {
 }
 
 QStringList pathParts(const QString& input, QStringList* blockers) {
-    const QString path = input.trimmed().isEmpty() ? QStringLiteral("/") : input.trimmed();
+    // Only a whitespace-only input collapses to root; a non-empty path is split UNTRIMMED so a
+    // component with a legitimate leading/trailing space (valid in ext, and emitted verbatim by
+    // this reader's own listings) round-trips instead of losing its edge space to trimmed().
+    const QString path = input.trimmed().isEmpty() ? QStringLiteral("/") : input;
     if (path.contains(QChar::Null) || path.contains(QLatin1Char('\\'))) {
         blockers->append(QStringLiteral("ext path contains unsupported control or backslash text"));
         return {};
@@ -384,7 +387,9 @@ private:
     [[nodiscard]] PartitionExtFileReadResult baseResult() const {
         PartitionExtFileReadResult result;
         result.file_system = m_superblock.file_system;
-        result.warnings = m_warnings;
+        // Do NOT seed warnings here: both callers append the full m_warnings at their final
+        // success path, so seeding a snapshot would duplicate every warning that already
+        // existed when the operation began.
         return result;
     }
 
