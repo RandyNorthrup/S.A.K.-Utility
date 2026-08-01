@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -71,6 +72,58 @@ static QString findNuspecDependencyId(const QString& extract_dir) {
     }
 
     return preferred.isEmpty() ? first : preferred;
+}
+
+// ============================================================================
+// Path-safety seams (pure; unit-tested)
+// ============================================================================
+
+OfflineDeploymentWorker::WorkDirDisposition OfflineDeploymentWorker::classifyWorkDir(
+    bool exists, bool has_ownership_marker, bool is_empty) {
+    if (!exists) {
+        return WorkDirDisposition::CreateFresh;
+    }
+    if (has_ownership_marker) {
+        return WorkDirDisposition::ReuseOwned;  // leftover from a prior build we created
+    }
+    // Adopt an empty unstamped dir; refuse a non-empty one (may hold user data).
+    return is_empty ? WorkDirDisposition::CreateFresh : WorkDirDisposition::RefuseForeign;
+}
+
+QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
+                                                       const QString& fallback) {
+    // Reduce to a single path segment: QUrl::fileName() decodes percent-encoding,
+    // so a crafted URL (e.g. ..%2F..%2Fx) can arrive bearing separators or "..".
+    const QString base = QFileInfo(raw_name).fileName();
+    if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..") ||
+        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\'))) {
+        return fallback;
+    }
+    return base;
+}
+
+bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QString& error_out) {
+    const QString marker = work_dir + "/" + offline::kWorkDirOwnershipMarker;
+    const QDir dir(work_dir);
+    const bool exists = dir.exists();
+    const WorkDirDisposition disposition =
+        classifyWorkDir(exists, QFile::exists(marker), exists && dir.isEmpty());
+
+    if (disposition == WorkDirDisposition::RefuseForeign) {
+        error_out = "Refusing to reuse existing work directory not created by S.A.K.: " + work_dir;
+        return false;
+    }
+    if (!QDir().mkpath(work_dir)) {
+        error_out = "Failed to create work directory: " + work_dir;
+        return false;
+    }
+    // Stamp ownership so a later removeRecursively() only ever deletes our tree.
+    QFile stamp(marker);
+    if (stamp.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        stamp.write("S.A.K. Utility offline-deployment work directory\n");
+        stamp.close();
+    }
+    return true;
 }
 
 // ============================================================================
@@ -139,8 +192,17 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     ctx.packages_dir = output_dir + "/" + offline::kPackagesSubdir;
     ctx.work_dir = output_dir + "/_work";
     ctx.output_dir = output_dir;
+
+    // Establish ownership of _work BEFORE any content is written there, so the
+    // recursive cleanup in finalizeBundle can never wipe a foreign directory.
+    QString work_err;
+    if (!prepareOwnedWorkDir(ctx.work_dir, work_err)) {
+        m_running = false;
+        QMetaObject::invokeMethod(
+            this, [this, work_err]() { Q_EMIT operationError(work_err); }, Qt::QueuedConnection);
+        return;
+    }
     QDir(ctx.packages_dir).mkpath(".");
-    QDir(ctx.work_dir).mkpath(".");
 
     DeploymentManifest manifest;
     manifest.manifest_version = offline::kManifestVersion;
@@ -523,6 +585,13 @@ void OfflineDeploymentWorker::emitLog(const QString& message) {
 int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
                                                           const QString& resolved_version,
                                                           const QString& output_dir) {
+    // A crafted package id must not escape the per-package temp dir (below) that
+    // is later removeRecursively()'d -- reject traversal/separators up front.
+    if (!PackageInternalizationEngine::isSafePackageComponent(pkg_id)) {
+        emitLog(QString("[%1] Rejected: unsafe package id").arg(pkg_id));
+        return 0;
+    }
+
     QString temp_dir = output_dir + "/_sak_temp_" + pkg_id;
     QDir(temp_dir).mkpath(".");
 
@@ -598,6 +667,12 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
     QString dep_id = findNuspecDependencyId(extract_dir);
     if (dep_id.isEmpty()) {
         emitLog(QString("[%1] No chocolateyInstall.ps1 found").arg(pkg_id));
+        return {};
+    }
+    // dep_id comes from a downloaded .nuspec (attacker-influenced): it feeds a
+    // temp path below, so it must be a single safe path segment.
+    if (!PackageInternalizationEngine::isSafePackageComponent(dep_id)) {
+        emitLog(QString("[%1] Rejected unsafe dependency id: %2").arg(pkg_id, dep_id));
         return {};
     }
 
@@ -687,10 +762,8 @@ int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
         if (m_cancelled) {
             break;
         }
-        QString filename = QUrl(url).fileName();
-        if (filename.isEmpty()) {
-            filename = QString("%1_installer_%2").arg(pkg_id).arg(downloaded + 1);
-        }
+        const QString filename = safeInstallerFilename(
+            QUrl(url).fileName(), QString("%1_installer_%2").arg(pkg_id).arg(downloaded + 1));
         QString dest = output_dir + "/" + filename;
         if (downloadFileFromUrl(url, dest)) {
             ++downloaded;

@@ -5940,6 +5940,40 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
     message(STATUS "Added unit test: test_package_internalization_engine")
 endif()
 
+# test_offline_deployment_worker --- pure path-safety seams (B10-12/13/14)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
+    add_executable(test_offline_deployment_worker
+        unit/test_offline_deployment_worker.cpp
+        ../src/core/offline_deployment_worker.cpp
+        ../src/core/package_internalization_engine.cpp
+        ../src/core/install_script_parser.cpp
+        ../src/core/script_rewriter.cpp
+        ../src/core/nuget_api_client.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/offline_deployment_worker.h
+        ../include/sak/package_internalization_engine.h
+        ../include/sak/install_script_parser.h
+        ../include/sak/script_rewriter.h
+        ../include/sak/nuget_api_client.h
+    )
+    set_target_properties(test_offline_deployment_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_offline_deployment_worker PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_offline_deployment_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_offline_deployment_worker
+             COMMAND test_offline_deployment_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_offline_deployment_worker")
+endif()
+
 # test_offline_package_builder ??? builds the Office PC offline deployment bundle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
     add_executable(test_offline_package_builder

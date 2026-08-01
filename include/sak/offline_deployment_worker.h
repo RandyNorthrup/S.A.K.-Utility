@@ -121,6 +121,27 @@ public:
     /// @brief Get current batch statistics
     [[nodiscard]] BatchStats getStats() const;
 
+    /// @brief How a build's reusable <output>/_work directory should be treated.
+    enum class WorkDirDisposition {
+        CreateFresh,    ///< Absent, or an empty unstamped dir we may adopt.
+        ReuseOwned,     ///< Bears our ownership marker: a leftover we may reuse+delete.
+        RefuseForeign,  ///< Non-empty and unstamped: never create/reuse or delete it.
+    };
+
+    /// @brief Decide how to treat a build work directory from its state, so a
+    ///        pre-existing FOREIGN <output>/_work is never recursively deleted.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static WorkDirDisposition classifyWorkDir(bool exists,
+                                                            bool has_ownership_marker,
+                                                            bool is_empty);
+
+    /// @brief Reduce a URL-derived name to a single safe path segment, returning
+    ///        @p fallback when it would escape the output dir (empty, ".", "..",
+    ///        or containing a path separator after basename reduction). Pure;
+    ///        unit-testable.
+    [[nodiscard]] static QString safeInstallerFilename(const QString& raw_name,
+                                                       const QString& fallback);
+
 Q_SIGNALS:
     /// @brief Batch operation started
     void operationStarted(int total_packages);
@@ -152,6 +173,11 @@ private:
 
     /// @brief Read a deployment manifest from disk
     [[nodiscard]] DeploymentManifest readManifest(const QString& path) const;
+
+    /// @brief Ensure the build work dir is ours to create/reuse and later delete.
+    ///        Refuses (returns false + @p error_out) a pre-existing foreign dir so
+    ///        a recursive cleanup can never wipe unrelated user data (B10-13).
+    [[nodiscard]] bool prepareOwnedWorkDir(const QString& work_dir, QString& error_out);
 
     /// @brief Execute the build bundle operation on a background thread
     void executeBuildBundle(const QString& output_dir, const QString& description);

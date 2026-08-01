@@ -68,6 +68,11 @@ constexpr auto kInstallersSubdir = "installers";
 constexpr auto kLogsSubdir = "logs";
 constexpr auto kReadmeFilename = "README.txt";
 
+// Ownership stamp dropped into a build's <output>/_work directory so a later
+// recursive cleanup only ever deletes a work tree this app created (a
+// pre-existing FOREIGN _work is refused, never wiped).
+constexpr auto kWorkDirOwnershipMarker = ".sak_offline_work";
+
 // ============================================================================
 // Package list presets
 // ============================================================================
