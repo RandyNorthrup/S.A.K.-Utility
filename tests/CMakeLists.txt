@@ -3015,6 +3015,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_run
     add_executable(test_ai_workflow_powershell_tool_runner
         unit/test_ai_workflow_powershell_tool_runner.cpp
         ../src/ai/ai_workflow_powershell_tool_runner.cpp
+        ../src/ai/ai_workflow_placeholders.cpp
         ../src/ai/ai_command_guard.cpp
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_credential_store.cpp
@@ -3022,6 +3023,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_run
         ../src/core/app_paths.cpp
         ../src/core/secure_memory.cpp
         ../include/sak/ai/ai_workflow_powershell_tool_runner.h
+        ../include/sak/ai/ai_workflow_placeholders.h
         ../include/sak/ai/ai_command_guard.h
         ../include/sak/ai/ai_execution_broker.h
         ../include/sak/ai/ai_credential_store.h

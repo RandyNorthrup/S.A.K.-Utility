@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/ai/ai_orchestrator.h"
+#include "sak/ai/ai_workflow_placeholders.h"
 #include "sak/ai/ai_workflow_powershell_tool_runner.h"
 
 #include <QtTest/QtTest>
@@ -15,6 +17,7 @@ private Q_SLOTS:
     void sensitiveCommandRequiresConfirmation();
     void successfulRunRecordsRedactedCommand();
     void clampsCallerControlledOutputCap();
+    void singleQuotedModeEscapesEmbeddedQuotes();
 };
 
 void AiWorkflowPowerShellToolRunnerTests::rejectsMissingCommand() {
@@ -146,6 +149,27 @@ void AiWorkflowPowerShellToolRunnerTests::clampsCallerControlledOutputCap() {
         callbacks);
     QVERIFY(low.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(seen_cap, options.min_output_bytes);
+}
+
+void AiWorkflowPowerShellToolRunnerTests::singleQuotedModeEscapesEmbeddedQuotes() {
+    // B12-03 / B1-05: a placeholder value substituted into a PowerShell single-quoted literal
+    // must have its single quotes doubled, so a malicious value cannot break out of the quotes
+    // and inject a command. Raw mode (used only for non-shell contexts like prompts) must not
+    // escape, proving the escaping is a deliberate, mode-gated behavior.
+    sak::ai::AiWorkflowPhaseContext context;
+    context.user_message = QStringLiteral("x'; Remove-Item C:\\ -Recurse; '");
+    const QString tmpl = QStringLiteral("Write-Output '${user_message}'");
+
+    const QString quoted = sak::ai::substituteWorkflowPlaceholders(
+        tmpl, context, sak::ai::WorkflowPlaceholderMode::PowerShellSingleQuoted);
+    // Every embedded single quote is doubled; the injected value stays inside one literal.
+    QVERIFY(quoted.contains(QStringLiteral("x''; Remove-Item C:\\ -Recurse; ''")));
+
+    const QString raw = sak::ai::substituteWorkflowPlaceholders(
+        tmpl, context, sak::ai::WorkflowPlaceholderMode::Raw);
+    // Raw mode leaves the single quotes intact (never used to build a shell command).
+    QVERIFY(raw.contains(QStringLiteral("x'; Remove-Item C:\\ -Recurse; '")));
+    QVERIFY(quoted != raw);
 }
 
 QTEST_GUILESS_MAIN(AiWorkflowPowerShellToolRunnerTests)
