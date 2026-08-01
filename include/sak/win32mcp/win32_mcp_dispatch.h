@@ -17,6 +17,32 @@ namespace sak::win32mcp {
 
 class BrowserControl;
 
+/// Server-side enforcement of the security controls the provider gateway sets in the spawned
+/// server's environment (WIN32_MCP_SECURITY_PROFILE, WIN32_MCP_REDACT_SENSITIVE_OUTPUT). The
+/// gateway pools a distinct process per security profile, so a value read once at startup holds
+/// for the whole process lifetime. Defaults are permissive/no-redaction so a server started
+/// outside the gateway (and every pure unit test) behaves exactly as before.
+struct Win32McpServerPolicy {
+    // WIN32_MCP_SECURITY_PROFILE == "read_only": tools/list advertises only read-only tools and
+    // tools/call refuses any non-read-only tool, so a read-only session cannot invoke a mutating
+    // or input tool even if the client's own policy gate were bypassed.
+    bool read_only_profile{false};
+    // WIN32_MCP_REDACT_SENSITIVE_OUTPUT == "true": mask obvious secrets in tool result text
+    // before it leaves the process, so raw passwords/tokens never reach the model.
+    bool redact_sensitive_output{false};
+
+    [[nodiscard]] static Win32McpServerPolicy fromEnvironment();
+};
+
+/// Whether a tool is read-only (no mutation, no input injection, no process control). Mirrors
+/// the client-side AiProviderGateway::isWin32ReadOnlyTool; the server enforces it independently
+/// so it never trusts the client. KEEP THE TWO LISTS IN SYNC when adding a read-only tool.
+[[nodiscard]] bool win32McpToolIsReadOnly(const QString& tool_name);
+
+/// Mask obvious secrets (password/token/secret/api key/bearer assignments) in @p text so raw
+/// sensitive output never reaches the model. Exposed for unit testing.
+[[nodiscard]] QString redactWin32McpSensitiveText(const QString& text);
+
 /// Shape a ToolResult into the MCP `tools/call` result object. A screenshot (image
 /// present) becomes an `image` content block plus an optional text summary; a text
 /// result stays a single `text` block. Exposed so the content shaping -- including the
@@ -32,6 +58,7 @@ class BrowserControl;
 /// (the default, and every pure unit test), only the built-in win32 tools are
 /// advertised and a browser_* call falls through to the unknown-tool error.
 [[nodiscard]] std::optional<QJsonObject> handleRequest(const QJsonObject& request,
-                                                       BrowserControl* browser = nullptr);
+                                                       BrowserControl* browser = nullptr,
+                                                       const Win32McpServerPolicy& policy = {});
 
 }  // namespace sak::win32mcp

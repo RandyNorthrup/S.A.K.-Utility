@@ -112,6 +112,12 @@ int runWin32McpProcess(int argc, char** argv) {
     }
     sak::win32mcp::BrowserControl* const browser_ptr = browser_ready ? &browser : nullptr;
 
+    // Enforce the security profile / output redaction the provider gateway set in this process's
+    // environment. The gateway pools a distinct process per profile, so reading it once here
+    // holds for the process lifetime.
+    const sak::win32mcp::Win32McpServerPolicy policy =
+        sak::win32mcp::Win32McpServerPolicy::fromEnvironment();
+
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) {
@@ -125,8 +131,8 @@ int runWin32McpProcess(int argc, char** argv) {
             // keep serving rather than desynchronizing the stream.
             continue;
         }
-        const std::optional<QJsonObject> response = sak::win32mcp::handleRequest(request,
-                                                                                 browser_ptr);
+        const std::optional<QJsonObject> response =
+            sak::win32mcp::handleRequest(request, browser_ptr, policy);
         if (response.has_value()) {
             writeResponse(response.value());
         }

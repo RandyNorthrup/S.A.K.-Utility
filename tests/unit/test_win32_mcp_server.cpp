@@ -75,6 +75,8 @@ private slots:
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
+    void readOnlyProfileFiltersCatalogAndRefusesMutatingCall();
+    void redactionMasksSecretsInResultText();
 };
 
 void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
@@ -482,6 +484,63 @@ void Win32McpServerTests::toolCallResult_imageBecomesImageBlockPlusSummary() {
     const QJsonObject text = content.at(1).toObject();
     QCOMPARE(text.value(QStringLiteral("type")).toString(), QStringLiteral("text"));
     QVERIFY(text.value(QStringLiteral("text")).toString().contains(QStringLiteral("screenshot")));
+}
+
+void Win32McpServerTests::readOnlyProfileFiltersCatalogAndRefusesMutatingCall() {
+    // B12-05: under the read-only security profile the server must advertise ONLY read-only
+    // tools and refuse a mutating/input tool, independently of the client's own gate.
+    sak::win32mcp::Win32McpServerPolicy policy;
+    policy.read_only_profile = true;
+
+    const auto listed = handleRequest(request(QStringLiteral("tools/list"), 1), nullptr, policy);
+    QVERIFY(listed.has_value());
+    const QJsonArray tools =
+        listed->value(QStringLiteral("result")).toObject().value(QStringLiteral("tools")).toArray();
+    QVERIFY(!tools.isEmpty());
+    for (const QJsonValue& tool : tools) {
+        const QString name = tool.toObject().value(QStringLiteral("name")).toString();
+        QVERIFY2(sak::win32mcp::win32McpToolIsReadOnly(name), qPrintable(name));
+    }
+
+    // A mutating/input/process tool is refused under the read-only profile.
+    const auto refused =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              2,
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("kill_process")},
+                                          {QStringLiteral("arguments"), QJsonObject{}}}),
+                      nullptr,
+                      policy);
+    QVERIFY(refused.has_value());
+    QVERIFY(refused->contains(QStringLiteral("error")));
+    QVERIFY(refused->value(QStringLiteral("error"))
+                .toObject()
+                .value(QStringLiteral("message"))
+                .toString()
+                .contains(QStringLiteral("read-only security profile")));
+
+    // A read-only tool still runs under the profile (health_check is read-only).
+    const auto allowed =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              3,
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("health_check")},
+                                          {QStringLiteral("arguments"), QJsonObject{}}}),
+                      nullptr,
+                      policy);
+    QVERIFY(allowed.has_value());
+    QVERIFY(allowed->contains(QStringLiteral("result")));
+}
+
+void Win32McpServerTests::redactionMasksSecretsInResultText() {
+    // B12-05: WIN32_MCP_REDACT_SENSITIVE_OUTPUT masks obvious secrets so raw credentials never
+    // reach the model.
+    const QString masked = sak::win32mcp::redactWin32McpSensitiveText(
+        QStringLiteral("user=admin password=Hunter2 api_key: ABC123 note=ok"));
+    QVERIFY(!masked.contains(QStringLiteral("Hunter2")));
+    QVERIFY(!masked.contains(QStringLiteral("ABC123")));
+    QVERIFY(masked.contains(QStringLiteral("[REDACTED]")));
+    // Non-secret text is preserved.
+    QVERIFY(masked.contains(QStringLiteral("user=admin")));
+    QVERIFY(masked.contains(QStringLiteral("note=ok")));
 }
 
 QTEST_MAIN(Win32McpServerTests)
