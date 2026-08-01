@@ -70,6 +70,10 @@ Q_SIGNALS:
 private:
     QVector<FirewallRule> m_rules;
     std::atomic<bool> m_cancelled{false};
+    // False when the last enumerateViaCOM() failed (COM init or a partway break),
+    // so the public ops do not emit a clean empty result over a failed security
+    // audit (B9-09). An empty-but-successful enumeration leaves this true.
+    bool m_enumerationOk{true};
 
     [[nodiscard]] QVector<FirewallRule> enumerateViaCOM();
     [[nodiscard]] QVector<FirewallConflict> findConflicts(const QVector<FirewallRule>& rules) const;

@@ -395,6 +395,12 @@ struct FirewallRule {
     int profiles = 0;
 
     QString grouping;
+
+    /// False when at least one COM getter failed while reading this rule, so its
+    /// remaining fields hold DEFAULTS (e.g. Allow/Inbound/Any/empty) that would
+    /// misrepresent the rule's real security posture. The auditor surfaces this
+    /// rather than presenting a defaulted rule as fact (B9-10).
+    bool complete = true;
 };
 
 /// @brief Firewall rule conflict

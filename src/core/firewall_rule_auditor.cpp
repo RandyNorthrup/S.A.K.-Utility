@@ -13,6 +13,7 @@
 
 #include <QSet>
 
+#include <algorithm>
 #include <optional>
 
 #include <winsock2.h>
@@ -139,73 +140,104 @@ FirewallRule::Protocol protocolFromNumber(long proto) {
 
 void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rule) {
     Q_ASSERT(pRule);
+    // Any getter that fails leaves a DEFAULT (Allow/Inbound/Any) that would
+    // misrepresent the rule's posture in a security audit, so flag the rule as
+    // incomplete rather than silently trusting the default (B9-10).
     VARIANT_BOOL enabled = VARIANT_FALSE;
     if (SUCCEEDED(pRule->get_Enabled(&enabled))) {
         rule.enabled = (enabled == VARIANT_TRUE);
+    } else {
+        rule.complete = false;
     }
 
     NET_FW_RULE_DIRECTION dir = NET_FW_RULE_DIR_IN;
     if (SUCCEEDED(pRule->get_Direction(&dir))) {
         rule.direction = (dir == NET_FW_RULE_DIR_IN) ? FirewallRule::Direction::Inbound
                                                      : FirewallRule::Direction::Outbound;
+    } else {
+        rule.complete = false;
     }
 
     NET_FW_ACTION action = NET_FW_ACTION_ALLOW;
     if (SUCCEEDED(pRule->get_Action(&action))) {
         rule.action = (action == NET_FW_ACTION_ALLOW) ? FirewallRule::Action::Allow
                                                       : FirewallRule::Action::Block;
+    } else {
+        rule.complete = false;
     }
 
     long proto = 0;
     if (SUCCEEDED(pRule->get_Protocol(&proto))) {
         rule.protocol = protocolFromNumber(proto);
+    } else {
+        rule.complete = false;
     }
 }
 
 void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule) {
     Q_ASSERT(pRule);
+    // Ports and addresses define the rule's scope; a failed getter leaves it
+    // empty, which the conflict/gap logic would read as a different scope, so a
+    // failure flags the rule incomplete (B9-10).
     BSTR localPorts = nullptr;
     if (SUCCEEDED(pRule->get_LocalPorts(&localPorts))) {
         rule.localPorts = bstrToQString(localPorts);
         SysFreeString(localPorts);
+    } else {
+        rule.complete = false;
     }
 
     BSTR remotePorts = nullptr;
     if (SUCCEEDED(pRule->get_RemotePorts(&remotePorts))) {
         rule.remotePorts = bstrToQString(remotePorts);
         SysFreeString(remotePorts);
+    } else {
+        rule.complete = false;
     }
 
     BSTR localAddrs = nullptr;
     if (SUCCEEDED(pRule->get_LocalAddresses(&localAddrs))) {
         rule.localAddresses = bstrToQString(localAddrs);
         SysFreeString(localAddrs);
+    } else {
+        rule.complete = false;
     }
 
     BSTR remoteAddrs = nullptr;
     if (SUCCEEDED(pRule->get_RemoteAddresses(&remoteAddrs))) {
         rule.remoteAddresses = bstrToQString(remoteAddrs);
         SysFreeString(remoteAddrs);
+    } else {
+        rule.complete = false;
     }
 }
 
 void populateRuleAppAndProfileInfo(INetFwRule* pRule, FirewallRule& rule) {
     Q_ASSERT(pRule);
+    // Application, service, and profile scope which program/service/network the
+    // rule applies to; a failed getter leaves the scope unknown, so flag the rule
+    // incomplete (B9-10). Grouping is a display label and is not flagged.
     BSTR appPath = nullptr;
     if (SUCCEEDED(pRule->get_ApplicationName(&appPath))) {
         rule.applicationPath = bstrToQString(appPath);
         SysFreeString(appPath);
+    } else {
+        rule.complete = false;
     }
 
     BSTR svcName = nullptr;
     if (SUCCEEDED(pRule->get_ServiceName(&svcName))) {
         rule.serviceName = bstrToQString(svcName);
         SysFreeString(svcName);
+    } else {
+        rule.complete = false;
     }
 
     long profiles = 0;
     if (SUCCEEDED(pRule->get_Profiles(&profiles))) {
         rule.profiles = static_cast<int>(profiles);
+    } else {
+        rule.complete = false;
     }
 
     BSTR grouping = nullptr;
@@ -288,7 +320,10 @@ void FirewallRuleAuditor::enumerateRules() {
     m_cancelled.store(false);
     m_rules = enumerateViaCOM();
 
-    if (!m_cancelled.load()) {
+    // Do not emit a clean result over a failed enumeration: errorOccurred already
+    // fired, and emitting an empty rulesEnumerated would let a broken audit read
+    // as "no rules" (B9-09). An empty-but-successful enumeration still emits.
+    if (!m_cancelled.load() && m_enumerationOk) {
         Q_EMIT rulesEnumerated(m_rules);
     }
 }
@@ -311,6 +346,12 @@ void FirewallRuleAuditor::fullAudit() {
 
     if (m_cancelled.load()) {
         Q_EMIT auditComplete({}, {}, {});
+        return;
+    }
+    if (!m_enumerationOk) {
+        // Enumeration failed (errorOccurred already fired). Do NOT emit a clean
+        // empty auditComplete -- a failed security audit must not look clean
+        // (B9-09).
         return;
     }
 
@@ -415,11 +456,13 @@ std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& c
 
 QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     QVector<FirewallRule> rules;
+    m_enumerationOk = true;
 
     ComInitializer com;
     QString error_msg;
     auto enumerator = initFirewallRuleEnumerator(com, error_msg);
     if (!enumerator) {
+        m_enumerationOk = false;
         if (!error_msg.isEmpty()) {
             Q_EMIT errorOccurred(error_msg);
         }
@@ -447,6 +490,7 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     // reporting a TRUNCATED rule set as a complete audit. A cooperative cancel leaves next_hr
     // SUCCEEDED and is handled by fullAudit's separate m_cancelled check.
     if (FAILED(next_hr)) {
+        m_enumerationOk = false;
         Q_EMIT errorOccurred(
             QStringLiteral("Firewall rule enumeration failed partway (HRESULT 0x%1)")
                 .arg(static_cast<unsigned long>(next_hr),
@@ -454,6 +498,19 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
                      kHexBase,
                      QLatin1Char('0')));
         return {};
+    }
+
+    // Surface rules whose COM getters partially failed: their fields hold
+    // defaults that may misrepresent the rule, so the audit must not present them
+    // as fully-read fact (B9-10). This is a warning, not an enumeration failure,
+    // so the (flagged) rules are still returned.
+    const auto incomplete = std::count_if(rules.cbegin(), rules.cend(), [](const FirewallRule& r) {
+        return !r.complete;
+    });
+    if (incomplete > 0) {
+        Q_EMIT errorOccurred(QStringLiteral("%1 firewall rule(s) could not be fully read; their "
+                                            "attributes may be incomplete.")
+                                 .arg(incomplete));
     }
 
     return rules;
