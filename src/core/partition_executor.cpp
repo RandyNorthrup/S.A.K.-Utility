@@ -156,10 +156,18 @@ PartitionExecutor::PartitionExecutor(QObject* parent) : QObject(parent) {}
 PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOperation>& operations,
                                                     bool dry_run,
                                                     bool use_elevation) {
-    m_cancelled.store(false, std::memory_order_relaxed);
     PartitionExecutionResult result;
     result.batch_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     result.dry_run = dry_run;
+
+    // Honor a cancel that arrived after this batch was dispatched but before the worker
+    // thread began running it. The executor is constructed fresh per apply (m_cancelled
+    // defaults false), so a flag set here can only be a genuine pre-dispatch cancel --
+    // clearing it and running the destructive batch anyway would ignore the user.
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        markCancelled(&result);
+        return result;
+    }
 
     if (operations.isEmpty()) {
         result.message = QStringLiteral("No partition operations queued");
@@ -236,6 +244,15 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
     ElevationBroker broker;
     connect(&broker, &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
     setActiveBroker(&broker);
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        // A cancel that raced in before the broker was registered would have found
+        // m_active_broker null and been unable to stop this task. Now that the broker is
+        // registered, re-check so a cancelled batch never launches the elevated
+        // (destructive) task through the gap.
+        setActiveBroker(nullptr);
+        step.error_message = QStringLiteral("Command cancelled");
+        return step;
+    }
     QJsonObject payload;
     payload[QStringLiteral("command")] = credentials.script();
     payload[QStringLiteral("timeout_seconds")] = std::max(script.timeout_seconds,

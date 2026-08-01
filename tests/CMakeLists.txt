@@ -315,10 +315,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
         ../src/core/elevation_broker.cpp
         ../src/core/partition_safety_validator.cpp
         ../src/core/partition_script_builder.cpp
+        ../src/core/partition_executor.cpp
         ../src/core/partition_operation_planner.cpp
         ../src/core/partition_operation_queue.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
+        ../include/sak/partition_executor.h
         ../include/sak/partition_manager_types.h
         ../include/sak/partition_file_system_detector.h
         ../include/sak/partition_file_system_registry.h

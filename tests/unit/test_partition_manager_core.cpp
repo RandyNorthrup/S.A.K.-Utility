@@ -12,6 +12,7 @@
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/partition_executor.h"
 #include "sak/partition_ext_file_system_reader.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
@@ -1897,6 +1898,7 @@ private Q_SLOTS:
     void apfsWriter_computesMultiChunkContainerGeometry();
     void apfsWriter_blocksOversizedGeneratedContainers();
     void apfsWriter_preflightFailsClosedUntilCertified();
+    void partitionExecutor_honorsPreDispatchCancel();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
@@ -8198,6 +8200,21 @@ void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() 
         *detection, PartitionApfsWriteOperation::CreateFile, certifiedImageOnly);
     QVERIFY(!rawMediaBlocked.allowed);
     QVERIFY(rawMediaBlocked.blockers.join(' ').contains(QStringLiteral("Raw APFS media writes")));
+}
+
+void PartitionManagerCoreTests::partitionExecutor_honorsPreDispatchCancel() {
+    // B11-10: a cancel that lands after the batch is dispatched but before the worker
+    // thread starts execute() must abort the batch, not be cleared at execute() entry.
+    // Cancel first, then run a non-empty (dry-run) batch and confirm nothing executed.
+    PartitionExecutor executor;
+    PartitionOperation op;
+    op.id = QStringLiteral("op-1");
+    op.summary = QStringLiteral("pre-dispatch cancel probe");
+    executor.cancel();
+    const auto result = executor.execute({op}, /*dry_run=*/true, /*use_elevation=*/false);
+    QVERIFY(result.cancelled);
+    QVERIFY(!result.success);
+    QVERIFY(result.steps.isEmpty());  // returned before any operation ran
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransaction() {
