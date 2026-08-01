@@ -84,6 +84,16 @@ public:
     /// @brief Check if any operation is in progress
     [[nodiscard]] bool isBusy() const;
 
+    /// @brief Pick a safe .nupkg filename for a download.
+    ///        @p candidate is the raw Content-Disposition name (may be empty or
+    ///        hostile); @p package_id is the request id used as fallback. The
+    ///        result is always a single basename confined to the output dir:
+    ///        traversal, separators, drive letters, ".", ".." and empties are
+    ///        rejected (candidate first, then package_id, then "package.nupkg").
+    ///        Pure; unit-testable.
+    [[nodiscard]] static QString sanitizeNupkgFilename(const QString& candidate,
+                                                       const QString& package_id);
+
 Q_SIGNALS:
     void searchComplete(QVector<ChocoPackageMetadata> results);
     void metadataReady(ChocoPackageMetadata metadata);

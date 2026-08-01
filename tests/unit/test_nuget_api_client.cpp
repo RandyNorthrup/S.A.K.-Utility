@@ -35,6 +35,11 @@ private Q_SLOTS:
     void parseDependencyString_semicolonSeparated();
     void parseDependencyString_pipeVersionRange();
     void parseDependencyString_empty_returnsEmpty();
+
+    // Download filename safety (B10-15)
+    void sanitizeNupkgFilename_prefersCleanCandidate();
+    void sanitizeNupkgFilename_confinesHostileNamesToBasename();
+    void sanitizeNupkgFilename_fallsBackToPackageIdThenLiteral();
 };
 
 // ============================================================================
@@ -279,6 +284,45 @@ void TestNuGetApiClient::parseDependencyString_empty_returnsEmpty() {
     QString dep_string;
     QStringList parts = dep_string.split('|', Qt::SkipEmptyParts);
     QVERIFY(parts.isEmpty());
+}
+
+// ============================================================================
+// Download Filename Safety (B10-15)
+// ============================================================================
+
+void TestNuGetApiClient::sanitizeNupkgFilename_prefersCleanCandidate() {
+    // A plain Content-Disposition name is used verbatim.
+    QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QStringLiteral("googlechrome.120.nupkg"),
+                                                        QStringLiteral("googlechrome")),
+             QStringLiteral("googlechrome.120.nupkg"));
+}
+
+void TestNuGetApiClient::sanitizeNupkgFilename_confinesHostileNamesToBasename() {
+    // A traversal-bearing header name is reduced to its bare basename.
+    const QString r = sak::NuGetApiClient::sanitizeNupkgFilename(
+        QStringLiteral("../../../etc/evil.nupkg"), QStringLiteral("pkg"));
+    QCOMPARE(r, QStringLiteral("evil.nupkg"));
+    // A name that reduces to a traversal token falls through to the package id.
+    QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QStringLiteral(".."),
+                                                        QStringLiteral("7zip.install")),
+             QStringLiteral("7zip.install.nupkg"));
+    // Whatever the candidate, the result never carries a path separator.
+    const QString bs = sak::NuGetApiClient::sanitizeNupkgFilename(QStringLiteral("a\\b\\c.nupkg"),
+                                                                  QStringLiteral("pkg"));
+    QVERIFY(!bs.contains(QLatin1Char('/')));
+    QVERIFY(!bs.contains(QLatin1Char('\\')));
+}
+
+void TestNuGetApiClient::sanitizeNupkgFilename_fallsBackToPackageIdThenLiteral() {
+    // Empty candidate -> package_id + .nupkg.
+    QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QString(), QStringLiteral("nodejs")),
+             QStringLiteral("nodejs.nupkg"));
+    // Both hostile -> a fixed safe literal, never a traversal.
+    QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QStringLiteral(".."),
+                                                        QStringLiteral("../..")),
+             QStringLiteral("package.nupkg"));
+    QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QString(), QString()),
+             QStringLiteral("package.nupkg"));
 }
 
 QTEST_GUILESS_MAIN(TestNuGetApiClient)

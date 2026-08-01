@@ -301,6 +301,20 @@ void NuGetApiClient::handleVersionsReply(QNetworkReply* reply, const QString& pa
     Q_EMIT versionsReady(package_id, versions);
 }
 
+QString NuGetApiClient::sanitizeNupkgFilename(const QString& candidate, const QString& package_id) {
+    // fileName() strips ../ traversal, drive letters and absolute paths (both /
+    // and \ separators on Windows) to a bare last segment.
+    const QString base = QFileInfo(candidate).fileName();
+    if (!base.isEmpty() && base != QStringLiteral(".") && base != QStringLiteral("..")) {
+        return base;
+    }
+    const QString safe_id = QFileInfo(package_id).fileName();
+    if (safe_id.isEmpty() || safe_id == QStringLiteral(".") || safe_id == QStringLiteral("..")) {
+        return QStringLiteral("package.nupkg");
+    }
+    return safe_id + QStringLiteral(".nupkg");
+}
+
 void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
                                          const QString& package_id,
                                          const QString& output_dir) {
@@ -326,21 +340,18 @@ void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
         return;
     }
 
-    // Determine filename from Content-Disposition or construct from package_id
-    QString filename;
+    // Determine filename from Content-Disposition or construct from package_id.
+    // Both the header name AND the package_id fallback are caller/server-supplied,
+    // so both are confined to a bare basename (sanitizeNupkgFilename) -- the write
+    // can never escape output_dir via ../ traversal, a drive letter or a separator.
+    QString candidate;
     QString disposition = reply->header(QNetworkRequest::ContentDispositionHeader).toString();
     if (!disposition.isEmpty() && disposition.contains("filename=")) {
         int start = disposition.indexOf("filename=") + kContentDispositionFilenamePrefixLength;
-        filename = disposition.mid(start).trimmed();
-        filename.remove('"');
-        // Confine a hostile Content-Disposition name to a bare basename: fileName() strips
-        // ../ traversal, drive letters and absolute paths (both / and \ separators on Windows),
-        // so the write can never escape output_dir.
-        filename = QFileInfo(filename).fileName();
+        candidate = disposition.mid(start).trimmed();
+        candidate.remove('"');
     }
-    if (filename.isEmpty()) {
-        filename = package_id + ".nupkg";
-    }
+    const QString filename = sanitizeNupkgFilename(candidate, package_id);
 
     QString file_path = QDir(output_dir).filePath(filename);
     QFile file(file_path);
