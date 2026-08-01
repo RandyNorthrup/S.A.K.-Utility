@@ -1214,6 +1214,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_recycle_bin.cpp")
     message(STATUS "Added unit test: test_recycle_bin")
 endif()
 
+# test_imap_uploader -- B9-01..05 security seams: flag-token validation,
+# line-prefix response parsing, parallel-vector guard, plaintext refusal.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_imap_uploader.cpp")
+    add_executable(test_imap_uploader
+        unit/test_imap_uploader.cpp
+        ../src/core/imap_uploader.cpp
+        ../include/sak/imap_uploader.h  # Q_OBJECT -> AUTOMOC
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_imap_uploader PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_imap_uploader PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_imap_uploader PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_imap_uploader COMMAND test_imap_uploader
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_imap_uploader")
+endif()
+
 # test_file_scanner ??? scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner

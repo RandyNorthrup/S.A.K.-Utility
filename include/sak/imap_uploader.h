@@ -51,6 +51,23 @@ public:
     /// Cancel the upload
     void cancel();
 
+    // --- Pure IMAP-protocol validators (security seams, exposed for testing) ---
+
+    /// True when @p flag is a valid IMAP flag (an optional leading '\' then RFC
+    /// 3501 atom characters only). Rejects CR/LF, spaces, parens, braces, quotes
+    /// and list wildcards that would otherwise break out of an APPEND flag-list
+    /// or inject a command (B9-03).
+    [[nodiscard]] static bool isValidImapFlag(const QString& flag);
+
+    /// True when @p buf holds a COMPLETE (CRLF-terminated) line beginning with
+    /// @p prefix at a real line boundary. IMAP status tokens and the '+'
+    /// continuation are only meaningful as the first token of a line (B9-05).
+    [[nodiscard]] static bool hasCompleteLineWithPrefix(const QString& buf, const QString& prefix);
+
+    /// True when the tagged completion line for @p tag has arrived and its status
+    /// is OK (line "tag OK ..."), evaluated only at a line boundary (B9-05).
+    [[nodiscard]] static bool taggedLineIsOk(const QString& buf, const QString& tag);
+
 Q_SIGNALS:
     void uploadStarted(int total_items);
     void uploadProgress(int items_done, int total_items, qint64 bytes_sent);

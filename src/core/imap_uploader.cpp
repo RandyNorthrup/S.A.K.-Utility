@@ -50,6 +50,18 @@ QString imapQuote(const QString& raw) {
     return QStringLiteral("\"") + escaped + QStringLiteral("\"");
 }
 
+// Thin file-local aliases so the session worker below reads cleanly; the
+// definitions live on ImapUploader (exposed as testable static seams).
+bool hasCompleteLineWithPrefix(const QString& buf, const QString& prefix) {
+    return ImapUploader::hasCompleteLineWithPrefix(buf, prefix);
+}
+bool taggedLineIsOk(const QString& buf, const QString& tag) {
+    return ImapUploader::taggedLineIsOk(buf, tag);
+}
+bool isValidImapFlag(const QString& flag) {
+    return ImapUploader::isValidImapFlag(flag);
+}
+
 QString formatImapDateForAppend(const QDateTime& date) {
     static const char* kMonths[] = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -89,6 +101,18 @@ public:
         : m_request(std::move(request)), m_sinks(sinks) {}
 
     void start() {
+        if (!m_request.config->use_ssl) {
+            // STARTTLS is not implemented, so use_ssl=false is pure plaintext: it
+            // would send credentials and message bodies in the clear. Refuse the
+            // session rather than leak them (B9-04).
+            m_sinks.result->success = false;
+            m_sinks.result->error = error_code::connection_failed;
+            m_sinks.result->error_message =
+                QStringLiteral("Refusing plaintext IMAP; enable SSL/TLS.");
+            m_sinks.owner_thread->quit();
+            m_sinks.done->release();
+            return;
+        }
         m_socket = new QSslSocket(this);
         m_timeoutTimer = new QTimer(this);
         m_timeoutTimer->setSingleShot(true);
@@ -155,7 +179,18 @@ private:
             return;
         }
         if (m_currentIndex >= messages().size()) {
-            finish(true);
+            // Success only when every message was appended. A CREATE/APPEND reject
+            // or an oversized skip incremented `failed`; a migration that silently
+            // dropped messages must not report success (B9-02).
+            if (m_sinks.result->failed > 0) {
+                finish(false,
+                       error_code::partial_failure,
+                       QStringLiteral("%1 of %2 message(s) failed to upload")
+                           .arg(m_sinks.result->failed)
+                           .arg(messages().size()));
+            } else {
+                finish(true);
+            }
             return;
         }
         if (skipOversizedMessage()) {
@@ -199,11 +234,19 @@ private:
     }
 
     QString flagsForCurrentMessage() const {
-        if (flags().at(m_currentIndex).isEmpty()) {
+        // Drop any flag that is not a valid IMAP atom before joining it into the
+        // APPEND flag-list, so a crafted flag cannot break out of the parens or
+        // inject a command (B9-03).
+        QStringList valid;
+        for (const QString& flag : flags().at(m_currentIndex)) {
+            if (isValidImapFlag(flag)) {
+                valid.append(flag);
+            }
+        }
+        if (valid.isEmpty()) {
             return {};
         }
-        return QStringLiteral("(") + flags().at(m_currentIndex).join(QStringLiteral(" ")) +
-               QStringLiteral(") ");
+        return QStringLiteral("(") + valid.join(QStringLiteral(" ")) + QStringLiteral(") ");
     }
 
     QString dateForCurrentMessage() const {
@@ -215,7 +258,7 @@ private:
     }
 
     void handleAppendResponse(const QString& response) {
-        if (response.contains(m_currentTag + QStringLiteral(" OK"))) {
+        if (taggedLineIsOk(response, m_currentTag)) {
             ++m_sinks.result->uploaded;
             m_bytesSent += messages().at(m_currentIndex).size();
         } else {
@@ -278,7 +321,7 @@ private:
     void handleAuthResponse(const QString& response) {
         // Require the TAGGED OK: an untagged "* OK" preceding a tagged "Axxx NO"
         // would otherwise be read as a successful authentication.
-        if (!response.contains(m_currentTag + QStringLiteral(" OK"))) {
+        if (!taggedLineIsOk(response, m_currentTag)) {
             finish(false,
                    error_code::authentication_failed,
                    QStringLiteral("Authentication failed"));
@@ -302,7 +345,7 @@ private:
     }
 
     void handleNoopResponse(const QString& response) {
-        if (!response.contains(m_currentTag + QStringLiteral(" OK"))) {
+        if (!taggedLineIsOk(response, m_currentTag)) {
             failConnection(QStringLiteral("NOOP failed"));
             return;
         }
@@ -312,7 +355,7 @@ private:
     void handleCreateResponse(const QString& response) {
         // Only signal a real creation on the tagged OK; a NO (folder exists) still
         // proceeds to append but must not fire folder_created.
-        if (response.contains(m_currentTag + QStringLiteral(" OK")) && m_request.folder_created) {
+        if (taggedLineIsOk(response, m_currentTag) && m_request.folder_created) {
             m_request.folder_created(m_request.target_folder);
         }
         appendNext();
@@ -335,8 +378,7 @@ private:
         if (m_currentTag.isEmpty()) {
             return false;
         }
-        const int tag_pos = m_buffer.indexOf(m_currentTag);
-        return tag_pos >= 0 && m_buffer.indexOf(QStringLiteral("\r\n"), tag_pos) >= 0;
+        return hasCompleteLineWithPrefix(m_buffer, m_currentTag + QStringLiteral(" "));
     }
 
     bool handleGreeting() {
@@ -363,7 +405,10 @@ private:
         if (!m_waitingContinuation) {
             return false;
         }
-        if (m_buffer.contains(QStringLiteral("+"))) {
+        // A continuation request is a line that STARTS with '+' -- matching '+'
+        // anywhere (e.g. inside an untagged line) would send the literal early
+        // (B9-05).
+        if (hasCompleteLineWithPrefix(m_buffer, QStringLiteral("+"))) {
             m_waitingContinuation = false;
             m_buffer.clear();
             if (m_socket->write(m_pendingLiteral) < 0) {
@@ -507,8 +552,13 @@ std::expected<int, error_code> ImapUploader::uploadFolder(const ImapServerConfig
                                                           const QVector<QByteArray>& eml_contents,
                                                           const QVector<QStringList>& flags_list,
                                                           const QVector<QDateTime>& dates) {
-    Q_ASSERT(eml_contents.size() == flags_list.size());
-    Q_ASSERT(eml_contents.size() == dates.size());
+    // The worker walks all three vectors by the same index; if the caller passes
+    // mismatched lengths the release build (where the asserts compile out) would
+    // drive an out-of-range QVector::at() -> OOB read. Fail closed instead (B9-01).
+    if (eml_contents.size() != flags_list.size() || eml_contents.size() != dates.size()) {
+        Q_EMIT errorOccurred(QStringLiteral("Message, flag, and date counts must match."));
+        return std::unexpected(error_code::invalid_argument);
+    }
     m_cancelled.store(false);
 
     const ImapSessionResult result = runImapSession(
@@ -684,6 +734,44 @@ void ImapUploader::disconnectFromServer() {
 // ======================================================================
 // Static helpers
 // ======================================================================
+
+bool ImapUploader::hasCompleteLineWithPrefix(const QString& buf, const QString& prefix) {
+    int start = 0;
+    while (true) {
+        const int nl = buf.indexOf(QStringLiteral("\r\n"), start);
+        if (nl < 0) {
+            return false;  // no complete line remains
+        }
+        if (QStringView(buf).sliced(start, nl - start).startsWith(prefix)) {
+            return true;
+        }
+        start = nl + 2;
+    }
+}
+
+bool ImapUploader::taggedLineIsOk(const QString& buf, const QString& tag) {
+    return hasCompleteLineWithPrefix(buf, tag + QStringLiteral(" OK"));
+}
+
+bool ImapUploader::isValidImapFlag(const QString& flag) {
+    if (flag.isEmpty()) {
+        return false;
+    }
+    int i = 0;
+    if (flag.at(0) == QLatin1Char('\\')) {
+        if (flag.size() == 1) {
+            return false;  // a bare backslash is not a flag
+        }
+        i = 1;
+    }
+    for (; i < flag.size(); ++i) {
+        const QChar ch = flag.at(i);
+        if (ch < QChar(0x21) || ch > QChar(0x7E) || QStringLiteral("(){ %*\"\\").contains(ch)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 QStringList ImapUploader::mapFlags(const PstItemDetail& item) {
     QStringList flags;
