@@ -299,11 +299,24 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
         QString("Source: %1 (backed up from %2 on %3)")
             .arg(snapshot.adapterName, snapshot.computerName, snapshot.backupTimestamp));
 
-    bool allSucceeded = snapshot.dhcpEnabled ? restoreDhcpMode(adapterName, dnsApplied)
-                                             : restoreStaticIp(snapshot, adapterName);
-
-    if (!restoreDnsServers(snapshot, adapterName)) {
-        allSucceeded = false;
+    bool allSucceeded = true;
+    if (snapshot.dhcpEnabled) {
+        // DHCP restore: both the IP and the DNS come from DHCP. Applying the
+        // captured servers as STATIC afterward would override the automatic DNS
+        // that restoreDhcpMode just set, leaving a "DHCP" restore pinned to
+        // static DNS. So the static DNS leg runs ONLY on the static path (B9-07).
+        allSucceeded = restoreDhcpMode(adapterName, dnsApplied);
+    } else {
+        allSucceeded = restoreStaticIp(snapshot, adapterName);
+        bool dnsPrimaryApplied = false;
+        if (!restoreDnsServers(snapshot, adapterName, &dnsPrimaryApplied)) {
+            allSucceeded = false;
+        }
+        if (dnsApplied != nullptr) {
+            // No captured servers -> nothing to apply; otherwise report whether
+            // the primary DNS actually went live.
+            *dnsApplied = snapshot.ipv4DnsServers.isEmpty() ? true : dnsPrimaryApplied;
+        }
     }
 
     if (allSucceeded) {
