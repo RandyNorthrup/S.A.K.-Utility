@@ -381,30 +381,65 @@ void UupDumpApi::onFilesReply() {
     }
 
     QString updateName = response["updateName"].toString();
-    QJsonObject filesObj = response["files"].toObject();
 
     QList<FileInfo> files;
-    qint64 totalSize = 0;
-
-    for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
-        QJsonObject fileObj = it.value().toObject();
-        auto maybeInfo = parseAndValidateFileEntry(it.key(), fileObj);
-        if (maybeInfo.has_value()) {
-            files.append(maybeInfo.value());
-            totalSize += maybeInfo.value().size;
-        }
+    if (!collectValidFiles(response["files"].toObject(), files)) {
+        return;  // incomplete set -- apiError already emitted
     }
-
-    double totalSizeGB = totalSize / sak::kBytesPerGBf;
-    sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
-                     .arg(files.size())
-                     .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
-                     .toStdString());
 
     Q_EMIT filesFetched(updateName, files);
 }
 
+bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>& out) {
+    qint64 totalSize = 0;
+    for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
+        auto maybeInfo = parseAndValidateFileEntry(it.key(), it.value().toObject());
+        if (maybeInfo.has_value()) {
+            out.append(maybeInfo.value());
+            totalSize += maybeInfo.value().size;
+        }
+    }
+
+    // A UUP ISO needs every listed file; silently dropping unsafe/unverifiable
+    // entries and reporting success would build from an incomplete set. Refuse.
+    const int droppedCount = filesObj.size() - out.size();
+    if (droppedCount > 0) {
+        const QString errorMsg =
+            QString(
+                "UUP file set incomplete: %1 of %2 entries rejected (unsafe, bad URL, or "
+                "missing/invalid SHA-1). Refusing to build from a partial set.")
+                .arg(droppedCount)
+                .arg(filesObj.size());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return false;
+    }
+
+    const double totalSizeGB = totalSize / sak::kBytesPerGBf;
+    sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
+                     .arg(out.size())
+                     .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
+                     .toStdString());
+    return true;
+}
+
 // --- Private Helpers --------------------------------------------------------
+
+bool UupDumpApi::isValidSha1(const QString& sha1) {
+    constexpr int kSha1HexLength = 40;
+    if (sha1.size() != kSha1HexLength) {
+        return false;
+    }
+    for (const QChar ch : sha1) {
+        const bool hex = (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+                         (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
+                         (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
+        if (!hex) {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
     if (info.fileName.contains("..") || info.fileName.contains('/') ||
@@ -456,6 +491,16 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
 
     // Only include files with valid download URLs
     if (info.url.isEmpty() || info.url == "null") {
+        return std::nullopt;
+    }
+
+    // Require a well-formed SHA-1: the Microsoft CDN is served over plain HTTP
+    // (allowed above) purely because each file is integrity-verified. A missing
+    // or malformed checksum means we cannot verify it -- reject rather than ship
+    // an unverifiable file into the ISO build.
+    if (!isValidSha1(info.sha1)) {
+        sak::logWarning("Rejected file entry with missing/invalid SHA-1: " +
+                        info.fileName.toStdString());
         return std::nullopt;
     }
 

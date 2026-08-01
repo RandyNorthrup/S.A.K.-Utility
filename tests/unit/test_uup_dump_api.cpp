@@ -39,6 +39,10 @@ private Q_SLOTS:
 
     // ── FileInfo defaults ─────────────────────────────────────────
     void fileInfo_defaults();
+
+    // ── SHA-1 validation (B10-20) ─────────────────────────────────
+    void isValidSha1_acceptsWellFormed();
+    void isValidSha1_rejectsMalformed();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -160,6 +164,28 @@ void TestUupDumpApi::fileInfo_defaults() {
     QVERIFY(info.sha1.isEmpty());
     QCOMPARE(info.size, static_cast<qint64>(0));
     QVERIFY(info.url.isEmpty());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SHA-1 validation (B10-20)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestUupDumpApi::isValidSha1_acceptsWellFormed() {
+    // 40 hex chars, lower/upper/mixed case.
+    QVERIFY(UupDumpApi::isValidSha1(QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd80709")));
+    QVERIFY(UupDumpApi::isValidSha1(QStringLiteral("DA39A3EE5E6B4B0D3255BFEF95601890AFD80709")));
+    QVERIFY(UupDumpApi::isValidSha1(QStringLiteral("Da39A3ee5e6B4b0d3255bFEF95601890afd80709")));
+}
+
+void TestUupDumpApi::isValidSha1_rejectsMalformed() {
+    QVERIFY(!UupDumpApi::isValidSha1(QString()));                        // empty
+    QVERIFY(!UupDumpApi::isValidSha1(QStringLiteral("da39a3ee")));       // too short
+    QVERIFY(!UupDumpApi::isValidSha1(
+        QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd80709aa")));  // too long
+    QVERIFY(!UupDumpApi::isValidSha1(
+        QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd8070g")));    // non-hex 'g'
+    QVERIFY(!UupDumpApi::isValidSha1(
+        QStringLiteral("da39a3ee5e6b4b0d3255 fef95601890afd80709")));    // embedded space
 }
 
 QTEST_MAIN(TestUupDumpApi)

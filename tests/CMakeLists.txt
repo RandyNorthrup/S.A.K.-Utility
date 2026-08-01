@@ -4792,6 +4792,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
     message(STATUS "Added unit test: test_user_profile_backup_worker")
 endif()
 
+# test_uup_dump_api --- channel/ring maps, entry safety, SHA-1 validation (B10-20)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_dump_api.cpp")
+    add_executable(test_uup_dump_api
+        unit/test_uup_dump_api.cpp
+        ../src/core/uup_dump_api.cpp
+        ../include/sak/uup_dump_api.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_uup_dump_api PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_uup_dump_api PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_uup_dump_api PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_uup_dump_api COMMAND test_uup_dump_api
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_uup_dump_api")
+endif()
+
 # test_uup_iso_builder ??? phase defaults, cancel, weight constants
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     add_executable(test_uup_iso_builder

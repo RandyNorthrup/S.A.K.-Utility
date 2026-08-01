@@ -46,19 +46,19 @@ class UupDumpApi : public QObject {
 public:
     /// @brief Information about an available Windows build
     struct BuildInfo {
-        QString uuid;    ///< Unique update identifier (used for subsequent API calls)
-        QString title;   ///< Human-readable title
-                         ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
-        QString build;   ///< Build number (e.g., "26100.3194")
-        QString arch;    ///< Architecture (e.g., "amd64", "arm64")
-        qint64 created;  ///< Unix timestamp of when the build was added to the database
+        QString uuid;       ///< Unique update identifier (used for subsequent API calls)
+        QString title;      ///< Human-readable title
+                            ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
+        QString build;      ///< Build number (e.g., "26100.3194")
+        QString arch;       ///< Architecture (e.g., "amd64", "arm64")
+        qint64 created{0};  ///< Unix timestamp of when the build was added to the database
     };
 
     /// @brief Information about a downloadable UUP file
     struct FileInfo {
         QString fileName;  ///< File name (e.g., "core_en-us.esd")
         QString sha1;      ///< SHA-1 checksum for integrity verification
-        qint64 size;       ///< File size in bytes
+        qint64 size{0};    ///< File size in bytes
         QString url;       ///< Direct download URL (Microsoft CDN, time-limited)
         QString uuid;      ///< File UUID
         QString expire;    ///< URL expiration timestamp
@@ -139,6 +139,15 @@ public:
     [[nodiscard]] static bool isSafeAria2FileEntry(const FileInfo& info);
 
     /**
+     * @brief True iff @p sha1 is a well-formed SHA-1 digest (exactly 40 hex
+     *        characters). UUP files are served over an HTTP CDN, so a
+     *        missing/malformed checksum means the download cannot be
+     *        integrity-verified and the entry must be rejected. Pure;
+     *        unit-testable.
+     */
+    [[nodiscard]] static bool isValidSha1(const QString& sha1);
+
+    /**
      * @brief Convert ReleaseChannel enum to human-readable display string
      */
     static QString channelToDisplayName(ReleaseChannel channel);
@@ -203,6 +212,11 @@ private:
     /// @return FileInfo if valid, std::nullopt if rejected
     std::optional<FileInfo> parseAndValidateFileEntry(const QString& key,
                                                       const QJsonObject& fileObj);
+
+    /// @brief Collect all valid file entries from @p filesObj into @p out. If any
+    ///        entry is rejected (unsafe/bad-URL/bad-SHA-1), emits apiError and
+    ///        returns false -- an incomplete set must not be built (B10-20).
+    [[nodiscard]] bool collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>& out);
 
     QNetworkAccessManager* m_networkManager;
     QList<QNetworkReply*> m_pendingReplies;
