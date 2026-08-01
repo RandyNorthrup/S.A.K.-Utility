@@ -38,14 +38,9 @@ std::shared_ptr<PartitionExecutor> makeAsyncExecutor() {
 }
 
 QString runtimeFilesystemManifestPath() {
-    const QString appManifest = PartitionFileSystemToolManifest::defaultRuntimeManifestPath(
-        QCoreApplication::applicationDirPath());
-    if (QFileInfo::exists(appManifest)) {
-        return appManifest;
-    }
-    const QString cwdManifest =
-        QDir::current().filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());
-    return cwdManifest;
+    // Root of trust for the elevated filesystem tools: resolve only from the trusted
+    // application directory, never a CWD-relative manifest an attacker could plant.
+    return PartitionFileSystemToolManifest::resolveRuntimeManifestPath();
 }
 
 // Cancel-then-JOIN a future watcher and delete it, instead of detaching it. The

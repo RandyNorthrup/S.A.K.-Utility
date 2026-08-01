@@ -41,6 +41,11 @@ class PartitionFileSystemToolManifest {
 public:
     [[nodiscard]] static QString defaultRuntimeRelativePath();
     [[nodiscard]] static QString defaultRuntimeManifestPath(const QString& app_dir);
+    // Resolve the elevated-tool manifest (root of trust) from the trusted application
+    // directory only; never from a current-working-directory path an attacker could plant.
+    // Returns an empty string when there is no trusted anchor, which makes the tool runner
+    // fail closed. See the definition for the SAK_DEV_SOURCE_TREE developer opt-in.
+    [[nodiscard]] static QString resolveRuntimeManifestPath();
     [[nodiscard]] static PartitionFileSystemToolManifestResult validateManifestFile(
         const QString& manifest_path, const QString& tools_root);
     [[nodiscard]] static PartitionFileSystemToolManifestResult validateManifestJson(

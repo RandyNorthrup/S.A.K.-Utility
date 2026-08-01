@@ -105,7 +105,6 @@ constexpr auto kHfsAttributeNamePayload = "hfs_attribute_name";
 constexpr auto kHfsAllowJournaledVolumePayload = "hfs_allow_journaled_volume";
 constexpr auto kHfsAllowWrappedVolumePayload = "hfs_allow_wrapped_volume";
 constexpr auto kHfsSecureWipeReleasedBlocksPayload = "hfs_secure_wipe_released_blocks";
-constexpr int kRuntimeManifestSourceFallbackDepth = 3;
 
 QString uintArg(uint64_t value) {
     return QString::number(value);
@@ -1472,53 +1471,11 @@ QString hfsFileMutationInvoke(const PartitionOperation& operation,
     return invoke + QLatin1Char('\n');
 }
 
-QString sourceTreeManifestFromCwd() {
-    QDir sourceCandidate = QDir::current();
-    for (int depth = 0; depth < kRuntimeManifestSourceFallbackDepth; ++depth) {
-        const QString sourceManifest =
-            sourceCandidate.filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());
-        const bool sourceCandidateLooksLikeSourceTree =
-            QFileInfo::exists(sourceCandidate.filePath(QStringLiteral("CMakeLists.txt"))) &&
-            QFileInfo::exists(
-                sourceCandidate.filePath(QStringLiteral("src/core/partition_script_builder.cpp")));
-        if (sourceCandidateLooksLikeSourceTree && QFileInfo::exists(sourceManifest)) {
-            return sourceManifest;
-        }
-        if (!sourceCandidate.cdUp()) {
-            break;
-        }
-    }
-    return {};
-}
-
 QString runtimeFilesystemManifestPath() {
-    // Resolve the manifest that declares the elevated filesystem tools from the TRUSTED
-    // executable directory first. The source-tree walk below trusts the current working
-    // directory, which an attacker can control when the app is launched from a user-writable
-    // folder (e.g. a portable extract), so it is gated behind an explicit developer opt-in and
-    // never used as the default for elevated operations.
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QString appManifest =
-        appDir.trimmed().isEmpty()
-            ? QString()
-            : PartitionFileSystemToolManifest::defaultRuntimeManifestPath(appDir);
-    if (!appManifest.isEmpty() && QFileInfo::exists(appManifest)) {
-        return appManifest;
-    }
-
-    if (qEnvironmentVariableIsSet("SAK_DEV_SOURCE_TREE")) {
-        const QString sourceManifest = sourceTreeManifestFromCwd();
-        if (!sourceManifest.isEmpty()) {
-            return sourceManifest;
-        }
-    }
-
-    // Fall back to the trusted app-dir path (which then fails closed if the manifest is
-    // absent) rather than a CWD-relative path an attacker could populate.
-    return appManifest.isEmpty()
-               ? QDir::current().filePath(
-                     PartitionFileSystemToolManifest::defaultRuntimeRelativePath())
-               : appManifest;
+    // Root of trust for the elevated filesystem tools: resolve only from the trusted
+    // application directory (with the SAK_DEV_SOURCE_TREE developer opt-in), never a
+    // CWD-relative manifest an attacker could plant. Shared with the controller.
+    return PartitionFileSystemToolManifest::resolveRuntimeManifestPath();
 }
 
 QString runtimeApfsWriterCliPath() {
