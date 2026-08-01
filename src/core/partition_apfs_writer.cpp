@@ -5141,6 +5141,10 @@ struct ApfsCheckpointCommitContext {
     // cpm_size, and advances the data-ring slot by it. The extra/removed block is pure ephemeral
     // data-ring space (160-block ring, ~6 used), so no spaceman-managed accounting changes.
     uint64_t spacemanEmitSpan{0};
+    // Length of the checkpoint-data ring in blocks (nx_xp_data_blocks). The ephemeral
+    // re-emit writes contiguously from newDataIndex and must NOT run past it (a corrupt
+    // count/cpm_size or an oversized emit span would clobber blocks past the ring).
+    uint64_t dataRingBlocks{0};
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -5427,9 +5431,14 @@ bool isFreeQueueTreeWithOid(const QByteArray& object, uint64_t oid) {
 // spaceman spills past one block in the metadata-overflow dead zone; every other
 // ephemeral is a single block.
 uint64_t checkpointEntryBlockSpan(const QByteArray& map, qsizetype entry, uint32_t blockSize) {
+    if (blockSize == 0) {
+        return 0;
+    }
     const uint32_t cpmSize = le32(map, entry + kApfsCheckpointMapEntrySizeOffset);
     const uint32_t bytes = cpmSize != 0 ? cpmSize : blockSize;
-    return (bytes + blockSize - 1) / blockSize;
+    // Compute the round-up in uint64: a corrupt cpm_size near UINT32_MAX would wrap
+    // "bytes + blockSize - 1" in uint32 and yield a tiny span, under-reading the object.
+    return (static_cast<uint64_t>(bytes) + blockSize - 1) / blockSize;
 }
 
 // Total block span of every ephemeral in the checkpoint (the data-ring length the
@@ -5650,6 +5659,14 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             return false;
         }
         const uint64_t emitSpan = resizeToEmitSpan(ctx, span, &object);
+        // Bound the write to the checkpoint-data ring BEFORE issuing it: a corrupt
+        // entry count / cpm_size, or an oversized emit span, must never write past
+        // the ring end (clobbering blocks outside the ephemeral area).
+        if (ctx.dataRingBlocks != 0 && dataOffset + emitSpan > ctx.dataRingBlocks) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: ephemeral re-emit overruns the checkpoint data ring"));
+            return false;
+        }
         if (!mutateEphemeralObject(ctx, &object, blockers) ||
             !stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
@@ -5897,7 +5914,8 @@ ApfsCheckpointCommitContext makeCheckpointCommitContext(const ApfsCheckpointAdva
             .newCabCount = request.newCabCount,
             .newIpBmBase = request.newIpBmBase,
             .ipBmBlocks = request.ipBmBlocks,
-            .newIpBmSize = request.newIpBmSize};
+            .newIpBmSize = request.newIpBmSize,
+            .dataRingBlocks = live.dataBlocks};
 }
 
 // The block span the re-emitted spaceman occupies this commit, derived from the effective
