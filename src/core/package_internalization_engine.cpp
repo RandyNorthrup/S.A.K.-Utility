@@ -25,6 +25,7 @@
 #include <QUrlQuery>
 
 #include <cstring>
+#include <optional>
 
 namespace sak {
 
@@ -71,6 +72,49 @@ NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     return request;
+}
+
+std::optional<QCryptographicHash::Algorithm> hashAlgorithmByName(const QString& lower_hint) {
+    if (lower_hint == QLatin1String("md5")) {
+        return QCryptographicHash::Md5;
+    }
+    if (lower_hint == QLatin1String("sha1")) {
+        return QCryptographicHash::Sha1;
+    }
+    if (lower_hint == QLatin1String("sha256")) {
+        return QCryptographicHash::Sha256;
+    }
+    if (lower_hint == QLatin1String("sha512")) {
+        return QCryptographicHash::Sha512;
+    }
+    return std::nullopt;
+}
+
+std::optional<QCryptographicHash::Algorithm> hashAlgorithmByHexLength(int hex_len) {
+    switch (hex_len) {
+    case 32:
+        return QCryptographicHash::Md5;
+    case 40:
+        return QCryptographicHash::Sha1;
+    case 64:
+        return QCryptographicHash::Sha256;
+    case 128:
+        return QCryptographicHash::Sha512;
+    default:
+        return std::nullopt;
+    }
+}
+
+// Resolve the digest algorithm from an explicit type hint, or -- when the hint
+// is absent -- infer it from the checksum's hex length. A present-but-unknown
+// hint stays unresolved (nullopt) so the caller fails closed.
+std::optional<QCryptographicHash::Algorithm> resolveChecksumAlgorithm(const QString& type_hint,
+                                                                      int hex_len) {
+    const QString hint = type_hint.trimmed().toLower();
+    if (!hint.isEmpty()) {
+        return hashAlgorithmByName(hint);
+    }
+    return hashAlgorithmByHexLength(hex_len);
 }
 
 bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
@@ -501,6 +545,33 @@ void PackageInternalizationEngine::finishWithError(InternalizationResult& result
     m_busy = false;
 }
 
+bool PackageInternalizationEngine::binaryChecksumMatches(const QByteArray& data,
+                                                         const QString& expected_checksum,
+                                                         const QString& checksum_type) {
+    const QString expected = expected_checksum.trimmed();
+    if (expected.isEmpty()) {
+        return true;  // no checksum was declared in the script -> nothing to verify
+    }
+    const auto algo = resolveChecksumAlgorithm(checksum_type, static_cast<int>(expected.size()));
+    if (!algo) {
+        return false;  // a checksum was declared but we cannot resolve its algorithm
+    }
+    const QString actual = QString::fromLatin1(QCryptographicHash::hash(data, *algo).toHex());
+    return actual.compare(expected, Qt::CaseInsensitive) == 0;
+}
+
+QHash<QString, QPair<QString, QString>> PackageInternalizationEngine::binaryChecksumMap(
+    const ParsedInstallScript& parsed) {
+    QHash<QString, QPair<QString, QString>> map;
+    for (const auto& resource : parsed.resources) {
+        // The parser captures a single checksum, which applies to the primary URL.
+        if (!resource.url.isEmpty() && !resource.checksum.isEmpty()) {
+            map.insert(resource.url, {resource.checksum, resource.checksum_type});
+        }
+    }
+    return map;
+}
+
 bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript& parsed,
                                                        const QString& tools_dir,
                                                        InternalizationResult& result) {
@@ -511,6 +582,7 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
 
     // Same iteration order + shared used_names as buildLocalFilenameMap, so the on-disk name and
     // the rewritten-script name for each URL always agree.
+    const QHash<QString, QPair<QString, QString>> checksums = binaryChecksumMap(parsed);
     QSet<QString> used_names;
     for (int idx = 0; idx < urls_to_download.size(); ++idx) {
         if (m_cancelled) {
@@ -551,6 +623,17 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
                             url.toStdString(),
                             error.toStdString());
             finishWithError(result, "Binary download failed: " + error);
+            return false;
+        }
+
+        // Verify the downloaded bytes against the script-declared checksum (when the
+        // parser captured one) BEFORE this file is repacked into the offline nupkg --
+        // a corrupted or substituted installer must never ship in the bundle.
+        const auto expected = checksums.constFind(url);
+        if (expected != checksums.constEnd() &&
+            !binaryChecksumMatches(transfer.body, expected->first, expected->second)) {
+            sak::logError("[InternalizationEngine] Checksum mismatch for {}", url.toStdString());
+            finishWithError(result, "Checksum verification failed for " + url);
             return false;
         }
 

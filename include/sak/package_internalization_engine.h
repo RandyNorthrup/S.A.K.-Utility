@@ -134,6 +134,16 @@ public:
     ///        Pure; unit-testable.
     [[nodiscard]] static bool isSafePackageComponent(const QString& component);
 
+    /// @brief True iff @p data matches @p expected_checksum under the algorithm
+    ///        named by @p checksum_type (md5/sha1/sha256/sha512), or, when the
+    ///        type is empty, inferred from the checksum's hex length. An empty
+    ///        expected checksum returns true (nothing declared); a declared but
+    ///        unresolvable checksum returns false (fail closed). Pure;
+    ///        unit-testable.
+    [[nodiscard]] static bool binaryChecksumMatches(const QByteArray& data,
+                                                    const QString& expected_checksum,
+                                                    const QString& checksum_type);
+
 private:
     struct InternalizationPaths {
         QString extract_dir;
@@ -176,6 +186,11 @@ private:
     [[nodiscard]] bool downloadAllBinaries(const ParsedInstallScript& parsed,
                                            const QString& tools_dir,
                                            InternalizationResult& result);
+
+    /// @brief Map each primary URL that declares a checksum to its (checksum,
+    ///        type) so a downloaded binary can be verified before repack.
+    [[nodiscard]] static QHash<QString, QPair<QString, QString>> binaryChecksumMap(
+        const ParsedInstallScript& parsed);
 
     /// @brief Resolve version, using latest from NuGet API if empty
     /// @return Resolved version string, or empty on failure
