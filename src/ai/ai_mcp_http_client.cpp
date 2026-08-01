@@ -34,6 +34,7 @@ struct HttpCallState {
     QNetworkReply::NetworkError network_error{QNetworkReply::NoError};
     QString network_error_text;
     bool timed_out{false};
+    bool too_large{false};
 };
 
 struct HttpWorkerSinks {
@@ -145,9 +146,21 @@ public:
                              QNetworkRequest::NoLessSafeRedirectPolicy);
 
         m_reply = manager->post(request, m_body);
+        // Bound the socket read buffer so an over-large body cannot balloon memory before the cap
+        // is applied at read time, and abort incrementally the instant the download (or a declared
+        // Content-Length) crosses the cap, instead of buffering the whole reply first.
+        m_reply->setReadBufferSize(static_cast<qint64>(kMaxResponseBytes) + 1);
         m_timer = new QTimer(this);
         m_timer->setSingleShot(true);
         QObject::connect(m_reply, &QNetworkReply::finished, this, [this]() { finish(false); });
+        QObject::connect(
+            m_reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
+                if (received > kMaxResponseBytes || total > kMaxResponseBytes) {
+                    m_tooLarge = true;
+                    m_reply->abort();
+                    finish(false);
+                }
+            });
         QObject::connect(m_timer, &QTimer::timeout, this, [this]() {
             m_reply->abort();
             finish(true);
@@ -165,6 +178,7 @@ private:
             m_timer->stop();
         }
         m_sinks.state->timed_out = timed_out;
+        m_sinks.state->too_large = m_tooLarge.load();
         if (!timed_out) {
             m_sinks.state->status = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
             m_sinks.state->response_body = m_reply->read(
@@ -184,6 +198,7 @@ private:
     QNetworkReply* m_reply{nullptr};
     QTimer* m_timer{nullptr};
     std::atomic_bool m_completed{false};
+    std::atomic_bool m_tooLarge{false};
 };
 
 bool validateHttpToolCall(const QUrl& endpoint, const QString& tool_name, QString* error_message) {
@@ -227,6 +242,13 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
 }
 
 bool explainHttpFailure(const HttpCallState& state, QString* error_message) {
+    if (state.too_large) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("MCP HTTP response exceeded the %1-byte cap").arg(kMaxResponseBytes);
+        }
+        return true;
+    }
     if (state.timed_out) {
         if (error_message) {
             *error_message = QStringLiteral("MCP HTTP request timed out");
