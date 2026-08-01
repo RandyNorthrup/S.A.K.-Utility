@@ -20918,6 +20918,26 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingImageOnlyContai
     return formatExistingContainerTarget(imageOnlyRequest);
 }
 
+// Build the full format block set, then (only if construction raised no blocker)
+// zero the target's stale signatures and write the blocks. Ordering matters: a
+// construction failure must never leave the (possibly raw-device) target zeroed
+// into a destroyed, unformatted state. A short/failed write records its own blocker.
+void constructZeroAndWriteFormatTarget(const PartitionApfsImageFormatRequest& request,
+                                       const PartitionApfsImageMutationPlan& plan,
+                                       QIODevice* target,
+                                       QStringList* writeBlockers) {
+    const auto blocks = emptyFormatBlocks(request,
+                                          plan.target_container_bytes / plan.block_size_bytes,
+                                          plan.volume_name,
+                                          writeBlockers);
+    if (!writeBlockers->isEmpty()) {
+        return;  // do NOT touch the target when the block set is incomplete
+    }
+    if (zeroFormatStaleSignatureRanges(target, request.target_container_bytes, writeBlockers)) {
+        writeImageBlocks(target, request.block_size_bytes, blocks, writeBlockers);
+    }
+}
+
 PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingContainerTarget(
     const PartitionApfsImageFormatRequest& request) {
     PartitionApfsImageBuildResult result = formatBuildResult(request);
@@ -20945,15 +20965,7 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingContainerTarget
     }
 
     QStringList writeBlockers;
-    if (zeroFormatStaleSignatureRanges(
-            target.get(), request.target_container_bytes, &writeBlockers)) {
-        const auto blocks =
-            emptyFormatBlocks(request,
-                              result.plan.target_container_bytes / result.plan.block_size_bytes,
-                              result.plan.volume_name,
-                              &writeBlockers);
-        writeImageBlocks(target.get(), request.block_size_bytes, blocks, &writeBlockers);
-    }
+    constructZeroAndWriteFormatTarget(request, result.plan, target.get(), &writeBlockers);
     if (auto* file = dynamic_cast<QFile*>(target.get())) {
         file->flush();
     }
