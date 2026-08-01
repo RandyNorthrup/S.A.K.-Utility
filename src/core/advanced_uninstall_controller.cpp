@@ -18,6 +18,8 @@
 #include <QThread>
 #include <QTimer>
 
+#include <memory>
+
 namespace sak {
 
 namespace {
@@ -27,6 +29,30 @@ constexpr int kThreadWaitMs = 5000;
 constexpr int kDefaultScanLevelValue = 1;
 constexpr int kMaxScanLevelValue = 2;
 constexpr int kRecoveredSizeDisplayPrecision = 1;
+
+// Safely dispose of a worker QThread before it is replaced or torn down (B10-09).
+// A completion slot fires from a WORKER signal that is delivered before QThread::run
+// has fully returned, so setState(Idle) can let the next op reassign the unique_ptr
+// while the thread is still live -- destroying it triggers the fatal "QThread:
+// Destroyed while thread is still running" abort. This cooperatively stops the
+// thread and, if it refuses within the bound, DETACHES it (bounded leak, self-deletes
+// when it finally exits) instead of force-terminating and destroying it.
+template <typename WorkerT>
+void retireWorker(std::unique_ptr<WorkerT>& worker) {
+    if (!worker) {
+        return;
+    }
+    if (worker->isExecuting() || worker->isRunning()) {
+        worker->requestStop();
+        if (!worker->wait(kThreadWaitMs)) {
+            WorkerT* stale = worker.release();
+            stale->setParent(nullptr);
+            QObject::connect(stale, &QThread::finished, stale, &QObject::deleteLater);
+            return;
+        }
+    }
+    worker.reset();
+}
 
 UninstallWorker::Mode uninstallModeForProgram(const ProgramInfo& program) {
     if (program.source == ProgramInfo::Source::UWP ||
@@ -144,6 +170,9 @@ void AdvancedUninstallController::uninstallProgram(const ProgramInfo& program,
     m_autoCleanSafe = autoCleanSafe;
     setState(State::Uninstalling);
 
+    // Safely dispose of any prior worker whose thread may still be exiting before the
+    // unique_ptr is overwritten (B10-09).
+    retireWorker(m_uninstall_worker);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, uninstallModeForProgram(program), scanLevel, createRestorePoint, this);
     connectUninstallWorkerSignals(true);
@@ -170,6 +199,7 @@ void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
     m_autoCleanSafe = false;  // Force uninstall always shows results for review
     setState(State::Uninstalling);
 
+    retireWorker(m_uninstall_worker);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::ForcedUninstall, scanLevel, createRestorePoint, this);
 
@@ -198,6 +228,7 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
 
     setState(State::Uninstalling);
 
+    retireWorker(m_uninstall_worker);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::RegistryOnly, ScanLevel::Safe, false, this);
 
@@ -273,6 +304,7 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
     Q_EMIT cleanupStarted(total);
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
+    retireWorker(m_cleanup_worker);
     m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, m_useRecycleBin, this);
 
     connect(m_cleanup_worker.get(),
@@ -601,28 +633,9 @@ void AdvancedUninstallController::stopEnumThread() {
 
 void AdvancedUninstallController::cleanupWorkers() {
     stopEnumThread();
-
-    if (m_uninstall_worker) {
-        if (m_uninstall_worker->isExecuting()) {
-            m_uninstall_worker->requestStop();
-            if (!m_uninstall_worker->wait(kThreadWaitMs)) {
-                m_uninstall_worker->terminate();
-                m_uninstall_worker->wait();
-            }
-        }
-        m_uninstall_worker.reset();
-    }
-
-    if (m_cleanup_worker) {
-        if (m_cleanup_worker->isExecuting()) {
-            m_cleanup_worker->requestStop();
-            if (!m_cleanup_worker->wait(kThreadWaitMs)) {
-                m_cleanup_worker->terminate();
-                m_cleanup_worker->wait();
-            }
-        }
-        m_cleanup_worker.reset();
-    }
+    // Cooperative stop + detach-if-refuses, never terminate()+destroy a live QThread.
+    retireWorker(m_uninstall_worker);
+    retireWorker(m_cleanup_worker);
 }
 
 void AdvancedUninstallController::connectUninstallWorkerSignals(bool includeNativeSignals) {
@@ -735,11 +748,10 @@ void AdvancedUninstallController::processNextQueueItem() {
     qi.status = UninstallQueueItem::Status::InProgress;
     Q_EMIT queueItemStatusChanged(m_batchIndex, UninstallQueueItem::Status::InProgress);
 
-    // Don't create individual restore points in batch (already done)
-    // Ensure previous worker is fully stopped before creating a new one
-    if (m_uninstall_worker) {
-        m_uninstall_worker->wait(kThreadWaitMs);
-    }
+    // Don't create individual restore points in batch (already done).
+    // Ensure the previous worker is safely retired (detach if it refuses to stop)
+    // before its unique_ptr is overwritten, so we never destroy a live QThread.
+    retireWorker(m_uninstall_worker);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         qi.program, uninstallModeForProgram(qi.program), qi.scanLevel, false, this);
     connectBatchUninstallWorkerSignals();
