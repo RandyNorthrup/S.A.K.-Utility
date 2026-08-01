@@ -5484,6 +5484,32 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_analyzer.cpp")
     message(STATUS "Added unit test: test_wifi_analyzer")
 endif()
 
+# test_bandwidth_tester -- iPerf config, server lifecycle guards, and the B9-16
+# per-instance firewall-rule-name seam (composeFirewallRuleName uniqueness).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bandwidth_tester.cpp")
+    add_executable(test_bandwidth_tester
+        unit/test_bandwidth_tester.cpp
+        ../src/core/bandwidth_tester.cpp
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/bandwidth_tester.h
+    )
+    set_target_properties(test_bandwidth_tester PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_bandwidth_tester PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_bandwidth_tester PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_bandwidth_tester COMMAND test_bandwidth_tester
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_bandwidth_tester")
+endif()
+
 # test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report

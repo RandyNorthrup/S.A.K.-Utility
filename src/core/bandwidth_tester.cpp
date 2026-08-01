@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QTimer>
+#include <QUuid>
 
 #include <chrono>
 #include <memory>
@@ -37,7 +38,6 @@ constexpr double kBitsPerByte = 8.0;
 constexpr double kMegabit = 1'000'000.0;
 
 const auto kIperf3Exe = QStringLiteral("iperf3.exe");
-const auto kFirewallRuleName = QStringLiteral("SAK_Utility_iPerf3");
 
 QStringList extractAcceptedClientLines(const QString& rawText) {
     const auto text = rawText.trimmed();
@@ -240,7 +240,11 @@ void BandwidthTester::startIperfServer(uint16_t port) {
         return;
     }
 
-    createFirewallRule(port);
+    // Unique per-instance rule name: two concurrent servers must not share one, or
+    // one stopping would tear down the other's still-needed inbound rule.
+    m_firewallRuleName = composeFirewallRuleName(port, QUuid::createUuid().toString(QUuid::Id128));
+    createFirewallRule(m_firewallRuleName, port);
+    const QString ruleName = m_firewallRuleName;
 
     m_serverProcess = new QProcess(this);
     m_serverProcess->setProgram(m_iperf3Path);
@@ -252,6 +256,11 @@ void BandwidthTester::startIperfServer(uint16_t port) {
         QStringLiteral("-J"),
     });
 
+    connectServerProcessSignals(ruleName, port);
+    m_serverProcess->start();
+}
+
+void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint16_t port) {
     connect(m_serverProcess, &QProcess::readyReadStandardOutput, this, [this]() {
         const auto data = m_serverProcess->readAllStandardOutput();
         for (const auto& line : extractAcceptedClientLines(QString::fromUtf8(data))) {
@@ -262,13 +271,16 @@ void BandwidthTester::startIperfServer(uint16_t port) {
     connect(m_serverProcess,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
-            [this]([[maybe_unused]] int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+            [this, ruleName]([[maybe_unused]] int exitCode,
+                             [[maybe_unused]] QProcess::ExitStatus status) {
                 auto* process = qobject_cast<QProcess*>(sender());
                 if (process != nullptr && m_serverProcess == process) {
                     m_serverProcess = nullptr;
                     process->deleteLater();
                 }
-                removeFirewallRule();
+                // Remove THIS server's own rule (captured), never whatever a later
+                // server may have installed into m_firewallRuleName.
+                removeFirewallRule(ruleName);
                 Q_EMIT serverStopped();
             });
 
@@ -276,22 +288,23 @@ void BandwidthTester::startIperfServer(uint16_t port) {
         Q_EMIT serverStarted(port);
     });
 
-    connect(m_serverProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-        if (error != QProcess::FailedToStart || m_serverProcess == nullptr) {
-            return;
-        }
-        Q_EMIT errorOccurred(QStringLiteral("Failed to start iPerf3 server: %1")
-                                 .arg(m_serverProcess->errorString()));
-        m_serverProcess->deleteLater();
-        m_serverProcess = nullptr;
-        // FailedToStart never emits finished(), so the finished-handler's cleanup never runs; tear
-        // down the inbound firewall rule here or it leaks (idempotent: delete-by-name is harmless
-        // if the add had not completed). removeFirewallRule uses its own QProcess, not
-        // m_serverProcess.
-        removeFirewallRule();
-    });
-
-    m_serverProcess->start();
+    connect(m_serverProcess,
+            &QProcess::errorOccurred,
+            this,
+            [this, ruleName](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart || m_serverProcess == nullptr) {
+                    return;
+                }
+                Q_EMIT errorOccurred(QStringLiteral("Failed to start iPerf3 server: %1")
+                                         .arg(m_serverProcess->errorString()));
+                m_serverProcess->deleteLater();
+                m_serverProcess = nullptr;
+                // FailedToStart never emits finished(), so the finished-handler's cleanup never
+                // runs; tear down the inbound firewall rule here or it leaks (idempotent:
+                // delete-by-name is harmless if the add had not completed). removeFirewallRule
+                // uses its own QProcess, not m_serverProcess.
+                removeFirewallRule(ruleName);
+            });
 }
 
 void BandwidthTester::stopIperfServer() {
@@ -308,7 +321,7 @@ void BandwidthTester::stopIperfServer() {
         });
     }
 
-    removeFirewallRule();
+    removeFirewallRule(m_firewallRuleName);
     m_serverProcess->deleteLater();
     m_serverProcess = nullptr;
 }
@@ -502,7 +515,11 @@ void BandwidthTester::runHttpSpeedTest() {
     }
 }
 
-void BandwidthTester::createFirewallRule(uint16_t port) {
+QString BandwidthTester::composeFirewallRuleName(uint16_t port, const QString& uniqueToken) {
+    return QStringLiteral("SAK_Utility_iPerf3_%1_%2").arg(port).arg(uniqueToken);
+}
+
+void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port) {
     auto* proc = new QProcess(this);
     connect(proc, &QProcess::errorOccurred, proc, [port, proc](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
@@ -528,14 +545,19 @@ void BandwidthTester::createFirewallRule(uint16_t port) {
                  QStringLiteral("firewall"),
                  QStringLiteral("add"),
                  QStringLiteral("rule"),
-                 QStringLiteral("name=%1").arg(kFirewallRuleName),
+                 QStringLiteral("name=%1").arg(ruleName),
                  QStringLiteral("dir=in"),
                  QStringLiteral("action=allow"),
                  QStringLiteral("protocol=tcp"),
                  QStringLiteral("localport=%1").arg(port)});
 }
 
-void BandwidthTester::removeFirewallRule() {
+void BandwidthTester::removeFirewallRule(const QString& ruleName) {
+    // No rule was ever installed (server never started) -> nothing to delete, and
+    // deleting name="" would nuke an unrelated unnamed rule set.
+    if (ruleName.isEmpty()) {
+        return;
+    }
     auto* proc = new QProcess(this);
     connect(proc, &QProcess::errorOccurred, proc, [proc](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
@@ -559,7 +581,7 @@ void BandwidthTester::removeFirewallRule() {
                  QStringLiteral("firewall"),
                  QStringLiteral("delete"),
                  QStringLiteral("rule"),
-                 QStringLiteral("name=%1").arg(kFirewallRuleName)});
+                 QStringLiteral("name=%1").arg(ruleName)});
 }
 
 }  // namespace sak

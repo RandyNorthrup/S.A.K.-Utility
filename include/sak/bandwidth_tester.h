@@ -64,6 +64,13 @@ public:
     /// @brief Check if iPerf3 is available
     [[nodiscard]] bool isIperf3Available() const;
 
+    /// @brief Compose the inbound firewall-rule name for an iPerf3 server instance.
+    ///
+    /// The name embeds a per-instance @p uniqueToken so two concurrent servers (or
+    /// two SAK instances) never share a rule -- otherwise one server stopping would
+    /// delete the still-running other's rule. Pure and deterministic; testable.
+    [[nodiscard]] static QString composeFirewallRuleName(uint16_t port, const QString& uniqueToken);
+
     void cancel();
 
 Q_SIGNALS:
@@ -80,14 +87,16 @@ Q_SIGNALS:
 private:
     QString m_iperf3Path;
     QProcess* m_serverProcess = nullptr;  ///< Owned; destroyed in destructor
+    QString m_firewallRuleName;           ///< Unique inbound rule for the running server
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] QString findIperf3Path() const;
     [[nodiscard]] BandwidthTestResult parseIperfJson(const QByteArray& json);
     [[nodiscard]] std::optional<double> measureTransferMbps(
         int sample_count, const std::function<std::pair<double, double>()>& sampler);
-    void createFirewallRule(uint16_t port);
-    void removeFirewallRule();
+    void connectServerProcessSignals(const QString& ruleName, uint16_t port);
+    void createFirewallRule(const QString& ruleName, uint16_t port);
+    void removeFirewallRule(const QString& ruleName);
 };
 
 }  // namespace sak

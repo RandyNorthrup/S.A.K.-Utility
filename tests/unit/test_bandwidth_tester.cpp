@@ -24,6 +24,11 @@ private Q_SLOTS:
     void stopServer_withoutStart();
     void isIperf3Available_returnsBool();
     void bandwidthTestResult_defaults();
+
+    // ── composeFirewallRuleName (per-instance uniqueness, B9-16) ──
+    void firewallRuleName_containsPortAndToken();
+    void firewallRuleName_uniquePerToken();
+    void firewallRuleName_noShellMetacharacters();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -105,6 +110,35 @@ void TestBandwidthTester::bandwidthTestResult_defaults() {
     QCOMPARE(result.durationSec, 0);
     QCOMPARE(result.parallelStreams, 0);
     QVERIFY(!result.reverseMode);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// composeFirewallRuleName -- per-instance uniqueness (B9-16)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestBandwidthTester::firewallRuleName_containsPortAndToken() {
+    const QString name = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123"));
+    QVERIFY(name.contains(QStringLiteral("5201")));
+    QVERIFY(name.contains(QStringLiteral("abc123")));
+    // Same inputs -> stable name (so create and remove match).
+    QCOMPARE(name, BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
+}
+
+void TestBandwidthTester::firewallRuleName_uniquePerToken() {
+    // Two concurrent servers get distinct tokens => distinct rule names, so one
+    // stopping cannot delete the other's inbound rule.
+    const QString a = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("token-A"));
+    const QString b = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("token-B"));
+    QVERIFY(a != b);
+}
+
+void TestBandwidthTester::firewallRuleName_noShellMetacharacters() {
+    // netsh runs shell-free via argv, but keep the composed name free of quotes and
+    // whitespace regardless.
+    const QString name = BandwidthTester::composeFirewallRuleName(
+        5201, QStringLiteral("0123456789abcdef0123456789abcdef"));
+    QVERIFY(!name.contains(QLatin1Char('"')));
+    QVERIFY(!name.contains(QLatin1Char(' ')));
 }
 
 QTEST_MAIN(TestBandwidthTester)
