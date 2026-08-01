@@ -1272,6 +1272,8 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
     const DirectoryExportContext ctx{target, max_file_bytes, result, observer};
     exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
     result.ok = result.blockers.isEmpty();
+    result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0 &&
+                      result.capped_files == 0;
     return result;
 }
 
@@ -1408,6 +1410,7 @@ FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirect
     const DirectoryImportContext ctx{target, result, observer};
     importDirectoryLevel(ctx, source.absoluteFilePath(), destination_path, 0);
     result.ok = result.blockers.isEmpty();
+    result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0;
     return result;
 }
 

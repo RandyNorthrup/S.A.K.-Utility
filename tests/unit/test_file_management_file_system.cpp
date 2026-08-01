@@ -489,6 +489,7 @@ private Q_SLOTS:
         const auto result = sak::FileManagementFileSystemBridge::exportDirectoryToHost(
             target, source.path(), destRoot, 0);
         QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QVERIFY(result.complete);
         QCOMPARE(result.files_exported, 3);
         QCOMPARE(result.directories_created, 2);
         QCOMPARE(result.capped_files, 0);
@@ -534,6 +535,7 @@ private Q_SLOTS:
         const auto result = sak::FileManagementFileSystemBridge::importDirectoryFromHost(
             target, source.path(), destRoot);
         QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QVERIFY(result.complete);
         QCOMPARE(result.files_imported, 3);
         QCOMPARE(result.directories_created, 2);
         QCOMPARE(result.symlinks_skipped, 0);
@@ -588,6 +590,9 @@ private Q_SLOTS:
             QDir(destination.path()).filePath(QStringLiteral("moved-root")));
         QVERIFY(imported.ok);
         QVERIFY(imported.entries_skipped > 0);
+        // ok alone overclaims: complete must report the dropped entries so a caller
+        // cannot mistake this partial import for a whole one (B8-19).
+        QVERIFY(!imported.complete);
         // The source tree was never touched by the copy.
         QVERIFY(QFileInfo(QDir(source.path()).filePath(QStringLiteral("root"))).isDir());
     }

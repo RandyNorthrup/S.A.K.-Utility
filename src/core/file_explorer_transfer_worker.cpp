@@ -180,7 +180,7 @@ bool FileExplorerTransferEngine::transferFromHost(const FileExplorerTransferItem
             m_destination_target, item.source_path, destination, observer);
         m_warnings.append(result.warnings);
         m_blockers.append(result.blockers);
-        if (result.symlinks_skipped > 0 || result.entries_skipped > 0) {
+        if (!result.complete) {
             m_last_transfer_incomplete = true;
         }
         return result.ok;
@@ -202,7 +202,7 @@ bool FileExplorerTransferEngine::transferRawDirectoryToLocal(
         m_source_target, item.source_path, destination, m_raw_read_cap, observer);
     m_warnings.append(result.warnings);
     m_blockers.append(result.blockers);
-    if (result.symlinks_skipped > 0 || result.entries_skipped > 0 || result.capped_files > 0) {
+    if (!result.complete) {
         m_last_transfer_incomplete = true;
     }
     if (result.ok && result.capped_files > 0 && !m_allow_capped_raw_reads) {

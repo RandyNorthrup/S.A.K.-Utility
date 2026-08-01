@@ -3201,9 +3201,16 @@ private Q_SLOTS:
         QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
         const QString copied_leaf =
             root.filePath(QStringLiteral("copy_pocket/bundle/deep/leaf.txt"));
-        QVERIFY2(QTest::qWaitFor([&copied_leaf]() { return QFile::exists(copied_leaf); }, 5000),
+        // inner.txt sorts after the "deep" subdirectory, so the walk writes it LAST;
+        // waiting on the leaf alone races the still-unwritten inner.txt. Wait on both.
+        const QString copied_inner = root.filePath(QStringLiteral("copy_pocket/bundle/inner.txt"));
+        QVERIFY2(QTest::qWaitFor(
+                     [&copied_leaf, &copied_inner]() {
+                         return QFile::exists(copied_leaf) && QFile::exists(copied_inner);
+                     },
+                     5000),
                  "folder paste did not recurse");
-        QFile copied(root.filePath(QStringLiteral("copy_pocket/bundle/inner.txt")));
+        QFile copied(copied_inner);
         QVERIFY(copied.open(QIODevice::ReadOnly));
         QCOMPARE(copied.readAll(), QByteArrayLiteral("inner payload"));
         QVERIFY(QFile::exists(root.filePath(QStringLiteral("bundle/inner.txt"))));

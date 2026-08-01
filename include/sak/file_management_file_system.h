@@ -154,8 +154,10 @@ struct FileManagementExportResult {
 
 /// Result of recursively exporting a directory tree to a local host destination.
 struct FileManagementDirectoryExportResult {
-    bool ok{false};       ///< True when every reachable file exported completely.
-    QString destination;  ///< Host directory the tree was written under.
+    bool ok{false};        ///< True when the walk finished without a hard blocker.
+    bool complete{false};  ///< True only when ok AND nothing was skipped or truncated,
+                           ///< so a caller cannot mistake a partial export for a whole one.
+    QString destination;   ///< Host directory the tree was written under.
     int files_exported{0};
     int directories_created{0};
     int symlinks_skipped{0};
@@ -168,7 +170,9 @@ struct FileManagementDirectoryExportResult {
 
 /// Result of recursively importing a local host directory tree into a target.
 struct FileManagementDirectoryImportResult {
-    bool ok{false};              ///< True when every reachable file imported completely.
+    bool ok{false};              ///< True when the walk finished without a hard blocker.
+    bool complete{false};        ///< True only when ok AND nothing was skipped, so a caller
+                                 ///< cannot mistake a partial import for a whole one.
     QString destination;         ///< Target path the tree was written under.
     int files_imported{0};
     int directories_created{0};  ///< Child directories created (the root is not counted).
