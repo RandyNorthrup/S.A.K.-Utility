@@ -34,6 +34,7 @@ private Q_SLOTS:
     void create_gzReturnsDecompressor();
     void create_unknownReturnsNull();
     void create_nonExistentReturnsNull();
+    void zipDetectionMatchesCreateCapability();
 
     // Magic number detection
     void detectFormat_gzipMagic();
@@ -151,6 +152,24 @@ void DecompressorFactoryTests::create_nonExistentReturnsNull() {
     // even for non-existent files (deferred open pattern)
     auto decomp = sak::DecompressorFactory::create(filePath("does_not_exist.gz"));
     QVERIFY(decomp != nullptr);
+}
+
+void DecompressorFactoryTests::zipDetectionMatchesCreateCapability() {
+    // B8-23: the factory used to advertise zip (detectFormat -> "zip",
+    // isCompressed -> true) while create() had no zip branch and returned null,
+    // so a guard-then-create caller got true then nullptr. A zip is an archive,
+    // not a single stream this factory can decompress; detection and creation
+    // must agree. Cover both the extension and the "PK" magic paths.
+    writeFile("archive.zip", QByteArrayLiteral("PK\x03\x04 not a real zip payload"));
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("archive.zip")).isEmpty());
+    QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("archive.zip")));
+    QVERIFY(sak::DecompressorFactory::create(filePath("archive.zip")) == nullptr);
+
+    // A zip signature under a non-archive extension must not be detected as zip.
+    QByteArray pk;
+    pk.append('P').append('K').append(QByteArray(14, '\0'));
+    writeFile("magic_pk.bin", pk);
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("magic_pk.bin")).isEmpty());
 }
 
 // ============================================================================

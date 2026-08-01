@@ -24,6 +24,7 @@ private Q_SLOTS:
     // Constructor
     void constructor_defaultValues();
     void constructor_customValues();
+    void constructor_zeroChunkCoercedToDefault();
 
     // MD5 file hashing
     void md5_knownContent();
@@ -43,6 +44,7 @@ private Q_SLOTS:
     void verifyHash_correct();
     void verifyHash_incorrect();
     void verifyHash_caseInsensitive();
+    void verifyHash_highByteExpectedNoUb();
 
     // Error paths
     void hashNonExistentFile();
@@ -116,6 +118,24 @@ void FileHashTests::constructor_customValues() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256, 4096);
     QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::sha256);
     QCOMPARE(hasher.getChunkSize(), std::size_t{4096});
+}
+
+void FileHashTests::constructor_zeroChunkCoercedToDefault() {
+    // B8-23: a zero chunk_size only trips the debug assert; in a release build it
+    // would reach file.read(0), which returns an empty buffer, so hashing would
+    // stop immediately and report the EMPTY-input digest as the file's hash. The
+    // constructor coerces it to the default so the hash is correct.
+    sak::file_hasher zero(sak::hash_algorithm::md5, 0);
+    QCOMPARE(zero.getChunkSize(), sak::file_hasher::DEFAULT_CHUNK_SIZE);
+
+    const auto zero_hash = zero.calculateHash(m_knownFile);
+    QVERIFY(zero_hash.has_value());
+    const auto ref_hash = sak::file_hasher(sak::hash_algorithm::md5).calculateHash(m_knownFile);
+    QVERIFY(ref_hash.has_value());
+    QCOMPARE(zero_hash.value(), ref_hash.value());
+    // Crucially, NOT the empty-input digest.
+    QVERIFY(QString::fromStdString(zero_hash.value()).toLower() !=
+            QStringLiteral("d41d8cd98f00b204e9800998ecf8427e"));
 }
 
 // ============================================================================
@@ -236,6 +256,22 @@ void FileHashTests::verifyHash_caseInsensitive() {
     auto verify = hasher.verifyHash(m_knownFile, upper_hash);
     QVERIFY(verify.has_value());
     QVERIFY(verify.value());
+}
+
+void FileHashTests::verifyHash_highByteExpectedNoUb() {
+    // B8-23: a garbled/hostile expected hash containing a byte > 127 must not
+    // reach std::tolower with a negative (signed-char) value, which is undefined
+    // behavior. The comparison simply reports a mismatch; the point is it runs
+    // cleanly (verified under the sanitizer builds).
+    sak::file_hasher hasher(sak::hash_algorithm::md5);
+    const auto real = hasher.calculateHash(m_knownFile);
+    QVERIFY(real.has_value());
+
+    std::string garbled = real.value();
+    garbled[0] = static_cast<char>(0xE9);  // high byte -> negative as signed char
+    const auto verify = hasher.verifyHash(m_knownFile, garbled);
+    QVERIFY(verify.has_value());
+    QVERIFY(!verify.value());
 }
 
 // ============================================================================

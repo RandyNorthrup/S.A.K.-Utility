@@ -1305,6 +1305,9 @@ QString restoreFailureReason(const sak::FileRecoveryRestoreResult& res) {
     if (!res.source_not_mutated) {
         return QStringLiteral("could not verify the source image stayed unchanged");
     }
+    if (!res.source_hash_covered_whole) {
+        return QStringLiteral("could only verify a prefix of the source stayed unchanged");
+    }
     return res.warnings.isEmpty() ? QStringLiteral("no files were recovered")
                                   : res.warnings.first();
 }
@@ -1325,10 +1328,12 @@ AppActionResult buildRestoreResult(const sak::FileRecoveryRestoreResult& res,
                      {QStringLiteral("truncated"), truncated},
                      {QStringLiteral("source_opened_read_only"), res.source_opened_read_only},
                      {QStringLiteral("source_not_mutated"), res.source_not_mutated},
+                     {QStringLiteral("source_hash_covered_whole"), res.source_hash_covered_whole},
                      {QStringLiteral("restored_paths"),
                       jsonStringArrayCapped(res.restored_paths, kMaxRestoreCandidates)},
                      {QStringLiteral("warnings"), jsonStringArrayCapped(res.warnings, 50)}};
-    if (restored > 0 && res.source_opened_read_only && res.source_not_mutated) {
+    if (restored > 0 && res.source_opened_read_only && res.source_not_mutated &&
+        res.source_hash_covered_whole) {
         return {true,
                 QStringLiteral("Recovered %1 of %2 file(s) to %3")
                     .arg(restored)

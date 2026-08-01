@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -42,7 +43,11 @@ QString pathToQString(const std::filesystem::path& path) {
 }  // namespace
 
 file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexcept
-    : m_algorithm(algorithm), m_chunk_size(chunk_size) {
+    // A zero chunk_size only trips the debug assert; in a release build it would
+    // reach file.read(0), which returns an empty buffer, so hashing would stop at
+    // once and report the EMPTY-input digest as the file's hash. Coerce it to the
+    // default so release builds never hash with a zero chunk (B8-23).
+    : m_algorithm(algorithm), m_chunk_size(chunk_size > 0 ? chunk_size : DEFAULT_CHUNK_SIZE) {
     Q_ASSERT_X(chunk_size > 0, "file_hasher", "chunk_size must be positive");
 }
 
@@ -98,13 +103,18 @@ auto file_hasher::verifyHash(const std::filesystem::path& file_path,
         return std::unexpected(calculated.error());
     }
 
-    // Case-insensitive comparison
+    // Case-insensitive comparison. Route each byte through unsigned char before
+    // std::tolower: a plain (signed) char with a value > 127 -- reachable via a
+    // garbled/hostile expected_hash -- is negative, and passing a negative value
+    // other than EOF to std::tolower is undefined behavior (B8-23).
     auto lower_expected = std::string(expected_hash);
     auto lower_calculated = *calculated;
-
-    std::transform(lower_expected.begin(), lower_expected.end(), lower_expected.begin(), ::tolower);
+    const auto to_lower = [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    };
+    std::transform(lower_expected.begin(), lower_expected.end(), lower_expected.begin(), to_lower);
     std::transform(
-        lower_calculated.begin(), lower_calculated.end(), lower_calculated.begin(), ::tolower);
+        lower_calculated.begin(), lower_calculated.end(), lower_calculated.begin(), to_lower);
 
     return lower_expected == lower_calculated;
 }

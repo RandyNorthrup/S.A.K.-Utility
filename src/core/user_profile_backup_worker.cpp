@@ -98,6 +98,17 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
 
     // Apply filter settings
     m_fileFilter->setRules(smartFilter);
+    // An exclude pattern that fails to compile is dropped, so files the user meant
+    // to exclude WILL be backed up (fail-open). Surface it rather than silently
+    // backing up what they asked to skip (B8-23).
+    const QStringList invalidPatterns = m_fileFilter->invalidPatterns();
+    if (!invalidPatterns.isEmpty()) {
+        Q_EMIT logMessage(tr("Ignoring %1 invalid exclusion pattern(s); matching files will NOT "
+                             "be excluded from the backup: %2")
+                              .arg(invalidPatterns.size())
+                              .arg(invalidPatterns.join(QStringLiteral("; "))),
+                          true);
+    }
 
     start();
 }

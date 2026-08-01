@@ -1192,6 +1192,28 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
     message(STATUS "Added unit test: test_smart_file_filter")
 endif()
 
+# test_recycle_bin -- B8-23 guard: empty/wildcard/NUL paths refused before the
+# SHFileOperationW shell call (wildcards would expand into a mass recycle).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_recycle_bin.cpp")
+    add_executable(test_recycle_bin
+        unit/test_recycle_bin.cpp
+        ../src/core/recycle_bin.cpp
+    )
+    set_target_properties(test_recycle_bin PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_recycle_bin PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_recycle_bin PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_recycle_bin COMMAND test_recycle_bin
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_recycle_bin")
+endif()
+
 # test_file_scanner ??? scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner

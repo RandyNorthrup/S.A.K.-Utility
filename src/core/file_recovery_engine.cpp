@@ -411,6 +411,19 @@ void restoreCandidate(const RestoreContext& context, const FileRecoveryCandidate
     context.result->restored_paths.append(outputPath);
 }
 
+// Whether an integrity hash bounded by hash_cap_bytes over a source of
+// source_size_bytes covered the WHOLE source, so a before/after match can be read
+// as a whole-source (not merely prefix) guarantee. A cap of 0 means "no cap" ->
+// whole. A known size no larger than the cap is fully covered. An unknown size
+// (0, e.g. a raw device that reports no length) under a cap cannot be proven whole
+// -- the hash only covered a bounded prefix (B8-23).
+bool hashCoveredWholeSource(uint64_t hash_cap_bytes, uint64_t source_size_bytes) {
+    if (hash_cap_bytes == 0) {
+        return true;
+    }
+    return source_size_bytes > 0 && source_size_bytes <= hash_cap_bytes;
+}
+
 uint64_t scanByteLimit(uint64_t imageSize, const FileRecoveryScanOptions& options) {
     if (imageSize == 0 && isWindowsRawDevicePath(options.image_path)) {
         return options.max_scan_bytes;
@@ -543,6 +556,10 @@ FileRecoveryRestoreResult FileRecoveryEngine::restoreCandidates(
 
     result.source_not_mutated = !beforeHash.isEmpty() &&
                                 beforeHash == hashOpenFile(&image, options.source_hash_bytes);
+    // Distinguish a whole-source guarantee from a prefix-only one: a capped hash
+    // that stops short of the source proves only the hashed window is unchanged.
+    result.source_hash_covered_whole = hashCoveredWholeSource(
+        options.source_hash_bytes, static_cast<uint64_t>(std::max<qint64>(0, image.size())));
     return result;
 }
 

@@ -2081,6 +2081,7 @@ private Q_SLOTS:
     void fileRecoveryEngine_scansAndRestoresOfflineImage();
     void fileRecoveryEngine_boundsHostileUnterminatedSignatures();
     void fileRecoveryEngine_confinesCraftedCandidateNames();
+    void fileRecoveryEngine_prefixHashDoesNotClaimWholeSource();
 };
 
 QByteArray fixtureJson() {
@@ -18851,6 +18852,9 @@ void PartitionManagerCoreTests::fileRecoveryEngine_scansAndRestoresOfflineImage(
     const auto restore = FileRecoveryEngine::restoreCandidates(restoreOptions);
     QVERIFY(restore.source_opened_read_only);
     QVERIFY(restore.source_not_mutated);
+    // Default source_hash_bytes is 0 -> the whole source was hashed, so the
+    // not-mutated result is a whole-source guarantee, not a prefix-only one (B8-23).
+    QVERIFY(restore.source_hash_covered_whole);
     QVERIFY(restore.warnings.isEmpty());
     QCOMPARE(restore.restored_paths.size(), kExpectedRecoveredFixtureCount);
     QCOMPARE(fileSha256(imagePath), beforeHash);
@@ -18873,6 +18877,46 @@ void PartitionManagerCoreTests::fileRecoveryEngine_scansAndRestoresOfflineImage(
                  qPrintable(
                      QStringLiteral("restored file %1 is not byte-complete").arg(restoredPath)));
     }
+}
+
+void PartitionManagerCoreTests::fileRecoveryEngine_prefixHashDoesNotClaimWholeSource() {
+    // B8-23: source_not_mutated compares only the hashed WINDOW. When
+    // source_hash_bytes caps below the source size, a match proves only the
+    // prefix is unchanged, so source_hash_covered_whole must stay false; an
+    // uncapped (0) or >= size hash covers the whole source.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir root(temp.path());
+    const QString imagePath = root.filePath(QStringLiteral("image.bin"));
+    {
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QVERIFY(image.write(QByteArray(4096, 'A')) > 0);  // 4096-byte source
+    }
+
+    const auto restoreWithCap = [&](uint64_t cap) {
+        FileRecoveryRestoreOptions options;
+        options.image_path = imagePath;
+        options.destination_directory = root.filePath(QStringLiteral("out"));
+        options.source_hash_bytes = cap;
+        // No candidates: this exercises only the before/after integrity hashing.
+        return FileRecoveryEngine::restoreCandidates(options);
+    };
+
+    // A cap below the source size: the prefix is unchanged, but a whole-source
+    // claim cannot be made.
+    const auto prefix = restoreWithCap(1024);
+    QVERIFY(prefix.source_not_mutated);
+    QVERIFY(!prefix.source_hash_covered_whole);
+
+    // Uncapped (0) hashes the whole source.
+    const auto whole = restoreWithCap(0);
+    QVERIFY(whole.source_not_mutated);
+    QVERIFY(whole.source_hash_covered_whole);
+
+    // A cap at least as large as the source also covers it.
+    const auto large = restoreWithCap(1U << 20);
+    QVERIFY(large.source_hash_covered_whole);
 }
 
 void PartitionManagerCoreTests::fileRecoveryEngine_boundsHostileUnterminatedSignatures() {

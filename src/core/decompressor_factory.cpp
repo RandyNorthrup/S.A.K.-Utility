@@ -68,6 +68,11 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         const char* ext;
         const char* format;
     };
+    // Only single-stream formats this factory can actually create() a decompressor
+    // for. A zip is a multi-member archive handled by the archive service, not a
+    // stream -- advertising it here made isCompressed() return true while create()
+    // returned nullptr, an inconsistency a guard-then-create caller would trip on
+    // (B8-23).
     static constexpr ExtEntry kExtensions[] = {
         {"gz", "gzip"},
         {"gzip", "gzip"},
@@ -75,7 +80,6 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         {"bzip2", "bzip2"},
         {"xz", "xz"},
         {"lzma", "xz"},
-        {"zip", "zip"},
     };
 
     auto it =
@@ -117,12 +121,13 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
         int length;
         const char* format;
     };
+    // No zip ("PK") entry: this factory only produces single-stream decompressors,
+    // and create() cannot build one for a zip archive (B8-23).
     static constexpr MagicEntry kMagicTable[] = {
         {{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, 6, "xz"},
         {{0x42, 0x5A, 0x68, 0, 0, 0}, 3, "bzip2"},
         {{0x5D, 0x00, 0x00, 0, 0, 0}, 3, "xz"},
         {{0x1F, 0x8B, 0, 0, 0, 0}, 2, "gzip"},
-        {{0x50, 0x4B, 0, 0, 0, 0}, 2, "zip"},
     };
 
     for (const auto& entry : kMagicTable) {

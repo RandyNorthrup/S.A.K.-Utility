@@ -60,7 +60,15 @@ struct FileRecoveryRestoreResult {
     QStringList restored_paths;
     QStringList warnings;
     bool source_opened_read_only{false};
+    /// True when the hashed source WINDOW (the first source_hash_bytes, or the
+    /// whole file when that is 0) was byte-identical before and after the restore.
+    /// This alone proves only the hashed window is unchanged; a whole-source
+    /// guarantee also requires source_hash_covered_whole (B8-23).
     bool source_not_mutated{false};
+    /// True when the integrity hash covered the ENTIRE source (an uncapped hash,
+    /// or a cap at least as large as the source), so source_not_mutated can be
+    /// read as a whole-source claim rather than a prefix-only one.
+    bool source_hash_covered_whole{false};
 };
 
 class FileRecoveryEngine {

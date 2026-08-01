@@ -77,6 +77,10 @@ private:
 
     /// Recursively scan a folder for recoverable items
     void scanRecoverableFolder(const PstFolder& folder, QVector<PstItemDetail>& recovered);
+    // Read the detail for each summary in one batch, appending recovered items.
+    // Returns false when a cancel was observed mid-batch (caller must stop).
+    [[nodiscard]] bool appendRecoverableBatch(const QVector<PstItemSummary>& items,
+                                              QVector<PstItemDetail>& recovered);
 
     /// Attempt to read an orphaned NID as a message
     [[nodiscard]] std::optional<PstItemDetail> tryReadOrphanedNode(uint64_t nid);
