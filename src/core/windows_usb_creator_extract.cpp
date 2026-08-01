@@ -554,16 +554,15 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
 
     cleanDrive = cleanDrive.toUpper();
 
-    // Use bcdboot.exe from extracted files to set up boot configuration
-    // This replaces bootsect.exe approach
-    QString bcdbootPath = QString("%1:\\sources\\recovery\\bcdboot.exe").arg(cleanDrive);
-
-    if (!QFile::exists(bcdbootPath)) {
-        // bcdboot may be in a different location, or may not exist on some ISOs
-        sak::logWarning("bcdboot.exe not found - boot files may still work");
-        // This is not critical - the files extracted by 7-Zip should include the necessary boot
-        /// code
-        return true;
+    // Resolve a runnable bcdboot: prefer the copy extracted onto the media, then
+    // the host's System32 copy. If neither exists we cannot configure boot, so we
+    // must NOT certify the media bootable (was: silently returned success).
+    const QString bcdbootPath = resolveBcdbootPath(cleanDrive);
+    if (bcdbootPath.isEmpty()) {
+        const QString err = "bcdboot.exe not found (media or host) -- cannot configure boot files";
+        setError(err);
+        sak::logError(err.toStdString());
+        return false;
     }
 
     sak::logInfo(QString("Configuring boot environment using bcdboot from %1")
@@ -573,35 +572,54 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
     return runBcdboot(bcdbootPath, cleanDrive);
 }
 
+QString WindowsUSBCreator::resolveBcdbootPath(const QString& cleanDrive) {
+    const QString mediaPath = QString("%1:\\sources\\recovery\\bcdboot.exe").arg(cleanDrive);
+    if (QFile::exists(mediaPath)) {
+        return mediaPath;
+    }
+    // %SystemRoot%\System32\bcdboot.exe is present on every running Windows.
+    const QString systemRoot = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
+    const QString hostPath = QDir(systemRoot).filePath("System32/bcdboot.exe");
+    if (QFile::exists(hostPath)) {
+        return QDir::toNativeSeparators(hostPath);
+    }
+    return {};
+}
+
+bool WindowsUSBCreator::bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode) {
+    return !timedOut && !cancelled && exitCode == 0;
+}
+
 bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
     Q_ASSERT(!bcdbootPath.isEmpty());
     Q_ASSERT(!cleanDrive.isEmpty());
     QStringList args;
     args << QString("%1:\\").arg(cleanDrive);
     args << "/s" << QString("%1:").arg(cleanDrive);
-    args << "/f" << "BIOS";  // Standard BIOS boot
+    // /f ALL writes BOTH BIOS and UEFI boot files; the previous "BIOS" only
+    // configured legacy boot yet the media was reported UEFI-bootable.
+    args << "/f" << "ALL";
 
     const auto bcdboot_result = sak::runProcess(
         bcdbootPath, args, sak::kTimeoutProcessLongMs, [this]() { return m_cancelled.load(); });
 
-    if (bcdboot_result.timed_out || bcdboot_result.cancelled) {
-        sak::logWarning("bcdboot timed out - boot may still work");
-        return true;  // Not critical
+    if (!bcdboot_result.std_out.isEmpty()) {
+        sak::logInfo(QString("bcdboot output: %1").arg(bcdboot_result.std_out).toStdString());
     }
 
-    QString output = bcdboot_result.std_out;
-    QString errors = bcdboot_result.std_err;
-
-    if (!output.isEmpty()) {
-        sak::logInfo(QString("bcdboot output: %1").arg(output).toStdString());
-    }
-
-    if (bcdboot_result.exit_code != 0) {
-        sak::logWarning(QString("bcdboot returned code %1 - boot may still work: %2")
-                            .arg(bcdboot_result.exit_code)
-                            .arg(errors)
-                            .toStdString());
-        return true;  // Not critical
+    // Gate boot certification on bcdboot actually succeeding. A timeout,
+    // cancellation, or non-zero exit means the boot config did NOT complete.
+    if (!bcdbootReportsSuccess(
+            bcdboot_result.timed_out, bcdboot_result.cancelled, bcdboot_result.exit_code)) {
+        const QString err =
+            QString("bcdboot did not complete (timed_out=%1, cancelled=%2, exit=%3): %4")
+                .arg(bcdboot_result.timed_out)
+                .arg(bcdboot_result.cancelled)
+                .arg(bcdboot_result.exit_code)
+                .arg(bcdboot_result.std_err.trimmed());
+        setError(err);
+        sak::logError(err.toStdString());
+        return false;
     }
 
     sak::logInfo("Boot configuration completed successfully");

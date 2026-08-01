@@ -40,6 +40,11 @@ public:
     explicit WindowsUSBCreator(QObject* parent = nullptr);
     ~WindowsUSBCreator();
 
+    /// @brief True iff a bcdboot run should be treated as a success. Pure;
+    ///        unit-testable. A timeout, cancellation, or non-zero exit is a
+    ///        failure -- boot support must NOT be certified in those cases.
+    [[nodiscard]] static bool bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode);
+
     /**
      * @brief Create a bootable Windows USB drive from an ISO
      * @param isoPath Path to the Windows ISO file
@@ -218,15 +223,21 @@ private:
     void copyISO_setVolumeLabel(const QString& cleanDest);
 
     /**
-     * @brief Configure boot files using bcdboot (if available)
+     * @brief Configure boot files using bcdboot
      * @param driveLetter Target drive letter (single letter, e.g., "E")
-     * @return true if successful (non-critical - boot may work without bcdboot)
+     * @return true only if boot files were actually configured; false (with
+     *         m_lastError set) if bcdboot is unavailable or does not succeed --
+     *         boot support must be gated on bcdboot, not merely file presence.
      */
     bool makeBootable(const QString& driveLetter);
 
-    /// @brief Execute the bcdboot process to configure boot files
-    /// @return true on success or non-critical failure
+    /// @brief Execute the bcdboot process to configure boot files (BIOS + UEFI)
+    /// @return true only when bcdboot completes successfully; false otherwise
     bool runBcdboot(const QString& bcdbootPath, const QString& cleanDrive);
+
+    /// @brief Resolve a runnable bcdboot.exe: the one extracted onto the media
+    ///        first, else the host's %SystemRoot%\\System32 copy. Empty if none.
+    [[nodiscard]] static QString resolveBcdbootPath(const QString& cleanDrive);
 
     /**
      * @brief Verify that the bootable flag is set on the partition

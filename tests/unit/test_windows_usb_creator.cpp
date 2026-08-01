@@ -53,6 +53,9 @@ private slots:
     void sanitizeVolumeLabel_stripsPowerShellMetacharacters();
     void sanitizeVolumeLabel_keepsLegitimateLabel();
     void sanitizeVolumeLabel_capsLength();
+
+    // ---- bcdboot success gating (B10-22) ----
+    void bcdbootReportsSuccess_onlyCleanZeroExit();
 };
 
 // ===========================================================================
@@ -263,6 +266,21 @@ void WindowsUSBCreatorTests::sanitizeVolumeLabel_keepsLegitimateLabel() {
 void WindowsUSBCreatorTests::sanitizeVolumeLabel_capsLength() {
     const QString longLabel(100, QChar('A'));
     QCOMPARE(sak::sanitizeVolumeLabel(longLabel).size(), 32);
+}
+
+// ===========================================================================
+// bcdboot success gating (B10-22)
+// ===========================================================================
+
+void WindowsUSBCreatorTests::bcdbootReportsSuccess_onlyCleanZeroExit() {
+    // Only a clean, non-cancelled, exit-0 run counts as bootable.
+    QVERIFY(WindowsUSBCreator::bcdbootReportsSuccess(false, false, 0));
+    // A timeout, cancellation, or any non-zero exit is a failure (must not
+    // certify the media bootable).
+    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(true, false, 0));
+    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, true, 0));
+    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, 1));
+    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, -1));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)
