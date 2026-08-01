@@ -9537,6 +9537,7 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
                                    input_values_copy,
                                    resume_state_copy,
                                    user_message,
+                                   currentAccessToolPolicy(),
                                    executor};
 
     QFuture<ai::AiOrchestratorResult> future =
@@ -9648,6 +9649,9 @@ QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
     launch.reasoning = ctx.reasoning;
     launch.input_values = input_values;
     launch.user_message = args.value(QStringLiteral("objective")).toString();
+    // Clamp the tool-invoked workflow to the session ceiling too (B12-01): a run_workflow tool
+    // call must not let a workflow agent exceed the session's granted capability.
+    launch.session_policy_ceiling = currentAccessToolPolicy();
     launch.executor = new PanelToolExecutor(this);
     launch.wire_callbacks = false;
 
@@ -9674,6 +9678,9 @@ ai::AiOrchestrationOptions AiAssistantPanel::workflowOrchestrationOptions(
     opts.max_parallel_subagents = kWorkflowMaxParallelSubagents;
     opts.user_message = launch.user_message;
     opts.input_values = launch.input_values;
+    // Clamp every workflow agent to the session's tool-policy ceiling (captured on the GUI
+    // thread at launch): a workflow may never grant more capability than the session.
+    opts.session_policy_ceiling = launch.session_policy_ceiling;
     applyWorkflowResumeState(&opts, launch.resume_state);
     return opts;
 }

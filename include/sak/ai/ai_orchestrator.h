@@ -38,6 +38,11 @@ struct AiPhaseExecution {
 struct AiOrchestrationOptions {
     int max_parallel_subagents{1};
     bool stop_on_phase_failure{true};
+    // The session's tool-policy ceiling. Every per-agent workflow policy is clamped to this so a
+    // catalog agent can never grant a workflow more capability than the session that launched it
+    // (e.g. a Chat/Research session must not gain package/mutating tools via a workflow agent).
+    // Defaults to the most restrictive policy so an unset ceiling fails closed.
+    AiToolPolicy session_policy_ceiling{AiToolPolicy::NoLocalExecution};
     QString default_model;
     QString default_reasoning_effort;
     QString api_key;

@@ -386,12 +386,18 @@ bool AiOrchestrator::isReadOnlyPolicy(AiToolPolicy policy) {
 
 AiToolPolicy AiOrchestrator::policyForAgent(const WorkflowTemplate& workflow,
                                             const QString& agent_id) const {
+    // Resolve the agent's catalog policy, then clamp it to the session ceiling so a workflow
+    // agent can never be more permissive than the session that launched it. Without this a
+    // Chat/Research session could gain package/mutating capability through a catalog agent's
+    // verbatim tool_policy. An unknown agent falls back to the most restrictive policy.
+    AiToolPolicy resolved = AiToolPolicy::NoLocalExecution;
     for (const auto& agent : workflow.agents) {
         if (agent.id == agent_id) {
-            return toolPolicyFromString(agent.tool_policy);
+            resolved = toolPolicyFromString(agent.tool_policy);
+            break;
         }
     }
-    return AiToolPolicy::NoLocalExecution;
+    return clampToolPolicy(resolved, m_options.session_policy_ceiling);
 }
 
 QVector<AiOrchestrator::PhaseGroup> AiOrchestrator::planGroups(

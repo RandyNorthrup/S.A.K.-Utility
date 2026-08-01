@@ -63,11 +63,12 @@ private:
 class FakeToolExecutor : public sak::ai::IAiToolExecutor {
 public:
     QJsonObject runToolPhase(const sak::ai::WorkflowPhase& phase,
-                             sak::ai::AiToolPolicy /*policy*/,
+                             sak::ai::AiToolPolicy policy,
                              const sak::ai::AiWorkflowPhaseContext& context,
                              const sak::ai::CancellationToken& /*token*/) override {
         ++calls;
         last_phase_id = phase.id;
+        last_policy = policy;
         last_context = context;
         if (result_sequences.contains(phase.id)) {
             auto& sequence = result_sequences[phase.id];
@@ -86,6 +87,7 @@ public:
 
     int calls{0};
     QString last_phase_id;
+    sak::ai::AiToolPolicy last_policy{sak::ai::AiToolPolicy::NoLocalExecution};
     sak::ai::AiWorkflowPhaseContext last_context;
     QHash<QString, QJsonObject> results;
     QHash<QString, QVector<QJsonObject>> result_sequences;
@@ -128,6 +130,7 @@ private Q_SLOTS:
     void runsAllPhasesSequentially();
     void groupsReadOnlyDelegatePhasesInParallel();
     void serializesMutatingPhases();
+    void clampsWorkflowPolicyToSessionCeiling();
     void skipsPhaseWhenConditionUnmet();
     void runsFallbackWhenPriorPhaseFlagged();
     void stopsOnPhaseFailureWhenConfigured();
@@ -213,6 +216,9 @@ void AiOrchestratorTests::serializesMutatingPhases() {
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
     sak::ai::AiOrchestrationOptions options;
     options.max_parallel_subagents = 4;
+    // Grant a permissive ceiling so the mutating agent is not clamped to read-only; this test
+    // exercises serialization of genuinely-mutating phases.
+    options.session_policy_ceiling = sak::ai::AiToolPolicy::ExclusiveMutatingExecutor;
     orchestrator.setOptions(options);
 
     sak::ai::WorkflowTemplate workflow;
@@ -228,6 +234,39 @@ void AiOrchestratorTests::serializesMutatingPhases() {
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
     QCOMPARE(result.parallel_groups_executed, 0);
     QCOMPARE(model.peak_concurrent, 1);
+}
+
+void AiOrchestratorTests::clampsWorkflowPolicyToSessionCeiling() {
+    // B12-01: a workflow agent's catalog policy must be clamped to the session ceiling before
+    // the executor runs, so a read-only session can never gain mutating capability via a
+    // catalog agent that declares mutating_requires_lease.
+    FakeModelClient model;
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    sak::ai::AiOrchestrationOptions options;
+    options.session_policy_ceiling = sak::ai::AiToolPolicy::ReadOnlyPc;
+    orchestrator.setOptions(options);
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("clamp");
+    workflow.agents << makeAgent(QStringLiteral("mut_agent"),
+                                 QStringLiteral("mutating_requires_lease"));
+    sak::ai::WorkflowPhase phase;
+    phase.id = QStringLiteral("mut_tool");
+    phase.type = QStringLiteral("tool_action");
+    phase.agent = QStringLiteral("mut_agent");
+    phase.tool = QStringLiteral("sak_offline_downloader");
+    phase.operation = QStringLiteral("direct_download");
+    workflow.phases << phase;
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("run_clamp"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("run_clamp"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QCOMPARE(tool.calls, 1);
+    // The executor received the CLAMPED (read-only) policy, not mutating_requires_lease.
+    QCOMPARE(tool.last_policy, sak::ai::AiToolPolicy::ReadOnlyPc);
 }
 
 void AiOrchestratorTests::skipsPhaseWhenConditionUnmet() {

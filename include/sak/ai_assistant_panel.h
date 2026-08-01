@@ -815,6 +815,10 @@ private:
         QJsonObject input_values;
         QJsonObject resume_state;
         QString user_message;
+        // The session's tool-policy ceiling, captured on the GUI thread at launch and passed to
+        // the orchestrator so every workflow agent is clamped to it (B12-01). Defaults to the
+        // most restrictive policy so an unset ceiling fails closed.
+        ai::AiToolPolicy session_policy_ceiling{ai::AiToolPolicy::NoLocalExecution};
         PanelToolExecutor* executor{nullptr};
         // When false (the model's run_workflow tool path) the orchestrator runs
         // WITHOUT wiring the panel's workflow-run UI callbacks, so a tool-invoked
