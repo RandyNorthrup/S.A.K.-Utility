@@ -48,12 +48,11 @@ void writeResponse(const QJsonObject& response) {
 
 // Chrome launches a native messaging host with the calling extension's origin
 // (chrome-extension://<id>/) as an argument -- we never get to add our own flag to
-// the manifest's `path`, so that origin is the signal to run as the browser-control
+// the manifest's `path`, so OUR extension's origin is the signal to run as the browser-control
 // relay. The explicit --browser-relay flag is accepted too, for local testing.
 bool wantsRelayMode(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--browser-relay") == 0 ||
-            std::strncmp(argv[i], "chrome-extension://", 19) == 0) {
+        if (std::strcmp(argv[i], "--browser-relay") == 0 || isOurExtensionOrigin(argv[i])) {
             return true;
         }
     }

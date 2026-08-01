@@ -4,6 +4,7 @@
 #include "sak/win32mcp/browser_control.h"
 #include "sak/win32mcp/browser_extension_installer.h"
 #include "sak/win32mcp/win32_mcp_dispatch.h"
+#include "sak/win32mcp/win32_mcp_entry.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include <QJsonArray>
@@ -77,6 +78,7 @@ private slots:
     void toolCallResult_imageBecomesImageBlockPlusSummary();
     void readOnlyProfileFiltersCatalogAndRefusesMutatingCall();
     void redactionMasksSecretsInResultText();
+    void relayModeRequiresOurPinnedExtensionOrigin();
 };
 
 void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
@@ -541,6 +543,24 @@ void Win32McpServerTests::redactionMasksSecretsInResultText() {
     // Non-secret text is preserved.
     QVERIFY(masked.contains(QStringLiteral("user=admin")));
     QVERIFY(masked.contains(QStringLiteral("note=ok")));
+}
+
+void Win32McpServerTests::relayModeRequiresOurPinnedExtensionOrigin() {
+    // B13-06: relay mode must be entered only for OUR pinned extension's origin, not any
+    // chrome-extension:// argument, so a stray/spoofed origin from another extension cannot
+    // drive this process as the browser-control relay.
+    using sak::win32mcp::isOurExtensionOrigin;
+    const std::string ours = std::string("chrome-extension://") +
+                             sak::win32mcp::kBrowserExtensionId;
+    QVERIFY(isOurExtensionOrigin((ours + "/").c_str()));  // canonical origin (trailing slash)
+    QVERIFY(isOurExtensionOrigin(ours.c_str()));          // id with no trailing slash
+    QVERIFY(isOurExtensionOrigin((ours + "/background.js").c_str()));  // origin + a path
+
+    QVERIFY(!isOurExtensionOrigin(
+        "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"));  // a different extension
+    QVERIFY(!isOurExtensionOrigin((ours + "EXTRA").c_str()));      // prefix-collision, wrong id
+    QVERIFY(!isOurExtensionOrigin("--browser-relay"));             // not an origin at all
+    QVERIFY(!isOurExtensionOrigin(nullptr));
 }
 
 QTEST_MAIN(Win32McpServerTests)
