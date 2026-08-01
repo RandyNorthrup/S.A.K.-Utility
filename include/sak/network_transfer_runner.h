@@ -29,6 +29,10 @@ struct NetworkTransferRequest {
     QByteArray body;
     QList<QPair<QByteArray, QByteArray>> raw_headers;
     int timeout_ms{kDefaultNetworkTransferTimeoutMs};
+    /// Abort once the response body exceeds this many bytes, bounding the in-memory
+    /// buffer so a hostile/oversized remote response cannot exhaust memory. 0 = no
+    /// limit (for callers that legitimately stream large, size-bounded downloads).
+    qint64 max_response_bytes{0};
 };
 
 struct NetworkTransferResult {

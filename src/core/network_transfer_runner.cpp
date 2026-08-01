@@ -32,7 +32,7 @@ public:
     NetworkTransferWorker(NetworkTransferRequest request,
                           NetworkCancelCheck should_cancel,
                           NetworkProgressCallback progress,
-                          NetworkTransferSinks sinks)
+                          const NetworkTransferSinks& sinks)
         : m_request(std::move(request))
         , m_shouldCancel(std::move(should_cancel))
         , m_progress(std::move(progress))
@@ -104,14 +104,27 @@ private:
     }
 
     void connectProgress(QNetworkReply* reply) {
-        QObject::connect(
-            reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-                m_sinks.result->bytes_received = received;
-                m_sinks.result->bytes_total = total;
-                if (m_progress) {
-                    m_progress(received, total);
-                }
-            });
+        QObject::connect(reply,
+                         &QNetworkReply::downloadProgress,
+                         this,
+                         [this, reply](qint64 received, qint64 total) {
+                             // Enforce the response-size cap early (on the reported total when
+                             // known, else the running received count) so QNetworkReply's internal
+                             // buffer is bounded to ~max_response_bytes instead of growing without
+                             // limit.
+                             const qint64 limit = m_request.max_response_bytes;
+                             if (limit > 0 && (total > limit || received > limit)) {
+                                 m_sinks.result->error_message =
+                                     QStringLiteral("Response exceeded the maximum allowed size");
+                                 reply->abort();
+                                 return;
+                             }
+                             m_sinks.result->bytes_received = received;
+                             m_sinks.result->bytes_total = total;
+                             if (m_progress) {
+                                 m_progress(received, total);
+                             }
+                         });
     }
 
     void finish(QNetworkReply* reply, QTimer* timeout_timer, QTimer* cancel_timer) {
@@ -121,9 +134,18 @@ private:
         m_sinks.result->http_status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (transferSucceeded(reply)) {
-            m_sinks.result->body = reply->readAll();
-            m_sinks.result->success = true;
-            m_sinks.result->bytes_received = m_sinks.result->body.size();
+            QByteArray body = reply->readAll();
+            const qint64 limit = m_request.max_response_bytes;
+            if (limit > 0 && body.size() > limit) {
+                // A small-but-over-cap body delivered in one shot never tripped the
+                // progress guard; reject it here rather than returning oversized data.
+                m_sinks.result->error_message =
+                    QStringLiteral("Response exceeded the maximum allowed size");
+            } else {
+                m_sinks.result->success = true;
+                m_sinks.result->bytes_received = body.size();
+                m_sinks.result->body = std::move(body);
+            }
         } else if (m_sinks.result->error_message.isEmpty()) {
             m_sinks.result->error_message = reply->errorString();
         }

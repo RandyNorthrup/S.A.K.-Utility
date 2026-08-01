@@ -64,6 +64,11 @@ public:
     /// @return Snapshot of the adapter's IP configuration, or invalid snapshot on failure
     [[nodiscard]] EthernetConfigSnapshot captureSettings(const QString& adapterName);
 
+    /// @brief Resolve an adapter's MAC address ("AA:BB:CC:DD:EE:FF") via QNetworkInterface,
+    ///        matched by human-readable or system name. Empty if the adapter is not found.
+    ///        Static and side-effect-free so it can be unit-tested.
+    [[nodiscard]] static QString lookupAdapterMac(const QString& adapterName);
+
     /// @brief Save a snapshot to a JSON file
     /// @param snapshot  The configuration to save
     /// @param filePath  Destination file path

@@ -12,14 +12,18 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
+#include <future>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace sak {
 
 namespace {
 constexpr int kBannerGrabTimeout = netdiag::kBannerGrabTimeoutMs;
 constexpr int kBannerMaxRead = netdiag::kBannerMaxBytes;
+constexpr int kMaxScanConcurrency = 256;  // upper bound on ports probed at once
 constexpr auto kHttpHeadProbe = "HEAD / HTTP/1.0\r\nHost: ";
 constexpr auto kHttpHeaderTerminator = "\r\n\r\n";
 
@@ -339,21 +343,44 @@ void PortScanner::scan(const ScanConfig& config) {
 
     Q_EMIT scanStarted(config.target, ports.size());
 
+    const QVector<PortScanResult> results = scanPortsConcurrently(config, ports);
+
+    Q_EMIT scanComplete(results);
+}
+
+QVector<PortScanResult> PortScanner::scanPortsConcurrently(const ScanConfig& config,
+                                                           const QVector<uint16_t>& ports) {
+    // Honor maxConcurrent: probe up to `concurrency` ports at once (each scanPort runs
+    // its own short-lived probe thread) instead of the previous strictly-serial loop.
+    // Ports are processed in batches and every batch is fully joined before the next, so
+    // the signals below are emitted from THIS thread in a stable, bounded order.
+    const int concurrency = std::clamp(config.maxConcurrent, 1, kMaxScanConcurrency);
     QVector<PortScanResult> results;
     results.reserve(ports.size());
 
-    for (int i = 0; i < ports.size(); ++i) {
-        if (m_cancelled.load()) {
-            break;
+    int scanned = 0;
+    for (int start = 0; start < ports.size() && !m_cancelled.load(); start += concurrency) {
+        const int end = std::min(start + concurrency, static_cast<int>(ports.size()));
+
+        std::vector<std::future<PortScanResult>> batch;
+        batch.reserve(static_cast<size_t>(end - start));
+        for (int i = start; i < end; ++i) {
+            const uint16_t port = ports[i];
+            batch.push_back(std::async(std::launch::async, [this, &config, port]() {
+                return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
+            }));
         }
 
-        auto result = scanPort(config.target, ports[i], config.timeoutMs, config.grabBanners);
-        results.append(result);
-        Q_EMIT portScanned(result);
-        Q_EMIT scanProgress(i + 1, ports.size());
+        for (auto& fut : batch) {
+            PortScanResult result = fut.get();
+            results.append(result);
+            ++scanned;
+            Q_EMIT portScanned(result);
+            Q_EMIT scanProgress(scanned, ports.size());
+        }
     }
 
-    Q_EMIT scanComplete(results);
+    return results;
 }
 
 PortScanResult PortScanner::scanPort(const QString& target,

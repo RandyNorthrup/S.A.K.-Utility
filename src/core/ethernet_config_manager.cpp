@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkInterface>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSysInfo>
@@ -84,6 +85,18 @@ bool EthernetConfigSnapshot::isValid() const {
 
 EthernetConfigManager::EthernetConfigManager(QObject* parent) : QObject(parent) {}
 
+QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName) {
+    if (adapterName.isEmpty()) {
+        return {};
+    }
+    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+        if (iface.humanReadableName() == adapterName || iface.name() == adapterName) {
+            return iface.hardwareAddress();  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
+        }
+    }
+    return {};
+}
+
 EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {
     Q_ASSERT(!adapterName.isEmpty());
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
@@ -101,11 +114,10 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& ada
     snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
     snapshot.computerName = QSysInfo::machineHostName();
 
-    // Get MAC address via separate netsh call
-    QString macOutput =
-        runNetsh({"interface", "show", "interface", QString("name=%1").arg(adapterName)});
-    // MAC is typically available from getmac or adapter inspector
-    // We'll use the adapter name as the identifier instead
+    // Populate the MAC from QNetworkInterface. The previous code ran
+    // `netsh interface show interface` (which does not even return a MAC) and then
+    // DISCARDED its output, leaving macAddress permanently empty.
+    snapshot.macAddress = lookupAdapterMac(adapterName);
     if (snapshot.adapterName.isEmpty()) {
         snapshot.adapterName = adapterName;
     }

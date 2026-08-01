@@ -86,6 +86,9 @@ private Q_SLOTS:
     void dns_recordTypes_notEmpty();
     void dns_recordTypes_includeCommon();
     void dns_recordTypes_includeAll();
+
+    // ── Port scan: concurrency honors maxConcurrent (B9-19) ──
+    void port_scan_concurrentReturnsAllPorts();
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -548,6 +551,42 @@ void NetworkDiagnosticUtilsTests::dns_recordTypes_includeAll() {
     QVERIFY(types.contains(QStringLiteral("NS")));
     QVERIFY(types.contains(QStringLiteral("SRV")));
     QVERIFY(types.contains(QStringLiteral("PTR")));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Port scan: batched concurrency honors maxConcurrent (B9-19)
+// ════════════════════════════════════════════════════════════════════════════
+
+void NetworkDiagnosticUtilsTests::port_scan_concurrentReturnsAllPorts() {
+    // Scan several localhost ports with maxConcurrent > 1: the batched path must
+    // return a result for EVERY requested port exactly once (previously the config
+    // field was ignored and the scan ran strictly serially).
+    PortScanner scanner;
+    QVector<PortScanResult> completed;
+    int completeCount = 0;
+    QObject::connect(
+        &scanner, &PortScanner::scanComplete, &scanner, [&](const QVector<PortScanResult>& r) {
+            completed = r;
+            ++completeCount;
+        });
+
+    PortScanner::ScanConfig config;
+    config.target = QStringLiteral("127.0.0.1");
+    config.ports = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    config.timeoutMs = 500;
+    config.grabBanners = false;
+    config.maxConcurrent = 4;
+
+    scanner.scan(config);  // blocking; emits scanComplete synchronously when done
+
+    QCOMPARE(completeCount, 1);
+    QCOMPARE(completed.size(), config.ports.size());
+
+    QSet<uint16_t> seenPorts;
+    for (const auto& r : completed) {
+        seenPorts.insert(r.port);
+    }
+    QCOMPARE(seenPorts.size(), config.ports.size());
 }
 
 QTEST_GUILESS_MAIN(NetworkDiagnosticUtilsTests)

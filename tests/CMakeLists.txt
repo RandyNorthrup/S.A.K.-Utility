@@ -1275,7 +1275,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ethernet_config_manager.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ethernet_config_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_ethernet_config_manager PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

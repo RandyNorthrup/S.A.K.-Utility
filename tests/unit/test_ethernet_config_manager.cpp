@@ -10,6 +10,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkInterface>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -37,6 +39,10 @@ private Q_SLOTS:
 
     // ── File I/O (atomic write) ───────────────────────────────────
     void saveToFile_atomicRoundTrip();
+
+    // ── MAC lookup (B9-19) ────────────────────────────────────────
+    void lookupAdapterMac_unknownAdapterEmpty();
+    void lookupAdapterMac_realAdapterHasMacFormat();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -205,6 +211,36 @@ void TestEthernetConfigManager::saveToFile_atomicRoundTrip() {
     QCOMPARE(restored.adapterName, snapshot.adapterName);
     QCOMPARE(restored.ipv4Address, snapshot.ipv4Address);
     QCOMPARE(restored.ipv4DnsServers, snapshot.ipv4DnsServers);
+}
+
+void TestEthernetConfigManager::lookupAdapterMac_unknownAdapterEmpty() {
+    // B9-19: a nonexistent adapter name resolves to an empty MAC (no match), and an
+    // empty name short-circuits to empty.
+    QVERIFY(EthernetConfigManager::lookupAdapterMac(QString()).isEmpty());
+    QVERIFY(
+        EthernetConfigManager::lookupAdapterMac(QStringLiteral("__no_such_adapter__")).isEmpty());
+}
+
+void TestEthernetConfigManager::lookupAdapterMac_realAdapterHasMacFormat() {
+    // If the host exposes any interface with a hardware address, the lookup must return
+    // it in canonical MAC form. Skips cleanly on a host with no such interface.
+    QString anyName;
+    QString expectedMac;
+    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+        if (!iface.hardwareAddress().isEmpty() && !iface.humanReadableName().isEmpty()) {
+            anyName = iface.humanReadableName();
+            expectedMac = iface.hardwareAddress();
+            break;
+        }
+    }
+    if (anyName.isEmpty()) {
+        QSKIP("No interface with a hardware address on this host");
+    }
+    const QString mac = EthernetConfigManager::lookupAdapterMac(anyName);
+    QCOMPARE(mac, expectedMac);
+    // Canonical form: six colon-separated hex octets.
+    const QRegularExpression macRe(QStringLiteral("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"));
+    QVERIFY(macRe.match(mac).hasMatch());
 }
 
 QTEST_MAIN(TestEthernetConfigManager)

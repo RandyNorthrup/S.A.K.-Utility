@@ -66,6 +66,10 @@ private:
                                           uint16_t port,
                                           int timeoutMs,
                                           bool grabBanner);
+    /// @brief Probe all @p ports honoring config.maxConcurrent (batched concurrency),
+    ///        emitting portScanned/scanProgress per port from the calling thread.
+    [[nodiscard]] QVector<PortScanResult> scanPortsConcurrently(const ScanConfig& config,
+                                                                const QVector<uint16_t>& ports);
     [[nodiscard]] static QString grabBannerData(const QString& target,
                                                 uint16_t port,
                                                 int timeoutMs);

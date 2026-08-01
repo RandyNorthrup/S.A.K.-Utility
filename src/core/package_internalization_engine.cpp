@@ -33,6 +33,9 @@ NetworkTransferRequest makeVersionRequest(const QUrl& url) {
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kApiRequestTimeoutMs;
+    // Version metadata is a small feed document; cap the buffer so a hostile endpoint
+    // cannot exhaust memory here (B9-19). Binary downloads are left uncapped.
+    request.max_response_bytes = 32LL * 1024 * 1024;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     request.raw_headers.append(QPair<QByteArray, QByteArray>{
