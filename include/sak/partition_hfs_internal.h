@@ -8182,17 +8182,30 @@ private:
                                     kHfsVolumeHeaderSize);
         uint64_t totalBytes = 0;
         if (!primary.has_value() ||
-            !checkedMul(m_volume.total_blocks, m_volume.block_size, &totalBytes) ||
-            totalBytes < kHfsMinimumVolumeBytesForAlternateHeader) {
-            result->warnings.append(
+            !checkedMul(m_volume.total_blocks, m_volume.block_size, &totalBytes)) {
+            // Could not read the primary header, or the geometry overflowed. This is a
+            // genuine failure, not a "no alternate header here" case: leaving the backup
+            // header stale while reporting success invites fsck_hfs to later "repair" the
+            // volume from the outdated copy. Fail closed so the caller's
+            // ok = blockers.isEmpty() marks the mutation failed.
+            result->blockers.append(
                 QStringLiteral("HFS+ alternate volume header synchronization failed"));
+            return;
+        }
+        if (totalBytes < kHfsMinimumVolumeBytesForAlternateHeader) {
+            // A sub-threshold volume has no alternate-volume-header region (the alternate
+            // slot would overlap the primary), so there is genuinely nothing to sync. Not
+            // an error -- record it and leave ok unaffected.
+            result->warnings.append(QStringLiteral(
+                "HFS+ volume too small for an alternate volume header; none to synchronize"));
             return;
         }
         const uint64_t alternateOffset = m_volume.volume_offset + totalBytes -
                                          kHfsVolumeHeaderOffset;
         if (!writeAt(
                 alternateOffset, primary->constData(), static_cast<uint64_t>(primary->size()))) {
-            result->warnings.append(
+            // The backup write itself failed: fail closed for the same reason as above.
+            result->blockers.append(
                 QStringLiteral("HFS+ alternate volume header synchronization failed"));
             return;
         }
