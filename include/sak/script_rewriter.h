@@ -63,6 +63,21 @@ public:
                                                 const QHash<QString, QString>& local_filenames,
                                                 const QString& output_path) const;
 
+    /// @brief A [start, length] span within a script to overwrite.
+    struct ReplacementSpan {
+        int start{0};
+        int length{0};
+    };
+
+    /// @brief Span to overwrite for a URL found at @p found_pos (@p url_len
+    ///        chars) in @p script. Extended to swallow a matched wrapping quote
+    ///        pair ('...' or "...") so the injected $toolsDir EXPRESSION is not
+    ///        left embedded inside a string literal (which would render the
+    ///        rewritten download inert). Pure; unit-testable.
+    [[nodiscard]] static ReplacementSpan urlReplacementSpan(const QString& script,
+                                                            int found_pos,
+                                                            int url_len);
+
 private:
     /// @brief Replace a single URL in script content with a local path
     [[nodiscard]] QString replaceUrl(const QString& script,

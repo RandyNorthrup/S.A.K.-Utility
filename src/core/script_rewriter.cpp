@@ -97,6 +97,24 @@ RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
 // Private Helpers
 // ============================================================================
 
+ScriptRewriter::ReplacementSpan ScriptRewriter::urlReplacementSpan(const QString& script,
+                                                                   int found_pos,
+                                                                   int url_len) {
+    ReplacementSpan span{found_pos, url_len};
+    const int after_pos = found_pos + url_len;
+    if (found_pos > 0 && after_pos < script.length()) {
+        const QChar before = script.at(found_pos - 1);
+        const QChar after = script.at(after_pos);
+        const bool wrapped = (before == QLatin1Char('\'') && after == QLatin1Char('\'')) ||
+                             (before == QLatin1Char('"') && after == QLatin1Char('"'));
+        if (wrapped) {
+            span.start = found_pos - 1;  // swallow the opening quote
+            span.length = url_len + 2;   // ...and the closing quote
+        }
+    }
+    return span;
+}
+
 QString ScriptRewriter::replaceUrl(const QString& script,
                                    const QString& url,
                                    const QString& local_filename,
@@ -104,8 +122,10 @@ QString ScriptRewriter::replaceUrl(const QString& script,
     QString result = script;
     QString tools_path = buildToolsPath(local_filename);
 
-    // Replace URL in both quoted and unquoted contexts
-    // Pattern: 'http://...' or "http://..." or bare http://...
+    // Replace URL in both quoted and unquoted contexts. tools_path is a PS
+    // EXPRESSION, so a matched wrapping quote pair must be consumed too --
+    // otherwise '<url>' becomes '(Join-Path ...)' , a literal string, and the
+    // rewritten download silently does nothing.
     int search_pos = 0;
     while (true) {
         int found_pos = result.indexOf(url, search_pos, Qt::CaseInsensitive);
@@ -113,17 +133,20 @@ QString ScriptRewriter::replaceUrl(const QString& script,
             break;
         }
 
+        const ReplacementSpan span =
+            urlReplacementSpan(result, found_pos, static_cast<int>(url.length()));
+
         ScriptReplacement replacement;
         replacement.original_url = url;
         replacement.local_path = tools_path;
 
         // Count newlines up to this position for line number
-        replacement.line_number = static_cast<int>(result.left(found_pos).count('\n')) + 1;
+        replacement.line_number = static_cast<int>(result.left(span.start).count('\n')) + 1;
 
-        result.replace(found_pos, url.length(), tools_path);
+        result.replace(span.start, span.length, tools_path);
         replacements.append(replacement);
 
-        search_pos = found_pos + tools_path.length();
+        search_pos = span.start + tools_path.length();
     }
 
     return result;

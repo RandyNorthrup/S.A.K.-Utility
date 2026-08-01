@@ -29,6 +29,11 @@ private Q_SLOTS:
     // Injection safety
     void rewrite_filenameWithQuote_isEscaped();
 
+    // Quote-swallowing (B10-16)
+    void urlReplacementSpan_swallowsMatchedQuotes();
+    void urlReplacementSpan_keepsBareOrMismatched();
+    void rewrite_quotedUrl_producesBareExpressionNotLiteral();
+
     // File output
     void rewriteToFile_writesContent();
     void rewriteToFile_invalidPath_failsGracefully();
@@ -192,6 +197,68 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QCOMPARE(result.replacements.first().local_path,
              QString("(Join-Path $toolsDir 'a'';Start-Process calc;''.zip')"));
     QVERIFY(!result.script_content.contains("calc;'.zip')"));
+}
+
+// ============================================================================
+// Quote-swallowing (B10-16)
+// ============================================================================
+
+void TestScriptRewriter::urlReplacementSpan_swallowsMatchedQuotes() {
+    const QString url = QStringLiteral("http://x/f.exe");
+    const int len = static_cast<int>(url.length());
+
+    const QString sq = QStringLiteral("-Url 'http://x/f.exe' `");
+    const int p1 = static_cast<int>(sq.indexOf(url));
+    auto s1 = sak::ScriptRewriter::urlReplacementSpan(sq, p1, len);
+    QCOMPARE(s1.start, p1 - 1);    // opening single quote consumed
+    QCOMPARE(s1.length, len + 2);  // ...and the closing one
+
+    const QString dq = QStringLiteral("-Url \"http://x/f.exe\"\n");
+    const int p2 = static_cast<int>(dq.indexOf(url));
+    auto s2 = sak::ScriptRewriter::urlReplacementSpan(dq, p2, len);
+    QCOMPARE(s2.start, p2 - 1);
+    QCOMPARE(s2.length, len + 2);
+}
+
+void TestScriptRewriter::urlReplacementSpan_keepsBareOrMismatched() {
+    const QString url = QStringLiteral("http://x/f.exe");
+    const int len = static_cast<int>(url.length());
+
+    // Bare (unquoted) URL: span is exactly the URL.
+    const QString bare = QStringLiteral("-OutFile http://x/f.exe more");
+    const int p1 = static_cast<int>(bare.indexOf(url));
+    auto s1 = sak::ScriptRewriter::urlReplacementSpan(bare, p1, len);
+    QCOMPARE(s1.start, p1);
+    QCOMPARE(s1.length, len);
+
+    // Mismatched quotes are NOT a wrapping pair.
+    const QString mis = QStringLiteral("x'http://x/f.exe\"y");
+    const int p2 = static_cast<int>(mis.indexOf(url));
+    auto s2 = sak::ScriptRewriter::urlReplacementSpan(mis, p2, len);
+    QCOMPARE(s2.start, p2);
+    QCOMPARE(s2.length, len);
+}
+
+void TestScriptRewriter::rewrite_quotedUrl_producesBareExpressionNotLiteral() {
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/setup.exe'
+)";
+    auto parsed = parser.parse(script);
+
+    QHash<QString, QString> filenames;
+    filenames["https://example.com/setup.exe"] = "setup.exe";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(result.success);
+    // The wrapping quotes are gone: the Join-Path expression stands on its own,
+    // NOT embedded in a '(...)' string literal (which would be inert).
+    QVERIFY(result.script_content.contains("-Url (Join-Path $toolsDir 'setup.exe')"));
+    QVERIFY(!result.script_content.contains("'(Join-Path"));
 }
 
 // ============================================================================
