@@ -27,6 +27,7 @@ private Q_SLOTS:
     void tamperedIV_failsDecrypt();
     void tamperedTag_failsDecrypt();
     void customParams_roundTrip();
+    void invalidParams_rejected();
     void differentPasswords_produceDifferentCiphertext();
     void sameInput_producesDifferentCiphertext();
 };
@@ -74,14 +75,12 @@ void EncryptionTests::roundTrip_emptyData() {
     QVERIFY(encrypted.has_value());
 
     auto decrypted = sak::decryptData(encrypted.value(), password);
-    // Empty data should either round-trip to empty or fail gracefully.
-    if (decrypted.has_value()) {
-        QCOMPARE(decrypted.value(), original);
-    } else {
-        // If decryption fails for zero-length plaintext due to padding,
-        // that's acceptable — just verify no crash occurred.
-        QVERIFY2(true, "Decryption of empty plaintext failed gracefully");
-    }
+    // B11-12: empty data MUST round-trip to empty. Encrypting empty produces a full CBC
+    // padding block; the HMAC verifies, and the decrypted empty plaintext must not be
+    // mistaken for a decryption failure.
+    QVERIFY(decrypted.has_value());
+    QCOMPARE(decrypted.value(), original);
+    QVERIFY(decrypted.value().isEmpty());
 }
 
 void EncryptionTests::roundTrip_largeData() {
@@ -224,6 +223,31 @@ void EncryptionTests::customParams_roundTrip() {
     auto decrypted = sak::decryptData(encrypted.value(), password, params);
     QVERIFY(decrypted.has_value());
     QCOMPARE(decrypted.value(), original);
+}
+
+void EncryptionTests::invalidParams_rejected() {
+    // B11-12: a hostile/broken EncryptionParams (non-AES key size, wrong IV length,
+    // too-small salt, or non-positive iterations) must be rejected up front, not fed
+    // into the KDF/cipher where it would derive weak keys or misbehave.
+    const QByteArray data = "params validation";
+    const QString password = "pw_params";
+    const auto expectRejected = [&](sak::EncryptionParams p) {
+        const auto enc = sak::encryptData(data, password, p);
+        QVERIFY(!enc.has_value());
+        QCOMPARE(enc.error(), sak::error_code::invalid_argument);
+    };
+    sak::EncryptionParams badKey;
+    badKey.key_size = 20;  // not 16/24/32
+    expectRejected(badKey);
+    sak::EncryptionParams badIv;
+    badIv.iv_size = 8;  // not one AES block
+    expectRejected(badIv);
+    sak::EncryptionParams badSalt;
+    badSalt.salt_size = 4;  // too small
+    expectRejected(badSalt);
+    sak::EncryptionParams badIter;
+    badIter.iterations = 0;  // non-positive
+    expectRejected(badIter);
 }
 
 void EncryptionTests::differentPasswords_produceDifferentCiphertext() {

@@ -12,6 +12,8 @@
 #include <QCryptographicHash>
 #include <QFile>
 
+#include <optional>
+
 #ifdef _WIN32
 #include <windows.h>
 
@@ -172,6 +174,15 @@ bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
     return diff == 0;
 }
 
+/// @brief Reject a hostile or default-broken EncryptionParams before any crypto runs: a
+/// non-AES key size, an IV that is not one AES block, a too-small salt, or a non-positive
+/// iteration count would otherwise derive weak keys or drive BCrypt into undefined behavior.
+bool valid_encryption_params(const EncryptionParams& params) {
+    const bool aes_key = params.key_size == 16 || params.key_size == 24 || params.key_size == 32;
+    return aes_key && params.iv_size == kAesBlockBytes && params.salt_size >= 8 &&
+           params.iterations > 0;
+}
+
 /// @brief Derive separate AES and HMAC keys from a password (encrypt-then-MAC)
 bool derive_enc_and_mac_keys(const QString& password,
                              const QByteArray& salt,
@@ -191,8 +202,11 @@ bool derive_enc_and_mac_keys(const QString& password,
 
 /// @brief AES-256-CBC encryption
 QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const QByteArray& iv) {
-    Q_ASSERT(!plaintext.isEmpty());
-    Q_ASSERT(!key.isEmpty());
+    // An empty plaintext is valid: CBC block padding turns it into one full padding block, which
+    // decrypts back to empty. Only a missing key is a hard error here.
+    if (key.isEmpty()) {
+        return {};
+    }
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_KEY_HANDLE hKey = nullptr;
 
@@ -243,15 +257,20 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
     return ciphertext;
 }
 
-/// @brief AES-256-CBC decryption
-QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, const QByteArray& iv) {
-    Q_ASSERT(!ciphertext.isEmpty());
-    Q_ASSERT(!key.isEmpty());
+/// @brief AES-256-CBC decryption. Returns nullopt on failure; a present-but-empty result is a
+/// legitimately empty plaintext (the inverse of encrypting empty data), which the QByteArray
+/// return type could not distinguish from an error.
+std::optional<QByteArray> aes_decrypt(const QByteArray& ciphertext,
+                                      const QByteArray& key,
+                                      const QByteArray& iv) {
+    if (ciphertext.isEmpty() || key.isEmpty()) {
+        return std::nullopt;
+    }
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_KEY_HANDLE hKey = nullptr;
 
     if (!initialize_aes_key(hAlg, hKey, key, "decryption")) {
-        return {};
+        return std::nullopt;
     }
 
     DWORD plaintext_len = 0;
@@ -303,7 +322,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
 auto encryptData(const QByteArray& data, const QString& password, const EncryptionParams& params)
     -> std::expected<QByteArray, error_code> {
 #ifdef _WIN32
-    if (password.isEmpty()) {
+    if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
 
@@ -359,7 +378,7 @@ auto decryptData(const QByteArray& encrypted_data,
                  const QString& password,
                  const EncryptionParams& params) -> std::expected<QByteArray, error_code> {
 #ifdef _WIN32
-    if (password.isEmpty()) {
+    if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
 
@@ -395,18 +414,21 @@ auto decryptData(const QByteArray& encrypted_data,
         return std::unexpected(error_code::decrypt_failed);
     }
 
-    QByteArray plaintext = aes_decrypt(ciphertext, enc_key, iv);
+    // The HMAC above already proved authenticity, so reaching here means the data is genuine.
+    // aes_decrypt returns nullopt only on a BCrypt error; a present-but-empty plaintext is the
+    // valid inverse of encrypting empty data and must round-trip, not be treated as a failure.
+    std::optional<QByteArray> plaintext = aes_decrypt(ciphertext, enc_key, iv);
     secure_wiper::wipe(enc_key.data(), enc_key.size());
-    if (plaintext.isEmpty()) {
+    if (!plaintext.has_value()) {
         logError("AES decryption failed - wrong password or corrupted data");
         return std::unexpected(error_code::decrypt_failed);
     }
 
     logDebug(
         "Decryption",
-        std::format("Decrypted {} bytes to {} bytes", encrypted_data.size(), plaintext.size()));
+        std::format("Decrypted {} bytes to {} bytes", encrypted_data.size(), plaintext->size()));
 
-    return plaintext;
+    return *plaintext;
 #else
     return std::unexpected(error_code::not_implemented);
 #endif
