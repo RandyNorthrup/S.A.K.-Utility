@@ -699,26 +699,23 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
         sak::logWarning("aria2c: some downloads may be incomplete (exit code 7)");
     }
 
-    // Verify at least some files were downloaded
-    QString downloadDir = QDir(m_workDir).filePath("UUPs");
-    QDir dir(downloadDir);
-    int fileCount = 0;
-    QDirIterator checkIt(dir.absolutePath(), QDir::Files);
-    while (checkIt.hasNext()) {
-        checkIt.next();
-        fileCount++;
-    }
-
-    if (fileCount == 0) {
+    // Verify EVERY expected UUP file is present and complete -- aria2 exit 7 means
+    // some downloads failed, and a missing/truncated file would build a broken ISO.
+    const QString downloadDir = QDir(m_workDir).filePath("UUPs");
+    const QStringList missing = missingFiles(m_files, downloadDir);
+    if (!missing.isEmpty()) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError(
-            "No files were downloaded. Check network connection "
-            "and that the selected build is still available.");
+        Q_EMIT buildError(QString("Download incomplete: %1 of %2 UUP files are missing or "
+                                  "truncated (e.g. %3). Cannot build an ISO from a partial set; "
+                                  "check the network connection and retry.")
+                              .arg(missing.size())
+                              .arg(m_files.size())
+                              .arg(missing.first()));
         return;
     }
 
     m_downloadPercent = kPercentComplete;
-    sak::logInfo("UUP file download complete: " + std::to_string(fileCount) + " files");
+    sak::logInfo("UUP file download complete: " + std::to_string(m_files.size()) + " files");
 
     Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
                            "Download complete. Starting conversion...");
@@ -759,7 +756,8 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
     nativeConversionTempDir = QDir::toNativeSeparators(conversionTempDir);
 
     uupMediaConverter = findUupMediaConverterPath();
-    outputIsoPath = QDir::toNativeSeparators(QFileInfo(m_outputIsoPath).absoluteFilePath());
+    const QString finalIso =
+        QDir::toNativeSeparators(QFileInfo(m_outputIsoPath).absoluteFilePath());
     if (!QFileInfo::exists(uupMediaConverter)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(
@@ -769,17 +767,22 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
     }
 
     // Ensure destination directory exists before converter starts.
-    QFileInfo outputInfo(outputIsoPath);
+    const QFileInfo outputInfo(finalIso);
     if (!QDir().mkpath(outputInfo.absolutePath())) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to create output directory: " + outputInfo.absolutePath());
         return false;
     }
 
-    // Remove pre-existing output file to avoid converter confusion.
-    if (QFile::exists(outputIsoPath)) {
-        QFile::remove(outputIsoPath);
+    // Convert into a temporary sibling file and replace the final ISO only on
+    // success (see onConverterFinished). A failed or aborted conversion must NOT
+    // destroy a pre-existing good ISO -- so the final file is left untouched here.
+    const QString partialIso = finalIso + ".partial";
+    if (QFile::exists(partialIso)) {
+        QFile::remove(partialIso);  // discard our own stale partial from a prior run
     }
+    outputIsoPath = QDir::toNativeSeparators(partialIso);
+    m_converterOutputPath = outputIsoPath;
 
     return true;
 }
@@ -830,6 +833,15 @@ void UupIsoBuilder::connectConverterSignals() {
                 }
                 sak::logError("UUPMediaConverter error: " + errorText.toStdString() + " - " +
                               m_converterProcess->errorString().toStdString());
+                if (error == QProcess::FailedToStart) {
+                    // finished() will NOT fire when the process never starts, so we
+                    // must emit a terminal failure here or the build hangs forever.
+                    m_phase = Phase::Failed;
+                    Q_EMIT buildError("UUP converter failed to start: " + errorText);
+                    return;
+                }
+                // Other runtime errors (crash/timeout) are followed by finished(),
+                // which reports the terminal failure; keep this non-terminal.
                 Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
                                        "Converter runtime error: " + errorText);
             });
@@ -1043,6 +1055,27 @@ void UupIsoBuilder::parseConverterProgressPatterns(const QString& line,
     }
 }
 
+QStringList UupIsoBuilder::missingFiles(const QList<UupDumpApi::FileInfo>& expected,
+                                        const QString& downloadDir) {
+    QStringList missing;
+    const QDir dir(downloadDir);
+    for (const auto& file : expected) {
+        const QFileInfo info(dir.filePath(file.fileName));
+        // Absent, or shorter than the API-declared size (a truncated partial).
+        if (!info.exists() || (file.size > 0 && info.size() < file.size)) {
+            missing.append(file.fileName);
+        }
+    }
+    return missing;
+}
+
+bool UupIsoBuilder::replaceFinalIso(const QString& tempPath, const QString& finalPath) {
+    if (QFile::exists(finalPath) && !QFile::remove(finalPath)) {
+        return false;
+    }
+    return QFile::rename(tempPath, finalPath);
+}
+
 void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitStatus) {
     Q_ASSERT(m_progressPollTimer);
     Q_ASSERT(m_converterProcess);
@@ -1050,6 +1083,10 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
 
     if (m_cancelled) {
         return;
+    }
+
+    if (m_phase == Phase::Failed) {
+        return;  // a fatal errorOccurred (e.g. FailedToStart) already reported the failure
     }
 
     if (exitStatus == QProcess::CrashExit) {
@@ -1074,15 +1111,25 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
 
     sak::logInfo("UUP converter process exited with code 0");
 
-    QFileInfo finalInfo(m_outputIsoPath);
-    if (!finalInfo.exists() || finalInfo.size() <= 0) {
+    const QFileInfo builtInfo(m_converterOutputPath);
+    if (!builtInfo.exists() || builtInfo.size() <= 0) {
         m_phase = Phase::Failed;
         QString classified = classifyConverterFailure();
         Q_EMIT buildError(classified);
         return;
     }
 
-    qint64 fileSize = finalInfo.size();
+    // Success: only now replace any prior ISO with the freshly built one.
+    if (!replaceFinalIso(m_converterOutputPath, m_outputIsoPath)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "ISO conversion succeeded but the finished image could not be moved "
+            "into place: " +
+            m_outputIsoPath);
+        return;
+    }
+
+    qint64 fileSize = QFileInfo(m_outputIsoPath).size();
     cleanupWorkDir();
     m_phase = Phase::Completed;
     Q_EMIT phaseChanged(Phase::Completed, "ISO build complete!");

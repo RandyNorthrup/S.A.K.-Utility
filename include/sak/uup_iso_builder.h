@@ -35,8 +35,12 @@
  * Only actual Windows UUP files are downloaded at runtime.
  *
  * Thread-Safety:
- *   - startBuild() and cancel() may be called from any thread
- *   - All signals are emitted in a way that is safe for cross-thread connections
+ *   - startBuild(), cancel(), and all other methods must be called on the
+ *     thread that owns this object: they drive QProcess/QTimer members, which
+ *     are bound to their owning thread. Marshal a cross-thread request with
+ *     QMetaObject::invokeMethod(..., Qt::QueuedConnection).
+ *   - Signals are emitted on this object's thread and are safe for queued
+ *     cross-thread connections.
  *
  * Example:
  * @code
@@ -95,8 +99,10 @@ public:
     /**
      * @brief Cancel the current build operation
      *
-     * Terminates any running aria2c or converter processes and
-     * cleans up the work directory. Safe to call from any thread.
+     * Terminates any running aria2c or converter processes and cleans up the
+     * work directory. Must be called on this object's own thread (see the
+     * Thread-Safety note above); marshal from another thread with a queued
+     * QMetaObject::invokeMethod.
      */
     void cancel();
 
@@ -104,6 +110,22 @@ public:
      * @brief Get the current phase
      */
     Phase currentPhase() const { return m_phase; }
+
+    /**
+     * @brief Names of expected files that are absent or shorter than their
+     *        API-declared size in @p downloadDir. Empty means the download set
+     *        is complete. Used to reject a partial aria2c result (exit code 7)
+     *        before conversion. Unit-testable.
+     */
+    [[nodiscard]] static QStringList missingFiles(const QList<UupDumpApi::FileInfo>& expected,
+                                                  const QString& downloadDir);
+
+    /**
+     * @brief Move a freshly built ISO from @p tempPath onto @p finalPath,
+     *        replacing any prior ISO only now (convert-then-replace, so a failed
+     *        conversion never destroys an existing good ISO). Unit-testable.
+     */
+    [[nodiscard]] static bool replaceFinalIso(const QString& tempPath, const QString& finalPath);
 
     /**
      * @brief Check if a build is currently in progress
@@ -212,6 +234,7 @@ private:
     // Build parameters
     QList<UupDumpApi::FileInfo> m_files;
     QString m_outputIsoPath;
+    QString m_converterOutputPath;  // temp ISO the converter writes; replaces m_outputIsoPath on ok
     QString m_edition;
     QString m_lang;
     QString m_updateId;
