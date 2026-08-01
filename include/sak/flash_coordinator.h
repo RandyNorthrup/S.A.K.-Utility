@@ -256,6 +256,11 @@ private:
     /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at
     /// finalize. Call with m_mutex held. (These were previously left at zero.)
     void finalizeResultMetrics();
+    /// Emit the terminal stateChanged + flashCompleted signals and tear workers down.
+    /// MUST be called with m_mutex released (it emits and cleanupWorkers() can wait()).
+    void emitTerminalOutcome(sak::FlashState state,
+                             const sak::FlashResult& result,
+                             const QString& statusMessage);
     void cleanupWorkers();
     /// Wire one worker's progress/completion/error/abort signals to the coordinator.
     void connectWorkerSignals(FlashWorker* worker);

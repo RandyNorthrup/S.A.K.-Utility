@@ -331,47 +331,64 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     QString devicePath = worker->targetDevice();
     sak::logInfo(QString("Drive completed: %1").arg(devicePath).toStdString());
 
-    QMutexLocker locker(&m_mutex);
-    // Mark this worker as having reported a terminal outcome so a later WorkerBase
-    // failed()/cancelled() for the same drive is not double-counted as a failure.
-    m_reportedWorkers.insert(worker);
-    m_progress.activeDrives--;
+    // Mutate coordinator state under the lock, but capture everything the signals
+    // need into locals and EMIT AFTER releasing it. Emitting under m_mutex deadlocks
+    // a same-thread (direct-connected) slot that calls a locked getter -- state(),
+    // progress(), isFlashing() (B10-07). cleanupWorkers() (which can wait() up to 15s)
+    // likewise runs unlocked so it never stalls those getters.
+    QString errorMsg;
+    bool passed = result.passed;
+    bool terminal = false;
+    sak::FlashState terminalState{};
+    sak::FlashResult terminalResult;
+    QString terminalMessage;
+    {
+        QMutexLocker locker(&m_mutex);
+        // Mark this worker as having reported a terminal outcome so a later WorkerBase
+        // failed()/cancelled() for the same drive is not double-counted as a failure.
+        m_reportedWorkers.insert(worker);
+        m_progress.activeDrives--;
 
-    // Check if verification passed. completedDrives counts SUCCESSES only (onWorkerFailed
-    // increments failedDrives); a failed verification must not bump both counters or it would
-    // contribute 2 to the finalize sum below and tear down still-active workers early.
-    if (!result.passed) {
-        sak::logError(QString("Verification failed for drive: %1").arg(devicePath).toStdString());
-        m_progress.failedDrives++;
-        m_result.failedDrives.append(devicePath);
-        QString errorMsg = result.errors.isEmpty() ? "Verification failed" : result.errors.first();
-        m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
+        // completedDrives counts SUCCESSES only (onWorkerFailed increments failedDrives);
+        // a failed verification must not bump both counters or it would contribute 2 to
+        // the finalize sum below and tear down still-active workers early.
+        if (!result.passed) {
+            sak::logError(
+                QString("Verification failed for drive: %1").arg(devicePath).toStdString());
+            m_progress.failedDrives++;
+            m_result.failedDrives.append(devicePath);
+            errorMsg = result.errors.isEmpty() ? "Verification failed" : result.errors.first();
+            m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
+        } else {
+            m_progress.completedDrives++;
+            m_result.successfulDrives.append(devicePath);
+            // The verified device checksum (== source when verification is on).
+            if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
+                m_result.sourceChecksum = result.targetChecksum;
+            }
+        }
+
+        if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
+            m_state = sak::FlashState::Completed;
+            m_result.success = m_progress.failedDrives == 0;
+            finalizeResultMetrics();
+            terminal = true;
+            terminalState = m_state;
+            terminalResult = m_result;
+            terminalMessage = QString("Completed: %1 successful, %2 failed")
+                                  .arg(m_result.successfulDrives.size())
+                                  .arg(m_result.failedDrives.size());
+        }
+    }
+
+    if (!passed) {
         Q_EMIT driveFailed(devicePath, errorMsg);
     } else {
-        m_progress.completedDrives++;
-        m_result.successfulDrives.append(devicePath);
-        // The verified device checksum (== source when verification is on) -- the only
-        // checksum the result previously reported was an empty string.
-        if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
-            m_result.sourceChecksum = result.targetChecksum;
-        }
         Q_EMIT driveCompleted(devicePath, result.targetChecksum);
     }
 
-    // Check if all drives are done
-    if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
-        m_state = sak::FlashState::Completed;
-        m_result.success = m_progress.failedDrives == 0;
-        finalizeResultMetrics();
-
-        Q_EMIT stateChanged(m_state,
-                            QString("Completed: %1 successful, %2 failed")
-                                .arg(m_result.successfulDrives.size())
-                                .arg(m_result.failedDrives.size()));
-
-        Q_EMIT flashCompleted(m_result);
-
-        cleanupWorkers();
+    if (terminal) {
+        emitTerminalOutcome(terminalState, terminalResult, terminalMessage);
     }
 }
 
@@ -391,43 +408,60 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
         return;
     }
 
-    QMutexLocker locker(&m_mutex);
-    // Dedup BEFORE dereferencing the worker. A normal handled error emits BOTH
-    // FlashWorker::error and (as execute() returns unexpected) WorkerBase::failed; the
-    // first finalizes the run and cleanupWorkers() DESTROYS the worker, so by the time
-    // the second (deduped) call arrives the captured pointer may dangle. contains()
-    // only compares the pointer value (no deref), so it safely rejects the stale
-    // pointer here; calling worker->targetDevice() before this check would be a UAF.
-    if (m_reportedWorkers.contains(worker)) {
-        return;
+    // Mutate under the lock; emit + cleanupWorkers() AFTER releasing it (see
+    // onWorkerCompleted for the deadlock rationale, B10-07).
+    QString devicePath;
+    bool terminal = false;
+    sak::FlashState terminalState{};
+    sak::FlashResult terminalResult;
+    QString terminalMessage;
+    {
+        QMutexLocker locker(&m_mutex);
+        // Dedup BEFORE dereferencing the worker. A normal handled error emits BOTH
+        // FlashWorker::error and (as execute() returns unexpected) WorkerBase::failed; the
+        // first finalizes the run and cleanupWorkers() DESTROYS the worker, so by the time
+        // the second (deduped) call arrives the captured pointer may dangle. contains()
+        // only compares the pointer value (no deref), so it safely rejects the stale
+        // pointer here; calling worker->targetDevice() before this check would be a UAF.
+        if (m_reportedWorkers.contains(worker)) {
+            return;
+        }
+        m_reportedWorkers.insert(worker);
+
+        devicePath = worker->targetDevice();
+        sak::logError(QString("Drive failed: %1 - %2").arg(devicePath, error).toStdString());
+        m_progress.failedDrives++;
+        m_progress.activeDrives--;
+
+        m_result.failedDrives.append(devicePath);
+        m_result.errorMessages.append(QString("%1: %2").arg(devicePath, error));
+
+        if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
+            m_state = sak::FlashState::Failed;
+            m_result.success = false;
+            finalizeResultMetrics();
+            terminal = true;
+            terminalState = m_state;
+            terminalResult = m_result;
+            terminalMessage = QString("Failed: %1 successful, %2 failed")
+                                  .arg(m_result.successfulDrives.size())
+                                  .arg(m_result.failedDrives.size());
+        }
     }
-    m_reportedWorkers.insert(worker);
-
-    QString devicePath = worker->targetDevice();
-    sak::logError(QString("Drive failed: %1 - %2").arg(devicePath, error).toStdString());
-    m_progress.failedDrives++;
-    m_progress.activeDrives--;
-
-    m_result.failedDrives.append(devicePath);
-    m_result.errorMessages.append(QString("%1: %2").arg(devicePath, error));
 
     Q_EMIT driveFailed(devicePath, error);
 
-    // Check if all drives are done
-    if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
-        m_state = sak::FlashState::Failed;
-        m_result.success = false;
-        finalizeResultMetrics();
-
-        Q_EMIT stateChanged(m_state,
-                            QString("Failed: %1 successful, %2 failed")
-                                .arg(m_result.successfulDrives.size())
-                                .arg(m_result.failedDrives.size()));
-
-        Q_EMIT flashCompleted(m_result);
-
-        cleanupWorkers();
+    if (terminal) {
+        emitTerminalOutcome(terminalState, terminalResult, terminalMessage);
     }
+}
+
+void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
+                                           const sak::FlashResult& result,
+                                           const QString& statusMessage) {
+    Q_EMIT stateChanged(state, statusMessage);
+    Q_EMIT flashCompleted(result);
+    cleanupWorkers();
 }
 
 QString FlashCoordinator::firstDuplicateTarget(const QStringList& targetDrives) {
@@ -566,20 +600,28 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
 }
 
 void FlashCoordinator::updateProgress() {
-    QMutexLocker locker(&m_mutex);
-    m_progress.bytesWritten = 0;
-    double totalSpeed = 0.0;
+    // Compute under the lock, emit the snapshot after releasing it (B10-07): a
+    // direct-connected progressUpdated slot that reads progress()/state() would
+    // otherwise re-lock the non-recursive m_mutex and deadlock.
+    sak::FlashProgress snapshot;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_progress.bytesWritten = 0;
+        double totalSpeed = 0.0;
 
-    for (const auto& worker : m_workers) {
-        m_progress.bytesWritten += worker->bytesWritten();
-        totalSpeed += worker->speedMBps();
+        for (const auto& worker : m_workers) {
+            m_progress.bytesWritten += worker->bytesWritten();
+            totalSpeed += worker->speedMBps();
+        }
+
+        m_progress.speedMBps = totalSpeed;
+        m_progress.percentage = m_progress.getOverallProgress();
+        m_progress.currentOperation =
+            QString("Writing to %1 drives...").arg(m_progress.activeDrives);
+        snapshot = m_progress;
     }
 
-    m_progress.speedMBps = totalSpeed;
-    m_progress.percentage = m_progress.getOverallProgress();
-    m_progress.currentOperation = QString("Writing to %1 drives...").arg(m_progress.activeDrives);
-
-    Q_EMIT progressUpdated(m_progress);
+    Q_EMIT progressUpdated(snapshot);
 }
 
 void FlashCoordinator::finalizeResultMetrics() {
