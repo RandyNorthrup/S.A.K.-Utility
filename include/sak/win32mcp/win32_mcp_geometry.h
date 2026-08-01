@@ -6,10 +6,18 @@
 
 #include <QString>
 
+#include <cstdint>
+
 namespace sak::win32mcp {
 
 // An absurd raw capture rect cannot be allowed to allocate gigabytes before downscaling.
 constexpr int kCaptureMaxEdge = 16'384;
+
+// The per-edge cap alone still permits a 16384x16384 square = 256 megapixels x 4 bytes ~ 1 GiB
+// allocated at full resolution BEFORE downscaling. Bound the total area so the pre-downscale
+// surface stays a few hundred MiB at most; 64 megapixels x 4 = 256 MiB covers any real capture
+// (a 4K monitor is ~8 megapixels) while rejecting the pathological maximal square.
+constexpr int64_t kCaptureMaxPixels = 64LL * 1024 * 1024;
 
 // A downscaled destination size plus the applied dest/source ratio (< 1 when downscaled, 1.0 when
 // the source already fits).

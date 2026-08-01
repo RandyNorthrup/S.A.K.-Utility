@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -225,7 +226,15 @@ bool resolveRegion(const QJsonObject& args, CaptureRequest& req, QString& err) {
         err = QStringLiteral("width and height must be positive");
         return false;
     }
-    req = CaptureRequest{nullptr, x, y, x + w, y + h, 0};
+    // x + w / y + h are signed int additions; a large x/y would overflow (UB) before the capture
+    // validation runs. Compute the far edges in 64-bit and reject anything outside int range.
+    const int64_t right = static_cast<int64_t>(x) + w;
+    const int64_t bottom = static_cast<int64_t>(y) + h;
+    if (right > std::numeric_limits<int>::max() || bottom > std::numeric_limits<int>::max()) {
+        err = QStringLiteral("capture region coordinates are out of range");
+        return false;
+    }
+    req = CaptureRequest{nullptr, x, y, static_cast<int>(right), static_cast<int>(bottom), 0};
     return true;
 }
 

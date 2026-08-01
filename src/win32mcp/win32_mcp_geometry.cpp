@@ -26,6 +26,11 @@ QString validateCaptureRect(int width, int height) {
     if (width > kCaptureMaxEdge || height > kCaptureMaxEdge) {
         return QStringLiteral("The capture region is too large; target a single window.");
     }
+    // Bound the TOTAL area too: width*height*4 bytes are allocated at full resolution before any
+    // downscale, so a maximal square within the per-edge cap would still allocate ~1 GiB.
+    if (static_cast<int64_t>(width) * height > kCaptureMaxPixels) {
+        return QStringLiteral("The capture region is too large; target a single window.");
+    }
     return {};
 }
 

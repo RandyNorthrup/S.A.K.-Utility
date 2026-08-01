@@ -56,6 +56,10 @@ void Win32McpGeometryTests::validateRejectsEmptyAndOversize() {
     QVERIFY(!validateCaptureRect(100, -1).isEmpty());      // negative
     QVERIFY(!validateCaptureRect(16'385, 100).isEmpty());  // over the edge cap
     QVERIFY(validateCaptureRect(1920, 1080).isEmpty());    // ok
+    // B13-01: a maximal square within the per-edge cap (16384x16384 ~ 1 GiB) must be rejected by
+    // the total-area cap, while a large-but-reasonable region (8192x4096 = 32 MP) stays allowed.
+    QVERIFY(!validateCaptureRect(16'384, 16'384).isEmpty());  // ~256 MP -> ~1 GiB, rejected
+    QVERIFY(validateCaptureRect(8192, 4096).isEmpty());       // 32 MP, allowed
 }
 
 void Win32McpGeometryTests::inverseScaleGuardsNonPositive() {
