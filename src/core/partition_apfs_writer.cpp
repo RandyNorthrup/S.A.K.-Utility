@@ -6583,7 +6583,7 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
@@ -6608,7 +6608,7 @@ void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk&
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
     const uint64_t paddrMask = (1ULL << kApfsObjTypeShift) - 1;
     const uint64_t lenMask = (1ULL << kApfsObjTypeShift) - 1;
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
@@ -7134,7 +7134,7 @@ QVector<uint64_t> fsTreeChildPaddrs(const QByteArray& node,
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
@@ -7249,7 +7249,8 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
         const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
         const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
                                        (isRoot ? kApfsBtreeInfoBytes : 0);
-        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const uint32_t nkeys =
+            boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
         const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
@@ -7365,7 +7366,8 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
         const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
         const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
                                        (isRoot ? kApfsBtreeInfoBytes : 0);
-        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const uint32_t nkeys =
+            boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
         const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
@@ -7634,7 +7636,7 @@ void mergeLeafFileExtentRecords(const QByteArray& node,
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                    le16(node, kApfsBtreeNodeTableLengthOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
@@ -7962,7 +7964,8 @@ QVector<ApfsInodeSibling> recoverInodeSiblings(QIODevice* image,
         const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
         const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
                                        (isRoot ? kApfsBtreeInfoBytes : 0);
-        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const uint32_t nkeys =
+            boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
         const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
@@ -8816,9 +8819,6 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     if (paddr == 0 || !readApfsRepairBlock(image, geometry, paddr, &node, blockers)) {
         return entries;
     }
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
-    const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
-                               le16(node, kApfsBtreeNodeTableLengthOffset);
     // Free-queue run values pack backward from the value-area end: blockSize on a non-root
     // leaf (a multi-node tree's leaf) but blockSize - btree_info on the lone root-leaf. Using
     // the fixed blockSize - 40 for a non-root leaf reads its lengths 40 bytes off. Derive the
@@ -8826,6 +8826,9 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
+    const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
+    const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
+                               le16(node, kApfsBtreeNodeTableLengthOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
         const uint16_t voff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
@@ -8859,8 +8862,8 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
     // Index root: 8-byte child-oid values packed backward from the root value-area end
     // (blockSize - btree_info). Read the child oids via the TOC value offsets so the packing
     // stays authoritative.
-    const uint32_t nkeys = le32(root, kApfsBtreeNodeCountOffset);
     const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    const uint32_t nkeys = boundedNodeKeyCount(root, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
     QVector<ApfsFreeQueueEntry> entries;
     for (uint32_t index = 0; index < nkeys; ++index) {
         const uint16_t voff = le16(root, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
@@ -23545,7 +23548,9 @@ QVector<QPair<quint64, quint64>> PartitionApfsWriter::readMainFreeQueueTreeBlock
     // Decode one free-queue leaf block into {xid, paddr} pairs, mirroring parseFreeQueueEntries
     // (root-flag-aware value area) but without needing an on-disk device.
     const auto decodeLeaf = [block_size, &out](const QByteArray& node) {
-        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const uint32_t nkeys = boundedNodeKeyCount(node,
+                                                   static_cast<qsizetype>(block_size),
+                                                   kApfsBtreeFixedTocEntryBytes);
         const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
                                    le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
