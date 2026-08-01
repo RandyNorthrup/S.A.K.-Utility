@@ -37,6 +37,7 @@ private Q_SLOTS:
     // ── startFlash guards ───────────────────────────────────
     void testStartFlashEmptyDrives();
     void testStartFlashRejectsDuplicateTargets();
+    void testFirstDuplicateTargetSeam();
     void testCancelWhenIdle();
 
 private:
@@ -139,6 +140,24 @@ void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
         }
     }
     QVERIFY2(sawDuplicate, "expected a Duplicate target device flashError");
+}
+
+void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
+    // Distinct targets -> empty (no duplicate).
+    QVERIFY(FlashCoordinator::firstDuplicateTarget(
+                {QStringLiteral("\\\\.\\PhysicalDrive1"), QStringLiteral("\\\\.\\PhysicalDrive2")})
+                .isEmpty());
+    QVERIFY(FlashCoordinator::firstDuplicateTarget({}).isEmpty());
+
+    // Exact duplicate -> returns the offending path.
+    QCOMPARE(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive3"),
+                                                     QStringLiteral("\\\\.\\PhysicalDrive3")}),
+             QStringLiteral("\\\\.\\PhysicalDrive3"));
+
+    // Case- and whitespace-insensitive: the same disk written two ways is still a dup.
+    QVERIFY(!FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive4"),
+                                                     QStringLiteral("  \\\\.\\PHYSICALDRIVE4 ")})
+                 .isEmpty());
 }
 
 void TestFlashCoordinator::testCancelWhenIdle() {

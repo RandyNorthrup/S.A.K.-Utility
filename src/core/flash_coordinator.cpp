@@ -70,17 +70,6 @@ bool physicalDriveHostsSystemVolume(int driveNumber) {
 // Returns the first target path that appears more than once (case-insensitive,
 // since Windows device paths are not case-sensitive), or an empty string if all
 // targets are distinct.
-QString firstDuplicateTarget(const QStringList& targetDrives) {
-    QSet<QString> seen;
-    for (const QString& devicePath : targetDrives) {
-        const QString key = devicePath.trimmed().toLower();
-        if (seen.contains(key)) {
-            return devicePath;
-        }
-        seen.insert(key);
-    }
-    return QString();
-}
 }  // namespace
 
 FlashCoordinator::FlashCoordinator(QObject* parent)
@@ -439,6 +428,18 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
 
         cleanupWorkers();
     }
+}
+
+QString FlashCoordinator::firstDuplicateTarget(const QStringList& targetDrives) {
+    QSet<QString> seen;
+    for (const QString& devicePath : targetDrives) {
+        const QString key = devicePath.trimmed().toLower();
+        if (seen.contains(key)) {
+            return devicePath;
+        }
+        seen.insert(key);
+    }
+    return QString();
 }
 
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {

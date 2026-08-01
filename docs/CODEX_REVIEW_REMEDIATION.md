@@ -289,12 +289,12 @@ Part 1 (B3-01..06 root) committed d0f0d72. Part 2 (controller/panel joins) here:
 - [x] CERT B9: firewall-fail-closed + wifi per-BSSID + bounds + injection tests; suite green. DONE 2026-07-31: full Release offscreen `ctest` = 100% pass, 199/199 (grew 192->199 this session by wiring 7 previously-orphaned test targets: test_wifi_analyzer, test_bandwidth_tester, test_connectivity_tester, test_dns_diagnostic_tool + earlier test_recycle_bin/test_imap_uploader/test_firewall_rule_auditor/test_ethernet_config_manager). Covers firewall fail-closed + rulesConflict, wifi per-BSSID deriveBssSecurity (incl. evil-twin-open-stays-insecure), connectivity sanitizeConfig bounds, DNS record-type/HTML-injection escaping, iperf parse-not-a-success, port maxConcurrent concurrency, ethernet MAC lookup, transfer byte cap.
 
 ## BATCH 10 -- Apps / supply-chain
-- [ ] B10-01 [CRIT] src/core/windows_usb_creator.cpp:103 -- (see B2-04).
-- [ ] B10-02 [CRIT] src/core/flash_coordinator.cpp:384 -- (see B2-05).
-- [ ] B10-03 [CRIT] src/core/leftover_scanner.cpp:891 -- (see B2-06).
-- [ ] B10-04 [CRIT] src/core/advanced_uninstall_controller.cpp:215 -- (see B2-07).
-- [ ] B10-05 [CRIT] src/core/flash_coordinator.cpp:515 -- (see B4-08).
-- [ ] B10-06 [HIGH] flash_coordinator.cpp:168 -- duplicate target paths not rejected (concurrent same-disk write). Fix: reject dup.
+- [x] B10-01 [CRIT] src/core/windows_usb_creator.cpp:103 -- (see B2-04). DUP: already fixed+certified as B2-04 (guardTargetDiskSafe preflight, fail-closed). Verified present in current tree.
+- [x] B10-02 [CRIT] src/core/flash_coordinator.cpp:384 -- (see B2-05). DUP: already fixed+certified as B2-05 (physicalDriveHostsSystemVolume blocks OS-disk targets). Verified present.
+- [x] B10-03 [CRIT] src/core/leftover_scanner.cpp:891 -- (see B2-06). DUP: already fixed+certified as B2-06 (installLocation exempt only as STRICT subfolder of protected root). Verified present.
+- [x] B10-04 [CRIT] src/core/advanced_uninstall_controller.cpp:215 -- (see B2-07). DUP: already fixed+certified as B2-07 (GUI path screens every item via leftover_cleanup_item_guard.h before CleanupWorker). Verified present.
+- [x] B10-05 [CRIT] src/core/flash_coordinator.cpp:515 -- (see B4-08). DUP: already fixed+certified as B4-08 (refuse-to-stop worker DETACHED, not terminate()'d mid-raw-write). Verified present.
+- [x] B10-06 [HIGH] flash_coordinator.cpp:168 -- duplicate target paths not rejected (concurrent same-disk write). Fix: reject dup. WHAT: already implemented (validateTargets rejects via firstDuplicateTarget, case-/whitespace-insensitive) + integration-tested (testStartFlashRejectsDuplicateTargets). This session promoted firstDuplicateTarget from an anonymous-namespace free function to a public static seam FlashCoordinator::firstDuplicateTarget and added a direct pure-seam test (distinct->empty, empty-list->empty, exact-dup->offending path, PHYSICALDRIVE4 vs "  ...drive4 " case+trim still dup). CERT: test_flash_coordinator 14/14 Release offscreen; lizard+clang-format pass.
 - [ ] B10-07 [HIGH] flash_coordinator.cpp:285 -- signals emitted while m_mutex held; direct slots calling locked getters deadlock. Fix: emit unlocked.
 - [ ] B10-08 [HIGH] src/core/uup_dump_api.cpp:109 + linux_distro_catalog.cpp:648 -- abort() synchronously removes from list being range-iterated -> iterator invalidation. Fix: snapshot before abort.
 - [ ] B10-09 [HIGH] src/core/advanced_uninstall_controller.cpp:544,447 -- enum shutdown force-terminates, ignores second wait, permits child QThread destroy while running; uninstall completion Idle before thread exits -> next op destroys running worker. Fix: check waits, delay Idle.

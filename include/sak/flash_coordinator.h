@@ -143,6 +143,13 @@ public:
      */
     bool startFlash(const QString& imagePath, const QStringList& targetDrives);
 
+    /// @brief Return the first target device path that appears more than once in
+    ///        @p targetDrives (case-/whitespace-insensitive), or empty if all are
+    ///        distinct. Two workers writing the SAME physical disk concurrently
+    ///        interleave their raw writes and corrupt each other, so a duplicate is
+    ///        rejected before flashing. Pure; unit-testable.
+    [[nodiscard]] static QString firstDuplicateTarget(const QStringList& targetDrives);
+
     /**
      * @brief Cancel ongoing flash operation
      */
