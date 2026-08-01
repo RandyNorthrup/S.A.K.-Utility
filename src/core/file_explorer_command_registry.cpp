@@ -252,7 +252,21 @@ bool isBrowseCommand(const FileExplorerCommandId id) {
 
 bool isReadCommand(const FileExplorerCommandId id) {
     using enum FileExplorerCommandId;
-    return id == Preview || id == Hash || id == CopyOut || id == CopyItems;
+    // Compress reads the selected sources, and every extract/flatten variant
+    // reads the archive; they are also write operations, but the write gate does
+    // not imply readability, so a source that cannot be read must disable them
+    // too (defense in depth: on real targets write already implies read).
+    static constexpr auto kReadCommands = std::to_array({Preview,
+                                                         Hash,
+                                                         CopyOut,
+                                                         CopyItems,
+                                                         CompressIntoZip,
+                                                         ExtractFiles,
+                                                         ExtractHere,
+                                                         ExtractHereSmart,
+                                                         ExtractToChildFolder,
+                                                         FlattenFolder});
+    return std::ranges::find(kReadCommands, id) != kReadCommands.end();
 }
 
 // Cross-pane copy needs a readable source and a writable destination. A raw source

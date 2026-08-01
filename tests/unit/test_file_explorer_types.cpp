@@ -796,6 +796,61 @@ private Q_SLOTS:
         QCOMPARE(delete_item.message(), QStringLiteral("3/3 items processed"));
     }
 
+    void statusCenterCardTransitionsOnTerminalProgress() {
+        // B8-22: a terminal status arriving through reportProgress must leave the
+        // in-progress state. Before the fix only m_return_result changed, so the
+        // card spun forever, still counted as in-progress, and was never reaped.
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.items_count = 2;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QVERIFY(item.isInProgress());
+        QCOMPARE(item.kind(), sak::FileExplorerStatusItemKind::InProgress);
+
+        sak::FileExplorerStatusProgress progress;
+        progress.status = sak::FileExplorerReturnResult::Success;
+        progress.enumeration_completed = true;
+        progress.items_count = 2;
+        progress.processed_items_count = 2;
+        item.reportProgress(progress);
+        QVERIFY(!item.isInProgress());
+        QVERIFY(!item.isCancelable());
+        QCOMPARE(item.kind(), sak::FileExplorerStatusItemKind::Successful);
+        QCOMPARE(item.iconKind(), sak::FileExplorerStatusIconKind::Successful);
+
+        // A failure status maps to the error kind and also leaves in-progress.
+        sak::FileExplorerStatusCenterItem failing(request);
+        sak::FileExplorerStatusProgress fail_progress;
+        fail_progress.status = sak::FileExplorerReturnResult::Failed;
+        failing.reportProgress(fail_progress);
+        QVERIFY(!failing.isInProgress());
+        QCOMPARE(failing.kind(), sak::FileExplorerStatusItemKind::Error);
+    }
+
+    void registryReadGatesCompressAndExtract() {
+        using sak::FileExplorerCommandId;
+        // B8-22: compress reads its sources and extract reads the archive, so a
+        // target that can WRITE but not READ must disable them. The only delta
+        // between the two targets is can_read_files, so a change in the enabled
+        // state isolates the read gate.
+        const auto unreadable = rawTarget(QStringLiteral("apfs"), true, false, true);
+        const auto readable = rawTarget(QStringLiteral("apfs"), true, true, true);
+        const auto blocked = contextFor(unreadable, true);
+        const auto ready = contextFor(readable, true);
+        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip,
+                                                         blocked)
+                     .enabled);
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip, ready)
+                .enabled);
+        QVERIFY(
+            !sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ExtractHere, blocked)
+                 .enabled);
+    }
+
     void statusProgressReporterThrottlesAndComputesDeltaSpeed() {
         qint64 now_ms = 0;
         int delivered = 0;

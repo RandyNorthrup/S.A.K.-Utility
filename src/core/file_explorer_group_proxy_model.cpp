@@ -30,6 +30,30 @@ bool bucketBefore(const GroupBucket& lhs, const GroupBucket& rhs) {
     return QString::localeAwareCompare(lhs.info.text, rhs.info.text) < 0;
 }
 
+// The source-model role whose value feeds the given grouping key, or -1 when the
+// grouping does not depend on any single role. A dataChanged touching this role
+// (or the whole-row "all roles" signal) can move a row between group sections.
+int groupingKeyRole(const FileExplorerGroupOption option) {
+    using enum FileExplorerGroupOption;
+    switch (option) {
+    case Name:
+        return FileExplorerItemModel::EntryNameRole;
+    case DateModified:
+        return FileExplorerItemModel::EntryModifiedTimeRole;
+    case DateCreated:
+        return FileExplorerItemModel::EntryCreatedTimeRole;
+    case Size:
+        return FileExplorerItemModel::EntrySizeRole;
+    case FileType:
+        return FileExplorerItemModel::EntryTypeRole;
+    case FileTag:
+        return FileExplorerItemModel::EntryTagsRole;
+    case None:
+        return -1;
+    }
+    return -1;
+}
+
 }  // namespace
 
 FileExplorerGroupProxyModel::FileExplorerGroupProxyModel(QObject* parent)
@@ -52,27 +76,33 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
     // Structure changes regroup via a full reset: group membership can move
     // arbitrarily, and the explorer reloads listings through model resets
     // anyway, so surgical row moves would add complexity without a consumer.
-    connect(source_model, &QAbstractItemModel::modelAboutToBeReset, this, [this]() {
-        beginResetModel();
-    });
-    connect(source_model, &QAbstractItemModel::modelReset, this, [this]() {
-        rebuildGroups();
-        endResetModel();
-    });
-    connect(source_model, &QAbstractItemModel::rowsAboutToBeInserted, this, [this]() {
-        beginResetModel();
-    });
-    connect(source_model, &QAbstractItemModel::rowsInserted, this, [this]() {
-        rebuildGroups();
-        endResetModel();
-    });
-    connect(source_model, &QAbstractItemModel::rowsAboutToBeRemoved, this, [this]() {
-        beginResetModel();
-    });
-    connect(source_model, &QAbstractItemModel::rowsRemoved, this, [this]() {
-        rebuildGroups();
-        endResetModel();
-    });
+    // Every "about to change" routes through beginSourceReset and its "done"
+    // through endSourceReset, which depth-guard the bracket so overlapping
+    // source signals cannot nest beginResetModel (which Qt forbids).
+    connect(source_model,
+            &QAbstractItemModel::modelAboutToBeReset,
+            this,
+            &FileExplorerGroupProxyModel::beginSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::modelReset,
+            this,
+            &FileExplorerGroupProxyModel::endSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsAboutToBeInserted,
+            this,
+            &FileExplorerGroupProxyModel::beginSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsInserted,
+            this,
+            &FileExplorerGroupProxyModel::endSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsAboutToBeRemoved,
+            this,
+            &FileExplorerGroupProxyModel::beginSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsRemoved,
+            this,
+            &FileExplorerGroupProxyModel::endSourceReset);
     connect(source_model,
             &QAbstractItemModel::layoutAboutToBeChanged,
             this,
@@ -81,17 +111,31 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
             &QAbstractItemModel::layoutChanged,
             this,
             &FileExplorerGroupProxyModel::onSourceLayoutChanged);
+    connectDataChangedSignal(source_model);
+}
+
+void FileExplorerGroupProxyModel::connectDataChangedSignal(QAbstractItemModel* source_model) {
     connect(source_model,
             &QAbstractItemModel::dataChanged,
             this,
             [this](const QModelIndex& top_left,
                    const QModelIndex& bottom_right,
                    const QList<int>& roles) {
-                // Group membership only changes with re-sorts or resets; a
-                // plain data repaint (cut dimming, tag refresh) maps through.
                 if (!top_left.isValid() || !bottom_right.isValid()) {
                     return;
                 }
+                if (dataChangeAffectsGrouping(roles)) {
+                    // The changed data feeds the current grouping key (e.g. an
+                    // in-place tag refresh while grouped by tag), so membership
+                    // can move. Regroup through the layout-change path, which
+                    // preserves the selection, instead of repainting rows that
+                    // now belong in a different section.
+                    onSourceLayoutAboutToBeChanged();
+                    onSourceLayoutChanged();
+                    return;
+                }
+                // A plain data repaint (cut dimming, icon/check refresh) that
+                // does not touch the grouping key maps straight through.
                 for (int row = top_left.row(); row <= bottom_right.row(); ++row) {
                     const QModelIndex proxy_top =
                         mapFromSource(sourceModel()->index(row, top_left.column()));
@@ -102,6 +146,33 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
                     }
                 }
             });
+}
+
+void FileExplorerGroupProxyModel::beginSourceReset() {
+    // Only the outermost source bracket opens the proxy reset. A batched source
+    // that emits a second "about to change" before the first "done" would
+    // otherwise nest beginResetModel, which Qt forbids and which corrupts the
+    // model's reset state.
+    if (m_reset_depth++ == 0) {
+        beginResetModel();
+    }
+}
+
+void FileExplorerGroupProxyModel::endSourceReset() {
+    if (m_reset_depth > 0 && --m_reset_depth == 0) {
+        rebuildGroups();
+        endResetModel();
+    }
+}
+
+bool FileExplorerGroupProxyModel::dataChangeAffectsGrouping(const QList<int>& roles) const {
+    if (!grouped()) {
+        return false;
+    }
+    const int key_role = groupingKeyRole(m_option);
+    // An empty role list means "every role changed"; otherwise regroup only when
+    // the specific grouping-key role is among the changed ones.
+    return key_role >= 0 && (roles.isEmpty() || roles.contains(key_role));
 }
 
 void FileExplorerGroupProxyModel::onSourceLayoutAboutToBeChanged() {

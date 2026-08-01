@@ -141,6 +141,10 @@ private:
     [[nodiscard]] QVariant decorationForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QString completedRenameName(const FileManagementEntry& entry,
                                               const QString& edited) const;
+    // After sort() permutes m_entries, move each persistent index to the row its
+    // item (identified by @p held_paths, captured before the sort) now occupies.
+    void remapPersistentIndexesByPath(const QModelIndexList& old_indexes,
+                                      const QStringList& held_paths);
 
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};

@@ -333,6 +333,18 @@ void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
     }
 
     Q_EMIT layoutAboutToBeChanged();
+    // Remember which entry each persistent index points at (by its unique path)
+    // BEFORE the permutation, so the selection, the current index, and any open
+    // editor follow their items instead of aliasing whatever row later lands at
+    // that number. Emitting layoutChanged without remapping persistent indexes
+    // violates the model contract and silently retargets the selection.
+    const QModelIndexList old_indexes = persistentIndexList();
+    QStringList held_paths;
+    held_paths.reserve(old_indexes.size());
+    for (const QModelIndex& held : old_indexes) {
+        held_paths.append(hasEntry(held.row()) ? m_entries.at(held.row()).path : QString());
+    }
+
     std::stable_sort(m_entries.begin(),
                      m_entries.end(),
                      [column, order](const auto& left, const auto& right) {
@@ -342,7 +354,26 @@ void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
                          const int compared = compareEntries(left, right, column);
                          return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
                      });
+
+    remapPersistentIndexesByPath(old_indexes, held_paths);
     Q_EMIT layoutChanged();
+}
+
+void FileExplorerItemModel::remapPersistentIndexesByPath(const QModelIndexList& old_indexes,
+                                                         const QStringList& held_paths) {
+    QHash<QString, int> path_to_row;
+    path_to_row.reserve(m_entries.size());
+    for (int row = 0; row < m_entries.size(); ++row) {
+        path_to_row.insert(m_entries.at(row).path, row);
+    }
+    QModelIndexList new_indexes;
+    new_indexes.reserve(old_indexes.size());
+    for (int i = 0; i < old_indexes.size(); ++i) {
+        const int new_row = path_to_row.value(held_paths.at(i), -1);
+        new_indexes.append(new_row < 0 ? QModelIndex()
+                                       : index(new_row, old_indexes.at(i).column()));
+    }
+    changePersistentIndexList(old_indexes, new_indexes);
 }
 
 void FileExplorerItemModel::setEntries(QVector<FileManagementEntry> entries) {

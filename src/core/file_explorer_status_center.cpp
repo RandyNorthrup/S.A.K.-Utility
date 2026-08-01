@@ -303,7 +303,33 @@ void FileExplorerStatusCenterItem::reportProgress(const FileExplorerStatusProgre
     applyProgressMessage(progress);
     updateCardStrings();
     applyProgressPercentAndSpeed(progress);
+    applyTerminalTransition();
     Q_EMIT changed();
+}
+
+// A terminal status arriving through progress must leave the in-progress state,
+// not just update m_return_result: otherwise m_kind/m_in_progress stay stale, so
+// the card spins forever, still counts as in-progress, and completed-item cleanup
+// never reaps it. Flip the kind/icon and clear the in-progress flags to match.
+void FileExplorerStatusCenterItem::applyTerminalTransition() {
+    const int branch = branchForResult(m_return_result);
+    if (branch == 0) {
+        return;  // still running
+    }
+    m_in_progress = false;
+    m_cancelable = false;
+    m_indeterminate = false;
+    m_discovering = false;
+    if (branch == 1) {
+        m_kind = FileExplorerStatusItemKind::Successful;
+        m_icon_kind = FileExplorerStatusIconKind::Successful;
+    } else if (branch == 3) {
+        m_kind = FileExplorerStatusItemKind::Canceled;
+        m_icon_kind = iconForOperation(m_operation);
+    } else {
+        m_kind = FileExplorerStatusItemKind::Error;
+        m_icon_kind = FileExplorerStatusIconKind::Error;
+    }
 }
 
 void FileExplorerStatusCenterItem::applyProgressMessage(

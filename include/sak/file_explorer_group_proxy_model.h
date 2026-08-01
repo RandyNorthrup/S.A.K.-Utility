@@ -63,13 +63,24 @@ public:
 private:
     [[nodiscard]] bool grouped() const;
     void connectSourceSignals(QAbstractItemModel* source_model);
+    void connectDataChangedSignal(QAbstractItemModel* source_model);
     void rebuildGroups();
     void resetWithGroups();
+
+    // Source structural changes drive a full proxy reset. beginSourceReset /
+    // endSourceReset depth-guard the bracket so overlapping source signals never
+    // nest beginResetModel.
+    void beginSourceReset();
+    void endSourceReset();
 
     // Source re-sort (layoutChanged) handling, split so the persistent-index
     // mapping is snapshot before the source re-sorts and remapped after.
     void onSourceLayoutAboutToBeChanged();
     void onSourceLayoutChanged();
+
+    // True when an in-place source dataChanged touched the role feeding the
+    // current grouping key, so the affected rows may need to move sections.
+    [[nodiscard]] bool dataChangeAffectsGrouping(const QList<int>& roles) const;
 
     // Grouped-mode row map: source_row >= 0 is an item; -1 is a header whose
     // text lives in header_text.
@@ -90,6 +101,10 @@ private:
     // held selection/current index to the wrong item).
     QModelIndexList m_layout_proxy_indexes;
     QVector<QPersistentModelIndex> m_layout_source_indexes;
+
+    // Depth of nested source reset brackets; only the outermost drives the proxy
+    // reset (see beginSourceReset / endSourceReset).
+    int m_reset_depth{0};
 };
 
 }  // namespace sak

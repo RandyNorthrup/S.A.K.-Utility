@@ -187,6 +187,7 @@ Q_SIGNALS:
 
 private:
     void applyInitialState(const FileExplorerStatusCardRequest& request);
+    void applyTerminalTransition();
     void applyProgressMessage(const FileExplorerStatusProgress& progress);
     void applyProgressPercentAndSpeed(const FileExplorerStatusProgress& progress);
     void appendGraphPoint(double percent, double speed);

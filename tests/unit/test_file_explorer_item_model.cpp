@@ -583,6 +583,69 @@ private Q_SLOTS:
         QVERIFY(pinned.isValid());
         QCOMPARE(pinned.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
     }
+
+    // B8-22: FileExplorerItemModel::sort permutes m_entries and emits
+    // layoutChanged, so it MUST remap its persistent indexes; without that a
+    // pinned selection / current / open editor silently retargets to whatever
+    // item lands at the old row number.
+    void itemModelSortRemapsPersistentIndexes() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("a.bin"), 20),
+                          fileEntry(QStringLiteral("z.bin"), 400),
+                          fileEntry(QStringLiteral("m.bin"), 50)});
+        model.sort(Model::NameColumn, Qt::AscendingOrder);  // a, m, z
+        const QPersistentModelIndex pinned(model.index(0, Model::NameColumn));
+        QCOMPARE(pinned.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+
+        model.sort(Model::NameColumn, Qt::DescendingOrder);  // z, m, a
+        QVERIFY(pinned.isValid());
+        // The pinned index follows a.bin to its new row, not the item now at row 0.
+        QCOMPARE(pinned.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+        QCOMPARE(pinned.row(), 2);
+    }
+
+    // B8-22: while grouped by a key, an in-place dataChanged that touches that
+    // key (a tag refresh under group-by-tag) must regroup, not leave the item
+    // stranded in its old section.
+    void groupProxyRegroupsOnGroupingKeyChange() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        model.setEntries(
+            {fileEntry(QStringLiteral("a.txt"), 1), fileEntry(QStringLiteral("b.txt"), 2)});
+        QStringList a_tags{QStringLiteral("red")};
+        model.setTagProvider([&a_tags](const QString& path) -> QStringList {
+            return path == QStringLiteral("/a.txt") ? a_tags : QStringList{QStringLiteral("blue")};
+        });
+        sak::FileExplorerSortFilterModel sort_proxy;
+        sort_proxy.setSourceModel(&model);
+        sort_proxy.sort(Model::NameColumn, Qt::AscendingOrder);
+        sak::FileExplorerGroupProxyModel group_proxy;
+        group_proxy.setSourceModel(&sort_proxy);
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::FileTag,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::AscendingOrder);
+
+        const auto sectionOf = [&group_proxy](const QString& name) -> QString {
+            QString header;
+            for (int row = 0; row < group_proxy.rowCount(); ++row) {
+                const QModelIndex idx = group_proxy.index(row, Model::NameColumn);
+                if (idx.data(sak::FileExplorerGroupProxyModel::IsGroupHeaderRole).toBool()) {
+                    header = group_proxy.index(row, 0).data().toString();
+                } else if (idx.data(Model::EntryNameRole).toString() == name) {
+                    return header;
+                }
+            }
+            return QString();
+        };
+
+        QCOMPARE(sectionOf(QStringLiteral("a.txt")), QStringLiteral("red"));
+
+        // Re-tag a.txt and refresh: the tag dataChanged must move it to "green".
+        a_tags = QStringList{QStringLiteral("green")};
+        model.refreshTags();
+        QCOMPARE(sectionOf(QStringLiteral("a.txt")), QStringLiteral("green"));
+    }
 };
 
 QTEST_MAIN(FileExplorerItemModelTests)
