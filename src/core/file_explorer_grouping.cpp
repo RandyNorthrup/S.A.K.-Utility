@@ -30,12 +30,15 @@ struct SizeBucket {
     const char* name;
     const char* range;
 };
+// The thresholds are decimal (SI) byte counts, so the range labels use decimal
+// units (GB/MB/KB) to match -- previously they read GiB/MiB/KiB, which name the
+// binary (1024-based) sizes and so misdescribed every bucket boundary (B8-24).
 constexpr SizeBucket kSizeBuckets[] = {
-    {5'000'000'000ULL, "Huge", "5 GiB +"},
-    {1'000'000'000ULL, "Very large", "1 GiB - 5 GiB"},
-    {128'000'000ULL, "Large", "128 MiB - 1 GiB"},
-    {1'000'000ULL, "Medium", "1 MiB - 128 MiB"},
-    {16'000ULL, "Small", "16 KiB - 1 MiB"},
+    {5'000'000'000ULL, "Huge", "5 GB +"},
+    {1'000'000'000ULL, "Very large", "1 GB - 5 GB"},
+    {128'000'000ULL, "Large", "128 MB - 1 GB"},
+    {1'000'000ULL, "Medium", "1 MB - 128 MB"},
+    {16'000ULL, "Small", "16 KB - 1 MB"},
 };
 
 FileExplorerGroupInfo sizeGroupInfo(const FileExplorerGroupSource& source) {
@@ -52,7 +55,7 @@ FileExplorerGroupInfo sizeGroupInfo(const FileExplorerGroupSource& source) {
         }
         --index;
     }
-    return {QStringLiteral("%1 (%2)").arg(trGroup("Tiny"), trGroup("0 B - 16 KiB")), 0};
+    return {QStringLiteral("%1 (%2)").arg(trGroup("Tiny"), trGroup("0 B - 16 KB")), 0};
 }
 
 // Files AbstractDateTimeFormatter.ToTimeSpanLabel ladder, split by rung. The

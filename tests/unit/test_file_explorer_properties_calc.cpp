@@ -41,8 +41,15 @@ public:
     }
 
     DirectoryLister lister() {
-        return [this](const QString& path, int /*max*/) -> FileManagementListResult {
-            return m_dirs.value(path, FileManagementListResult{});  // default: ok=false
+        return [this](const QString& path, int max) -> FileManagementListResult {
+            FileManagementListResult listing =
+                m_dirs.value(path, FileManagementListResult{});  // default: ok=false
+            // Mimic the real lister's cap so the walk's one-past-the-cap probe
+            // can distinguish an exactly-full directory from a truncated one.
+            if (max > 0 && listing.entries.size() > max) {
+                listing.entries.resize(max);
+            }
+            return listing;
         };
     }
 
@@ -112,15 +119,26 @@ void PropertiesCalcTests::unreadableSubdirMarksIncompleteButKeepsRest() {
 }
 
 void PropertiesCalcTests::entryCapMarksIncomplete() {
-    FakeFs fs;
-    // A directory filled exactly to the entry cap is treated as truncated.
-    fs.add(QStringLiteral("/dir"),
-           {fileEntry(QStringLiteral("/dir/a"), 1), fileEntry(QStringLiteral("/dir/b"), 2)});
+    // A directory holding EXACTLY the cap count is COMPLETE: the walk probes one
+    // past the cap to tell "exactly full" from "truncated", so an exact-cap dir
+    // is no longer wrongly marked incomplete (B8-24).
+    FakeFs exact;
+    exact.add(QStringLiteral("/dir"),
+              {fileEntry(QStringLiteral("/dir/a"), 1), fileEntry(QStringLiteral("/dir/b"), 2)});
+    const TreeSizeResult exact_result =
+        combinedSize(exact.lister(), {dirEntry(QStringLiteral("/dir"))}, 32, /*cap*/ 2);
+    QCOMPARE(exact_result.bytes, static_cast<quint64>(3));
+    QVERIFY(exact_result.complete);
 
-    const TreeSizeResult result =
-        combinedSize(fs.lister(), {dirEntry(QStringLiteral("/dir"))}, 32, /*cap*/ 2);
-    QCOMPARE(result.bytes, static_cast<quint64>(3));
-    QVERIFY(!result.complete);
+    // MORE entries than the cap: the listing was truncated -> incomplete.
+    FakeFs over;
+    over.add(QStringLiteral("/dir"),
+             {fileEntry(QStringLiteral("/dir/a"), 1),
+              fileEntry(QStringLiteral("/dir/b"), 2),
+              fileEntry(QStringLiteral("/dir/c"), 4)});
+    const TreeSizeResult over_result =
+        combinedSize(over.lister(), {dirEntry(QStringLiteral("/dir"))}, 32, /*cap*/ 2);
+    QVERIFY(!over_result.complete);
 }
 
 void PropertiesCalcTests::hashTruncationDetection() {

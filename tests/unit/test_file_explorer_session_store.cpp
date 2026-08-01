@@ -151,6 +151,47 @@ private Q_SLOTS:
         QCOMPARE(loaded.active_index, 0);
     }
 
+    void corruptEnumValuesFallBackToDefaults() {
+        // B8-24: a persisted enum int outside the valid range (a corrupt or
+        // forward-version settings file) must fall back to the default instead
+        // of yielding an out-of-range enum that later switches would mishandle.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString group = QStringLiteral("Session");
+
+        sak::FileExplorerTabSession session;
+        session.tabs.append(makeTab(QStringLiteral("A"),
+                                    QStringLiteral("t1"),
+                                    QStringLiteral("/a"),
+                                    sak::FileExplorerViewMode::Grid));
+        session.tabs[0].primary.view.group_option = sak::FileExplorerGroupOption::Size;
+        {
+            QSettings settings(settingsPath(dir), QSettings::IniFormat);
+            sak::FileExplorerSessionStore::save(settings, group, session);
+        }
+
+        // Overwrite the persisted enum keys for tab 0's primary pane with
+        // out-of-range ints (QSettings arrays are 1-based).
+        {
+            QSettings settings(settingsPath(dir), QSettings::IniFormat);
+            settings.setValue(QStringLiteral("Session/tabs/1/primary/viewMode"), 999);
+            settings.setValue(QStringLiteral("Session/tabs/1/primary/groupOption"), -3);
+            settings.setValue(QStringLiteral("Session/tabs/1/primary/groupDateUnit"), 42);
+            settings.setValue(QStringLiteral("Session/tabs/1/primary/folderPlacement"), 77);
+            settings.setValue(QStringLiteral("Session/tabs/1/primary/sortOrder"), 5);
+        }
+
+        QSettings settings(settingsPath(dir), QSettings::IniFormat);
+        const auto loaded = sak::FileExplorerSessionStore::load(settings, group);
+        QCOMPARE(loaded.tabs.size(), 1);
+        const auto& view = loaded.tabs[0].primary.view;
+        QCOMPARE(view.mode, sak::FileExplorerViewMode::Details);
+        QCOMPARE(view.group_option, sak::FileExplorerGroupOption::None);
+        QCOMPARE(view.group_date_unit, sak::FileExplorerGroupDateUnit::Year);
+        QCOMPARE(view.folder_placement, sak::FileExplorerFolderSortPlacement::FoldersFirst);
+        QCOMPARE(view.sort_order, Qt::AscendingOrder);
+    }
+
     void clearRemovesStoredSession() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());

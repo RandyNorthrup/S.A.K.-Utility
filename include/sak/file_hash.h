@@ -143,9 +143,4 @@ private:
     return file_hasher(hash_algorithm::sha256).calculateHash(file_path);
 }
 
-/// @brief Convert hash bytes to hex string
-/// @param hash_bytes Hash bytes
-/// @return Hex string representation
-[[nodiscard]] std::string hashToHex(std::span<const unsigned char> hash_bytes);
-
 }  // namespace sak

@@ -345,6 +345,10 @@ void FileExplorerTransferWorker::discover(FileExplorerStatusProgressReporter* re
 
 void FileExplorerTransferWorker::discoverHostTree(const QString& path,
                                                   FileExplorerStatusProgressReporter* reporter) {
+    // Sum the tree's BYTES for the size denominator, but do NOT add its entries
+    // to the item count: transferItems advances the item counter once per
+    // top-level selection, so counting nested entries here would inflate the
+    // denominator past what the numerator can ever reach (B8-24).
     QDirIterator it(path,
                     QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
                     QDirIterator::Subdirectories);
@@ -354,11 +358,9 @@ void FileExplorerTransferWorker::discoverHostTree(const QString& path,
         }
         it.next();
         const QFileInfo info = it.fileInfo();
-        ++m_discovered_items;
         if (info.isFile() && !info.isSymLink()) {
             m_discovered_bytes += info.size();
         }
-        reporter->setItemsCount(m_discovered_items);
         reporter->setTotalSize(m_discovered_bytes);
         reporter->report();
     }
@@ -376,13 +378,14 @@ void FileExplorerTransferWorker::discoverRawTree(const QString& path,
         return;
     }
     for (const FileManagementEntry& entry : listing.entries) {
-        ++m_discovered_items;
+        // Bytes-only, as in discoverHostTree: nested entries feed the size
+        // denominator, not the item count that reaches its total per top-level
+        // selection (B8-24).
         if (entry.directory) {
             discoverRawTree(entry.path, depth + 1, reporter);
         } else if (entry.regular_file) {
             m_discovered_bytes += static_cast<qint64>(entry.size_bytes);
         }
-        reporter->setItemsCount(m_discovered_items);
         reporter->setTotalSize(m_discovered_bytes);
         reporter->report();
     }

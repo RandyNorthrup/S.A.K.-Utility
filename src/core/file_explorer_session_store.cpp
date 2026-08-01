@@ -36,15 +36,25 @@ void writePane(QSettings& settings, const QString& prefix, const FileExplorerPan
                       static_cast<int>(pane.view.folder_placement));
 }
 
+// Cast a persisted int to enum E only when it names a valid enumerator in the
+// contiguous [0, max_valid] range; a corrupt or forward-version settings value
+// falls back to `fallback` rather than producing an out-of-range enum that later
+// switches would mishandle (B8-24).
+template <typename E>
+E validatedEnum(const int value, const E max_valid, const E fallback) {
+    return (value >= 0 && value <= static_cast<int>(max_valid)) ? static_cast<E>(value) : fallback;
+}
+
 FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
     FileExplorerPaneState pane;
     pane.location.target_id.value = settings.value(prefix + QStringLiteral("targetId")).toString();
     pane.location.path = settings.value(prefix + QStringLiteral("path")).toString();
-    pane.view.mode = static_cast<FileExplorerViewMode>(
-        settings
-            .value(prefix + QStringLiteral("viewMode"),
-                   static_cast<int>(FileExplorerViewMode::Details))
-            .toInt());
+    pane.view.mode = validatedEnum(settings
+                                       .value(prefix + QStringLiteral("viewMode"),
+                                              static_cast<int>(FileExplorerViewMode::Details))
+                                       .toInt(),
+                                   FileExplorerViewMode::Adaptive,
+                                   FileExplorerViewMode::Details);
     pane.view.show_hidden = settings.value(prefix + QStringLiteral("showHidden"), false).toBool();
     pane.view.show_extensions =
         settings.value(prefix + QStringLiteral("showExtensions"), true).toBool();
@@ -61,27 +71,37 @@ FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
         settings.value(prefix + QStringLiteral("columnsSize"), size_defaults.columns).toInt();
     pane.view.sort_key =
         settings.value(prefix + QStringLiteral("sortKey"), QStringLiteral("name")).toString();
-    pane.view.sort_order = static_cast<Qt::SortOrder>(
+    pane.view.sort_order = validatedEnum(
         settings.value(prefix + QStringLiteral("sortOrder"), static_cast<int>(Qt::AscendingOrder))
-            .toInt());
-    pane.view.group_option = static_cast<FileExplorerGroupOption>(
-        settings
-            .value(prefix + QStringLiteral("groupOption"),
-                   static_cast<int>(FileExplorerGroupOption::None))
-            .toInt());
-    pane.view.group_order = static_cast<Qt::SortOrder>(
+            .toInt(),
+        Qt::DescendingOrder,
+        Qt::AscendingOrder);
+    pane.view.group_option =
+        validatedEnum(settings
+                          .value(prefix + QStringLiteral("groupOption"),
+                                 static_cast<int>(FileExplorerGroupOption::None))
+                          .toInt(),
+                      FileExplorerGroupOption::FileTag,
+                      FileExplorerGroupOption::None);
+    pane.view.group_order = validatedEnum(
         settings.value(prefix + QStringLiteral("groupOrder"), static_cast<int>(Qt::AscendingOrder))
-            .toInt());
-    pane.view.group_date_unit = static_cast<FileExplorerGroupDateUnit>(
-        settings
-            .value(prefix + QStringLiteral("groupDateUnit"),
-                   static_cast<int>(FileExplorerGroupDateUnit::Year))
-            .toInt());
-    pane.view.folder_placement = static_cast<FileExplorerFolderSortPlacement>(
-        settings
-            .value(prefix + QStringLiteral("folderPlacement"),
-                   static_cast<int>(FileExplorerFolderSortPlacement::FoldersFirst))
-            .toInt());
+            .toInt(),
+        Qt::DescendingOrder,
+        Qt::AscendingOrder);
+    pane.view.group_date_unit =
+        validatedEnum(settings
+                          .value(prefix + QStringLiteral("groupDateUnit"),
+                                 static_cast<int>(FileExplorerGroupDateUnit::Year))
+                          .toInt(),
+                      FileExplorerGroupDateUnit::Day,
+                      FileExplorerGroupDateUnit::Year);
+    pane.view.folder_placement =
+        validatedEnum(settings
+                          .value(prefix + QStringLiteral("folderPlacement"),
+                                 static_cast<int>(FileExplorerFolderSortPlacement::FoldersFirst))
+                          .toInt(),
+                      FileExplorerFolderSortPlacement::Together,
+                      FileExplorerFolderSortPlacement::FoldersFirst);
     return pane;
 }
 
@@ -116,9 +136,11 @@ FileExplorerTabSession FileExplorerSessionStore::load(QSettings& settings, const
         settings.setArrayIndex(i);
         FileExplorerTabState tab;
         tab.title = settings.value(QStringLiteral("title")).toString();
-        tab.split = static_cast<FileExplorerPaneSplit>(
+        tab.split = validatedEnum(
             settings.value(QStringLiteral("split"), static_cast<int>(FileExplorerPaneSplit::None))
-                .toInt());
+                .toInt(),
+            FileExplorerPaneSplit::Horizontal,
+            FileExplorerPaneSplit::None);
         tab.secondary_pane_enabled =
             settings.value(QStringLiteral("secondaryEnabled"), false).toBool();
         tab.active_pane_index = settings.value(QStringLiteral("activePane"), 0).toInt();

@@ -23,14 +23,18 @@ TreeSizeResult treeSize(const DirectoryLister& list,
         result.complete = false;
         return result;
     }
-    const FileManagementListResult listing = list(path, max_entries_per_directory);
+    // Probe one past the cap so a directory holding EXACTLY the cap count is not
+    // mistaken for a truncated one: only MORE entries than the cap means the
+    // listing was cut short. Previously an exact-cap directory was always marked
+    // incomplete even when it was whole (B8-24).
+    const int probe_cap = max_entries_per_directory > 0 ? max_entries_per_directory + 1
+                                                        : max_entries_per_directory;
+    const FileManagementListResult listing = list(path, probe_cap);
     if (!listing.ok) {
         result.complete = false;
         return result;
     }
-    // A directory that filled the entry cap was almost certainly truncated, so
-    // its contribution cannot be trusted as complete.
-    if (max_entries_per_directory > 0 && listing.entries.size() >= max_entries_per_directory) {
+    if (max_entries_per_directory > 0 && listing.entries.size() > max_entries_per_directory) {
         result.complete = false;
     }
     for (const FileManagementEntry& entry : listing.entries) {
