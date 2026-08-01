@@ -4696,16 +4696,39 @@ QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStri
     return block;
 }
 
+// Block geometry the format writer enforces on every write: the block size and
+// the target container's total block count (0 == count unknown, bound skipped).
+struct ApfsBlockWriteBounds {
+    uint32_t blockSize = 0;
+    uint64_t containerBlockCount = 0;
+};
+
 bool writeBlock(QIODevice* device,
                 uint64_t blockIndex,
-                uint32_t blockSize,
+                const ApfsBlockWriteBounds& bounds,
                 const QByteArray& block,
                 QStringList* blockers) {
-    if (!device || block.size() != static_cast<qsizetype>(blockSize)) {
+    if (!device || bounds.blockSize == 0 ||
+        block.size() != static_cast<qsizetype>(bounds.blockSize)) {
         blockers->append(QStringLiteral("APFS format block has invalid size"));
         return false;
     }
-    const uint64_t offset = blockIndex * static_cast<uint64_t>(blockSize);
+    // Fail closed if the block index falls outside the target container's block
+    // range: blockIndex * blockSize must never wrap past the container end and
+    // scribble stale data over an unrelated region of a raw device.
+    if (bounds.containerBlockCount != 0 && blockIndex >= bounds.containerBlockCount) {
+        blockers->append(
+            QStringLiteral("APFS format block index %1 is outside the container's %2-block range")
+                .arg(blockIndex)
+                .arg(bounds.containerBlockCount));
+        return false;
+    }
+    if (blockIndex > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) / bounds.blockSize) {
+        blockers->append(
+            QStringLiteral("APFS format block offset for index %1 overflows").arg(blockIndex));
+        return false;
+    }
+    const uint64_t offset = blockIndex * static_cast<uint64_t>(bounds.blockSize);
     if (offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) ||
         !device->seek(static_cast<qint64>(offset)) || device->write(block) != block.size()) {
         blockers->append(QStringLiteral("Unable to write APFS format block %1: %2")
@@ -20166,11 +20189,11 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
 }
 
 bool writeImageBlocks(QIODevice* device,
-                      uint32_t blockSize,
+                      const ApfsBlockWriteBounds& bounds,
                       const QVector<ApfsImageBlock>& blocks,
                       QStringList* blockers) {
     for (const auto& block : blocks) {
-        if (!writeBlock(device, block.first, blockSize, block.second, blockers)) {
+        if (!writeBlock(device, block.first, bounds, block.second, blockers)) {
             return false;
         }
     }
@@ -20899,12 +20922,15 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImage(
     }
 
     QStringList writeBlockers;
+    const uint64_t containerBlockCount = result.plan.target_container_bytes /
+                                         result.plan.block_size_bytes;
     const auto blocks =
-        emptyFormatBlocks(request,
-                          result.plan.target_container_bytes / result.plan.block_size_bytes,
-                          result.plan.volume_name,
-                          &writeBlockers);
-    writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
+        emptyFormatBlocks(request, containerBlockCount, result.plan.volume_name, &writeBlockers);
+    writeImageBlocks(&image,
+                     {.blockSize = request.block_size_bytes,
+                      .containerBlockCount = containerBlockCount},
+                     blocks,
+                     &writeBlockers);
     image.close();
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
@@ -20926,15 +20952,18 @@ void constructZeroAndWriteFormatTarget(const PartitionApfsImageFormatRequest& re
                                        const PartitionApfsImageMutationPlan& plan,
                                        QIODevice* target,
                                        QStringList* writeBlockers) {
-    const auto blocks = emptyFormatBlocks(request,
-                                          plan.target_container_bytes / plan.block_size_bytes,
-                                          plan.volume_name,
-                                          writeBlockers);
+    const uint64_t containerBlockCount = plan.target_container_bytes / plan.block_size_bytes;
+    const auto blocks =
+        emptyFormatBlocks(request, containerBlockCount, plan.volume_name, writeBlockers);
     if (!writeBlockers->isEmpty()) {
         return;  // do NOT touch the target when the block set is incomplete
     }
     if (zeroFormatStaleSignatureRanges(target, request.target_container_bytes, writeBlockers)) {
-        writeImageBlocks(target, request.block_size_bytes, blocks, writeBlockers);
+        writeImageBlocks(target,
+                         {.blockSize = request.block_size_bytes,
+                          .containerBlockCount = containerBlockCount},
+                         blocks,
+                         writeBlockers);
     }
 }
 
@@ -21032,7 +21061,10 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImageWith
                                                    .files = files,
                                                },
                                                &writeBlockers);
-    writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
+    writeImageBlocks(&image,
+                     {.blockSize = request.block_size_bytes, .containerBlockCount = blockCount},
+                     blocks,
+                     &writeBlockers);
     image.close();
 
     result.blockers.append(writeBlockers);
@@ -21075,7 +21107,12 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyPerFileEncrypte
         return result;
     }
     QStringList writeBlockers;
-    writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
+    const uint64_t containerBlockCount = request.target_container_bytes / request.block_size_bytes;
+    writeImageBlocks(&image,
+                     {.blockSize = request.block_size_bytes,
+                      .containerBlockCount = containerBlockCount},
+                     blocks,
+                     &writeBlockers);
     image.close();
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
