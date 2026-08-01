@@ -39,6 +39,8 @@ private Q_SLOTS:
     void testResolveChecksumUrl();
     void testResolveFileName();
 
+    void testCancelAllWithNoPendingIsSafe();
+
     void cleanupTestCase();
 
 private:
@@ -191,6 +193,19 @@ void TestLinuxDistroCatalog::testResolveFileName() {
     QVERIFY(!name.isEmpty());
     QVERIFY(name.endsWith(".iso"));
     QVERIFY(!name.contains("{version}"));
+}
+
+// ============================================================================
+// Cancel (B10-08)
+// ============================================================================
+
+void TestLinuxDistroCatalog::testCancelAllWithNoPendingIsSafe() {
+    // B10-08: cancelAll() snapshots+clears m_pendingReplies before aborting so a
+    // finished()-driven removeOne() cannot invalidate the iteration. With no pending
+    // replies it is a safe no-op; the catalog stays usable afterward.
+    m_catalog->cancelAll();
+    QVERIFY(!m_catalog->allDistros().isEmpty());
+    m_catalog->cancelAll();  // idempotent
 }
 
 // ============================================================================

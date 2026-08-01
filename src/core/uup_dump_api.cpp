@@ -107,13 +107,18 @@ void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QS
 }
 
 void UupDumpApi::cancelAll() {
-    for (QNetworkReply* reply : m_pendingReplies) {
+    // abort() synchronously delivers finished(), whose slot calls
+    // m_pendingReplies.removeOne(reply) -- mutating the very list we would be
+    // range-iterating (iterator invalidation / UB). Snapshot and clear FIRST, then
+    // abort from the copy; the slot's removeOne then no-ops on the empty list.
+    const QList<QNetworkReply*> pending = m_pendingReplies;
+    m_pendingReplies.clear();
+    for (QNetworkReply* reply : pending) {
         if (reply) {
             reply->abort();
             reply->deleteLater();
         }
     }
-    m_pendingReplies.clear();
 }
 
 // --- Static Helpers ---------------------------------------------------------

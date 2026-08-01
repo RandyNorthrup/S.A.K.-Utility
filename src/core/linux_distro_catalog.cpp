@@ -646,9 +646,15 @@ void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
 // ============================================================================
 
 void LinuxDistroCatalog::cancelAll() {
-    for (auto* reply : m_pendingReplies) {
-        reply->abort();
-        reply->deleteLater();
-    }
+    // abort() synchronously delivers finished(), whose slot calls
+    // m_pendingReplies.removeOne(reply) -- mutating the list mid-iteration (UB).
+    // Snapshot and clear FIRST, then abort from the copy.
+    const QList<QNetworkReply*> pending = m_pendingReplies;
     m_pendingReplies.clear();
+    for (auto* reply : pending) {
+        if (reply) {
+            reply->abort();
+            reply->deleteLater();
+        }
+    }
 }
