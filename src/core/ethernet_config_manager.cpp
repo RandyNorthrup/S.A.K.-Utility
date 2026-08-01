@@ -6,6 +6,7 @@
 
 #include "sak/ethernet_config_manager.h"
 
+#include "sak/io_write_utils.h"
 #include "sak/process_runner.h"
 
 #include <QDateTime>
@@ -14,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSysInfo>
 #include <QTextStream>
 
@@ -124,19 +126,25 @@ bool EthernetConfigManager::saveToFile(const EthernetConfigSnapshot& snapshot,
         return false;
     }
 
-    QFile file(filePath);
+    // QSaveFile stages to a temporary and renames on commit(), so a failed or
+    // short write never truncates a pre-existing backup (the previous QFile
+    // opened WriteOnly, truncating the target before writing) (B9-12).
+    QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Cannot write to file: %1").arg(filePath));
         return false;
     }
 
-    QJsonDocument doc(snapshot.toJson());
-    const QByteArray data = doc.toJson(QJsonDocument::Indented);
-    if (file.write(data) != data.size()) {
+    const QJsonDocument doc(snapshot.toJson());
+    if (!sak::writeFully(file, doc.toJson(QJsonDocument::Indented))) {
+        file.cancelWriting();
         Q_EMIT errorOccurred(QString("Incomplete write to file: %1").arg(filePath));
         return false;
     }
-    file.close();
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QString("Could not finalize file: %1").arg(filePath));
+        return false;
+    }
 
     Q_EMIT logOutput(QString("Settings saved to: %1").arg(filePath));
     return true;

@@ -6,8 +6,11 @@
 
 #include "sak/ethernet_config_manager.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -31,6 +34,9 @@ private Q_SLOTS:
     void snapshot_toJson_dhcpEnabled();
     void snapshot_toJson_staticIp();
     void snapshot_toJson_multipleDns();
+
+    // ── File I/O (atomic write) ───────────────────────────────────
+    void saveToFile_atomicRoundTrip();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -167,6 +173,38 @@ void TestEthernetConfigManager::snapshot_toJson_multipleDns() {
     const auto restored = EthernetConfigSnapshot::fromJson(json);
     QCOMPARE(restored.ipv4DnsServers.size(), 3);
     QVERIFY(restored.ipv4DnsServers.contains("1.1.1.1"));
+}
+
+void TestEthernetConfigManager::saveToFile_atomicRoundTrip() {
+    // B9-12: saveToFile writes atomically (QSaveFile) and round-trips through
+    // loadFromFile; overwriting an existing backup must fully replace it rather
+    // than truncate-then-write.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("eth.json"));
+
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = "Ethernet";
+    snapshot.dhcpEnabled = false;
+    snapshot.ipv4Address = "192.168.1.100";
+    snapshot.ipv4SubnetMask = "255.255.255.0";
+    snapshot.ipv4Gateway = "192.168.1.1";
+    snapshot.ipv4DnsServers = {"8.8.8.8"};
+    snapshot.backupTimestamp = "2026-03-08T12:00:00";
+    snapshot.computerName = "WS-01";
+    QVERIFY(snapshot.isValid());
+
+    EthernetConfigManager mgr;
+    QVERIFY(mgr.saveToFile(snapshot, path));
+    QVERIFY(QFileInfo::exists(path));
+    // Overwrite: an atomic writer fully replaces the prior file.
+    QVERIFY(mgr.saveToFile(snapshot, path));
+
+    const auto restored = mgr.loadFromFile(path);
+    QVERIFY(restored.isValid());
+    QCOMPARE(restored.adapterName, snapshot.adapterName);
+    QCOMPARE(restored.ipv4Address, snapshot.ipv4Address);
+    QCOMPARE(restored.ipv4DnsServers, snapshot.ipv4DnsServers);
 }
 
 QTEST_MAIN(TestEthernetConfigManager)

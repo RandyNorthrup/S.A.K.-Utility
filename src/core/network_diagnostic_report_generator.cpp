@@ -6,12 +6,14 @@
 
 #include "sak/network_diagnostic_report_generator.h"
 
+#include "sak/io_write_utils.h"
 #include "sak/report_style_constants.h"
 
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QTextStream>
 
 namespace sak {
@@ -89,32 +91,49 @@ void NetworkDiagnosticReportGenerator::setShareData(const QVector<NetworkShareIn
 }
 
 void NetworkDiagnosticReportGenerator::generateHtml(const QString& outputPath) {
-    QFile file(outputPath);
+    // QSaveFile stages to a temporary and renames on commit(), so a failed or
+    // short write never truncates a pre-existing report. The QTextStream must be
+    // flushed AND destroyed BEFORE commit() -- the previous code closed the file
+    // while the still-live stream held buffered data, then always emitted success
+    // regardless (B9-12).
+    QSaveFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot write to %1").arg(outputPath));
         return;
     }
-
-    QTextStream out(&file);
-    out << toHtml();
-    file.close();
-
+    {
+        QTextStream out(&file);
+        out << toHtml();
+        out.flush();
+        if (out.status() != QTextStream::Status::Ok) {
+            file.cancelWriting();
+            Q_EMIT errorOccurred(QStringLiteral("Incomplete write to %1").arg(outputPath));
+            return;
+        }
+    }
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not finalize %1").arg(outputPath));
+        return;
+    }
     Q_EMIT reportGenerated(outputPath);
 }
 
 void NetworkDiagnosticReportGenerator::generateJson(const QString& outputPath) {
-    QFile file(outputPath);
+    QSaveFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot write to %1").arg(outputPath));
         return;
     }
 
-    const QByteArray data = toJson().toUtf8();
-    if (file.write(data) != data.size()) {
+    if (!sak::writeFully(file, toJson().toUtf8())) {
+        file.cancelWriting();
         Q_EMIT errorOccurred(QStringLiteral("Incomplete write to %1").arg(outputPath));
         return;
     }
-    file.close();
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not finalize %1").arg(outputPath));
+        return;
+    }
 
     Q_EMIT reportGenerated(outputPath);
 }

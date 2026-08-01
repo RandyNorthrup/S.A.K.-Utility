@@ -10,8 +10,12 @@
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -59,6 +63,10 @@ private Q_SLOTS:
     void json_wifiData_serialized();
     void json_firewallData_serialized();
     void json_shareData_serialized();
+
+    // ── File output: atomic write + flush (B9-12) ──
+    void generateHtml_writesCompleteFileAndEmitsSignal();
+    void generateJson_writesValidJsonAndEmitsSignal();
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -430,6 +438,60 @@ void NetworkDiagnosticReportTests::json_shareData_serialized() {
 
     const auto json = gen.toJson();
     QVERIFY(json.contains(QStringLiteral("JsonShare")));
+}
+
+void NetworkDiagnosticReportTests::generateHtml_writesCompleteFileAndEmitsSignal() {
+    // B9-12: generateHtml must flush the stream before finalizing and write the
+    // whole document atomically, then emit reportGenerated only on success. The
+    // old close-before-flush dropped the buffered tail, and success was emitted
+    // unconditionally.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = QDir(dir.path()).filePath(QStringLiteral("report.html"));
+
+    NetworkDiagnosticReportGenerator gen;
+    QSignalSpy done(&gen, &NetworkDiagnosticReportGenerator::reportGenerated);
+    QSignalSpy failed(&gen, &NetworkDiagnosticReportGenerator::errorOccurred);
+    gen.generateHtml(out);
+
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(done.first().at(0).toString(), out);
+
+    QFile file(out);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString html = QString::fromUtf8(file.readAll());
+    // The file holds the COMPLETE document, byte-identical to the string builder
+    // (a flush/truncation bug would drop the tail).
+    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>"), Qt::CaseInsensitive));
+    QVERIFY(html.trimmed().endsWith(QStringLiteral("</html>")));
+    // Byte-identical after normalizing the Text-mode CRLF the writer inserts.
+    QString htmlNormalized = html;
+    htmlNormalized.remove(QLatin1Char('\r'));
+    QCOMPARE(htmlNormalized, gen.toHtml());
+}
+
+void NetworkDiagnosticReportTests::generateJson_writesValidJsonAndEmitsSignal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = QDir(dir.path()).filePath(QStringLiteral("report.json"));
+
+    NetworkDiagnosticReportGenerator gen;
+    QSignalSpy done(&gen, &NetworkDiagnosticReportGenerator::reportGenerated);
+    QSignalSpy failed(&gen, &NetworkDiagnosticReportGenerator::errorOccurred);
+    gen.generateJson(out);
+
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(failed.count(), 0);
+
+    QFile file(out);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
+    QCOMPARE(err.error, QJsonParseError::NoError);
+    QVERIFY(!doc.isNull());
+    QCOMPARE(QString::fromUtf8(bytes).remove(QLatin1Char('\r')), gen.toJson());
 }
 
 QTEST_GUILESS_MAIN(NetworkDiagnosticReportTests)

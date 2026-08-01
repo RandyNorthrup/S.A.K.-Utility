@@ -1261,6 +1261,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_firewall_rule_auditor.cpp")
     message(STATUS "Added unit test: test_firewall_rule_auditor")
 endif()
 
+# test_ethernet_config_manager -- snapshot serialization + B9-12 atomic saveToFile
+# round-trip. (The netsh-driven restore/DHCP path is not unit-tested.)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ethernet_config_manager.cpp")
+    add_executable(test_ethernet_config_manager
+        unit/test_ethernet_config_manager.cpp
+        ../src/core/ethernet_config_manager.cpp
+        ../include/sak/ethernet_config_manager.h  # Q_OBJECT -> AUTOMOC
+        ../src/core/process_runner.cpp
+    )
+    set_target_properties(test_ethernet_config_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ethernet_config_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ethernet_config_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ethernet_config_manager COMMAND test_ethernet_config_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ethernet_config_manager")
+endif()
+
 # test_file_scanner ??? scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner
