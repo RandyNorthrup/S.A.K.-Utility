@@ -5907,6 +5907,39 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     message(STATUS "Added unit test: test_email_report_generator")
 endif()
 
+# test_package_internalization_engine -- B10-11 pure isSafePackageComponent seam
+# (package id / version cannot escape the work dir). No network at runtime.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.cpp")
+    add_executable(test_package_internalization_engine
+        unit/test_package_internalization_engine.cpp
+        ../src/core/package_internalization_engine.cpp
+        ../src/core/install_script_parser.cpp
+        ../src/core/script_rewriter.cpp
+        ../src/core/nuget_api_client.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/package_internalization_engine.h
+        ../include/sak/install_script_parser.h
+        ../include/sak/script_rewriter.h
+        ../include/sak/nuget_api_client.h
+    )
+    set_target_properties(test_package_internalization_engine PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_package_internalization_engine PRIVATE
+        Qt6::Core Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_package_internalization_engine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_package_internalization_engine
+             COMMAND test_package_internalization_engine
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_package_internalization_engine")
+endif()
+
 # test_offline_package_builder ??? builds the Office PC offline deployment bundle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
     add_executable(test_offline_package_builder

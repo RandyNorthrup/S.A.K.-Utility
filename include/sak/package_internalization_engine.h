@@ -126,6 +126,14 @@ public:
     /// @brief Find the chocolateyInstall.ps1 within extracted package
     [[nodiscard]] QString findInstallScript(const QString& extract_dir) const;
 
+    /// @brief True if @p component is safe to use as a single path segment when
+    ///        composing work/extract/output paths from a package id or version.
+    ///        Rejects empty, ".", "..", and any path-separator / drive-colon /
+    ///        control character, so a crafted id/version cannot escape the work dir
+    ///        (traversal, overwrite, or recursive-cleanup outside the work tree).
+    ///        Pure; unit-testable.
+    [[nodiscard]] static bool isSafePackageComponent(const QString& component);
+
 private:
     struct InternalizationPaths {
         QString extract_dir;

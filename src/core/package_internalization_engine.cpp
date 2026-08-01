@@ -147,12 +147,34 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     repackAndFinish(result, paths.extract_dir, output_dir, "Repacking .nupkg...");
 }
 
+bool PackageInternalizationEngine::isSafePackageComponent(const QString& component) {
+    if (component.isEmpty() || component == QLatin1String(".") ||
+        component == QLatin1String("..")) {
+        return false;
+    }
+    for (const QChar c : component) {
+        if (c == QLatin1Char('/') || c == QLatin1Char('\\') || c == QLatin1Char(':') ||
+            c.unicode() < 0x20) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool PackageInternalizationEngine::beginInternalization(const QString& package_id,
                                                         const QString& version,
                                                         QString& resolved_version,
                                                         InternalizationResult& result) {
     if (m_busy) {
         Q_EMIT errorOccurred(package_id, "Engine is already busy");
+        return false;
+    }
+
+    // Reject a package id that would escape the work dir (path separators, "..", drive
+    // colon) BEFORE it is composed into extract/nupkg/output paths (B10-11).
+    if (!isSafePackageComponent(package_id)) {
+        Q_EMIT errorOccurred(package_id,
+                             "Invalid package id: path separators or traversal not allowed");
         return false;
     }
 
@@ -168,6 +190,12 @@ bool PackageInternalizationEngine::beginInternalization(const QString& package_i
     result.version = resolved_version;
     if (resolved_version.isEmpty()) {
         finishWithError(result, "Could not resolve latest version for " + package_id);
+        return false;
+    }
+    // The resolved version is likewise concatenated into paths; reject an unsafe one
+    // (a hostile feed could return a traversal-bearing version string).
+    if (!isSafePackageComponent(resolved_version)) {
+        finishWithError(result, "Resolved version contains unsafe path characters");
         return false;
     }
     m_current_progress.version = resolved_version;
