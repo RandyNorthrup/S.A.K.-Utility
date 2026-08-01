@@ -66,6 +66,16 @@ QJsonObject resultFrame(const QString& id, const QString& cmd, const QJsonObject
                        {QStringLiteral("payload"), payload}};
 }
 
+// A result frame carrying the extension's per-reply DOM-generation marker (domEpoch).
+QJsonObject resultFrameEpoch(const QString& id,
+                             const QString& cmd,
+                             const QJsonObject& payload,
+                             int domEpoch) {
+    QJsonObject frame = resultFrame(id, cmd, payload);
+    frame.insert(QStringLiteral("domEpoch"), domEpoch);
+    return frame;
+}
+
 }  // namespace
 
 class BrowserBridgeTests : public QObject {
@@ -81,6 +91,7 @@ private slots:
     void onReply_errorFrameSurfacesMessageAndRetires();
     void hostReconnect_clearsRefIndexSoStaleRefFails();
     void onDetached_refusesRefActionButAllowsSnapshot();
+    void externalNavigationViaDomEpochInvalidatesRefs();
     void onReply_unexpectedTypeIsError();
     void reply_forgedSnapshotCmdCannotInstallRefIndex();
     void detachDuringSnapshot_replyDoesNotInstallRefIndex();
@@ -172,6 +183,36 @@ void BrowserBridgeTests::snapshot_populatesRefIndexAndClickResolvesBackendNodeId
     QCOMPARE(click.frame.value(QStringLiteral("cmd")).toString(), QStringLiteral("click"));
     QCOMPARE(click.frame.value(QStringLiteral("backendNodeId")).toInt(), 4242);
     QCOMPARE(click.frame.value(QStringLiteral("id")).toString(), QStringLiteral("b-2"));
+}
+
+void BrowserBridgeTests::externalNavigationViaDomEpochInvalidatesRefs() {
+    // B13-04: the extension stamps a domEpoch on every reply; a later reply whose epoch differs
+    // from the snapshot's baseline means the DOM navigated externally (no navigation command from
+    // us), so ref_index must be invalidated -- the production wiring of onDetached().
+    BrowserBridgeSession session;
+    session.onHostConnected();
+
+    // Snapshot at DOM epoch 1 -> ref_index installed, baseline epoch 1, not stale.
+    const auto snap = session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    (void)session.onReply(resultFrameEpoch(snap.frame.value(QStringLiteral("id")).toString(),
+                                           QStringLiteral("snapshot"),
+                                           snapshotPayload(4242, QStringLiteral("Sign in")),
+                                           1));
+    QVERIFY(!session.refIndexStale());
+
+    // A later NON-snapshot reply reports a HIGHER epoch: the page navigated out from under us.
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    (void)session.onReply(resultFrameEpoch(shot.frame.value(QStringLiteral("id")).toString(),
+                                           QStringLiteral("screenshot"),
+                                           screenshotPayload(pngHeaderBase64(10, 10)),
+                                           2));
+    QVERIFY(session.refIndexStale());
+
+    // A ref-based action is now refused until a fresh snapshot re-baselines the DOM.
+    const auto click =
+        session.beginCommand(QStringLiteral("browser_click"),
+                             QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}});
+    QVERIFY(!click.ok);
 }
 
 void BrowserBridgeTests::onReply_errorFrameSurfacesMessageAndRetires() {

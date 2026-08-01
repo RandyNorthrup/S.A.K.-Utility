@@ -121,6 +121,7 @@ void BrowserBridgeSession::onHostConnected() {
     connected_ = true;
     ref_index_ = QJsonObject{};
     ref_index_stale_ = false;
+    have_dom_epoch_ = false;  // new session: no DOM-generation baseline until the first snapshot
     outstanding_id_.clear();
     outstanding_cmd_.clear();
     ++session_epoch_;  // new browser session: any in-flight reply is for a dead one
@@ -130,6 +131,7 @@ void BrowserBridgeSession::onHostDisconnected() {
     connected_ = false;
     ref_index_ = QJsonObject{};
     ref_index_stale_ = false;
+    have_dom_epoch_ = false;
     outstanding_id_.clear();
     outstanding_cmd_.clear();
     ++session_epoch_;
@@ -215,6 +217,25 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
     incoming.text = compactJson(payload);
 }
 
+void BrowserBridgeSession::reconcileDomEpoch(const QString& sent_cmd, const QJsonObject& frame) {
+    if (!frame.contains(QStringLiteral("domEpoch"))) {
+        return;  // an older extension omits the marker: leave the check disabled
+    }
+    const auto epoch = static_cast<quint64>(frame.value(QStringLiteral("domEpoch")).toDouble());
+    // A successful snapshot re-baselines: its ref_index matches THIS DOM generation.
+    if (sent_cmd == QLatin1String("snapshot") && !ref_index_stale_) {
+        dom_epoch_ = epoch;
+        have_dom_epoch_ = true;
+        return;
+    }
+    // Any other reply whose epoch differs from the baseline means the DOM changed underneath our
+    // ref_index -- an EXTERNAL navigation / tab switch / CDP detach we did not command. This is
+    // the production wiring of onDetached(): mark the refs stale until the next snapshot.
+    if (have_dom_epoch_ && epoch != dom_epoch_) {
+        onDetached();
+    }
+}
+
 void BrowserBridgeSession::fillScreenshotResult(const QJsonObject& payload, Incoming& incoming) {
     const QString data = payload.value(QStringLiteral("data")).toString();
     if (data.isEmpty()) {
@@ -295,6 +316,7 @@ BrowserBridgeSession::Incoming BrowserBridgeSession::onReply(const QJsonObject& 
     const QString type = frame.value(QStringLiteral("type")).toString();
     if (type == QLatin1String("result")) {
         fillResult(sent_cmd, sent_epoch, frame, incoming);
+        reconcileDomEpoch(sent_cmd, frame);
         return incoming;
     }
     incoming.is_error = true;

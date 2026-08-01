@@ -127,6 +127,13 @@ let httpAuthCreds = null;
 let port = null;
 let health = { connected: false, bridge: null, error: null };
 let attachedTabId = null;
+// A monotonic DOM-generation counter stamped on every reply (domEpoch). It increments whenever
+// the DOM the bridge's ref_index was captured against goes away out from under us -- a top-frame
+// navigation, an in-document (SPA) route change, or a CDP detach (tab close / DevTools). The
+// bridge compares it across replies and invalidates element refs when it moves, so an external
+// navigation cannot leave a stale ref addressable. (The relay is strict request/reply, so this
+// rides on normal replies rather than an unsolicited event.)
+let domEpoch = 0;
 // The tab whose nodes populated the current ref_index. An element ref (backendNodeId) is
 // only valid against THIS tab: if the active tab changed since the snapshot, applying the
 // ref elsewhere could click/type a node the user never saw, so ref actions refuse.
@@ -237,9 +244,9 @@ async function handleCommand(msg) {
   const cmd = msg.cmd;
   try {
     const payload = await runCommand(cmd, msg);
-    send({ type: "result", id, cmd, payload });
+    send({ type: "result", id, cmd, payload, domEpoch });
   } catch (e) {
-    send({ type: "error", id, cmd, error: e && e.message ? e.message : String(e) });
+    send({ type: "error", id, cmd, error: e && e.message ? e.message : String(e), domEpoch });
   }
 }
 
@@ -429,6 +436,7 @@ async function detachAll(_reason) {
 // The user opening DevTools, or the tab closing, force-detaches our session.
 chrome.debugger.onDetach.addListener((source) => {
   if (source && source.tabId === attachedTabId) {
+    domEpoch++;  // the DOM our refs were captured against is gone
     setTabControlBadge(source.tabId, false);  // control ended; clear the toolbar badge
     attachedTabId = null;
     lastSnapshotTabId = null;
@@ -492,6 +500,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   const topFrameNav =
     method === "Page.frameNavigated" && params && params.frame && !params.frame.parentId;
   if (topFrameNav || method === "Page.navigatedWithinDocument") {
+    domEpoch++;  // the document/route changed: any prior ref_index is stale
     pendingDialogPolicy = null;
     if (topFrameNav) {
       // A new document: any in-flight count from the old page is moot -- reset so a request

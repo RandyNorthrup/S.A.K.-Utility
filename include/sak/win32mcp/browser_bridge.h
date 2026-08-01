@@ -86,10 +86,18 @@ private:
                     Incoming& incoming);
     static void fillScreenshotResult(const QJsonObject& payload, Incoming& incoming);
     static void fillPrintResult(const QJsonObject& payload, Incoming& incoming);
+    // Detect an EXTERNAL DOM change (user navigation / tab switch / CDP detach) reported by the
+    // extension via a per-reply domEpoch: a fresh snapshot re-baselines the epoch our ref_index
+    // was captured at; any later reply carrying a different epoch means our refs are stale.
+    void reconcileDomEpoch(const QString& sent_cmd, const QJsonObject& frame);
 
     bool connected_{false};
     bool ref_index_stale_{false};
     quint64 counter_{0};
+    // The extension's DOM-generation counter that the current ref_index was captured against, and
+    // whether we have observed one yet (an older extension omits domEpoch, disabling the check).
+    quint64 dom_epoch_{0};
+    bool have_dom_epoch_{false};
     // Bumped whenever the browser/DOM identity changes underneath an in-flight op
     // (host connect, host disconnect, CDP detach). A command records the epoch it was
     // issued under; a reply that arrives after the epoch moved cannot install snapshot
