@@ -28,7 +28,6 @@ private Q_SLOTS:
     // ── Configuration ───────────────────────────────────────
     void testSetVerification();
     void testSetBufferSize();
-    void testSetBufferCount();
 
     // ── State queries ───────────────────────────────────────
     void testIsFlashingWhenIdle();
@@ -87,11 +86,6 @@ void TestFlashCoordinator::testSetBufferSize() {
     // Should not crash
     constexpr qint64 size128MB = 128LL * 1024 * 1024;
     m_coord->setBufferSize(size128MB);
-}
-
-void TestFlashCoordinator::testSetBufferCount() {
-    // Should not crash
-    m_coord->setBufferCount(8);
 }
 
 // ============================================================================

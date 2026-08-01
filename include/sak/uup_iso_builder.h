@@ -245,7 +245,6 @@ private:
     // Process management
     std::unique_ptr<QProcess> m_aria2Process;
     std::unique_ptr<QProcess> m_converterProcess;
-    QThread* m_workerThread = nullptr;
 
     // Progress tracking
     QElapsedTimer m_phaseTimer;

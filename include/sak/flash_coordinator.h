@@ -191,11 +191,6 @@ public:
      */
     void setBufferSize(qint64 sizeBytes);
 
-    /**
-     * @brief Set number of buffers for pipeline
-     * @param count Number of buffers (default 16)
-     */
-    void setBufferCount(int count);
 
 Q_SIGNALS:
     /**
@@ -283,7 +278,6 @@ private:
 
     bool m_verificationEnabled;
     qint64 m_bufferSize;
-    int m_bufferCount;
     std::atomic<bool> m_isCancelled;
 
     QStringList m_targetDrives;

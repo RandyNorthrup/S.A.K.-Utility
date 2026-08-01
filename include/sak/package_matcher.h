@@ -61,7 +61,6 @@ public:
         int max_search_results{kPackageMatcherDefaultMaxSearchResults};
         bool verify_availability{true};  // Verify package exists in Chocolatey
         int thread_count{kPackageMatcherDefaultThreadCount};
-        bool use_cache{true};            // Cache search results
     };
 
     // Matching operations

@@ -121,12 +121,6 @@ private:
 
     /// @brief Check if app name indicates a system component to filter
     static bool isSystemComponent(const QString& name);
-
-    /**
-     * @brief Parse AppX package using PowerShell
-     * @return List of AppX packages
-     */
-    std::vector<AppInfo> parseAppXPackages();
 };
 
 }  // namespace sak

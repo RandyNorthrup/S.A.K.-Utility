@@ -21,7 +21,6 @@
 
 namespace {
 constexpr qint64 kDefaultFlashBufferSizeMb = 256;
-constexpr int kDefaultFlashBufferCount = 16;
 constexpr int kMaxPhysicalDriveNumber = 99;
 constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
 
@@ -77,7 +76,6 @@ FlashCoordinator::FlashCoordinator(QObject* parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
     , m_bufferSize(kDefaultFlashBufferSizeMb * sak::kBytesPerMB)
-    , m_bufferCount(kDefaultFlashBufferCount)
     , m_isCancelled(false) {
     m_progress.state = sak::FlashState::Idle;
     m_progress.percentage = 0.0;
@@ -278,10 +276,6 @@ bool FlashCoordinator::isVerificationEnabled() const {
 
 void FlashCoordinator::setBufferSize(qint64 sizeBytes) {
     m_bufferSize = sizeBytes;
-}
-
-void FlashCoordinator::setBufferCount(int count) {
-    m_bufferCount = count;
 }
 
 void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) {
