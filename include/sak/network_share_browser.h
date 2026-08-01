@@ -62,6 +62,14 @@ private:
     [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(const QString& hostname,
                                                             bool testAccess,
                                                             bool& ok);
+    /// Append one NetShareEnum result buffer to @p shares (probing access when asked).
+    /// @p shareInfoBuffer is a PSHARE_INFO_1 passed as void* to keep the Windows LAN
+    /// Manager headers out of this public header.
+    void appendSharesFromBuffer(const void* shareInfoBuffer,
+                                unsigned long entriesRead,
+                                const QString& displayHost,
+                                bool testAccess,
+                                QVector<NetworkShareInfo>& shares);
     [[nodiscard]] QPair<bool, bool> testReadWriteAccess(const QString& uncPath);
 };
 

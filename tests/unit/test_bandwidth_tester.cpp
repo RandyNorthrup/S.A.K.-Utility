@@ -29,6 +29,11 @@ private Q_SLOTS:
     void firewallRuleName_containsPortAndToken();
     void firewallRuleName_uniquePerToken();
     void firewallRuleName_noShellMetacharacters();
+
+    // ── parseIperfJson (bad-output not a success, B9-18) ──────────
+    void parseIperf_rejectsGarbage();
+    void parseIperf_rejectsJsonWithoutEndSummary();
+    void parseIperf_acceptsValidTcpResult();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -139,6 +144,33 @@ void TestBandwidthTester::firewallRuleName_noShellMetacharacters() {
         5201, QStringLiteral("0123456789abcdef0123456789abcdef"));
     QVERIFY(!name.contains(QLatin1Char('"')));
     QVERIFY(!name.contains(QLatin1Char(' ')));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// parseIperfJson -- unparseable output must not read as a zero success (B9-18)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestBandwidthTester::parseIperf_rejectsGarbage() {
+    QVERIFY(!BandwidthTester::parseIperfJson(QByteArrayLiteral("not json at all")).has_value());
+    QVERIFY(!BandwidthTester::parseIperfJson(QByteArray()).has_value());
+}
+
+void TestBandwidthTester::parseIperf_rejectsJsonWithoutEndSummary() {
+    // Valid JSON, but not an iPerf3 result (no `end` throughput summary): must be
+    // rejected rather than yielding an all-zero "success".
+    const auto r = BandwidthTester::parseIperfJson(QByteArrayLiteral("{\"start\":{}}"));
+    QVERIFY(!r.has_value());
+}
+
+void TestBandwidthTester::parseIperf_acceptsValidTcpResult() {
+    const QByteArray json = QByteArrayLiteral(
+        "{\"end\":{\"sum_sent\":{\"bits_per_second\":100000000,\"retransmits\":2},"
+        "\"sum_received\":{\"bits_per_second\":90000000}}}");
+    const auto r = BandwidthTester::parseIperfJson(json);
+    QVERIFY(r.has_value());
+    QCOMPARE(r->uploadMbps, 100.0);   // 100 Mbit/s
+    QCOMPARE(r->downloadMbps, 90.0);  // 90 Mbit/s
+    QCOMPARE(r->retransmissions, 2.0);
 }
 
 QTEST_MAIN(TestBandwidthTester)

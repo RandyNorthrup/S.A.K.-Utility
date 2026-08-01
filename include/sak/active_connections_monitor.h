@@ -76,6 +76,7 @@ private:
     MonitorConfig m_config;
     std::atomic<bool> m_monitoring{false};
     bool m_lastRefreshError = false;
+    bool m_hasBaseline = false;  ///< True once a first successful refresh established a baseline
 
     [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections(
         const QHash<uint32_t, QString>& processNames, bool& readError);

@@ -169,6 +169,12 @@ double measureHttpHeadLatencyMs(const QString& url, int timeoutMs) {
     request.method = NetworkTransferMethod::Head;
     request.timeout_ms = timeoutMs;
     const auto transfer = runNetworkTransfer(request);
+    if (!transfer.success) {
+        // A failed HEAD (timeout / DNS / refused) elapses the full timeout; returning
+        // that as the latency would misreport a dead link as a very high RTT. Signal
+        // "no measurement" instead.
+        return -1.0;
+    }
     return static_cast<double>(transfer.elapsed_ms);
 }
 }  // namespace
@@ -390,18 +396,24 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
         return;
     }
 
-    const QByteArray output = process.std_out;
-    const QByteArray errOutput = process.std_err;
-
     if (process.exit_code != 0) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 failed (exit %1): %2")
                                  .arg(process.exit_code)
-                                 .arg(QString::fromUtf8(errOutput)));
+                                 .arg(QString::fromUtf8(process.std_err)));
         Q_EMIT testComplete({});
         return;
     }
 
-    auto result = parseIperfJson(output);
+    const auto parsed = parseIperfJson(process.std_out);
+    if (!parsed.has_value()) {
+        // Exit 0 but the output was not usable iPerf3 JSON: report an error rather
+        // than a bogus all-zero "successful" result.
+        Q_EMIT errorOccurred(QStringLiteral("iPerf3 completed but returned unparseable output"));
+        Q_EMIT testComplete({});
+        return;
+    }
+
+    auto result = *parsed;
     result.target = config.serverAddress;
     result.mode = BandwidthTestResult::TestMode::LanIperf3;
     result.durationSec = config.durationSec;
@@ -412,18 +424,27 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
     Q_EMIT testComplete(result);
 }
 
-BandwidthTestResult BandwidthTester::parseIperfJson(const QByteArray& json) {
-    Q_ASSERT(!json.isEmpty());
-    BandwidthTestResult result;
-
+std::optional<BandwidthTestResult> BandwidthTester::parseIperfJson(const QByteArray& json) {
     QJsonParseError parseErr;
     const auto doc = QJsonDocument::fromJson(json, &parseErr);
-    if (doc.isNull()) {
-        return result;
+    if (doc.isNull() || !doc.isObject()) {
+        return std::nullopt;  // not valid JSON (or an error object) -> not a successful test
     }
 
     const auto root = doc.object();
     const auto end = root.value(QStringLiteral("end")).toObject();
+
+    // A genuine iperf3 result always carries an `end` summary with a throughput sum
+    // (TCP: sum_sent/sum_received; UDP: sum). Its absence means the output was not a
+    // real result, which must NOT be surfaced as a successful zero-throughput test.
+    const bool hasThroughput = end.contains(QStringLiteral("sum_sent")) ||
+                               end.contains(QStringLiteral("sum_received")) ||
+                               end.contains(QStringLiteral("sum"));
+    if (!hasThroughput) {
+        return std::nullopt;
+    }
+
+    BandwidthTestResult result;
 
     // Parse sent/received sum
     const auto sumSent = end.value(QStringLiteral("sum_sent")).toObject();
@@ -475,6 +496,9 @@ void BandwidthTester::runHttpSpeedTest() {
 
     double latencyMs = measureHttpHeadLatencyMs(
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), kCloudflareLatencyTimeoutMs);
+    if (latencyMs < 0.0) {
+        latencyMs = 0.0;  // unknown latency: report 0 rather than a bogus timeout value
+    }
 
     if (m_cancelled.load()) {
         Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);

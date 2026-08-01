@@ -64,6 +64,14 @@ public:
     /// @brief Check if iPerf3 is available
     [[nodiscard]] bool isIperf3Available() const;
 
+    /// @brief Parse iPerf3 JSON (`-J`) output into a result.
+    ///
+    /// Returns nullopt when the bytes are not valid iPerf3 result JSON (parse error,
+    /// or missing the `end` throughput summary) so a zero-exit run with unusable
+    /// output is reported as an error, not a bogus all-zero "successful" test. Pure
+    /// and static so it can be unit-tested with crafted JSON.
+    [[nodiscard]] static std::optional<BandwidthTestResult> parseIperfJson(const QByteArray& json);
+
     /// @brief Compose the inbound firewall-rule name for an iPerf3 server instance.
     ///
     /// The name embeds a per-instance @p uniqueToken so two concurrent servers (or
@@ -91,7 +99,6 @@ private:
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] QString findIperf3Path() const;
-    [[nodiscard]] BandwidthTestResult parseIperfJson(const QByteArray& json);
     [[nodiscard]] std::optional<double> measureTransferMbps(
         int sample_count, const std::function<std::pair<double, double>()>& sampler);
     void connectServerProcessSignals(const QString& ruleName, uint16_t port);

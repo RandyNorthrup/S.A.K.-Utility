@@ -11,6 +11,7 @@
 
 #include "sak/process_runner.h"
 
+#include <algorithm>
 #include <chrono>
 
 #include <winsock2.h>
@@ -27,7 +28,8 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kIpv4OctetCount = 4;
-}
+constexpr int kMaxOctetValue = 255;
+}  // namespace
 
 DnsDiagnosticTool::DnsDiagnosticTool(QObject* parent) : QObject(parent) {}
 
@@ -61,6 +63,39 @@ QStringList DnsDiagnosticTool::supportedRecordTypes() {
         QStringLiteral("SRV"),
         QStringLiteral("PTR"),
     };
+}
+
+bool DnsDiagnosticTool::isSupportedRecordType(const QString& recordType) {
+    return supportedRecordTypes().contains(recordType, Qt::CaseInsensitive);
+}
+
+bool DnsDiagnosticTool::isNumericIpv4(const QString& ipAddress) {
+    const auto parts = ipAddress.split(QLatin1Char('.'));
+    if (parts.size() != kIpv4OctetCount) {
+        return false;
+    }
+    for (const auto& part : parts) {
+        if (part.isEmpty()) {
+            return false;
+        }
+        bool ok = false;
+        const int value = part.toInt(&ok);
+        if (!ok || value < 0 || value > kMaxOctetValue) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DnsDiagnosticTool::answersEquivalent(const QVector<QString>& a, const QVector<QString>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    QVector<QString> sortedA = a;
+    QVector<QString> sortedB = b;
+    std::sort(sortedA.begin(), sortedA.end());
+    std::sort(sortedB.begin(), sortedB.end());
+    return sortedA == sortedB;
 }
 
 }  // namespace sak
@@ -225,12 +260,18 @@ void DnsDiagnosticTool::query(const QString& hostname,
         return;
     }
 
+    // Reject an unknown record type rather than silently querying A for it.
+    if (!isSupportedRecordType(recordType)) {
+        Q_EMIT errorOccurred(QStringLiteral("Unsupported DNS record type: %1").arg(recordType));
+        Q_EMIT queryComplete({});
+        return;
+    }
+
     auto result = performQuery(hostname, recordType, dnsServer);
     Q_EMIT queryComplete(result);
 }
 
 void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& dnsServer) {
-    Q_ASSERT(!ipAddress.isEmpty());
     m_cancelled.store(false);
 
     if (ipAddress.isEmpty()) {
@@ -239,13 +280,16 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
         return;
     }
 
-    // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
-    const auto parts = ipAddress.split(QLatin1Char('.'));
-    if (parts.size() != kIpv4OctetCount) {
+    // Require four numeric 0..255 octets: a non-numeric part (e.g. "a.b.c.d") would
+    // otherwise build a bogus PTR name and issue a meaningless query.
+    if (!isNumericIpv4(ipAddress)) {
         Q_EMIT errorOccurred(QStringLiteral("Invalid IPv4 address format"));
         Q_EMIT queryComplete({});
         return;
     }
+
+    // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
+    const auto parts = ipAddress.split(QLatin1Char('.'));
 
     QString reverseName;
     for (int i = parts.size() - 1; i >= 0; --i) {
@@ -273,7 +317,7 @@ void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
 
     if (firstAnswers.isEmpty() && result.success) {
         firstAnswers = result.answers;
-    } else if (result.success && result.answers != firstAnswers) {
+    } else if (result.success && !answersEquivalent(result.answers, firstAnswers)) {
         comparison.allAgree = false;
     }
 }
@@ -285,6 +329,12 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 
     if (hostname.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
+        Q_EMIT comparisonComplete({});
+        return;
+    }
+
+    if (!isSupportedRecordType(recordType)) {
+        Q_EMIT errorOccurred(QStringLiteral("Unsupported DNS record type: %1").arg(recordType));
         Q_EMIT comparisonComplete({});
         return;
     }
@@ -369,7 +419,10 @@ void DnsDiagnosticTool::flushDnsCache() {
     }
 
     if (!ok) {
+        // Do not emit dnsCacheFlushed() on failure -- that signal means the cache was
+        // actually flushed, and firing it here would report a false success.
         Q_EMIT errorOccurred(QStringLiteral("Failed to flush the DNS resolver cache."));
+        return;
     }
     Q_EMIT dnsCacheFlushed();
 }

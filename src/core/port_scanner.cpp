@@ -27,6 +27,9 @@ struct TcpProbeResult {
     bool connected{false};
     bool timed_out{false};
     QString error_message;
+    /// The socket error enum, so callers classify (e.g. connection-refused) via the
+    /// stable value rather than the localized errorString() text.
+    QAbstractSocket::SocketError socket_error{QAbstractSocket::UnknownSocketError};
     QByteArray banner;
     double response_time_ms{0.0};
 };
@@ -135,6 +138,7 @@ void connectTcpProbeSocket(const TcpProbeContextPtr& probe) {
                          if (probe->finished || error == QAbstractSocket::RemoteHostClosedError) {
                              return;
                          }
+                         probe->result.socket_error = error;
                          probe->result.error_message = probe->socket->errorString();
                          finishTcpProbe(probe);
                      });
@@ -374,7 +378,9 @@ PortScanResult PortScanner::scanPort(const QString& target,
             result.banner = QString::fromUtf8(probe.banner).trimmed();
             result.banner.remove(QLatin1Char('\0'));
         }
-    } else if (probe.error_message.contains(QStringLiteral("refused"), Qt::CaseInsensitive)) {
+    } else if (probe.socket_error == QAbstractSocket::ConnectionRefusedError) {
+        // Classify via the stable socket-error enum, not the localized "refused" text,
+        // so closed ports are detected on non-English Windows too.
         result.state = PortScanResult::State::Closed;
     } else if (probe.timed_out) {
         result.state = PortScanResult::State::Filtered;

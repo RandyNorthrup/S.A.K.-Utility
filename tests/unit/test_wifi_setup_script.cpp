@@ -33,6 +33,7 @@ private Q_SLOTS:
     void refusesUnsafeSsidWithQuote();
     void refusesSsidWithControlChar();
     void refusesEmptySsid();
+    void refusesOverlongSsid();
     void neutralizesBatchMetacharacters();
     void usesUniqueTempFileAndWipesOnBothPaths();
     void usesPassphraseOnlyForWpa();
@@ -138,6 +139,20 @@ void TestWifiSetupScript::refusesEmptySsid() {
     QVERIFY(sak::buildWifiSetupScriptWindows(
                 QString(), QStringLiteral("pw"), QStringLiteral("wpa2"), false)
                 .isEmpty());
+}
+
+void TestWifiSetupScript::refusesOverlongSsid() {
+    // B9-18: an 802.11 SSID is at most 32 octets. A 33-byte SSID must be refused, and
+    // a 32-byte one accepted. Enforced on UTF-8 byte length, not character count.
+    const QString ssid33(33, QLatin1Char('a'));
+    QVERIFY(sak::buildWifiSetupScriptWindows(
+                ssid33, QStringLiteral("pw"), QStringLiteral("wpa2"), false)
+                .isEmpty());
+
+    const QString ssid32(32, QLatin1Char('a'));
+    QVERIFY(!sak::buildWifiSetupScriptWindows(
+                 ssid32, QStringLiteral("pw"), QStringLiteral("wpa2"), false)
+                 .isEmpty());
 }
 
 void TestWifiSetupScript::neutralizesBatchMetacharacters() {

@@ -392,7 +392,6 @@ void ConnectivityTester::ping(const PingConfig& rawConfig) {
     PingResult result;
     result.target = config.target;
     result.resolvedIP = targetIP;
-    result.sent = config.count;
 
     QVector<double> rtts;
 
@@ -418,6 +417,10 @@ void ConnectivityTester::ping(const PingConfig& rawConfig) {
             QThread::msleep(static_cast<unsigned long>(config.intervalMs));
         }
     }
+
+    // Report the number actually sent (== attempts made), not the configured count:
+    // a cancelled run stops early, and loss stats must reflect real attempts.
+    result.sent = static_cast<int>(result.replies.size());
 
     computePingStats(result, rtts);
 

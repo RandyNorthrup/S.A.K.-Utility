@@ -274,7 +274,7 @@ QString NetworkDiagnosticReportGenerator::buildDnsSection() const {
 
         html += QStringLiteral("<h3>%1 (%2) via %3 -- <span class=\"%4\">%5</span> (%6 ms)</h3>\n")
                     .arg(r.queryName.toHtmlEscaped(),
-                         r.recordType,
+                         r.recordType.toHtmlEscaped(),
                          r.dnsServer.toHtmlEscaped(),
                          statusClass,
                          statusText)
@@ -379,15 +379,18 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
 
         const auto connected = net.isConnected ? QStringLiteral(" *") : QString();
 
-        html += QStringLiteral(
-                    "<tr><td>%1%2</td><td>%3</td>"
-                    "<td class=\"%4\">%5 dBm (%6%%)</td>"
-                    "<td>%7</td><td>%8</td><td>%9</td><td>%10</td></tr>\n")
-                    .arg(net.ssid.toHtmlEscaped(), connected, net.bssid, signalClass)
-                    .arg(net.rssiDbm)
-                    .arg(net.signalQuality)
-                    .arg(net.channelNumber)
-                    .arg(net.band, net.authentication, net.apVendor);
+        html +=
+            QStringLiteral(
+                "<tr><td>%1%2</td><td>%3</td>"
+                "<td class=\"%4\">%5 dBm (%6%%)</td>"
+                "<td>%7</td><td>%8</td><td>%9</td><td>%10</td></tr>\n")
+                .arg(net.ssid.toHtmlEscaped(), connected, net.bssid.toHtmlEscaped(), signalClass)
+                .arg(net.rssiDbm)
+                .arg(net.signalQuality)
+                .arg(net.channelNumber)
+                .arg(net.band.toHtmlEscaped(),
+                     net.authentication.toHtmlEscaped(),
+                     net.apVendor.toHtmlEscaped());
     }
     html += QStringLiteral("</table>\n");
     return html;

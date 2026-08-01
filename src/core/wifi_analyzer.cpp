@@ -308,14 +308,58 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
 // (so an empty result is a genuine "no networks"); it stays false only when BOTH reads errored
 // -- e.g. the radio is powered off (ERROR_NDIS_DOT11_POWER_STATE_INVALID) -- which the caller
 // surfaces as an honest scan failure rather than a misleading empty success.
+constexpr int kScanCompleteTimeoutMs = 4000;  // upper bound on waiting for a scan to finish
+
+void CALLBACK onWlanScanNotification(PWLAN_NOTIFICATION_DATA data, PVOID context) {
+    if (context == nullptr || data == nullptr) {
+        return;
+    }
+    if (data->NotificationSource == WLAN_NOTIFICATION_SOURCE_ACM &&
+        (data->NotificationCode == wlan_notification_acm_scan_complete ||
+         data->NotificationCode == wlan_notification_acm_scan_fail)) {
+        SetEvent(static_cast<HANDLE>(context));
+    }
+}
+
+// Trigger a scan and wait (bounded) for the driver's ACM scan-complete/scan-fail
+// notification instead of blindly sleeping a fixed interval -- a fixed sleep may be
+// too short (the BSS list read then returns STALE cached results) or wastefully long.
+// Falls back to the fixed sleep only if WlanScan or the notification registration fails.
+void triggerScanAndWait(HANDLE handle, const GUID& guid) {
+    HANDLE scanDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    DWORD prevSource = 0;
+    const bool registered = scanDone != nullptr &&
+                            WlanRegisterNotification(handle,
+                                                     WLAN_NOTIFICATION_SOURCE_ACM,
+                                                     FALSE,
+                                                     &onWlanScanNotification,
+                                                     scanDone,
+                                                     nullptr,
+                                                     &prevSource) == ERROR_SUCCESS;
+
+    const DWORD scanStatus = WlanScan(handle, &guid, nullptr, nullptr, nullptr);
+    if (scanStatus == ERROR_SUCCESS && registered) {
+        WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
+    } else {
+        QThread::msleep(kForcedScanDelayMs);
+    }
+
+    if (registered) {
+        WlanRegisterNotification(
+            handle, WLAN_NOTIFICATION_SOURCE_NONE, FALSE, nullptr, nullptr, nullptr, &prevSource);
+    }
+    if (scanDone != nullptr) {
+        CloseHandle(scanDone);
+    }
+}
+
 void scanInterface(HANDLE handle,
                    const WLAN_INTERFACE_INFO& ifInfo,
                    bool triggerScan,
                    QVector<WiFiNetworkInfo>& networks,
                    bool& readOk) {
     if (triggerScan) {
-        WlanScan(handle, &ifInfo.InterfaceGuid, nullptr, nullptr, nullptr);
-        QThread::msleep(kForcedScanDelayMs);
+        triggerScanAndWait(handle, ifInfo.InterfaceGuid);
     }
 
     readOk = false;
@@ -499,6 +543,11 @@ void WiFiAnalyzer::startContinuousScan(int intervalMs) {
         }
         bool scanError = false;  // background refresh: a transient read error just yields no update
         auto networks = performWlanScan(false, scanError);
+        if (scanError && networks.isEmpty()) {
+            // Transient driver/radio failure -> keep the last good scan rather than
+            // clobbering it with an empty list and emitting a misleading "0 networks".
+            return;
+        }
         m_lastScan = networks;
         Q_EMIT scanComplete(networks);
         auto channels = calculateChannelUtilization(networks);

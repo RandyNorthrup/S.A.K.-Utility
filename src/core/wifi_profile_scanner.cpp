@@ -74,7 +74,8 @@ QString exportWifiProfileXml(const QString& name, int timeout_ms, const WifiScan
 }  // namespace
 
 QStringList parseWifiProfileNames(const QString& output) {
-    Q_ASSERT(!output.isEmpty());
+    // No Q_ASSERT on empty: an empty string parses to zero names gracefully rather
+    // than aborting a debug build.
     QStringList names;
     for (const QString& line : output.split('\n')) {
         const int colon_idx = line.indexOf(':');
@@ -93,7 +94,7 @@ QStringList parseWifiProfileNames(const QString& output) {
 }
 
 QString parseWifiSecurityType(const QString& detail_output) {
-    Q_ASSERT(!detail_output.isEmpty());
+    // No Q_ASSERT on empty: an empty string yields no security type gracefully.
     for (const QString& line : detail_output.split('\n')) {
         if (!line.contains("Authentication", Qt::CaseInsensitive)) {
             continue;
@@ -128,6 +129,7 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
     QVector<WifiProfileInfo> profiles;
     profiles.reserve(profile_names.size());
 
+    int detail_failures = 0;
     for (const QString& name : profile_names) {
         WifiProfileInfo info;
         info.profile_name = name;
@@ -137,6 +139,11 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
             runNetsh({"wlan", "show", "profile", "name=" + name}, kTimeoutWifiProfileMs, logger);
         if (!detail.isEmpty()) {
             info.security_type = parseWifiSecurityType(detail);
+        } else {
+            // Per-profile detail read failed: surface it (do not silently present the
+            // profile as fully scanned with an unknown security type).
+            ++detail_failures;
+            sak::logWarning("netsh show profile failed for '{}'", name.toStdString());
         }
 
         // Store real WLANProfile XML (DPAPI-protected key), NOT the `key=clear` console text --
@@ -147,6 +154,12 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
         }
 
         profiles.append(info);
+    }
+
+    if (detail_failures > 0 && logger) {
+        logger(QStringLiteral("%1 of %2 profiles could not be fully read")
+                   .arg(detail_failures)
+                   .arg(profile_names.size()));
     }
 
     return profiles;

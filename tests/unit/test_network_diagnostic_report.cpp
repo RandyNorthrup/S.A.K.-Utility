@@ -44,6 +44,7 @@ private Q_SLOTS:
     void html_section_adapterConfig();
     void html_section_pingResults();
     void html_section_dnsResults();
+    void html_dnsRecordType_htmlEscaped();
     void html_section_portScanResults();
     void html_section_bandwidthResults();
     void html_section_wifiAnalysis();
@@ -208,6 +209,24 @@ void NetworkDiagnosticReportTests::html_section_dnsResults() {
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("example.com")));
     QVERIFY(html.contains(QStringLiteral("93.184.216.34")));
+}
+
+void NetworkDiagnosticReportTests::html_dnsRecordType_htmlEscaped() {
+    // B9-18: the DNS record type was emitted into the HTML report unescaped. A
+    // crafted type must be escaped so it cannot inject markup into the report.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::DnsResults});
+
+    DnsQueryResult dns;
+    dns.queryName = QStringLiteral("example.com");
+    dns.recordType = QStringLiteral("<script>alert(1)</script>");
+    dns.dnsServer = QStringLiteral("8.8.8.8");
+    dns.success = true;
+    gen.setDnsData({dns});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>alert(1)</script>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
 }
 
 void NetworkDiagnosticReportTests::html_section_portScanResults() {

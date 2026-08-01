@@ -65,6 +65,20 @@ public:
     /// @brief Supported DNS record types
     [[nodiscard]] static QStringList supportedRecordTypes();
 
+    /// @brief True if @p recordType is one of supportedRecordTypes() (case-insensitive).
+    /// Guards against a typo'd type being silently downgraded to an A query.
+    [[nodiscard]] static bool isSupportedRecordType(const QString& recordType);
+
+    /// @brief True if @p ipAddress is a dotted-quad IPv4 with four 0..255 numeric octets.
+    /// Reverse lookup must reject non-numeric octets rather than build a bogus PTR name.
+    [[nodiscard]] static bool isNumericIpv4(const QString& ipAddress);
+
+    /// @brief Order-insensitive comparison of two DNS answer sets. DNS servers may
+    /// return the same records in different order (round-robin), so an ordered
+    /// compare would wrongly flag agreeing servers as disagreeing.
+    [[nodiscard]] static bool answersEquivalent(const QVector<QString>& a,
+                                                const QVector<QString>& b);
+
 Q_SIGNALS:
     void queryComplete(sak::DnsQueryResult result);
     void comparisonComplete(sak::DnsServerComparison comparison);

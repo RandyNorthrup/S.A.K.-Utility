@@ -21,6 +21,13 @@ namespace sak {
 namespace {
 
 constexpr int kEscapedTextReserveMultiplier = 2;
+constexpr int kMaxSsidBytes = 32;  // an 802.11 SSID is at most 32 octets
+
+// True if the SSID fits the 802.11 32-octet limit. Uses UTF-8 byte length, not
+// QString character count: a multi-byte SSID can be <=32 chars yet >32 bytes.
+bool ssidWithinByteLimit(const QString& ssid) {
+    return ssid.toUtf8().size() <= kMaxSsidBytes;
+}
 
 struct WlanAuthConfig {
     QString auth_type;
@@ -179,6 +186,10 @@ QString buildWifiSetupScriptWindows(const QString& ssid,
             "Refusing to build WiFi script: SSID is empty or contains unsafe characters");
         return {};
     }
+    if (!ssidWithinByteLimit(ssid)) {
+        sak::logWarning("Refusing to build WiFi script: SSID exceeds the 32-byte WLAN limit");
+        return {};
+    }
     const WlanAuthConfig auth = resolveWlanAuth(security);
     const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
     const QString xml_base64 = QString::fromLatin1(xml.toUtf8().toBase64());
@@ -196,17 +207,16 @@ WifiConnectResult connectWifiWindows(const QString& ssid,
                                      const QString& password,
                                      const QString& security,
                                      bool hidden) {
-    // A WLAN SSID is at most 32 bytes; cap generously and fail closed on empty / unsafe (quote or
-    // control char) BEFORE touching a temp file or running netsh.
-    constexpr int kMaxSsidChars = 64;
+    // A WLAN SSID is at most 32 octets; fail closed on empty / unsafe (quote or control
+    // char) / over-length BEFORE touching a temp file or running netsh.
     WifiConnectResult result;
     if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
         result.error =
             QStringLiteral("SSID is empty or contains a double quote / control character");
         return result;
     }
-    if (ssid.size() > kMaxSsidChars) {
-        result.error = QStringLiteral("SSID is too long to be a valid network name");
+    if (!ssidWithinByteLimit(ssid)) {
+        result.error = QStringLiteral("SSID exceeds the 32-byte WLAN limit");
         return result;
     }
 

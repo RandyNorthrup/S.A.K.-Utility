@@ -5533,6 +5533,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_connectivity_tester.cpp")
     message(STATUS "Added unit test: test_connectivity_tester")
 endif()
 
+# test_dns_diagnostic_tool -- well-known servers, supported record types, and the
+# B9-18 seams (record-type validation, numeric-IPv4 guard, order-insensitive compare).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dns_diagnostic_tool.cpp")
+    add_executable(test_dns_diagnostic_tool
+        unit/test_dns_diagnostic_tool.cpp
+        ../src/core/dns_diagnostic_tool.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../include/sak/dns_diagnostic_tool.h
+    )
+    set_target_properties(test_dns_diagnostic_tool PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_dns_diagnostic_tool PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_dns_diagnostic_tool PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_dns_diagnostic_tool COMMAND test_dns_diagnostic_tool
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_dns_diagnostic_tool")
+endif()
+
 # test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report

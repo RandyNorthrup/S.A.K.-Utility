@@ -129,6 +129,7 @@ void ActiveConnectionsMonitor::refreshNow() {
     detectChanges(connections);
 
     m_lastConnections = connections;
+    m_hasBaseline = true;
     Q_EMIT connectionsUpdated(connections);
 }
 
@@ -330,7 +331,11 @@ void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections
 }
 
 void ActiveConnectionsMonitor::detectChanges(const QVector<ConnectionInfo>& current) {
-    if (m_lastConnections.isEmpty()) {
+    // Skip only until a first baseline exists -- NOT whenever the previous snapshot
+    // was empty. Using isEmpty() as the sentinel meant that if the prior refresh
+    // legitimately had zero connections, the next refresh's genuinely new connections
+    // were suppressed. m_hasBaseline distinguishes "no baseline yet" from "empty baseline".
+    if (!m_hasBaseline) {
         return;
     }
 

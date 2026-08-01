@@ -154,40 +154,57 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
     // no SMB round-trip. The UNC/display host is normalized to "localhost" for local reads.
     const ShareServer server = resolveShareServer(hostname);
 
-    PSHARE_INFO_1 shareInfo = nullptr;
-    DWORD entriesRead = 0;
+    LPWSTR serverName = server.serverName.empty() ? nullptr
+                                                  : const_cast<LPWSTR>(server.serverName.c_str());
     DWORD totalEntries = 0;
     DWORD resumeHandle = 0;
+    NET_API_STATUS status = NERR_Success;
 
-    NET_API_STATUS status = NetShareEnum(server.serverName.empty()
-                                             ? nullptr
-                                             : const_cast<LPWSTR>(server.serverName.c_str()),
-                                         kShareInfoLevel,
-                                         reinterpret_cast<LPBYTE*>(&shareInfo),
-                                         MAX_PREFERRED_LENGTH,
-                                         &entriesRead,
-                                         &totalEntries,
-                                         &resumeHandle);
+    // Loop on ERROR_MORE_DATA using resumeHandle: a single call can return only a
+    // partial set, and treating that partial buffer as the complete enumeration would
+    // silently drop shares. Keep pulling until a terminal NERR_Success (or cancel).
+    do {
+        PSHARE_INFO_1 shareInfo = nullptr;
+        DWORD entriesRead = 0;
+        status = NetShareEnum(serverName,
+                              kShareInfoLevel,
+                              reinterpret_cast<LPBYTE*>(&shareInfo),
+                              MAX_PREFERRED_LENGTH,
+                              &entriesRead,
+                              &totalEntries,
+                              &resumeHandle);
 
-    if (status != NERR_Success && status != ERROR_MORE_DATA) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to enumerate shares on %1 (error %2)")
-                                 .arg(server.displayHost)
-                                 .arg(status));
-        return shares;  // ok stays false: a real enumeration failure, not an empty host
-    }
+        if (status != NERR_Success && status != ERROR_MORE_DATA) {
+            Q_EMIT errorOccurred(QStringLiteral("Failed to enumerate shares on %1 (error %2)")
+                                     .arg(server.displayHost)
+                                     .arg(status));
+            return shares;  // ok stays false: a real enumeration failure, not an empty host
+        }
 
-    // NetShareEnum succeeded (a NULL buffer just means zero shares): a genuine, complete read.
+        if (shareInfo != nullptr) {
+            appendSharesFromBuffer(shareInfo, entriesRead, server.displayHost, testAccess, shares);
+            NetApiBufferFree(shareInfo);
+        }
+    } while (status == ERROR_MORE_DATA && !m_cancelled.load());
+
+    // Reached a terminal NERR_Success (or the user cancelled) with every returned
+    // buffer consumed: a complete read, not a silently truncated one.
     ok = true;
-    if (shareInfo == nullptr) {
-        return shares;
-    }
+    return shares;
+}
 
+void NetworkShareBrowser::appendSharesFromBuffer(const void* shareInfoBuffer,
+                                                 unsigned long entriesRead,
+                                                 const QString& displayHost,
+                                                 bool testAccess,
+                                                 QVector<NetworkShareInfo>& shares) {
+    const auto* entries = static_cast<const SHARE_INFO_1*>(shareInfoBuffer);
     for (DWORD i = 0; i < entriesRead; ++i) {
         if (m_cancelled.load()) {
             break;
         }
 
-        NetworkShareInfo info = makeShareInfo(shareInfo[i], server.displayHost);
+        NetworkShareInfo info = makeShareInfo(entries[i], displayHost);
 
         // Probe access ONLY when asked: testReadWriteAccess writes a temp file to the share, so
         // read-only callers pass testAccess=false and leave canRead/canWrite unset.
@@ -199,9 +216,6 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
 
         shares.append(info);
     }
-
-    NetApiBufferFree(shareInfo);
-    return shares;
 }
 
 QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPath) {
