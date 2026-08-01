@@ -94,6 +94,12 @@ public:
     [[nodiscard]] static QString sanitizeNupkgFilename(const QString& candidate,
                                                        const QString& package_id);
 
+    /// @brief Parse a NuGet v2 OData "Dependencies" string into package ids.
+    ///        Each pipe-separated entry is "id:versionRange:targetFramework"; the
+    ///        id is the first colon field, framework-only markers ("::net45") are
+    ///        skipped. Pure; unit-testable.
+    [[nodiscard]] static QStringList parseDependencyString(const QString& dep_string);
+
 Q_SIGNALS:
     void searchComplete(QVector<ChocoPackageMetadata> results);
     void metadataReady(ChocoPackageMetadata metadata);
@@ -124,13 +130,17 @@ private:
     void populateConvertedProperties(ChocoPackageMetadata& meta,
                                      const QDomElement& properties) const;
     [[nodiscard]] QString extractProperty(const QDomElement& properties, const QString& name) const;
-    [[nodiscard]] QStringList parseDependencyString(const QString& dep_string) const;
     [[nodiscard]] QNetworkRequest buildRequest(const QString& url) const;
+
+    /// @brief Track/untrack an in-flight reply (pending-op count + abortable list).
+    void trackReply(QNetworkReply* reply);
+    void untrackReply(QNetworkReply* reply);
 
     QNetworkAccessManager* m_network_manager;
     bool m_owns_nam{false};
     std::atomic<bool> m_cancelled{false};
     std::atomic<int> m_pending_ops{0};
+    QList<QNetworkReply*> m_pending_replies;  ///< In-flight replies, aborted by cancel()
 
     // Dependency resolution state
     QVector<ChocoPackageMetadata> m_resolved_deps;

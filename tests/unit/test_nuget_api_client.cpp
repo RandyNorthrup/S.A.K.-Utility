@@ -40,6 +40,10 @@ private Q_SLOTS:
     void sanitizeNupkgFilename_prefersCleanCandidate();
     void sanitizeNupkgFilename_confinesHostileNamesToBasename();
     void sanitizeNupkgFilename_fallsBackToPackageIdThenLiteral();
+
+    // Dependency-string parsing (B10-28)
+    void parseDependencyString_takesFirstFieldAsId();
+    void parseDependencyString_skipsFrameworkOnlyMarkers();
 };
 
 // ============================================================================
@@ -323,6 +327,39 @@ void TestNuGetApiClient::sanitizeNupkgFilename_fallsBackToPackageIdThenLiteral()
              QStringLiteral("package.nupkg"));
     QCOMPARE(sak::NuGetApiClient::sanitizeNupkgFilename(QString(), QString()),
              QStringLiteral("package.nupkg"));
+}
+
+// ============================================================================
+// Dependency-string parsing (B10-28)
+// ============================================================================
+
+void TestNuGetApiClient::parseDependencyString_takesFirstFieldAsId() {
+    // Canonical NuGet v2: "id:versionRange:targetFramework". The id is the first
+    // colon field for every entry (previously a dotted id fell into a wrong branch).
+    const QStringList ids = sak::NuGetApiClient::parseDependencyString(
+        QStringLiteral("Newtonsoft.Json:9.0.1:net45|Castle.Core:4.0.0|jQuery:1.4.4"));
+    QCOMPARE(ids.size(), 3);
+    QCOMPARE(ids.at(0), QStringLiteral("Newtonsoft.Json"));
+    QCOMPARE(ids.at(1), QStringLiteral("Castle.Core"));
+    QCOMPARE(ids.at(2), QStringLiteral("jQuery"));
+
+    // A bare id with no version/framework is kept; duplicates are collapsed.
+    const QStringList deduped = sak::NuGetApiClient::parseDependencyString(
+        QStringLiteral("chocolatey-core.extension|chocolatey-core.extension:1.0.0"));
+    QCOMPARE(deduped.size(), 1);
+    QCOMPARE(deduped.at(0), QStringLiteral("chocolatey-core.extension"));
+}
+
+void TestNuGetApiClient::parseDependencyString_skipsFrameworkOnlyMarkers() {
+    // "::net45" is a framework-only dependency-group marker with no package -- the
+    // framework token must NOT be recorded as a dependency id.
+    const QStringList ids =
+        sak::NuGetApiClient::parseDependencyString(QStringLiteral("::net45|realdep:2.0.0:net45"));
+    QCOMPARE(ids.size(), 1);
+    QCOMPARE(ids.at(0), QStringLiteral("realdep"));
+
+    QVERIFY(sak::NuGetApiClient::parseDependencyString(QString()).isEmpty());
+    QVERIFY(sak::NuGetApiClient::parseDependencyString(QStringLiteral("::net45")).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TestNuGetApiClient)

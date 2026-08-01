@@ -23,7 +23,6 @@ namespace sak {
 namespace {
 constexpr qsizetype kNugetErrorBodyPreviewChars = 500;
 constexpr int kContentDispositionFilenamePrefixLength = 9;
-constexpr qsizetype kDependencySubpartMinimumCount = 2;
 }  // namespace
 
 // ============================================================================
@@ -50,9 +49,7 @@ NuGetApiClient::~NuGetApiClient() {
 // ============================================================================
 
 void NuGetApiClient::searchPackages(const QString& query, int max_results) {
-    if (m_cancelled) {
-        return;
-    }
+    m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
     // Build OData URL manually — QUrlQuery double-encodes $-prefixed params
     // and single quotes that the NuGet v2 API requires.
@@ -82,15 +79,13 @@ void NuGetApiClient::searchPackages(const QString& query, int max_results) {
                          QNetworkRequest::NoLessSafeRedirectPolicy);
 
     auto* reply = m_network_manager->get(request);
-    m_pending_ops++;
+    trackReply(reply);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { handleSearchReply(reply); });
 }
 
 void NuGetApiClient::getPackageMetadata(const QString& package_id, const QString& version) {
-    if (m_cancelled) {
-        return;
-    }
+    m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
     QString url_str;
     if (version.isEmpty()) {
@@ -106,15 +101,13 @@ void NuGetApiClient::getPackageMetadata(const QString& package_id, const QString
 
     auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
-    m_pending_ops++;
+    trackReply(reply);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { handleMetadataReply(reply); });
 }
 
 void NuGetApiClient::getPackageVersions(const QString& package_id) {
-    if (m_cancelled) {
-        return;
-    }
+    m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
     // Build FindPackagesById URL manually — QUrlQuery double-encodes OData quotes.
     QString encoded_id = QString(QUrl::toPercentEncoding(package_id));
@@ -125,7 +118,7 @@ void NuGetApiClient::getPackageVersions(const QString& package_id) {
 
     auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
-    m_pending_ops++;
+    trackReply(reply);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, package_id]() {
         handleVersionsReply(reply, package_id);
@@ -135,9 +128,7 @@ void NuGetApiClient::getPackageVersions(const QString& package_id) {
 void NuGetApiClient::downloadNupkg(const QString& package_id,
                                    const QString& version,
                                    const QString& output_dir) {
-    if (m_cancelled) {
-        return;
-    }
+    m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
     QString url_str =
         QString("%1%2%3/%4")
@@ -152,7 +143,7 @@ void NuGetApiClient::downloadNupkg(const QString& package_id,
 
     auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
-    m_pending_ops++;
+    trackReply(reply);
 
     connect(reply,
             &QNetworkReply::downloadProgress,
@@ -167,9 +158,7 @@ void NuGetApiClient::downloadNupkg(const QString& package_id,
 }
 
 void NuGetApiClient::resolveDependencies(const QString& package_id, const QString& version) {
-    if (m_cancelled) {
-        return;
-    }
+    m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
     m_resolved_deps.clear();
     m_deps_to_resolve.clear();
@@ -189,6 +178,26 @@ void NuGetApiClient::resolveDependencies(const QString& package_id, const QStrin
 
 void NuGetApiClient::cancel() {
     m_cancelled = true;
+    // abort() delivers finished() synchronously, whose handler calls
+    // untrackReply()->removeOne on the very list we would iterate. Snapshot and
+    // clear FIRST, then abort from the copy so the handler's removeOne no-ops.
+    const QList<QNetworkReply*> pending = m_pending_replies;
+    m_pending_replies.clear();
+    for (QNetworkReply* reply : pending) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+}
+
+void NuGetApiClient::trackReply(QNetworkReply* reply) {
+    m_pending_ops++;
+    m_pending_replies.append(reply);
+}
+
+void NuGetApiClient::untrackReply(QNetworkReply* reply) {
+    m_pending_ops--;
+    m_pending_replies.removeOne(reply);
 }
 
 bool NuGetApiClient::isBusy() const {
@@ -200,7 +209,7 @@ bool NuGetApiClient::isBusy() const {
 // ============================================================================
 
 void NuGetApiClient::handleSearchReply(QNetworkReply* reply) {
-    m_pending_ops--;
+    untrackReply(reply);
     reply->deleteLater();
 
     if (m_cancelled) {
@@ -235,7 +244,7 @@ void NuGetApiClient::handleSearchReply(QNetworkReply* reply) {
 }
 
 void NuGetApiClient::handleMetadataReply(QNetworkReply* reply) {
-    m_pending_ops--;
+    untrackReply(reply);
     reply->deleteLater();
 
     if (m_cancelled) {
@@ -275,7 +284,7 @@ void NuGetApiClient::handleMetadataReply(QNetworkReply* reply) {
 }
 
 void NuGetApiClient::handleVersionsReply(QNetworkReply* reply, const QString& package_id) {
-    m_pending_ops--;
+    untrackReply(reply);
     reply->deleteLater();
 
     if (m_cancelled) {
@@ -318,7 +327,7 @@ QString NuGetApiClient::sanitizeNupkgFilename(const QString& candidate, const QS
 void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
                                          const QString& package_id,
                                          const QString& output_dir) {
-    m_pending_ops--;
+    untrackReply(reply);
     reply->deleteLater();
 
     if (m_cancelled) {
@@ -404,7 +413,7 @@ void NuGetApiClient::resolveNextDependency() {
 
     auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
-    m_pending_ops++;
+    trackReply(reply);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, pinned_root, depth]() {
         handleDependencyReply(reply, pinned_root, depth);
@@ -451,7 +460,7 @@ void NuGetApiClient::enqueueDependencies(const ChocoPackageMetadata& pkg, int de
 }
 
 void NuGetApiClient::handleDependencyReply(QNetworkReply* reply, bool pinned_root, int depth) {
-    m_pending_ops--;
+    untrackReply(reply);
     reply->deleteLater();
     if (m_cancelled) {
         return;
@@ -612,33 +621,20 @@ QString NuGetApiClient::extractProperty(const QDomElement& properties, const QSt
     return elem.text().trimmed();
 }
 
-QStringList NuGetApiClient::parseDependencyString(const QString& dep_string) const {
-    // NuGet v2 dependencies format: "id:version_range|id:version_range|..."
-    // or "framework::id:version|id:version"
+QStringList NuGetApiClient::parseDependencyString(const QString& dep_string) {
+    // NuGet v2 OData "Dependencies": pipe-separated entries, each of the form
+    // "id:versionRange:targetFramework" (versionRange/targetFramework optional).
+    // The package ID is ALWAYS the first colon-separated field. An entry with an
+    // empty first field (e.g. "::net45") is a framework-only dependency-group
+    // marker with no package and is skipped -- the previous ".contains('.')"
+    // heuristic mis-recorded such a framework token as a dependency id.
     QStringList result;
-    QStringList parts = dep_string.split('|', Qt::SkipEmptyParts);
+    const QStringList parts = dep_string.split('|', Qt::SkipEmptyParts);
 
     for (const auto& part : parts) {
-        QString trimmed = part.trimmed();
-        if (trimmed.isEmpty()) {
-            continue;
-        }
-        // Handle framework-qualified deps: "targetFramework:dep1:ver|dep2:ver"
-        int colon_pos = trimmed.indexOf(':');
-        if (colon_pos > 0) {
-            QString dep_id = trimmed.left(colon_pos);
-            // Skip framework specifiers (they contain dots like "net45")
-            if (!dep_id.contains('.')) {
-                result.append(dep_id);
-            } else {
-                // This might be "framework::dep_id:ver" — try splitting further
-                QStringList sub_parts = trimmed.split(':', Qt::SkipEmptyParts);
-                if (sub_parts.size() >= kDependencySubpartMinimumCount) {
-                    result.append(sub_parts[0]);
-                }
-            }
-        } else {
-            result.append(trimmed);
+        const QString dep_id = part.section(':', 0, 0).trimmed();
+        if (!dep_id.isEmpty() && !result.contains(dep_id)) {
+            result.append(dep_id);
         }
     }
 
