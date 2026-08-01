@@ -396,11 +396,25 @@ void sleepBeforeRetry(int retry_delay_ms) {
     }
 }
 
-AiSubagentResult timeoutResult(const AiSubagentTask& task, int wall_clock_timeout_ms) {
+AiSubagentResult timeoutResult(const AiSubagentTask& task, qint64 wall_clock_timeout_ms) {
     return baseResult(
         task,
         AiSubagentStatus::TimedOut,
         QStringLiteral("Subagent wall-clock timeout exceeded (%1 ms)").arg(wall_clock_timeout_ms));
+}
+
+// The effective wall-clock bound is the TIGHTEST of the runner-wide option and the per-task
+// timeout_seconds. The per-task value was previously parsed but never enforced, so a task could
+// run to the runner-wide limit (or forever) regardless of its own declared budget. A source that
+// is 0/unset does not constrain; if both are unset the deadline is Forever.
+qint64 effectiveWallClockMs(const AiSubagentRunnerOptions& options, const AiSubagentTask& task) {
+    const qint64 option_ms = options.wall_clock_timeout_ms > 0 ? options.wall_clock_timeout_ms : 0;
+    const qint64 task_ms =
+        task.timeout_seconds > 0 ? static_cast<qint64>(task.timeout_seconds) * 1000 : 0;
+    if (option_ms > 0 && task_ms > 0) {
+        return std::min(option_ms, task_ms);
+    }
+    return std::max(option_ms, task_ms);
 }
 
 AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
@@ -408,14 +422,15 @@ AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
                                      const CancellationToken& agent_token) {
     const AiSubagentTask& task = *ctx.task;
     const int max_attempts = std::max(1, options.max_retries + 1);
-    const QDeadlineTimer deadline = options.wall_clock_timeout_ms > 0
-                                        ? QDeadlineTimer(options.wall_clock_timeout_ms)
+    const qint64 effective_timeout_ms = effectiveWallClockMs(options, task);
+    const QDeadlineTimer deadline = effective_timeout_ms > 0
+                                        ? QDeadlineTimer(effective_timeout_ms)
                                         : QDeadlineTimer(QDeadlineTimer::Forever);
     AiSubagentResult last_attempt =
         baseResult(task, AiSubagentStatus::Failed, QStringLiteral("Subagent did not run"));
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
         if (deadline.hasExpired()) {
-            return timeoutResult(task, options.wall_clock_timeout_ms);
+            return timeoutResult(task, effective_timeout_ms);
         }
         if (tokenCancelled(agent_token)) {
             return baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
@@ -429,7 +444,7 @@ AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
         sleepBeforeRetry(options.retry_delay_ms);
     }
     if (deadline.hasExpired() && last_attempt.status == AiSubagentStatus::Failed) {
-        return timeoutResult(task, options.wall_clock_timeout_ms);
+        return timeoutResult(task, effective_timeout_ms);
     }
     return last_attempt;
 }

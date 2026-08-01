@@ -134,6 +134,7 @@ private Q_SLOTS:
     void retriesUntilSuccess();
     void retriesExhaustedReturnsLastFailure();
     void wallClockTimeoutMarksTimedOut();
+    void perTaskTimeoutBoundsRun();
     void factoryCreatesFreshClientPerRun();
     void cancelledParentDoesNotCreateFactoryClient();
     void actingSubagentExecutesToolCallsThenCompletes();
@@ -424,6 +425,35 @@ void AiSubagentRunnerTests::wallClockTimeoutMarksTimedOut() {
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
     QVERIFY(result.error_message.contains(QStringLiteral("timeout")));
     QVERIFY(client.invocation_count < 6);
+}
+
+void AiSubagentRunnerTests::perTaskTimeoutBoundsRun() {
+    // B12-06: the per-task timeout_seconds must bound the run even when the runner-wide wall
+    // clock is unset (0 = unbounded). Before the fix the task timeout was parsed but ignored, so
+    // this run would exhaust every retry and end Failed; now it ends TimedOut at the task budget.
+    FakeModelClient client;
+    sak::ai::IAiModelClient::Response fail;
+    fail.success = false;
+    fail.error_message = QStringLiteral("transient");
+    for (int i = 0; i < 12; ++i) {
+        client.scripted_responses << fail;
+    }
+
+    sak::ai::AiSubagentRunner runner(&client);
+    sak::ai::AiSubagentRunnerOptions opts;
+    opts.max_retries = 11;
+    opts.retry_delay_ms = 300;       // 11 delays (~3.3s) far exceed the 1s task budget
+    opts.wall_clock_timeout_ms = 0;  // runner-wide UNBOUNDED: only the per-task timeout can fire
+    runner.setOptions(opts);
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("task_bound");
+    task.agent_id = QStringLiteral("a");
+    task.timeout_seconds = 1;  // 1s per-task budget
+
+    const auto result = runner.run(task, {});
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
+    QVERIFY(client.invocation_count < 12);  // stopped before exhausting all retries
 }
 
 void AiSubagentRunnerTests::factoryCreatesFreshClientPerRun() {
