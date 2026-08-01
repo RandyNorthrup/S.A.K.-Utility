@@ -64,6 +64,7 @@ class BrowserBridgeRelayTests : public QObject {
 private slots:
     void relayConnect_rejectsForeignServerPid();
     void relayHandshake_rejectsBadToken();
+    void relayHandshake_rejectsProtocolMismatch();
     void relay_forwardsCommandAndReplyOverRealPipe();
     void control_notConnectedReportsError();
     void control_snapshotRoundTripsThroughRelay();
@@ -102,6 +103,25 @@ void BrowserBridgeRelayTests::relayHandshake_rejectsBadToken() {
     QVERIFY(pipe != INVALID_HANDLE_VALUE);
     // The server drops a wrong-token handshake, so the relay's welcome read fails.
     QVERIFY(!relayHandshake(pipe, QStringLiteral("wrong-token"), protocol, &error));
+    CloseHandle(pipe);
+    server.stop();
+}
+
+void BrowserBridgeRelayTests::relayHandshake_rejectsProtocolMismatch() {
+    // B13-08: the handshake must enforce the protocol version. Offering a protocol the server
+    // does not speak must fail rather than pump frames under a version skew (the server rejects
+    // the hello, and the relay additionally verifies the welcome's protocol as defense in depth).
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(serverOptions(dir.filePath(QStringLiteral("r.json"))));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+
+    QString token;
+    int protocol = 0;
+    const HANDLE pipe =
+        relayConnect(dir.filePath(QStringLiteral("r.json")), &token, &protocol, &error);
+    QVERIFY(pipe != INVALID_HANDLE_VALUE);
+    QVERIFY(!relayHandshake(pipe, token, protocol + 1, &error));  // wrong protocol -> refused
     CloseHandle(pipe);
     server.stop();
 }

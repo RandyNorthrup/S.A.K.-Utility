@@ -224,6 +224,16 @@ bool relayHandshake(HANDLE pipe, const QString& token, int protocol, QString* er
                      .arg(welcome.value(QStringLiteral("error")).toString()));
         return false;
     }
+    // The welcome must confirm the SAME protocol version we offered, or the two sides would pump
+    // frames under a version skew. Fail closed on a missing or mismatched protocol value rather
+    // than trusting any frame whose type happens to be "welcome".
+    if (welcome.value(QStringLiteral("protocol")).toInt(-1) != protocol) {
+        setError(error,
+                 QStringLiteral("Bridge protocol mismatch: relay offered %1, server welcomed %2")
+                     .arg(protocol)
+                     .arg(welcome.value(QStringLiteral("protocol")).toInt(-1)));
+        return false;
+    }
     return true;
 }
 
