@@ -169,6 +169,12 @@ protected:
 
 private:
     static constexpr qint64 kRawAlignment = 4096;
+    // The largest alignment-multiple byte count that still fits in a DWORD. A raw
+    // volume ReadFile/WriteFile count must be an alignment multiple, and DWORD_MAX
+    // itself is not one, so every clamped request is rounded down to this bound and a
+    // larger transfer is satisfied as a short read/write that QIODevice loops over.
+    static constexpr qint64 kMaxAlignedRequest =
+        (static_cast<qint64>(std::numeric_limits<DWORD>::max()) / kRawAlignment) * kRawAlignment;
 
     [[nodiscard]] bool isAlignedRawRequest(qint64 maxSize) const {
         const qint64 prefixBytes = position_ - alignedStart();
@@ -223,8 +229,7 @@ private:
     }
 
     [[nodiscard]] static DWORD clampedDword(qint64 size) {
-        return static_cast<DWORD>(
-            std::min<qint64>(size, static_cast<qint64>(std::numeric_limits<DWORD>::max())));
+        return static_cast<DWORD>(std::min<qint64>(size, kMaxAlignedRequest));
     }
 
     [[nodiscard]] bool seekHandle(qint64 offset) {
@@ -251,8 +256,19 @@ private:
     [[nodiscard]] qint64 writeUnaligned(const char* data, qint64 maxSize) {
         const qint64 start = alignedStart();
         const qint64 prefixBytes = position_ - start;
-        const qint64 alignedBytes = alignedReadSize(prefixBytes + maxSize);
-        const DWORD bytesRequested = clampedDword(alignedBytes);
+        // The scratch buffer is read/written in one ReadFile/WriteFile whose byte count
+        // must fit in a DWORD and be an alignment multiple (kMaxAlignedRequest). Cap the
+        // payload so prefix + payload never rounds past it; a larger request returns a
+        // short write and QIODevice::write() loops for the remainder. Without this cap a
+        // clamped scratch would be smaller than prefix + maxSize and std::copy_n below
+        // would write past the buffer (heap overflow).
+        const qint64 payload = std::min<qint64>(maxSize, kMaxAlignedRequest - prefixBytes);
+        if (payload <= 0) {
+            setErrorString(QStringLiteral("Raw device unaligned write prefix exceeds request cap"));
+            return -1;
+        }
+        const qint64 alignedBytes = alignedReadSize(prefixBytes + payload);
+        const auto bytesRequested = static_cast<DWORD>(alignedBytes);
         if (!seekHandle(start)) {
             return -1;
         }
@@ -267,7 +283,7 @@ private:
             setErrorString(QStringLiteral("Raw device short read before unaligned write"));
             return -1;
         }
-        std::copy_n(data, maxSize, scratch.data() + prefixBytes);
+        std::copy_n(data, payload, scratch.data() + prefixBytes);
         if (!seekHandle(start)) {
             return -1;
         }
@@ -281,8 +297,8 @@ private:
             setErrorString(QStringLiteral("Raw device short unaligned write"));
             return -1;
         }
-        position_ += maxSize;
-        return maxSize;
+        position_ += payload;
+        return payload;
     }
 
     QString path_;
