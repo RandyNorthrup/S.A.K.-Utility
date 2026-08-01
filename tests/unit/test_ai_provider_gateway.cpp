@@ -148,9 +148,13 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("capture_screen")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("clipboard_paste")));
 
-    QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("kill_process")));
-    QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("start_process")));
+    QVERIFY(sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("close_window")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("click")));
+    // B12-08: list_processes/kill_process/start_process were classified but never in the server
+    // manifest (dead) -- removed, so they are no longer read-only or high-risk.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("list_processes")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("kill_process")));
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32HighRiskTool(QStringLiteral("start_process")));
 
     // Browser reads are read-only (ungated); browser input tools are the confirmation
     // tier and must NOT be misclassified as read-only.

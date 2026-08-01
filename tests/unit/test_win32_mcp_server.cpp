@@ -502,11 +502,11 @@ void Win32McpServerTests::readOnlyProfileFiltersCatalogAndRefusesMutatingCall() 
         QVERIFY2(sak::win32mcp::win32McpToolIsReadOnly(name), qPrintable(name));
     }
 
-    // A mutating/input/process tool is refused under the read-only profile.
+    // A mutating tool (close_window is a real high-risk tool) is refused under read-only.
     const auto refused =
         handleRequest(request(QStringLiteral("tools/call"),
                               2,
-                              QJsonObject{{QStringLiteral("name"), QStringLiteral("kill_process")},
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("close_window")},
                                           {QStringLiteral("arguments"), QJsonObject{}}}),
                       nullptr,
                       policy);

@@ -615,7 +615,6 @@ bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
         QStringLiteral("get_window_snapshot"),
         QStringLiteral("health_check"),
         QStringLiteral("list_monitors"),
-        QStringLiteral("list_processes"),
         QStringLiteral("list_windows"),
         QStringLiteral("mouse_position"),
         QStringLiteral("ocr_region"),
@@ -635,10 +634,11 @@ bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
 }
 
 bool AiProviderGateway::isWin32HighRiskTool(const QString& tool_name) {
+    // Only tools the win32 server actually implements. list_processes/kill_process/start_process
+    // were classified here (and as read-only) but were never in the server manifest, so their
+    // classification was dead -- removed.
     static const QSet<QString> high_risk{
         QStringLiteral("close_window"),
-        QStringLiteral("kill_process"),
-        QStringLiteral("start_process"),
     };
     return high_risk.contains(tool_name.trimmed());
 }

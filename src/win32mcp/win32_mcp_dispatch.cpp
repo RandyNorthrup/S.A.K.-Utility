@@ -153,7 +153,6 @@ bool win32McpToolIsReadOnly(const QString& tool_name) {
         QStringLiteral("get_window_snapshot"),
         QStringLiteral("health_check"),
         QStringLiteral("list_monitors"),
-        QStringLiteral("list_processes"),
         QStringLiteral("list_windows"),
         QStringLiteral("mouse_position"),
         QStringLiteral("ocr_region"),
