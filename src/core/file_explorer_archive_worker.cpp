@@ -43,7 +43,7 @@ void FileExplorerArchiveWorker::runCompress() {
         m_blockers.append(QStringLiteral("Could not create a staging folder for the archive."));
         return;
     }
-    const QStringList host_sources = collectCompressSources(staging.path());
+    const QStringList host_sources = collectValidatedSources(staging.path());
     if (host_sources.isEmpty() || checkStop()) {
         return;
     }
@@ -64,6 +64,22 @@ void FileExplorerArchiveWorker::runCompress() {
         return;
     }
     m_completed = 1;
+}
+
+// Stage all sources; fail closed if any could not be prepared. A raw selection
+// that fails to stage out is dropped by collectCompressSources, leaving fewer
+// host sources than were requested -- compressing that subset would ship an
+// archive silently missing a requested item as a success (B8-21).
+QStringList FileExplorerArchiveWorker::collectValidatedSources(const QString& staging_dir) {
+    const QStringList host_sources = collectCompressSources(staging_dir);
+    if (checkStop() || host_sources.size() == m_request.sources.size()) {
+        return host_sources;
+    }
+    if (m_blockers.isEmpty()) {
+        m_blockers.append(
+            QStringLiteral("Could not prepare every selected item; the archive was not written."));
+    }
+    return {};
 }
 
 // Host-side source list: local selections pass through, raw selections stage
@@ -192,6 +208,16 @@ bool FileExplorerArchiveWorker::deliverFlattened(const QString& host_out_dir) {
         QDir(host_out_dir).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
     for (const QFileInfo& info : infos) {
         const QString name = availableChildName(info.fileName());
+        if (name.isEmpty()) {
+            // Every numbered variant is taken (or the destination listing failed):
+            // childPath("") would resolve to the directory itself, so the transfer
+            // would target the folder instead of a child. Skip and fail closed.
+            m_blockers.append(
+                QStringLiteral("Could not find an unused name for %1; it was not delivered.")
+                    .arg(info.fileName()));
+            all_ok = false;
+            continue;
+        }
         FileExplorerTransferEngine engine(FileManagementFileSystemBridge::localTarget(QString()),
                                           m_request.target,
                                           m_request.raw_read_cap);
@@ -246,14 +272,18 @@ bool FileExplorerArchiveWorker::destinationOccupied(const QString& name) const {
     if (m_request.target.local_file_system) {
         return QFileInfo::exists(QDir(m_request.directory).filePath(name));
     }
-    const QVector<FileManagementEntry> entries =
-        FileManagementFileSystemBridge::listDirectory(m_request.target,
-                                                      m_request.directory,
-                                                      kArchiveListMaxEntries)
-            .entries;
-    return std::any_of(entries.cbegin(), entries.cend(), [&name](const FileManagementEntry& entry) {
-        return entry.name == name;
-    });
+    const auto listing = FileManagementFileSystemBridge::listDirectory(m_request.target,
+                                                                       m_request.directory,
+                                                                       kArchiveListMaxEntries);
+    if (!listing.ok) {
+        // The listing failed, so we cannot prove the name is free. Treat it as
+        // occupied: availableChildName then tries other names and ultimately
+        // fails closed rather than delivering into an unverified destination.
+        return true;
+    }
+    return std::any_of(listing.entries.cbegin(),
+                       listing.entries.cend(),
+                       [&name](const FileManagementEntry& entry) { return entry.name == name; });
 }
 
 QString FileExplorerArchiveWorker::childPath(const QString& name) const {

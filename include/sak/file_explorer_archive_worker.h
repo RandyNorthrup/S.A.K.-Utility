@@ -84,6 +84,9 @@ protected:
 private:
     void runCompress();
     [[nodiscard]] QStringList collectCompressSources(const QString& staging_dir);
+    // Stage all sources, then fail closed (empty result + blocker) if any could
+    // not be prepared, so a partial subset is never compressed as a success.
+    [[nodiscard]] QStringList collectValidatedSources(const QString& staging_dir);
     void runExtract();
     [[nodiscard]] bool extractOne(const FileExplorerArchiveExtractItem& archive,
                                   const QString& staging_dir);

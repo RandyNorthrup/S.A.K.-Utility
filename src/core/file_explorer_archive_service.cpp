@@ -320,6 +320,7 @@ void addDirectoryEntries(QZipWriter* writer,
                          const QString& directory,
                          FileExplorerArchiveResult* result) {
     writer->addDirectory(prefix);
+    ++result->entries;
     QDirIterator it(directory,
                     QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden,
                     QDirIterator::Subdirectories);
@@ -334,7 +335,11 @@ void addDirectoryEntries(QZipWriter* writer,
             continue;
         }
         if (info.isDir()) {
+            // Count directories toward the cap too. A tree of millions of empty
+            // directories would otherwise never increment the counter, so the
+            // loop guard never trips and the entry cap is bypassed entirely.
             writer->addDirectory(entry_name);
+            ++result->entries;
             continue;
         }
         if (addFileEntry(writer, entry_name, path, &result->blockers)) {
@@ -352,6 +357,37 @@ void addDirectoryEntries(QZipWriter* writer,
         if (!result->blockers.contains(truncated)) {
             result->blockers.append(truncated);
         }
+    }
+}
+
+// Add one compress source to the writer, classifying it: directory -> recurse,
+// file -> stream, symlink/special -> warn. A source the caller asked to archive
+// that no longer exists is a hard blocker -- silently downgrading it to a warning
+// would ship an archive missing a requested item as a success (B8-21).
+void addCompressSource(QZipWriter* writer,
+                       const QString& source,
+                       FileExplorerArchiveResult* result) {
+    const QFileInfo info(source);
+    if (info.isSymLink()) {
+        result->warnings.append(
+            QStringLiteral("Skipped symlink %1 (links are not archived).").arg(source));
+        return;
+    }
+    if (info.isDir()) {
+        addDirectoryEntries(writer, info.fileName(), source, result);
+        return;
+    }
+    if (info.isFile()) {
+        if (addFileEntry(writer, info.fileName(), source, &result->blockers)) {
+            ++result->entries;
+        }
+        return;
+    }
+    if (!info.exists()) {
+        result->blockers.append(
+            QStringLiteral("Source %1 no longer exists; the archive was not written.").arg(source));
+    } else {
+        result->warnings.append(QStringLiteral("Skipped special entry %1.").arg(source));
     }
 }
 
@@ -417,23 +453,7 @@ FileExplorerArchiveResult FileExplorerArchiveService::compressToZip(
     }
     writer.setCompressionPolicy(QZipWriter::AutoCompress);
     for (const QString& source : source_paths) {
-        const QFileInfo info(source);
-        if (info.isSymLink()) {
-            result.warnings.append(
-                QStringLiteral("Skipped symlink %1 (links are not archived).").arg(source));
-            continue;
-        }
-        if (info.isDir()) {
-            addDirectoryEntries(&writer, info.fileName(), source, &result);
-            continue;
-        }
-        if (!info.isFile()) {
-            result.warnings.append(QStringLiteral("Skipped special entry %1.").arg(source));
-            continue;
-        }
-        if (addFileEntry(&writer, info.fileName(), source, &result.blockers)) {
-            ++result.entries;
-        }
+        addCompressSource(&writer, source, &result);
     }
     writer.close();
     if (writer.status() != QZipWriter::NoError) {

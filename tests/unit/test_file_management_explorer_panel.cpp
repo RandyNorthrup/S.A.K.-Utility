@@ -1847,7 +1847,10 @@ private Q_SLOTS:
             zip,
             {root.filePath(QStringLiteral("bundle")), root.filePath(QStringLiteral("loose.txt"))});
         QVERIFY2(compressed.ok, qPrintable(compressed.blockers.join(QStringLiteral("; "))));
-        QCOMPARE(compressed.entries, 3);
+        // Directories now count toward the entry total (B8-21), so this is the
+        // wrapper "bundle" + inner.txt + the "deep" subdir + deep/leaf.bin +
+        // loose.txt = 5 (was 3 when only files were counted).
+        QCOMPARE(compressed.entries, 5);
         // Two top-level roots ("bundle", "loose.txt") -> not a single root.
         QVERIFY(!sak::FileExplorerArchiveService::hasSingleTopLevelRoot(zip, nullptr));
 

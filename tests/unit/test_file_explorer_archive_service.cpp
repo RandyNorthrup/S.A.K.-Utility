@@ -28,6 +28,8 @@ class FileExplorerArchiveServiceTests : public QObject {
 private Q_SLOTS:
     void compressToZip_refusesExistingOutputWithoutClobber();
     void compressThenExtract_roundTrips();
+    void compressToZip_missingSourceFailsClosed();
+    void compressToZip_countsDirectoriesTowardEntryCap();
 };
 
 void FileExplorerArchiveServiceTests::compressToZip_refusesExistingOutputWithoutClobber() {
@@ -73,6 +75,44 @@ void FileExplorerArchiveServiceTests::compressThenExtract_roundTrips() {
     QFile roundtripped(QDir(outdir).filePath(QStringLiteral("data.txt")));
     QVERIFY(roundtripped.open(QIODevice::ReadOnly));
     QCOMPARE(roundtripped.readAll(), QByteArrayLiteral("payload-12345"));
+}
+
+void FileExplorerArchiveServiceTests::compressToZip_missingSourceFailsClosed() {
+    // A source the caller asked to archive that no longer exists must fail the
+    // compress, not be quietly downgraded to a warning that ships an archive
+    // silently missing the requested item (B8-21). The half-written archive is
+    // removed on failure.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString present = dir.filePath(QStringLiteral("present.txt"));
+    writeFile(present, QByteArrayLiteral("here"));
+    const QString missing = dir.filePath(QStringLiteral("gone.txt"));  // never created
+    const QString out = dir.filePath(QStringLiteral("out.zip"));
+
+    const auto result = FileExplorerArchiveService::compressToZip(out, {present, missing});
+
+    QVERIFY2(!result.ok, "a missing requested source must fail the compress");
+    QVERIFY(!result.blockers.isEmpty());
+    QVERIFY2(!QFile::exists(out), "the partial archive must be removed, not left behind");
+}
+
+void FileExplorerArchiveServiceTests::compressToZip_countsDirectoriesTowardEntryCap() {
+    // Directories must count toward the archive entry cap. Before B8-21 only
+    // files incremented the counter, so a tree of empty directories never
+    // tripped the loop guard and bypassed the cap entirely. A bundle with one
+    // wrapper dir, one subdirectory, and one file must report three entries.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    QVERIFY(root.mkpath(QStringLiteral("bundle/sub")));
+    writeFile(root.filePath(QStringLiteral("bundle/a.txt")), QByteArrayLiteral("x"));
+    const QString out = dir.filePath(QStringLiteral("out.zip"));
+
+    const auto result =
+        FileExplorerArchiveService::compressToZip(out, {root.filePath(QStringLiteral("bundle"))});
+
+    QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(result.entries, 3);
 }
 
 QTEST_GUILESS_MAIN(FileExplorerArchiveServiceTests)
