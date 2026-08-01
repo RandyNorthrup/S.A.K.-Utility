@@ -120,16 +120,29 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
     script += "echo S.A.K. Utility - WiFi Network Setup Script\r\n";
     script += "echo Network: " + safe_ssid + "\r\n";
     script += "echo.\r\n";
-    script += "set PROFILE_XML=%TEMP%\\wifi_profile_sak.xml\r\n";
+    // Allocate a kernel-chosen, unpredictable temp file (GetTempFileName atomically
+    // creates a uniquely named 0-byte file), instead of a fixed %TEMP%\wifi_profile_sak.xml
+    // that a local attacker could pre-create/symlink and that two runs would collide on.
     script +=
-        "powershell -Command \"[System.Text.Encoding]::UTF8."
+        "for /f \"usebackq delims=\" %%i in "
+        "(`powershell -NoProfile -Command \"[System.IO.Path]::GetTempFileName()\"`) "
+        "do set \"PROFILE_XML=%%i\"\r\n";
+    script += "if not defined PROFILE_XML (\r\n";
+    script += "    echo Failed to allocate a temporary profile file.\r\n";
+    script += "    pause\r\n";
+    script += "    exit /b 1\r\n";
+    script += ")\r\n";
+    script +=
+        "powershell -NoProfile -Command \"[System.Text.Encoding]::UTF8."
         "GetString([System.Convert]::FromBase64String('" +
         xml_base64 +
-        "')) | Set-Content -Path '%PROFILE_XML%'"
+        "')) | Set-Content -LiteralPath $env:PROFILE_XML"
         " -Encoding UTF8\"\r\n";
     script +=
         "netsh wlan add profile filename=\"%PROFILE_XML%\""
         " user=all\r\n";
+    // Wipe the plaintext-password XML immediately after netsh consumes it, on BOTH the
+    // failure and success paths, so the credentials do not linger in %TEMP%.
     script += "if %errorlevel% neq 0 (\r\n";
     script +=
         "    echo Failed to add WiFi profile."

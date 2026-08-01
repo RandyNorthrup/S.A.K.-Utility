@@ -34,6 +34,7 @@ private Q_SLOTS:
     void refusesSsidWithControlChar();
     void refusesEmptySsid();
     void neutralizesBatchMetacharacters();
+    void usesUniqueTempFileAndWipesOnBothPaths();
     void usesPassphraseOnlyForWpa();
     void connectRefusesEmptySsid();
     void connectRefusesUnsafeSsid();
@@ -66,6 +67,25 @@ void TestWifiSetupScript::connectRefusesOverlongSsid() {
         QString(200, QLatin1Char('a')), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
     QVERIFY(!r.profile_added);
     QVERIFY(!r.error.isEmpty());
+}
+
+void TestWifiSetupScript::usesUniqueTempFileAndWipesOnBothPaths() {
+    // B9-15: the profile XML holds the plaintext passphrase, so the generated .cmd
+    // must NOT write it to a fixed, predictable %TEMP% path, and must delete it on
+    // both the add-profile failure and success branches.
+    const QString script = sak::buildWifiSetupScriptWindows(
+        QStringLiteral("MyNet"), QStringLiteral("secret123"), QStringLiteral("wpa2"), false);
+    QVERIFY(!script.isEmpty());
+
+    // The old predictable filename must be gone.
+    QVERIFY(!script.contains(QStringLiteral("wifi_profile_sak.xml")));
+    // A kernel-unique temp file is allocated instead.
+    QVERIFY(script.contains(QStringLiteral("GetTempFileName()")));
+    QVERIFY(script.contains(QStringLiteral("if not defined PROFILE_XML")));
+
+    // The XML is deleted on BOTH paths: the failure branch (before `exit /b 1`) and
+    // the success path (before `netsh wlan connect`). Two `del` calls prove it.
+    QCOMPARE(script.count(QStringLiteral("del \"%PROFILE_XML%\" 2>nul")), 2);
 }
 
 void TestWifiSetupScript::usesPassphraseOnlyForWpa() {
