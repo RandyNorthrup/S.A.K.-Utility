@@ -166,21 +166,25 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     emitProgress(InternalizationStatus::ParsingScript, "Parsing install script...");
     const QString script_path = findInstallScript(paths.extract_dir);
     if (script_path.isEmpty()) {
-        sak::logInfo(
-            "[InternalizationEngine] No install script found, "
-            "skipping binary internalization");
-        repackAndFinish(result, paths.extract_dir, output_dir, "Repacking (no binaries)...");
+        // No script means nothing was internalized: repack, but do NOT present it
+        // as a fully offline package (binaries_internalized stays false).
+        sak::logWarning(
+            "[InternalizationEngine] No install script found for {}; nothing internalized "
+            "(package may still require internet at install time)",
+            package_id.toStdString());
+        repackAndFinish(
+            result, paths.extract_dir, output_dir, "Repacking (no binaries internalized)...");
         return;
     }
 
     const auto parsed = m_parser.parseFile(script_path);
     if (parsed.resources.isEmpty()) {
-        sak::logInfo(
-            "[InternalizationEngine] No download URLs in script "
-            "for {}",
+        sak::logWarning(
+            "[InternalizationEngine] No recognized download URLs in script for {}; nothing "
+            "internalized (package may still require internet at install time)",
             package_id.toStdString());
         repackAndFinish(
-            result, paths.extract_dir, output_dir, "Repacking (no external downloads)...");
+            result, paths.extract_dir, output_dir, "Repacking (no binaries internalized)...");
         return;
     }
 
@@ -516,6 +520,9 @@ void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result
 
     if (repackNupkg(extract_dir, output_nupkg)) {
         result.success = true;
+        // True only if binaries were actually downloaded; a no-URL repack leaves
+        // this false so consumers can warn the package may not be fully offline.
+        result.binaries_internalized = !result.internalized_files.isEmpty();
         result.output_nupkg_path = output_nupkg;
         result.checksum = computeChecksum(output_nupkg);
         result.internalized_size = QFileInfo(output_nupkg).size();

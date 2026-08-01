@@ -57,6 +57,12 @@ struct InternalizationResult {
     QString package_id;
     QString version;
     bool success{false};
+    /// @brief True only if at least one external binary was actually downloaded
+    ///        and internalized. False means the package was merely repacked as-is
+    ///        (no recognized download URLs) -- it may STILL fetch from the
+    ///        internet at install time, so callers must surface this to the user
+    ///        rather than presenting it as a fully offline package.
+    bool binaries_internalized{false};
     QString output_nupkg_path;
     QString checksum;
     QStringList internalized_files;

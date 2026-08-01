@@ -323,7 +323,10 @@ void OfflineDeploymentWorker::applyInternalizationResult(int idx,
         entry.nupkg_filename = QFileInfo(result.output_nupkg_path).fileName();
         entry.checksum = result.checksum;
         entry.size_bytes = result.internalized_size;
-        entry.internalized = true;
+        // Reflect whether binaries were ACTUALLY internalized -- a no-URL package
+        // is repacked but not truly offline, and the manifest must say so honestly
+        // rather than always claiming internalized=true.
+        entry.internalized = result.binaries_internalized;
         manifest.packages.append(entry);
         manifest.total_size_bytes += result.internalized_size;
     } else {
