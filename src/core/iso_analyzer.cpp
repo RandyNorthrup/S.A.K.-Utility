@@ -515,47 +515,45 @@ void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) 
 void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
     Q_ASSERT(device.isOpen());
 
-    // Boot record is at LBA 17 (sector 17)
-    constexpr qint64 kBootRecordOffset = 17 * kSectorSize;
-    if (!device.seek(kBootRecordOffset)) {
-        return;
-    }
-
-    std::array<char, kSectorSize> sector{};
-    qint64 bytes_read = device.read(sector.data(), kSectorSize);
-    if (bytes_read < kSectorSize) {
-        return;
-    }
-
-    // Check for boot record volume descriptor
-    if (static_cast<uint8_t>(sector[0]) != kVdTypeBoot) {
-        return;
-    }
-    if (std::memcmp(sector.data() + 1, kIso9660Magic, kIso9660MagicLength) != 0) {
-        return;
-    }
-
-    // Check El Torito identifier at bytes 7-29
+    // The Boot Record volume descriptor is NOT always at LBA 17: it lives
+    // somewhere in the VD sequence that starts at LBA 16 and ends at a type-255
+    // terminator, and a supplementary VD before it shifts it later. Scan the set
+    // (bounded by kMaxDescriptors) for the boot record instead of a fixed LBA.
     constexpr int kElToritoIdentifierOffset = 7;
     constexpr int kElToritoIdLength = 23;
-    if (std::memcmp(sector.data() + kElToritoIdentifierOffset, kElToritoId, kElToritoIdLength) !=
-        0) {
+    constexpr int kMaxDescriptors = 16;
+
+    for (int descriptor_index = 0; descriptor_index < kMaxDescriptors; ++descriptor_index) {
+        const qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
+        if (!device.seek(offset)) {
+            return;
+        }
+        std::array<char, kSectorSize> sector{};
+        if (device.read(sector.data(), kSectorSize) < kSectorSize) {
+            return;
+        }
+        if (std::memcmp(sector.data() + 1, kIso9660Magic, kIso9660MagicLength) != 0) {
+            return;  // not an ISO 9660 volume descriptor
+        }
+        const auto descriptor_type = static_cast<uint8_t>(sector[0]);
+        if (descriptor_type == kVdTypeTerminator) {
+            return;  // end of the descriptor set: no boot record
+        }
+        if (descriptor_type != kVdTypeBoot || std::memcmp(sector.data() + kElToritoIdentifierOffset,
+                                                          kElToritoId,
+                                                          kElToritoIdLength) != 0) {
+            continue;  // some other VD, or a boot record that is not El Torito
+        }
+
+        info.is_bootable = true;
+
+        // Read boot catalog pointer (LE 32-bit at offset 71)
+        uint32_t catalog_lba = 0;
+        std::memcpy(&catalog_lba, sector.data() + kElToritoBootCatalogOffset, sizeof(catalog_lba));
+        info.boot_type = (catalog_lba == 0) ? QStringLiteral("Legacy BIOS")
+                                            : classifyBootCatalog(device, catalog_lba);
         return;
     }
-
-    info.is_bootable = true;
-
-    // Read boot catalog pointer (LE 32-bit at offset 71)
-    uint32_t catalog_lba = 0;
-    std::memcpy(&catalog_lba, sector.data() + kElToritoBootCatalogOffset, sizeof(catalog_lba));
-
-    if (catalog_lba == 0) {
-        info.boot_type = QStringLiteral("Legacy BIOS");
-        return;
-    }
-
-    // Read and classify boot catalog entries
-    info.boot_type = classifyBootCatalog(device, catalog_lba);
 }
 
 // ============================================================================

@@ -321,7 +321,10 @@ qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
 }
 
 qint64 CompressedImageSource::size() const {
-    return m_metadata.uncompressedSize;
+    // uncompressedSize is only known once decompression has determined it; until
+    // then it is 0. Fall back to the compressed on-disk size (always set from the
+    // file) so callers get a meaningful non-zero size instead of a useless 0.
+    return m_metadata.uncompressedSize > 0 ? m_metadata.uncompressedSize : m_metadata.size;
 }
 
 qint64 CompressedImageSource::position() const {

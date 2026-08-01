@@ -197,7 +197,9 @@ QVector<ProgramInfo> ProgramEnumerator::programs() const {
 }
 
 bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+    // An empty program list is a legitimate enumeration result (locked-down
+    // machine, or all scans returned nothing); the loop below handles it. Do NOT
+    // assert non-empty -- that aborts a debug build on a valid empty scan.
     for (int i = 0; i < programs.size(); ++i) {
         if (m_cancelRequested.load(std::memory_order_acquire)) {
             Q_EMIT enumerationFailed("Enumeration cancelled.");
@@ -226,7 +228,7 @@ bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) 
 }
 
 void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     for (auto& prog : programs) {
         if (prog.source == ProgramInfo::Source::UWP ||
             prog.source == ProgramInfo::Source::Provisioned) {
@@ -256,8 +258,7 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
 }
 
 void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
-    Q_ASSERT(programs.size() > 0);
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     // Bloatware patterns from CheckBloatwareAction database
     static const QStringList kBloatwarePatterns = {"CandyCrush",
                                                    "FarmVille",
@@ -652,7 +653,7 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
 }
 
 void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     QSet<QString> seen;
     QVector<ProgramInfo> unique;
     unique.reserve(programs.size());

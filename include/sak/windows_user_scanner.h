@@ -71,6 +71,13 @@ public:
      */
     static qint64 estimateProfileSize(const QString& profilePath);
 
+    /// @brief Sum of file sizes directly under @p folderPath (recursive), capped
+    ///        at @p fileLimit files. Unlike estimateProfileSize (which expects a
+    ///        profile ROOT and scans its standard subfolders), this sizes a single
+    ///        folder -- so a per-folder selection reports its real size, not 0.
+    ///        Unit-testable.
+    [[nodiscard]] static qint64 sumFolderFileSizes(const QString& folderPath, int fileLimit);
+
     /**
      * @brief Get default folder selections for a user
      * @param profilePath User profile path

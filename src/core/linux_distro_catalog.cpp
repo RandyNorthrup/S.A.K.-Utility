@@ -631,6 +631,10 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
 void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
                                               const QString& matchedName,
                                               const QJsonArray& assets) {
+    // A newly resolved release may ship no checksum sidecar. Drop any URL cached
+    // for a PRIOR release first, so we never verify the new asset against an old
+    // release's checksum (stale-checksum false verification / spurious mismatch).
+    m_githubAssetUrls.remove(distroId + "_checksum");
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
         QString name = asset["name"].toString();

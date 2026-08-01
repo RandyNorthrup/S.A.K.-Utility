@@ -6,6 +6,9 @@
 
 #include "sak/windows_user_scanner.h"
 
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -21,7 +24,29 @@ private Q_SLOTS:
     void estimateProfileSize_invalidPath();
     void getDefaultFolderSelections_currentUser();
     void getDefaultFolderSelections_invalidPath();
+    void sumFolderFileSizes_sumsRealFiles();  // B10-31 per-folder sizing
 };
+
+void TestWindowsUserScanner::sumFolderFileSizes_sumsRealFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // 5 + 3 bytes at two nesting levels; a per-folder selection must report the
+    // real total (previously it called estimateProfileSize on the folder and got 0).
+    QFile a(QDir(dir.path()).filePath("a.txt"));
+    QVERIFY(a.open(QIODevice::WriteOnly));
+    a.write("hello");  // 5
+    a.close();
+    QVERIFY(QDir(dir.path()).mkpath("sub"));
+    QFile b(QDir(dir.path()).filePath("sub/b.txt"));
+    QVERIFY(b.open(QIODevice::WriteOnly));
+    b.write("abc");  // 3
+    b.close();
+
+    QCOMPARE(WindowsUserScanner::sumFolderFileSizes(dir.path(), 1000), static_cast<qint64>(8));
+    // An absent folder sizes to 0.
+    QCOMPARE(WindowsUserScanner::sumFolderFileSizes(QDir(dir.path()).filePath("nope"), 1000),
+             static_cast<qint64>(0));
+}
 
 void TestWindowsUserScanner::construction_default() {
     WindowsUserScanner scanner;

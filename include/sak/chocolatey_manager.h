@@ -101,6 +101,17 @@ public:
     void setAutoConfirm(bool confirm);
     bool getAutoConfirm() const;
 
+    /// @brief True iff @p package_name is a safe Chocolatey/NuGet package id: it
+    ///        must START with an alphanumeric (so it can never be read as a CLI
+    ///        option like "-force") and otherwise contain only [A-Za-z0-9._-].
+    ///        Pure; unit-testable.
+    [[nodiscard]] static bool validatePackageName(const QString& package_name);
+
+    /// @brief True iff @p version is a safe version string: NuGet/SemVer numeric
+    ///        core with optional dotted prerelease and +build metadata, starting
+    ///        with a digit (never an option). Pure; unit-testable.
+    [[nodiscard]] static bool validateVersion(const QString& version);
+
 Q_SIGNALS:
     void installStarted(const QString& package_name);
     void installProgress(const QString& package_name, const QString& status);
@@ -124,9 +135,7 @@ private:
     bool isDependencyError(const QString& output) const;
     bool isPermissionError(const QString& output) const;
 
-    // Validation
-    bool validatePackageName(const QString& package_name) const;
-    bool validateVersion(const QString& version) const;
+    // Validation (declared public+static below for headless testability)
 
     // Member variables
     QString m_choco_path;  // Path to choco.exe

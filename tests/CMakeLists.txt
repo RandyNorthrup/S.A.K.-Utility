@@ -5339,6 +5339,78 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     message(STATUS "Added unit test: test_advanced_uninstall_types")
 endif()
 
+# test_windows_user_scanner --- profile/folder scanning + per-folder sizing (B10-31)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_user_scanner.cpp")
+    add_executable(test_windows_user_scanner
+        unit/test_windows_user_scanner.cpp
+        ../src/core/windows_user_scanner.cpp
+        ../src/core/logger.cpp
+        ../include/sak/windows_user_scanner.h
+    )
+    set_target_properties(test_windows_user_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_windows_user_scanner PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_windows_user_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_windows_user_scanner COMMAND test_windows_user_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_windows_user_scanner")
+endif()
+
+# test_app_scanner --- registry hive enumeration robustness (B10-31)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_scanner.cpp")
+    add_executable(test_app_scanner
+        unit/test_app_scanner.cpp
+        ../src/core/app_scanner.cpp
+        ../src/core/bundled_tools_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/app_scanner.h
+    )
+    set_target_properties(test_app_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_app_scanner PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_app_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_app_scanner COMMAND test_app_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_app_scanner")
+endif()
+
+# test_chocolatey_manager --- struct defaults, parse, input validation (B10-31)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_chocolatey_manager.cpp")
+    add_executable(test_chocolatey_manager
+        unit/test_chocolatey_manager.cpp
+        ../src/core/chocolatey_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/chocolatey_manager.h
+    )
+    set_target_properties(test_chocolatey_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_chocolatey_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_chocolatey_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_chocolatey_manager COMMAND test_chocolatey_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_chocolatey_manager")
+endif()
+
 # test_cleanup_worker --- construction, enum coverage, recycle-fallback surfacing (B10-23)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cleanup_worker.cpp")
     add_executable(test_cleanup_worker

@@ -292,6 +292,18 @@ bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
 #endif
 }
 
+qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fileLimit) {
+    qint64 total = 0;
+    int count = 0;
+    QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext() && count < fileLimit) {
+        it.next();
+        total += it.fileInfo().size();
+        ++count;
+    }
+    return total;
+}
+
 qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
     Q_ASSERT(!profilePath.isEmpty());
     qint64 totalSize = 0;
@@ -342,7 +354,12 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
         sel.file_count = 0;
         QString fullPath = profilePath + "/" + relativePath;
         if (QDir(fullPath).exists()) {
-            sel.size_bytes = WindowsUserScanner::estimateProfileSize(fullPath);
+            // Size THIS folder directly. estimateProfileSize expects a profile
+            // ROOT and scans its standard subfolders, so calling it on a single
+            // folder (e.g. .../Documents) looked for .../Documents/Documents and
+            // reported 0 for almost every selection.
+            sel.size_bytes = WindowsUserScanner::sumFolderFileSizes(fullPath,
+                                                                    kFolderSelectionFileLimit);
             // Quick file count
             QDirIterator it(fullPath, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext() && sel.file_count < kFolderSelectionFileLimit) {

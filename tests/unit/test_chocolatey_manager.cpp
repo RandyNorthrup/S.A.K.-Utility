@@ -23,6 +23,10 @@ private Q_SLOTS:
     void parseSearchResults_invalidInput();
     void timeout_defaultAndSet();
     void autoConfirm_defaultAndSet();
+
+    // Input validation (B10-31)
+    void validatePackageName_rejectsLeadingDashAndSeparators();
+    void validateVersion_acceptsSemVerRejectsInjection();
 };
 
 void TestChocolateyManager::construction_default() {
@@ -103,6 +107,35 @@ void TestChocolateyManager::autoConfirm_defaultAndSet() {
 
     manager.setAutoConfirm(true);
     QVERIFY(manager.getAutoConfirm());
+}
+
+void TestChocolateyManager::validatePackageName_rejectsLeadingDashAndSeparators() {
+    // Real ids.
+    QVERIFY(ChocolateyManager::validatePackageName("googlechrome"));
+    QVERIFY(ChocolateyManager::validatePackageName("7zip.install"));
+    QVERIFY(ChocolateyManager::validatePackageName("chocolatey-core.extension"));
+    // Leading dash would be parsed by choco as an option -> injection.
+    QVERIFY(!ChocolateyManager::validatePackageName("-force"));
+    QVERIFY(!ChocolateyManager::validatePackageName("--source=http://evil"));
+    // Separators / spaces / empty.
+    QVERIFY(!ChocolateyManager::validatePackageName("a b"));
+    QVERIFY(!ChocolateyManager::validatePackageName("a/b"));
+    QVERIFY(!ChocolateyManager::validatePackageName(QString()));
+}
+
+void TestChocolateyManager::validateVersion_acceptsSemVerRejectsInjection() {
+    // Valid NuGet/SemVer -- previously the dotted prerelease / build were rejected.
+    QVERIFY(ChocolateyManager::validateVersion("1"));
+    QVERIFY(ChocolateyManager::validateVersion("1.2.3"));
+    QVERIFY(ChocolateyManager::validateVersion("1.2.3.4"));
+    QVERIFY(ChocolateyManager::validateVersion("1.2.3-beta.1"));
+    QVERIFY(ChocolateyManager::validateVersion("2024.01.0+build.5"));
+    QVERIFY(ChocolateyManager::validateVersion("1.0.0-rc.1+exp.sha.5114f85"));
+    // Injection / garbage.
+    QVERIFY(!ChocolateyManager::validateVersion("-1.0"));
+    QVERIFY(!ChocolateyManager::validateVersion("1.0 --force"));
+    QVERIFY(!ChocolateyManager::validateVersion("latest"));
+    QVERIFY(!ChocolateyManager::validateVersion(QString()));
 }
 
 QTEST_MAIN(TestChocolateyManager)

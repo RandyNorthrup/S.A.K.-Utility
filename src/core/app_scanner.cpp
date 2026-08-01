@@ -93,16 +93,29 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
         return apps;
     }
 
-    // Enumerate subkeys (each represents an app)
+    // Enumerate subkeys (each represents an app). Classify the return code
+    // explicitly: an ERROR_MORE_DATA (a single over-long subkey name) or a
+    // transient error must SKIP that one entry, not silently halt the entire
+    // enumeration -- the old "while(... == ERROR_SUCCESS)" stopped on the first
+    // non-success and dropped every remaining app.
     DWORD index = 0;
     wchar_t subKeyName[kRegistrySubKeyNameChars];
-    DWORD subKeyNameSize = kRegistrySubKeyNameChars;
 
-    while (RegEnumKeyExW(
-               hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) ==
-           ERROR_SUCCESS) {
-        index++;
-        subKeyNameSize = kRegistrySubKeyNameChars;
+    while (true) {
+        DWORD subKeyNameSize = kRegistrySubKeyNameChars;
+        const LONG enumResult = RegEnumKeyExW(
+            hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr);
+        if (enumResult == ERROR_NO_MORE_ITEMS) {
+            break;  // enumeration complete
+        }
+        ++index;
+        if (enumResult != ERROR_SUCCESS) {
+            // ERROR_MORE_DATA (name > buffer) or a transient error: skip this one
+            // subkey and keep going so a single bad entry never truncates the scan.
+            sak::logWarning("AppScanner: skipping registry subkey (enum status {})",
+                            static_cast<long>(enumResult));
+            continue;
+        }
 
         // Open this application's registry key
         HKEY appKey;

@@ -513,23 +513,29 @@ bool ChocolateyManager::isPermissionError(const QString& output) const {
            output.contains("elevated", Qt::CaseInsensitive);
 }
 
-bool ChocolateyManager::validatePackageName(const QString& package_name) const {
+bool ChocolateyManager::validatePackageName(const QString& package_name) {
     if (package_name.isEmpty() || package_name.length() > kMaxPackageNameLength) {
         return false;
     }
 
-    // Package names should contain only alphanumeric, dash, dot, underscore
-    QRegularExpression valid_name(R"(^[a-zA-Z0-9._-]+$)");
+    // Must START with an alphanumeric so a crafted id (e.g. "-force",
+    // "--source=evil") can never be parsed by choco as an OPTION rather than a
+    // package; the remainder may contain [A-Za-z0-9._-].
+    static const QRegularExpression valid_name(R"(^[a-zA-Z0-9][a-zA-Z0-9._-]*$)");
     return valid_name.match(package_name).hasMatch();
 }
 
-bool ChocolateyManager::validateVersion(const QString& version) const {
+bool ChocolateyManager::validateVersion(const QString& version) {
     if (version.isEmpty() || version.length() > kMaxVersionLength) {
         return false;
     }
 
-    // Version format: digits, dots, and optional prerelease identifiers
-    QRegularExpression valid_version(R"(^\d+(\.\d+)*(-[a-zA-Z0-9]+)?$)");
+    // NuGet/SemVer: numeric core "1", "1.2", "1.2.3", "1.2.3.4"; optional
+    // dotted prerelease "-beta.1" / "-rc.1"; optional "+build.5" metadata. Must
+    // start with a digit (never an option). Previously a dotted prerelease or
+    // build metadata was wrongly rejected.
+    static const QRegularExpression valid_version(
+        R"(^\d+(\.\d+)*(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$)");
     return valid_version.match(version).hasMatch();
 }
 
