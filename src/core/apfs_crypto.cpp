@@ -252,7 +252,12 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
                         uint64_t iterations,
                         int keyLength) {
 #ifdef _WIN32
-    if (keyLength <= 0 || iterations == 0) {
+    // A hostile keybag can claim an arbitrary iteration count; PBKDF2 would then spin for that
+    // many HMAC rounds -- an unlock-time denial of service. Real APFS FileVault keybags use a
+    // low-hundreds-of-thousands count, so refuse anything past a generous ceiling and fail the
+    // unlock closed rather than derive against an attacker-chosen work factor.
+    constexpr uint64_t kMaxPbkdf2Iterations = 100'000'000ULL;
+    if (keyLength <= 0 || iterations == 0 || iterations > kMaxPbkdf2Iterations) {
         return {};
     }
     AlgProvider alg(BCRYPT_SHA256_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG);

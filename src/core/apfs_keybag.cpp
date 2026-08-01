@@ -10,7 +10,9 @@
 
 #include <QtEndian>
 
+#include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace sak::apfs_keybag {
 
@@ -60,7 +62,13 @@ void assignKeyBlobField(KeyBlobParams* out, uint8_t tag, const QByteArray& value
         out->wrappedKey = value;
         break;
     case 0x84:
-        out->iterations = derBigEndianU64(value);
+        // A DER INTEGER wider than 8 bytes cannot be a real PBKDF2 iteration count and would
+        // silently overflow the uint64 accumulator in derBigEndianU64. Treat an over-wide
+        // value as out-of-range (UINT64_MAX) so the downstream iteration cap fails the unlock
+        // closed instead of deriving against a wrapped, attacker-chosen count.
+        out->iterations = value.size() <= static_cast<qsizetype>(sizeof(uint64_t))
+                              ? derBigEndianU64(value)
+                              : std::numeric_limits<uint64_t>::max();
         break;
     case 0x85:
         out->salt = value;
@@ -149,6 +157,9 @@ QList<KeybagEntry> parseKeybagBlock(const QByteArray& block, bool align16) {
 }
 
 bool parseKeyBlob(const QByteArray& blob, KeyBlobParams* out) {
+    if (out == nullptr) {
+        return false;
+    }
     const QList<DerField> top = derParse(blob);
     if (top.isEmpty() || top.first().tag != 0x30) {
         return false;

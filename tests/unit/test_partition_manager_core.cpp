@@ -13406,6 +13406,10 @@ void verifyApfsCryptoHashHmacKeywrapVectors() {
     // Iterations are honoured (c=2 differs from c=1) and multi-block output spans.
     QVERIFY(pbkdf2Sha256(pwd, salt, 2, 32) != pbkdf2Sha256(pwd, salt, 1, 32));
     QCOMPARE(pbkdf2Sha256(pwd, salt, 4, 64).size(), 64);
+    // B11-11: an out-of-range iteration count (0 or past the DoS ceiling) fails closed
+    // rather than spinning PBKDF2 for an attacker-chosen number of rounds.
+    QVERIFY(pbkdf2Sha256(pwd, salt, 0, 32).isEmpty());
+    QVERIFY(pbkdf2Sha256(pwd, salt, 100'000'001ULL, 32).isEmpty());
 
     // RFC 3394 §4.6 — wrap a 256-bit key under a 256-bit KEK.
     const QByteArray kek =
@@ -13633,6 +13637,7 @@ void verifyApfsEncryptedVolumeUnlock(const QString& img,
     KeyBlobParams vek;
     QVERIFY(parseKeyBlob(kekBlob, &kek));
     QVERIFY(parseKeyBlob(vekBlob, &vek));
+    QVERIFY(!parseKeyBlob(kekBlob, nullptr));  // B11-11: null out fails closed, no deref
     const QByteArray derived = pbkdf2Sha256(password, kek.salt, kek.iterations, 32);
     const auto kekKey = aesKeyUnwrap(derived, kek.wrappedKey);
     QVERIFY(kekKey.has_value());
