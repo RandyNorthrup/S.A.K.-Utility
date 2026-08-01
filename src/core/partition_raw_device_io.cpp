@@ -23,6 +23,8 @@
 #include <io.h>
 #include <winioctl.h>
 #else
+#include <cerrno>
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -453,6 +455,33 @@ bool copyDataRegionPosix(int in, int out, off_t offset, off_t length) {
     return true;
 }
 
+// Outcome of locating the next data region at or after `position` in a sparse source.
+enum class SparseSeekResult {
+    Found,
+    EndOfData,
+    Error
+};
+
+// Locate the next [dataStart, dataEnd) data region at or after `position`. Distinguishes a
+// legitimate end-of-data (SEEK_DATA fails with ENXIO: only a trailing hole remains) from a
+// real seek failure (any other errno), so the caller never silently finishes with a
+// hole-filled, truncated destination reported as success.
+SparseSeekResult nextSparseDataRegion(
+    int in, off_t position, off_t fileSize, off_t* dataStart, off_t* dataEnd) {
+    errno = 0;
+    const off_t start = ::lseek(in, position, SEEK_DATA);
+    if (start < 0) {
+        return errno == ENXIO ? SparseSeekResult::EndOfData : SparseSeekResult::Error;
+    }
+    off_t end = ::lseek(in, start, SEEK_HOLE);
+    if (end < 0) {
+        end = fileSize;  // no trailing hole: the data region runs to EOF
+    }
+    *dataStart = start;
+    *dataEnd = end;
+    return SparseSeekResult::Found;
+}
+
 bool copyFileSparsePosix(const QString& source, const QString& destination, QString* errorMessage) {
     const QByteArray sourceName = QFile::encodeName(source);
     const QByteArray destName = QFile::encodeName(destination);
@@ -474,13 +503,13 @@ bool copyFileSparsePosix(const QString& source, const QString& destination, QStr
     bool ok = ::ftruncate(out, info.st_size) == 0;
     off_t position = 0;
     while (ok && position < info.st_size) {
-        const off_t dataStart = ::lseek(in, position, SEEK_DATA);
-        if (dataStart < 0) {
-            break;  // ENXIO: no more data before EOF
-        }
-        off_t dataEnd = ::lseek(in, dataStart, SEEK_HOLE);
-        if (dataEnd < 0) {
-            dataEnd = info.st_size;
+        off_t dataStart = 0;
+        off_t dataEnd = 0;
+        const SparseSeekResult seek =
+            nextSparseDataRegion(in, position, info.st_size, &dataStart, &dataEnd);
+        if (seek != SparseSeekResult::Found) {
+            ok = (seek == SparseSeekResult::EndOfData);  // Error -> fail closed
+            break;
         }
         ok = copyDataRegionPosix(in, out, dataStart, dataEnd - dataStart);
         position = dataEnd;
