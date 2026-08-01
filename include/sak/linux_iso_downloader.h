@@ -93,6 +93,18 @@ public:
      */
     Phase currentPhase() const { return m_phase; }
 
+    /// @brief True iff a checksum-verification result for operation-generation
+    ///        @p result_generation should still be applied: the downloader was
+    ///        not cancelled and no newer operation (@p current_generation) has
+    ///        begun. Guards against a stale background hash from a cancelled or
+    ///        superseded download acting on the current download's state. Pure;
+    ///        unit-testable.
+    [[nodiscard]] static bool shouldApplyVerifyResult(bool cancelled,
+                                                      quint64 result_generation,
+                                                      quint64 current_generation) {
+        return !cancelled && result_generation == current_generation;
+    }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when the download phase changes
@@ -152,6 +164,8 @@ private:
                                      const QString& outFile) const;
     void verifyChecksum();
     void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);
+    /// @brief Launch the background file-hash + gen-tagged verify watcher.
+    void launchChecksumHash(QCryptographicHash::Algorithm algorithm, const QString& expectedHash);
     QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
     void onChecksumVerified(bool match, const QString& expected, const QString& actual);
     QString findAria2c() const;
@@ -171,6 +185,9 @@ private:
     QString m_expectedFileName;
     qint64 m_totalSize = 0;
     std::atomic<bool> m_cancelled{false};
+    // Bumped on every new download and on cancel; a background hash tags itself
+    // with the generation it started under so a stale result is discarded.
+    std::atomic<quint64> m_operationGeneration{0};
     QFuture<QString>
         m_hashFuture;  // background checksum hash; joined in the dtor (see cancel note)
     LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;

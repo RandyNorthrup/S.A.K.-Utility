@@ -103,6 +103,9 @@ private Q_SLOTS:
     // Cancel
     void testCancelFromIdle();
 
+    // Verify-result staleness guard (B10-19)
+    void testShouldApplyVerifyResult_gating();
+
     // ========================================================================
     // Network Tests (require internet — auto-skip if unreachable)
     // ========================================================================
@@ -536,6 +539,16 @@ void LinuxISODownloaderTests::testCancelFromIdle() {
     // Cancel from idle should not crash
     downloader.cancel();
     QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Idle);
+}
+
+void LinuxISODownloaderTests::testShouldApplyVerifyResult_gating() {
+    // Same generation, not cancelled -> apply.
+    QVERIFY(LinuxISODownloader::shouldApplyVerifyResult(false, 5, 5));
+    // Cancelled -> never apply, even if generation still matches.
+    QVERIFY(!LinuxISODownloader::shouldApplyVerifyResult(true, 5, 5));
+    // Superseded by a newer operation -> discard the stale result.
+    QVERIFY(!LinuxISODownloader::shouldApplyVerifyResult(false, 5, 6));
+    QVERIFY(!LinuxISODownloader::shouldApplyVerifyResult(true, 5, 6));
 }
 
 // ============================================================================

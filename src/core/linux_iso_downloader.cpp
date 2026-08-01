@@ -111,6 +111,7 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
     }
 
     m_cancelled = false;
+    ++m_operationGeneration;  // supersede any stale in-flight verify from a prior run
     m_currentDistroId = distroId;
     m_savePath = savePath;
 
@@ -416,9 +417,13 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
         verifyChecksum();
     } else {
-        // No checksum available -- complete without verification
+        // No checksum available -- complete WITHOUT integrity verification. This is
+        // an unverified download (the transport may have been redirected to an HTTP
+        // mirror), so surface it explicitly rather than presenting it as verified.
+        sak::logWarning("Linux ISO downloaded WITHOUT checksum verification: " +
+                        m_savePath.toStdString());
         setPhase(Phase::Completed, "Download complete (no checksum verification available)");
-        Q_EMIT statusMessage("Download complete -- no checksum available for this distribution");
+        Q_EMIT statusMessage("Download complete -- no checksum available; integrity NOT verified");
         Q_EMIT downloadComplete(m_savePath, downloadedFile.size());
     }
 }
@@ -520,6 +525,10 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     reply->deleteLater();
     nam->deleteLater();
 
+    if (m_cancelled) {
+        return;  // a cancelled verify emits no terminal signal
+    }
+
     if (reply->error() != QNetworkReply::NoError) {
         const QString error = "Checksum fetch failed: " + reply->errorString();
         sak::logWarning(error.toStdString());
@@ -547,16 +556,34 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
 
     auto algorithm = (m_checksumType == "sha1") ? QCryptographicHash::Sha1
                                                 : QCryptographicHash::Sha256;
+    launchChecksumHash(algorithm, expectedHash);
+}
+
+void LinuxISODownloader::launchChecksumHash(QCryptographicHash::Algorithm algorithm,
+                                            const QString& expectedHash) {
+    // Tag this verify with the current operation generation and hash the file
+    // captured NOW (by value) -- so a later download that reassigns m_savePath
+    // cannot make this background hash read the wrong file, and a cancelled or
+    // superseded result is discarded instead of acting on stale state.
+    const quint64 generation = m_operationGeneration.load();
+    const QString hashPath = m_savePath;
 
     auto* watcher = new QFutureWatcher<QString>(this);
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, expectedHash]() {
-        QString actualHash = watcher->result();
-        watcher->deleteLater();
-        onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
-    });
+    connect(
+        watcher,
+        &QFutureWatcher<QString>::finished,
+        this,
+        [this, watcher, expectedHash, generation]() {
+            QString actualHash = watcher->result();
+            watcher->deleteLater();
+            if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+                return;  // cancelled or superseded by a newer download
+            }
+            onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
+        });
 
-    m_hashFuture = QtConcurrent::run([this, algorithm]() -> QString {
-        QFile file(m_savePath);
+    m_hashFuture = QtConcurrent::run([this, algorithm, hashPath]() -> QString {
+        QFile file(hashPath);
         if (!file.open(QIODevice::ReadOnly)) {
             return QString();
         }
@@ -564,6 +591,9 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         QCryptographicHash hash(algorithm);
         const qint64 bufferSize = kChecksumReadBufferSize;
         while (!file.atEnd()) {
+            if (m_cancelled.load()) {
+                return QString();  // abort a long hash promptly on cancel
+            }
             hash.addData(file.read(bufferSize));
         }
         return hash.result().toHex().toLower();
@@ -638,6 +668,7 @@ void LinuxISODownloader::cancel() {
     Q_ASSERT(m_progressTimer);
     Q_ASSERT(m_catalog);
     m_cancelled = true;
+    ++m_operationGeneration;  // invalidate any background hash still running
     m_progressTimer->stop();
     m_catalog->cancelAll();
 
