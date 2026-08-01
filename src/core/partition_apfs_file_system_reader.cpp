@@ -590,6 +590,17 @@ private:
         if (!validateBlockGeometry(result)) {
             return false;
         }
+        // Reconcile the claimed container block count with the REAL backing device:
+        // a corrupt or hostile nx_block_count larger than the device would let the
+        // extent-bounds checks (which trust blockCount_) accept block indices past
+        // the device end. Clamp to what the device actually holds.
+        if (device_ != nullptr && blockSize_ != 0) {
+            const uint64_t deviceBytes =
+                static_cast<uint64_t>(std::max<qint64>(0, device_->size()));
+            if (deviceBytes != 0) {
+                blockCount_ = std::min<uint64_t>(blockCount_, deviceBytes / blockSize_);
+            }
+        }
         if (firstBlock->size() < static_cast<qsizetype>(blockSize_)) {
             return readBlock(0, firstBlock, result);
         }

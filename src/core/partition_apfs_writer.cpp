@@ -4830,18 +4830,23 @@ bool readApfsRepairBlock(QIODevice* image,
     return true;
 }
 
-// The highest block index a commit may write: the LARGER of the container's logical block
-// count and the actual backing-device size. "Device end" means the real device - during a
-// resize-grow the commit context still carries the OLD nx_block_count (its layout math needs
-// it) while the backing image has already been extended, so grow-region writes are legitimate.
-// For every non-grow commit the two are equal, so the bound is byte-identical to the logical
-// count (it never narrows the writable range). 0 means "unbounded" (no geometry, no device).
+// The highest block index a commit may write. When the actual backing-device size is known it
+// is AUTHORITATIVE: a commit must never write past the real device, so an over-claimed
+// nx_block_count (a corrupt or hostile superblock claiming more blocks than the device holds)
+// can NOT widen the writable range -- the old max(claimed,device) did exactly that. The device
+// bound still covers the legitimate resize-grow case, where the backing image has already been
+// extended past the OLD nx_block_count the commit context still carries (device >= claimed), so
+// this never narrows a valid write. Only when the device size is UNKNOWN (no image / zero size)
+// does it fall back to the claimed logical count. 0 means "unbounded" (no geometry, no device).
 uint64_t apfsWritableBlockBound(QIODevice* image, const ApfsRepairGeometry& geometry) {
     const uint64_t deviceBytes =
         image != nullptr ? static_cast<uint64_t>(std::max<qint64>(0, image->size())) : 0;
     const uint64_t deviceBlocks =
         (deviceBytes != 0 && geometry.blockSize != 0) ? deviceBytes / geometry.blockSize : 0;
-    return std::max(geometry.blockCount, deviceBlocks);
+    if (deviceBlocks != 0) {
+        return deviceBlocks;     // real device is the hard cap; never trust a larger claim
+    }
+    return geometry.blockCount;  // device size unknown -> best-effort logical bound
 }
 
 bool writeApfsRepairBlock(QIODevice* image,

@@ -908,13 +908,25 @@ std::optional<PartitionFileSystemDetection> detectBtrfsFamily(const QByteArray& 
 
 void appendApfsSizeDetails(PartitionFileSystemDetection* detection,
                            uint32_t blockSize,
-                           uint64_t blockCount) {
+                           uint64_t blockCount,
+                           uint64_t partition_size_bytes) {
     if (blockSize < kMinimumApfsBlockSize || blockSize > kMaximumApfsBlockSize ||
         !isPowerOfTwo(blockSize) || blockCount == 0) {
         return;
     }
     if (const auto totalBytes = checkedProduct(blockSize, blockCount); totalBytes.has_value()) {
-        detection->total_bytes = *totalBytes;
+        // Reconcile the claimed container size against the validated partition size:
+        // a corrupt/hostile nx_block_count can claim more than the partition holds, so
+        // never report more than the partition actually provides. 0 = size unknown.
+        detection->total_bytes = (partition_size_bytes != 0)
+                                     ? std::min<uint64_t>(*totalBytes, partition_size_bytes)
+                                     : *totalBytes;
+        if (partition_size_bytes != 0 && *totalBytes > partition_size_bytes) {
+            detection->details.append(
+                QStringLiteral("Warning: APFS claims %1 bytes but the partition holds only %2")
+                    .arg(*totalBytes)
+                    .arg(partition_size_bytes));
+        }
     }
     detection->details.append(QStringLiteral("Block size: %1").arg(blockSize));
     detection->details.append(QStringLiteral("Block count: %1").arg(blockCount));
@@ -1928,7 +1940,8 @@ void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
     }
 }
 
-std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& bytes) {
+std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& bytes,
+                                                             uint64_t partition_size_bytes) {
     if (!matchesBytes(bytes, kApfsMagicOffset, "NXSB", kApfsMagicSize)) {
         return std::nullopt;
     }
@@ -1939,7 +1952,7 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
     const uint64_t blockCount = littleEndian64(bytes, kApfsBlockCountOffset);
     const ApfsCheckpointValues checkpoint = apfsCheckpointValues(bytes);
     const uint32_t maxFileSystems = littleEndian32(bytes, kApfsMaxFileSystemsOffset);
-    appendApfsSizeDetails(&detection, blockSize, blockCount);
+    appendApfsSizeDetails(&detection, blockSize, blockCount, partition_size_bytes);
     appendDetailIfText(&detection,
                        QStringLiteral("Container UUID"),
                        uuidField(bytes, kApfsUuidOffset));
@@ -2120,7 +2133,8 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectB
     if (const auto btrfsDetection = detectBtrfsFamily(bytes); btrfsDetection.has_value()) {
         return btrfsDetection;
     }
-    if (const auto apfsDetection = detectApfsFamily(bytes); apfsDetection.has_value()) {
+    if (const auto apfsDetection = detectApfsFamily(bytes, partition_size_bytes);
+        apfsDetection.has_value()) {
         return apfsDetection;
     }
     if (const auto hfsDetection = detectHfsPlusFamily(bytes); hfsDetection.has_value()) {

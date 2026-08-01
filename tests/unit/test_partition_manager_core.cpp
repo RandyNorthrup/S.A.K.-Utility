@@ -1849,6 +1849,7 @@ class PartitionManagerCoreTests : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void fileSystemDetector_detectsRawSignatures();
+    void fileSystemDetector_apfsGeometryReconciledToPartitionSize();  // B11-01
     void fileSystemDetector_flagsMalformedMetadataSanityWarnings();
     void fileSystemDetector_readsProbeBytesFromPath();
     void fileSystemDetector_supplementsApfsSpaceManagerFromCheckpointData();
@@ -2692,7 +2693,12 @@ void verifyApfsBtreeDetails(const QString& details) {
 
 void verifyApfsRawDetection() {
     const auto apfs = apfsRawDetectionFixture();
-    const auto detection = PartitionFileSystemDetector::detectBytes(apfs, apfs.size());
+    // Pass the REAL partition size (the container's claimed size), as production does
+    // (storage_inventory_worker passes partition->size_bytes) -- not the small
+    // signature-sample buffer size. With a partition >= the claim, the B11-01
+    // geometry reconciliation is a no-op and total_bytes reports the claimed size.
+    const auto detection = PartitionFileSystemDetector::detectBytes(apfs,
+                                                                    4096ULL * kTestApfsBlockSize);
     QVERIFY(detection.has_value());
     QCOMPARE(detection->file_system, QStringLiteral("APFS"));
     QCOMPARE(detection->total_bytes, 4096ULL * kTestApfsBlockSize);
@@ -3418,6 +3424,20 @@ void PartitionManagerCoreTests::fileSystemDetector_detectsRawSignatures() {
     verifyApfsRawDetection();
     verifyLinuxSwapRawDetection();
     QVERIFY(!PartitionFileSystemDetector::detectBytes(signatureFixture()).has_value());
+}
+
+void PartitionManagerCoreTests::fileSystemDetector_apfsGeometryReconciledToPartitionSize() {
+    // A corrupt/hostile APFS superblock can claim more blocks than the partition
+    // holds. B11-01: the reported total must be clamped to the real partition size
+    // (never over-report) and a warning surfaced.
+    const auto apfs = apfsRawDetectionFixture();  // claims 4096 * kTestApfsBlockSize
+    const uint64_t smallPartition = 1000ULL * kTestApfsBlockSize;
+    const auto detection = PartitionFileSystemDetector::detectBytes(apfs, smallPartition);
+    QVERIFY(detection.has_value());
+    QCOMPARE(detection->file_system, QStringLiteral("APFS"));
+    QCOMPARE(detection->total_bytes, smallPartition);  // clamped, not the 4096-block claim
+    QVERIFY(detection->details.join(' ').contains(
+        QStringLiteral("claims 16777216 bytes but the partition holds only")));
 }
 
 void PartitionManagerCoreTests::fileSystemDetector_flagsMalformedMetadataSanityWarnings() {
@@ -6747,7 +6767,10 @@ void PartitionManagerCoreTests::apfsFileSystemReader_rejectsCorruptMetadataCheck
     QVERIFY(!stampedResult.ok);
     QVERIFY(
         !stampedResult.blockers.join(' ').contains(QStringLiteral("APFS object checksum failed")));
-    QVERIFY(stampedResult.blockers.join(' ').contains(QStringLiteral("APFS seek failed")));
+    // The backing buffer is far smaller than the claimed container, so the B11-01
+    // geometry reconciliation clamps blockCount_ to the real device and the first
+    // checkpoint block past it is rejected at the bounds check (before any seek).
+    QVERIFY(stampedResult.blockers.join(' ').contains(QStringLiteral("outside container bounds")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_computesAndVerifiesObjectChecksums() {
