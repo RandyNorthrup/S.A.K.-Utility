@@ -194,6 +194,10 @@ Q_SIGNALS:
     /// @brief Cleanup completed
     void cleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
 
+    /// @brief Cleanup was cancelled partway (distinct from cleanupFinished, which
+    ///        must NOT be emitted on cancel or a cancelled cleanup reads as success)
+    void cleanupCancelled();
+
     /// @brief Locked files scheduled for removal on next Windows reboot
     void rebootPendingItems(QStringList paths);
 
@@ -222,6 +226,7 @@ private Q_SLOTS:
     // Cleanup worker slots
     void onCleanupComplete(int succeeded, int failed, qint64 bytesRecovered);
     void onCleanupWorkerFailed(int errorCode, const QString& message);
+    void onCleanupWorkerCancelled();
 
 private:
     /// @brief Apply the fail-closed clean-leftovers screens to the selected items,

@@ -28,6 +28,9 @@ private Q_SLOTS:
 
     // Recycle-fallback surfacing (B10-23)
     void permanentMode_deletesAndEmitsNoRecycleFallback();
+
+    // Cancellation is not success (B10-30)
+    void cancelledBeforeStart_emitsCancelledNotComplete();
 };
 
 void TestCleanupWorker::construction_emptyItems() {
@@ -105,6 +108,40 @@ void TestCleanupWorker::permanentMode_deletesAndEmitsNoRecycleFallback() {
     QCOMPARE(fallbackSpy.count(), 0);  // recycle-fallback signal only fires in recycle mode
     const auto args = completeSpy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 1);   // one succeeded
+}
+
+void TestCleanupWorker::cancelledBeforeStart_emitsCancelledNotComplete() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("keep.txt");
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+    }
+
+    QVector<LeftoverItem> items;
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::File;
+    item.path = path;
+    item.selected = true;
+    items.append(item);
+
+    CleanupWorker worker(items, /*useRecycleBin=*/false);
+    QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
+    QSignalSpy cancelledSpy(&worker, &WorkerBase::cancelled);
+
+    // Stop requested before the loop processes any item -- WorkerBase preserves a
+    // pre-start stop request, so execute() bails on the first checkStop().
+    worker.requestStop();
+    worker.start();
+    QVERIFY(cancelledSpy.wait(3000));
+
+    // A cancelled run must NOT emit the success-shaped cleanupComplete...
+    QCOMPARE(completeSpy.count(), 0);
+    // ...and nothing was deleted.
+    QVERIFY(QFile::exists(path));
 }
 
 QTEST_MAIN(TestCleanupWorker)

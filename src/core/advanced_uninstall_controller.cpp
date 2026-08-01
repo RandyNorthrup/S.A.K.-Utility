@@ -324,6 +324,10 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
             this,
             &AdvancedUninstallController::onCleanupWorkerFailed);
     connect(m_cleanup_worker.get(),
+            &CleanupWorker::cancelled,
+            this,
+            &AdvancedUninstallController::onCleanupWorkerCancelled);
+    connect(m_cleanup_worker.get(),
             &CleanupWorker::progress,
             this,
             [this](int current, int total, const QString& /*msg*/) {
@@ -599,6 +603,14 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
 void AdvancedUninstallController::onCleanupWorkerFailed(int /*errorCode*/, const QString& message) {
     setState(State::Idle);
     Q_EMIT statusMessage(QString("Cleanup failed: %1").arg(message), kStatusTimeoutLongMs);
+}
+
+void AdvancedUninstallController::onCleanupWorkerCancelled() {
+    // A cancelled cleanup is NOT a completed one: surface it as cancelled rather
+    // than emitting cleanupFinished with partial (success-looking) counts.
+    setState(State::Idle);
+    Q_EMIT cleanupCancelled();
+    Q_EMIT statusMessage("Cleanup cancelled.", kStatusTimeoutShortMs);
 }
 
 // -- Private -----------------------------------------------------------------

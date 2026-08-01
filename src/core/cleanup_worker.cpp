@@ -43,7 +43,9 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
 
     for (int idx = 0; idx < total; ++idx) {
         if (checkStop()) {
-            Q_EMIT cleanupComplete(succeeded, failed, bytes_recovered);
+            // Do NOT emit cleanupComplete on cancel -- that carries success-shaped
+            // counts and reads as a completed run. WorkerBase emits cancelled()
+            // instead, which the controller handles distinctly.
             return {};
         }
 
