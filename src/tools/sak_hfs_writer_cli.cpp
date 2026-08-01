@@ -18,6 +18,7 @@
 #include <QJsonObject>
 #include <QTextStream>
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 
@@ -27,6 +28,14 @@ constexpr int kExitOk = 0;
 constexpr int kExitOperationFailed = 1;
 constexpr int kExitInvalidArguments = 2;
 constexpr int kExitReportFailed = 3;
+
+// A payload file is slurped whole into RAM by readAll, so cap it to bound peak memory; a
+// hostile or mistaken multi-GB path would otherwise OOM the process. 2 GiB is far above any
+// real single-file HFS+ seed.
+constexpr qint64 kMaxPayloadFileBytes = 2LL * 1024 * 1024 * 1024;
+// HFS+ file names cap at 255 UTF-16 units; a --name-pad beyond that just wastes memory (a huge
+// value would allocate a multi-GB QString), so clamp it to the name-length limit.
+constexpr int kMaxNamePad = 255;
 
 QJsonArray stringArray(const QStringList& values) {
     QJsonArray array;
@@ -40,6 +49,10 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         *error = QStringLiteral("Unable to read payload file: %1").arg(file.errorString());
+        return std::nullopt;
+    }
+    if (file.size() > kMaxPayloadFileBytes) {
+        *error = QStringLiteral("Payload file exceeds the %1-byte limit").arg(kMaxPayloadFileBytes);
         return std::nullopt;
     }
     return file.readAll();
@@ -219,7 +232,7 @@ void appendLinkJournalAndBatchRunners(FileCommandRunnerTable& runners) {
     });
     runners.insert(QStringLiteral("create-empty-files-image"), [](const CliInvocation& invocation) {
         sak::PartitionHfsFileWriteResult result;
-        const QString pad(std::max(0, invocation.name_pad), QLatin1Char('x'));
+        const QString pad(std::clamp(invocation.name_pad, 0, kMaxNamePad), QLatin1Char('x'));
         constexpr int kIndexFieldWidth = 4;
         constexpr int kDecimalBase = 10;
         for (int index = 0; index < invocation.file_count; ++index) {

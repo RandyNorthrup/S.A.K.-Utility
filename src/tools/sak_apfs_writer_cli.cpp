@@ -6,6 +6,7 @@
 
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/secure_memory.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -21,6 +22,7 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 
+#include <algorithm>
 #include <limits>
 #include <optional>
 
@@ -32,6 +34,12 @@ constexpr int kExitOk = 0;
 constexpr int kExitOperationFailed = 1;
 constexpr int kExitInvalidArguments = 2;
 constexpr int kExitReportFailed = 3;
+
+// readAll slurps a whole file into RAM, so cap both inputs to bound peak memory. A seed
+// payload can be large (it becomes a file in the image) but not unbounded; a credential file
+// holds a password, which is tiny.
+constexpr qint64 kMaxSeedPayloadFileBytes = 2LL * 1024 * 1024 * 1024;
+constexpr qint64 kMaxCredentialFileBytes = 1LL * 1024 * 1024;
 
 QJsonArray toJsonArray(const QStringList& values) {
     QJsonArray array;
@@ -89,6 +97,11 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         *error = QStringLiteral("Unable to read payload file: %1").arg(file.errorString());
+        return std::nullopt;
+    }
+    if (file.size() > kMaxSeedPayloadFileBytes) {
+        *error =
+            QStringLiteral("Payload file exceeds the %1-byte limit").arg(kMaxSeedPayloadFileBytes);
         return std::nullopt;
     }
     return file.readAll();
@@ -335,15 +348,31 @@ struct CliParserOptions {
     const QCommandLineOption* xattr{nullptr};
 };
 
-// Parse repeatable --xattr name=hexvalue options into (name, value) pairs.
-[[nodiscard]] QVector<QPair<QByteArray, QByteArray>> parseXattrOptions(const QStringList& values) {
+// Parse repeatable --xattr name=hexvalue options into (name, value) pairs. Fails closed on a
+// malformed spec (no name, or a value that is not clean even-length hex) instead of silently
+// dropping the entry or letting QByteArray::fromHex mangle it by skipping non-hex bytes.
+[[nodiscard]] std::optional<QVector<QPair<QByteArray, QByteArray>>> parseXattrOptions(
+    const QStringList& values, QString* error) {
     QVector<QPair<QByteArray, QByteArray>> out;
     for (const QString& spec : values) {
         const int eq = spec.indexOf(QLatin1Char('='));
         if (eq <= 0) {
-            continue;
+            *error = QStringLiteral("--xattr must be name=hexvalue: %1").arg(spec);
+            return std::nullopt;
         }
-        out.append({spec.left(eq).toUtf8(), QByteArray::fromHex(spec.mid(eq + 1).toUtf8())});
+        const QString hex = spec.mid(eq + 1);
+        const auto isHexDigit = [](QChar ch) {
+            return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+                   (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
+                   (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
+        };
+        const bool cleanHex = (hex.size() % 2) == 0 &&
+                              std::all_of(hex.cbegin(), hex.cend(), isHexDigit);
+        if (!cleanHex) {
+            *error = QStringLiteral("--xattr value must be even-length hex: %1").arg(spec);
+            return std::nullopt;
+        }
+        out.append({spec.left(eq).toUtf8(), QByteArray::fromHex(hex.toUtf8())});
     }
     return out;
 }
@@ -435,7 +464,42 @@ QString credentialFromParser(const QCommandLineParser& parser,
         *error = QStringLiteral("Unable to read credential file: %1").arg(filePath);
         return QString();
     }
-    return QString::fromUtf8(credentialFile.readAll());
+    if (credentialFile.size() > kMaxCredentialFileBytes) {
+        *error = QStringLiteral("Credential file exceeds the %1-byte limit")
+                     .arg(kMaxCredentialFileBytes);
+        return QString();
+    }
+    QByteArray raw = credentialFile.readAll();
+    QString credential = QString::fromUtf8(raw);
+    // Wipe the raw byte copy of the secret as soon as it is converted; the returned QString
+    // still holds the credential (unavoidable while it is in use) but this removes one
+    // lingering plaintext copy from the process heap.
+    sak::secure_wiper::wipe(raw.data(), raw.size());
+    return credential;
+}
+
+struct CliSparseXattrInputs {
+    uint64_t sparse_logical_size{0};
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+};
+
+// Validate --sparse-size (a bad value would silently become 0, i.e. non-sparse) and the
+// --xattr specs (bad hex would be silently mangled) up front, failing closed on either.
+std::optional<CliSparseXattrInputs> sparseXattrFromParser(const QCommandLineParser& parser,
+                                                          const CliParserOptions& options,
+                                                          QString* error) {
+    const QString sparseRaw = parser.value(*options.sparse_size).trimmed();
+    bool sparseOk = true;
+    const uint64_t sparseSize = sparseRaw.isEmpty() ? 0 : sparseRaw.toULongLong(&sparseOk);
+    if (!sparseOk) {
+        *error = QStringLiteral("--sparse-size must be a non-negative integer: %1").arg(sparseRaw);
+        return std::nullopt;
+    }
+    auto xattrs = parseXattrOptions(parser.values(*options.xattr), error);
+    if (!xattrs.has_value()) {
+        return std::nullopt;
+    }
+    return CliSparseXattrInputs{.sparse_logical_size = sparseSize, .xattrs = std::move(*xattrs)};
 }
 
 std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& parser,
@@ -467,6 +531,10 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
     if (!error->isEmpty()) {
         return std::nullopt;
     }
+    const auto sparseXattr = sparseXattrFromParser(parser, options, error);
+    if (!sparseXattr.has_value()) {
+        return std::nullopt;
+    }
     return CliInvocation{
         .command = *command,
         .target_path = *target,
@@ -493,8 +561,8 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
         .compress_lzfse = parser.isSet(*options.compress_lzfse),
         .compress_lzvn = parser.isSet(*options.compress_lzvn),
         .compress_lzbitmap = parser.isSet(*options.compress_lzbitmap),
-        .sparse_logical_size = parser.value(*options.sparse_size).toULongLong(),
-        .xattrs = parseXattrOptions(parser.values(*options.xattr))};
+        .sparse_logical_size = sparseXattr->sparse_logical_size,
+        .xattrs = sparseXattr->xattrs};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
