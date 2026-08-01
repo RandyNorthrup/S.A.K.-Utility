@@ -74,6 +74,17 @@ public:
 
     ~AppInstallationWorker();
 
+    /// @brief Upper bound on install concurrency. Chocolatey holds a global lock,
+    ///        so installs run serially regardless; this only caps the requested
+    ///        value. 0 is the queue-only (dry-run) mode used by validation paths.
+    static constexpr int kMaxInstallConcurrency = 8;
+
+    /// @brief Clamp a requested concurrency to [0, kMaxInstallConcurrency]. Pure;
+    ///        unit-testable. 0 stays valid (queue-without-installing); negatives
+    ///        clamp to 0 and absurd values to the cap so scheduling never stalls
+    ///        on an out-of-range request.
+    [[nodiscard]] static int boundConcurrency(int requested);
+
     /**
      * @brief Start migration from report
      * @param report Migration report with selected entries
@@ -216,7 +227,9 @@ private:
      *
      * @param job The migration job with app name and package ID
      * @param choco_result The result from Chocolatey install
-     * @return True if installation verified or inconclusive, false if definitely failed
+     * @return True only if a source (choco count line, registry, or AppX)
+     *         positively confirms the install; false when nothing confirms it
+     *         (inconclusive is treated as unverified, not success).
      */
     bool verifyInstallation(const MigrationJob& job, const ChocolateyManager::Result& choco_result);
 

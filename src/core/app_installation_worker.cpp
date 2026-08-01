@@ -82,6 +82,10 @@ AppInstallationWorker::~AppInstallationWorker() {
     }
 }
 
+int AppInstallationWorker::boundConcurrency(int requested) {
+    return qBound(0, requested, kMaxInstallConcurrency);
+}
+
 int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report,
                                           int maxConcurrent) {
     if (!report) {
@@ -99,7 +103,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         }
 
         m_report = report;
-        m_maxConcurrent = qMax(0, maxConcurrent);
+        m_maxConcurrent = boundConcurrency(maxConcurrent);
         m_running = true;
         m_paused = false;
         m_cancelled = false;
@@ -309,7 +313,10 @@ AppInstallationWorker::QueueAction AppInstallationWorker::checkQueueState() {
         return QueueAction::Wait;
     }
 
-    if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
+    // Finish when there is no active job AND either the queue is drained or no
+    // job can EVER launch (maxConcurrent==0 dry-run) -- otherwise the loop below
+    // would busy-poll forever waiting for a slot that never opens.
+    if (m_activeJobs == 0 && (m_jobQueue.isEmpty() || m_maxConcurrent <= 0)) {
         m_running = false;
         locker.unlock();
         Q_EMIT migrationCompleted(getStats());
@@ -435,11 +442,14 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
         }
     }
 
-    // Could not verify — trust choco exit code, warn in logs
+    // No source confirmed the install: choco printed no "installed X/Y" count line
+    // AND neither the registry nor AppX shows the app. Do NOT certify it installed
+    // on the exit code alone -- require positive confirmation (the caller reports
+    // "reported success but could not be verified" so the user can check).
     sak::logWarning("[AppInstallationWorker] Could not independently verify {} ({})",
                     job.appName.toStdString(),
                     job.packageId.toStdString());
-    return true;
+    return false;
 }
 
 // ======================================================================

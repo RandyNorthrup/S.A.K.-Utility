@@ -222,6 +222,33 @@ private Q_SLOTS:
 
         worker.cancel();
     }
+
+    /// boundConcurrency clamps to [0, cap] (B10-26): 0 stays the dry-run mode,
+    /// negatives clamp to 0, absurd values clamp to the cap so scheduling never
+    /// stalls on an out-of-range request.
+    void boundConcurrencyClampsRange() {
+        using W = sak::AppInstallationWorker;
+        QCOMPARE(W::boundConcurrency(0), 0);
+        QCOMPARE(W::boundConcurrency(-5), 0);
+        QCOMPARE(W::boundConcurrency(1), 1);
+        QCOMPARE(W::boundConcurrency(3), 3);
+        QCOMPARE(W::boundConcurrency(1000), W::kMaxInstallConcurrency);
+        QCOMPARE(W::boundConcurrency(W::kMaxInstallConcurrency), W::kMaxInstallConcurrency);
+    }
+
+    /// A dry-run (maxConcurrent==0) must finish on its own without a cancel --
+    /// previously it busy-polled forever (B10-26 stall).
+    void dryRunFinishesWithoutCancel() {
+        auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
+        sak::AppInstallationWorker worker(chocoMgr);
+
+        QSignalSpy doneSpy(&worker, &sak::AppInstallationWorker::migrationCompleted);
+        auto report = createTestReport(3, 1, 2, 0);
+        worker.startMigration(report, 0);  // dry-run: queue jobs, launch none
+
+        // No cancel() here: the loop must reach migrationCompleted on its own.
+        QVERIFY(doneSpy.wait(3000));
+    }
 };
 
 QTEST_GUILESS_MAIN(AppInstallationWorkerTests)
