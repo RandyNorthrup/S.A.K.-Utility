@@ -18,6 +18,11 @@ namespace {
 
 constexpr int kModelInvokeTimeoutMs = 300'000;
 constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
+// Grace added to the semaphore wait beyond the invoke timeout. The worker's own timeout timer
+// releases the semaphore within kModelInvokeTimeoutMs on every normal path; the grace only
+// matters if the worker thread failed to START (QThread::start can fail under resource
+// exhaustion), in which case an unconditional acquire would deadlock forever.
+constexpr int kSemaphoreWaitGraceMs = 30'000;
 
 struct ModelInvokeState {
     OpenAIResponseResult result;
@@ -160,7 +165,10 @@ IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
         client->createResponse(req);
     });
     network_thread.start();
-    done.acquire();
+    // Timed acquire so a failed thread start (finish() never runs) cannot deadlock forever.
+    if (!done.tryAcquire(1, kModelInvokeTimeoutMs + kSemaphoreWaitGraceMs)) {
+        state.timed_out = true;
+    }
     network_thread.quit();
     network_thread.wait();
 

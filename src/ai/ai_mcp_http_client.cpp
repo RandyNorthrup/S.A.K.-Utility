@@ -22,6 +22,9 @@ namespace sak::ai {
 namespace {
 
 constexpr int kMaxResponseBytes = 1024 * 1024;
+// Grace added to the semaphore wait beyond the request timeout so a worker thread that failed to
+// START (finish() never runs) can never deadlock the caller on an unconditional acquire.
+constexpr int kSemaphoreWaitGraceMs = 30'000;
 constexpr qsizetype kSseDataPrefixLength = 5;
 constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 
@@ -127,7 +130,7 @@ struct HttpWorkerSinks {
 
 class HttpToolCallWorker final : public QObject {
 public:
-    HttpToolCallWorker(QUrl endpoint, QByteArray body, int timeout_ms, HttpWorkerSinks sinks)
+    HttpToolCallWorker(QUrl endpoint, QByteArray body, int timeout_ms, const HttpWorkerSinks& sinks)
         : m_endpoint(std::move(endpoint))
         , m_body(std::move(body))
         , m_timeoutMs(timeout_ms)
@@ -212,7 +215,12 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [worker]() { worker->start(); });
     network_thread.start();
-    done.acquire();
+    // Timed acquire so a worker thread that failed to start cannot hang the caller forever; the
+    // worker releases within timeout_ms on every normal path, so a grace past it only fires on a
+    // genuine start failure.
+    if (!done.tryAcquire(1, timeout_ms + kSemaphoreWaitGraceMs)) {
+        state.timed_out = true;
+    }
     network_thread.quit();
     network_thread.wait();
     return state;

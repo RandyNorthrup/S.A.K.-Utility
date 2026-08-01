@@ -31,6 +31,9 @@ constexpr int kInitializeId = 1;
 constexpr int kToolCallId = 2;
 constexpr int kMcpStdioErrorPreviewChars = 2000;
 constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
+// Grace added to the semaphore wait beyond the request timeout so a worker thread that failed to
+// START (finish() never runs) can never deadlock the caller on an unconditional acquire.
+constexpr int kSemaphoreWaitGraceMs = 30'000;
 // Abort once this many stdout bytes buffer without a newline, so a server that streams
 // a newline-free byte stream cannot grow the QProcess buffer until the process OOMs.
 constexpr qint64 kMaxStdioReadBufferBytes = 8 * 1024 * 1024;  // 8 MiB
@@ -293,7 +296,14 @@ StdioCallState performStdioToolCall(const AiMcpStdioCallRequest& request) {
     QObject::connect(&stdio_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&stdio_thread, &QThread::started, worker, [worker]() { worker->start(); });
     stdio_thread.start();
-    done.acquire();
+    // Timed acquire so a worker thread that failed to start cannot hang the caller forever; the
+    // worker releases within its own request timeout on every normal path, so a grace past it
+    // only fires on a genuine start failure.
+    const int acquire_timeout_ms = qMax(request.timeout_ms, kMinimumRequestTimeoutMs) +
+                                   kSemaphoreWaitGraceMs;
+    if (!done.tryAcquire(1, acquire_timeout_ms)) {
+        state.error_message = QStringLiteral("MCP stdio worker thread did not start");
+    }
     stdio_thread.quit();
     stdio_thread.wait();
     return state;
