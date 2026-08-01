@@ -17,6 +17,10 @@
 #include <algorithm>
 #include <limits>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 class FileManagementFileSystemTests : public QObject {
     Q_OBJECT
 
@@ -595,6 +599,75 @@ private Q_SLOTS:
         QVERIFY(!imported.complete);
         // The source tree was never touched by the copy.
         QVERIFY(QFileInfo(QDir(source.path()).filePath(QStringLiteral("root"))).isDir());
+    }
+
+    void listLocalDirectoryEnumeratesHiddenEntries() {
+        // A host-hidden file must reach the listing so the view's show-hidden
+        // toggle can act on it. Before B8-20 the source listing dropped hidden
+        // (and system) entries entirely, leaving that toggle dead -- and hiding
+        // files a folder copy would still transfer.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const auto writeOne = [](const QString& path) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("x"), qint64(1));
+        };
+        writeOne(root.filePath(QStringLiteral("visible.txt")));
+        const QString hiddenPath = root.filePath(QStringLiteral("secret.dat"));
+        writeOne(hiddenPath);
+#ifdef Q_OS_WIN
+        const std::wstring native = QDir::toNativeSeparators(hiddenPath).toStdWString();
+        QVERIFY(SetFileAttributesW(native.c_str(), FILE_ATTRIBUTE_HIDDEN) != 0);
+        const QString hiddenName = QStringLiteral("secret.dat");
+#else
+        const QString hiddenName = QStringLiteral(".secret.dat");
+        QVERIFY(QFile::rename(hiddenPath, root.filePath(hiddenName)));
+#endif
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const auto listing =
+            sak::FileManagementFileSystemBridge::listDirectory(target, dir.path(), 100);
+        QVERIFY(listing.ok);
+        QStringList names;
+        bool hidden_flag = false;
+        for (const auto& entry : listing.entries) {
+            names << entry.name;
+            if (entry.name == hiddenName) {
+                hidden_flag = entry.hidden;
+            }
+        }
+        QVERIFY2(names.contains(QStringLiteral("visible.txt")), qPrintable(names.join(QChar(','))));
+        QVERIFY2(names.contains(hiddenName), qPrintable(names.join(QChar(','))));
+#ifdef Q_OS_WIN
+        // The hidden attribute rides through on the entry so the view can filter it.
+        QVERIFY(hidden_flag);
+#endif
+    }
+
+    void listLocalDirectoryCapsToSortedPrefixWithWarning() {
+        // The cap keeps the display-order-first N entries (a bounded top-N heap,
+        // not an arbitrary iteration subset) and flags the truncation, so an
+        // enormous directory yields a small sorted window in O(cap) memory (B8-20).
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        for (char letter = 'a'; letter <= 'h'; ++letter) {
+            QFile file(root.filePath(QString(QLatin1Char(letter)) + QStringLiteral(".txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("x"), qint64(1));
+        }
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const auto listing =
+            sak::FileManagementFileSystemBridge::listDirectory(target, dir.path(), 3);
+        QVERIFY(listing.ok);
+        QCOMPARE(listing.entries.size(), qsizetype(3));
+        QCOMPARE(listing.entries.at(0).name, QStringLiteral("a.txt"));
+        QCOMPARE(listing.entries.at(1).name, QStringLiteral("b.txt"));
+        QCOMPARE(listing.entries.at(2).name, QStringLiteral("c.txt"));
+        QVERIFY(!listing.warnings.isEmpty());
+        QVERIFY2(listing.warnings.join(QChar(' ')).contains(QStringLiteral("truncated")),
+                 qPrintable(listing.warnings.join(QChar(' '))));
     }
 
     void deleteDirectoryTreeRemovesNestedLocalTree() {

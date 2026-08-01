@@ -17,6 +17,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -27,6 +28,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <vector>
 
 namespace sak {
 
@@ -310,26 +312,68 @@ FileManagementEntry fromLocalInfo(const QFileInfo& info, const QString& basePath
     return entry;
 }
 
+// Display order for a local listing: directories first, then a case-insensitive
+// name compare. The GUI proxy re-sorts, so this only decides which entries survive
+// the cap and the order seen by direct (non-GUI) callers.
+bool localEntryLess(const QFileInfo& a, const QFileInfo& b) {
+    if (a.isDir() != b.isDir()) {
+        return a.isDir();
+    }
+    return QString::compare(a.fileName(), b.fileName(), Qt::CaseInsensitive) < 0;
+}
+
+// Stream a directory, keeping only the display-order-smallest `cap` entries in
+// O(cap) memory via a bounded max-heap, so an enormous or hostile directory can
+// never force its whole QFileInfoList (one stat per entry) into RAM before the
+// cap is applied (B8-20). cap <= 0 keeps every entry. Hidden and System entries
+// are enumerated -- otherwise the source listing drops them before the view's
+// show-hidden filter can ever act, leaving that toggle dead and hiding files a
+// folder copy would still transfer. `overflowed` is set when entries were dropped.
+std::vector<QFileInfo> collectLocalEntries(const QString& path, int cap, bool& overflowed) {
+    overflowed = false;
+    std::vector<QFileInfo> kept;
+    QDirIterator iter(path,
+                      QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                      QDirIterator::NoIteratorFlags);
+    while (iter.hasNext()) {
+        iter.next();
+        QFileInfo info = iter.fileInfo();
+        if (cap <= 0 || static_cast<int>(kept.size()) < cap) {
+            kept.push_back(std::move(info));
+            if (cap > 0) {
+                std::push_heap(kept.begin(), kept.end(), localEntryLess);
+            }
+            continue;
+        }
+        overflowed = true;
+        if (localEntryLess(info, kept.front())) {
+            std::pop_heap(kept.begin(), kept.end(), localEntryLess);
+            kept.back() = std::move(info);
+            std::push_heap(kept.begin(), kept.end(), localEntryLess);
+        }
+    }
+    std::sort(kept.begin(), kept.end(), localEntryLess);
+    return kept;
+}
+
 FileManagementListResult listLocalDirectory(const QString& path, int maxEntries) {
     FileManagementListResult result;
     result.ok = false;
     result.file_system = QStringLiteral("Local");
-    const QDir dir(path);
-    if (!dir.exists()) {
+    if (!QDir(path).exists()) {
         result.blockers.append(QStringLiteral("Directory does not exist: %1").arg(path));
         return result;
     }
 
-    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
-                                           QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
-    const qsizetype limit = maxEntries > 0 ? std::min<qsizetype>(maxEntries, entries.size())
-                                           : entries.size();
-    result.entries.reserve(limit);
-    for (qsizetype i = 0; i < limit; ++i) {
-        result.entries.append(fromLocalInfo(entries.at(i), path));
+    bool overflowed = false;
+    const std::vector<QFileInfo> entries = collectLocalEntries(path, maxEntries, overflowed);
+    result.entries.reserve(static_cast<qsizetype>(entries.size()));
+    for (const QFileInfo& info : entries) {
+        result.entries.append(fromLocalInfo(info, path));
     }
-    if (limit < entries.size()) {
-        result.warnings.append(QStringLiteral("Listing truncated to %1 entries").arg(limit));
+    if (overflowed) {
+        result.warnings.append(
+            QStringLiteral("Listing truncated to %1 entries").arg(result.entries.size()));
     }
     result.ok = true;
     return result;
