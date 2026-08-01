@@ -292,6 +292,22 @@ private slots:
         QCOMPARE(inst.stateString(), QStringLiteral("not_installed"));
     }
 
+    void uninstallReportsFailureWhenNativeHostCannotBeRemoved() {
+        // B13-03: a failed registry removal must surface as ok=false, not a silent success that
+        // leaves the force-install policy / native host in place.
+        QTemporaryDir dir;
+        const QString crx = makeFile(dir.filePath("sak_browser_control.crx"), "CRX");
+        const QString exe = makeFile(dir.filePath("sak_win32_mcp.exe"), "EXE");
+        BrowserExtensionInstaller inst(testConfig(dir.path(), crx, exe));
+        QVERIFY(inst.install().ok);
+        // A subkey under the native host key makes RegDeleteKeyExW -- which cannot delete a key
+        // that still has subkeys -- fail, so the host key remains after uninstall.
+        seedReg(hostKey() + QStringLiteral("\\pinned"), QString(), QStringLiteral("x"));
+        const ExtensionInstallResult r = inst.uninstall();
+        QVERIFY(!r.ok);
+        QVERIFY(r.summary.contains(QStringLiteral("incomplete")));
+    }
+
     void statePartialWhenOnlyHostPresent() {
         QTemporaryDir dir;
         const QString crx = makeFile(dir.filePath("sak_browser_control.crx"), "CRX");

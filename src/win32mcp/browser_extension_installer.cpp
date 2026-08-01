@@ -411,6 +411,63 @@ int nativeHostPresence(const ExtensionInstallConfig& c) {
     return (readString(key.get(), nullptr, def) && !def.isEmpty()) ? 1 : 0;
 }
 
+// Outcome of trying to remove our force-install policy values from the forcelist key.
+struct ForcelistRemoval {
+    bool touched{false};     // at least one of our entries was deleted
+    bool failed{false};      // an entry we own could not be deleted / key not writable
+    bool read_error{false};  // the key exists but could not be READ (a genuine error)
+};
+
+// Remove ONLY our force-install entries, leaving foreign policy values intact. Fails (rather
+// than reporting a silent success) if our entry cannot be removed or the key is unreadable/
+// unwritable, so uninstall() never claims success while the force-install policy survives.
+ForcelistRemoval removeOurForcelistEntries(const QString& forcelist_key_path) {
+    ForcelistRemoval out;
+    std::vector<RegValue> values;
+    {
+        RegKey key;
+        const LSTATUS s = openReadStatus(forcelist_key_path, key);
+        if (s == ERROR_FILE_NOT_FOUND) {
+            return out;  // absent: nothing of ours to remove
+        }
+        if (s != ERROR_SUCCESS) {
+            out.read_error = true;
+            return out;
+        }
+        values = enumStringValues(key.get());
+    }
+    RegKey wkey;
+    if (!openOrCreate(forcelist_key_path, wkey)) {
+        out.failed = true;  // our entries remain -- force-install policy stays in place
+        return out;
+    }
+    for (const auto& v : values) {
+        if (!isOurForcelistData(v.data)) {
+            continue;
+        }
+        const LSTATUS del = RegDeleteValueW(wkey.get(),
+                                            v.name.isEmpty() ? nullptr : toW(v.name).c_str());
+        if (del == ERROR_SUCCESS) {
+            out.touched = true;
+        } else {
+            out.failed = true;
+        }
+    }
+    return out;
+}
+
+// Remove our native host key entirely (the leaf key is exclusively ours). Absence is fine
+// (already gone); any other error means the key -- and thus the native host -- remains.
+void removeNativeHostKey(const QString& native_host_key_path, bool* touched, bool* failed) {
+    const LSTATUS del =
+        RegDeleteKeyExW(HKEY_CURRENT_USER, toW(native_host_key_path).c_str(), KEY_WOW64_64KEY, 0);
+    if (del == ERROR_SUCCESS) {
+        *touched = true;
+    } else if (del != ERROR_FILE_NOT_FOUND) {
+        *failed = true;
+    }
+}
+
 }  // namespace
 
 ExtensionInstallResult BrowserExtensionInstaller::install() {
@@ -458,55 +515,34 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
     return r;
 }
 
+// Not const by design: it is the semantic pair of the (mutating) install(), and both perform an
+// external registry/filesystem mutation even though neither writes a data member.
+// cppcheck-suppress functionConst
 ExtensionInstallResult BrowserExtensionInstaller::uninstall() {
     ExtensionInstallResult r;
-    bool touched = false;
-
-    // Remove only our force-install entry; leave any foreign policy values intact. If the
-    // key exists but cannot be READ (a real error, not mere absence), fail closed rather
-    // than reporting a success that leaves the force-install policy in place.
-    {
-        std::vector<RegValue> values;
-        bool haveKey = false;
-        {
-            RegKey key;
-            const LSTATUS s = openReadStatus(config_.forcelist_key_path, key);
-            if (s == ERROR_SUCCESS) {
-                values = enumStringValues(key.get());
-                haveKey = true;
-            } else if (s != ERROR_FILE_NOT_FOUND) {
-                r.ok = false;
-                r.summary = QStringLiteral("Could not read Chrome policy to uninstall");
-                r.detail = config_.forcelist_key_path;
-                return r;
-            }
-        }
-        if (haveKey) {
-            RegKey wkey;
-            if (openOrCreate(config_.forcelist_key_path, wkey)) {
-                for (const auto& v : values) {
-                    if (isOurForcelistData(v.data)) {
-                        RegDeleteValueW(wkey.get(),
-                                        v.name.isEmpty() ? nullptr : toW(v.name).c_str());
-                        touched = true;
-                    }
-                }
-            }
-        }
+    const ForcelistRemoval fl = removeOurForcelistEntries(config_.forcelist_key_path);
+    if (fl.read_error) {
+        r.ok = false;
+        r.summary = QStringLiteral("Could not read Chrome policy to uninstall");
+        r.detail = config_.forcelist_key_path;
+        return r;
     }
+    bool touched = fl.touched;
+    bool failed = fl.failed;
+    removeNativeHostKey(config_.native_host_key_path, &touched, &failed);
 
-    // Remove our native host key entirely (the leaf key is exclusively ours).
-    if (RegDeleteKeyExW(
-            HKEY_CURRENT_USER, toW(config_.native_host_key_path).c_str(), KEY_WOW64_64KEY, 0) ==
-        ERROR_SUCCESS) {
-        touched = true;
-    }
-
-    // Best-effort cleanup of generated files.
+    // Best-effort cleanup of generated files (harmless orphans once the registry policy is gone).
     QFile::remove(updateXmlPath(config_));
     QFile::remove(hostManifestPath(config_));
 
-    r.ok = true;
+    r.ok = !failed;
+    if (failed) {
+        r.summary = QStringLiteral(
+            "Browser extension uninstall incomplete: the force-install "
+            "policy or native host could not be fully removed");
+        r.detail = QStringLiteral("id ") + QString::fromLatin1(kBrowserExtensionId);
+        return r;
+    }
     r.summary = touched ? QStringLiteral("Browser extension uninstalled")
                         : QStringLiteral("Browser extension was not installed");
     r.detail = QStringLiteral("removed force-install policy entry + native host for id ") +
