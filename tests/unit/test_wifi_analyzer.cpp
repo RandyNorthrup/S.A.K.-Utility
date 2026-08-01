@@ -36,6 +36,15 @@ private Q_SLOTS:
     void channelUtil_emptyInput();
     void channelUtil_singleNetwork();
     void channelUtil_multipleNetworks();
+
+    // ── deriveBssSecurity (per-BSSID, B9-13) ──────────────────────
+    void bssSecurity_openNoPrivacyNoIe();
+    void bssSecurity_wepPrivacyNoIe();
+    void bssSecurity_wpa1VendorIe();
+    void bssSecurity_wpa2RsnPsk();
+    void bssSecurity_wpa3RsnSae();
+    void bssSecurity_evilTwinOpenStaysInsecure();
+    void bssSecurity_truncatedIeNoCrash();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -165,6 +174,71 @@ void TestWiFiAnalyzer::channelUtil_multipleNetworks() {
             break;
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// deriveBssSecurity -- per-BSSID security from 802.11 IEs (B9-13)
+// ═══════════════════════════════════════════════════════════════════
+
+void TestWiFiAnalyzer::bssSecurity_openNoPrivacyNoIe() {
+    // No Privacy bit, no RSN/WPA IE => genuinely open.
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(false, nullptr, 0);
+    QCOMPARE(sec.authentication, QStringLiteral("Open"));
+    QCOMPARE(sec.encryption, QStringLiteral("None"));
+    QVERIFY(!sec.isSecure);
+}
+
+void TestWiFiAnalyzer::bssSecurity_wepPrivacyNoIe() {
+    // Privacy bit set but no RSN/WPA IE => legacy WEP.
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(true, nullptr, 0);
+    QCOMPARE(sec.authentication, QStringLiteral("WEP"));
+    QVERIFY(sec.isSecure);
+}
+
+void TestWiFiAnalyzer::bssSecurity_wpa1VendorIe() {
+    // Vendor-specific IE (221) with WPA OUI 00:50:F2 type 01 => WPA1.
+    const unsigned char ie[] = {221, 4, 0x00, 0x50, 0xF2, 0x01};
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(true, ie, sizeof(ie));
+    QCOMPARE(sec.authentication, QStringLiteral("WPA"));
+    QVERIFY(sec.isSecure);
+}
+
+void TestWiFiAnalyzer::bssSecurity_wpa2RsnPsk() {
+    // RSN IE (48) with PSK AKM (00:0F:AC:02) => WPA2.
+    const unsigned char ie[] = {48,   18,   0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00,
+                                0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02};
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(true, ie, sizeof(ie));
+    QCOMPARE(sec.authentication, QStringLiteral("WPA2"));
+    QCOMPARE(sec.encryption, QStringLiteral("AES-CCMP"));
+    QVERIFY(sec.isSecure);
+}
+
+void TestWiFiAnalyzer::bssSecurity_wpa3RsnSae() {
+    // RSN IE (48) with SAE AKM (00:0F:AC:08) => WPA3.
+    const unsigned char ie[] = {48,   18,   0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00,
+                                0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x08};
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(true, ie, sizeof(ie));
+    QCOMPARE(sec.authentication, QStringLiteral("WPA3"));
+    QVERIFY(sec.isSecure);
+}
+
+void TestWiFiAnalyzer::bssSecurity_evilTwinOpenStaysInsecure() {
+    // Core of B9-13: an AP with no Privacy bit and no security IE must be reported
+    // insecure REGARDLESS of any sibling BSSID advertising the same SSID securely.
+    // deriveBssSecurity only sees this AP's own beacon, so it can never inherit a
+    // sibling's label.
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(false, nullptr, 0);
+    QVERIFY(!sec.isSecure);
+    QCOMPARE(sec.authentication, QStringLiteral("Open"));
+}
+
+void TestWiFiAnalyzer::bssSecurity_truncatedIeNoCrash() {
+    // Malformed IE claiming a length past the buffer end must not over-read; the
+    // walk bails and falls back to the Privacy bit (here clear => Open).
+    const unsigned char ie[] = {48, 50, 0x01, 0x00};
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(false, ie, sizeof(ie));
+    QVERIFY(!sec.isSecure);
+    QCOMPARE(sec.authentication, QStringLiteral("Open"));
 }
 
 QTEST_MAIN(TestWiFiAnalyzer)

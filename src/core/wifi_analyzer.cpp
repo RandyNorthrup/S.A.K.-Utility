@@ -103,6 +103,77 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return mac;
 }
 
+// ── Per-BSSID security from 802.11 information elements ──────────────────────
+constexpr int kIeIdRsn = 48;                     ///< RSN IE (WPA2/WPA3)
+constexpr int kIeIdVendor = 221;                 ///< Vendor-specific IE (holds WPA1)
+constexpr uint16_t kCapabilityPrivacy = 0x0010;  ///< Beacon capability Privacy bit
+constexpr int kIeHeaderLen = 2;                  ///< element id + length octets
+constexpr int kSuiteLen = 4;                     ///< OUI(3) + type(1)
+
+[[nodiscard]] int readLe16(const unsigned char* p) {
+    return static_cast<int>(p[0]) | (static_cast<int>(p[1]) << 8);
+}
+
+// WPA1 vendor IE payload begins with OUI 00:50:F2 followed by type 0x01.
+[[nodiscard]] bool isWpaVendorIe(const unsigned char* d, int len) {
+    return len >= kSuiteLen && d[0] == 0x00 && d[1] == 0x50 && d[2] == 0xF2 && d[3] == 0x01;
+}
+
+// Scan an RSN IE payload for the SAE AKM suite (00:0F:AC:08) => WPA3.
+[[nodiscard]] bool rsnHasSae(const unsigned char* d, int len) {
+    int pos = 2 + kSuiteLen;  // version(2) + group cipher suite(4)
+    if (pos + 2 > len) {
+        return false;
+    }
+    const int pairwise = readLe16(d + pos);
+    pos += 2 + (kSuiteLen * pairwise);
+    if (pos + 2 > len) {
+        return false;
+    }
+    const int akm = readLe16(d + pos);
+    pos += 2;
+    for (int i = 0; i < akm; ++i) {
+        const int off = pos + (kSuiteLen * i);
+        if (off + kSuiteLen > len) {
+            break;
+        }
+        if (d[off] == 0x00 && d[off + 1] == 0x0F && d[off + 2] == 0xAC && d[off + 3] == 0x08) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct IeSecurityScan {
+    bool rsn = false;
+    bool sae = false;
+    bool wpa1 = false;
+};
+
+[[nodiscard]] IeSecurityScan scanSecurityIes(const unsigned char* ie, int ieLen) {
+    IeSecurityScan scan;
+    if (ie == nullptr) {
+        return scan;
+    }
+    int pos = 0;
+    while (pos + kIeHeaderLen <= ieLen) {
+        const int id = ie[pos];
+        const int len = ie[pos + 1];
+        if (pos + kIeHeaderLen + len > ieLen) {
+            break;
+        }
+        const unsigned char* data = ie + pos + kIeHeaderLen;
+        if (id == kIeIdRsn) {
+            scan.rsn = true;
+            scan.sae = scan.sae || rsnHasSae(data, len);
+        } else if (id == kIeIdVendor && isWpaVendorIe(data, len)) {
+            scan.wpa1 = true;
+        }
+        pos += kIeHeaderLen + len;
+    }
+    return scan;
+}
+
 [[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss) {
     WiFiNetworkInfo info;
 
@@ -116,6 +187,17 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     info.channelNumber = WiFiAnalyzer::frequencyToChannel(info.channelFrequencyKHz);
     info.band = WiFiAnalyzer::frequencyToBand(info.channelFrequencyKHz);
     info.bssType = bssTypeString(bss.dot11BssType);
+
+    // Authoritative per-BSSID security straight from THIS AP's beacon, so a rogue
+    // AP cannot borrow a sibling BSSID's security label via a shared SSID.
+    const auto* base = reinterpret_cast<const unsigned char*>(&bss);
+    const bool privacy = (bss.usCapabilityInformation & kCapabilityPrivacy) != 0;
+    const WiFiBssSecurity sec = WiFiAnalyzer::deriveBssSecurity(privacy,
+                                                                base + bss.ulIeOffset,
+                                                                static_cast<int>(bss.ulIeSize));
+    info.authentication = sec.authentication;
+    info.encryption = sec.encryption;
+    info.isSecure = sec.isSecure;
 
     info.apVendor = WiFiAnalyzer::lookupVendor(info.bssid);
     return info;
@@ -184,8 +266,19 @@ void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& 
 }
 
 void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
+    // info.isSecure was already set per-BSSID from this AP's own beacon. The
+    // available-network entry is an SSID-wide aggregate, so only adopt its
+    // (typically richer) auth/cipher labels when the aggregate agrees with this
+    // BSSID's security class -- never let it flip isSecure. Otherwise an Open
+    // evil-twin sharing a secured SSID would inherit the secure label.
+    QString aggEncryption;
+    bool aggSecure = false;
+    mapCipherAlgorithm(net.dot11DefaultCipherAlgorithm, aggEncryption, aggSecure);
+    if (aggSecure != info.isSecure) {
+        return;
+    }
     info.authentication = mapAuthAlgorithm(net.dot11DefaultAuthAlgorithm);
-    mapCipherAlgorithm(net.dot11DefaultCipherAlgorithm, info.encryption, info.isSecure);
+    info.encryption = aggEncryption;
 }
 
 void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net, QVector<WiFiNetworkInfo>& networks) {
@@ -510,6 +603,36 @@ QString WiFiAnalyzer::lookupVendor(const QString& bssid) {
         return it.value();
     }
     return {};
+}
+
+WiFiBssSecurity WiFiAnalyzer::deriveBssSecurity(bool privacyBit,
+                                                const unsigned char* ie,
+                                                int ieLen) {
+    WiFiBssSecurity sec;
+    const IeSecurityScan scan = scanSecurityIes(ie, ieLen);
+    if (scan.rsn) {
+        sec.authentication = scan.sae ? QStringLiteral("WPA3") : QStringLiteral("WPA2");
+        sec.encryption = QStringLiteral("AES-CCMP");
+        sec.isSecure = true;
+        return sec;
+    }
+    if (scan.wpa1) {
+        sec.authentication = QStringLiteral("WPA");
+        sec.encryption = QStringLiteral("TKIP");
+        sec.isSecure = true;
+        return sec;
+    }
+    if (privacyBit) {
+        // Privacy bit set but no RSN/WPA IE => legacy WEP (encrypted, but weak).
+        sec.authentication = QStringLiteral("WEP");
+        sec.encryption = QStringLiteral("WEP");
+        sec.isSecure = true;
+        return sec;
+    }
+    sec.authentication = QStringLiteral("Open");
+    sec.encryption = QStringLiteral("None");
+    sec.isSecure = false;
+    return sec;
 }
 
 QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(

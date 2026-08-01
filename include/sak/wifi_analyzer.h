@@ -16,6 +16,19 @@
 
 namespace sak {
 
+/// @brief Per-BSSID security determination derived from the 802.11 beacon.
+///
+/// The Native WiFi "available network" list is aggregated per SSID, so its
+/// auth/cipher fields describe an SSID as a whole -- not any single access
+/// point. Deriving security from each BSS entry's own capability bit and
+/// information elements keeps an evil-twin AP (e.g. an Open AP broadcasting a
+/// secured network's SSID) from inheriting a sibling BSSID's "secure" label.
+struct WiFiBssSecurity {
+    QString authentication;  ///< "Open","WEP","WPA","WPA2","WPA3"
+    QString encryption;      ///< "None","WEP","TKIP","AES-CCMP"
+    bool isSecure = false;
+};
+
 /// @brief WiFi network analysis via wlanapi.dll
 ///
 /// Discovers WiFi networks, measures signal strength, analyzes
@@ -63,6 +76,16 @@ public:
 
     /// @brief Look up vendor by BSSID MAC prefix
     [[nodiscard]] static QString lookupVendor(const QString& bssid);
+
+    /// @brief Derive per-BSSID security from the 802.11 capability "Privacy" bit
+    ///        and raw information-element bytes (RSN IE / WPA vendor IE). Pure and
+    ///        self-contained so it can be unit-tested with crafted IE buffers.
+    /// @param privacyBit  true if the beacon capability Privacy bit is set
+    /// @param ie          pointer to the IE byte blob (may be null)
+    /// @param ieLen       length of the IE blob in bytes
+    [[nodiscard]] static WiFiBssSecurity deriveBssSecurity(bool privacyBit,
+                                                           const unsigned char* ie,
+                                                           int ieLen);
 
 Q_SIGNALS:
     void scanComplete(QVector<sak::WiFiNetworkInfo> networks);

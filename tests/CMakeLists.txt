@@ -5460,6 +5460,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     message(STATUS "Added unit test: test_network_diagnostic_utils")
 endif()
 
+# test_wifi_analyzer -- freq/channel/band helpers, channel utilization, and the
+# B9-13 per-BSSID security seam (deriveBssSecurity: RSN/WPA IE + Privacy bit).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_analyzer.cpp")
+    add_executable(test_wifi_analyzer
+        unit/test_wifi_analyzer.cpp
+        ../src/core/wifi_analyzer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/wifi_analyzer.h
+    )
+    set_target_properties(test_wifi_analyzer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_wifi_analyzer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_wifi_analyzer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_wifi_analyzer COMMAND test_wifi_analyzer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_wifi_analyzer")
+endif()
+
 # test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report
