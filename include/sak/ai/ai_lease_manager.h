@@ -20,10 +20,13 @@ namespace sak::ai {
 /// reclaimed so the mutating path self-heals instead of wedging permanently.
 class AiLeaseManager {
 public:
-    // A single mutating command tool call is bounded by its own process timeout
-    // (about 2 minutes by default), so this TTL sits far above any legitimate
-    // hold. It only fires when a release was genuinely lost, capping the wedge.
-    static constexpr qint64 kDefaultLeaseTtlSeconds = 3600;  // 1 hour
+    // The TTL must sit ABOVE the longest legitimate hold, or a still-running mutating op has
+    // its lease reclaimed as "abandoned" and a second mutating op starts concurrently -- the
+    // exact concurrent-mutation the lease exists to prevent. The longest single mutating call
+    // is a package tool (install/uninstall/upgrade), capped at kPackageToolMaxTimeoutSeconds
+    // = 7200s (2 hours); this TTL covers that plus release/overhead margin. It only fires when
+    // a release was genuinely lost (a crashed/hung handler), capping the wedge.
+    static constexpr qint64 kDefaultLeaseTtlSeconds = 9000;  // 2.5 hours (> 7200s max op)
 
     struct Lease {
         QString lease_id;
