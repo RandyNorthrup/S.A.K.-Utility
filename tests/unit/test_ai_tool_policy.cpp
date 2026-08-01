@@ -11,6 +11,7 @@ class AiToolPolicyTests : public QObject {
 private Q_SLOTS:
     void readOnlyPolicyBlocksRiskyCommands();
     void readOnlyPolicyBlocksMutatingFileCmdlets();
+    void readOnlyPolicyBlocksNativeMutators();
     void readOnlyPolicyAllowsProviderGatewayStatus();
     void readOnlyPolicyAllowsSessionSearch();
     void skillToolAllowedUnderEveryPolicy();
@@ -62,6 +63,48 @@ void AiToolPolicyTests::readOnlyPolicyBlocksMutatingFileCmdlets() {
                                                           request);
         QVERIFY2(!decision.allowed, qPrintable(preview));
         QVERIFY2(decision.risky_change, qPrintable(preview));
+    }
+}
+
+void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
+    // B12-02: native (non-cmdlet) mutators and output redirection must also be flagged risky
+    // and blocked under the read-only lease -- the earlier blacklist only caught PowerShell
+    // cmdlets, so reg add / sc stop / taskkill / shutdown / schtasks / redirection slipped
+    // through as "safe" and ran without a lease or confirmation.
+    const QStringList mutating = {QStringLiteral("reg add HKLM\\Software\\X /v Y /d 1 /f"),
+                                  QStringLiteral("sc stop wuauserv"),
+                                  QStringLiteral("sc.exe config wuauserv start= disabled"),
+                                  QStringLiteral("net stop spooler"),
+                                  QStringLiteral("taskkill /IM notepad.exe /F"),
+                                  QStringLiteral("shutdown /r /t 0"),
+                                  QStringLiteral(
+                                      "schtasks /create /tn evil /tr calc.exe /sc onlogon"),
+                                  QStringLiteral("powercfg /setactive SCHEME_MIN"),
+                                  QStringLiteral("systeminfo > C:\\report.txt"),
+                                  QStringLiteral("ipconfig /all >> C:\\log.txt")};
+    for (const auto& preview : mutating) {
+        sak::ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("run_powershell");
+        request.command_preview = preview;
+        const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc,
+                                                          request);
+        QVERIFY2(!decision.allowed, qPrintable(preview));
+        QVERIFY2(decision.risky_change, qPrintable(preview));
+    }
+
+    // Legit read-only diagnostics that merely suppress or merge output streams must NOT be
+    // mistaken for a file-writing redirection.
+    const QStringList benign = {QStringLiteral("ipconfig /all 2>&1"),
+                                QStringLiteral("Get-Process > $null"),
+                                QStringLiteral("dir >nul 2>&1"),
+                                QStringLiteral("systeminfo")};
+    for (const auto& preview : benign) {
+        sak::ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("run_powershell");
+        request.command_preview = preview;
+        const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc,
+                                                          request);
+        QVERIFY2(!decision.risky_change, qPrintable(preview));
     }
 }
 

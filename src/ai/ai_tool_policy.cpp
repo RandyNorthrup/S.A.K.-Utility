@@ -363,11 +363,14 @@ bool commandLooksRiskyChange(const QString& preview) {
     // A blacklist is fail-open, so it must at least cover the common mutating
     // cmdlets/commands. Earlier revisions omitted rename/move/copy/content-writing
     // verbs, so Rename-Item / Move-Item / Copy-Item / Add-Content / Out-File and
-    // the cmd.exe equivalents executed under the read-only lease. Obfuscated and
-    // catastrophic shapes also count as risky so they never slip through as safe.
+    // the cmd.exe equivalents executed under the read-only lease. This revision also
+    // adds native mutators the PowerShell-cmdlet list missed: reg add, sc / net
+    // service control, taskkill, shutdown, schtasks, powercfg, and file-writing output
+    // redirection (> / >>). Obfuscated and catastrophic shapes also count as risky so
+    // they never slip through as safe.
     static const QRegularExpression risky(
         QStringLiteral(
-            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b))"),
+            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b|\breg\b\s+add\b|\bsc(\.exe)?\b\s+(stop|start|config|delete|create|failure|pause|continue)\b|\bnet\b\s+(stop|start)\b|\btaskkill\b|\bshutdown\b|\bschtasks\b\s*/(create|delete|change|run|end)|\bpowercfg\b\s*/(setactive|s\b|import|delete|x\b)|\s\d*>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
     return risky.match(preview).hasMatch() || commandLooksObfuscated(preview) ||
            commandLooksCatastrophic(preview);
