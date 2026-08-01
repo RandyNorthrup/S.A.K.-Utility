@@ -29,7 +29,6 @@ namespace sak {
 namespace {
 constexpr int kShareInfoLevel = 1;  // SHARE_INFO_1 level
 constexpr DWORD kShareTypeMask = 0x00'00'FF'FF;
-constexpr qsizetype kTemporaryFileUuidChars = 8;
 
 [[nodiscard]] NetworkShareInfo::ShareType mapShareType(DWORD type) {
     switch (type & kShareTypeMask) {
@@ -222,18 +221,22 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
 
     // Test write access by creating a temporary file
     if (canRead) {
-        const QString testFile =
-            uncPath + QStringLiteral("\\._sak_write_test_") +
-            QUuid::createUuid().toString(QUuid::Id128).left(kTemporaryFileUuidChars) +
-            QStringLiteral(".tmp");
+        // Full UUID (not a truncated 8-char prefix) for collision resistance, and
+        // NewOnly so the probe NEVER truncates a pre-existing remote file: a name
+        // collision or a planted file makes open() fail (canWrite stays false)
+        // instead of clobbering and then deleting someone else's file (B9-06).
+        const QString testFile = uncPath + QStringLiteral("\\._sak_write_test_") +
+                                 QUuid::createUuid().toString(QUuid::Id128) +
+                                 QStringLiteral(".tmp");
 
         QFile file(testFile);
-        if (file.open(QIODevice::WriteOnly)) {
+        if (file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
             const QByteArray test_data("SAK write test");
             canWrite = (file.write(test_data) == test_data.size());
             file.close();
 
-            // Clean up test file
+            // Safe: NewOnly guaranteed we created this file, so remove only ever
+            // deletes our own probe, never a pre-existing remote file.
             file.remove();
         }
     }
