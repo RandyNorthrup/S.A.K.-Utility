@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTextStream>
 
 namespace sak {
@@ -76,7 +77,10 @@ RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
         dir.mkpath(".");
     }
 
-    QFile file(output_path);
+    // QSaveFile: write to a temp file and atomically commit, so a crash or a
+    // stream error never leaves a truncated/half-rewritten install script in
+    // place of the original.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         result.success = false;
         result.error_message = QString("Cannot write to: %1").arg(output_path);
@@ -86,7 +90,13 @@ RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
 
     QTextStream stream(&file);
     stream << result.script_content;
-    file.close();
+    stream.flush();
+    if (stream.status() != QTextStream::Ok || !file.commit()) {
+        result.success = false;
+        result.error_message = QString("Failed to write: %1").arg(output_path);
+        sak::logError("[ScriptRewriter] {}", result.error_message.toStdString());
+        return result;
+    }
 
     sak::logInfo("[ScriptRewriter] Wrote rewritten script to: {}", output_path.toStdString());
 

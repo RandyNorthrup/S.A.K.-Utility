@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QSaveFile>
 
 #include <algorithm>
 #include <cmath>
@@ -721,14 +722,18 @@ void PackageMatcher::exportMappings(const QString& file_path) const {
     root["mappings"] = mappings;
     root["count"] = m_exact_mappings.size();
 
-    QFile file(file_path);
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
-        if (json_bytes.size() > 0 && file.write(json_bytes) != json_bytes.size()) {
-            sak::logWarning("[PackageMatcher] Incomplete write of mappings file: {}",
-                            file_path.toStdString());
-        }
-        file.close();
+    // QSaveFile writes to a temp file and atomically renames on commit(), so a
+    // crash or short write never truncates the user's existing mappings file.
+    QSaveFile file(file_path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        sak::logWarning("[PackageMatcher] Failed to open mappings file for write: {}",
+                        file_path.toStdString());
+        return;
+    }
+    const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size() || !file.commit()) {
+        sak::logWarning("[PackageMatcher] Failed to write mappings file (original left intact): {}",
+                        file_path.toStdString());
     }
 }
 

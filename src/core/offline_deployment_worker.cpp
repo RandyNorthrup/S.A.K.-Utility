@@ -965,7 +965,10 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
     root["packages"] = packages_arr;
 
     QString manifest_path = output_dir + "/" + offline::kManifestFilename;
-    QFile file(manifest_path);
+    // QSaveFile: write to a temp file and atomically rename on commit(), so a
+    // crash or short write never truncates a previously-good manifest (which
+    // installFromBundle would then reject as "empty or unreadable").
+    QSaveFile file(manifest_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logError("[OfflineDeploymentWorker] Cannot write manifest: {}",
                       manifest_path.toStdString());
@@ -974,19 +977,11 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
 
     QJsonDocument doc(root);
     const QByteArray json = doc.toJson(QJsonDocument::Indented);
-    if (file.write(json) != json.size()) {
-        sak::logError("[OfflineDeploymentWorker] Short write on manifest: {}",
+    if (file.write(json) != json.size() || !file.commit()) {
+        sak::logError("[OfflineDeploymentWorker] Failed to write manifest (original intact): {}",
                       manifest_path.toStdString());
-        file.close();
         return false;
     }
-    if (!file.flush()) {  // surface a buffered-write failure (QFile::close() is void)
-        sak::logError("[OfflineDeploymentWorker] Failed to flush manifest: {}",
-                      manifest_path.toStdString());
-        file.close();
-        return false;
-    }
-    file.close();
 
     sak::logInfo("[OfflineDeploymentWorker] Manifest written: {}", manifest_path.toStdString());
     return true;
