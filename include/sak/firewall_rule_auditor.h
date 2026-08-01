@@ -58,6 +58,13 @@ public:
     /// @brief Check if two port ranges overlap
     [[nodiscard]] static bool portsOverlap(const QString& a, const QString& b);
 
+    /// @brief Whether two rules genuinely conflict (an enabled same-direction
+    ///        Allow-vs-Block pair whose profile, protocol, LOCAL AND REMOTE
+    ///        ports, application, and service all overlap). Exposed as a pure
+    ///        seam; addresses are conservatively assumed to overlap because
+    ///        proving CIDR disjointness is out of scope (B9-11).
+    [[nodiscard]] static bool rulesConflict(const FirewallRule& a, const FirewallRule& b);
+
 Q_SIGNALS:
     void rulesEnumerated(QVector<sak::FirewallRule> rules);
     void conflictsDetected(QVector<sak::FirewallConflict> conflicts);

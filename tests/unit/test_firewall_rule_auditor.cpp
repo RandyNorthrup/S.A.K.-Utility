@@ -29,6 +29,8 @@ private Q_SLOTS:
     void enumerateRules_emitsSignal();
     void fullAudit_emitsAuditComplete();
     void findRules_afterEnumeration();
+    void portsOverlap_unknownExpressionOverlapsConservatively();
+    void rulesConflict_requiresAllSelectorsToOverlap();
 };
 
 void TestFirewallRuleAuditor::construction_default() {
@@ -138,6 +140,65 @@ void TestFirewallRuleAuditor::findRules_afterEnumeration() {
 
     const auto name_results = auditor.findRulesByName(QStringLiteral("Core Networking"));
     QVERIFY(name_results.size() >= 0);
+}
+
+void TestFirewallRuleAuditor::portsOverlap_unknownExpressionOverlapsConservatively() {
+    // Wildcard / empty means "any".
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("*"), QStringLiteral("80")));
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QString(), QStringLiteral("80")));
+    // Concrete ports: overlap iff they intersect.
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80"), QStringLiteral("80")));
+    QVERIFY(!FirewallRuleAuditor::portsOverlap(QStringLiteral("80"), QStringLiteral("443")));
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80-100"), QStringLiteral("90")));
+    QVERIFY(!FirewallRuleAuditor::portsOverlap(QStringLiteral("80-100"), QStringLiteral("200")));
+    // B9-11: a non-wildcard expression that parses to no ports (a named service
+    // like "RPC") cannot be proven disjoint, so it must conservatively overlap
+    // rather than fail-open to no-overlap and hide a conflict.
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("RPC"), QStringLiteral("80")));
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80"), QStringLiteral("RPC-EPMap")));
+}
+
+void TestFirewallRuleAuditor::rulesConflict_requiresAllSelectorsToOverlap() {
+    const auto makeRule = [](FirewallRule::Action action) {
+        FirewallRule rule;
+        rule.enabled = true;
+        rule.direction = FirewallRule::Direction::Inbound;
+        rule.action = action;
+        rule.protocol = FirewallRule::Protocol::TCP;
+        rule.localPorts = QStringLiteral("445");
+        rule.profiles = static_cast<int>(FirewallRule::Profile::Domain);
+        return rule;
+    };
+    const FirewallRule allow = makeRule(FirewallRule::Action::Allow);
+    const FirewallRule block = makeRule(FirewallRule::Action::Block);
+
+    // Enabled, same direction, Allow vs Block, overlapping local ports -> conflict.
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, block));
+
+    // Same action, disabled, or opposite direction -> not a conflict.
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, allow));
+    FirewallRule disabled = block;
+    disabled.enabled = false;
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, disabled));
+
+    // B9-11: disjoint REMOTE ports means the rules never apply to the same
+    // traffic, so it is not a conflict (remote ports were previously ignored).
+    FirewallRule allowRemote = allow;
+    allowRemote.remotePorts = QStringLiteral("80");
+    FirewallRule blockRemote = block;
+    blockRemote.remotePorts = QStringLiteral("443");
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allowRemote, blockRemote));
+
+    // B9-11: different services -> disjoint traffic -> not a conflict.
+    FirewallRule allowSvc = allow;
+    allowSvc.serviceName = QStringLiteral("ServiceA");
+    FirewallRule blockSvc = block;
+    blockSvc.serviceName = QStringLiteral("ServiceB");
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allowSvc, blockSvc));
+
+    // Same service still conflicts (overlapping traffic).
+    blockSvc.serviceName = QStringLiteral("ServiceA");
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allowSvc, blockSvc));
 }
 
 QTEST_MAIN(TestFirewallRuleAuditor)

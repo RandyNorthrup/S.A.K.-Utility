@@ -1238,6 +1238,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_imap_uploader.cpp")
     message(STATUS "Added unit test: test_imap_uploader")
 endif()
 
+# test_firewall_rule_auditor -- B9-11 pure conflict/port-overlap seams plus the
+# live-firewall enumeration integration checks.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_firewall_rule_auditor.cpp")
+    add_executable(test_firewall_rule_auditor
+        unit/test_firewall_rule_auditor.cpp
+        ../src/core/firewall_rule_auditor.cpp
+        ../include/sak/firewall_rule_auditor.h  # Q_OBJECT -> AUTOMOC
+    )
+    set_target_properties(test_firewall_rule_auditor PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_firewall_rule_auditor PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_firewall_rule_auditor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_firewall_rule_auditor COMMAND test_firewall_rule_auditor
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_firewall_rule_auditor")
+endif()
+
 # test_file_scanner ??? scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner

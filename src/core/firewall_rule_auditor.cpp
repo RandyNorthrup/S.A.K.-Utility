@@ -539,23 +539,37 @@ bool applicationPathsMatch(const QString& path_a, const QString& path_b) {
     return path_a.compare(path_b, Qt::CaseInsensitive) == 0;
 }
 
-bool rulesOverlap(const FirewallRule& a, const FirewallRule& b) {
+// Two rules bound to DIFFERENT non-empty services do not apply to the same
+// traffic, so they cannot conflict. An empty service means "any" and matches.
+bool servicesMatch(const QString& svc_a, const QString& svc_b) {
+    if (svc_a.isEmpty() || svc_b.isEmpty()) {
+        return true;
+    }
+    return svc_a.compare(svc_b, Qt::CaseInsensitive) == 0;
+}
+
+bool FirewallRuleAuditor::rulesConflict(const FirewallRule& a, const FirewallRule& b) {
     if (!a.enabled || !b.enabled) {
         return false;
     }
+    // A conflict is a same-direction Allow-vs-Block pair whose scope overlaps.
     if (a.direction != b.direction || a.action == b.action) {
         return false;
     }
-    if (!profilesOverlap(a.profiles, b.profiles)) {
+    if (!profilesOverlap(a.profiles, b.profiles) || !protocolsOverlap(a.protocol, b.protocol)) {
         return false;
     }
-    if (!protocolsOverlap(a.protocol, b.protocol)) {
+    // Both the LOCAL and the REMOTE port ranges must overlap; a rule pair that
+    // differs only on remote ports (e.g. remote 80 vs 443) does NOT conflict --
+    // remote ports were previously ignored, producing false conflicts (B9-11).
+    if (!portsOverlap(a.localPorts, b.localPorts) || !portsOverlap(a.remotePorts, b.remotePorts)) {
         return false;
     }
-    if (!FirewallRuleAuditor::portsOverlap(a.localPorts, b.localPorts)) {
-        return false;
-    }
-    return applicationPathsMatch(a.applicationPath, b.applicationPath);
+    // Different applications or services scope the rules to disjoint traffic.
+    // Addresses are conservatively assumed to overlap (proving CIDR disjointness
+    // is out of scope), so they never HIDE a conflict.
+    return applicationPathsMatch(a.applicationPath, b.applicationPath) &&
+           servicesMatch(a.serviceName, b.serviceName);
 }
 
 FirewallConflict buildConflict(const FirewallRule& a, const FirewallRule& b) {
@@ -593,7 +607,7 @@ QVector<FirewallConflict> FirewallRuleAuditor::findConflicts(
             break;
         }
         for (int j = i + 1; j < rules.size(); ++j) {
-            if (rulesOverlap(rules[i], rules[j])) {
+            if (rulesConflict(rules[i], rules[j])) {
                 conflicts.append(buildConflict(rules[i], rules[j]));
             }
         }
@@ -691,8 +705,11 @@ void FirewallRuleAuditor::checkSmbGap(const QVector<FirewallRule>& rules,
         if (rule.direction != FirewallRule::Direction::Inbound) {
             continue;
         }
+        // A wildcard ("*") port rule allows ALL ports, which includes SMB (445);
+        // matching only the explicit-445 case missed a wildcard rule that exposes
+        // SMB on Public just as much (B9-11), mirroring checkRdpGap.
         auto ports = parsePorts(rule.localPorts);
-        if (!ports.contains(kSmbPort)) {
+        if (!ports.contains(kSmbPort) && rule.localPorts != QStringLiteral("*")) {
             continue;
         }
         if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
@@ -772,6 +789,15 @@ bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {
 
     const auto portsA = parsePorts(a);
     const auto portsB = parsePorts(b);
+
+    // A non-empty, non-wildcard expression that parsed to NO ports is an
+    // unrecognized form (e.g. a named service like "RPC"/"RPC-EPMap"). We cannot
+    // prove it disjoint, so treat it as overlapping rather than hiding a possible
+    // conflict -- a conflict detector must fail SAFE, not fail-open to no-overlap
+    // (B9-11).
+    if (portsA.isEmpty() || portsB.isEmpty()) {
+        return true;
+    }
 
     for (const auto port : portsA) {
         if (portsB.contains(port)) {
