@@ -273,7 +273,10 @@ void PartitionManagerController::cancel() {
 
 void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_system,
                                                             const QString& target_path) {
-    if (m_file_system_check_watcher && !m_file_system_check_watcher->isFinished()) {
+    // Gate on the watcher's lifetime, not isFinished() (which flips true on the worker thread
+    // before the queued finished slot nulls the pointer on the GUI thread) so a second check
+    // cannot dispatch in that gap. m_file_system_check_watcher is cleared only after cleanup.
+    if (m_file_system_check_watcher != nullptr) {
         Q_EMIT statusMessage(QStringLiteral("Filesystem check already running"),
                              sak::kTimerStatusDefaultMs);
         return;
@@ -345,7 +348,13 @@ void PartitionManagerController::emitQueueChanged() {
 }
 
 bool PartitionManagerController::applyIsRunning() const {
-    return m_apply_watcher && !m_apply_watcher->isFinished();
+    // Gate on the watcher's LIFETIME, not QFuture::isFinished(). isFinished() flips true on
+    // the worker thread the instant execute() returns, but finishApplyQueue -- which nulls
+    // m_apply_watcher and resets m_apply_executor -- runs later on the GUI thread via the
+    // queued finished signal. Using isFinished() would report "not running" in that gap and
+    // let a second applyQueue() dispatch a concurrent, destructive batch. m_apply_watcher is
+    // set at dispatch and cleared only after that cleanup, so it fails closed across the gap.
+    return m_apply_watcher != nullptr;
 }
 
 }  // namespace sak
