@@ -9,6 +9,7 @@
 
 #include "sak/advanced_uninstall_types.h"
 
+#include <QPair>
 #include <QSet>
 #include <QStringList>
 #include <QVector>
@@ -142,6 +143,19 @@ private:
     [[nodiscard]] static qint64 calculateSize(const QString& path,
                                               const std::atomic<bool>& stopRequested);
 };
+
+/// @brief Build service leftover items from an enumerated (serviceName, displayName) list.
+///
+/// Keeps only the services the @p matches predicate accepts (applied to BOTH the key name and the
+/// display name), tagging each as a Risky Service leftover. Polls @p stopRequested so a cooperative
+/// cancel interrupts the walk. This is the locale-independent successor to the old sc.exe console
+/// parse: the (name, display) pairs come from the SCM API (EnumServicesStatusExW), whose fields are
+/// language-neutral, so it no longer keys off English "SERVICE_NAME:"/"DISPLAY_NAME:" labels that
+/// were empty on non-English Windows. Pure + unit-testable (no SCM handle required).
+[[nodiscard]] QVector<LeftoverItem> buildServiceLeftoverItems(
+    const QVector<QPair<QString, QString>>& services,
+    const std::function<bool(const QString&)>& matches,
+    const std::atomic<bool>& stopRequested);
 
 // -- Compile-Time Invariants -------------------------------------------------
 

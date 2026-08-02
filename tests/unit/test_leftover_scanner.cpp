@@ -55,6 +55,11 @@ private Q_SLOTS:
     // ── Empty Program ──
     void scan_emptyProgram_noResults();
     void scan_emptyPublisher_noPublisherPatterns();
+
+    // ── Service leftover builder (SCM seam, locale-independent) ──
+    void buildServiceItems_matchesNameOrDisplay();
+    void buildServiceItems_stopRequestedInterrupts();
+    void buildServiceItems_localeIndependentFields();
 };
 
 // ── Helper ──────────────────────────────────────────────────────────────────
@@ -408,6 +413,73 @@ void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns() {
     // Should not crash and should work based on name patterns only
     auto results = scanner.scan(stop);
     QVERIFY(results.size() >= 0);
+}
+
+// ── Service leftover builder (SCM seam) ──────────────────────────────────────
+// buildServiceLeftoverItems is the locale-independent successor to the old sc.exe console parse:
+// it consumes (serviceName, displayName) pairs -- exactly what EnumServicesStatusExW yields -- so
+// the matching no longer depends on English "SERVICE_NAME:"/"DISPLAY_NAME:" labels. These pure
+// tests exercise it directly without touching the live SCM.
+
+void LeftoverScannerTests::buildServiceItems_matchesNameOrDisplay() {
+    const QVector<QPair<QString, QString>> services = {
+        {QStringLiteral("AcmeSync"), QStringLiteral("Acme Sync Service")},
+        {QStringLiteral("WSearch"), QStringLiteral("Windows Search")},
+        {QStringLiteral("svc-acme-helper"), QStringLiteral("Unrelated Display")},
+        {QStringLiteral("keynamemiss"), QStringLiteral("Acme Background Agent")},
+    };
+    // Matcher: anything containing "acme" (case-insensitive), applied to name AND display.
+    const auto matches = [](const QString& text) {
+        return text.contains(QStringLiteral("acme"), Qt::CaseInsensitive);
+    };
+    std::atomic<bool> stop{false};
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+
+    // Rows 0 (name+display), 2 (name only), 3 (display only) match; row 1 does not.
+    QCOMPARE(items.size(), 3);
+    for (const auto& item : items) {
+        QCOMPARE(item.type, LeftoverItem::Type::Service);
+        QCOMPARE(item.risk, LeftoverItem::RiskLevel::Risky);
+    }
+    // path is the service KEY name (what an uninstall would target), not the display string.
+    QCOMPARE(items.at(0).path, QStringLiteral("AcmeSync"));
+    QVERIFY(items.at(0).description.contains(QStringLiteral("Acme Sync Service")));
+    QCOMPARE(items.at(1).path, QStringLiteral("svc-acme-helper"));
+    QCOMPARE(items.at(2).path, QStringLiteral("keynamemiss"));
+}
+
+void LeftoverScannerTests::buildServiceItems_stopRequestedInterrupts() {
+    QVector<QPair<QString, QString>> services;
+    for (int i = 0; i < 100; ++i) {
+        services.append({QStringLiteral("acme%1").arg(i), QStringLiteral("Acme %1").arg(i)});
+    }
+    const auto matches = [](const QString&) {
+        return true;
+    };  // would match every row
+    std::atomic<bool> stop{true};  // already cancelled before the first iteration
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+    QVERIFY(items.isEmpty());  // cooperative cancel honored -> no items built
+}
+
+void LeftoverScannerTests::buildServiceItems_localeIndependentFields() {
+    // The SCM fields are language-neutral: even a display name in a non-Latin script flows through
+    // untouched (the old console parse keyed off English labels and would have dropped this row).
+    const QVector<QPair<QString, QString>> services = {
+        {QStringLiteral("AcmeSvc"),
+         QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9")},  // JP "service"
+    };
+    const auto matches = [](const QString& text) {
+        return text.contains(QStringLiteral("AcmeSvc"));  // matches the language-neutral key name
+    };
+    std::atomic<bool> stop{false};
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+    QCOMPARE(items.size(), 1);
+    QCOMPARE(items.at(0).path, QStringLiteral("AcmeSvc"));
+    QVERIFY(items.at(0).description.contains(
+        QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9")));
 }
 
 QTEST_GUILESS_MAIN(LeftoverScannerTests)

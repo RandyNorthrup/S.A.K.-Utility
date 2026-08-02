@@ -1,168 +1,202 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file wifi_profile_scanner.cpp
-/// @brief Utility for scanning Windows WiFi profiles via netsh
+/// @brief Utility for scanning Windows WiFi profiles via the native WLAN API
 
 #include "sak/wifi_profile_scanner.h"
 
-#include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include "sak/process_runner.h"
 
-#include <QDir>
-#include <QFile>
-#include <QTemporaryDir>
+#include <QRegularExpression>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+// wlanapi.h must follow windows.h.
+#include <wlanapi.h>
+#endif
 
 namespace sak {
 
 namespace {
 
-/// @brief Run a netsh command with timeout, returning its stdout
-QString runNetsh(const QStringList& args, int timeout_ms, const WifiScanLogger& logger) {
-    Q_ASSERT(!args.isEmpty());
-    Q_ASSERT(timeout_ms >= 0);
-
-    const auto result = sak::runProcess(QStringLiteral("netsh"), args, timeout_ms);
-    if (!result.succeeded()) {
-        sak::logWarning("netsh failed/timed out: {}", args.join(' ').toStdString());
-        if (logger) {
-            logger(QStringLiteral("netsh timed out"));
+/// @brief Map a WLANProfile <authentication> schema token to a friendly, language-neutral label.
+/// Tokens are the fixed schema enum (open/shared/WPA/WPAPSK/WPA2/WPA2PSK/WPA3*/OWE...), identical
+/// on every Windows UI language. Unknown tokens pass through verbatim so a future scheme is not
+/// lost.
+QString friendlyWifiAuthName(const QString& token) {
+    const QString key = token.trimmed().toLower();
+    if (key.isEmpty()) {
+        return {};
+    }
+    // Fixed schema tokens (language-neutral) -> friendly labels. An unknown token falls through and
+    // is preserved verbatim, so a future auth scheme is surfaced rather than silently dropped.
+    static const QList<QPair<QString, QString>> kTable = {
+        {QStringLiteral("open"), QStringLiteral("Open")},
+        {QStringLiteral("shared"), QStringLiteral("Shared (WEP)")},
+        {QStringLiteral("wpapsk"), QStringLiteral("WPA-Personal")},
+        {QStringLiteral("wpa"), QStringLiteral("WPA-Enterprise")},
+        {QStringLiteral("wpa2psk"), QStringLiteral("WPA2-Personal")},
+        {QStringLiteral("wpa2"), QStringLiteral("WPA2-Enterprise")},
+        {QStringLiteral("wpa3sae"), QStringLiteral("WPA3-Personal")},
+        {QStringLiteral("wpa3ent192"), QStringLiteral("WPA3-Enterprise (192-bit)")},
+        {QStringLiteral("wpa3"), QStringLiteral("WPA3-Enterprise")},
+        {QStringLiteral("wpa3ent"), QStringLiteral("WPA3-Enterprise")},
+        {QStringLiteral("owe"), QStringLiteral("Enhanced Open (OWE)")},
+    };
+    for (const auto& entry : kTable) {
+        if (key == entry.first) {
+            return entry.second;
         }
-        return {};
     }
-    return result.std_out;
-}
-
-/// @brief Read the single exported WLANProfile XML file from a directory (empty on any failure).
-QString readSingleXmlFromDir(const QString& dir_path) {
-    const QStringList xmls = QDir(dir_path).entryList(QStringList{"*.xml"}, QDir::Files);
-    if (xmls.isEmpty()) {
-        return {};
-    }
-    QFile file(QDir(dir_path).filePath(xmls.first()));
-    if (!file.open(QIODevice::ReadOnly)) {
-        return {};
-    }
-    return QString::fromUtf8(file.readAll());
-}
-
-/// @brief Export a WiFi profile to real re-importable WLANProfile XML via `netsh wlan export`.
-/// @note Deliberately omits `key=clear`, so the exported keyMaterial is DPAPI-protected
-///       (protected=true) rather than a plaintext PSK written to disk. Trade-off: DPAPI is
-///       machine/user-bound, so a backup restored on a DIFFERENT PC yields a profile without a
-///       usable key. Fails closed (returns empty) on any error.
-QString exportWifiProfileXml(const QString& name, int timeout_ms, const WifiScanLogger& logger) {
-    QTemporaryDir dir;
-    if (!dir.isValid()) {
-        return {};
-    }
-    const auto result =
-        sak::runProcess(QStringLiteral("netsh"),
-                        {"wlan", "export", "profile", "name=" + name, "folder=" + dir.path()},
-                        timeout_ms);
-    if (!result.succeeded()) {
-        sak::logWarning("netsh wlan export failed: {}", name.toStdString());
-        if (logger) {
-            logger(QStringLiteral("netsh export failed"));
-        }
-        return {};
-    }
-    return readSingleXmlFromDir(dir.path());
+    return token.trimmed();
 }
 
 }  // namespace
 
-QStringList parseWifiProfileNames(const QString& output) {
-    // No Q_ASSERT on empty: an empty string parses to zero names gracefully rather
-    // than aborting a debug build.
-    QStringList names;
-    for (const QString& line : output.split('\n')) {
-        const int colon_idx = line.indexOf(':');
-        if (colon_idx < 0) {
-            continue;
-        }
-        if (!line.contains("Profile", Qt::CaseInsensitive)) {
-            continue;
-        }
-        const QString name = line.mid(colon_idx + 1).trimmed();
-        if (!name.isEmpty()) {
-            names.append(name);
-        }
+QString wifiSecurityTypeFromProfileXml(const QString& xml) {
+    // The first (and only) <authentication> element lives under MSM/security/authEncryption. Match
+    // it case-insensitively across newlines; the value is a schema token, never localized text.
+    static const QRegularExpression re(
+        QStringLiteral("<authentication>\\s*([^<]+?)\\s*</authentication>"),
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+    const QRegularExpressionMatch match = re.match(xml);
+    if (!match.hasMatch()) {
+        return {};
     }
-    return names;
+    return friendlyWifiAuthName(match.captured(1));
 }
 
-QString parseWifiSecurityType(const QString& detail_output) {
-    // No Q_ASSERT on empty: an empty string yields no security type gracefully.
-    for (const QString& line : detail_output.split('\n')) {
-        if (!line.contains("Authentication", Qt::CaseInsensitive)) {
-            continue;
+#ifdef Q_OS_WIN
+
+namespace {
+
+/// Read one profile's XML, deriving its security type (and, when requested, its re-importable XML).
+/// WlanGetProfile is called WITHOUT WLAN_PROFILE_GET_PLAINTEXT_KEY, so the key stays
+/// DPAPI-protected and no plaintext PSK is ever produced. Sets @p detail_ok false on a read
+/// failure.
+WifiProfileInfo readOneProfile(
+    HANDLE handle, const GUID& guid, LPCWSTR profile_name, bool include_xml, bool& detail_ok) {
+    WifiProfileInfo info;
+    info.profile_name = QString::fromWCharArray(profile_name);
+    info.selected = true;
+
+    LPWSTR xml = nullptr;
+    DWORD flags = 0;  // 0 -> keyMaterial remains DPAPI-protected (protected=true), never plaintext
+    DWORD granted_access = 0;
+    const DWORD rc =
+        WlanGetProfile(handle, &guid, profile_name, nullptr, &xml, &flags, &granted_access);
+    if (rc == ERROR_SUCCESS && xml != nullptr) {
+        const QString xml_str = QString::fromWCharArray(xml);
+        info.security_type = wifiSecurityTypeFromProfileXml(xml_str);
+        if (include_xml) {
+            info.xml_data = xml_str;  // real re-importable WLANProfile XML (DPAPI-protected key)
         }
-        const int colon_idx = line.indexOf(':');
-        if (colon_idx >= 0) {
-            return line.mid(colon_idx + 1).trimmed();
-        }
-        break;
+        detail_ok = true;
+    } else {
+        detail_ok = false;
+        sak::logWarning("WlanGetProfile failed for '{}'", info.profile_name.toStdString());
     }
-    return {};
+    if (xml != nullptr) {
+        WlanFreeMemory(xml);
+    }
+    return info;
 }
+
+/// Append every profile on one WLAN interface. A per-interface list failure is skipped (other
+/// adapters still enumerate); each profile that fails its detail read increments @p
+/// detail_failures.
+void appendInterfaceProfiles(HANDLE handle,
+                             const GUID& guid,
+                             bool include_xml,
+                             QVector<WifiProfileInfo>& out,
+                             int& detail_failures) {
+    WLAN_PROFILE_INFO_LIST* profile_list = nullptr;
+    if (WlanGetProfileList(handle, &guid, nullptr, &profile_list) != ERROR_SUCCESS ||
+        profile_list == nullptr) {
+        return;
+    }
+    for (DWORD p = 0; p < profile_list->dwNumberOfItems; ++p) {
+        bool detail_ok = false;
+        out.append(readOneProfile(
+            handle, guid, profile_list->ProfileInfo[p].strProfileName, include_xml, detail_ok));
+        if (!detail_ok) {
+            ++detail_failures;
+        }
+    }
+    WlanFreeMemory(profile_list);
+}
+
+}  // namespace
 
 QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
                                              bool* scan_ok,
                                              bool include_xml) {
-    const QString list_output =
-        runNetsh({"wlan", "show", "profiles"}, kTimeoutNetworkReadMs, logger);
-    if (list_output.isEmpty()) {
-        // netsh errored / WLAN AutoConfig unavailable: enumeration FAILED, not "0 profiles". Report
-        // the failure through scan_ok so callers do not treat it as an empty-but-successful scan.
+    auto fail = [&](const char* why) -> QVector<WifiProfileInfo> {
+        sak::logWarning("WLAN enumeration failed: {}", why);
+        if (logger) {
+            logger(QStringLiteral("WLAN enumeration failed"));
+        }
         if (scan_ok != nullptr) {
-            *scan_ok = false;
+            *scan_ok = false;  // enumeration FAILED, not "0 profiles" -- honesty for the caller
         }
         return {};
-    }
-    if (scan_ok != nullptr) {
-        *scan_ok = true;
+    };
+
+    HANDLE handle = nullptr;
+    DWORD negotiated_version = 0;
+    if (WlanOpenHandle(WLAN_API_VERSION_2_0, nullptr, &negotiated_version, &handle) !=
+        ERROR_SUCCESS) {
+        return fail("WlanOpenHandle");
     }
 
-    const QStringList profile_names = parseWifiProfileNames(list_output);
+    WLAN_INTERFACE_INFO_LIST* interfaces = nullptr;
+    if (WlanEnumInterfaces(handle, nullptr, &interfaces) != ERROR_SUCCESS ||
+        interfaces == nullptr) {
+        WlanCloseHandle(handle, nullptr);
+        return fail("WlanEnumInterfaces");
+    }
+
     QVector<WifiProfileInfo> profiles;
-    profiles.reserve(profile_names.size());
-
     int detail_failures = 0;
-    for (const QString& name : profile_names) {
-        WifiProfileInfo info;
-        info.profile_name = name;
-        info.selected = true;
-
-        const QString detail =
-            runNetsh({"wlan", "show", "profile", "name=" + name}, kTimeoutWifiProfileMs, logger);
-        if (!detail.isEmpty()) {
-            info.security_type = parseWifiSecurityType(detail);
-        } else {
-            // Per-profile detail read failed: surface it (do not silently present the
-            // profile as fully scanned with an unknown security type).
-            ++detail_failures;
-            sak::logWarning("netsh show profile failed for '{}'", name.toStdString());
-        }
-
-        // Store real WLANProfile XML (DPAPI-protected key), NOT the `key=clear` console text --
-        // that leaked the plaintext PSK into the backup and was not re-importable anyway. Skipped
-        // when include_xml is false (headless list op): no temp-dir/DPAPI churn, no key material.
-        if (include_xml) {
-            info.xml_data = exportWifiProfileXml(name, kTimeoutWifiProfileMs, logger);
-        }
-
-        profiles.append(info);
+    for (DWORD i = 0; i < interfaces->dwNumberOfItems; ++i) {
+        appendInterfaceProfiles(handle,
+                                interfaces->InterfaceInfo[i].InterfaceGuid,
+                                include_xml,
+                                profiles,
+                                detail_failures);
     }
 
+    WlanFreeMemory(interfaces);
+    WlanCloseHandle(handle, nullptr);
+
+    if (scan_ok != nullptr) {
+        *scan_ok =
+            true;  // enumeration mechanism worked (individual detail failures reported below)
+    }
     if (detail_failures > 0 && logger) {
         logger(QStringLiteral("%1 of %2 profiles could not be fully read")
                    .arg(detail_failures)
-                   .arg(profile_names.size()));
+                   .arg(profiles.size()));
     }
-
     return profiles;
 }
+
+#else   // !Q_OS_WIN
+
+QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
+                                             bool* scan_ok,
+                                             bool include_xml) {
+    Q_UNUSED(include_xml);
+    if (logger) {
+        logger(QStringLiteral("WiFi scanning is Windows-only"));
+    }
+    if (scan_ok != nullptr) {
+        *scan_ok = false;  // no WLAN API off Windows -> a failed read, never a dishonest empty
+    }
+    return {};
+}
+
+#endif  // Q_OS_WIN
 
 }  // namespace sak

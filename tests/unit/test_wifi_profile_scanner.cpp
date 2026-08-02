@@ -1,8 +1,8 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_wifi_profile_scanner.cpp
-/// @brief Unit tests for WiFi profile parsing utilities
+/// @brief Unit tests for the WLANProfile-XML security-type parser (locale-independent)
 
 #include "sak/wifi_profile_scanner.h"
 
@@ -12,146 +12,94 @@ class TestWifiProfileScanner : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── parseWifiProfileNames ───────────────────────────────────────────
-    void parseNames_typicalOutput();
-    void parseNames_emptyOutput();
-    void parseNames_noProfiles();
-    void parseNames_multipleProfiles();
-    void parseNames_profileWithSpaces();
-
-    // ── parseWifiSecurityType ───────────────────────────────────────────
-    void parseSecurity_wpa2Personal();
-    void parseSecurity_open();
-    void parseSecurity_noAuthLine();
-    void parseSecurity_emptyOutput();
+    // ── wifiSecurityTypeFromProfileXml ──────────────────────────────────
+    void security_wpa2Personal();
+    void security_wpa3Personal();
+    void security_open();
+    void security_enterprise();
+    void security_caseInsensitiveTag();
+    void security_unknownTokenPassthrough();
+    void security_noAuthElement();
+    void security_emptyXml();
+    void security_localeIndependent();
 };
 
-// ============================================================================
-// parseWifiProfileNames Tests
-// ============================================================================
+namespace {
 
-void TestWifiProfileScanner::parseNames_typicalOutput() {
-    const QString output =
-        "Profiles on interface Wi-Fi:\r\n"
-        "\r\n"
-        "Group policy profiles (read only)\r\n"
-        "---------------------------------\r\n"
-        "    <None>\r\n"
-        "\r\n"
-        "User profiles\r\n"
-        "-------------\r\n"
-        "    All User Profile     : MyHomeNetwork\r\n"
-        "    All User Profile     : OfficeWifi\r\n";
-
-    const QStringList names = sak::parseWifiProfileNames(output);
-    QCOMPARE(names.size(), 2);
-    QCOMPARE(names.at(0), QStringLiteral("MyHomeNetwork"));
-    QCOMPARE(names.at(1), QStringLiteral("OfficeWifi"));
+/// A minimal but schema-shaped WLANProfile document with the given <authentication> token.
+QString profileXml(const QString& auth_token) {
+    return QStringLiteral(
+               "<?xml version=\"1.0\"?>\r\n"
+               "<WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">\r\n"
+               "  <name>MyNet</name>\r\n"
+               "  <SSIDConfig><SSID><name>MyNet</name></SSID></SSIDConfig>\r\n"
+               "  <connectionType>ESS</connectionType>\r\n"
+               "  <MSM>\r\n"
+               "    <security>\r\n"
+               "      <authEncryption>\r\n"
+               "        <authentication>%1</authentication>\r\n"
+               "        <encryption>AES</encryption>\r\n"
+               "        <useOneX>false</useOneX>\r\n"
+               "      </authEncryption>\r\n"
+               "    </security>\r\n"
+               "  </MSM>\r\n"
+               "</WLANProfile>\r\n")
+        .arg(auth_token);
 }
 
-void TestWifiProfileScanner::parseNames_emptyOutput() {
-    const QStringList names = sak::parseWifiProfileNames(QString());
-    QVERIFY(names.isEmpty());
+}  // namespace
+
+void TestWifiProfileScanner::security_wpa2Personal() {
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA2PSK"))),
+             QStringLiteral("WPA2-Personal"));
 }
 
-void TestWifiProfileScanner::parseNames_noProfiles() {
-    const QString output =
-        "Profiles on interface Wi-Fi:\r\n"
-        "\r\n"
-        "Group policy profiles (read only)\r\n"
-        "---------------------------------\r\n"
-        "    <None>\r\n"
-        "\r\n"
-        "User profiles\r\n"
-        "-------------\r\n"
-        "    <None>\r\n";
-
-    const QStringList names = sak::parseWifiProfileNames(output);
-    QVERIFY(names.isEmpty());
+void TestWifiProfileScanner::security_wpa3Personal() {
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA3SAE"))),
+             QStringLiteral("WPA3-Personal"));
 }
 
-void TestWifiProfileScanner::parseNames_multipleProfiles() {
-    const QString output =
-        "    All User Profile     : Network1\r\n"
-        "    All User Profile     : Network2\r\n"
-        "    All User Profile     : Network3\r\n"
-        "    All User Profile     : Network4\r\n"
-        "    All User Profile     : Network5\r\n";
-
-    const QStringList names = sak::parseWifiProfileNames(output);
-    QCOMPARE(names.size(), 5);
-    QCOMPARE(names.at(4), QStringLiteral("Network5"));
+void TestWifiProfileScanner::security_open() {
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("open"))),
+             QStringLiteral("Open"));
 }
 
-void TestWifiProfileScanner::parseNames_profileWithSpaces() {
-    const QString output = "    All User Profile     : My Home WiFi Network\r\n";
-
-    const QStringList names = sak::parseWifiProfileNames(output);
-    QCOMPARE(names.size(), 1);
-    QCOMPARE(names.at(0), QStringLiteral("My Home WiFi Network"));
+void TestWifiProfileScanner::security_enterprise() {
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA2"))),
+             QStringLiteral("WPA2-Enterprise"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA3ENT192"))),
+             QStringLiteral("WPA3-Enterprise (192-bit)"));
 }
 
-// ============================================================================
-// parseWifiSecurityType Tests
-// ============================================================================
-
-void TestWifiProfileScanner::parseSecurity_wpa2Personal() {
-    const QString detail =
-        "Profile MyNetwork on interface Wi-Fi:\r\n"
-        "=======================================================================\r\n"
-        "\r\n"
-        "Applied: All User Profile\r\n"
-        "\r\n"
-        "Profile information\r\n"
-        "-------------------\r\n"
-        "    Version                : 1\r\n"
-        "    Type                   : Wireless LAN\r\n"
-        "    Name                   : MyNetwork\r\n"
-        "    Control options        :\r\n"
-        "        Connection mode    : Connect automatically\r\n"
-        "\r\n"
-        "Connectivity settings\r\n"
-        "---------------------\r\n"
-        "    Number of SSIDs        : 1\r\n"
-        "    SSID name              : \"MyNetwork\"\r\n"
-        "    Network type           : Infrastructure\r\n"
-        "    Radio type             : [ Any Radio Type ]\r\n"
-        "\r\n"
-        "Security settings\r\n"
-        "-----------------\r\n"
-        "    Authentication         : WPA2-Personal\r\n"
-        "    Cipher                 : CCMP\r\n"
-        "    Security key           : Present\r\n";
-
-    const QString security_type = sak::parseWifiSecurityType(detail);
-    QCOMPARE(security_type, QStringLiteral("WPA2-Personal"));
+void TestWifiProfileScanner::security_caseInsensitiveTag() {
+    // Element name and token casing must not matter (schema tokens vary in case across exporters).
+    const QString xml =
+        profileXml(QStringLiteral("wpa2psk"))
+            .replace(QStringLiteral("<authentication>"), QStringLiteral("<Authentication>"))
+            .replace(QStringLiteral("</authentication>"), QStringLiteral("</Authentication>"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(xml), QStringLiteral("WPA2-Personal"));
 }
 
-void TestWifiProfileScanner::parseSecurity_open() {
-    const QString detail =
-        "Security settings\r\n"
-        "-----------------\r\n"
-        "    Authentication         : Open\r\n"
-        "    Cipher                 : None\r\n";
-
-    const QString security_type = sak::parseWifiSecurityType(detail);
-    QCOMPARE(security_type, QStringLiteral("Open"));
+void TestWifiProfileScanner::security_unknownTokenPassthrough() {
+    // A future/unknown scheme is preserved verbatim rather than dropped.
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA4FUTURE"))),
+             QStringLiteral("WPA4FUTURE"));
 }
 
-void TestWifiProfileScanner::parseSecurity_noAuthLine() {
-    const QString detail =
-        "Profile information\r\n"
-        "-------------------\r\n"
-        "    Version                : 1\r\n"
-        "    Type                   : Wireless LAN\r\n";
-
-    const QString security_type = sak::parseWifiSecurityType(detail);
-    QVERIFY(security_type.isEmpty());
+void TestWifiProfileScanner::security_noAuthElement() {
+    const QString xml = QStringLiteral("<WLANProfile><name>MyNet</name></WLANProfile>");
+    QVERIFY(sak::wifiSecurityTypeFromProfileXml(xml).isEmpty());
 }
 
-void TestWifiProfileScanner::parseSecurity_emptyOutput() {
-    const QString security_type = sak::parseWifiSecurityType(QString());
-    QVERIFY(security_type.isEmpty());
+void TestWifiProfileScanner::security_emptyXml() {
+    QVERIFY(sak::wifiSecurityTypeFromProfileXml(QString()).isEmpty());
+}
+
+void TestWifiProfileScanner::security_localeIndependent() {
+    // The whole point of the WLAN-API rewrite: the token is schema text, so a non-English Windows
+    // (which localizes netsh CONSOLE output but never the profile XML) still yields the right type.
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPAPSK"))),
+             QStringLiteral("WPA-Personal"));
 }
 
 QTEST_MAIN(TestWifiProfileScanner)

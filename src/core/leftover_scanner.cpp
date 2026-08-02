@@ -27,7 +27,6 @@ constexpr int kPowerShellTimeoutMs = 15'000;
 constexpr int kMaxSizeWalkEntries = 200'000;
 constexpr int kMinConcatNameLen = 4;
 constexpr int kRegistryHivePrefixLength = 5;
-constexpr int kServiceOutputValueOffset = 14;
 
 #ifdef Q_OS_WIN
 constexpr DWORD kMaxRegistryValueNameLen = 256;
@@ -523,53 +522,109 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 
 #endif  // Q_OS_WIN
 
-QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested,
-                                                    bool& ok) {
+QVector<LeftoverItem> buildServiceLeftoverItems(const QVector<QPair<QString, QString>>& services,
+                                                const std::function<bool(const QString&)>& matches,
+                                                const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
-
-    const auto result = sak::runProcess(QStringLiteral("sc.exe"),
-                                        {QStringLiteral("query"),
-                                         QStringLiteral("type="),
-                                         QStringLiteral("service"),
-                                         QStringLiteral("state="),
-                                         QStringLiteral("all")},
-                                        kPowerShellTimeoutMs,
-                                        [&stopRequested]() { return stopRequested.load(); });
-    if (!result.succeeded()) {
-        ok = false;  // sc.exe failed/blocked/timed out -> empty is a FAILED read, not "none found"
-        return items;
-    }
-
-    QString output = result.std_out;
-    QStringList lines = output.split('\n');
-
-    QString current_service;
-    QString current_display;
-
-    for (const auto& line : lines) {
+    for (const auto& service : services) {
         if (stopRequested.load()) {
             break;
         }
+        const QString& name = service.first;
+        const QString& display = service.second;
+        if (matches(name) || matches(display)) {
+            LeftoverItem item;
+            item.type = LeftoverItem::Type::Service;
+            item.path = name;
+            item.description = QString("Windows service: %1").arg(display);
+            item.risk = LeftoverItem::RiskLevel::Risky;
+            items.append(item);
+        }
+    }
+    return items;
+}
 
-        QString trimmed = line.trimmed();
+#ifdef Q_OS_WIN
+namespace {
+// Enumerate installed Win32 services as (keyName, displayName) pairs straight from the Service
+// Control Manager (EnumServicesStatusExW). Both fields are language-neutral, so the leftover match
+// no longer depends on English sc.exe console labels ("SERVICE_NAME:"/"DISPLAY_NAME:") that were
+// empty on localized Windows. Sets @p ok false on a real SCM/enumeration failure (an empty result
+// is then a FAILED read, not an honest "no services"); leaves it true on clean completion or a
+// cooperative cancel. Fails closed: a hard error discards any partial list.
+QVector<QPair<QString, QString>> enumerateWin32Services(const std::atomic<bool>& stopRequested,
+                                                        bool& ok) {
+    QVector<QPair<QString, QString>> services;
 
-        if (trimmed.startsWith("SERVICE_NAME:")) {
-            current_service = trimmed.mid(kServiceOutputValueOffset).trimmed();
-        } else if (trimmed.startsWith("DISPLAY_NAME:")) {
-            current_display = trimmed.mid(kServiceOutputValueOffset).trimmed();
+    const SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ENUMERATE_SERVICE);
+    if (scm == nullptr) {
+        ok = false;  // cannot even open the SCM -> a failed read, not "none found"
+        return services;
+    }
 
-            if (matchesProgramStrict(current_service) || matchesProgramStrict(current_display)) {
-                LeftoverItem item;
-                item.type = LeftoverItem::Type::Service;
-                item.path = current_service;
-                item.description = QString("Windows service: %1").arg(current_display);
-                item.risk = LeftoverItem::RiskLevel::Risky;
-                items.append(item);
-            }
+    constexpr DWORD kInitialBufferBytes = 64u * 1024u;
+    std::vector<BYTE> buffer(kInitialBufferBytes);
+    DWORD resume_handle = 0;
+    for (;;) {
+        if (stopRequested.load()) {
+            break;  // cooperative cancel: ok stays true (a cancel is not a read failure)
+        }
+        DWORD bytes_needed = 0;
+        DWORD services_returned = 0;
+        const BOOL rc = EnumServicesStatusExW(scm,
+                                              SC_ENUM_PROCESS_INFO,
+                                              SERVICE_WIN32,
+                                              SERVICE_STATE_ALL,
+                                              buffer.data(),
+                                              static_cast<DWORD>(buffer.size()),
+                                              &bytes_needed,
+                                              &services_returned,
+                                              &resume_handle,
+                                              nullptr);
+        const DWORD err = rc ? ERROR_SUCCESS : GetLastError();
+        if (rc == FALSE && err != ERROR_MORE_DATA) {
+            ok = false;  // genuine enumeration failure -> fail closed, discard the partial list
+            CloseServiceHandle(scm);
+            return {};
+        }
+
+        const auto* entries = reinterpret_cast<const ENUM_SERVICE_STATUS_PROCESSW*>(buffer.data());
+        for (DWORD i = 0; i < services_returned; ++i) {
+            services.append({QString::fromWCharArray(entries[i].lpServiceName),
+                             QString::fromWCharArray(entries[i].lpDisplayName)});
+        }
+
+        if (rc != FALSE) {
+            break;  // enumeration complete
+        }
+        // ERROR_MORE_DATA: grow the buffer if even one more entry will not fit, then resume.
+        if (bytes_needed > buffer.size()) {
+            buffer.resize(bytes_needed);
         }
     }
 
-    return items;
+    CloseServiceHandle(scm);
+    return services;
+}
+}  // namespace
+#endif  // Q_OS_WIN
+
+QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested,
+                                                    bool& ok) {
+#ifdef Q_OS_WIN
+    const QVector<QPair<QString, QString>> services = enumerateWin32Services(stopRequested, ok);
+    if (!ok) {
+        return {};  // enumeration failed -> empty is a FAILED read, honesty preserved by ok=false
+    }
+    return buildServiceLeftoverItems(
+        services,
+        [this](const QString& text) { return matchesProgramStrict(text); },
+        stopRequested);
+#else
+    Q_UNUSED(stopRequested);
+    ok = false;  // no SCM off Windows -> a failed read, never a dishonest empty-success
+    return {};
+#endif
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested,

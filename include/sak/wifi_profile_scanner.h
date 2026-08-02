@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file wifi_profile_scanner.h
-/// @brief Utility for scanning Windows WiFi profiles via netsh
+/// @brief Utility for scanning Windows WiFi profiles via the native WLAN API
 
 #pragma once
 
@@ -18,26 +18,29 @@ namespace sak {
 /// @brief Callback for reporting scan progress messages
 using WifiScanLogger = std::function<void(const QString&)>;
 
-/// @brief Parse WiFi profile names from netsh "show profiles" output
-/// @param output Raw stdout from "netsh wlan show profiles"
-/// @return List of profile name strings
-[[nodiscard]] QStringList parseWifiProfileNames(const QString& output);
+/// @brief Map a WLANProfile <authentication> element to a friendly security-type label.
+/// @param xml A WLANProfile XML document (as returned by WlanGetProfile).
+/// @return e.g. "WPA2-Personal", "WPA3-Personal", "Open"; empty when no <authentication> is
+/// present.
+/// @note The <authentication> value is a schema enum (open/WPAPSK/WPA2PSK/WPA3SAE/...), NOT
+///       localized console text, so this is language-neutral on every Windows UI language -- unlike
+///       the old parse that keyed off the English "Authentication :" line of `netsh show profile`.
+[[nodiscard]] QString wifiSecurityTypeFromProfileXml(const QString& xml);
 
-/// @brief Extract authentication/security type from netsh profile detail
-/// @param detail_output Raw stdout from "netsh wlan show profile name=X"
-/// @return Security type string (e.g. "WPA2-Personal") or empty
-[[nodiscard]] QString parseWifiSecurityType(const QString& detail_output);
-
-/// @brief Scan all Windows WiFi profiles using netsh wlan commands
+/// @brief Scan all Windows WiFi profiles using the native WLAN API (wlanapi).
 /// @param logger Optional callback for progress/error messages
-/// @param scan_ok Optional out-param: set false when the profile enumeration itself failed (netsh
-///        errored / WLAN service unavailable), true otherwise. Distinguishes a genuine "0 saved
-///        profiles" from a failed scan -- without it an empty return is a fail-open honesty hole
-///        (a failed enumeration looks identical to a machine with no saved networks).
-/// @param include_xml When true (default, GUI backup path) each profile is exported to
-///        DPAPI-protected WLANProfile XML (info.xml_data). When false the export is skipped: no
-///        temp-dir/DPAPI churn and no re-importable key material is ever materialized -- used by
-///        the headless list op, which surfaces only profile name + security type to the model.
+/// @param scan_ok Optional out-param: set false when the profile enumeration itself failed (the
+///        WLAN service is unavailable / WlanOpenHandle or WlanEnumInterfaces errored), true
+///        otherwise. Distinguishes a genuine "0 saved profiles" from a failed scan -- without it an
+///        empty return is a fail-open honesty hole (a failed enumeration looks identical to a
+///        machine with no saved networks).
+/// @param include_xml When true (default, GUI backup path) each profile's re-importable
+///        DPAPI-protected WLANProfile XML is stored in info.xml_data. When false it is parsed for
+///        the security type and then discarded: no re-importable key material is ever retained --
+///        used by the headless list op, which surfaces only profile name + security type. Either
+///        way WlanGetProfile is called WITHOUT WLAN_PROFILE_GET_PLAINTEXT_KEY, so the key stays
+///        DPAPI-protected and no plaintext PSK is ever materialized (and nothing is written to
+///        disk, unlike the old `netsh wlan export` temp-dir path).
 /// @return Vector of discovered WiFi profile info
 [[nodiscard]] QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger = nullptr,
                                                            bool* scan_ok = nullptr,
