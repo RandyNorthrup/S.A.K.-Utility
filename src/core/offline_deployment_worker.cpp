@@ -24,10 +24,12 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QXmlStreamReader>
 
 namespace sak {
@@ -216,6 +218,20 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     }
     QDir(ctx.packages_dir).mkpath(".");
 
+    // Expand the user's package list into the full transitive dependency closure
+    // (honoring each dependency's declared version range) BEFORE internalizing, so
+    // the bundle is genuinely self-contained for offline install. Replaces m_jobs
+    // with the resolved closure; surfaces any resolution warning to the UI log.
+    QStringList resolve_warnings;
+    const QVector<BatchInternalizationJob> closure = resolveDependencyClosure(resolve_warnings);
+    {
+        QMutexLocker jobs_lock(&m_mutex);
+        m_jobs = closure;
+    }
+    for (const QString& warning : resolve_warnings) {
+        emitLog(QStringLiteral("[Dependencies] %1").arg(warning));
+    }
+
     DeploymentManifest manifest;
     manifest.manifest_version = offline::kManifestVersion;
     manifest.created_date = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -226,6 +242,11 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     QMutexLocker lock(&m_mutex);
     ctx.total_jobs = m_jobs.size();
     lock.unlock();
+
+    if (ctx.total_jobs > 0) {
+        emitLog(
+            QStringLiteral("Resolved %1 package(s) including dependencies").arg(ctx.total_jobs));
+    }
 
     for (int idx = 0; idx < ctx.total_jobs; ++idx) {
         if (m_cancelled) {
@@ -240,6 +261,119 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     }
 
     finalizeBundle(manifest, ctx);
+}
+
+// ============================================================================
+// Transitive dependency resolution (the offline bundle's completeness guarantee)
+// ============================================================================
+
+QVector<FeedPackageVersion> OfflineDeploymentWorker::fetchFeedVersions(const QString& package_id,
+                                                                       bool& ok) {
+    ok = false;
+    // A crafted id is embedded into the feed query; keep it a single safe segment.
+    if (!PackageInternalizationEngine::isSafePackageComponent(package_id)) {
+        emitLog(QStringLiteral("[Dependencies] Rejected unsafe package id: %1").arg(package_id));
+        return {};
+    }
+
+    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
+    url.setQuery(query);
+
+    NetworkTransferRequest request;
+    request.url = url;
+    request.timeout_ms = offline::kApiRequestTimeoutMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("Accept"),
+                                                             QByteArrayLiteral("application/xml")});
+
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (transfer.cancelled) {
+        return {};  // ok stays false; a cancelled fetch is not a package-missing answer
+    }
+    if (!transfer.success) {
+        emitLog(QStringLiteral("[Dependencies] Feed fetch HTTP %1 for %2")
+                    .arg(transfer.http_status)
+                    .arg(package_id));
+        return {};
+    }
+
+    // A successful transfer is an authoritative answer even if it lists no
+    // versions (the resolver then records "no satisfying version").
+    ok = true;
+    return NuGetDependencyResolver::parseODataFeedVersions(transfer.body);
+}
+
+QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosure(
+    QStringList& warnings) {
+    QVector<BatchInternalizationJob> requested;
+    {
+        QMutexLocker lock(&m_mutex);
+        requested = m_jobs;
+    }
+
+    NuGetDependencyResolver resolver(offline::kMaxDependencyDepth, offline::kMaxPackagesPerBuild);
+    bool seeded = false;
+    for (const BatchInternalizationJob& job : requested) {
+        if (!seeded) {
+            resolver.start(job.package_id, job.version);
+            seeded = true;
+        } else {
+            resolver.addRoot(job.package_id, job.version);
+        }
+    }
+
+    while (!resolver.isComplete()) {
+        if (m_cancelled) {
+            resolver.cancel();
+            break;
+        }
+        const QString id = resolver.nextFetchId();
+        bool ok = false;
+        const QVector<FeedPackageVersion> versions = fetchFeedVersions(id, ok);
+        if (m_cancelled) {
+            // A cancel that arrived DURING the fetch is not a feed failure -- do
+            // not record a bogus "failed to fetch" for it; just stop.
+            resolver.cancel();
+            break;
+        }
+        if (ok) {
+            resolver.provideFeed(id, versions);
+        } else {
+            resolver.provideFeedFailure(id);
+        }
+    }
+
+    warnings = resolver.errors();
+
+    QVector<BatchInternalizationJob> jobs;
+    QSet<QString> resolved_ids;
+    for (const ResolvedPackage& pkg : resolver.resolved()) {
+        BatchInternalizationJob job;
+        job.package_id = pkg.package_id;
+        job.version = pkg.version;
+        jobs.append(job);
+        resolved_ids.insert(pkg.package_id.toLower());
+    }
+
+    // NEVER drop an explicitly-requested package. If its feed fetch failed (or it
+    // resolved to no version), it is still appended so internalizeOnePackage
+    // attempts it directly -- preserving the pre-closure behavior where every
+    // requested package was built. Closure resolution only ADDS dependencies.
+    for (const BatchInternalizationJob& req : requested) {
+        if (!resolved_ids.contains(req.package_id.toLower())) {
+            jobs.append(req);
+            resolved_ids.insert(req.package_id.toLower());
+            warnings.append(
+                QStringLiteral("Requested package %1 could not be resolved from the feed; "
+                               "attempting it directly")
+                    .arg(req.package_id));
+        }
+    }
+
+    return jobs;
 }
 
 bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
@@ -298,7 +432,20 @@ InternalizationResult OfflineDeploymentWorker::runInternalizationJob(
                     Qt::QueuedConnection);
             });
 
+    // Publish the active engine so cancel() (UI thread) can abort THIS engine's
+    // in-flight download; clear it before the local engine goes out of scope.
+    {
+        QMutexLocker lock(&m_mutex);
+        m_active_engine = &engine;
+    }
+    if (m_cancelled) {
+        engine.cancel();  // a cancel that landed before we published the pointer
+    }
     engine.internalizePackage(job.package_id, job.version, ctx.packages_dir, ctx.work_dir);
+    {
+        QMutexLocker lock(&m_mutex);
+        m_active_engine = nullptr;
+    }
 
     if (!got_result) {
         result.package_id = job.package_id;
@@ -904,7 +1051,12 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url, const QStr
 
 void OfflineDeploymentWorker::cancel() {
     m_cancelled = true;
-    m_engine.cancel();
+    // Abort the engine actively internalizing a package, if any, so a large
+    // in-progress download stops promptly instead of running to completion.
+    QMutexLocker lock(&m_mutex);
+    if (m_active_engine != nullptr) {
+        m_active_engine->cancel();
+    }
 }
 
 bool OfflineDeploymentWorker::isRunning() const {

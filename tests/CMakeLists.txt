@@ -1704,6 +1704,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/chocolatey_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/package_list_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/offline_deployment_worker.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/nuget_dependency_resolver.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/nuget_version_range.cpp
         ${CMAKE_SOURCE_DIR}/src/core/package_internalization_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/core/install_script_parser.cpp
         ${CMAKE_SOURCE_DIR}/src/core/script_rewriter.cpp
@@ -3715,6 +3717,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     add_executable(test_nuget_api_client
         unit/test_nuget_api_client.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/nuget_dependency_resolver.cpp
+        ../src/core/nuget_version_range.cpp
         ../include/sak/nuget_api_client.h
         ../src/core/logger.cpp
     )
@@ -3731,6 +3735,52 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     add_test(NAME test_nuget_api_client COMMAND test_nuget_api_client
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_nuget_api_client")
+endif()
+
+# test_nuget_version_range --- pure NuGet version + version-range primitives (B10-25)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_version_range.cpp")
+    add_executable(test_nuget_version_range
+        unit/test_nuget_version_range.cpp
+        ../src/core/nuget_version_range.cpp
+        ../include/sak/nuget_version_range.h
+    )
+    set_target_properties(test_nuget_version_range PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_nuget_version_range PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_nuget_version_range PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_nuget_version_range COMMAND test_nuget_version_range
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_nuget_version_range")
+endif()
+
+# test_nuget_dependency_resolver --- transitive resolution e2e (B10-25/B10-28)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_dependency_resolver.cpp")
+    add_executable(test_nuget_dependency_resolver
+        unit/test_nuget_dependency_resolver.cpp
+        ../src/core/nuget_dependency_resolver.cpp
+        ../src/core/nuget_version_range.cpp
+        ../include/sak/nuget_dependency_resolver.h
+        ../include/sak/nuget_version_range.h
+    )
+    set_target_properties(test_nuget_dependency_resolver PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_nuget_dependency_resolver PRIVATE
+        Qt6::Core Qt6::Test Qt6::Xml ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_nuget_dependency_resolver PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_nuget_dependency_resolver COMMAND test_nuget_dependency_resolver
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_nuget_dependency_resolver")
 endif()
 
 # test_offline_package_search ??? offline deploy search workflow, dedup, data flow
@@ -6066,6 +6116,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/nuget_dependency_resolver.cpp
+        ../src/core/nuget_version_range.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         ../src/core/logger.cpp
@@ -6073,6 +6125,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
         ../include/sak/nuget_api_client.h
+        ../include/sak/nuget_dependency_resolver.h
+        ../include/sak/nuget_version_range.h
     )
     set_target_properties(test_package_internalization_engine PROPERTIES
         AUTOMOC ON
@@ -6099,6 +6153,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/nuget_dependency_resolver.cpp
+        ../src/core/nuget_version_range.cpp
         ../src/core/bundled_tools_manager.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
@@ -6108,6 +6164,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
         ../include/sak/nuget_api_client.h
+        ../include/sak/nuget_dependency_resolver.h
+        ../include/sak/nuget_version_range.h
     )
     set_target_properties(test_offline_deployment_worker PROPERTIES
         AUTOMOC ON
@@ -6134,6 +6192,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ../src/core/nuget_dependency_resolver.cpp
+        ../src/core/nuget_version_range.cpp
         ../src/core/bundled_tools_manager.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
@@ -6143,6 +6203,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
         ../include/sak/nuget_api_client.h
+        ../include/sak/nuget_dependency_resolver.h
+        ../include/sak/nuget_version_range.h
     )
     set_target_properties(test_offline_package_builder PROPERTIES
         AUTOMOC ON

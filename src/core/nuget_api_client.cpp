@@ -7,6 +7,7 @@
 #include "sak/nuget_api_client.h"
 
 #include "sak/logger.h"
+#include "sak/nuget_dependency_resolver.h"
 #include "sak/offline_deployment_constants.h"
 
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QDomElement>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
@@ -23,7 +25,20 @@ namespace sak {
 namespace {
 constexpr qsizetype kNugetErrorBodyPreviewChars = 500;
 constexpr int kContentDispositionFilenamePrefixLength = 9;
+
+/// @brief Key a package's captured metadata by lowercased id + concrete version.
+QString metadataKey(const QString& id, const QString& version) {
+    return id.toLower() + QLatin1Char('@') + version;
+}
 }  // namespace
+
+/// @brief Per-resolution state: the shared transitive resolver plus the full
+///        ChocoPackageMetadata captured for each fetched version (so the emitted
+///        dependency tree keeps its rich fields, not just id + version).
+struct NuGetApiClient::DepResolutionContext {
+    NuGetDependencyResolver resolver{offline::kMaxDependencyDepth, offline::kMaxPackagesPerBuild};
+    QHash<QString, ChocoPackageMetadata> metadata_by_key;
+};
 
 // ============================================================================
 // Construction / Destruction
@@ -160,20 +175,88 @@ void NuGetApiClient::downloadNupkg(const QString& package_id,
 void NuGetApiClient::resolveDependencies(const QString& package_id, const QString& version) {
     m_cancelled = false;  // a new operation clears a prior cancel (cancel is not permanent)
 
-    m_resolved_deps.clear();
-    m_deps_to_resolve.clear();
-    m_visited_deps.clear();
-    m_root_id_lower = package_id.toLower();
-    m_root_version = version;
-
-    m_deps_to_resolve.append({package_id, 0});
-    m_visited_deps.insert(package_id.toLower());
+    // Each call owns its OWN resolution state (shared_ptr captured by the reply
+    // lambdas), so two overlapping resolveDependencies() calls can never share or
+    // clobber one graph (B10-28 part 1). The resolver honors declared version
+    // ranges and picks the highest satisfying version (B10-25).
+    auto ctx = std::make_shared<DepResolutionContext>();
+    ctx->resolver.start(package_id, version);
 
     sak::logInfo("[NuGetApiClient] Resolving dependencies for {} {}",
                  package_id.toStdString(),
                  version.toStdString());
 
-    resolveNextDependency();
+    pumpDependencyResolution(ctx);
+}
+
+void NuGetApiClient::pumpDependencyResolution(const std::shared_ptr<DepResolutionContext>& ctx) {
+    if (m_cancelled) {
+        return;
+    }
+    if (ctx->resolver.isComplete()) {
+        QVector<ChocoPackageMetadata> tree;
+        for (const ResolvedPackage& pkg : ctx->resolver.resolved()) {
+            const QString key = metadataKey(pkg.package_id, pkg.version);
+            if (ctx->metadata_by_key.contains(key)) {
+                tree.append(ctx->metadata_by_key.value(key));
+            } else {
+                ChocoPackageMetadata meta;
+                meta.package_id = pkg.package_id;
+                meta.version = pkg.version;
+                tree.append(meta);
+            }
+        }
+        for (const QString& warning : ctx->resolver.errors()) {
+            sak::logWarning("[NuGetApiClient] Dependency resolution: {}", warning.toStdString());
+        }
+        Q_EMIT dependenciesResolved(tree);
+        return;
+    }
+
+    const QString fetch_id = ctx->resolver.nextFetchId();
+    const QString encoded_id = QString(QUrl::toPercentEncoding(fetch_id));
+    // FindPackagesById returns EVERY version with its Dependencies, so the resolver
+    // can select the highest version satisfying the declared range.
+    const QString url_str =
+        QString("%1%2?id=%27%3%27")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath, encoded_id);
+
+    auto request = buildRequest(url_str);
+    auto* reply = m_network_manager->get(request);
+    trackReply(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, ctx, fetch_id]() {
+        handleResolverFeedReply(reply, ctx, fetch_id);
+    });
+}
+
+void NuGetApiClient::handleResolverFeedReply(QNetworkReply* reply,
+                                             const std::shared_ptr<DepResolutionContext>& ctx,
+                                             const QString& fetch_id) {
+    untrackReply(reply);
+    reply->deleteLater();
+    if (m_cancelled) {
+        return;
+    }
+
+    if (reply->error() != QNetworkReply::NoError) {
+        sak::logWarning("[NuGetApiClient] Dep feed error for {}: {}",
+                        fetch_id.toStdString(),
+                        reply->errorString().toStdString());
+        ctx->resolver.provideFeedFailure(fetch_id);
+        pumpDependencyResolution(ctx);
+        return;
+    }
+
+    const QByteArray data = reply->readAll();
+    // Capture the full metadata for every version so the emitted tree stays rich...
+    const auto metas = parseODataFeed(data);
+    for (const ChocoPackageMetadata& meta : metas) {
+        ctx->metadata_by_key.insert(metadataKey(meta.package_id, meta.version), meta);
+    }
+    // ...and feed the resolver the (version, dependencies) view it consumes.
+    ctx->resolver.provideFeed(fetch_id, NuGetDependencyResolver::parseODataFeedVersions(data));
+    pumpDependencyResolution(ctx);
 }
 
 void NuGetApiClient::cancel() {
@@ -390,117 +473,6 @@ void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
 }
 
 // ============================================================================
-// Dependency Resolution
-// ============================================================================
-
-void NuGetApiClient::resolveNextDependency() {
-    if (m_cancelled || m_deps_to_resolve.isEmpty()) {
-        sak::logInfo("[NuGetApiClient] Dependency resolution complete: {} packages",
-                     static_cast<int>(m_resolved_deps.size()));
-        Q_EMIT dependenciesResolved(m_resolved_deps);
-        return;
-    }
-
-    const auto next = m_deps_to_resolve.takeFirst();
-    const QString next_id = next.first;
-    const int depth = next.second;
-    // Only the root node carries a pinned version; children are resolved to their latest.
-    const bool pinned_root = !m_root_version.isEmpty() && next_id.toLower() == m_root_id_lower;
-
-    // Build OData URL manually — QUrlQuery double-encodes OData quotes and $ params.
-    const QString encoded_id = QString(QUrl::toPercentEncoding(next_id));
-    const QString url_str = buildDependencyUrl(encoded_id, pinned_root);
-
-    auto request = buildRequest(url_str);
-    auto* reply = m_network_manager->get(request);
-    trackReply(reply);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, pinned_root, depth]() {
-        handleDependencyReply(reply, pinned_root, depth);
-    });
-}
-
-QString NuGetApiClient::buildDependencyUrl(const QString& encoded_id, bool pinned_root) const {
-    if (pinned_root) {
-        // FindPackagesById returns EVERY version (with its Dependencies), so the exact pinned
-        // root version can be selected instead of the feed's IsLatestVersion.
-        return QString("%1%2?id=%27%3%27")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath, encoded_id);
-    }
-    return QString(
-               "%1%2?$filter=IsLatestVersion%20and%20Id%20eq%20%27%3%27"
-               "&searchTerm=%27%4%27&targetFramework=%27%27"
-               "&includePrerelease=false")
-        .arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath, encoded_id, encoded_id);
-}
-
-int NuGetApiClient::indexOfVersion(const QVector<ChocoPackageMetadata>& results,
-                                   const QString& version) const {
-    for (int i = 0; i < results.size(); ++i) {
-        if (results.at(i).version == version) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-void NuGetApiClient::enqueueDependencies(const ChocoPackageMetadata& pkg, int depth) {
-    // Enforce the graph-depth cap at enqueue time (root=0..kMaxDependencyDepth-1 levels), so the
-    // cap limits recursion depth, not the flat number of packages processed. Breadth is never cut.
-    if (depth + 1 >= offline::kMaxDependencyDepth) {
-        return;
-    }
-    for (const auto& dep_id : pkg.dependency_ids) {
-        const QString lower_dep = dep_id.toLower();
-        if (!m_visited_deps.contains(lower_dep)) {
-            m_visited_deps.insert(lower_dep);
-            m_deps_to_resolve.append({dep_id, depth + 1});
-        }
-    }
-}
-
-void NuGetApiClient::handleDependencyReply(QNetworkReply* reply, bool pinned_root, int depth) {
-    untrackReply(reply);
-    reply->deleteLater();
-    if (m_cancelled) {
-        return;
-    }
-    if (reply->error() != QNetworkReply::NoError) {
-        sak::logWarning("[NuGetApiClient] Dep resolve error: {}",
-                        reply->errorString().toStdString());
-        resolveNextDependency();
-        return;
-    }
-
-    const QByteArray data = reply->readAll();
-    const auto results = parseODataFeed(data);
-
-    if (pinned_root) {
-        const int idx = indexOfVersion(results, m_root_version);
-        if (idx < 0) {
-            // Fail closed: the requested version is unavailable; never silently resolve latest.
-            Q_EMIT errorOccurred("dependencies",
-                                 "Requested version " + m_root_version + " of " + m_root_id_lower +
-                                     " not available");
-            return;
-        }
-        const auto& pkg = results.at(idx);
-        m_resolved_deps.append(pkg);
-        enqueueDependencies(pkg, depth);
-    } else {
-        if (results.isEmpty()) {
-            resolveNextDependency();
-            return;
-        }
-        const auto& pkg = results.first();
-        m_resolved_deps.append(pkg);
-        enqueueDependencies(pkg, depth);
-    }
-
-    resolveNextDependency();
-}
-
-// ============================================================================
 // XML Parsing
 // ============================================================================
 
@@ -622,22 +594,13 @@ QString NuGetApiClient::extractProperty(const QDomElement& properties, const QSt
 }
 
 QStringList NuGetApiClient::parseDependencyString(const QString& dep_string) {
-    // NuGet v2 OData "Dependencies": pipe-separated entries, each of the form
-    // "id:versionRange:targetFramework" (versionRange/targetFramework optional).
-    // The package ID is ALWAYS the first colon-separated field. An entry with an
-    // empty first field (e.g. "::net45") is a framework-only dependency-group
-    // marker with no package and is skipped -- the previous ".contains('.')"
-    // heuristic mis-recorded such a framework token as a dependency id.
+    // Delegate to the shared range-aware parser and project to bare ids (this
+    // struct field carries ids only). One parsing implementation, one behavior:
+    // framework-only markers ("::net45") are skipped and ids are deduplicated.
     QStringList result;
-    const QStringList parts = dep_string.split('|', Qt::SkipEmptyParts);
-
-    for (const auto& part : parts) {
-        const QString dep_id = part.section(':', 0, 0).trimmed();
-        if (!dep_id.isEmpty() && !result.contains(dep_id)) {
-            result.append(dep_id);
-        }
+    for (const NuGetDependency& dep : NuGetDependencyResolver::parseDependencies(dep_string)) {
+        result.append(dep.id);
     }
-
     return result;
 }
 

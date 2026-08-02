@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "sak/nuget_dependency_resolver.h"
 #include "sak/package_internalization_engine.h"
 
 #include <QFuture>
@@ -195,6 +196,24 @@ private:
     /// @brief Execute the build bundle operation on a background thread
     void executeBuildBundle(const QString& output_dir, const QString& description);
 
+    /// @brief Expand the requested package list (m_jobs) into the FULL transitive
+    ///        dependency closure so the bundle actually contains everything an
+    ///        offline install needs. Honors each dependency's declared NuGet
+    ///        version range (picks the highest satisfying version) instead of
+    ///        grabbing latest. Runs synchronously on the build thread. Any
+    ///        unresolved dependency / fetch failure is appended to @p warnings so
+    ///        an incomplete bundle is surfaced, not silently reported as success.
+    ///        On total resolution failure, falls back to the requested list.
+    [[nodiscard]] QVector<BatchInternalizationJob> resolveDependencyClosure(QStringList& warnings);
+
+    /// @brief Fetch a package's available versions (with declared dependencies)
+    ///        from the NuGet feed (FindPackagesById). @p ok is set false on a
+    ///        transport failure (so resolution records a fetch error); an empty
+    ///        result with @p ok true means the feed legitimately returned no
+    ///        matching package.
+    [[nodiscard]] QVector<FeedPackageVersion> fetchFeedVersions(const QString& package_id,
+                                                                bool& ok);
+
     /// @brief Execute direct download on a background thread
     void executeDirectDownload(const QVector<QPair<QString, QString>>& packages,
                                const QString& output_dir);
@@ -273,7 +292,12 @@ private:
     /// @brief Emit a log message to the UI from a background thread
     void emitLog(const QString& message);
 
-    PackageInternalizationEngine m_engine;
+    /// @brief The internalization engine running the CURRENT package, or nullptr
+    ///        between jobs. Guarded by m_mutex so cancel() (UI thread) can abort
+    ///        the in-flight download the build thread is performing. (The build
+    ///        creates a fresh local engine per job; without this, cancel() had no
+    ///        way to reach it and an in-progress download ran to completion.)
+    PackageInternalizationEngine* m_active_engine{nullptr};
     QVector<BatchInternalizationJob> m_jobs;
     mutable QMutex m_mutex;
     QFuture<void> m_operation_future;

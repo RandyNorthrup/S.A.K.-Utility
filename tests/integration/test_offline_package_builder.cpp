@@ -220,7 +220,15 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
     QVERIFY2(operation_error.isEmpty(),
              qPrintable("Worker reported an operation error: " + operation_error));
 
-    QCOMPARE(final_stats.total, kOfficePcPackages.size());
+    // The builder now expands the requested list into the full transitive
+    // dependency closure before internalizing (e.g. 7zip pulls in 7zip.install +
+    // chocolatey-core.extension), so total is >= the requested count -- never
+    // fewer. (When the dependency feed is unreachable it falls back to exactly the
+    // requested list, so equality is the lower bound.)
+    QVERIFY2(final_stats.total >= kOfficePcPackages.size(),
+             qPrintable(QString("Closure total %1 is smaller than the %2 requested packages")
+                            .arg(final_stats.total)
+                            .arg(kOfficePcPackages.size())));
     if (final_stats.completed == 0 && allPackageFailuresAreTransient(package_errors)) {
         QSKIP("Chocolatey package service/CDN returned only transient transfer errors.");
     }

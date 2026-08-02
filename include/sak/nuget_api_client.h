@@ -19,6 +19,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <memory>
 
 namespace sak {
 
@@ -116,12 +117,21 @@ private:
     void handleDownloadReply(QNetworkReply* reply,
                              const QString& package_id,
                              const QString& output_dir);
-    void resolveNextDependency();
-    [[nodiscard]] QString buildDependencyUrl(const QString& encoded_id, bool pinned_root) const;
-    void handleDependencyReply(QNetworkReply* reply, bool pinned_root, int depth);
-    [[nodiscard]] int indexOfVersion(const QVector<ChocoPackageMetadata>& results,
-                                     const QString& version) const;
-    void enqueueDependencies(const ChocoPackageMetadata& pkg, int depth);
+    /// @brief Per-resolution state (resolver + captured metadata). Held via a
+    ///        shared_ptr owned by the in-flight reply lambdas so each
+    ///        resolveDependencies() call gets its OWN state -- concurrent calls
+    ///        never share/clobber a graph (B10-28 part 1). Defined in the .cpp.
+    struct DepResolutionContext;
+
+    /// @brief Drive the shared NuGetDependencyResolver: issue the next feed fetch,
+    ///        or, when the closure is complete, emit dependenciesResolved().
+    void pumpDependencyResolution(const std::shared_ptr<DepResolutionContext>& ctx);
+
+    /// @brief Handle one FindPackagesById feed reply: capture full metadata, feed
+    ///        the resolver (or record a fetch failure), then pump the next step.
+    void handleResolverFeedReply(QNetworkReply* reply,
+                                 const std::shared_ptr<DepResolutionContext>& ctx,
+                                 const QString& fetch_id);
 
     [[nodiscard]] QVector<ChocoPackageMetadata> parseODataFeed(const QByteArray& xml);
     [[nodiscard]] ChocoPackageMetadata parseODataEntry(const QDomElement& entry) const;
@@ -141,13 +151,6 @@ private:
     std::atomic<bool> m_cancelled{false};
     std::atomic<int> m_pending_ops{0};
     QList<QNetworkReply*> m_pending_replies;  ///< In-flight replies, aborted by cancel()
-
-    // Dependency resolution state
-    QVector<ChocoPackageMetadata> m_resolved_deps;
-    QList<QPair<QString, int>> m_deps_to_resolve;  // (package_id, graph_depth)
-    QSet<QString> m_visited_deps;
-    QString m_root_id_lower;  // lowercased root id, to detect the pinned-version root node
-    QString m_root_version;   // requested root version ("" = latest)
 };
 
 }  // namespace sak
