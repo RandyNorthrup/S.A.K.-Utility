@@ -306,35 +306,35 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
 
     retireWorker(m_cleanup_worker);
     m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, m_useRecycleBin, this);
+    connectCleanupWorkerSignals(m_cleanup_worker.get());
+    m_cleanup_worker->start();
+}
 
-    connect(m_cleanup_worker.get(),
-            &CleanupWorker::itemCleaned,
-            this,
-            &AdvancedUninstallController::itemCleaned);
-    connect(m_cleanup_worker.get(),
+void AdvancedUninstallController::connectCleanupWorkerSignals(CleanupWorker* worker) {
+    connect(worker, &CleanupWorker::itemCleaned, this, &AdvancedUninstallController::itemCleaned);
+    connect(worker,
             &CleanupWorker::cleanupComplete,
             this,
             &AdvancedUninstallController::onCleanupComplete);
-    connect(m_cleanup_worker.get(),
+    connect(worker,
             &CleanupWorker::rebootPendingItems,
             this,
             &AdvancedUninstallController::rebootPendingItems);
-    connect(m_cleanup_worker.get(),
-            &CleanupWorker::failed,
+    // recycleFallbackItems: items destroyed permanently after the Recycle Bin failed -- re-emitted
+    // so the panel can warn the user the recoverable-default was not honored.
+    connect(worker,
+            &CleanupWorker::recycleFallbackItems,
             this,
-            &AdvancedUninstallController::onCleanupWorkerFailed);
-    connect(m_cleanup_worker.get(),
+            &AdvancedUninstallController::recycleFallbackItems);
+    connect(
+        worker, &CleanupWorker::failed, this, &AdvancedUninstallController::onCleanupWorkerFailed);
+    connect(worker,
             &CleanupWorker::cancelled,
             this,
             &AdvancedUninstallController::onCleanupWorkerCancelled);
-    connect(m_cleanup_worker.get(),
-            &CleanupWorker::progress,
-            this,
-            [this](int current, int total, const QString& /*msg*/) {
-                Q_EMIT progressUpdate(current, total);
-            });
-
-    m_cleanup_worker->start();
+    connect(worker, &CleanupWorker::progress, this, [this](int current, int total, const QString&) {
+        Q_EMIT progressUpdate(current, total);
+    });
 }
 
 void AdvancedUninstallController::cancelOperation() {

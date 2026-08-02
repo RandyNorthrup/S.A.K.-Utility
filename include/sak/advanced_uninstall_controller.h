@@ -201,6 +201,10 @@ Q_SIGNALS:
     /// @brief Locked files scheduled for removal on next Windows reboot
     void rebootPendingItems(QStringList paths);
 
+    /// @brief Items that could NOT be sent to the Recycle Bin and were permanently deleted despite
+    ///        recycle mode (so the UI can warn the user the recoverable-default was not honored).
+    void recycleFallbackItems(QStringList paths);
+
     /// @brief Batch queue item status changed
     void queueItemStatusChanged(int index, sak::UninstallQueueItem::Status status);
 
@@ -234,6 +238,10 @@ private:
     /// OS-critical / unrecoverable / injection targets from reaching CleanupWorker.
     QVector<LeftoverItem> screenCleanupItems(const QVector<LeftoverItem>& selectedItems,
                                              int* refusedCount);
+
+    /// @brief Wire a freshly created CleanupWorker's signals to this controller (incl. the
+    ///        recycle-fallback re-emit so the UI can warn about permanent deletions).
+    void connectCleanupWorkerSignals(CleanupWorker* worker);
 
     /// @brief Transition to a new state
     void setState(State newState);

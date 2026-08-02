@@ -54,6 +54,8 @@ private Q_SLOTS:
     void fileRefusesSystemAndRoots();
     void fileRefusesTrailingDotSpaceEvasion();
     void fileRefusesShortNameEvasion();
+    void fileRefusesUserShellFolderRoots();
+    void fileRefusesBootAndCriticalTree();
     void fileAllowsSpecificLeftoverSubfolder();
     void fileRefusesUncAndRelative();
 };
@@ -218,11 +220,53 @@ void TestLeftoverCleanupGuard::fileRefusesShortNameEvasion() {
         !blocked(filePathDeletionRefusal(QStringLiteral("C:\\ProgramData\\Acme~Vendor\\data"))));
 }
 
+void TestLeftoverCleanupGuard::fileRefusesUserShellFolderRoots() {
+    // A user's shell-data folder ROOT is never an app leftover: refusing it stops a poisoned batch
+    // from wiping the whole Documents/Desktop/Downloads/... tree (previously only the profile root
+    // and AppData roots were exact-blocked, so these passed).
+    for (const auto* leaf : {"Documents",
+                             "Desktop",
+                             "Downloads",
+                             "Pictures",
+                             "Music",
+                             "Videos",
+                             "Favorites",
+                             "Contacts",
+                             "Links",
+                             "Saved Games",
+                             "OneDrive"}) {
+        const QString path =
+            QStringLiteral("C:\\Users\\Username\\%1").arg(QString::fromLatin1(leaf));
+        QVERIFY2(blocked(filePathDeletionRefusal(path)), qPrintable(path));
+    }
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Public\\Documents"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Public\\Pictures"))));
+}
+
+void TestLeftoverCleanupGuard::fileRefusesBootAndCriticalTree() {
+    // Boot / system-critical roots are refused for the whole subtree (no subfolder is ever a
+    // legitimate leftover), unlike shared roots which block only the exact path.
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\bootmgr"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot\\BCD"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Recovery"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("D:\\EFI\\Microsoft\\Boot"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\$Recycle.Bin\\S-1-5-21"))));
+    QVERIFY(blocked(
+        filePathDeletionRefusal(QStringLiteral("D:\\System Volume Information\\tracking.log"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\pagefile.sys"))));
+}
+
 void TestLeftoverCleanupGuard::fileAllowsSpecificLeftoverSubfolder() {
     QVERIFY(!blocked(filePathDeletionRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App"))));
     QVERIFY(!blocked(filePathDeletionRefusal(
         QStringLiteral("C:\\Users\\Public\\AppData\\Local\\AcmeCorp\\cache.db"))));
     QVERIFY(!blocked(filePathDeletionRefusal(QStringLiteral("C:\\ProgramData\\AcmeCorp"))));
+    // A per-app subfolder UNDER a shell folder stays cleanable (the block is the folder root only).
+    QVERIFY(!blocked(filePathDeletionRefusal(
+        QStringLiteral("C:\\Users\\Username\\Documents\\AcmeApp\\save.dat"))));
+    QVERIFY(!blocked(
+        filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\Downloads\\AcmeSetup"))));
 }
 
 void TestLeftoverCleanupGuard::fileRefusesUncAndRelative() {

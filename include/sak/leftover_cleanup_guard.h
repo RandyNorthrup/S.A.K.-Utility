@@ -352,13 +352,30 @@ namespace sak {
 }
 
 /// Directories that are shared system/user roots: blocked as the EXACT path (a specific subfolder
-/// under them -- e.g. Program Files\\Vendor -- is a legitimate leftover and stays allowed).
+/// under them -- e.g. Program Files\\Vendor or Documents\\SomeApp -- is a legitimate leftover and
+/// stays allowed). Includes the per-user shell-data folder ROOTS (Documents/Desktop/Downloads/...)
+/// and the Public shell roots, so a poisoned batch cannot wipe a user's entire Documents/Desktop
+/// tree while a genuine app subfolder under them stays cleanable.
 [[nodiscard]] inline const QRegularExpression& cleanupSharedRootDirRegex() {
+    static const QRegularExpression kRegex(QStringLiteral(
+        "^[a-z]:/(program files|program files \\(x86\\)|programdata|users|"
+        "users/public|windows|users/[^/]+|users/[^/]+/appdata|"
+        "users/[^/]+/appdata/local|users/[^/]+/appdata/roaming|"
+        "users/[^/]+/appdata/locallow|"
+        "users/[^/]+/(documents|desktop|downloads|pictures|music|videos|favorites|contacts|"
+        "links|searches|saved games|onedrive)|"
+        "users/public/(documents|desktop|downloads|pictures|music|videos|libraries))$"));
+    return kRegex;
+}
+
+/// Boot / system-critical roots that are NEVER a legitimate application leftover: refused as the
+/// path AND its whole subtree (unlike the shared roots, no subfolder under these is ever
+/// cleanable).
+[[nodiscard]] inline const QRegularExpression& cleanupCriticalTreeRegex() {
     static const QRegularExpression kRegex(
-        QStringLiteral("^[a-z]:/(program files|program files \\(x86\\)|programdata|users|"
-                       "users/public|windows|users/[^/]+|users/[^/]+/appdata|"
-                       "users/[^/]+/appdata/local|users/[^/]+/appdata/roaming|"
-                       "users/[^/]+/appdata/locallow)$"));
+        QStringLiteral("^[a-z]:/(bootmgr|boot|efi|recovery|\\$recycle\\.bin|"
+                       "system volume information|hiberfil\\.sys|pagefile\\.sys|swapfile\\.sys|"
+                       "bootsect\\.bak|bootnxt|config\\.msi)(/.*)?$"));
     return kRegex;
 }
 
@@ -398,7 +415,15 @@ namespace sak {
     if (!string_refusal.isEmpty()) {
         return string_refusal;
     }
-    const QString clean = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    // Resolve DOS-device / SUBST aliases (and symlinks) to the REAL target when the path exists, so
+    // an alias such as `subst X: C:\Windows` cannot smuggle a protected path past the drive-letter
+    // screens below (the kernel resolves X:\ to C:\Windows at delete time, but a lexical
+    // absoluteFilePath would keep "x:/..." and slip every check). canonicalFilePath() is empty for
+    // a nonexistent path -- deleting one is a no-op -- so fall back to the lexical absolute path.
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    const QString clean = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath()
+                                                              : canonical);
     const QString lower = cleanupCanonicalLower(clean);
     static const QRegularExpression kDriveRootRe(QStringLiteral("^[a-z]:/?$"));
     if (kDriveRootRe.match(lower).hasMatch()) {
@@ -409,6 +434,9 @@ namespace sak {
     systemRoot = QDir::cleanPath(systemRoot).toLower();
     if (lower == systemRoot || lower.startsWith(systemRoot + QLatin1Char('/'))) {
         return QStringLiteral("refusing a path inside the Windows system directory");
+    }
+    if (cleanupCriticalTreeRegex().match(lower).hasMatch()) {
+        return QStringLiteral("refusing a boot/system-critical path");
     }
     if (cleanupSharedRootDirRegex().match(lower).hasMatch()) {
         return QStringLiteral(

@@ -1703,11 +1703,12 @@ QJsonObject uninstallProgramParamsSchema(const QString& name_description) {
 }
 
 // Drive a prepared UninstallWorker to completion with a hard timeout and a real cancel, then
-// map the terminal signal to a tool result. On success executeXxxMode emits uninstallComplete
-// (checked ==Success); a failed removal returns unexpected -> WorkerBase::failed; a stop ->
-// cancelled. The worker is FULLY JOINED before return: ~UninstallWorker is =default, so
-// ~WorkerBase (which joins) would otherwise run AFTER the derived members execute() reads are
-// destroyed = a UAF on the timeout path.
+// map the terminal signal to a tool result. uninstallComplete carries a result code (Success for
+// the Standard/UWP paths this drives; Skipped for ForcedUninstall), so the ok==Success branch is
+// real handling, not dead code; a failed removal returns unexpected -> WorkerBase::failed; a stop
+// -> cancelled. The worker is FULLY JOINED before return: the explicit requestStop + bounded wait +
+// terminate fallback below reaps the thread, and ~UninstallWorker itself calls stopAndJoin() (it is
+// NOT =default) while its members are still alive, so there is no base-runs-too-late UAF.
 AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& name, int timeout_ms) {
     AsyncActionInvocation inv(timeout_ms);
     QObject::connect(
@@ -1935,7 +1936,12 @@ QString validateCleanupItem(const QJsonObject& obj, LeftoverItem& out) {
     }
     out.type = *type;
     out.path = obj.value(QStringLiteral("path")).toString().trimmed();
-    out.registryValueName = obj.value(QStringLiteral("registry_value_name")).toString().trimmed();
+    // Do NOT trim the registry value name: a value name's leading/trailing spaces are significant,
+    // so trimming could target a DIFFERENT value than the model named and the human confirmed. The
+    // guard (registryValueDeletionRefusal) still rejects an all-whitespace name and screens
+    // control/wildcard characters, so preserving the raw name opens no new risk while keeping the
+    // deletion exact.
+    out.registryValueName = obj.value(QStringLiteral("registry_value_name")).toString();
     out.selected = true;
     out.sizeBytes = 0;
     return cleanupItemRefusal(out);
@@ -1947,21 +1953,26 @@ struct CleanupTally {
     int succeeded = 0;
     int failed = 0;
     QStringList reboot_paths;
+    QStringList recycle_fallback_paths;  // items PERMANENTLY deleted after the Recycle Bin failed
     QJsonArray per_item;
 };
 
-// Build the tool result from the accumulated tally. ok = every item deleted; a reboot-scheduled
-// file still EXISTS, so it is reported separately (count + message note), not folded silently into
+// Build the tool result from the accumulated tally. ok = no item outright FAILED; a
+// reboot-scheduled file still exists (reported separately, count + note) and a recycle-fallback
+// item was destroyed permanently (also reported), so neither honesty caveat is folded silently into
 // the cleaned count.
 AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     const bool ok = tally.failed == 0;
-    QJsonObject data{{QStringLiteral("items_total"), items_total},
-                     {QStringLiteral("succeeded"), tally.succeeded},
-                     {QStringLiteral("failed"), tally.failed},
-                     {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
-                     {QStringLiteral("reboot_pending"),
-                      jsonStringArrayCapped(tally.reboot_paths, 50)},
-                     {QStringLiteral("items"), tally.per_item}};
+    QJsonObject data{
+        {QStringLiteral("items_total"), items_total},
+        {QStringLiteral("succeeded"), tally.succeeded},
+        {QStringLiteral("failed"), tally.failed},
+        {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
+        {QStringLiteral("reboot_pending"), jsonStringArrayCapped(tally.reboot_paths, 50)},
+        {QStringLiteral("permanently_deleted_count"), tally.recycle_fallback_paths.size()},
+        {QStringLiteral("permanently_deleted"),
+         jsonStringArrayCapped(tally.recycle_fallback_paths, 50)},
+        {QStringLiteral("items"), tally.per_item}};
     QString message =
         ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
            : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
@@ -1969,6 +1980,15 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
         message +=
             QStringLiteral(" (%1 path(s) scheduled for removal on next reboot; not yet deleted)")
                 .arg(tally.reboot_paths.size());
+    }
+    if (!tally.recycle_fallback_paths.isEmpty()) {
+        // The Recycle Bin failed for these, so they were destroyed permanently despite recycle
+        // mode. Surface it explicitly -- the recoverable-default contract was silently broken
+        // otherwise.
+        message += QStringLiteral(
+                       " (%1 item(s) could NOT be sent to the Recycle Bin and were PERMANENTLY "
+                       "deleted)")
+                       .arg(tally.recycle_fallback_paths.size());
     }
     return {ok, message, data};
 }
@@ -2004,6 +2024,12 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
                      &CleanupWorker::rebootPendingItems,
                      inv.context(),
                      [&tally](const QStringList& paths) { tally.reboot_paths = paths; });
+    // recycleFallbackItems is emitted right after rebootPendingItems and before finished, into this
+    // same queued caller-thread context, so it is populated before buildCleanupResult reads it.
+    QObject::connect(&worker,
+                     &CleanupWorker::recycleFallbackItems,
+                     inv.context(),
+                     [&tally](const QStringList& paths) { tally.recycle_fallback_paths = paths; });
     // Finish on WorkerBase::finished (fires after execute() returns, i.e. AFTER cleanupComplete and
     // rebootPendingItems, which are queued to this same caller-thread context in emission order),
     // so every accumulator is populated by the time this runs.

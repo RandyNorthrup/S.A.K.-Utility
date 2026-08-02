@@ -434,6 +434,10 @@ void AdvancedUninstallPanel::connectCleanupSignals() {
             &AdvancedUninstallController::rebootPendingItems,
             this,
             &AdvancedUninstallPanel::onRebootPendingItems);
+    connect(m_controller.get(),
+            &AdvancedUninstallController::recycleFallbackItems,
+            this,
+            &AdvancedUninstallPanel::onRecycleFallbackItems);
 }
 
 void AdvancedUninstallPanel::connectStatusSignals() {
@@ -860,6 +864,24 @@ void AdvancedUninstallPanel::onRebootPendingItems(QStringList paths) {
            "They have been scheduled for automatic removal on the next "
            "Windows restart. This is independent of this application -- "
            "Windows will handle the deletion at boot time.")
+            .arg(paths.size()));
+}
+
+void AdvancedUninstallPanel::onRecycleFallbackItems(QStringList paths) {
+    logMessage(
+        QString("Items that could NOT be sent to the Recycle Bin and were permanently deleted: %1")
+            .arg(paths.size()));
+    for (const auto& path : paths) {
+        logMessage(QString("  Permanently deleted: %1").arg(path));
+    }
+
+    sak::showWarningLogged(
+        this,
+        tr("Permanently Deleted"),
+        tr("<b>%1 item(s)</b> could not be sent to the Recycle Bin and were "
+           "<b>permanently deleted</b> instead.<br><br>"
+           "These items are NOT recoverable from the Recycle Bin. See the log for the "
+           "full list.")
             .arg(paths.size()));
 }
 
