@@ -7085,11 +7085,11 @@ void AiAssistantPanel::startOfflineWorkerOperation(OfflineDeploymentWorker* work
         return;
     }
     if (operation == QLatin1String("build_bundle")) {
-        // payload_mode: "list" = metadata-only (target downloads at install);
-        // anything else (default) = self-contained Bundle.
-        const bool as_list =
-            args.value(QStringLiteral("payload_mode")).toString().trimmed().toLower() ==
-            QLatin1String("list");
+        // payload_mode: "thin"/"list" = metadata-only Thin Bundle (target downloads
+        // at install); anything else (default) = self-contained Full Bundle.
+        const QString mode_arg =
+            args.value(QStringLiteral("payload_mode")).toString().trimmed().toLower();
+        const bool as_list = mode_arg == QLatin1String("thin") || mode_arg == QLatin1String("list");
         worker->buildDeploymentBundle(packages,
                                       output_dir,
                                       QStringLiteral("S.A.K. Utility AI deployment payload"),

@@ -574,14 +574,14 @@ void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actionsLayout) 
     auto* payloadRow = new QHBoxLayout();
     payloadRow->addWidget(new QLabel(tr("Payload type:"), this));
     m_payloadModeCombo = new QComboBox(this);
-    m_payloadModeCombo->addItem(tr("Self-contained bundle (installers packed in)"),
+    m_payloadModeCombo->addItem(tr("Full Bundle (installers packed in)"),
                                 static_cast<int>(sak::PayloadMode::Bundle));
-    m_payloadModeCombo->addItem(tr("Metadata list (target downloads at install)"),
+    m_payloadModeCombo->addItem(tr("Thin Bundle (names only; downloaded at install)"),
                                 static_cast<int>(sak::PayloadMode::List));
     m_payloadModeCombo->setToolTip(
-        tr("Bundle: download and pack every installer now (bundle once, deploy many; minimal "
-           "bandwidth at deploy).\nList: record only package names/versions; the target fetches "
-           "each installer at install time."));
+        tr("Full Bundle: download and pack every installer now (bundle once, deploy many; "
+           "minimal bandwidth at deploy).\nThin Bundle: record only package names/versions; the "
+           "target fetches each installer at install time."));
     payloadRow->addWidget(m_payloadModeCombo, 1);
 
     m_airGapCheck = new QCheckBox(tr("Air-gap install (packed only)"), this);

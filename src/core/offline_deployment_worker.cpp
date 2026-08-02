@@ -289,10 +289,10 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
     }
 
     Q_EMIT operationStarted(packages.size());
-    Q_EMIT logMessage(QString("Building %1 payload: %2 package(s)")
+    Q_EMIT logMessage(QString("Building %1: %2 package(s)")
                           .arg(mode == PayloadMode::List
-                                   ? QStringLiteral("List (metadata-only)")
-                                   : QStringLiteral("Bundle (self-contained)"))
+                                   ? QStringLiteral("Thin Bundle (metadata-only)")
+                                   : QStringLiteral("Full Bundle (self-contained)"))
                           .arg(packages.size()));
 
     if (mode == PayloadMode::List) {
@@ -423,8 +423,8 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
         this,
         [this, stats, output_dir]() {
             Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
-            Q_EMIT logMessage(QString("List payload written: %1 package(s), fetched at install")
-                                  .arg(stats.total));
+            Q_EMIT logMessage(
+                QString("Thin Bundle written: %1 package(s), fetched at install").arg(stats.total));
             Q_EMIT operationCompleted(stats);
         },
         Qt::QueuedConnection);
@@ -864,8 +864,8 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
     const bool is_list = manifest.payload_mode == PayloadMode::List;
     Q_EMIT operationStarted(manifest.packages.size());
     Q_EMIT logMessage(
-        QString("Installing %1 payload: %2 package(s)%3")
-            .arg(is_list ? QStringLiteral("List") : QStringLiteral("Bundle"))
+        QString("Installing %1: %2 package(s)%3")
+            .arg(is_list ? QStringLiteral("Thin Bundle") : QStringLiteral("Full Bundle"))
             .arg(manifest.packages.size())
             .arg(packed_only && !is_list ? QStringLiteral(" (air-gap: packed only)") : QString()));
 
@@ -1582,8 +1582,8 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
     stream << "S.A.K. Utility - Deployment Payload\n";
     stream << "===================================\n\n";
     stream << "Type: "
-           << (is_list ? "List (metadata-only; installers downloaded at install time)"
-                       : "Bundle (self-contained; installers packed in)")
+           << (is_list ? "Thin Bundle (metadata-only; installers downloaded at install time)"
+                       : "Full Bundle (self-contained; installers packed in)")
            << "\n";
     stream << "Created: " << manifest.created_date << "\n";
     if (!manifest.description.isEmpty()) {
