@@ -58,6 +58,10 @@ private Q_SLOTS:
     void fileRefusesBootAndCriticalTree();
     void fileAllowsSpecificLeftoverSubfolder();
     void fileRefusesUncAndRelative();
+
+    // -- Delete-time ancestor-junction-swap re-verification --
+    void handleRedirectAllowsExactMatch();
+    void handleRedirectRefusesSwapAndProtected();
 };
 
 void TestLeftoverCleanupGuard::registryKeyRefusesHiveRootAndBadHive() {
@@ -273,6 +277,44 @@ void TestLeftoverCleanupGuard::fileRefusesUncAndRelative() {
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("\\\\host\\share\\file"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("relative\\path"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("\\\\.\\PhysicalDrive0"))));
+}
+
+void TestLeftoverCleanupGuard::handleRedirectAllowsExactMatch() {
+    // The object's real resolved path equals the validated path and is not protected -> safe.
+    QVERIFY(!blocked(cleanupHandleRedirectRefusal(
+        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.dll"),
+        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.dll"))));
+    // Case- and separator-insensitive: GetFinalPathNameByHandleW returns the on-disk case / native
+    // separators, which must still match the validated path.
+    QVERIFY(
+        !blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:\\ProgramData\\AcmeCorp\\cache"),
+                                              QStringLiteral("c:\\programdata\\acmecorp\\cache"))));
+    QVERIFY(
+        !blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:/ProgramData/AcmeCorp/cache"),
+                                              QStringLiteral("C:\\ProgramData\\AcmeCorp\\cache"))));
+}
+
+void TestLeftoverCleanupGuard::handleRedirectRefusesSwapAndProtected() {
+    // Ancestor junction swapped the leftover subfolder to a junction pointing at System32: the real
+    // resolved path lands in the Windows tree -> refused as protected.
+    QVERIFY(blocked(
+        cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\cache\\data.bin"),
+                                     QStringLiteral("C:\\Windows\\System32\\data.bin"))));
+    // Ancestor junction redirects to a DIFFERENT but benign location the human never confirmed:
+    // still refused (the real target must equal the validated target).
+    QVERIFY(blocked(cleanupHandleRedirectRefusal(
+        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.dll"),
+        QStringLiteral("C:\\Users\\Username\\Documents\\important\\stale.dll"))));
+    // Redirected onto a drive root or a UNC target -> refused.
+    QVERIFY(blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App"),
+                                                 QStringLiteral("C:\\"))));
+    QVERIFY(
+        blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"),
+                                             QStringLiteral("\\\\attacker\\share\\x"))));
+    // Handle could not be resolved (GetFinalPathNameByHandleW failed) -> refused, never delete
+    // blind.
+    QVERIFY(blocked(cleanupHandleRedirectRefusal(
+        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"), QString())));
 }
 
 QTEST_MAIN(TestLeftoverCleanupGuard)

@@ -30,6 +30,7 @@ private Q_SLOTS:
     // ── Accessor / Mutator Pairs ──
     void autoRestorePoint_setAndGet();
     void autoCleanSafe_setAndGet();
+    void safeLeftovers_filtersSafeOnlyAndSelects();
     void defaultScanLevel_setAndGet();
     void showSystemComponents_setAndGet();
     void defaultScanLevel_allValues();
@@ -106,6 +107,38 @@ void AdvancedUninstallControllerTests::autoCleanSafe_setAndGet() {
 
     ctrl.setAutoCleanSafe(true);
     QVERIFY(ctrl.autoCleanSafe());
+}
+
+void AdvancedUninstallControllerTests::safeLeftovers_filtersSafeOnlyAndSelects() {
+    // auto-clean-safe only ever removes SAFE-classified leftovers; Review/Risky always stay for the
+    // human. safeLeftovers() is the pure filter that enforces that, marking each kept item
+    // selected.
+    QVector<sak::LeftoverItem> items;
+    sak::LeftoverItem safeFile;
+    safeFile.type = sak::LeftoverItem::Type::File;
+    safeFile.risk = sak::LeftoverItem::RiskLevel::Safe;
+    safeFile.path = QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.log");
+    safeFile.selected = false;
+    items.append(safeFile);
+
+    sak::LeftoverItem reviewItem;
+    reviewItem.type = sak::LeftoverItem::Type::Folder;
+    reviewItem.risk = sak::LeftoverItem::RiskLevel::Review;
+    reviewItem.path = QStringLiteral("C:\\ProgramData\\Shared");
+    items.append(reviewItem);
+
+    sak::LeftoverItem riskyItem;
+    riskyItem.type = sak::LeftoverItem::Type::RegistryKey;
+    riskyItem.risk = sak::LeftoverItem::RiskLevel::Risky;
+    riskyItem.path = QStringLiteral("HKLM\\SOFTWARE\\AcmeCorp");
+    items.append(riskyItem);
+
+    const QVector<sak::LeftoverItem> safe = AdvancedUninstallController::safeLeftovers(items);
+    QCOMPARE(safe.size(), 1);
+    QCOMPARE(safe.first().path, QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.log"));
+    QVERIFY(safe.first().selected);  // marked selected so CleanupWorker acts on it
+    // Empty in -> empty out (no auto-clean when nothing is safe).
+    QVERIFY(AdvancedUninstallController::safeLeftovers({}).isEmpty());
 }
 
 void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet() {

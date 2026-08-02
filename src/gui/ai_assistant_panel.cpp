@@ -301,6 +301,11 @@ constexpr int kHumanApprovalInfoMaxChars = 600;
 constexpr int kCommandPreviewMaxChars = 500;
 constexpr int kCommandResultPreviewMaxChars = 1200;
 constexpr int kOpenAiResponsePreviewMaxChars = 3000;
+// A human can meaningfully review only so many destructive items in one catastrophic-confirm modal.
+// A batch action whose 'items' array exceeds this is refused (the model must split it) so every
+// item the human confirms is actually shown per-item, never hidden behind a truncated JSON blob.
+constexpr int kMaxReviewableCatastrophicItems = 100;
+constexpr int kConfirmItemFieldMaxChars = 300;
 constexpr int kSubagentTranscriptFindingLimit = 4;
 constexpr int kSubagentTranscriptActionLimit = 4;
 constexpr int kSubagentTranscriptNextStepLimit = 3;
@@ -6556,6 +6561,61 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
     return std::nullopt;
 }
 
+// Render a model-supplied item batch (e.g. software.clean_leftovers) as a human-reviewable,
+// one-line-per-item preview for the catastrophic-confirm dialog, instead of a truncated JSON blob a
+// human cannot vet. Each line shows the item's type + path (+ registry value name), clamped per
+// field so a hostile long value cannot push the rest off-screen but the whole batch stays visible.
+static QString renderItemsConfirmPreview(const QJsonArray& items) {
+    QStringList lines;
+    lines.reserve(items.size() + 1);
+    lines << QObject::tr("%1 item(s) to permanently delete:").arg(items.size());
+    for (int i = 0; i < items.size(); ++i) {
+        const QJsonObject obj = items.at(i).toObject();
+        const QString type = obj.value(QStringLiteral("type")).toString();
+        QString path = obj.value(QStringLiteral("path")).toString().simplified();
+        if (path.size() > kConfirmItemFieldMaxChars) {
+            path = path.left(kConfirmItemFieldMaxChars) + QStringLiteral("...");
+        }
+        QString line = QStringLiteral("%1. [%2] %3").arg(i + 1).arg(type, path);
+        QString value = obj.value(QStringLiteral("registry_value_name")).toString().simplified();
+        if (!value.isEmpty()) {
+            if (value.size() > kConfirmItemFieldMaxChars) {
+                value = value.left(kConfirmItemFieldMaxChars) + QStringLiteral("...");
+            }
+            line += QStringLiteral("  value=%1").arg(value);
+        }
+        lines << line;
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+// Build the confirm-dialog detail for an app action's arguments. A batch action carrying an 'items'
+// array is rendered per-item (fully reviewable); everything else falls back to a compact JSON
+// summary. Sets @p tooLargeToReview when a CATASTROPHIC item batch exceeds what a human can vet in
+// one modal -- the caller then refuses so the batch is never confirmed behind a truncated preview.
+static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
+                                        const QJsonObject& action_args,
+                                        bool& tooLargeToReview) {
+    tooLargeToReview = false;
+    if (action_args.isEmpty()) {
+        return {};
+    }
+    if (action_args.value(QStringLiteral("items")).isArray()) {
+        const QJsonArray items = action_args.value(QStringLiteral("items")).toArray();
+        if (descriptor.catastrophic && items.size() > kMaxReviewableCatastrophicItems) {
+            tooLargeToReview = true;
+            return {};
+        }
+        return renderItemsConfirmPreview(items);
+    }
+    QString detail = QString::fromUtf8(QJsonDocument(action_args).toJson(QJsonDocument::Compact));
+    constexpr int kMaxDetailChars = 200;
+    if (detail.size() > kMaxDetailChars) {
+        detail = detail.left(kMaxDetailChars) + QStringLiteral("...");
+    }
+    return detail;
+}
+
 QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
                                               const QJsonObject& action_args) {
     const std::optional<AppActionDescriptor> descriptor = m_appActionRegistry.descriptor(action_id);
@@ -6565,15 +6625,22 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
         return result;
     }
 
-    // Give the human gate a compact argument summary so a confirm/restore prompt for
-    // a mutating (esp. catastrophic) action shows WHAT it will run, not just the title.
-    QString detail;
-    if (!action_args.isEmpty()) {
-        detail = QString::fromUtf8(QJsonDocument(action_args).toJson(QJsonDocument::Compact));
-        constexpr int kMaxDetailChars = 200;
-        if (detail.size() > kMaxDetailChars) {
-            detail = detail.left(kMaxDetailChars) + QStringLiteral("...");
-        }
+    // Give the human gate a per-item (or compact) argument summary so a confirm/restore prompt for
+    // a mutating (esp. catastrophic) action shows EXACTLY WHAT it will run. A catastrophic batch
+    // too large to review item-by-item is refused outright rather than confirmed behind a
+    // truncation.
+    bool too_large_to_review = false;
+    const QString detail = buildActionConfirmDetail(*descriptor, action_args, too_large_to_review);
+    if (too_large_to_review) {
+        QJsonObject result = toolError(
+            tr("App action '%1' was given %2 items, more than the %3 a human can review in one "
+               "confirmation. Split it into batches of at most %3 items so every item can be "
+               "verified before deletion.")
+                .arg(descriptor->title)
+                .arg(action_args.value(QStringLiteral("items")).toArray().size())
+                .arg(kMaxReviewableCatastrophicItems));
+        result[QStringLiteral("failure_class")] = QStringLiteral("batch_too_large_to_review");
+        return result;
     }
     if (const std::optional<QJsonObject> blocked = appActionRunGate(*descriptor, detail)) {
         return *blocked;

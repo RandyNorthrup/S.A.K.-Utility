@@ -2470,6 +2470,36 @@ private Q_SLOTS:
         QVERIFY(!data.value(QStringLiteral("refused")).toArray().isEmpty());
     }
 
+    // A catastrophic batch too large to review item-by-item is REFUSED outright rather than
+    // confirmed behind a truncated JSON preview a human cannot vet (>100 items). The confirm never
+    // shows and the worker never runs.
+    void cleanLeftoversRefusesOversizeBatchForReview() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        QJsonArray items;
+        for (int i = 0; i < 150; ++i) {
+            items.append(QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("file")},
+                {QStringLiteral("path"),
+                 QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale%1.tmp").arg(i)}});
+        }
+        const QString args =
+            QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("items"), items}})
+                                  .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("batch_too_large_to_review"));
+        // Refused BEFORE the human confirm -- the approval hook never fired.
+        QVERIFY(titles.isEmpty());
+    }
+
     // W2a(1): the action is registered mutating, NOT read_only -- so appActionRunGate
     // enforces the human-gate/restore path rather than skipping it.
     void exportMboxListedAsMutating() {

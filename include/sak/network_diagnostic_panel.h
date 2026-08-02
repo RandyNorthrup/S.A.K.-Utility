@@ -9,8 +9,11 @@
 #include "sak/network_diagnostic_types.h"
 
 #include <QComboBox>
+#include <QFuture>
 #include <QLabel>
 #include <QLineEdit>
+#include <QList>
+#include <QPair>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -298,6 +301,13 @@ private:
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
     QuickActionController* m_qa_controller{nullptr};
+
+    // In-flight runCommandAsync() futures (netsh/ipconfig -- several are MUTATING adapter admin
+    // ops). Tracked so ~NetworkDiagnosticPanel can bounded-wait any still running instead of
+    // letting the mutation run detached past teardown; each carries its own process timeout so the
+    // wait is bounded. Finished futures are pruned on each new call so this never grows unbounded.
+    QList<QFuture<QPair<bool, QString>>> m_pending_command_futures;
+
     LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
     LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
 

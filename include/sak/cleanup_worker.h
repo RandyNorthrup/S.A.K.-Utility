@@ -70,12 +70,41 @@ private:
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);
 
+    /// @brief Delete-time re-verification that @p path still resolves to exactly the validated
+    ///        target. Between validate and delete, a local attacker can swap an ANCESTOR directory
+    ///        into a junction so the same string resolves elsewhere; this opens a handle, reads the
+    ///        object's real path (GetFinalPathNameByHandleW), and refuses (false) on a redirect or
+    ///        a resolved-to-protected target. Non-Windows: always true. See
+    ///        cleanupHandleRedirectRefusal.
+    [[nodiscard]] bool deleteTimeRedirectSafe(const QString& path);
+
+    /// @brief Permanently unlink a file. On Windows deletes BY HANDLE (open, re-verify, unlink via
+    ///        the handle -- no path re-resolution after the check), falling back to a string unlink
+    ///        only when the object could not be opened (locked/denied) and was NOT redirected.
+    [[nodiscard]] bool removeFilePermanent(const QString& path);
+
+#ifdef Q_OS_WIN
+    /// Outcome of a by-handle permanent delete attempt.
+    enum class HandleDeleteOutcome {
+        Deleted,
+        Redirected,
+        NotOpenable
+    };
+    /// @brief Open @p path (no leaf-reparse follow), verify it is still the validated target, and
+    ///        delete it via the handle. Redirected => refused, never fall back to a string delete.
+    [[nodiscard]] HandleDeleteOutcome deleteFileByVerifiedHandle(const QString& path);
+#endif
+
     /// @brief Dispatch cleanup for a single leftover item by type
     [[nodiscard]] bool cleanSingleItem(const LeftoverItem& item);
     [[nodiscard]] bool cleanStartupEntry(const LeftoverItem& item);
 
     /// @brief Delete a folder, falling back to reboot scheduling for locked contents
     [[nodiscard]] bool deleteFolder(const QString& path);
+
+    /// @brief Permanently remove a (non-reparse, redirect-verified) folder: recursive delete, else
+    ///        a forced per-entry sweep + rmdir, scheduling locked leftovers for reboot removal.
+    [[nodiscard]] bool removeFolderPermanent(QDir& dir, const QString& path);
 
     /// @brief Unlink a reparse point (junction / symlink) WITHOUT touching its target
     [[nodiscard]] bool unlinkReparsePoint(const QString& path);

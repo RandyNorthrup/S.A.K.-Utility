@@ -38,6 +38,7 @@
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/image_source.h"
 #include "sak/iso_analyzer.h"
+#include "sak/leftover_scan_provenance.h"
 #include "sak/leftover_scanner.h"
 #include "sak/mbox_parser.h"
 #include "sak/memory_benchmark_worker.h"
@@ -638,6 +639,11 @@ AppActionResult scanLeftovers(const QJsonObject& args) {
     canceller.finish();
     const bool timed_out = canceller.fired();
     const QStringList failed_phases = failedLeftoverPhases(reliability);
+
+    // Proof-of-scan binding: record every item this scan found (system-sourced) so the mutating
+    // software.clean_leftovers op can refuse any item the model did not actually scan. Records the
+    // FULL vector (not the truncated sample below) so a legitimately-copied item is always present.
+    LeftoverScanProvenance::instance().record(items);
 
     LeftoverTotals totals;
     const QJsonArray arr = serializeLeftovers(items, totals);

@@ -446,4 +446,39 @@ namespace sak {
     return {};
 }
 
+/// Delete-TIME re-verification for the file/folder cleanup path (the ancestor-junction-swap TOCTOU
+/// close). filePathDeletionRefusal screens a path STRING at validate time, but CleanupWorker
+/// deletes later by re-resolving that string. A local attacker who swaps an ANCESTOR directory into
+/// a junction between validate and delete makes the same string resolve to a DIFFERENT real target
+/// (a leftover subfolder "cache" replaced by a junction to C:\\Windows\\System32). Leaf reparse is
+/// already screened; the ancestor swap is not. So at delete time the worker opens a handle to the
+/// item (FILE_FLAG_OPEN_REPARSE_POINT, no leaf-follow) and reads the object's REAL path via
+/// GetFinalPathNameByHandleW -- with every ancestor junction/symlink resolved to its true target --
+/// and passes it here as @p handleFinalPath (\\?\ already stripped). This refuses the deletion when
+/// that real path (a) cannot be resolved, (b) lands in a protected/critical/root/UNC location, or
+/// (c) no longer matches the validated @p requestedPath (ANY ancestor was swapped, even to a benign
+/// but wrong target the human never confirmed). Empty QString => the real target is exactly the
+/// validated path and is safe to delete; the worker then deletes BY HANDLE so no third path
+/// resolution can re-open the swap window. Pure/string-only so it is unit-testable without a live
+/// junction.
+[[nodiscard]] inline QString cleanupHandleRedirectRefusal(const QString& requestedPath,
+                                                          const QString& handleFinalPath) {
+    if (handleFinalPath.trimmed().isEmpty()) {
+        return QStringLiteral("could not resolve the real deletion target");
+    }
+    const QString protectedRefusal = filePathDeletionRefusal(handleFinalPath);
+    if (!protectedRefusal.isEmpty()) {
+        return QStringLiteral("delete target resolved to a protected location (%1)")
+            .arg(protectedRefusal);
+    }
+    const QString wantLower = cleanupCanonicalLower(QDir::cleanPath(requestedPath));
+    const QString gotLower = cleanupCanonicalLower(QDir::cleanPath(handleFinalPath));
+    if (wantLower != gotLower) {
+        return QStringLiteral(
+            "delete target was redirected from the validated path (possible junction/symlink "
+            "swap)");
+    }
+    return {};
+}
+
 }  // namespace sak

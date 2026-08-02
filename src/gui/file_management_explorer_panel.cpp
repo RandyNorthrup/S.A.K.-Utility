@@ -523,6 +523,23 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
         m_search_worker->requestStop();
         m_search_worker->wait(5000);
     }
+    // Same for the MUTATING copy/move + archive workers: a running child QThread must be joined (or
+    // detached) before ~QObject destroys it, else the write is aborted mid-flight and Qt fatally
+    // reports "QThread destroyed while thread is still running". requestStop() is cooperative (the
+    // workers poll it), so this does not freeze teardown; a worker that refuses to stop within the
+    // bounded wait is detached (parent cleared -> intentional bounded leak) so it self-cleans via
+    // its own deleteLater instead of being destroyed alive.
+    constexpr int kIoWorkerJoinMs = 5000;
+    for (WorkerBase* worker : std::as_const(m_active_io_workers)) {
+        if (!worker) {
+            continue;
+        }
+        worker->requestStop();
+        if (!worker->wait(kIoWorkerJoinMs)) {
+            worker->setParent(nullptr);
+        }
+    }
+    m_active_io_workers.clear();
     saveTabSession();
 }
 
@@ -3435,9 +3452,11 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
             &FileExplorerTransferWorker::requestStop,
             Qt::DirectConnection);
     connect(worker, &QThread::finished, this, [this, worker, card, completion]() {
+        m_active_io_workers.remove(worker);
         finishTransferWorker(worker, card, completion);
         worker->deleteLater();
     });
+    m_active_io_workers.insert(worker);
     worker->start();
 }
 
@@ -5118,9 +5137,11 @@ void FileManagementExplorerPanel::startArchiveWorker(const FileExplorerArchiveRe
         m_status_center->addItem(archiveCardRequest(request, FileExplorerReturnResult::InProgress));
     auto* worker = new FileExplorerArchiveWorker(request, this);
     connect(worker, &QThread::finished, this, [this, worker, card, failure_title]() {
+        m_active_io_workers.remove(worker);
         finishArchiveWorker(worker, card, failure_title);
         worker->deleteLater();
     });
+    m_active_io_workers.insert(worker);
     worker->start();
 }
 

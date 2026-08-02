@@ -1923,6 +1923,14 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
         // through it, so a page destroyed mid-install cannot be dereferenced.
         return installAppsSequentially(selectedApps, self);
     }));
+    // B3-15 detached-mutation decision: this is a Chocolatey install that can run for MINUTES, so
+    // the wizard-page destructor deliberately does NOT waitForFinished() (that would freeze
+    // teardown for the whole install). It is safe to leave running detached: the background task
+    // derefs only the QPointer above (dropped once the page is gone) and the finished handler is
+    // bound to a child QFutureWatcher that Qt tears down with the page, so no slot fires on a dead
+    // page. The install self-completes; aborting a half-done package install would be worse than
+    // letting it finish. (Short, bounded mutations -- netsh/copy/archive -- ARE joined at teardown
+    // instead.)
 }
 
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {

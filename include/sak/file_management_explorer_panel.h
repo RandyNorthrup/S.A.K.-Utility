@@ -723,6 +723,12 @@ private:
     bool m_last_hash_capped{false};
     // Live omnibar search worker (one per search; stopped on re-search/mode exit).
     AdvancedSearchWorker* m_search_worker{nullptr};
+    // Running copy/move + archive I/O worker threads (parented children that deleteLater on
+    // finish). Tracked so ~FileManagementExplorerPanel can requestStop()+join (or detach) each
+    // before ~QObject would otherwise destroy a still-running QThread mid-write ("QThread destroyed
+    // while thread is still running" abort). These are MUTATING (disk writes), unlike
+    // m_search_worker.
+    QSet<WorkerBase*> m_active_io_workers;
     // Entry name to select once the next listing arrives (open-search-result flow).
     QString m_pending_select_name;
     // Inline search-mode plumbing: 200 ms suggestion debounce (Files), the

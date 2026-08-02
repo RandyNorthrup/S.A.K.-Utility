@@ -26,6 +26,8 @@
 #include "sak/flash_coordinator.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_item_guard.h"
+#include "sak/leftover_scan_provenance.h"
+#include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/organizer_worker.h"
 #include "sak/ost_conversion_worker.h"
@@ -2053,6 +2055,59 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
     return result;
 }
 
+// Parse + validate + proof-of-scan-bind the model's item array. Fills @p items (accepted for
+// deletion), @p refusals (empty/protected/invalid targets), and @p unscanned (valid targets that no
+// software.scan_leftovers surfaced this session -- populated only when NOT technician-overridden).
+// Split out so cleanLeftovers stays within the complexity budget.
+void collectCleanupItems(const QJsonArray& items_arr,
+                         bool technician_override,
+                         QVector<LeftoverItem>& items,
+                         QStringList& refusals,
+                         QStringList& unscanned) {
+    for (int i = 0; i < items_arr.size(); ++i) {
+        if (!items_arr.at(i).isObject()) {
+            refusals << QStringLiteral("item %1 is not an object").arg(i);
+            continue;
+        }
+        const QJsonObject obj = items_arr.at(i).toObject();
+        LeftoverItem item;
+        const QString reason = validateCleanupItem(obj, item);
+        const QString label = item.path.isEmpty() ? obj.value(QStringLiteral("type")).toString()
+                                                  : item.path;
+        if (!reason.isEmpty()) {
+            refusals
+                << QStringLiteral("item %1 (%2): %3").arg(i).arg(clampCleanupLine(label), reason);
+            continue;
+        }
+        // Proof-of-scan: unless the technician explicitly overrides, refuse any item a prior scan
+        // never surfaced (an injected/fabricated path clears the denylist but not this check).
+        if (!technician_override && !LeftoverScanProvenance::instance().contains(item)) {
+            unscanned << QStringLiteral("item %1 (%2)").arg(i).arg(clampCleanupLine(label));
+            continue;
+        }
+        items.push_back(item);
+    }
+}
+
+// Result for a batch blocked because items were not produced by a prior scan (proof-of-scan gate).
+AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total) {
+    return {
+        false,
+        QStringLiteral(
+            "Refused: %1 of %2 item(s) were not produced by a prior software.scan_leftovers in "
+            "this "
+            "session; run scan_leftovers for this program first (its output is the safe source for "
+            "this list), or pass technician_override=true to clean a hand-authored list. No "
+            "deletion "
+            "performed. %3")
+            .arg(unscanned.size())
+            .arg(total)
+            .arg(unscanned.mid(0, 10).join(QStringLiteral("; "))),
+        QJsonObject{{QStringLiteral("unscanned"), jsonStringArrayCapped(unscanned, 20)},
+                    {QStringLiteral("hint"),
+                     QStringLiteral("call software.scan_leftovers for this program first")}}};
+}
+
 AppActionResult cleanLeftovers(const QJsonObject& args) {
     const QJsonValue items_val = args.value(QStringLiteral("items"));
     if (!items_val.isArray()) {
@@ -2069,29 +2124,18 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
                 {}};
     }
 
+    const bool technician_override =
+        args.value(QStringLiteral("technician_override")).toBool(false);
+
     QVector<LeftoverItem> items;
     items.reserve(items_arr.size());
     QStringList refusals;
-    for (int i = 0; i < items_arr.size(); ++i) {
-        if (!items_arr.at(i).isObject()) {
-            refusals << QStringLiteral("item %1 is not an object").arg(i);
-            continue;
-        }
-        const QJsonObject obj = items_arr.at(i).toObject();
-        LeftoverItem item;
-        const QString reason = validateCleanupItem(obj, item);
-        if (!reason.isEmpty()) {
-            const QString label = item.path.isEmpty() ? obj.value(QStringLiteral("type")).toString()
-                                                      : item.path;
-            refusals
-                << QStringLiteral("item %1 (%2): %3").arg(i).arg(clampCleanupLine(label), reason);
-            continue;
-        }
-        items.push_back(item);
-    }
+    QStringList unscanned;
+    collectCleanupItems(items_arr, technician_override, items, refusals, unscanned);
 
     // All-or-nothing: any refused item blocks the WHOLE batch. Nothing is deleted unless every item
-    // clears the fail-closed screen.
+    // clears the fail-closed screen. The denylist (protected/invalid) takes priority over the
+    // proof-of-scan gate.
     if (!refusals.isEmpty()) {
         return {false,
                 QStringLiteral("Refused: %1 of %2 item(s) target protected/invalid resources; no "
@@ -2100,6 +2144,15 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
                     .arg(items_arr.size())
                     .arg(refusals.mid(0, 10).join(QStringLiteral("; "))),
                 QJsonObject{{QStringLiteral("refused"), jsonStringArrayCapped(refusals, 20)}}};
+    }
+    if (!unscanned.isEmpty()) {
+        return provenanceRefusalResult(unscanned, items_arr.size());
+    }
+
+    if (technician_override) {
+        sak::logWarning(
+            "clean_leftovers: technician_override set -- proof-of-scan binding bypassed for "
+            "this batch; the fail-closed OS-critical denylist is still enforced");
     }
 
     // Default to the Recycle Bin (files/folders recoverable). Registry keys/values, services,
@@ -2154,10 +2207,19 @@ QJsonObject cleanLeftoversParamsSchema() {
          QStringLiteral("If true (default), deleted files/folders go to the Recycle Bin "
                         "(recoverable); if false, permanent deletion. Registry keys/values, "
                         "services, tasks, and firewall rules are always permanent.")}};
+    QJsonObject override_prop{
+        {QStringLiteral("type"), QStringLiteral("boolean")},
+        {QStringLiteral("description"),
+         QStringLiteral("Leave false. Every item must come from a prior software.scan_leftovers in "
+                        "this session; items that did not are refused. Set true ONLY when a "
+                        "technician deliberately supplies a hand-authored list not produced by a "
+                        "scan -- this bypasses the proof-of-scan check (the OS-critical denylist "
+                        "still applies) and is surfaced in the run log.")}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"),
                         QJsonObject{{QStringLiteral("items"), items_prop},
-                                    {QStringLiteral("use_recycle_bin"), recycle_prop}}},
+                                    {QStringLiteral("use_recycle_bin"), recycle_prop},
+                                    {QStringLiteral("technician_override"), override_prop}}},
                        {QStringLiteral("required"), QJsonArray{QStringLiteral("items")}},
                        {QStringLiteral("additionalProperties"), false}};
 }

@@ -7,6 +7,7 @@
 #include "sak/cleanup_worker.h"
 
 #include "sak/layout_constants.h"
+#include "sak/leftover_cleanup_guard.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 #include "sak/recycle_bin.h"
@@ -16,6 +17,8 @@
 #include <QFileInfo>
 
 #ifdef Q_OS_WIN
+#include <string>
+
 #include <windows.h>
 
 #include <shellapi.h>
@@ -27,6 +30,64 @@ namespace {
 constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kCleanupCommandTimeoutMs = 10'000;
 constexpr int kCleanupServiceStopSettleMs = kTimerProgressPollMs;
+
+#ifdef Q_OS_WIN
+// Open a handle to the EXACT path for delete-time verification, WITHOUT following a leaf reparse
+// point (FILE_FLAG_OPEN_REPARSE_POINT). Ancestor junctions are still traversed by the OS during
+// path parsing -- which is the point: GetFinalPathNameByHandleW then reveals the real resolved
+// target. FILE_FLAG_BACKUP_SEMANTICS is required to obtain a directory handle. DELETE access lets
+// the same handle be used to unlink the object.
+HANDLE openForVerifiedDelete(const QString& path) {
+    return CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
+                       DELETE | FILE_READ_ATTRIBUTES,
+                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       nullptr,
+                       OPEN_EXISTING,
+                       FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                       nullptr);
+}
+
+// The REAL on-disk path of an open handle, every ancestor junction/symlink resolved, with the
+// \\?\ (and \\?\UNC\) extended-length prefix stripped. Empty on failure.
+QString finalPathOfHandle(HANDLE handle) {
+    std::wstring buffer(1024, L'\0');
+    const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+    DWORD length =
+        GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+    if (length == 0) {
+        return {};
+    }
+    if (length > buffer.size()) {
+        buffer.resize(length);
+        length = GetFinalPathNameByHandleW(
+            handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+        if (length == 0 || length > buffer.size()) {
+            return {};
+        }
+    }
+    QString resolved = QString::fromWCharArray(buffer.data(), static_cast<int>(length));
+    if (resolved.startsWith(QStringLiteral("\\\\?\\UNC\\"))) {
+        return QStringLiteral("\\\\") + resolved.mid(8);
+    }
+    if (resolved.startsWith(QStringLiteral("\\\\?\\"))) {
+        return resolved.mid(4);
+    }
+    return resolved;
+}
+
+// Unlink the object an open handle refers to, WITHOUT re-resolving any path. Prefers POSIX
+// semantics (name removed immediately) and falls back to legacy delete-on-close.
+bool unlinkByHandle(HANDLE handle) {
+    FILE_DISPOSITION_INFO_EX info_ex{};
+    info_ex.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+    if (SetFileInformationByHandle(handle, FileDispositionInfoEx, &info_ex, sizeof(info_ex))) {
+        return true;
+    }
+    FILE_DISPOSITION_INFO info{};
+    info.DeleteFile = TRUE;
+    return SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)) != 0;
+}
+#endif  // Q_OS_WIN
 }  // namespace
 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
@@ -119,11 +180,86 @@ bool CleanupWorker::cleanStartupEntry(const LeftoverItem& item) {
     return deleteFile(item.path);
 }
 
+bool CleanupWorker::deleteTimeRedirectSafe(const QString& path) {
+#ifdef Q_OS_WIN
+    HANDLE handle = openForVerifiedDelete(path);
+    if (handle == INVALID_HANDLE_VALUE) {
+        // Cannot open to verify (locked/denied, or raced-away). Re-screen ancestors LEXICALLY now
+        // so a fresh junction/symlink swap is still refused; a truly-gone path has nothing to
+        // delete.
+        if (sak::pathReparseUnsafe(path)) {
+            sak::logWarning("Refusing cleanup delete of " + path.toStdString() +
+                            ": path is (or is nested under) a symlink/junction");
+            return false;
+        }
+        return true;
+    }
+    const QString final_path = finalPathOfHandle(handle);
+    CloseHandle(handle);
+    const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
+    if (!refusal.isEmpty()) {
+        sak::logWarning("Refusing cleanup delete of " + path.toStdString() + ": " +
+                        refusal.toStdString());
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(path)
+    return true;
+#endif
+}
+
+#ifdef Q_OS_WIN
+CleanupWorker::HandleDeleteOutcome CleanupWorker::deleteFileByVerifiedHandle(const QString& path) {
+    HANDLE handle = openForVerifiedDelete(path);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return HandleDeleteOutcome::NotOpenable;
+    }
+    const QString final_path = finalPathOfHandle(handle);
+    const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
+    if (!refusal.isEmpty()) {
+        CloseHandle(handle);
+        sak::logWarning("Refusing permanent delete of " + path.toStdString() + ": " +
+                        refusal.toStdString());
+        return HandleDeleteOutcome::Redirected;
+    }
+    const bool ok = unlinkByHandle(handle);
+    CloseHandle(handle);
+    return ok ? HandleDeleteOutcome::Deleted : HandleDeleteOutcome::NotOpenable;
+}
+#endif
+
+bool CleanupWorker::removeFilePermanent(const QString& path) {
+#ifdef Q_OS_WIN
+    // Delete BY HANDLE: open the exact object, re-verify it is still the validated target (no
+    // ancestor junction/symlink swap), then unlink through the handle -- no path is re-resolved
+    // after the check, closing the TOCTOU window a string-based QFile::remove would leave open.
+    const HandleDeleteOutcome outcome = deleteFileByVerifiedHandle(path);
+    if (outcome == HandleDeleteOutcome::Deleted) {
+        return true;
+    }
+    if (outcome == HandleDeleteOutcome::Redirected) {
+        return false;  // NEVER fall back to a string delete on a redirected/protected target
+    }
+    // NotOpenable (locked/denied but not redirected): the caller's top-level deleteTimeRedirectSafe
+    // gate already re-screened ancestors, so the string unlink cannot hit a swapped-in junction.
+    return QFile::remove(path);
+#else
+    return QFile::remove(path);
+#endif
+}
+
 bool CleanupWorker::deleteFile(const QString& path) {
     Q_ASSERT(!path.isEmpty());
     QFileInfo info(path);
     if (!info.exists()) {
         return true;  // Already gone
+    }
+
+    // Ancestor-junction-swap close: verify the string still resolves to the validated object before
+    // ANY deletion (recycle or permanent). A redirected/protected target is refused outright.
+    if (!deleteTimeRedirectSafe(path)) {
+        return false;
     }
 
     // If recycle bin mode is enabled, try that first.
@@ -139,7 +275,7 @@ bool CleanupWorker::deleteFile(const QString& path) {
                         "; falling back to permanent deletion");
     }
 
-    if (QFile::remove(path)) {
+    if (removeFilePermanent(path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
     }
@@ -147,7 +283,7 @@ bool CleanupWorker::deleteFile(const QString& path) {
     // Try setting writable and retry
     QFile file(path);
     file.setPermissions(QFile::ReadOther | QFile::WriteOther);
-    if (file.remove()) {
+    if (removeFilePermanent(path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
     }
@@ -178,6 +314,14 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         return unlinkReparsePoint(path);
     }
 
+    // Ancestor-junction-swap close: verify the folder's real resolved path is still the validated,
+    // non-protected target before recursing/deleting. This pins the tree ROOT (an ancestor swapped
+    // into a junction to System32 is caught here); per-child reparse points are screened during the
+    // forced removal below.
+    if (!deleteTimeRedirectSafe(path)) {
+        return false;
+    }
+
     bool recycleFallback = false;
     if (m_useRecycleBin) {
         if (sendPathToRecycleBin(path)) {
@@ -189,19 +333,20 @@ bool CleanupWorker::deleteFolder(const QString& path) {
                         "; falling back to permanent deletion");
     }
 
-    if (dir.removeRecursively()) {
+    if (removeFolderPermanent(dir, path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
     }
+    return false;
+}
 
+bool CleanupWorker::removeFolderPermanent(QDir& dir, const QString& path) {
+    if (dir.removeRecursively()) {
+        return true;
+    }
     bool all_handled = removeFolderContentsForced(dir);
-
     if (!dir.rmdir(path)) {
         all_handled = tryScheduleReboot(path) && all_handled;
-    }
-
-    if (all_handled) {
-        noteRecycleFallback(recycleFallback, path);
     }
     return all_handled;
 }

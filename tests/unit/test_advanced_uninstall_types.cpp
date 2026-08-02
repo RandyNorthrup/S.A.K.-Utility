@@ -5,6 +5,7 @@
 /// @brief Unit tests for Advanced Uninstall shared data types
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/leftover_scan_provenance.h"
 
 #include <QtTest/QtTest>
 
@@ -41,6 +42,11 @@ private Q_SLOTS:
 
     // ── ViewFilter ──
     void viewFilter_enumValues();
+
+    // ── Leftover scan provenance (proof-of-scan binding) ──
+    void provenanceKey_stableAcrossFormatting();
+    void provenanceKey_distinctForDifferentItems();
+    void provenanceStore_recordsAndMatches();
 
     // ── Compile-Time Invariants ──
     void staticAsserts_defaultConstructible();
@@ -337,6 +343,74 @@ void AdvancedUninstallTypesTests::staticAsserts_movable() {
     QVERIFY(std::is_move_constructible_v<sak::LeftoverItem>);
     QVERIFY(std::is_move_constructible_v<sak::UninstallReport>);
     QVERIFY(std::is_move_constructible_v<sak::UninstallQueueItem>);
+}
+
+// ── Leftover scan provenance (proof-of-scan binding) ─────────────────────────
+
+namespace {
+sak::LeftoverItem makeItem(sak::LeftoverItem::Type type,
+                           const QString& path,
+                           const QString& valueName = QString()) {
+    sak::LeftoverItem item;
+    item.type = type;
+    item.path = path;
+    item.registryValueName = valueName;
+    return item;
+}
+}  // namespace
+
+void AdvancedUninstallTypesTests::provenanceKey_stableAcrossFormatting() {
+    using T = sak::LeftoverItem::Type;
+    // Filesystem: separator/case/trailing-dot differences resolve to the same key.
+    QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Program Files\\Acme\\a.dll")),
+             sak::leftoverProvenanceKey(makeItem(T::File, "c:/program files/acme/a.dll")));
+    // Registry key: hive case + repeated/trailing separators canonicalize.
+    QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKLM\\SOFTWARE\\Acme")),
+             sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "hklm\\software\\\\acme\\")));
+    // Service names are case-insensitive.
+    QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::Service, "AcmeSvc")),
+             sak::leftoverProvenanceKey(makeItem(T::Service, "acmesvc")));
+    // Scheduled task: leading backslash + separator style normalize.
+    QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::ScheduledTask, "\\Acme\\Update")),
+             sak::leftoverProvenanceKey(makeItem(T::ScheduledTask, "Acme/Update")));
+}
+
+void AdvancedUninstallTypesTests::provenanceKey_distinctForDifferentItems() {
+    using T = sak::LeftoverItem::Type;
+    // A registry value with a name is distinct from the bare key.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Run")) !=
+            sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKCU\\Software\\Acme")));
+    // Different value names under one key are distinct.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Run")) !=
+            sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Load")));
+    // Different filesystem paths are distinct.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\a.dll")) !=
+            sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\b.dll")));
+}
+
+void AdvancedUninstallTypesTests::provenanceStore_recordsAndMatches() {
+    using T = sak::LeftoverItem::Type;
+    auto& store = sak::LeftoverScanProvenance::instance();
+    store.clear();
+    QVERIFY(store.isEmpty());
+
+    const sak::LeftoverItem scanned = makeItem(T::File, "C:\\Program Files\\Acme\\a.dll");
+    const sak::LeftoverItem scannedReg = makeItem(T::RegistryKey, "HKLM\\SOFTWARE\\Acme");
+    QVERIFY(!store.contains(scanned));  // nothing recorded yet -> proof-of-scan gate would refuse
+
+    store.record({scanned, scannedReg, makeItem(T::Service, "AcmeSvc")});
+    QVERIFY(!store.isEmpty());
+
+    // A reformatted copy of a scanned item still matches (same normalized key).
+    QVERIFY(store.contains(makeItem(T::File, "c:/program files/acme/a.dll")));
+    QVERIFY(store.contains(makeItem(T::RegistryKey, "hklm\\software\\acme")));
+    QVERIFY(store.contains(makeItem(T::Service, "acmesvc")));
+
+    // An item no scan surfaced is refused (fabricated/injected path).
+    QVERIFY(!store.contains(makeItem(T::File, "C:\\Program Files\\Acme\\evil.exe")));
+
+    store.clear();
+    QVERIFY(store.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AdvancedUninstallTypesTests)

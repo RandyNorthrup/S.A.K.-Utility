@@ -5,6 +5,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFuture>
 #include <QGroupBox>
 #include <QImage>
 #include <QLineEdit>
@@ -271,6 +272,12 @@ private:
     QList<WifiConfig> configsFromRows(const QList<int>& rows) const;
     void startAddToWindowsProfiles(const QList<WifiConfig>& configs);
     static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs);
+
+    // In-flight "add to Windows profiles" install (netsh wlan add profile). Tracked so the
+    // destructor can bounded-wait it instead of letting the mutation run detached past teardown.
+    // The finished handler is already UAF-safe via a QPointer, but the netsh writes are short and
+    // bounded, so joining them at teardown is cheap and keeps the mutation owned.
+    QFuture<QPair<int, int>> m_wlanInstallFuture;
 
     // -------------------------------------------------------------------------
     // Persistence

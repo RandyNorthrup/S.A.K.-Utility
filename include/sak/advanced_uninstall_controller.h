@@ -79,6 +79,11 @@ public:
     /// @brief Clean selected leftover items
     void cleanLeftovers(const QVector<LeftoverItem>& selectedItems);
 
+    /// @brief The SAFE-risk subset of @p items, each marked selected, used by auto-clean-safe.
+    ///        Review/Risky leftovers are deliberately excluded (they always require human review).
+    ///        Pure/static so it is unit-testable without driving an uninstall.
+    static QVector<LeftoverItem> safeLeftovers(const QVector<LeftoverItem>& items);
+
     /// @brief Cancel the current operation
     void cancelOperation();
 
@@ -188,6 +193,11 @@ Q_SIGNALS:
     /// @brief Cleanup started
     void cleanupStarted(int totalItems);
 
+    /// @brief Emitted when auto-clean-safe kicks off an automatic cleanup of the SAFE-classified
+    ///        leftovers after an uninstall (Review/Risky items are never auto-cleaned). @p
+    ///        itemCount is the number of safe items being auto-removed.
+    void autoCleanSafeStarted(int itemCount);
+
     /// @brief Individual item cleaned
     void itemCleaned(const QString& path, bool success);
 
@@ -241,6 +251,10 @@ private:
     QVector<LeftoverItem> screenCleanupItems(const QVector<LeftoverItem>& selectedItems,
                                              int* refusedCount);
 
+    /// @brief If @p autoClean and @p report has SAFE leftovers, start an automatic cleanup of just
+    ///        those (screened + recycle-bin by default). Returns true iff a cleanup was started.
+    bool maybeAutoCleanSafeLeftovers(const UninstallReport& report, bool autoClean);
+
     /// @brief Wire a freshly created CleanupWorker's signals to this controller (incl. the
     ///        recycle-fallback re-emit so the UI can warn about permanent deletions).
     void connectCleanupWorkerSignals(CleanupWorker* worker);
@@ -285,6 +299,11 @@ private:
     // Last uninstall report for auto-clean-safe
     UninstallReport m_lastReport;
     bool m_autoCleanSafe = true;
+
+    // SAFE leftovers accumulated across a batch (only from items whose autoCleanSafeLeftovers is
+    // set); auto-cleaned in one pass at batch end so a cleanup never runs concurrently with the
+    // next queued uninstall.
+    QVector<LeftoverItem> m_batchAutoCleanItems;
 
     // Preferences
     ScanLevel m_defaultScanLevel = ScanLevel::Moderate;

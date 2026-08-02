@@ -249,7 +249,16 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
     }
 }
 
-NetworkDiagnosticPanel::~NetworkDiagnosticPanel() = default;
+NetworkDiagnosticPanel::~NetworkDiagnosticPanel() {
+    // Bounded-join any in-flight runCommandAsync() ops (some MUTATE adapters via netsh) so the
+    // mutation does not run detached past teardown. Each op carries its own process timeout, so
+    // this cannot hang teardown beyond a bounded few seconds even if several are in flight.
+    for (QFuture<QPair<bool, QString>>& future : m_pending_command_futures) {
+        if (future.isRunning()) {
+            future.waitForFinished();
+        }
+    }
+}
 
 // ===================================================================
 // UI Setup
@@ -2382,14 +2391,22 @@ void NetworkDiagnosticPanel::runCommandAsync(
         watcher->deleteLater();
         callback(success, output);
     });
-    watcher->setFuture(QtConcurrent::run([program, args, timeout_ms]() -> QPair<bool, QString> {
-        const auto process = runProcess(program, args, timeout_ms);
-        const QString output = process.std_out.isEmpty() ? process.std_err : process.std_out;
-        if (process.timed_out) {
-            return {false, QStringLiteral("%1 command timed out").arg(program)};
-        }
-        return {process.exit_code == 0, output};
-    }));
+    const QFuture<QPair<bool, QString>> future =
+        QtConcurrent::run([program, args, timeout_ms]() -> QPair<bool, QString> {
+            const auto process = runProcess(program, args, timeout_ms);
+            const QString output = process.std_out.isEmpty() ? process.std_err : process.std_out;
+            if (process.timed_out) {
+                return {false, QStringLiteral("%1 command timed out").arg(program)};
+            }
+            return {process.exit_code == 0, output};
+        });
+    watcher->setFuture(future);
+    // Track the future so the destructor can bounded-wait a still-running (possibly MUTATING) op
+    // rather than let it run detached past teardown. Prune finished ones first so this stays
+    // bounded.
+    m_pending_command_futures.removeIf(
+        [](const QFuture<QPair<bool, QString>>& f) { return f.isFinished(); });
+    m_pending_command_futures.append(future);
 }
 
 void NetworkDiagnosticPanel::runNetshCommandAsync(

@@ -313,6 +313,41 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
     m_cleanup_worker->start();
 }
 
+QVector<LeftoverItem> AdvancedUninstallController::safeLeftovers(
+    const QVector<LeftoverItem>& items) {
+    QVector<LeftoverItem> safe;
+    for (const LeftoverItem& item : items) {
+        if (item.risk == LeftoverItem::RiskLevel::Safe) {
+            LeftoverItem copy = item;
+            copy.selected = true;
+            safe.append(copy);
+        }
+    }
+    return safe;
+}
+
+bool AdvancedUninstallController::maybeAutoCleanSafeLeftovers(const UninstallReport& report,
+                                                              bool autoClean) {
+    if (!autoClean) {
+        return false;
+    }
+    const QVector<LeftoverItem> safe = safeLeftovers(report.foundLeftovers);
+    if (safe.isEmpty()) {
+        return false;
+    }
+    Q_EMIT autoCleanSafeStarted(static_cast<int>(safe.size()));
+    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from %2 "
+                                 "(Review/Risky items kept for your review)...")
+                             .arg(safe.size())
+                             .arg(report.programName),
+                         0);
+    // Reuse the vetted GUI cleanup path: it re-screens against the OS-critical denylist and runs
+    // CleanupWorker with the recycle-bin default, so an auto-clean is recoverable and can never
+    // permanently delete a misclassified protected target.
+    cleanLeftovers(safe);
+    return m_state == State::Cleaning;
+}
+
 void AdvancedUninstallController::connectCleanupWorkerSignals(CleanupWorker* worker) {
     connect(worker, &CleanupWorker::itemCleaned, this, &AdvancedUninstallController::itemCleaned);
     connect(worker,
@@ -401,6 +436,7 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
 
     m_batchIndex = -1;
     m_batchRestorePointCreated = false;
+    m_batchAutoCleanItems.clear();
 
     // Create a single restore point for the entire batch
     if (createRestorePoint) {
@@ -536,6 +572,13 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
                         : UninstallQueueItem::Status::Failed;
         Q_EMIT queueItemStatusChanged(m_batchIndex, qi.status);
 
+        // Accumulate this item's SAFE leftovers for a single auto-clean pass at batch end (only if
+        // the item opted in). Running a cleanup now would race the next queued uninstall, so it is
+        // deferred until the whole batch is done and no uninstall worker is active.
+        if (qi.autoCleanSafeLeftovers) {
+            m_batchAutoCleanItems.append(safeLeftovers(report.foundLeftovers));
+        }
+
         // Process next queued item
         processNextQueueItem();
         return;
@@ -547,6 +590,10 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
                              .arg(report.programName)
                              .arg(report.foundLeftovers.size()),
                          kStatusTimeoutLongMs);
+
+    // Auto-clean the SAFE leftovers if enabled (Review/Risky always stay for human review). Starts
+    // a recoverable, denylist-screened CleanupWorker; a no-op when disabled or nothing is safe.
+    maybeAutoCleanSafeLeftovers(report, m_autoCleanSafe);
 }
 
 void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
@@ -748,6 +795,18 @@ void AdvancedUninstallController::finishBatchUninstall() {
         QString("Batch uninstall complete: %1 succeeded, %2 failed.").arg(succeeded).arg(failed),
         kStatusTimeoutLongMs);
     m_batchIndex = -1;
+
+    // Now that no uninstall worker is running, auto-clean the SAFE leftovers accumulated from every
+    // opted-in batch item in one recoverable, denylist-screened CleanupWorker pass.
+    const QVector<LeftoverItem> auto_clean = m_batchAutoCleanItems;
+    m_batchAutoCleanItems.clear();
+    if (!auto_clean.isEmpty()) {
+        Q_EMIT autoCleanSafeStarted(static_cast<int>(auto_clean.size()));
+        Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from the batch...")
+                                 .arg(auto_clean.size()),
+                             0);
+        cleanLeftovers(auto_clean);
+    }
 }
 
 void AdvancedUninstallController::processNextQueueItem() {

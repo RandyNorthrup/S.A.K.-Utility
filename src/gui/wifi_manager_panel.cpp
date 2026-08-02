@@ -211,7 +211,14 @@ WifiManagerPanel::WifiManagerPanel(QWidget* parent) : QWidget(parent) {
     connectSignals();
 }
 
-WifiManagerPanel::~WifiManagerPanel() = default;
+WifiManagerPanel::~WifiManagerPanel() {
+    // Bounded-join the in-flight "add to Windows profiles" install so the netsh mutation does not
+    // run detached past teardown. Each netsh call carries its own process timeout, so this cannot
+    // hang teardown for more than a few bounded seconds.
+    if (m_wlanInstallFuture.isRunning()) {
+        m_wlanInstallFuture.waitForFinished();
+    }
+}
 
 // -----------------------------------------------------------------------------
 // UI setup
@@ -1785,8 +1792,9 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
         }
     });
 
-    watcher->setFuture(
-        QtConcurrent::run([configs]() { return WifiManagerPanel::installWlanProfiles(configs); }));
+    m_wlanInstallFuture =
+        QtConcurrent::run([configs]() { return WifiManagerPanel::installWlanProfiles(configs); });
+    watcher->setFuture(m_wlanInstallFuture);
 }
 
 QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& configs) {
