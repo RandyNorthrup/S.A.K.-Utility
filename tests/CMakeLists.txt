@@ -5511,6 +5511,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
     message(STATUS "Added unit test: test_leftover_scanner")
 endif()
 
+# test_program_enumerator --- enumeration signals (generation token), bloatware/orphan detection
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_program_enumerator.cpp")
+    add_executable(test_program_enumerator
+        unit/test_program_enumerator.cpp
+        ../src/core/program_enumerator.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/program_enumerator.h
+    )
+    set_target_properties(test_program_enumerator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_program_enumerator PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_program_enumerator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_program_enumerator COMMAND test_program_enumerator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_program_enumerator")
+endif()
+
 # test_registry_snapshot_engine ??? diff logic, pattern matching, capture smoke test
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
     add_executable(test_registry_snapshot_engine

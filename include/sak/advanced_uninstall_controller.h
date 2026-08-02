@@ -218,9 +218,11 @@ Q_SIGNALS:
     void progressUpdate(int current, int maximum);
 
 private Q_SLOTS:
-    // Enumerator slots
-    void onEnumerationFinished(QVector<sak::ProgramInfo> programs);
-    void onEnumerationFailed(const QString& error);
+    // Enumerator slots. @p generation identifies the run: a completion whose generation does not
+    // match the current one is stale (a cancelled-then-restarted enumeration) and is dropped, so an
+    // old run's result never overwrites the new one.
+    void onEnumerationFinished(int generation, QVector<sak::ProgramInfo> programs);
+    void onEnumerationFailed(int generation, const QString& error);
 
     // Uninstall worker slots
     void onUninstallComplete(sak::UninstallReport report);
@@ -262,6 +264,10 @@ private:
     void processNextQueueItem();
 
     State m_state = State::Idle;
+
+    // Monotonic enumeration generation. Bumped on every refreshPrograms() so a stale completion
+    // from a superseded (cancelled-then-restarted) run can be told apart from the current run's.
+    int m_enum_generation = 0;
 
     // Workers
     std::unique_ptr<ProgramEnumerator> m_enumerator;

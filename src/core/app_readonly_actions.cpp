@@ -703,12 +703,17 @@ AppActionResult scanVulnerabilities(const QJsonObject& args) {
                      {QStringLiteral("critical_count"), scan.criticalCount},
                      {QStringLiteral("actively_exploited_count"), scan.activelyExploitedCount},
                      {QStringLiteral("truncated"), scan.findings.size() > findings.size()},
+                     {QStringLiteral("cancelled"), scan.cancelled},
                      {QStringLiteral("findings"), findings},
                      {QStringLiteral("source_errors"), source_errors}};
-    const QString message = QStringLiteral("Scanned %1 app(s): %2 finding(s), %3 critical")
-                                .arg(scan.installedAppsScanned)
-                                .arg(scan.findings.size())
-                                .arg(scan.criticalCount);
+    QString message = QStringLiteral("Scanned %1 app(s): %2 finding(s), %3 critical")
+                          .arg(scan.installedAppsScanned)
+                          .arg(scan.findings.size())
+                          .arg(scan.criticalCount);
+    if (scan.cancelled) {
+        // A cancelled scan is PARTIAL: say so instead of presenting the findings as a full result.
+        message += QStringLiteral(" (scan was CANCELLED; results are partial)");
+    }
     return {true, message, data};
 }
 

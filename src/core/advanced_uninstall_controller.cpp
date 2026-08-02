@@ -141,9 +141,12 @@ void AdvancedUninstallController::refreshPrograms() {
         return;
     }
     m_enumerator->resetCancel();
+    // Bump the generation so a still-running prior enumeration (cancelled, but whose cooperative
+    // stop was cleared by resetCancel above) cannot pass its stale completion off as this run's.
+    const int generation = ++m_enum_generation;
     QMetaObject::invokeMethod(
         m_enumerator.get(),
-        [enumerator = m_enumerator.get()]() { enumerator->enumerateAll(); },
+        [enumerator = m_enumerator.get(), generation]() { enumerator->enumerateAll(generation); },
         Qt::QueuedConnection);
 }
 
@@ -491,9 +494,11 @@ RestorePointManager* AdvancedUninstallController::restorePointManager() const {
 
 // -- Private Slots -----------------------------------------------------------
 
-void AdvancedUninstallController::onEnumerationFinished(QVector<ProgramInfo> programs) {
-    // Guard against stale signal after cancelOperation() already cleaned up
-    if (m_state != State::Enumerating) {
+void AdvancedUninstallController::onEnumerationFinished(int generation,
+                                                        QVector<ProgramInfo> programs) {
+    // Drop a stale completion: a run cancelled then restarted would otherwise apply the OLD (or an
+    // un-cancelled superseded) result to the NEW run. Also guard the post-cancel Idle state.
+    if (generation != m_enum_generation || m_state != State::Enumerating) {
         return;
     }
 
@@ -505,9 +510,10 @@ void AdvancedUninstallController::onEnumerationFinished(QVector<ProgramInfo> pro
     Q_EMIT enumerationFinished(programs);
 }
 
-void AdvancedUninstallController::onEnumerationFailed(const QString& error) {
-    // Guard against stale signal after cancelOperation() already cleaned up
-    if (m_state != State::Enumerating) {
+void AdvancedUninstallController::onEnumerationFailed(int generation, const QString& error) {
+    // Drop a stale failure (a superseded run's cancel) so it cannot force the NEW run's state to
+    // Idle.
+    if (generation != m_enum_generation || m_state != State::Enumerating) {
         return;
     }
 

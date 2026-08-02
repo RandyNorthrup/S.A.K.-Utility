@@ -222,11 +222,12 @@ void TestProgramEnumerator::enumerateAll_cancelledBeforeStart() {
     enumerator.requestCancel();
 
     QSignalSpy failed_spy(&enumerator, &ProgramEnumerator::enumerationFailed);
-    enumerator.enumerateAll();
+    enumerator.enumerateAll(42);  // generation is echoed back so a stale run can be dropped
 
     QCOMPARE(failed_spy.count(), 1);
     const auto args = failed_spy.takeFirst();
-    QVERIFY(args.at(0).toString().contains("cancelled"));
+    QCOMPARE(args.at(0).toInt(), 42);  // generation echoed
+    QVERIFY(args.at(1).toString().contains("cancelled"));
 }
 
 QTEST_MAIN(TestProgramEnumerator)

@@ -79,9 +79,10 @@ void ProgramEnumerator::resetCancel() {
     m_cancelRequested.store(false, std::memory_order_release);
 }
 
-void ProgramEnumerator::enumerateAll() {
+void ProgramEnumerator::enumerateAll(int generation) {
+    m_generation = generation;  // stamped on every terminal signal from this run
     if (m_cancelRequested.load(std::memory_order_acquire)) {
-        Q_EMIT enumerationFailed("Enumeration cancelled.");
+        Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
         return;
     }
     Q_EMIT enumerationStarted();
@@ -93,7 +94,7 @@ void ProgramEnumerator::enumerateAll() {
         // Phase 1: Win32 registry programs
         auto registry_programs = scanRegistryPrograms();
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(registry_programs);
@@ -104,7 +105,7 @@ void ProgramEnumerator::enumerateAll() {
         bool uwpOk = true;
         auto uwp_programs = scanUwpPackages(uwpOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(uwp_programs);
@@ -114,7 +115,7 @@ void ProgramEnumerator::enumerateAll() {
         bool provisionedOk = true;
         auto provisioned = scanProvisionedPackages(provisionedOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(provisioned);
@@ -138,10 +139,10 @@ void ProgramEnumerator::enumerateAll() {
 
         Q_EMIT enumerationProgress(kPercentMax, kPercentMax);
         m_cachedPrograms = all_programs;
-        Q_EMIT enumerationFinished(all_programs);
+        Q_EMIT enumerationFinished(m_generation, all_programs);
 
     } catch (const std::exception& e) {
-        Q_EMIT enumerationFailed(QString("Enumeration error: %1").arg(e.what()));
+        Q_EMIT enumerationFailed(m_generation, QString("Enumeration error: %1").arg(e.what()));
     }
 }
 
@@ -202,7 +203,7 @@ bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) 
     // assert non-empty -- that aborts a debug build on a valid empty scan.
     for (int i = 0; i < programs.size(); ++i) {
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return false;
         }
         auto& prog = programs[i];
@@ -313,7 +314,13 @@ void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
 }
 
 qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
+    if (path.isEmpty()) {
+        // Fail closed: an empty path must size NOTHING. QDirIterator("") walks the CURRENT working
+        // directory, so without this a program with an empty installLocation would report the CWD's
+        // size (and, in the test harness, walk the whole build tree). The old Q_ASSERT was a no-op
+        // in Release.
+        return 0;
+    }
     qint64 total = 0;
     QDirIterator it(path,
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,

@@ -39,8 +39,11 @@ public:
     ProgramEnumerator(ProgramEnumerator&&) = delete;
     ProgramEnumerator& operator=(ProgramEnumerator&&) = delete;
 
-    /// @brief Start async enumeration of all installed programs
-    void enumerateAll();
+    /// @brief Start async enumeration of all installed programs.
+    /// @param generation An opaque token echoed back in enumerationFinished/Failed so a driver can
+    ///        drop a stale completion from a superseded (e.g. cancelled-then-restarted) run instead
+    ///        of applying its results to the new one. 0 for callers that do not track generations.
+    void enumerateAll(int generation = 0);
 
     /// @brief Synchronously enumerate ONLY UWP + provisioned packages -- no registry scan and
     ///        no icon/size enrichment (the slow whole-machine phases of enumerateAll). For a
@@ -77,8 +80,10 @@ public:
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);
-    void enumerationFinished(QVector<ProgramInfo> programs);
-    void enumerationFailed(const QString& error);
+    /// @p generation echoes the value passed to enumerateAll (see there); a driver compares it to
+    /// its current generation to ignore a stale, superseded run's completion.
+    void enumerationFinished(int generation, QVector<ProgramInfo> programs);
+    void enumerationFailed(int generation, const QString& error);
     void enumerationWarning(const QString& message);
 
 private:
@@ -141,6 +146,9 @@ private:
 
     QVector<ProgramInfo> m_cachedPrograms;
     std::atomic<bool> m_cancelRequested{false};
+    // Generation of the CURRENT enumerateAll run, echoed in enumerationFinished/Failed. Written and
+    // read only on the enumeration worker thread (runs are serialized), so a plain int is safe.
+    int m_generation{0};
 };
 
 // -- Compile-Time Invariants -------------------------------------------------
