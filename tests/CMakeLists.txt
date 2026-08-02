@@ -3712,31 +3712,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_vulnerability_scanner.cpp")
     message(STATUS "Added unit test: test_vulnerability_scanner")
 endif()
 
-# test_nuget_api_client ??? OData XML parsing, construction, metadata structs
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
-    add_executable(test_nuget_api_client
-        unit/test_nuget_api_client.cpp
-        ../src/core/nuget_api_client.cpp
-        ../src/core/nuget_dependency_resolver.cpp
-        ../src/core/nuget_version_range.cpp
-        ../include/sak/nuget_api_client.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_nuget_api_client PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_nuget_api_client PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_nuget_api_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_nuget_api_client COMMAND test_nuget_api_client
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_nuget_api_client")
-endif()
-
 # test_nuget_version_range --- pure NuGet version + version-range primitives (B10-25)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_version_range.cpp")
     add_executable(test_nuget_version_range
@@ -6115,7 +6090,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
         ../src/core/package_internalization_engine.cpp
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
-        ../src/core/nuget_api_client.cpp
         ../src/core/nuget_dependency_resolver.cpp
         ../src/core/nuget_version_range.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
@@ -6124,7 +6098,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
         ../include/sak/package_internalization_engine.h
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
-        ../include/sak/nuget_api_client.h
         ../include/sak/nuget_dependency_resolver.h
         ../include/sak/nuget_version_range.h
     )
@@ -6152,7 +6125,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
         ../src/core/package_internalization_engine.cpp
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
-        ../src/core/nuget_api_client.cpp
         ../src/core/nuget_dependency_resolver.cpp
         ../src/core/nuget_version_range.cpp
         ../src/core/bundled_tools_manager.cpp
@@ -6163,7 +6135,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
         ../include/sak/package_internalization_engine.h
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
-        ../include/sak/nuget_api_client.h
         ../include/sak/nuget_dependency_resolver.h
         ../include/sak/nuget_version_range.h
     )
@@ -6191,7 +6162,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../src/core/package_internalization_engine.cpp
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
-        ../src/core/nuget_api_client.cpp
         ../src/core/nuget_dependency_resolver.cpp
         ../src/core/nuget_version_range.cpp
         ../src/core/bundled_tools_manager.cpp
@@ -6202,7 +6172,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../include/sak/package_internalization_engine.h
         ../include/sak/install_script_parser.h
         ../include/sak/script_rewriter.h
-        ../include/sak/nuget_api_client.h
         ../include/sak/nuget_dependency_resolver.h
         ../include/sak/nuget_version_range.h
     )

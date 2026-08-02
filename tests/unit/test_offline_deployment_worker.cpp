@@ -29,6 +29,9 @@ private Q_SLOTS:
     void sanitizeManifestFilename_rejectsPathsAndTraversal();
     void verifyBundledPackage_acceptsMatchingChecksumAndSize();
     void verifyBundledPackage_rejectsMismatchMissingAndBadName();
+    void installDispositionFor_skipsRequiresNetworkOnlyWhenOfflineOnly();
+    void collectInstallerUrls_collectsEveryResourceDeduped();
+    void uniqueFilename_disambiguatesCollidingBasenames();
 };
 
 void TestOfflineDeploymentWorker::classifyWorkDir_freshWhenMissingOrEmpty() {
@@ -167,6 +170,66 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_rejectsMismatchMissingAnd
     bad_name.size_bytes = 0;
     QString err4;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(bad_name, dir.path(), err4));
+}
+
+void TestOfflineDeploymentWorker::installDispositionFor_skipsRequiresNetworkOnlyWhenOfflineOnly() {
+    using Disposition = OfflineDeploymentWorker::InstallDisposition;
+
+    DeploymentManifestEntry offline_ready;
+    offline_ready.offline_ready = true;
+    DeploymentManifestEntry needs_net;
+    needs_net.offline_ready = false;
+
+    // Offline install: ready -> install, not-ready -> skip (never a generic failure).
+    QCOMPARE(OfflineDeploymentWorker::installDispositionFor(offline_ready, true),
+             Disposition::Install);
+    QCOMPARE(OfflineDeploymentWorker::installDispositionFor(needs_net, true),
+             Disposition::SkipRequiresNetwork);
+
+    // Online install: attempt everything (the target has internet).
+    QCOMPARE(OfflineDeploymentWorker::installDispositionFor(offline_ready, false),
+             Disposition::Install);
+    QCOMPARE(OfflineDeploymentWorker::installDispositionFor(needs_net, false),
+             Disposition::Install);
+}
+
+void TestOfflineDeploymentWorker::collectInstallerUrls_collectsEveryResourceDeduped() {
+    ParsedInstallScript parsed;
+    DownloadResource a;
+    a.url = QStringLiteral("https://host/a32.exe");
+    a.url_64bit = QStringLiteral("https://host/a64.exe");
+    DownloadResource b;
+    b.url = QStringLiteral("https://host/b.msi");
+    b.url_64bit = QStringLiteral("https://host/a64.exe");  // duplicate of a's 64-bit URL
+    parsed.resources = {a, b};
+
+    const QStringList urls = OfflineDeploymentWorker::collectInstallerUrls(parsed);
+    // Every DISTINCT installer URL across ALL resources -- not just the first.
+    QCOMPARE(urls.size(), 3);
+    QVERIFY(urls.contains(QStringLiteral("https://host/a32.exe")));
+    QVERIFY(urls.contains(QStringLiteral("https://host/a64.exe")));
+    QVERIFY(urls.contains(QStringLiteral("https://host/b.msi")));
+
+    // Empty parse -> no urls.
+    QVERIFY(OfflineDeploymentWorker::collectInstallerUrls(ParsedInstallScript{}).isEmpty());
+}
+
+void TestOfflineDeploymentWorker::uniqueFilename_disambiguatesCollidingBasenames() {
+    QSet<QString> used;
+    // Two distinct URLs whose basename is 'setup.exe' must map to different files.
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("setup.exe"), used),
+             QStringLiteral("setup.exe"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("setup.exe"), used),
+             QStringLiteral("setup_1.exe"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("setup.exe"), used),
+             QStringLiteral("setup_2.exe"));
+    // A distinct name is untouched; an extension-less name still disambiguates.
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("other.msi"), used),
+             QStringLiteral("other.msi"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("installer"), used),
+             QStringLiteral("installer"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("installer"), used),
+             QStringLiteral("installer_1"));
 }
 
 QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)

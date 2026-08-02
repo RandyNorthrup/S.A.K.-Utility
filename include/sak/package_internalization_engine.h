@@ -12,7 +12,6 @@
 #pragma once
 
 #include "sak/install_script_parser.h"
-#include "sak/nuget_api_client.h"
 #include "sak/script_rewriter.h"
 
 #include <QHash>
@@ -52,6 +51,13 @@ struct InternalizationProgress {
     QString error_message;
 };
 
+/// @brief How confidently a repacked package will install with NO internet.
+enum class OfflineReadiness {
+    Internalized,     ///< external installer binaries were downloaded + embedded
+    SelfContained,    ///< no external download needed (no script, or installer ships in the nupkg)
+    RequiresNetwork,  ///< an install script is present but its installer could not be internalized
+};
+
 /// @brief Result of a completed internalization
 struct InternalizationResult {
     QString package_id;
@@ -63,6 +69,10 @@ struct InternalizationResult {
     ///        internet at install time, so callers must surface this to the user
     ///        rather than presenting it as a fully offline package.
     bool binaries_internalized{false};
+    /// @brief Honest offline-install classification (drives the manifest's
+    ///        offline_ready flag and the install-time offline gate). Defaults to
+    ///        the conservative RequiresNetwork until a branch proves otherwise.
+    OfflineReadiness offline_readiness{OfflineReadiness::RequiresNetwork};
     QString output_nupkg_path;
     QString checksum;
     QStringList internalized_files;
@@ -149,6 +159,16 @@ public:
     [[nodiscard]] static bool binaryChecksumMatches(const QByteArray& data,
                                                     const QString& expected_checksum,
                                                     const QString& checksum_type);
+
+    /// @brief True if @p script_text references a NETWORK download -- a literal
+    ///        http/https/ftp URL, or a raw download method (Invoke-WebRequest,
+    ///        Start-BitsTransfer, WebClient/DownloadFile, wget, curl, ...). This is
+    ///        the honest offline-readiness test: a package installs offline only if
+    ///        its (post-internalization) script has no remaining network fetch.
+    ///        Note: the recognized Chocolatey download helpers are rewritten to
+    ///        LOCAL paths before this runs, so their cmdlet names are intentionally
+    ///        NOT treated as download indicators. Pure; unit-testable.
+    [[nodiscard]] static bool scriptHasNetworkDownload(const QString& script_text);
 
 private:
     struct InternalizationPaths {

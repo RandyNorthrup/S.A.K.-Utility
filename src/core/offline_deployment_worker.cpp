@@ -36,7 +36,53 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kInstallErrorPreviewChars = 200;
+
+/// @brief Manifest-facing view of an engine OfflineReadiness classification.
+struct OfflineReadinessInfo {
+    bool ready;
+    QString note;
+};
+
+OfflineReadinessInfo readinessInfo(OfflineReadiness readiness) {
+    switch (readiness) {
+    case OfflineReadiness::Internalized:
+        return {true, QStringLiteral("installer binaries internalized")};
+    case OfflineReadiness::SelfContained:
+        return {true, QStringLiteral("self-contained (no external download needed)")};
+    case OfflineReadiness::RequiresNetwork:
+        break;
+    }
+    return {false,
+            QStringLiteral("requires internet at install time (installer not internalized)")};
 }
+
+/// @brief Honest one-line summary of a completed bundle build.
+QString bundleCompletionMessage(const BatchStats& stats) {
+    QString summary = QString("Bundle complete: %1 succeeded (%2 fully offline-capable")
+                          .arg(stats.completed)
+                          .arg(stats.offline_capable);
+    if (stats.requires_network > 0) {
+        summary += QString(", %1 still require internet at install").arg(stats.requires_network);
+    }
+    return summary + QString("), %1 failed").arg(stats.failed);
+}
+
+/// @brief Honest one-line summary of a completed bundle install.
+QString installCompletionMessage(const BatchStats& stats) {
+    QString summary =
+        QString("Install complete: %1 installed, %2 failed").arg(stats.completed).arg(stats.failed);
+    if (stats.skipped > 0) {
+        summary += QString(", %1 skipped (require internet)").arg(stats.skipped);
+    }
+    if (stats.cancelled > 0) {
+        summary += QString(", %1 cancelled").arg(stats.cancelled);
+    }
+    if (stats.pending > 0) {
+        summary += QString(", %1 not attempted").arg(stats.pending);
+    }
+    return summary;
+}
+}  // namespace
 
 // ============================================================================
 // Helpers
@@ -354,6 +400,7 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosu
         BatchInternalizationJob job;
         job.package_id = pkg.package_id;
         job.version = pkg.version;
+        job.dependencies = pkg.dependencies;  // direct deps -> manifest provenance
         jobs.append(job);
         resolved_ids.insert(pkg.package_id.toLower());
     }
@@ -470,10 +517,15 @@ void OfflineDeploymentWorker::applyInternalizationResult(int idx,
         entry.nupkg_filename = QFileInfo(result.output_nupkg_path).fileName();
         entry.checksum = result.checksum;
         entry.size_bytes = result.internalized_size;
-        // Reflect whether binaries were ACTUALLY internalized -- a no-URL package
-        // is repacked but not truly offline, and the manifest must say so honestly
-        // rather than always claiming internalized=true.
+        // Record the HONEST offline classification: internalized (binaries
+        // embedded), self-contained (no download needed), or requires-network
+        // (repacked but its script still fetches at install time). The manifest
+        // must not claim a package is offline-ready when it is not.
         entry.internalized = result.binaries_internalized;
+        const OfflineReadinessInfo info = readinessInfo(result.offline_readiness);
+        entry.offline_ready = info.ready;
+        entry.offline_note = info.note;
+        entry.dependencies = m_jobs[idx].dependencies;  // direct deps from the resolved closure
         manifest.packages.append(entry);
         manifest.total_size_bytes += result.internalized_size;
     } else {
@@ -529,6 +581,17 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
     stats.failed = ctx.failed_count;
     stats.total_bytes = manifest.total_size_bytes;
 
+    // Distinguish truly-offline packages from ones that will still need the
+    // internet at install time, so the completion is honest about the bundle's
+    // real offline coverage instead of conflating the two into "N succeeded".
+    for (const DeploymentManifestEntry& entry : manifest.packages) {
+        if (entry.offline_ready) {
+            stats.offline_capable++;
+        } else {
+            stats.requires_network++;
+        }
+    }
+
     QMutexLocker lock(&m_mutex);
     for (const auto& job : m_jobs) {
         if (job.status == InternalizationStatus::Cancelled) {
@@ -544,9 +607,7 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
     QMetaObject::invokeMethod(
         this,
         [this, stats]() {
-            Q_EMIT logMessage(QString("Bundle complete: %1 succeeded, %2 failed")
-                                  .arg(stats.completed)
-                                  .arg(stats.failed));
+            Q_EMIT logMessage(bundleCompletionMessage(stats));
             Q_EMIT operationCompleted(stats);
         },
         Qt::QueuedConnection);
@@ -556,8 +617,20 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
 // Install From Bundle
 // ============================================================================
 
+OfflineDeploymentWorker::InstallDisposition OfflineDeploymentWorker::installDispositionFor(
+    const DeploymentManifestEntry& entry, bool offline_only) {
+    // Under an offline install, a package that is not offline-ready would only
+    // fail against a dead network, so skip it with a clear reason instead of
+    // handing it to choco and reporting a generic install failure.
+    if (offline_only && !entry.offline_ready) {
+        return InstallDisposition::SkipRequiresNetwork;
+    }
+    return InstallDisposition::Install;
+}
+
 void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
-                                                const QString& choco_source_dir) {
+                                                const QString& choco_source_dir,
+                                                bool offline_only) {
     if (m_running) {
         Q_EMIT operationError("An operation is already running");
         return;
@@ -573,16 +646,18 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
     m_cancelled = false;
 
     Q_EMIT operationStarted(manifest.packages.size());
-    Q_EMIT logMessage(
-        QString("Installing from bundle: %1 package(s)").arg(manifest.packages.size()));
+    Q_EMIT logMessage(QString("Installing from bundle: %1 package(s)%2")
+                          .arg(manifest.packages.size())
+                          .arg(offline_only ? QStringLiteral(" (offline mode)") : QString()));
 
-    m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir]() {
-        executeInstallFromBundle(manifest, choco_source_dir);
+    m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir, offline_only]() {
+        executeInstallFromBundle(manifest, choco_source_dir, offline_only);
     });
 }
 
 void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manifest,
-                                                       QString choco_source_dir) {
+                                                       QString choco_source_dir,
+                                                       bool offline_only) {
     BatchStats stats;
     stats.total = manifest.packages.size();
 
@@ -590,16 +665,40 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
         if (m_cancelled) {
             break;
         }
-        if (installBundlePackage(entry, stats.completed, stats.total, choco_source_dir)) {
+        if (installDispositionFor(entry, offline_only) == InstallDisposition::SkipRequiresNetwork) {
+            ++stats.skipped;
+            // A skip is NOT a failure: surface it as a neutral log line so the UI
+            // does not render a skipped package as a failed one.
+            emitLog(QString("[%1] Skipped: requires internet (not internalized) -- %2")
+                        .arg(entry.package_id, entry.offline_note));
+            continue;
+        }
+        const bool ok = installBundlePackage(entry, stats.completed, stats.total, choco_source_dir);
+        if (ok) {
             ++stats.completed;
+        } else if (m_cancelled) {
+            ++stats.cancelled;  // interrupted mid-install -- not a hard failure
         } else {
             ++stats.failed;
         }
+        if (m_cancelled) {
+            break;  // stop; remaining packages become "pending" below
+        }
     }
+
+    // Every package must be accounted for so the totals sum: any never reached
+    // (because a cancel broke the loop) are pending.
+    const int accounted = stats.completed + stats.failed + stats.skipped + stats.cancelled;
+    stats.pending = (stats.total > accounted) ? (stats.total - accounted) : 0;
 
     m_running = false;
     QMetaObject::invokeMethod(
-        this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+        this,
+        [this, stats]() {
+            Q_EMIT logMessage(installCompletionMessage(stats));
+            Q_EMIT operationCompleted(stats);
+        },
+        Qt::QueuedConnection);
 }
 
 QString OfflineDeploymentWorker::resolveChocoExecutable() {
@@ -850,9 +949,9 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
         pkg_extract_dir = dep_extract;
     }
 
-    // Parse for download URLs (primary installer only)
+    // Parse for download URLs (all installer resources, 32- and 64-bit).
     auto parsed = parser.parseFile(script_path);
-    QStringList urls = collectPrimaryUrls(parsed);
+    QStringList urls = collectInstallerUrls(parsed);
 
     // Embedded installer fallback, then URL download
     int result = 0;
@@ -970,17 +1069,38 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
     return copied;
 }
 
-QStringList OfflineDeploymentWorker::collectPrimaryUrls(const ParsedInstallScript& parsed) {
+QString OfflineDeploymentWorker::uniqueFilename(const QString& desired, QSet<QString>& used) {
+    if (!used.contains(desired)) {
+        used.insert(desired);
+        return desired;
+    }
+    const QFileInfo info(desired);
+    const QString stem = info.completeBaseName();
+    const QString suffix = info.suffix();
+    int counter = 1;
+    QString candidate;
+    do {
+        candidate = suffix.isEmpty() ? QString("%1_%2").arg(stem).arg(counter)
+                                     : QString("%1_%2.%3").arg(stem).arg(counter).arg(suffix);
+        ++counter;
+    } while (used.contains(candidate));
+    used.insert(candidate);
+    return candidate;
+}
+
+QStringList OfflineDeploymentWorker::collectInstallerUrls(const ParsedInstallScript& parsed) {
+    // Collect the 32- and 64-bit installer URLs from EVERY resource, de-duplicated.
+    // A package can declare several installers (e.g. an app + a prerequisite); a
+    // direct download that kept only the first resource would ship an incomplete
+    // set that then fails at install time.
     QStringList urls;
-    if (parsed.resources.isEmpty()) {
-        return urls;
-    }
-    const auto& primary = parsed.resources.first();
-    if (!primary.url.isEmpty()) {
-        urls.append(primary.url);
-    }
-    if (!primary.url_64bit.isEmpty()) {
-        urls.append(primary.url_64bit);
+    for (const auto& resource : parsed.resources) {
+        if (!resource.url.isEmpty() && !urls.contains(resource.url)) {
+            urls.append(resource.url);
+        }
+        if (!resource.url_64bit.isEmpty() && !urls.contains(resource.url_64bit)) {
+            urls.append(resource.url_64bit);
+        }
     }
     return urls;
 }
@@ -989,12 +1109,19 @@ int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
                                                const QStringList& urls,
                                                const QString& output_dir) {
     int downloaded = 0;
+    int index = 0;
+    QSet<QString> used_names;
     for (const auto& url : urls) {
         if (m_cancelled) {
             break;
         }
-        const QString filename = safeInstallerFilename(
-            QUrl(url).fileName(), QString("%1_installer_%2").arg(pkg_id).arg(downloaded + 1));
+        ++index;
+        // Two distinct installer URLs can share a basename (x86 vs x64 setup.exe).
+        // Disambiguate so the second never overwrites the first on disk (which
+        // would ship one architecture while counting two downloads).
+        QString filename = safeInstallerFilename(QUrl(url).fileName(),
+                                                 QString("%1_installer_%2").arg(pkg_id).arg(index));
+        filename = uniqueFilename(filename, used_names);
         QString dest = output_dir + "/" + filename;
         if (downloadFileFromUrl(url, dest)) {
             ++downloaded;
@@ -1108,6 +1235,8 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
         pkg["checksum"] = entry.checksum;
         pkg["size_bytes"] = entry.size_bytes;
         pkg["internalized"] = entry.internalized;
+        pkg["offline_ready"] = entry.offline_ready;
+        pkg["offline_note"] = entry.offline_note;
 
         QJsonArray deps;
         for (const auto& dep : entry.dependencies) {
@@ -1157,15 +1286,30 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
     if (!manifest.description.isEmpty()) {
         stream << "Description: " << manifest.description << "\n";
     }
-    stream << "Packages: " << manifest.packages.size() << "\n\n";
+    int offline_capable = 0;
+    for (const auto& entry : manifest.packages) {
+        if (entry.offline_ready) {
+            ++offline_capable;
+        }
+    }
+    stream << "Packages: " << manifest.packages.size() << " (" << offline_capable
+           << " install fully offline, " << (manifest.packages.size() - offline_capable)
+           << " may require internet)\n\n";
 
     stream << "Included Packages:\n";
     for (const auto& entry : manifest.packages) {
-        stream << "  - " << entry.package_id << " v" << entry.version;
-        if (entry.internalized) {
-            stream << " (internalized)";
+        stream << "  - " << entry.package_id << " v" << entry.version << " -- "
+               << (entry.offline_ready ? "OFFLINE-READY" : "REQUIRES INTERNET");
+        if (!entry.offline_note.isEmpty()) {
+            stream << " (" << entry.offline_note << ")";
         }
         stream << "\n";
+    }
+
+    if (offline_capable < manifest.packages.size()) {
+        stream << "\nNOTE: packages marked REQUIRES INTERNET could not have their installer\n";
+        stream << "internalized; installing them on a disconnected machine will fail. The\n";
+        stream << "offline install skips them by default.\n";
     }
 
     stream << "\nInstallation:\n";
@@ -1213,6 +1357,12 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
         entry.checksum = pkg["checksum"].toString();
         entry.size_bytes = pkg["size_bytes"].toInteger();
         entry.internalized = pkg["internalized"].toBool();
+        // Older manifests predate offline_ready. Do NOT derive it from internalized
+        // (a self-contained package has internalized=false yet installs offline);
+        // default to true so such a manifest keeps its pre-gate behavior of
+        // attempting every package rather than newly skipping the offline ones.
+        entry.offline_ready = pkg.contains("offline_ready") ? pkg["offline_ready"].toBool() : true;
+        entry.offline_note = pkg["offline_note"].toString();
 
         QJsonArray deps = pkg["dependencies"].toArray();
         for (const auto& dep : deps) {

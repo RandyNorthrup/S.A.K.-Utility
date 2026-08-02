@@ -85,6 +85,7 @@ private slots:
     void conflictingDiamondSurfacesError();
     void compatibleDiamondPicksVersionSatisfyingBoth();
     void lateConstraintFlaggedByValidation();
+    void resolvedPackageCarriesDirectDependencyIds();
     void parseDependencies_preservesRangesAndSkipsFrameworkMarkers();
     void parseODataFeedVersions_extractsVersionsAndDeps();
 };
@@ -310,6 +311,29 @@ void TestNuGetDependencyResolver::lateConstraintFlaggedByValidation() {
 
     QCOMPARE(versionOf(resolved, "d"), QStringLiteral("1.0.0"));  // kept (over-include-safe)
     QVERIFY(!r.errors().isEmpty());                               // but the conflict is surfaced
+}
+
+void TestNuGetDependencyResolver::resolvedPackageCarriesDirectDependencyIds() {
+    // Each ResolvedPackage records its chosen version's DIRECT dependency ids, so
+    // the bundle manifest can carry real dependency provenance.
+    Feed feed;
+    feed["a"] = {fv("1.0.0", {dep("b"), dep("c")})};
+    feed["b"] = {fv("1.0.0")};
+    feed["c"] = {fv("1.0.0")};
+
+    NuGetDependencyResolver r;
+    r.start(QStringLiteral("a"), QString());
+    drive(r, feed);
+
+    QStringList a_deps;
+    for (const ResolvedPackage& p : r.resolved()) {
+        if (p.package_id == QLatin1String("a")) {
+            a_deps = p.dependencies;
+        }
+    }
+    QCOMPARE(a_deps.size(), 2);
+    QVERIFY(a_deps.contains(QStringLiteral("b")));
+    QVERIFY(a_deps.contains(QStringLiteral("c")));
 }
 
 void TestNuGetDependencyResolver::parseDependencies_preservesRangesAndSkipsFrameworkMarkers() {

@@ -117,6 +117,14 @@ std::optional<QCryptographicHash::Algorithm> resolveChecksumAlgorithm(const QStr
     return hashAlgorithmByHexLength(hex_len);
 }
 
+QString readTextFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
 bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
     // QSaveFile: verify the full byte count and atomically commit, so a partial write (disk full)
     // leaves no truncated installer that would be repacked as a "successfully internalized" file.
@@ -166,25 +174,29 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     emitProgress(InternalizationStatus::ParsingScript, "Parsing install script...");
     const QString script_path = findInstallScript(paths.extract_dir);
     if (script_path.isEmpty()) {
-        // No script means nothing was internalized: repack, but do NOT present it
-        // as a fully offline package (binaries_internalized stays false).
-        sak::logWarning(
-            "[InternalizationEngine] No install script found for {}; nothing internalized "
-            "(package may still require internet at install time)",
+        // No install script at all: nothing to download -- the nupkg is the whole
+        // package (a metapackage or content package), so it installs offline.
+        sak::logInfo(
+            "[InternalizationEngine] No install script for {}; self-contained (no download needed)",
             package_id.toStdString());
-        repackAndFinish(
-            result, paths.extract_dir, output_dir, "Repacking (no binaries internalized)...");
+        result.offline_readiness = OfflineReadiness::SelfContained;
+        repackAndFinish(result, paths.extract_dir, output_dir, "Repacking (self-contained)...");
         return;
     }
 
     const auto parsed = m_parser.parseFile(script_path);
     if (parsed.resources.isEmpty()) {
-        sak::logWarning(
-            "[InternalizationEngine] No recognized download URLs in script for {}; nothing "
-            "internalized (package may still require internet at install time)",
-            package_id.toStdString());
-        repackAndFinish(
-            result, paths.extract_dir, output_dir, "Repacking (no binaries internalized)...");
+        // Script present but no recognized download URL. It is offline-ready ONLY
+        // if the script performs NO network download at all (a config-only or
+        // embedded-installer package); if it fetches via a method the parser does
+        // not recognize (raw Invoke-WebRequest, WebClient, ...), flag it honestly.
+        const bool needs_net = scriptHasNetworkDownload(readTextFile(script_path));
+        result.offline_readiness = needs_net ? OfflineReadiness::RequiresNetwork
+                                             : OfflineReadiness::SelfContained;
+        sak::logInfo("[InternalizationEngine] {} has no recognized download URL; classified {}",
+                     package_id.toStdString(),
+                     needs_net ? "requires-network" : "self-contained");
+        repackAndFinish(result, paths.extract_dir, output_dir, "Repacking (no binaries)...");
         return;
     }
 
@@ -192,7 +204,49 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
         return;
     }
 
+    // The recognized URLs are now local files. If the REWRITTEN script STILL
+    // references a network download (a URL the parser did not recognize, e.g. a
+    // raw Invoke-WebRequest for a prerequisite), the package is NOT fully offline
+    // -- report RequiresNetwork honestly instead of over-claiming Internalized.
+    const bool residual = scriptHasNetworkDownload(readTextFile(script_path));
+    if (residual) {
+        result.offline_readiness = OfflineReadiness::RequiresNetwork;
+        sak::logWarning(
+            "[InternalizationEngine] {} internalized its recognized installers but its script "
+            "still "
+            "fetches from the network; classified requires-network",
+            package_id.toStdString());
+    } else {
+        result.offline_readiness = OfflineReadiness::Internalized;
+    }
     repackAndFinish(result, paths.extract_dir, output_dir, "Repacking .nupkg...");
+}
+
+bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& script_text) {
+    const QString lower = script_text.toLower();
+    if (lower.contains(QLatin1String("http://")) || lower.contains(QLatin1String("https://")) ||
+        lower.contains(QLatin1String("ftp://"))) {
+        return true;
+    }
+    // Raw download primitives. The recognized Chocolatey helpers are rewritten to
+    // LOCAL paths before this runs, so their cmdlet names are NOT listed here.
+    static const QStringList kDownloadTokens = {QStringLiteral("invoke-webrequest"),
+                                                QStringLiteral("invoke-restmethod"),
+                                                QStringLiteral("start-bitstransfer"),
+                                                QStringLiteral("bitsadmin"),
+                                                QStringLiteral("downloadfile"),
+                                                QStringLiteral("downloadstring"),
+                                                QStringLiteral("downloaddata"),
+                                                QStringLiteral("webclient"),
+                                                QStringLiteral("net.http"),
+                                                QStringLiteral("wget"),
+                                                QStringLiteral("curl")};
+    for (const QString& token : kDownloadTokens) {
+        if (lower.contains(token)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool PackageInternalizationEngine::isSafePackageComponent(const QString& component) {

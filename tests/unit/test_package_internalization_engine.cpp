@@ -6,6 +6,9 @@
 
 #include "sak/package_internalization_engine.h"
 
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -18,6 +21,8 @@ private Q_SLOTS:
     void isSafePackageComponent_rejectsTraversalAndSeparators();
     void binaryChecksumMatches_verifiesNamedAndInferredAlgorithms();
     void binaryChecksumMatches_rejectsMismatchAndUnresolvable();
+    void scriptHasNetworkDownload_detectsUrlsAndRawDownloadPrimitives();
+    void scriptHasNetworkDownload_ignoresLocalOnlyScripts();
 };
 
 void TestPackageInternalizationEngine::isSafePackageComponent_acceptsNormalIdsAndVersions() {
@@ -77,6 +82,29 @@ void TestPackageInternalizationEngine::binaryChecksumMatches_rejectsMismatchAndU
     // Declared but unresolvable: no hint and a nonstandard hex length.
     QVERIFY(!PackageInternalizationEngine::binaryChecksumMatches(
         data, QStringLiteral("deadbeef"), QString()));
+}
+
+void TestPackageInternalizationEngine::
+    scriptHasNetworkDownload_detectsUrlsAndRawDownloadPrimitives() {
+    // A literal remote URL is a download indicator (the honest offline signal).
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Invoke-WebRequest -Uri 'https://ex.com/vc.exe' -OutFile $out")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$c = New-Object Net.WebClient; $c.DownloadFile($u, $p)")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Start-BitsTransfer -Source http://host/f -Destination x")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("curl -o x ftp://h/f")));
+}
+
+void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnlyScripts() {
+    // A config-only script (no download) is offline-ready.
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Set-ItemProperty HKLM:\\Software\\App -Name Enabled -Value 1")));
+    // An install from a LOCAL file (the internalized case) is not a network fetch.
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Install-ChocolateyInstallPackage -File (Join-Path $toolsDir 'app.exe')")));
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(QString()));
 }
 
 QTEST_APPLESS_MAIN(TestPackageInternalizationEngine)

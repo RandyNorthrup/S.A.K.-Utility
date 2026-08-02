@@ -203,6 +203,11 @@ void NuGetDependencyResolver::resolveDequeued(const QueueItem& item,
     resolved.version = chosen->version;
     resolved.version_range = item.version_range;
     resolved.depth = item.depth;
+    for (const NuGetDependency& dep : chosen->dependencies) {
+        if (!dep.id.isEmpty()) {
+            resolved.dependencies.append(dep.id);
+        }
+    }
     m_resolved.append(resolved);
 
     enqueueDependencies(*chosen, item.depth);

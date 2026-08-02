@@ -599,7 +599,6 @@ set(CORE_SOURCES
     include/sak/imap_uploader.h
     include/sak/conversion_report_generator.h
     # Offline Deployment (Chocolatey internalization)
-    src/core/nuget_api_client.cpp
     src/core/nuget_version_range.cpp
     src/core/nuget_dependency_resolver.cpp
     src/core/install_script_parser.cpp
@@ -608,7 +607,6 @@ set(CORE_SOURCES
     src/core/offline_deployment_worker.cpp
     src/core/package_list_manager.cpp
     include/sak/offline_deployment_constants.h
-    include/sak/nuget_api_client.h
     include/sak/nuget_version_range.h
     include/sak/nuget_dependency_resolver.h
     include/sak/install_script_parser.h

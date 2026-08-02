@@ -57,9 +57,10 @@ struct FeedPackageVersion {
 /// @brief A concretely selected package in the resolved closure.
 struct ResolvedPackage {
     QString package_id;
-    QString version;        ///< the concrete version chosen from the feed
-    QString version_range;  ///< the range that selected it (provenance)
-    int depth{0};           ///< 0 = root, 1 = direct dependency, ...
+    QString version;           ///< the concrete version chosen from the feed
+    QString version_range;     ///< the range that selected it (provenance)
+    int depth{0};              ///< 0 = root, 1 = direct dependency, ...
+    QStringList dependencies;  ///< direct dependency ids declared by the chosen version
 };
 
 /// @brief Transitive dependency resolver (pull-based, per-request state).
@@ -116,8 +117,8 @@ public:
 
     /// @brief Parse a NuGet v2 OData "Dependencies" string into (id, range)
     ///        pairs. Pipe-separated "id:versionRange:targetFramework" entries;
-    ///        framework-only markers ("::net45") are skipped. Preserves the
-    ///        version range (unlike the id-only NuGetApiClient::parseDependencyString).
+    ///        framework-only markers ("::net45") are skipped. The version range is
+    ///        preserved (it is what drives highest-satisfying selection).
     [[nodiscard]] static QVector<NuGetDependency> parseDependencies(const QString& dep_string);
 
     /// @brief Parse an OData feed (FindPackagesById result) into the available

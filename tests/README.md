@@ -68,7 +68,8 @@ tests/
 │   ├── test_network_diagnostic_types.cpp
 │   ├── test_network_diagnostic_utils.cpp
 │   ├── test_network_share_browser.cpp
-    ├── test_nuget_api_client.cpp
+    ├── test_nuget_dependency_resolver.cpp
+    ├── test_nuget_version_range.cpp
     ├── test_organizer_worker.cpp
     ├── test_package_list_manager.cpp
 │   ├── test_package_matcher.cpp
@@ -196,7 +197,8 @@ cmake --build build --target run_integration_tests
 | test_restore_point_manager | `restore_point_manager` | System restore point creation |
 | test_package_list_manager | `package_list_manager` | Curated package list management, list generation |
 | test_install_script_parser | `install_script_parser` | Installation script parsing and validation |
-| test_nuget_api_client | `nuget_api_client` | NuGet API queries, package metadata retrieval |
+| test_nuget_version_range | `nuget_version_range` | NuGet SemVer parse/compare + version-range grammar |
+| test_nuget_dependency_resolver | `nuget_dependency_resolver` | Transitive dependency closure resolution (in-memory feed e2e) |
 | test_script_rewriter | `script_rewriter` | Script modification and rewriting logic |
 
 ### Diagnostics & Benchmarking

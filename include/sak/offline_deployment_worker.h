@@ -16,6 +16,7 @@
 #include <QFuture>
 #include <QMutex>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -31,7 +32,9 @@ struct DeploymentManifestEntry {
     QString checksum;
     qint64 size_bytes{0};
     QStringList dependencies;
-    bool internalized{false};
+    bool internalized{false};   ///< external installer binaries were embedded
+    bool offline_ready{false};  ///< installs with NO internet (internalized or self-contained)
+    QString offline_note;       ///< human-readable reason for offline_ready
 };
 
 /// @brief Full deployment manifest describing a bundled offline package set
@@ -53,6 +56,7 @@ struct BatchInternalizationJob {
     QString error_message;
     QString output_path;
     QString checksum;
+    QStringList dependencies;  ///< direct dependency ids (from the resolved closure)
 };
 
 /// @brief Statistics for a batch internalization run
@@ -62,6 +66,9 @@ struct BatchStats {
     int failed{0};
     int cancelled{0};
     int pending{0};
+    int offline_capable{0};   ///< packages that install with NO internet
+    int requires_network{0};  ///< packages that still need internet at install time
+    int skipped{0};           ///< packages skipped (e.g. requires-network under an offline install)
     qint64 total_bytes{0};
 };
 
@@ -105,7 +112,14 @@ public:
     /// @brief Install packages from a local deployment bundle
     /// @param manifest_path Path to the deployment manifest.json
     /// @param choco_source_dir Path to the local package source directory
-    void installFromBundle(const QString& manifest_path, const QString& choco_source_dir);
+    /// @param offline_only When true (the default for an OFFLINE bundle), a package
+    ///        the manifest marks not-offline-ready is SKIPPED with a clear
+    ///        "requires internet" outcome instead of being blindly handed to choco
+    ///        and failing with a generic error. Pass false to also attempt those
+    ///        (only useful when the target actually has internet).
+    void installFromBundle(const QString& manifest_path,
+                           const QString& choco_source_dir,
+                           bool offline_only = true);
 
     /// @brief Download .nupkg files directly (no internalization)
     /// @param packages List of (package_id, version) pairs
@@ -235,8 +249,34 @@ private:
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);
 
     /// @brief Execute bundle installation on a background thread
-    void executeInstallFromBundle(DeploymentManifest manifest, QString choco_source_dir);
+    void executeInstallFromBundle(DeploymentManifest manifest,
+                                  QString choco_source_dir,
+                                  bool offline_only);
 
+public:
+    /// @brief What to do with a bundle entry at install time.
+    enum class InstallDisposition {
+        Install,              ///< install it (offline-ready, or online mode)
+        SkipRequiresNetwork,  ///< offline install + not offline-ready -> skip, don't fail
+    };
+
+    /// @brief Decide whether a manifest entry should be installed or skipped.
+    ///        Pure; unit-testable. Under an offline install, a not-offline-ready
+    ///        entry is skipped (it would only fail against a dead network).
+    [[nodiscard]] static InstallDisposition installDispositionFor(
+        const DeploymentManifestEntry& entry, bool offline_only);
+
+    /// @brief Collect ALL installer URLs (32- and 64-bit, every resource) from a
+    ///        parsed install script -- direct download must not silently drop the
+    ///        secondary installers a multi-resource package declares. Pure.
+    [[nodiscard]] static QStringList collectInstallerUrls(const ParsedInstallScript& parsed);
+
+    /// @brief Return @p desired if unused, else a de-duplicated variant ("x_1.exe"),
+    ///        inserting the chosen name into @p used. Two installer URLs that share
+    ///        a basename must not write to the same file. Pure; unit-testable.
+    [[nodiscard]] static QString uniqueFilename(const QString& desired, QSet<QString>& used);
+
+private:
     /// @brief Install one package from an offline bundle
     [[nodiscard]] bool installBundlePackage(const DeploymentManifestEntry& entry,
                                             int completed,
@@ -276,9 +316,6 @@ private:
     [[nodiscard]] int copyEmbeddedInstallers(const QString& pkg_id,
                                              const QString& pkg_extract_dir,
                                              const QString& output_dir);
-
-    /// @brief Collect primary installer URLs from parsed install script
-    [[nodiscard]] static QStringList collectPrimaryUrls(const ParsedInstallScript& parsed);
 
     /// @brief Download a list of URLs to a directory
     /// @return Number of files successfully downloaded

@@ -585,7 +585,9 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) 
     m_directDownloadButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_directDownloadButton->setEnabled(false);
     m_directDownloadButton->setAccessibleName(QStringLiteral("Direct Download"));
-    m_directDownloadButton->setToolTip(tr("Download .nupkg files without internalization"));
+    m_directDownloadButton->setToolTip(
+        tr("Download the raw installer binaries (.exe/.msi) for each package -- for manual "
+           "install, not a deployable offline bundle"));
     actionBtnRow->addWidget(m_directDownloadButton);
 
     m_installFromBundleButton = new QPushButton(tr("Install from Bundle"), this);

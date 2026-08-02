@@ -7115,6 +7115,11 @@ QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operatio
     stats[QStringLiteral("failed")] = run_result.final_stats.failed;
     stats[QStringLiteral("cancelled")] = run_result.final_stats.cancelled;
     stats[QStringLiteral("pending")] = run_result.final_stats.pending;
+    // Offline-coverage + skip accounting, so the AI never reads a partial install
+    // (packages skipped because they require internet) as a full success.
+    stats[QStringLiteral("skipped")] = run_result.final_stats.skipped;
+    stats[QStringLiteral("offline_capable")] = run_result.final_stats.offline_capable;
+    stats[QStringLiteral("requires_network")] = run_result.final_stats.requires_network;
     stats[QStringLiteral("total_bytes")] = static_cast<double>(run_result.final_stats.total_bytes);
     result[QStringLiteral("stats")] = stats;
     return result;
