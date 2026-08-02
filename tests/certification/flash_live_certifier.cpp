@@ -56,8 +56,13 @@ QString physicalDrivePath(int driveNumber) {
 
 // Returns the byte length of a physical drive, or -1 on failure.
 qint64 physicalDriveLength(int driveNumber) {
+    // IOCTL_DISK_GET_LENGTH_INFO requires READ access to the device: opening with
+    // dwDesiredAccess = 0 (metadata-only, which IOCTL_STORAGE_QUERY_PROPERTY does
+    // tolerate) makes the length IOCTL fail with ERROR_ACCESS_DENIED on real USB
+    // drives, so the pre-flight wrongly refused a perfectly good disk. Open for
+    // GENERIC_READ; the share flags keep other readers/writers unaffected.
     HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(physicalDrivePath(driveNumber).utf16()),
-                           0,
+                           GENERIC_READ,
                            FILE_SHARE_READ | FILE_SHARE_WRITE,
                            nullptr,
                            OPEN_EXISTING,
