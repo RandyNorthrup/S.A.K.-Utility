@@ -30,6 +30,10 @@ struct DownloadResource {
     QString checksum;
     /// @brief Checksum algorithm (sha256, md5, etc.)
     QString checksum_type;
+    /// @brief Expected checksum of the 64-bit file (checksum64)
+    QString checksum_64bit;
+    /// @brief Checksum algorithm for the 64-bit file (checksumType64)
+    QString checksum_type_64bit;
     /// @brief Suggested filename for the download
     QString file_name;
     /// @brief The Chocolatey helper function that references this download

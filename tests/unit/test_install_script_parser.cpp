@@ -21,6 +21,7 @@ private Q_SLOTS:
     void parse_installChocolateyPackage_extractsUrl();
     void parse_installChocolateyPackage_extractsUrl64();
     void parse_installChocolateyPackage_extractsChecksum();
+    void parse_installChocolateyPackage_extractsChecksum64();
     void parse_installChocolateyPackage_extractsPackageType();
 
     // Install-ChocolateyZipPackage parsing
@@ -106,6 +107,24 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QVERIFY(!result.resources.isEmpty());
     QCOMPARE(result.resources.first().checksum, QString("abc123def456"));
     QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
+}
+
+void TestInstallScriptParser::parse_installChocolateyPackage_extractsChecksum64() {
+    // The 64-bit installer's own checksum64/checksumType64 must be captured so the
+    // build can verify the 64-bit binary too (not just the 32-bit one).
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/setup-x86.exe' `
+    -Checksum 'aaa32' -ChecksumType 'sha256' `
+    -Url64bit 'https://example.com/setup-x64.exe' `
+    -Checksum64 'bbb64' -ChecksumType64 'sha512'
+)";
+    auto result = parser.parse(script);
+    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.first().checksum_64bit, QString("bbb64"));
+    QCOMPARE(result.resources.first().checksum_type_64bit, QString("sha512"));
 }
 
 void TestInstallScriptParser::parse_installChocolateyPackage_extractsPackageType() {

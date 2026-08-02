@@ -220,6 +220,16 @@ private:
     ///        On total resolution failure, falls back to the requested list.
     [[nodiscard]] QVector<BatchInternalizationJob> resolveDependencyClosure(QStringList& warnings);
 
+    /// @brief Turn the resolver's output into build jobs: drop the 'chocolatey'
+    ///        framework package, keep every resolved dependency, and re-append any
+    ///        explicitly-requested package the feed could not resolve (attempted
+    ///        directly). Surfaces the framework exclusion + unresolved requests via
+    ///        @p warnings. Pure (no instance state).
+    [[nodiscard]] static QVector<BatchInternalizationJob> assembleClosureJobs(
+        const QVector<ResolvedPackage>& resolved,
+        const QVector<BatchInternalizationJob>& requested,
+        QStringList& warnings);
+
     /// @brief Fetch a package's available versions (with declared dependencies)
     ///        from the NuGet feed (FindPackagesById). @p ok is set false on a
     ///        transport failure (so resolution records a fetch error); an empty
@@ -275,6 +285,18 @@ public:
     ///        inserting the chosen name into @p used. Two installer URLs that share
     ///        a basename must not write to the same file. Pure; unit-testable.
     [[nodiscard]] static QString uniqueFilename(const QString& desired, QSet<QString>& used);
+
+    /// @brief True if @p id is the Chocolatey FRAMEWORK package ('chocolatey',
+    ///        case-insensitive) -- which must NEVER be bundled or force-installed
+    ///        onto a target (it bootstraps Chocolatey there). Helper/extension
+    ///        packages (chocolatey.extension, ...) are NOT the framework. Pure.
+    [[nodiscard]] static bool isChocolateyFrameworkId(const QString& id);
+
+    /// @brief Reject a manifest-supplied token that is empty, option-like (a
+    ///        leading '-'), or carries whitespace/control chars, before it becomes
+    ///        a choco argv element -- defense in depth against a tampered manifest
+    ///        injecting a Chocolatey flag. Pure; unit-testable.
+    [[nodiscard]] static bool isSafeInstallToken(const QString& token);
 
 private:
     /// @brief Install one package from an offline bundle

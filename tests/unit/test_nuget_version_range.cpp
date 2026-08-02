@@ -47,6 +47,7 @@ private slots:
     void select_picksHighestInRange();
     void select_noneQualifyReturnsNullopt();
     void select_prefersStableOverPrereleaseAtEqualPrecedence();
+    void select_excludesPrereleaseUnlessRangeTargetsIt();
 };
 
 void TestNuGetVersionRange::parse_acceptsReleaseAndPrerelease() {
@@ -209,6 +210,29 @@ void TestNuGetVersionRange::select_prefersStableOverPrereleaseAtEqualPrecedence(
     QVERIFY(best.has_value());
     QCOMPARE(best->original(), QStringLiteral("2.0.0"));
     QVERIFY(!best->isPrerelease());
+}
+
+void TestNuGetVersionRange::select_excludesPrereleaseUnlessRangeTargetsIt() {
+    // A plain range must NOT pick a higher prerelease over a satisfying stable
+    // (NuGet default: prerelease is excluded). 2.0.0-beta is higher-precedence
+    // than 1.9.0 yet must lose.
+    const QVector<NuGetVersion> avail{v("2.0.0-beta"), v("1.9.0")};
+    const auto plain =
+        NuGetVersionRange::parse(QStringLiteral("[1.0,)")).selectHighestSatisfying(avail);
+    QVERIFY(plain.has_value());
+    QCOMPARE(plain->original(), QStringLiteral("1.9.0"));
+
+    // When a bound is itself a prerelease, prerelease candidates ARE eligible.
+    const auto targeted =
+        NuGetVersionRange::parse(QStringLiteral("[2.0.0-alpha,)")).selectHighestSatisfying(avail);
+    QVERIFY(targeted.has_value());
+    QCOMPARE(targeted->original(), QStringLiteral("2.0.0-beta"));
+
+    // A plain range with ONLY a prerelease available qualifies nothing.
+    const QVector<NuGetVersion> only_pre{v("2.0.0-beta")};
+    QVERIFY(!NuGetVersionRange::parse(QStringLiteral("[1.0,)"))
+                 .selectHighestSatisfying(only_pre)
+                 .has_value());
 }
 
 QTEST_APPLESS_MAIN(TestNuGetVersionRange)

@@ -79,6 +79,12 @@ bool startProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResul
     }
     proc->start(request.program, request.args);
     if (proc->waitForStarted(sak::kTimeoutProcessStartMs)) {
+        // Close the child's stdin so any tool that reads it gets immediate EOF
+        // instead of blocking. Chocolatey's non-elevated "Do you want to
+        // continue?" prompt (not suppressed by --yes) otherwise stalls ~20s per
+        // package waiting on a stdin that never arrives; with EOF it proceeds at
+        // once. We never write to a child's stdin, so this is always safe.
+        proc->closeWriteChannel();
         return true;
     }
     result->std_err = QStringLiteral("Failed to start process: %1").arg(proc->errorString());

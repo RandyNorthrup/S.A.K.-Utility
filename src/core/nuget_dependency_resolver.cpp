@@ -62,6 +62,40 @@ std::optional<FeedPackageVersion> selectPinnedVersion(const QString& pinned,
     return std::nullopt;
 }
 
+/// @brief True if a version range explicitly targets a prerelease (any of its
+///        bounds is itself a prerelease version). NuGet only considers prerelease
+///        candidates when the range opts in this way; otherwise a stable release
+///        must be chosen even if a higher prerelease exists (e.g. 1.9.0 wins over
+///        2.0.0-beta for "[1.0,)").
+bool rangeTargetsPrerelease(const QString& range) {
+    QString inner = range;
+    inner.remove(QLatin1Char('['))
+        .remove(QLatin1Char(']'))
+        .remove(QLatin1Char('('))
+        .remove(QLatin1Char(')'));
+    const QStringList bounds = inner.split(QLatin1Char(','));
+    for (const QString& bound : bounds) {
+        const auto v = NuGetVersion::parse(bound.trimmed());
+        if (v.has_value() && v->isPrerelease()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// @brief True if the id's own range OR any recorded constraint targets prerelease.
+bool anyRangeTargetsPrerelease(const QString& own_range, const QVector<QString>& constraints) {
+    if (rangeTargetsPrerelease(own_range)) {
+        return true;
+    }
+    for (const QString& range : constraints) {
+        if (rangeTargetsPrerelease(range)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 NuGetDependencyResolver::NuGetDependencyResolver(int max_depth, int max_packages)
@@ -84,7 +118,20 @@ void NuGetDependencyResolver::addRoot(const QString& root_id, const QString& roo
     }
     const QString lower = root_id.toLower();
     if (m_visited.contains(lower)) {
-        return;  // already scheduled (duplicate root, or already a dependency)
+        // Already scheduled (duplicate root, or already pulled in as a dependency).
+        // A second root that pins a DIFFERENT version cannot also be bundled (one
+        // version per id is scheduled), so surface the dropped pin instead of
+        // silently discarding it.
+        if (!root_version.isEmpty()) {
+            const QString range = QStringLiteral("[%1]").arg(root_version);
+            if (!m_constraints.value(lower).contains(range)) {
+                m_errors.append(
+                    QStringLiteral("Package %1 requested at multiple versions; keeping the first "
+                                   "and ignoring the additional pin %2")
+                        .arg(root_id, root_version));
+            }
+        }
+        return;
     }
     m_visited.insert(lower);
 
@@ -153,13 +200,20 @@ std::optional<FeedPackageVersion> NuGetDependencyResolver::selectVersion(
         return selectPinnedVersion(item.root_version, versions);
     }
 
+    // A prerelease candidate is only eligible when a relevant range explicitly
+    // targets prerelease (NuGet's default excludes prerelease), so a higher
+    // prerelease never shadows a satisfying stable release.
+    const bool allow_prerelease = anyRangeTargetsPrerelease(item.version_range,
+                                                            m_constraints.value(item.id.toLower()));
+
     // Honor EVERY declared range for this id (a diamond may constrain it from two
     // edges), picking the highest version that satisfies them all.
     std::optional<NuGetVersion> best;
     std::optional<FeedPackageVersion> chosen;
     for (const FeedPackageVersion& fv : versions) {
         const auto parsed = NuGetVersion::parse(fv.version);
-        if (!parsed.has_value() || !satisfiesAllConstraints(item.id, item.version_range, *parsed)) {
+        if (!parsed.has_value() || (parsed->isPrerelease() && !allow_prerelease) ||
+            !satisfiesAllConstraints(item.id, item.version_range, *parsed)) {
             continue;
         }
         if (isBetterCandidate(*parsed, best)) {

@@ -18,6 +18,7 @@
 #include <QDomElement>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QThread>
@@ -223,13 +224,20 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
 }
 
 bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& script_text) {
-    const QString lower = script_text.toLower();
-    if (lower.contains(QLatin1String("http://")) || lower.contains(QLatin1String("https://")) ||
-        lower.contains(QLatin1String("ftp://"))) {
-        return true;
-    }
+    // A nested Chocolatey invocation (`choco install dep`, `cinst dep`,
+    // `chocolatey upgrade x`) pulls another package from the feed at install time
+    // and CANNOT be constrained to the bundle, so a script whose action is a
+    // nested choco call is honestly a will-fetch even though the parser extracts
+    // no URL from it. Matched as whole words so a filename never trips it.
+    static const QRegularExpression kNestedChoco(
+        QStringLiteral("\\b(?:cinst|(?:choco(?:\\.exe)?|chocolatey)\\s+(?:install|upgrade))\\b"));
+
     // Raw download primitives. The recognized Chocolatey helpers are rewritten to
     // LOCAL paths before this runs, so their cmdlet names are NOT listed here.
+    // curl/wget are intentionally ABSENT: a genuine curl/wget download carries a
+    // URL (caught by the scheme check below), whereas the rewriter's local
+    // filename literal (e.g. 'curl-8.0.0.zip', 'wget.exe') would otherwise
+    // substring-match and falsely flag a fully-packed package as will-fetch.
     static const QStringList kDownloadTokens = {QStringLiteral("invoke-webrequest"),
                                                 QStringLiteral("invoke-restmethod"),
                                                 QStringLiteral("start-bitstransfer"),
@@ -238,12 +246,29 @@ bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& scrip
                                                 QStringLiteral("downloadstring"),
                                                 QStringLiteral("downloaddata"),
                                                 QStringLiteral("webclient"),
-                                                QStringLiteral("net.http"),
-                                                QStringLiteral("wget"),
-                                                QStringLiteral("curl")};
-    for (const QString& token : kDownloadTokens) {
-        if (lower.contains(token)) {
+                                                QStringLiteral("net.http")};
+
+    // Scan line by line so a full-line comment (an internalized package's
+    // homepage banner, `# https://project.example`) is not read as a live
+    // download; only executable lines count.
+    const QStringList lines = script_text.split(QLatin1Char('\n'));
+    for (const QString& raw_line : lines) {
+        const QString trimmed = raw_line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        const QString lower = trimmed.toLower();
+        if (lower.contains(QLatin1String("http://")) || lower.contains(QLatin1String("https://")) ||
+            lower.contains(QLatin1String("ftp://"))) {
             return true;
+        }
+        if (kNestedChoco.match(lower).hasMatch()) {
+            return true;
+        }
+        for (const QString& token : kDownloadTokens) {
+            if (lower.contains(token)) {
+                return true;
+            }
         }
     }
     return false;
@@ -430,13 +455,14 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
         return false;
     }
 
-    QFile file(nupkg_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        finishWithError(result, "Nupkg download failed: Cannot write nupkg file");
+    // Fail-closed write (QSaveFile + full-size + commit), so a disk-full partial
+    // write never leaves a truncated .nupkg that would then be extracted/repacked
+    // and shipped as a "successfully internalized" package.
+    QString write_error;
+    if (!writeBinaryBody(nupkg_path, transfer.body, write_error)) {
+        finishWithError(result, "Nupkg download failed: " + write_error);
         return false;
     }
-    file.write(transfer.body);
-    file.close();
 
     return true;
 }
@@ -625,9 +651,15 @@ QHash<QString, QPair<QString, QString>> PackageInternalizationEngine::binaryChec
     const ParsedInstallScript& parsed) {
     QHash<QString, QPair<QString, QString>> map;
     for (const auto& resource : parsed.resources) {
-        // The parser captures a single checksum, which applies to the primary URL.
+        // The primary URL carries checksum/checksumType; the 64-bit URL carries
+        // its own checksum64/checksumType64. Verify BOTH at build time -- a 64-bit
+        // installer that shipped unverified (only the 32-bit was checked) was the
+        // asymmetric integrity gap.
         if (!resource.url.isEmpty() && !resource.checksum.isEmpty()) {
             map.insert(resource.url, {resource.checksum, resource.checksum_type});
+        }
+        if (!resource.url_64bit.isEmpty() && !resource.checksum_64bit.isEmpty()) {
+            map.insert(resource.url_64bit, {resource.checksum_64bit, resource.checksum_type_64bit});
         }
     }
     return map;

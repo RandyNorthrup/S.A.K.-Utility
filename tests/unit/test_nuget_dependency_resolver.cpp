@@ -88,6 +88,8 @@ private slots:
     void resolvedPackageCarriesDirectDependencyIds();
     void parseDependencies_preservesRangesAndSkipsFrameworkMarkers();
     void parseODataFeedVersions_extractsVersionsAndDeps();
+    void prereleaseExcludedForPlainRange();
+    void duplicateRootDifferentVersionWarns();
 };
 
 void TestNuGetDependencyResolver::resolvesLinearChain() {
@@ -370,6 +372,36 @@ void TestNuGetDependencyResolver::parseODataFeedVersions_extractsVersionsAndDeps
     QCOMPARE(versions.at(0).dependencies.at(0).version_range, QStringLiteral("[1.0, )"));
     QCOMPARE(versions.at(1).version, QStringLiteral("2.0.0"));
     QVERIFY(versions.at(1).dependencies.isEmpty());
+}
+
+void TestNuGetDependencyResolver::prereleaseExcludedForPlainRange() {
+    // A plain (any) range must select the highest STABLE, never a higher
+    // prerelease -- matching NuGet/Chocolatey default resolution.
+    Feed feed;
+    feed["a"] = {fv("1.9.0"), fv("2.0.0-beta")};
+
+    NuGetDependencyResolver r;
+    r.start(QStringLiteral("a"), QString());
+    const auto resolved = drive(r, feed);
+
+    QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.9.0"));
+}
+
+void TestNuGetDependencyResolver::duplicateRootDifferentVersionWarns() {
+    // Two roots for the same id at different pins: one version is scheduled (the
+    // first), and the dropped pin is surfaced as a warning rather than silently
+    // discarded.
+    Feed feed;
+    feed["a"] = {fv("1.0.0"), fv("2.0.0")};
+
+    NuGetDependencyResolver r;
+    r.start(QStringLiteral("a"), QStringLiteral("1.0.0"));
+    r.addRoot(QStringLiteral("a"), QStringLiteral("2.0.0"));
+    const auto resolved = drive(r, feed);
+
+    QCOMPARE(countOf(resolved, "a"), 1);
+    QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.0.0"));
+    QVERIFY(!r.errors().isEmpty());
 }
 
 QTEST_APPLESS_MAIN(TestNuGetDependencyResolver)

@@ -287,21 +287,39 @@ bool NuGetVersionRange::satisfies(const NuGetVersion& version) const {
     return true;
 }
 
+namespace {
+/// @brief True if a range bound is a prerelease version (nullopt bound is not).
+bool boundIsPrerelease(const std::optional<NuGetVersion>& bound) {
+    return bound.has_value() && bound->isPrerelease();
+}
+
+/// @brief True if @p candidate should replace @p best: higher precedence wins,
+///        and at equal precedence a stable release displaces a prerelease.
+bool candidateBeats(const NuGetVersion& candidate, const std::optional<NuGetVersion>& best) {
+    if (!best.has_value()) {
+        return true;
+    }
+    const int cmp = candidate.compare(*best);
+    return cmp > 0 || (cmp == 0 && best->isPrerelease() && !candidate.isPrerelease());
+}
+}  // namespace
+
 std::optional<NuGetVersion> NuGetVersionRange::selectHighestSatisfying(
     const QVector<NuGetVersion>& available) const {
+    // Prerelease candidates are eligible only when a bound of this range is itself
+    // a prerelease (NuGet's default excludes prerelease), so a higher prerelease
+    // never shadows a satisfying stable release (e.g. 1.9.0 wins over 2.0.0-beta
+    // for "[1.0,)").
+    const bool allow_prerelease = boundIsPrerelease(m_lower) || boundIsPrerelease(m_upper);
     std::optional<NuGetVersion> best;
     for (const NuGetVersion& candidate : available) {
         if (!candidate.isValid() || !satisfies(candidate)) {
             continue;
         }
-        if (!best.has_value()) {
-            best = candidate;
+        if (candidate.isPrerelease() && !allow_prerelease) {
             continue;
         }
-        const int cmp = candidate.compare(*best);
-        // Higher precedence wins; at equal precedence prefer a stable release
-        // over a prerelease (they compare equal only if both stable).
-        if (cmp > 0 || (cmp == 0 && best->isPrerelease() && !candidate.isPrerelease())) {
+        if (candidateBeats(candidate, best)) {
             best = candidate;
         }
     }

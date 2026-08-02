@@ -23,9 +23,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QProcessEnvironment>
 #include <QSaveFile>
 #include <QSet>
-#include <QStandardPaths>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
@@ -82,11 +82,59 @@ QString installCompletionMessage(const BatchStats& stats) {
     }
     return summary;
 }
+
+/// @brief Validate the id + version a manifest entry will pass to choco: a safe
+/// package component AND non-option-like (defense in depth vs a tampered manifest).
+bool entryInstallTokensValid(const DeploymentManifestEntry& entry) {
+    return PackageInternalizationEngine::isSafePackageComponent(entry.package_id) &&
+           OfflineDeploymentWorker::isSafeInstallToken(entry.package_id) &&
+           OfflineDeploymentWorker::isSafeInstallToken(entry.version);
+}
+
+/// @brief Honest one-line outcome for a finished choco install attempt.
+QString installOutcomeText(const ProcessResult& process, bool success) {
+    if (process.cancelled) {
+        return QStringLiteral("Installation cancelled");
+    }
+    if (process.timed_out) {
+        return QStringLiteral("Installation timed out");
+    }
+    if (success) {
+        return QStringLiteral("Installed");
+    }
+    return (process.std_out.isEmpty() ? process.std_err : process.std_out)
+        .left(kInstallErrorPreviewChars);
+}
 }  // namespace
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+bool OfflineDeploymentWorker::isChocolateyFrameworkId(const QString& id) {
+    // The 'chocolatey' framework package bootstraps Chocolatey onto a machine
+    // (machine ChocolateyInstall env + PATH + %ProgramData%\chocolatey). A
+    // portable tool must never bundle/install it; the bundled portable choco
+    // provides the framework at deploy time. Many packages (git.install and
+    // virtually every *.install) declare it as a dependency, so it enters the
+    // closure and must be dropped. chocolatey.extension / chocolatey-core.extension
+    // are legitimate content and are NOT the framework.
+    return id.compare(QLatin1String("chocolatey"), Qt::CaseInsensitive) == 0;
+}
+
+bool OfflineDeploymentWorker::isSafeInstallToken(const QString& token) {
+    // isSafePackageComponent alone does NOT reject a leading '-', so a manifest id
+    // like "--production" (or a crafted version) could inject a Chocolatey flag.
+    if (token.isEmpty() || token.startsWith(QLatin1Char('-'))) {
+        return false;
+    }
+    for (const QChar c : token) {
+        if (c.isSpace() || c.unicode() < 0x20) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /// @brief Parse .nuspec in extract_dir for the first dependency package ID.
 /// Prefers dependencies ending in ".install" (e.g. 7zip → 7zip.install).
@@ -393,10 +441,24 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosu
     }
 
     warnings = resolver.errors();
+    return assembleClosureJobs(resolver.resolved(), requested, warnings);
+}
 
+QVector<BatchInternalizationJob> OfflineDeploymentWorker::assembleClosureJobs(
+    const QVector<ResolvedPackage>& resolved,
+    const QVector<BatchInternalizationJob>& requested,
+    QStringList& warnings) {
     QVector<BatchInternalizationJob> jobs;
     QSet<QString> resolved_ids;
-    for (const ResolvedPackage& pkg : resolver.resolved()) {
+    bool excluded_framework = false;
+    for (const ResolvedPackage& pkg : resolved) {
+        // Drop the 'chocolatey' framework package: bundling/force-installing it
+        // would bootstrap Chocolatey onto the clean target, which this portable
+        // tool must never do. The bundled portable choco supplies it at deploy.
+        if (isChocolateyFrameworkId(pkg.package_id)) {
+            excluded_framework = true;
+            continue;
+        }
         BatchInternalizationJob job;
         job.package_id = pkg.package_id;
         job.version = pkg.version;
@@ -410,6 +472,10 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosu
     // attempts it directly -- preserving the pre-closure behavior where every
     // requested package was built. Closure resolution only ADDS dependencies.
     for (const BatchInternalizationJob& req : requested) {
+        if (isChocolateyFrameworkId(req.package_id)) {
+            excluded_framework = true;
+            continue;
+        }
         if (!resolved_ids.contains(req.package_id.toLower())) {
             jobs.append(req);
             resolved_ids.insert(req.package_id.toLower());
@@ -418,6 +484,13 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosu
                                "attempting it directly")
                     .arg(req.package_id));
         }
+    }
+
+    if (excluded_framework) {
+        warnings.append(
+            QStringLiteral("Excluded the 'chocolatey' framework package from the payload; the "
+                           "bundled portable Chocolatey provides it at deploy time (it is never "
+                           "installed onto the target machine)."));
     }
 
     return jobs;
@@ -665,6 +738,16 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
         if (m_cancelled) {
             break;
         }
+        // Defense in depth against an older/tampered bundle: never force-install
+        // the Chocolatey framework onto a target (the build side already excludes
+        // it from the closure). The bundled portable choco supplies it at deploy.
+        if (isChocolateyFrameworkId(entry.package_id)) {
+            ++stats.skipped;
+            emitLog(QString("[%1] Skipped: the Chocolatey framework is never installed onto a "
+                            "target machine")
+                        .arg(entry.package_id));
+            continue;
+        }
         if (installDispositionFor(entry, offline_only) == InstallDisposition::SkipRequiresNetwork) {
             ++stats.skipped;
             // A skip is NOT a failure: surface it as a neutral log line so the UI
@@ -702,14 +785,17 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
 }
 
 QString OfflineDeploymentWorker::resolveChocoExecutable() {
-    // Prefer the bundled portable choco, then an absolute path off PATH. Never a
-    // bare "choco": runProcess would let the OS resolve it via cwd/PATH, so a
-    // planted choco.exe (e.g. in the working dir) could run with the app's rights.
+    // Portable technician tool: ONLY the choco.exe bundled with the app is ever
+    // run. Never a system-installed choco -- a target machine must not need one,
+    // and must not have Chocolatey installed onto it -- and never a bare "choco"
+    // (the OS would resolve it via cwd/PATH, so a planted choco.exe could run
+    // with the app's rights). A missing bundled copy is a packaging fault: fail
+    // closed rather than silently borrow the host's tooling.
     const auto& tools = BundledToolsManager::instance();
     if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
         return tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
     }
-    return QStandardPaths::findExecutable(QStringLiteral("choco"));
+    return QString();
 }
 
 bool OfflineDeploymentWorker::verifyBundledPackage(const DeploymentManifestEntry& entry,
@@ -775,7 +861,19 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
 
     const QString choco_exe = resolveChocoExecutable();
     if (choco_exe.isEmpty()) {
-        emitPackageOutcome(entry, false, QStringLiteral("Chocolatey (choco.exe) not found"));
+        emitPackageOutcome(entry,
+                           false,
+                           QStringLiteral("Bundled Chocolatey (choco.exe) missing from app"));
+        return false;
+    }
+
+    // Re-validate the id/version straight from the manifest BEFORE they become
+    // choco argv elements. A tampered manifest could otherwise smuggle an
+    // option-like token (leading '-') that choco parses as a flag.
+    if (!entryInstallTokensValid(entry)) {
+        emitPackageOutcome(entry,
+                           false,
+                           QStringLiteral("Rejected unsafe package id/version from manifest"));
         return false;
     }
 
@@ -787,27 +885,30 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
         return false;
     }
 
-    const auto process = runProcess(choco_exe,
-                                    {QStringLiteral("install"),
-                                     entry.package_id,
-                                     QStringLiteral("--version"),
-                                     entry.version,
-                                     QStringLiteral("--source"),
-                                     choco_source_dir,
-                                     QStringLiteral("--yes"),
-                                     QStringLiteral("--no-progress"),
-                                     QStringLiteral("--force")},
-                                    offline::kInstallTimeoutPerPackageMs,
-                                    [this]() { return m_cancelled.load(); });
+    // Point the child at the bundled portable Chocolatey root (the dir holding
+    // choco.exe), matching the search side. Without ChocolateyInstall a portable
+    // choco would fall back to %ProgramData%\chocolatey -- i.e. try to install
+    // onto the target machine's system location, which a portable tool must not
+    // do (and which does not exist on a clean target).
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(choco_exe).absolutePath());
+
+    const auto process = runProcessWithEnvironment(choco_exe,
+                                                   {QStringLiteral("install"),
+                                                    entry.package_id,
+                                                    QStringLiteral("--version"),
+                                                    entry.version,
+                                                    QStringLiteral("--source"),
+                                                    choco_source_dir,
+                                                    QStringLiteral("--yes"),
+                                                    QStringLiteral("--no-progress"),
+                                                    QStringLiteral("--force")},
+                                                   offline::kInstallTimeoutPerPackageMs,
+                                                   env,
+                                                   [this]() { return m_cancelled.load(); });
 
     const bool success = !process.timed_out && !process.cancelled && process.exit_code == 0;
-    const QString output = process.cancelled   ? QStringLiteral("Installation cancelled")
-                           : process.timed_out ? QStringLiteral("Installation timed out")
-                           : success
-                               ? QStringLiteral("Installed")
-                               : (process.std_out.isEmpty() ? process.std_err : process.std_out)
-                                     .left(kInstallErrorPreviewChars);
-    emitPackageOutcome(entry, success, output);
+    emitPackageOutcome(entry, success, installOutcomeText(process, success));
     return success;
 }
 
@@ -1321,12 +1422,43 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
     file.close();
 }
 
+static DeploymentManifestEntry parseManifestEntry(const QJsonObject& pkg) {
+    DeploymentManifestEntry entry;
+    entry.package_id = pkg["package_id"].toString();
+    entry.version = pkg["version"].toString();
+    entry.nupkg_filename = pkg["filename"].toString();
+    entry.checksum = pkg["checksum"].toString();
+    entry.size_bytes = pkg["size_bytes"].toInteger();
+    entry.internalized = pkg["internalized"].toBool();
+    // Older manifests predate offline_ready. Do NOT derive it from internalized
+    // (a self-contained package has internalized=false yet installs offline);
+    // default to true so such a manifest keeps its pre-gate behavior of attempting
+    // every package rather than newly skipping the offline ones.
+    entry.offline_ready = pkg.contains("offline_ready") ? pkg["offline_ready"].toBool() : true;
+    entry.offline_note = pkg["offline_note"].toString();
+
+    const QJsonArray deps = pkg["dependencies"].toArray();
+    for (const auto& dep : deps) {
+        entry.dependencies.append(dep.toString());
+    }
+    return entry;
+}
+
 DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) const {
     DeploymentManifest manifest;
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logError("[OfflineDeploymentWorker] Cannot read manifest: {}", path.toStdString());
+        return manifest;
+    }
+
+    // Bound a hostile/corrupt manifest BEFORE reading it wholesale into memory
+    // (the install side otherwise had no size cap, unlike the build side).
+    if (file.size() > offline::kMaxManifestBytes) {
+        sak::logError("[OfflineDeploymentWorker] Manifest too large: {} bytes (cap {})",
+                      static_cast<long long>(file.size()),
+                      static_cast<long long>(offline::kMaxManifestBytes));
         return manifest;
     }
 
@@ -1348,28 +1480,17 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
     manifest.total_size_bytes = root["total_size_bytes"].toInteger();
 
     QJsonArray packages_arr = root["packages"].toArray();
+    // Parity with the build-side kMaxPackagesPerBuild gate: refuse a manifest that
+    // lists more packages than a build could ever have produced, failing closed
+    // (an empty manifest -> installFromBundle reports "empty or unreadable").
+    if (packages_arr.size() > offline::kMaxPackagesPerBuild) {
+        sak::logError("[OfflineDeploymentWorker] Manifest lists {} packages; exceeds cap {}",
+                      static_cast<long long>(packages_arr.size()),
+                      static_cast<long long>(offline::kMaxPackagesPerBuild));
+        return DeploymentManifest{};
+    }
     for (const auto& val : packages_arr) {
-        QJsonObject pkg = val.toObject();
-        DeploymentManifestEntry entry;
-        entry.package_id = pkg["package_id"].toString();
-        entry.version = pkg["version"].toString();
-        entry.nupkg_filename = pkg["filename"].toString();
-        entry.checksum = pkg["checksum"].toString();
-        entry.size_bytes = pkg["size_bytes"].toInteger();
-        entry.internalized = pkg["internalized"].toBool();
-        // Older manifests predate offline_ready. Do NOT derive it from internalized
-        // (a self-contained package has internalized=false yet installs offline);
-        // default to true so such a manifest keeps its pre-gate behavior of
-        // attempting every package rather than newly skipping the offline ones.
-        entry.offline_ready = pkg.contains("offline_ready") ? pkg["offline_ready"].toBool() : true;
-        entry.offline_note = pkg["offline_note"].toString();
-
-        QJsonArray deps = pkg["dependencies"].toArray();
-        for (const auto& dep : deps) {
-            entry.dependencies.append(dep.toString());
-        }
-
-        manifest.packages.append(entry);
+        manifest.packages.append(parseManifestEntry(val.toObject()));
     }
 
     return manifest;

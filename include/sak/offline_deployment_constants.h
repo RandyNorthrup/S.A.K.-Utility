@@ -50,6 +50,12 @@ constexpr int kPackTimeoutMs = 60'000;
 constexpr int kInstallTimeoutPerPackageMs = 600'000;
 constexpr int kMaxDependencyDepth = 10;
 
+/// @brief Hard cap on a deployment manifest.json read from disk on the install
+/// side. 200 packages of metadata is a few dozen KiB, so 8 MiB is generous while
+/// still bounding a hostile/corrupt manifest before it is read wholesale into
+/// memory (parity with the build side's 32 MiB feed-read cap).
+constexpr long long kMaxManifestBytes = 8LL * 1024 * 1024;
+
 // ============================================================================
 // Checksums
 // ============================================================================

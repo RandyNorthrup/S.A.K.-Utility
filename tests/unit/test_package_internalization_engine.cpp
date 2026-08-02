@@ -95,6 +95,15 @@ void TestPackageInternalizationEngine::
         QStringLiteral("Start-BitsTransfer -Source http://host/f -Destination x")));
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("curl -o x ftp://h/f")));
+    // A nested Chocolatey invocation fetches another package from the feed at
+    // install time and cannot be constrained to the bundle -> honestly will-fetch,
+    // even though the parser extracts no URL from such a script.
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("choco install somedep -y")));
+    QVERIFY(
+        PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral("cinst othertool")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("choco.exe upgrade thing -y")));
 }
 
 void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnlyScripts() {
@@ -104,6 +113,19 @@ void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnly
     // An install from a LOCAL file (the internalized case) is not a network fetch.
     QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("Install-ChocolateyInstallPackage -File (Join-Path $toolsDir 'app.exe')")));
+    // curl/wget appearing ONLY as the rewriter's local filename (not a command
+    // with a URL) must not be read as a network fetch.
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral(
+        "Install-ChocolateyZipPackage -File (Join-Path $toolsDir 'curl-8.0.0.zip')")));
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Copy-Item (Join-Path $toolsDir 'wget.exe') $dest")));
+    // A full-line comment carrying a homepage URL is documentation, not a download.
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("# Project homepage: https://project.example/downloads")));
+    // A choco EXTENSION module reference (no install/upgrade verb) is not a nested
+    // install and must not trip the detector.
+    QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Import-Module chocolatey-core.extension")));
     QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(QString()));
 }
 

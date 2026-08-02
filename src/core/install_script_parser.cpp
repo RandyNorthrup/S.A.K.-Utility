@@ -130,6 +130,9 @@ void InstallScriptParser::extractInstallPackageParams(const QString& call_text,
 
     resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
     resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"), script);
+    resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"), script);
+    resource.checksum_type_64bit = resolveVariables(extractParameter(call_text, "checksumType64"),
+                                                    script);
     resource.file_name = resolveVariables(extractParameter(call_text, "fileName"), script);
 
     QString file_type = resolveVariables(extractParameter(call_text, "fileType"), script);
@@ -192,6 +195,10 @@ void InstallScriptParser::parseInstallChocolateyZipPackage(const QString& script
         resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
         resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"),
                                                   script);
+        resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"),
+                                                   script);
+        resource.checksum_type_64bit =
+            resolveVariables(extractParameter(call_text, "checksumType64"), script);
 
         result.package_type = "zip";
 
@@ -226,6 +233,10 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
         resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
         resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"),
                                                   script);
+        resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"),
+                                                   script);
+        resource.checksum_type_64bit =
+            resolveVariables(extractParameter(call_text, "checksumType64"), script);
 
         if (!resource.url.isEmpty() || !resource.url_64bit.isEmpty()) {
             result.resources.append(resource);
@@ -269,6 +280,9 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
     resource.url_64bit = resolveVariables(url64, script);
     resource.checksum = resolveVariables(extractHashtableValue(block, "checksum"), script);
     resource.checksum_type = resolveVariables(extractHashtableValue(block, "checksumType"), script);
+    resource.checksum_64bit = resolveVariables(extractHashtableValue(block, "checksum64"), script);
+    resource.checksum_type_64bit = resolveVariables(extractHashtableValue(block, "checksumType64"),
+                                                    script);
     resource.file_name = resolveVariables(extractHashtableValue(block, "fileName"), script);
 
     const QString file_type = extractHashtableValue(block, "fileType");

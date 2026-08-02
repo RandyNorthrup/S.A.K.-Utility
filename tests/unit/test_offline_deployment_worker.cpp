@@ -32,6 +32,8 @@ private Q_SLOTS:
     void installDispositionFor_skipsRequiresNetworkOnlyWhenOfflineOnly();
     void collectInstallerUrls_collectsEveryResourceDeduped();
     void uniqueFilename_disambiguatesCollidingBasenames();
+    void isChocolateyFrameworkId_matchesOnlyTheFrameworkPackage();
+    void isSafeInstallToken_rejectsOptionLikeAndBlankTokens();
 };
 
 void TestOfflineDeploymentWorker::classifyWorkDir_freshWhenMissingOrEmpty() {
@@ -230,6 +232,31 @@ void TestOfflineDeploymentWorker::uniqueFilename_disambiguatesCollidingBasenames
              QStringLiteral("installer"));
     QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("installer"), used),
              QStringLiteral("installer_1"));
+}
+
+void TestOfflineDeploymentWorker::isChocolateyFrameworkId_matchesOnlyTheFrameworkPackage() {
+    // The framework package itself must be recognized (case-insensitive) so it is
+    // never bundled/installed onto a target; helper/extension packages must NOT.
+    QVERIFY(OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("chocolatey")));
+    QVERIFY(OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("Chocolatey")));
+    QVERIFY(
+        !OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("chocolatey.extension")));
+    QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(
+        QStringLiteral("chocolatey-core.extension")));
+    QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("git.install")));
+}
+
+void TestOfflineDeploymentWorker::isSafeInstallToken_rejectsOptionLikeAndBlankTokens() {
+    // Normal ids/versions pass.
+    QVERIFY(OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("git.install")));
+    QVERIFY(OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("1.2.3-beta.1")));
+    // A tampered manifest must not inject a choco flag: reject option-like or
+    // whitespace/blank tokens.
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QString()));
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("--production")));
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("-x")));
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("a b")));
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("a\tb")));
 }
 
 QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)
