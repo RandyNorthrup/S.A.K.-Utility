@@ -568,9 +568,36 @@ void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* sideBySide) 
     sideBySide->addWidget(listGroup, 1);
 }
 
+void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actionsLayout) {
+    // Payload type selector + air-gap switch. (Provisional labels -- the final
+    // user-facing naming is being workshopped; see docs Batch 14 B14-14.)
+    auto* payloadRow = new QHBoxLayout();
+    payloadRow->addWidget(new QLabel(tr("Payload type:"), this));
+    m_payloadModeCombo = new QComboBox(this);
+    m_payloadModeCombo->addItem(tr("Self-contained bundle (installers packed in)"),
+                                static_cast<int>(sak::PayloadMode::Bundle));
+    m_payloadModeCombo->addItem(tr("Metadata list (target downloads at install)"),
+                                static_cast<int>(sak::PayloadMode::List));
+    m_payloadModeCombo->setToolTip(
+        tr("Bundle: download and pack every installer now (bundle once, deploy many; minimal "
+           "bandwidth at deploy).\nList: record only package names/versions; the target fetches "
+           "each installer at install time."));
+    payloadRow->addWidget(m_payloadModeCombo, 1);
+
+    m_airGapCheck = new QCheckBox(tr("Air-gap install (packed only)"), this);
+    m_airGapCheck->setToolTip(
+        tr("When installing on a disconnected machine, install only fully-packed packages and "
+           "skip any that would still need to download."));
+    payloadRow->addWidget(m_airGapCheck);
+    actionsLayout->addLayout(payloadRow);
+}
+
 void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) {
     auto* actionsGroup = new QGroupBox(tr("Deployment Actions"), this);
     auto* actionsLayout = new QVBoxLayout(actionsGroup);
+
+    setupPayloadModeControls(actionsLayout);
+
     auto* actionBtnRow = new QHBoxLayout();
 
     m_buildBundleButton = new QPushButton(tr("Build Offline Bundle"), this);

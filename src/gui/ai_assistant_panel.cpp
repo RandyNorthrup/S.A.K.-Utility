@@ -7085,14 +7085,23 @@ void AiAssistantPanel::startOfflineWorkerOperation(OfflineDeploymentWorker* work
         return;
     }
     if (operation == QLatin1String("build_bundle")) {
-        worker->buildDeploymentBundle(
-            packages, output_dir, QStringLiteral("S.A.K. Utility AI offline deployment bundle"));
+        // payload_mode: "list" = metadata-only (target downloads at install);
+        // anything else (default) = self-contained Bundle.
+        const bool as_list =
+            args.value(QStringLiteral("payload_mode")).toString().trimmed().toLower() ==
+            QLatin1String("list");
+        worker->buildDeploymentBundle(packages,
+                                      output_dir,
+                                      QStringLiteral("S.A.K. Utility AI deployment payload"),
+                                      as_list ? sak::PayloadMode::List : sak::PayloadMode::Bundle);
         return;
     }
     const QString manifest_path = args.value(QStringLiteral("manifest_path")).toString().trimmed();
     const QString packages_dir =
         QFileInfo(manifest_path).dir().filePath(QStringLiteral("packages"));
-    worker->installFromBundle(manifest_path, packages_dir);
+    // packed_only: air-gap install of a self-contained bundle (skip will-fetch).
+    const bool packed_only = args.value(QStringLiteral("packed_only")).toBool();
+    worker->installFromBundle(manifest_path, packages_dir, packed_only);
 }
 
 QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operation,

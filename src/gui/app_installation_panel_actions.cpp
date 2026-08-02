@@ -561,9 +561,9 @@ void AppInstallationPanel::onBuildBundle() {
     m_offline_in_progress = true;
     enableOfflineControls(false);
 
-    m_offline_worker->buildDeploymentBundle(packages,
-                                            output_dir,
-                                            tr("S.A.K. Utility offline deployment bundle"));
+    const auto mode = static_cast<sak::PayloadMode>(m_payloadModeCombo->currentData().toInt());
+    m_offline_worker->buildDeploymentBundle(
+        packages, output_dir, tr("S.A.K. Utility deployment payload"), mode);
 }
 
 void AppInstallationPanel::onInstallFromBundle() {
@@ -593,12 +593,23 @@ void AppInstallationPanel::onInstallFromBundle() {
         return;
     }
 
+    // Installing packages via choco writes machine locations -> require elevation
+    // (parity with onInstallAll), so a non-elevated run does not silently stall or
+    // half-install.
+    auto gate = sak::showElevationGate(
+        this,
+        tr("Install from Bundle"),
+        tr("Installing packages from a deployment payload requires administrator privileges."));
+    if (gate != sak::ElevationGateResult::AlreadyElevated) {
+        return;
+    }
+
     Q_EMIT logOutput(QString("=== Installing from Bundle: %1 ===").arg(manifest_path));
 
     m_offline_in_progress = true;
     enableOfflineControls(false);
 
-    m_offline_worker->installFromBundle(manifest_path, packages_dir);
+    m_offline_worker->installFromBundle(manifest_path, packages_dir, m_airGapCheck->isChecked());
 }
 
 void AppInstallationPanel::onDirectDownload() {
@@ -739,4 +750,6 @@ void AppInstallationPanel::enableOfflineControls(bool enabled) {
     m_installFromBundleButton->setEnabled(enabled);
     m_saveOfflineListButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
     m_loadOfflineListButton->setEnabled(enabled);
+    m_payloadModeCombo->setEnabled(enabled);
+    m_airGapCheck->setEnabled(enabled);
 }

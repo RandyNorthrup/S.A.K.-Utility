@@ -24,6 +24,22 @@
 
 namespace sak {
 
+/// @brief What kind of deployment payload to build / install from.
+///
+/// Two payloads, both deployed on the target by the app's OWN bundled portable
+/// choco (never a system choco, never installed onto the target):
+///   - Bundle: self-contained -- the installers are downloaded + internalized on
+///     the staging machine and packed in, so the target installs from local
+///     .nupkg files (bundle once, deploy many, minimal bandwidth at deploy).
+///   - List:   metadata-only -- just the package ids/versions; nothing is
+///     downloaded at build time and the target fetches each installer from the
+///     Chocolatey feed at install time (smallest payload).
+/// (Provisional internal names; the user-facing labels are workshopped separately.)
+enum class PayloadMode {
+    Bundle,
+    List
+};
+
 /// @brief Manifest entry for a single package in a deployment bundle
 struct DeploymentManifestEntry {
     QString package_id;
@@ -46,6 +62,17 @@ struct DeploymentManifest {
     QString output_dir;
     QVector<DeploymentManifestEntry> packages;
     qint64 total_size_bytes{0};
+    /// @brief Bundle (installers packed in) or List (metadata-only, target fetches).
+    ///        Drives the install source strategy. Defaults to Bundle so a manifest
+    ///        written before this field existed installs from its local packages.
+    PayloadMode payload_mode{PayloadMode::Bundle};
+};
+
+/// @brief Per-package install strategy, derived from the manifest's payload mode.
+struct BundleInstallContext {
+    QString source;            ///< local packages dir (Bundle) or feed URL (List)
+    bool ignore_dependencies;  ///< Bundle: true -- we install every closure member ourselves
+    bool verify_local;         ///< Bundle: verify the local .nupkg before handing it to choco
 };
 
 /// @brief A package to be internalized as part of a batch operation
@@ -107,19 +134,23 @@ public:
     /// @param description Optional user description for the manifest
     void buildDeploymentBundle(const QVector<QPair<QString, QString>>& packages,
                                const QString& output_dir,
-                               const QString& description = QString());
+                               const QString& description = QString(),
+                               PayloadMode mode = PayloadMode::Bundle);
 
-    /// @brief Install packages from a local deployment bundle
+    /// @brief Install packages from a deployment payload, using the app's OWN
+    ///        bundled portable choco. The source strategy follows the manifest's
+    ///        PayloadMode: a Bundle installs from @p choco_source_dir (local
+    ///        .nupkg files, dependency install handled by us); a List installs
+    ///        from the Chocolatey feed (choco resolves + downloads).
     /// @param manifest_path Path to the deployment manifest.json
-    /// @param choco_source_dir Path to the local package source directory
-    /// @param offline_only When true (the default for an OFFLINE bundle), a package
-    ///        the manifest marks not-offline-ready is SKIPPED with a clear
-    ///        "requires internet" outcome instead of being blindly handed to choco
-    ///        and failing with a generic error. Pass false to also attempt those
-    ///        (only useful when the target actually has internet).
+    /// @param choco_source_dir Path to the local package source directory (Bundle)
+    /// @param packed_only Air-gap switch (Bundle only): when true, install ONLY
+    ///        fully-packed packages and skip will-fetch ones with a clear reason.
+    ///        The default (false) installs everything -- packed content first,
+    ///        fetching any will-fetch remainder at install time.
     void installFromBundle(const QString& manifest_path,
                            const QString& choco_source_dir,
-                           bool offline_only = true);
+                           bool packed_only = false);
 
     /// @brief Download .nupkg files directly (no internalization)
     /// @param packages List of (package_id, version) pairs
@@ -207,8 +238,14 @@ private:
     ///        a recursive cleanup can never wipe unrelated user data (B10-13).
     [[nodiscard]] bool prepareOwnedWorkDir(const QString& work_dir, QString& error_out);
 
-    /// @brief Execute the build bundle operation on a background thread
+    /// @brief Execute a Bundle (self-contained) build on a background thread:
+    ///        resolve the closure, internalize + pack every installer.
     void executeBuildBundle(const QString& output_dir, const QString& description);
+
+    /// @brief Execute a List (metadata-only) build on a background thread: write a
+    ///        manifest of the requested packages with NO download/internalization.
+    ///        Fast and network-free; the target fetches each installer at install.
+    void executeBuildListManifest(const QString& output_dir, const QString& description);
 
     /// @brief Expand the requested package list (m_jobs) into the FULL transitive
     ///        dependency closure so the bundle actually contains everything an
@@ -261,20 +298,37 @@ private:
     /// @brief Execute bundle installation on a background thread
     void executeInstallFromBundle(DeploymentManifest manifest,
                                   QString choco_source_dir,
-                                  bool offline_only);
+                                  bool packed_only);
 
 public:
     /// @brief What to do with a bundle entry at install time.
     enum class InstallDisposition {
-        Install,              ///< install it (offline-ready, or online mode)
-        SkipRequiresNetwork,  ///< offline install + not offline-ready -> skip, don't fail
+        Install,        ///< install it (the default: install everything)
+        SkipNotPacked,  ///< air-gap (packed_only) + not fully packed -> skip, don't fail
     };
 
     /// @brief Decide whether a manifest entry should be installed or skipped.
-    ///        Pure; unit-testable. Under an offline install, a not-offline-ready
-    ///        entry is skipped (it would only fail against a dead network).
+    ///        The default installs everything; under the air-gap switch
+    ///        (@p packed_only) a not-fully-packed (will-fetch) entry is skipped so
+    ///        it does not fail against a deliberately disconnected target. Pure.
     [[nodiscard]] static InstallDisposition installDispositionFor(
-        const DeploymentManifestEntry& entry, bool offline_only);
+        const DeploymentManifestEntry& entry, bool packed_only);
+
+    /// @brief Order @p packages so every package's bundled dependencies install
+    ///        BEFORE it (a stable topological sort over the manifest's own
+    ///        dependency edges). Required because a Bundle install passes
+    ///        --ignore-dependencies (we install each closure member ourselves), so
+    ///        choco does not order them. A dependency cycle falls back to the
+    ///        original order. Pure; unit-testable.
+    [[nodiscard]] static QVector<DeploymentManifestEntry> topologicalInstallOrder(
+        const QVector<DeploymentManifestEntry>& packages);
+
+    /// @brief Build the per-package install strategy for a payload mode. Bundle
+    ///        installs from the local @p local_source_dir with --ignore-dependencies
+    ///        and local verification; List installs from the Chocolatey feed and
+    ///        lets choco resolve + download. Pure; unit-testable.
+    [[nodiscard]] static BundleInstallContext installContextForMode(
+        PayloadMode mode, const QString& local_source_dir);
 
     /// @brief Collect ALL installer URLs (32- and 64-bit, every resource) from a
     ///        parsed install script -- direct download must not silently drop the
@@ -299,11 +353,20 @@ public:
     [[nodiscard]] static bool isSafeInstallToken(const QString& token);
 
 private:
-    /// @brief Install one package from an offline bundle
+    /// @brief Install one package from a deployment payload, per @p install_ctx
+    ///        (local source + verify for Bundle, feed source for List).
     [[nodiscard]] bool installBundlePackage(const DeploymentManifestEntry& entry,
                                             int completed,
                                             int total,
-                                            const QString& choco_source_dir);
+                                            const BundleInstallContext& install_ctx);
+
+    /// @brief Install one manifest entry or skip it (Chocolatey framework, or an
+    ///        air-gap install of a not-fully-packed package), updating @p stats.
+    ///        Returns true when a mid-install cancel means the loop should stop.
+    [[nodiscard]] bool installOneManifestEntry(const DeploymentManifestEntry& entry,
+                                               bool packed_only,
+                                               const BundleInstallContext& install_ctx,
+                                               BatchStats& stats);
 
     /// @brief Resolve an absolute path to choco.exe (bundled portable first,
     ///        then PATH). Empty if not found -- callers must NOT fall back to a

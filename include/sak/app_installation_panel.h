@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFuture>
 #include <QGroupBox>
@@ -164,6 +165,7 @@ private:
     void setupOfflineSearchGroup(QHBoxLayout* sideBySide);
     void setupOfflineDeployListGroup(QHBoxLayout* sideBySide);
     void setupOfflineActionsGroup(QVBoxLayout* offlineLayout);
+    void setupPayloadModeControls(QVBoxLayout* actionsLayout);
     /** @brief Handle NuGet search completion on the main thread */
     void onOfflineSearchCompleted(bool success,
                                   const QString& output,
@@ -233,6 +235,8 @@ private:
     QPushButton* m_offlineAddButton{nullptr};
     QPushButton* m_offlineRemoveButton{nullptr};
     QPushButton* m_offlineClearButton{nullptr};
+    QComboBox* m_payloadModeCombo{nullptr};  ///< self-contained Bundle vs metadata List
+    QCheckBox* m_airGapCheck{nullptr};       ///< install: air-gap (packed-only) switch
     QPushButton* m_buildBundleButton{nullptr};
     QPushButton* m_installFromBundleButton{nullptr};
     QPushButton* m_directDownloadButton{nullptr};

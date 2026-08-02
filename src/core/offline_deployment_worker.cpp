@@ -72,7 +72,7 @@ QString installCompletionMessage(const BatchStats& stats) {
     QString summary =
         QString("Install complete: %1 installed, %2 failed").arg(stats.completed).arg(stats.failed);
     if (stats.skipped > 0) {
-        summary += QString(", %1 skipped (require internet)").arg(stats.skipped);
+        summary += QString(", %1 skipped (air-gap: not fully packed)").arg(stats.skipped);
     }
     if (stats.cancelled > 0) {
         summary += QString(", %1 cancelled").arg(stats.cancelled);
@@ -254,7 +254,8 @@ OfflineDeploymentWorker::~OfflineDeploymentWorker() {
 void OfflineDeploymentWorker::buildDeploymentBundle(
     const QVector<QPair<QString, QString>>& packages,
     const QString& output_dir,
-    const QString& description) {
+    const QString& description,
+    PayloadMode mode) {
     if (m_running) {
         Q_EMIT operationError("An operation is already running");
         return;
@@ -288,8 +289,18 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
     }
 
     Q_EMIT operationStarted(packages.size());
-    Q_EMIT logMessage(QString("Building deployment bundle: %1 package(s)").arg(packages.size()));
+    Q_EMIT logMessage(QString("Building %1 payload: %2 package(s)")
+                          .arg(mode == PayloadMode::List
+                                   ? QStringLiteral("List (metadata-only)")
+                                   : QStringLiteral("Bundle (self-contained)"))
+                          .arg(packages.size()));
 
+    if (mode == PayloadMode::List) {
+        m_operation_future = QtConcurrent::run([this, output_dir, description]() {
+            executeBuildListManifest(output_dir, description);
+        });
+        return;
+    }
     m_operation_future = QtConcurrent::run(
         [this, output_dir, description]() { executeBuildBundle(output_dir, description); });
 }
@@ -332,6 +343,7 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     manifest.creator = "S.A.K. Utility";
     manifest.description = description;
     manifest.output_dir = output_dir;
+    manifest.payload_mode = PayloadMode::Bundle;
 
     QMutexLocker lock(&m_mutex);
     ctx.total_jobs = m_jobs.size();
@@ -355,6 +367,67 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     }
 
     finalizeBundle(manifest, ctx);
+}
+
+void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir,
+                                                       const QString& description) {
+    // List payload: metadata only. No closure resolution, no download -- the
+    // target's bundled choco fetches + resolves each package from the feed at
+    // install time. Fast and network-free to build.
+    QVector<BatchInternalizationJob> requested;
+    {
+        QMutexLocker lock(&m_mutex);
+        requested = m_jobs;
+    }
+
+    DeploymentManifest manifest;
+    manifest.manifest_version = offline::kManifestVersion;
+    manifest.created_date = QDateTime::currentDateTime().toString(Qt::ISODate);
+    manifest.creator = "S.A.K. Utility";
+    manifest.description = description;
+    manifest.output_dir = output_dir;
+    manifest.payload_mode = PayloadMode::List;
+
+    for (const BatchInternalizationJob& job : requested) {
+        if (isChocolateyFrameworkId(job.package_id)) {
+            continue;  // never deploy the Chocolatey framework onto a target
+        }
+        DeploymentManifestEntry entry;
+        entry.package_id = job.package_id;
+        entry.version = job.version;
+        entry.internalized = false;
+        entry.offline_ready = false;  // a List entry always fetches at install time
+        entry.offline_note =
+            QStringLiteral("metadata-only; downloaded from the Chocolatey feed at install");
+        manifest.packages.append(entry);
+    }
+
+    QDir(output_dir).mkpath(QStringLiteral("."));
+    if (manifest.packages.isEmpty() || !writeManifest(manifest, output_dir)) {
+        m_running = false;
+        QMetaObject::invokeMethod(
+            this,
+            [this]() { Q_EMIT operationError("Failed to write the List payload manifest"); },
+            Qt::QueuedConnection);
+        return;
+    }
+    writeReadme(manifest, output_dir);
+
+    BatchStats stats;
+    stats.total = manifest.packages.size();
+    stats.completed = manifest.packages.size();
+    stats.requires_network = manifest.packages.size();
+
+    m_running = false;
+    QMetaObject::invokeMethod(
+        this,
+        [this, stats, output_dir]() {
+            Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
+            Q_EMIT logMessage(QString("List payload written: %1 package(s), fetched at install")
+                                  .arg(stats.total));
+            Q_EMIT operationCompleted(stats);
+        },
+        Qt::QueuedConnection);
 }
 
 // ============================================================================
@@ -691,19 +764,89 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
 // ============================================================================
 
 OfflineDeploymentWorker::InstallDisposition OfflineDeploymentWorker::installDispositionFor(
-    const DeploymentManifestEntry& entry, bool offline_only) {
-    // Under an offline install, a package that is not offline-ready would only
-    // fail against a dead network, so skip it with a clear reason instead of
-    // handing it to choco and reporting a generic install failure.
-    if (offline_only && !entry.offline_ready) {
-        return InstallDisposition::SkipRequiresNetwork;
+    const DeploymentManifestEntry& entry, bool packed_only) {
+    // Default: install everything. Only the air-gap switch (packed_only) skips a
+    // not-fully-packed (will-fetch) package -- on a deliberately disconnected
+    // target it could only fail, so skip it with a clear reason instead.
+    if (packed_only && !entry.offline_ready) {
+        return InstallDisposition::SkipNotPacked;
     }
     return InstallDisposition::Install;
 }
 
+// Fill the dependency edges among @p packages: enables[d] gets each package that
+// depends on d, and in_degree[i] counts i's dependencies that are present in the
+// set. Only intra-set edges count (a dependency not in the payload is ignored).
+static void buildInstallEdges(const QVector<DeploymentManifestEntry>& packages,
+                              const QHash<QString, int>& index_by_id,
+                              QVector<QVector<int>>& enables,
+                              QVector<int>& in_degree) {
+    for (int i = 0; i < packages.size(); ++i) {
+        for (const QString& dep : packages[i].dependencies) {
+            const auto it = index_by_id.constFind(dep.toLower());
+            if (it != index_by_id.constEnd() && *it != i) {
+                enables[*it].append(i);
+                ++in_degree[i];
+            }
+        }
+    }
+}
+
+QVector<DeploymentManifestEntry> OfflineDeploymentWorker::topologicalInstallOrder(
+    const QVector<DeploymentManifestEntry>& packages) {
+    QHash<QString, int> index_by_id;
+    for (int i = 0; i < packages.size(); ++i) {
+        index_by_id.insert(packages[i].package_id.toLower(), i);
+    }
+    QVector<QVector<int>> enables(packages.size());
+    QVector<int> in_degree(packages.size(), 0);
+    buildInstallEdges(packages, index_by_id, enables, in_degree);
+
+    QVector<int> queue;
+    for (int i = 0; i < packages.size(); ++i) {
+        if (in_degree[i] == 0) {
+            queue.append(i);  // deps-free packages first, in original order (stable)
+        }
+    }
+    QVector<DeploymentManifestEntry> ordered;
+    QVector<bool> emitted(packages.size(), false);
+    for (int head = 0; head < queue.size(); ++head) {
+        const int n = queue[head];
+        ordered.append(packages[n]);
+        emitted[n] = true;
+        for (const int m : enables[n]) {
+            if (--in_degree[m] == 0) {
+                queue.append(m);
+            }
+        }
+    }
+    // A dependency cycle leaves some packages unemitted: append them in original
+    // order so nothing is ever dropped from the install set.
+    for (int i = 0; i < packages.size(); ++i) {
+        if (!emitted[i]) {
+            ordered.append(packages[i]);
+        }
+    }
+    return ordered;
+}
+
+BundleInstallContext OfflineDeploymentWorker::installContextForMode(
+    PayloadMode mode, const QString& local_source_dir) {
+    if (mode == PayloadMode::List) {
+        // Metadata-only payload: install straight from the Chocolatey feed and let
+        // choco resolve + download dependencies. No local .nupkg to verify.
+        return {offline::kNuGetBaseUrl, /*ignore_dependencies=*/false, /*verify_local=*/false};
+    }
+    // Self-contained bundle: install from the local packages dir. We install every
+    // closure member ourselves (in topological order), so choco must NOT re-resolve
+    // dependencies -- otherwise it would demand the excluded 'chocolatey' framework
+    // from a local-only source and fail. Verify each local .nupkg first.
+    return {local_source_dir, /*ignore_dependencies=*/true, /*verify_local=*/true};
+}
+
 void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
                                                 const QString& choco_source_dir,
-                                                bool offline_only) {
+                                                bool packed_only) {
     if (m_running) {
         Q_EMIT operationError("An operation is already running");
         return;
@@ -718,54 +861,73 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
     m_running = true;
     m_cancelled = false;
 
+    const bool is_list = manifest.payload_mode == PayloadMode::List;
     Q_EMIT operationStarted(manifest.packages.size());
-    Q_EMIT logMessage(QString("Installing from bundle: %1 package(s)%2")
-                          .arg(manifest.packages.size())
-                          .arg(offline_only ? QStringLiteral(" (offline mode)") : QString()));
+    Q_EMIT logMessage(
+        QString("Installing %1 payload: %2 package(s)%3")
+            .arg(is_list ? QStringLiteral("List") : QStringLiteral("Bundle"))
+            .arg(manifest.packages.size())
+            .arg(packed_only && !is_list ? QStringLiteral(" (air-gap: packed only)") : QString()));
 
-    m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir, offline_only]() {
-        executeInstallFromBundle(manifest, choco_source_dir, offline_only);
+    m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir, packed_only]() {
+        executeInstallFromBundle(manifest, choco_source_dir, packed_only);
     });
+}
+
+bool OfflineDeploymentWorker::installOneManifestEntry(const DeploymentManifestEntry& entry,
+                                                      bool packed_only,
+                                                      const BundleInstallContext& install_ctx,
+                                                      BatchStats& stats) {
+    // Defense in depth against an older/tampered bundle: never force-install the
+    // Chocolatey framework onto a target (the build side already excludes it).
+    if (isChocolateyFrameworkId(entry.package_id)) {
+        ++stats.skipped;
+        emitLog(QString("[%1] Skipped: the Chocolatey framework is never installed onto a target "
+                        "machine")
+                    .arg(entry.package_id));
+        return false;
+    }
+    if (installDispositionFor(entry, packed_only) == InstallDisposition::SkipNotPacked) {
+        ++stats.skipped;
+        // A skip is NOT a failure: surface it as a neutral log line so the UI does
+        // not render a skipped package as a failed one.
+        emitLog(QString("[%1] Skipped: not fully packed, air-gap install requested -- %2")
+                    .arg(entry.package_id, entry.offline_note));
+        return false;
+    }
+    const bool ok = installBundlePackage(entry, stats.completed, stats.total, install_ctx);
+    if (ok) {
+        ++stats.completed;
+    } else if (m_cancelled) {
+        ++stats.cancelled;  // interrupted mid-install -- not a hard failure
+    } else {
+        ++stats.failed;
+    }
+    return m_cancelled.load();
 }
 
 void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manifest,
                                                        QString choco_source_dir,
-                                                       bool offline_only) {
-    BatchStats stats;
-    stats.total = manifest.packages.size();
+                                                       bool packed_only) {
+    const BundleInstallContext install_ctx = installContextForMode(manifest.payload_mode,
+                                                                   choco_source_dir);
+    // Air-gap (packed-only) applies only to a self-contained Bundle; a List always
+    // fetches at install. A Bundle installs with --ignore-dependencies, so order
+    // its packages dependencies-first.
+    const bool is_bundle = manifest.payload_mode == PayloadMode::Bundle;
+    const bool effective_packed_only = packed_only && is_bundle;
+    const QVector<DeploymentManifestEntry> ordered =
+        is_bundle ? topologicalInstallOrder(manifest.packages) : manifest.packages;
 
-    for (const auto& entry : manifest.packages) {
+    BatchStats stats;
+    stats.total = ordered.size();
+
+    for (const auto& entry : ordered) {
         if (m_cancelled) {
             break;
         }
-        // Defense in depth against an older/tampered bundle: never force-install
-        // the Chocolatey framework onto a target (the build side already excludes
-        // it from the closure). The bundled portable choco supplies it at deploy.
-        if (isChocolateyFrameworkId(entry.package_id)) {
-            ++stats.skipped;
-            emitLog(QString("[%1] Skipped: the Chocolatey framework is never installed onto a "
-                            "target machine")
-                        .arg(entry.package_id));
-            continue;
-        }
-        if (installDispositionFor(entry, offline_only) == InstallDisposition::SkipRequiresNetwork) {
-            ++stats.skipped;
-            // A skip is NOT a failure: surface it as a neutral log line so the UI
-            // does not render a skipped package as a failed one.
-            emitLog(QString("[%1] Skipped: requires internet (not internalized) -- %2")
-                        .arg(entry.package_id, entry.offline_note));
-            continue;
-        }
-        const bool ok = installBundlePackage(entry, stats.completed, stats.total, choco_source_dir);
-        if (ok) {
-            ++stats.completed;
-        } else if (m_cancelled) {
-            ++stats.cancelled;  // interrupted mid-install -- not a hard failure
-        } else {
-            ++stats.failed;
-        }
-        if (m_cancelled) {
-            break;  // stop; remaining packages become "pending" below
+        if (installOneManifestEntry(entry, effective_packed_only, install_ctx, stats)) {
+            break;  // cancelled mid-install; remaining packages become "pending"
         }
     }
 
@@ -847,10 +1009,31 @@ void OfflineDeploymentWorker::emitPackageOutcome(const DeploymentManifestEntry& 
         Qt::QueuedConnection);
 }
 
+// Build the choco install argv for a manifest entry. A Bundle passes
+// --ignore-dependencies (we install every closure member ourselves in dependency
+// order), so choco does not re-resolve and demand the excluded 'chocolatey'
+// framework from a local-only source.
+static QStringList chocoInstallArgs(const DeploymentManifestEntry& entry,
+                                    const BundleInstallContext& install_ctx) {
+    QStringList args{QStringLiteral("install"),
+                     entry.package_id,
+                     QStringLiteral("--version"),
+                     entry.version,
+                     QStringLiteral("--source"),
+                     install_ctx.source,
+                     QStringLiteral("--yes"),
+                     QStringLiteral("--no-progress"),
+                     QStringLiteral("--force")};
+    if (install_ctx.ignore_dependencies) {
+        args.append(QStringLiteral("--ignore-dependencies"));
+    }
+    return args;
+}
+
 bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry& entry,
                                                    int completed,
                                                    int total,
-                                                   const QString& choco_source_dir) {
+                                                   const BundleInstallContext& install_ctx) {
     QMetaObject::invokeMethod(
         this,
         [this, completed, total, entry]() {
@@ -877,12 +1060,14 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
         return false;
     }
 
-    // Verify the bundled artifact against the manifest before install, so a
-    // tampered/substituted .nupkg in the source dir is never handed to choco.
-    QString verify_error;
-    if (!verifyBundledPackage(entry, choco_source_dir, verify_error)) {
-        emitPackageOutcome(entry, false, verify_error);
-        return false;
+    // Verify the bundled artifact against the manifest before install (Bundle mode
+    // only -- a List payload has no local .nupkg; choco downloads it from the feed).
+    if (install_ctx.verify_local) {
+        QString verify_error;
+        if (!verifyBundledPackage(entry, install_ctx.source, verify_error)) {
+            emitPackageOutcome(entry, false, verify_error);
+            return false;
+        }
     }
 
     // Point the child at the bundled portable Chocolatey root (the dir holding
@@ -894,15 +1079,7 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
     env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(choco_exe).absolutePath());
 
     const auto process = runProcessWithEnvironment(choco_exe,
-                                                   {QStringLiteral("install"),
-                                                    entry.package_id,
-                                                    QStringLiteral("--version"),
-                                                    entry.version,
-                                                    QStringLiteral("--source"),
-                                                    choco_source_dir,
-                                                    QStringLiteral("--yes"),
-                                                    QStringLiteral("--no-progress"),
-                                                    QStringLiteral("--force")},
+                                                   chocoInstallArgs(entry, install_ctx),
                                                    offline::kInstallTimeoutPerPackageMs,
                                                    env,
                                                    [this]() { return m_cancelled.load(); });
@@ -1326,6 +1503,8 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
     root["creator"] = manifest.creator;
     root["description"] = manifest.description;
     root["total_size_bytes"] = manifest.total_size_bytes;
+    root["payload_mode"] = manifest.payload_mode == PayloadMode::List ? QStringLiteral("list")
+                                                                      : QStringLiteral("bundle");
 
     QJsonArray packages_arr;
     for (const auto& entry : manifest.packages) {
@@ -1372,6 +1551,24 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
     return true;
 }
 
+// Write the per-package section of a payload README. Bundle entries are tagged
+// FULLY PACKED / WILL FETCH; a List has no such tag (everything downloads).
+static void writeReadmePackageList(QTextStream& stream,
+                                   const DeploymentManifest& manifest,
+                                   bool is_list) {
+    stream << "Included Packages:\n";
+    for (const auto& entry : manifest.packages) {
+        stream << "  - " << entry.package_id << " v" << entry.version;
+        if (!is_list) {
+            stream << " -- " << (entry.offline_ready ? "FULLY PACKED" : "WILL FETCH");
+        }
+        if (!entry.offline_note.isEmpty()) {
+            stream << " (" << entry.offline_note << ")";
+        }
+        stream << "\n";
+    }
+}
+
 void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
                                           const QString& output_dir) const {
     QString readme_path = output_dir + "/" + offline::kReadmeFilename;
@@ -1380,44 +1577,46 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
         return;
     }
 
+    const bool is_list = manifest.payload_mode == PayloadMode::List;
     QTextStream stream(&file);
-    stream << "S.A.K. Utility - Offline Deployment Package\n";
-    stream << "============================================\n\n";
+    stream << "S.A.K. Utility - Deployment Payload\n";
+    stream << "===================================\n\n";
+    stream << "Type: "
+           << (is_list ? "List (metadata-only; installers downloaded at install time)"
+                       : "Bundle (self-contained; installers packed in)")
+           << "\n";
     stream << "Created: " << manifest.created_date << "\n";
     if (!manifest.description.isEmpty()) {
         stream << "Description: " << manifest.description << "\n";
     }
-    int offline_capable = 0;
+
+    int packed = 0;
     for (const auto& entry : manifest.packages) {
         if (entry.offline_ready) {
-            ++offline_capable;
+            ++packed;
         }
     }
-    stream << "Packages: " << manifest.packages.size() << " (" << offline_capable
-           << " install fully offline, " << (manifest.packages.size() - offline_capable)
-           << " may require internet)\n\n";
-
-    stream << "Included Packages:\n";
-    for (const auto& entry : manifest.packages) {
-        stream << "  - " << entry.package_id << " v" << entry.version << " -- "
-               << (entry.offline_ready ? "OFFLINE-READY" : "REQUIRES INTERNET");
-        if (!entry.offline_note.isEmpty()) {
-            stream << " (" << entry.offline_note << ")";
-        }
-        stream << "\n";
+    if (is_list) {
+        stream << "Packages: " << manifest.packages.size()
+               << " (all fetched from the Chocolatey feed at install)\n\n";
+    } else {
+        stream << "Packages: " << manifest.packages.size() << " (" << packed << " fully packed, "
+               << (manifest.packages.size() - packed) << " fetch a remainder at install)\n\n";
     }
 
-    if (offline_capable < manifest.packages.size()) {
-        stream << "\nNOTE: packages marked REQUIRES INTERNET could not have their installer\n";
-        stream << "internalized; installing them on a disconnected machine will fail. The\n";
-        stream << "offline install skips them by default.\n";
-    }
+    writeReadmePackageList(stream, manifest, is_list);
 
     stream << "\nInstallation:\n";
     stream << "  1. Copy this folder to the target machine\n";
     stream << "  2. Open S.A.K. Utility on the target machine\n";
     stream << "  3. Go to App Management > Offline Deploy tab\n";
     stream << "  4. Click 'Install from Bundle' and select manifest.json\n";
+    stream << "     (installs via the app's OWN bundled Chocolatey; nothing is installed onto the "
+              "machine itself)\n";
+    if (is_list) {
+        stream << "  Note: the target needs internet -- each installer is downloaded, then "
+                  "installed.\n";
+    }
 
     file.close();
 }
@@ -1478,6 +1677,11 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
     manifest.creator = root["creator"].toString();
     manifest.description = root["description"].toString();
     manifest.total_size_bytes = root["total_size_bytes"].toInteger();
+    // Absent (pre-field manifest) -> Bundle, so an older bundle installs from its
+    // local packages exactly as before.
+    manifest.payload_mode = root["payload_mode"].toString() == QLatin1String("list")
+                                ? PayloadMode::List
+                                : PayloadMode::Bundle;
 
     QJsonArray packages_arr = root["packages"].toArray();
     // Parity with the build-side kMaxPackagesPerBuild gate: refuse a manifest that
