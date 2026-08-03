@@ -16,6 +16,7 @@
  *   - Tests run without admin privileges.
  */
 
+#include <QDir>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -161,6 +162,15 @@ private slots:
 
     // ---- R3-03/R3-09: content verification passes a good copy ----
     void verifyGoodCopySucceeds();
+
+    // ---- AppData source filtering + netsh path resolution (residual wiring) ----
+    void appDataEmptySourcesNeverExcludes();
+    void appDataUncheckedSourceExcludesSubtree();
+    void appDataCheckedSourceNotExcluded();
+    void appDataLongestPrefixWins();
+    void appDataUnrelatedPathNotExcluded();
+    void system32NetshResolvesUnderSystemRoot();
+    void system32NetshEmptyWhenNoSystemRoot();
 };
 
 // ===========================================================================
@@ -1211,6 +1221,95 @@ void UserProfileRestoreWorkerTests::verifyGoodCopySucceeds() {
 
     const QString destFile = destDir.path() + "/Users/VUser/Documents/verify.txt";
     QVERIFY(QFile::exists(destFile));
+}
+
+// ===========================================================================
+// Tests — AppData source filtering (honoring the restore AppData page)
+// ===========================================================================
+
+namespace {
+sak::AppDataSourceInfo makeSource(const QString& relPath, bool selected) {
+    sak::AppDataSourceInfo s;
+    s.relative_path = relPath;
+    s.selected = selected;
+    return s;
+}
+}  // namespace
+
+void UserProfileRestoreWorkerTests::appDataEmptySourcesNeverExcludes() {
+    using RW = sak::UserProfileRestoreWorker;
+    // No selection forwarded (legacy backup / page never shown) restores everything.
+    QVERIFY(!RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Chrome"), {}));
+}
+
+void UserProfileRestoreWorkerTests::appDataUncheckedSourceExcludesSubtree() {
+    using RW = sak::UserProfileRestoreWorker;
+    QVector<sak::AppDataSourceInfo> sources{
+        makeSource(QStringLiteral("AppData/Local/Google/Chrome"), false)};
+    // The source root and everything beneath it are excluded; separators and case
+    // are normalized.
+    QVERIFY(RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Chrome"), sources));
+    QVERIFY(RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Chrome/User Data/x"),
+                                      sources));
+    QVERIFY(RW::isAppDataPathExcluded(QStringLiteral("appdata\\local\\google\\chrome\\Default"),
+                                      sources));
+}
+
+void UserProfileRestoreWorkerTests::appDataCheckedSourceNotExcluded() {
+    using RW = sak::UserProfileRestoreWorker;
+    QVector<sak::AppDataSourceInfo> sources{
+        makeSource(QStringLiteral("AppData/Local/Google/Chrome"), true)};
+    QVERIFY(!RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Chrome/User Data"),
+                                       sources));
+}
+
+void UserProfileRestoreWorkerTests::appDataLongestPrefixWins() {
+    using RW = sak::UserProfileRestoreWorker;
+    // A checked child under an unchecked parent path: the most specific (longest)
+    // matching source decides, so the child is restored.
+    QVector<sak::AppDataSourceInfo> sources{
+        makeSource(QStringLiteral("AppData/Local/Google"), false),
+        makeSource(QStringLiteral("AppData/Local/Google/Chrome"), true)};
+    QVERIFY(RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Earth"), sources));
+    QVERIFY(
+        !RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/Chrome/Default"), sources));
+}
+
+void UserProfileRestoreWorkerTests::appDataUnrelatedPathNotExcluded() {
+    using RW = sak::UserProfileRestoreWorker;
+    QVector<sak::AppDataSourceInfo> sources{
+        makeSource(QStringLiteral("AppData/Local/Google/Chrome"), false)};
+    // A path that only shares a partial segment name must NOT be excluded (segment
+    // aware: "Chrome" != "ChromeBeta").
+    QVERIFY(!RW::isAppDataPathExcluded(QStringLiteral("AppData/Local/Google/ChromeBeta"), sources));
+    QVERIFY(!RW::isAppDataPathExcluded(QStringLiteral("Documents/report.docx"), sources));
+}
+
+void UserProfileRestoreWorkerTests::system32NetshResolvesUnderSystemRoot() {
+    using RW = sak::UserProfileRestoreWorker;
+    const QByteArray saved = qgetenv("SystemRoot");
+    qputenv("SystemRoot", QByteArrayLiteral("C:\\Windows"));
+    const QString netsh = RW::resolveSystem32Netsh();
+    if (saved.isEmpty()) {
+        qunsetenv("SystemRoot");
+    } else {
+        qputenv("SystemRoot", saved);
+    }
+    // Fully qualified under System32 (no bare "netsh.exe" search-order exposure).
+    const QString normalized = QDir::fromNativeSeparators(netsh).toLower();
+    QVERIFY2(normalized.endsWith(QStringLiteral("/windows/system32/netsh.exe")), qPrintable(netsh));
+}
+
+void UserProfileRestoreWorkerTests::system32NetshEmptyWhenNoSystemRoot() {
+    using RW = sak::UserProfileRestoreWorker;
+    const QByteArray saved = qgetenv("SystemRoot");
+    qunsetenv("SystemRoot");
+    const QString netsh = RW::resolveSystem32Netsh();
+    if (!saved.isEmpty()) {
+        qputenv("SystemRoot", saved);
+    }
+    // Fail closed: no guessed path when %SystemRoot% is unavailable.
+    QVERIFY(netsh.isEmpty());
 }
 
 QTEST_MAIN(UserProfileRestoreWorkerTests)

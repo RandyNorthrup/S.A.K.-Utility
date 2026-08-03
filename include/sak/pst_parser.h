@@ -232,6 +232,21 @@ private:
     /// Parse format-specific ROOT pointers
     void parseHeaderRootPointers(const QByteArray& data);
 
+    /// Verify the header integrity CRCs (MS-PST 2.2.2.6 dwCRCPartial, plus
+    /// dwCRCFull for Unicode/Unicode4k). Fails closed on mismatch so a corrupt
+    /// or forged header is rejected rather than mined for garbage BTree pointers.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyHeaderIntegrity(
+        const QByteArray& data);
+
+    /// Verify a block's on-disk trailer (MS-PST 2.2.2.8.1 BLOCKTRAILER, or the
+    /// Unicode4k block footer): declared size, dwCRC over the raw cb bytes, and
+    /// the ComputeSig(file_offset, bid) signature. @p raw is the exact cb on-disk
+    /// bytes (pre-decompress/pre-decrypt), matching how the CRC was authored.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyBlockTrailer(const QByteArray& raw,
+                                                                          uint64_t file_offset,
+                                                                          int cb,
+                                                                          uint64_t bid);
+
     /// Log validated header metadata
     void logParsedHeader() const;
 
@@ -243,6 +258,14 @@ private:
     /// zeroed or mistyped page cannot be walked as a BTree.
     [[nodiscard]] std::expected<BTreePageInfo, sak::error_code> parseBTreePage(
         uint64_t page_offset, int depth, uint8_t expected_ptype);
+
+    /// Verify a BTree page's PAGETRAILER (dwCRC over the page body + wSig =
+    /// ComputeSig(page ib, page bid)). Fails closed on mismatch.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyPageTrailer(
+        const QByteArray& page_data, const PageFormatSizes& fmt, uint64_t page_offset);
+
+    /// Parse the format-dependent BTree page metadata (entry count/size, level).
+    void parsePageMeta(BTreePageInfo& info, int meta_offset);
 
     /// Load the Node BTree from the given page offset. Public entry point: seeds a fresh
     /// per-traversal visited-page-offset set and delegates to loadNodeBTreeGuarded.
@@ -267,6 +290,19 @@ private:
 
     /// Read a single data block by Block ID
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlock(uint64_t bid);
+
+    /// Apply the post-read transforms to a raw block: authenticate its on-disk
+    /// trailer, then (Unicode4k) decompress and (compressible) decrypt. Kept
+    /// separate so readBlock stays within complexity limits.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> postProcessBlock(QByteArray raw,
+                                                                              uint64_t file_offset,
+                                                                              int cb,
+                                                                              uint64_t bid);
+
+    /// Read a block's on-disk trailer bytes (computing its padded position for the
+    /// current format). Fails closed when the trailer cannot be fully read.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlockTrailer(uint64_t file_offset,
+                                                                              int cb);
 
     /// Recursion guard threaded through the data-tree walk. @p depth bounds
     /// recursion so a cyclic or self-referential internal block cannot overflow

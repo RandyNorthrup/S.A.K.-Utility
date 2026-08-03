@@ -7,8 +7,13 @@ review-2 guards already exist). Only CONFIRMED + PARTIAL are tracked here;
 30 findings were verified FALSE-POSITIVE (guard already present / misread) and dropped.
 
 STATUS: COMPLETE (2026-08-03). All 374 items (53 CONFIRMED + 321 PARTIAL) resolved:
-372 fixed/decided ([x]) + 2 documented LOW residuals ([~]) + 0 open. Remediated across
-6 fix-agent waves, each gated by a full Release build + serial ctest 208/208 and
+374 fixed/decided ([x]) + 0 documented residuals + 0 open. The two LOW residuals were
+subsequently CLOSED (2026-08-03, wave F) when real PST/OST fixtures were located
+(temp/ost_pst_files): PST/OST header+page+block CRC/signature verification implemented
+and byte-for-byte validated against a real 1.15 GB Unicode PST and three Unicode4k OSTs,
+and the profile-restore WiFi/Ethernet/AppData selections fully wired end to end
+(wizard pages -> worker -> netsh apply). Remediated across
+6 fix-agent waves + wave F, each gated by a full Release build + serial ctest and
 hand-review of every security diff before commit:
   wave A netdiag (60)          -> commit ba43479
   wave B appdeploy (77)        -> commit a7c44ee
@@ -16,6 +21,7 @@ hand-review of every security diff before commit:
   wave D misc/tools/actions(58)-> commit a566d2f
   wave E1 ai + win32mcp (61)   -> commit f287d01
   wave E2 email + gui (55)     -> commit 21efdf8
+  wave F  residual close-out   -> PST/OST CRC + profile-restore network/appdata wiring
 User scope decision: everything. No fallbacks; fail closed; surface the real error.
 Intentional-design items carry the decision in-line ([x] with a DECISION/no_change note),
 never silently skipped. The central gate caught and corrected ~10 agent-introduced
@@ -23,10 +29,40 @@ regressions before commit (incl. reverting an overseer-phase over-reach that bro
 workflow, and a GLOBALROOT raw-target resolution that had to keep the app's own canonical
 path working while still failing closed on an unresolvable target).
 
-Two LOW residuals ([~], not fail-open): (1) PST header/trailer CRC verification deferred --
-needs a real PST fixture to avoid rejecting valid files (readLE bounds + encryption
-fail-closed ARE done); (2) profile-restore WiFi/Ethernet wizard checkboxes -- the worker
-has no WiFi/Ethernet restore, so wiring them is feature-dev, not a fix.
+Wave F (2026-08-03) CLOSED both former LOW residuals -- 0 residuals remain:
+(1) PST/OST integrity now authenticated. Implemented the MS-PST weak CRC-32
+    (reflected poly 0xEDB88320, init 0, no final XOR) + ComputeSig, and verify:
+    header dwCRCPartial (471B @8) and dwCRCFull (516B @8, Unicode/Unicode4k);
+    every PAGETRAILER (dwCRC over page body + wSig = ComputeSig(ib,bid)); and every
+    block trailer (BLOCKTRAILER 16/12B or the 24B Unicode4k footer -- declared cb,
+    dwCRC over raw on-disk bytes, wSig, bid). All ranges were validated byte-for-byte
+    against real Outlook stores in temp/ost_pst_files (my emails.pst = 1.15 GB Unicode
+    wVer=23; three Unicode4k wVer=36 OST/NST). Mismatch fails closed
+    (error_code::pst_integrity_check_failed). Unit tests build genuine spec-conformant
+    fixtures (correct CRCs) and prove each check bites on corruption; an env-gated
+    live smoke (SAK_TEST_PST_DIR) parses the real multi-GB files with verification on.
+(2) profile-restore WiFi/Ethernet/AppData selections fully wired: each dead page now
+    persists its checkbox state via validatePage() onto the wizard; onStartRestore
+    forwards the selections to UserProfileRestoreWorker::startRestore; the worker
+    applies selected WiFi profiles (netsh wlan add profile from stored XML) and
+    Ethernet configs (netsh interface ip set address/dnsservers, static or DHCP) via
+    the System32-qualified netsh.exe (no bare-name search-order exposure; fail closed
+    if %SystemRoot% unset), and skips app-data subtrees the user unchecked
+    (longest-prefix path filter). New unit tests cover the filter + netsh resolution.
+
+    LIVE netsh cert (local PC, elevated, disconnected spare NIC + throwaway WLAN
+    profile only): System32 netsh resolution, WiFi wlan-add-profile (add+verify+
+    delete, 4/4), Ethernet static argv (accepted exit 0), and fail-closed on a
+    nonexistent adapter all PASS. The cert surfaced a real defect: netsh
+    `set address source=dhcp` returns a non-zero "DHCP is already enabled on this
+    interface" when the adapter is already DHCP -- restoring a DHCP config to an
+    already-DHCP adapter would false-negative. FIXED: restoreEthernetConfig now
+    queries DHCP state structurally via the IP Helper API (GetAdaptersAddresses /
+    IP_ADAPTER_DHCP_ENABLED, the same pattern network_adapter_inspector.cpp ships),
+    skips the redundant switch when already DHCP, and on a set error accepts only
+    when the adapter is verifiably DHCP afterward (else fails closed). Not locale-
+    dependent, not fail-open. The WiFi/Ethernet netsh APPLY is not part of the gated
+    ctest suite (it mutates machine network state); it is certified out-of-band here.
 
 Method: parallel fix-agent waves partitioned by disjoint files; central serial
 ctest gate (ctest -C Release -j1) + hand-review of every security diff before each
@@ -269,7 +305,7 @@ Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial
 - [x] [LOW/CONF] src/core/email_profile_manager.cpp:898 -- WMS profiles are exported as Outlook but restore permits only Office Outlook registry paths, so WMS registry backups cannot be restored.  (wave E2)
 - [x] [LOW/PART] src/core/email_profile_manager.cpp:496 -- Manifest lacks strict schema/version/type validation; empty/wrong-typed values coerce to empty and empty objects count as restored; registry changes precede file validation with no rollback.  (wave E2)
 - [x] [LOW/PART] src/core/pst_parser.cpp:3086 -- Malformed page/BTH entry sizes reach fixed-offset reads outside QByteArray; member readLE relies only on release-disabled Q_ASSERT before memcpy.  (wave E2)
-- [~] [LOW/PART] src/core/pst_parser.cpp:1162 -- PST integrity not authenticated: header CRC read but never checked; page/block trailer CRC, signature, BID, declared size not validated.  PARTIAL (wave E2): readLE runtime bounds check + unknown-encryption fail-closed DONE; the MS-PST header/trailer CRC verification is DEFERRED -- implementing the exact dwCRCPartial/dwCRCFull ranges without a real PST fixture risks rejecting every valid file, so it needs a dedicated CRC pass with a fixture (this parser is a best-effort forensic recovery tool, memory-safe throughout).
+- [x] [LOW/PART] src/core/pst_parser.cpp:1162 -- PST integrity not authenticated: header CRC read but never checked; page/block trailer CRC, signature, BID, declared size not validated.  CLOSED (wave F): MS-PST weak CRC-32 + ComputeSig implemented; header dwCRCPartial+dwCRCFull, every PAGETRAILER dwCRC+wSig, and every block trailer (BLOCKTRAILER + Unicode4k footer: declared cb, dwCRC over raw bytes, wSig, bid) now verified fail-closed (pst_integrity_check_failed). All ranges validated byte-for-byte against real Outlook stores (temp/ost_pst_files: 1.15 GB Unicode PST + 3 Unicode4k OST/NST). Unit tests use spec-conformant fixtures + prove each check bites; env-gated live smoke on the real files.
 - [x] [LOW/PART] src/core/pst_parser.cpp:1373 -- BTree loaders accept truncated/malformed pages as partial success: undersized entries break, zero/small entry sizes accepted, duplicate NID/BID keys silently overwrite cache.  (wave E2)
 - [x] [LOW/PART] src/core/pst_parser.cpp:1820 -- BTH/property parsing repeatedly converts corruption to empty/partial success: cycles return empty, child errors ignored, invalid layouts discarded, failed HNID resolution leaves empty properties.  (wave E2)
 - [x] [LOW/PART] src/core/pst_parser.cpp:2566 -- Folder hierarchy errors are logged then swallowed; open succeeds with a partial tree after hierarchy-table or child-folder failures.  (wave E2)
@@ -443,4 +479,4 @@ Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial
 - [x] [LOW/PART] src/gui/ai_assistant_panel.cpp:1302 -- safePackageToken lowercases and strips characters outside [a-z0-9_.+-] instead of rejecting; packagesFromJson (1569) applies it to an AI-supplied package_id so a malformed id can become a different valid package.  (wave E2)
 - [x] [LOW/PART] src/gui/ai_assistant_panel.cpp:9928 -- applyWorkflowResumeState enables resume for any nonempty object, defaults resume_start_phase_index to 0 on missing/wrong type, and silently drops malformed phase_history/flags.  (wave E2)
 - [x] [LOW/PART] src/gui/ai_assistant_panel.cpp:1179 -- workflowRequirementAvailable returns true for every non-sak_tool requirement (OS/system/bundled) without probing it, so a missing OS/system dependency passes preflight.  (wave E2)
-- [~] [LOW/PART] src/gui/user_profile_restore_wizard_execute.cpp:126 -- The AppData page and Networks (WiFi/Ethernet) page checkboxes are dead state -- onStartRestore forwards only backupPath, manifest, mappings and {conflict, permission, verify, createBackup} to the worker; no app-data/WiFi/Ethernet selection is passed.  RESIDUAL: feature-wiring gap (see wave D note) -- WiFi/Ethernet restore is unimplemented in the worker; deferred pending a decision to build the feature.
+- [x] [LOW/PART] src/gui/user_profile_restore_wizard_execute.cpp:126 -- The AppData page and Networks (WiFi/Ethernet) page checkboxes are dead state -- onStartRestore forwards only backupPath, manifest, mappings and {conflict, permission, verify, createBackup} to the worker; no app-data/WiFi/Ethernet selection is passed.  CLOSED (wave F): each page now persists its checkbox state via validatePage() onto the wizard (WiFi carries xml_data, Ethernet carries full IP/DNS fields, AppData carries relative_paths); onStartRestore forwards all three to UserProfileRestoreWorker::startRestore. Worker applies selected WiFi (netsh wlan add profile) + Ethernet (netsh interface ip set, static/DHCP) via System32-qualified netsh.exe (fail closed if %SystemRoot% unset), and skips app-data subtrees the user unchecked (longest-prefix filter). Unit tests cover the filter + netsh resolution.

@@ -4515,6 +4515,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
         ../include/sak/windows_user_scanner.h
         ../src/core/path_utils.cpp
         ../include/sak/path_utils.h
+        ../src/core/process_runner.cpp
+        ../include/sak/process_runner.h
         ../src/core/logger.cpp
     )
     set_target_properties(test_user_profile_restore_worker PROPERTIES

@@ -238,6 +238,77 @@ static constexpr int kHidBlockIndexMaskLegacy = 0xFFFF;
 static constexpr int kResolvedRecipientPartCount = 2;
 static constexpr int kBthRowIdValueOffset = 4;
 
+// ---------------------------------------------------------------------------
+// MS-PST integrity-field layout (validated byte-for-byte against real Outlook
+// PST (Unicode wVer=23) and OST (Unicode4k wVer=36) stores)
+// ---------------------------------------------------------------------------
+
+/// dwCRCPartial covers this many bytes of the header starting at wMagicClient.
+static constexpr int kHeaderCrcDataStart = 8;
+/// MS-PST 2.2.2.6 dwCRCPartial length (bytes from offset 8).
+static constexpr int kHeaderCrcPartialLen = 471;
+/// MS-PST 2.2.2.6 dwCRCFull length (bytes from offset 8); Unicode/Unicode4k only.
+static constexpr int kHeaderCrcFullLen = 516;
+/// Offset of dwCRCFull in the Unicode/Unicode4k header.
+static constexpr int kHeaderCrcFullOffset = 0x20C;
+
+/// PAGETRAILER field offsets (relative to the start of the trailer).
+static constexpr int kPageTrailerSigOffset = 2;  // wSig
+static constexpr int kPageTrailerCrcOffset = 4;  // dwCRC
+static constexpr int kPageTrailerBidOffset = 8;  // bid (u64 Unicode/4k, u32 ANSI)
+
+/// BLOCKTRAILER (Unicode 16 / ANSI 12) and Unicode4k block-footer field offsets.
+/// The first 16 bytes of the 24-byte 4k footer share this layout.
+static constexpr int kBlockTrailerCbOffset = 0;   // cb (repeats BBT data size)
+static constexpr int kBlockTrailerSigOffset = 2;  // wSig
+static constexpr int kBlockTrailerCrcOffset = 4;  // dwCRC over the cb data bytes
+static constexpr int kBlockTrailerBidOffset = 8;  // bid (u64 Unicode/4k, u32 ANSI)
+static constexpr int kBlockTrailerSizeUnicode = 16;
+static constexpr int kBlockTrailerSizeAnsi = 12;
+/// On-disk blocks (non-4k) are padded so data+trailer rounds up to this boundary.
+static constexpr int kBlockAlignment = 64;
+
+// MS-PST 2.2.2.7.1 / 2.2.2.8.1: 32-bit "weak" CRC. Standard reflected CRC-32
+// lookup table (poly 0xEDB88320) with initial value 0 and NO final inversion --
+// this differs from ISO 3309 CRC-32, which pre/post-inverts with 0xFFFFFFFF.
+// Writes the computed CRC to @p out; returns false (without writing) when the
+// requested range lies outside @p data so the caller fails closed rather than
+// hashing a truncated span.
+static bool msPstWeakCrc(const QByteArray& data, int offset, int len, uint32_t& out) {
+    static const std::array<uint32_t, 256> kTable = [] {
+        std::array<uint32_t, 256> table{};
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int bit = 0; bit < 8; ++bit) {
+                c = (c & 1u) ? ((c >> 1) ^ 0xED'B8'83'20u) : (c >> 1);
+            }
+            table[i] = c;
+        }
+        return table;
+    }();
+
+    if (offset < 0 || len < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(len) > data.size()) {
+        return false;
+    }
+    uint32_t crc = 0;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data.constData()) + offset;
+    for (int i = 0; i < len; ++i) {
+        crc = (crc >> 8) ^ kTable[(crc ^ bytes[i]) & 0xFFu];
+    }
+    out = crc;
+    return true;
+}
+
+// MS-PST 5.4 ComputeSig: fold (ib XOR bid) down to 16 bits. Used to authenticate
+// that a page/block trailer belongs at its file offset with its declared BID.
+static uint16_t msPstComputeSig(uint64_t ib, uint64_t bid) {
+    uint64_t value = ib ^ bid;
+    value ^= (value >> 16);
+    value ^= (value >> 32);
+    return static_cast<uint16_t>(value & 0xFFFFu);
+}
+
 // MS-OXCMSG: PR_SUBJECT may begin with a prefix marker (U+0001) followed by
 // a single character encoding the prefix length.  Strip these control bytes.
 static QString stripSubjectPrefix(const QString& subject) {
@@ -1235,6 +1306,40 @@ void PstParser::parseHeaderRootPointers(const QByteArray& data) {
     m_header.root_bbt_page = readLE<uint32_t>(data, kAnsiRootOffset + kAnsiRootBbtOffset);
 }
 
+std::expected<void, error_code> PstParser::verifyHeaderIntegrity(const QByteArray& data) {
+    // dwCRCPartial (offset 4) is present in every MS-PST version and covers 471
+    // bytes from wMagicClient (offset 8).
+    uint32_t partial = 0;
+    if (!msPstWeakCrc(data, kHeaderCrcDataStart, kHeaderCrcPartialLen, partial)) {
+        return std::unexpected(error_code::pst_invalid_header);
+    }
+    if (partial != m_header.crc) {
+        sak::logError(
+            "PstParser: header dwCRCPartial mismatch (computed 0x{:08X}, stored 0x{:08X})",
+            partial,
+            m_header.crc);
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+
+    // dwCRCFull (offset 0x20C) exists only in the Unicode/Unicode4k header and
+    // authenticates the fuller 516-byte prefix (through bidNextB).
+    if (m_is_unicode) {
+        uint32_t full = 0;
+        if (!msPstWeakCrc(data, kHeaderCrcDataStart, kHeaderCrcFullLen, full)) {
+            return std::unexpected(error_code::pst_invalid_header);
+        }
+        uint32_t stored_full = readLE<uint32_t>(data, kHeaderCrcFullOffset);
+        if (full != stored_full) {
+            sak::logError(
+                "PstParser: header dwCRCFull mismatch (computed 0x{:08X}, stored 0x{:08X})",
+                full,
+                stored_full);
+            return std::unexpected(error_code::pst_integrity_check_failed);
+        }
+    }
+    return {};
+}
+
 void PstParser::logParsedHeader() const {
     sak::logInfo(
         "PstParser: Header parsed - version={}, unicode={}, encryption={}, NBT=0x{:X}, "
@@ -1257,6 +1362,15 @@ std::expected<void, error_code> PstParser::parseHeader() {
     auto preamble_result = parseHeaderPreamble(data);
     if (!preamble_result) {
         return std::unexpected(preamble_result.error());
+    }
+
+    // §2.2.2.6 — authenticate the header before trusting any field past the
+    // preamble. dwCRCPartial/dwCRCFull cover the version, ROOT BREF pointers, and
+    // crypt method; a mismatch means the bytes we are about to parse as the on-disk
+    // layout are corrupt or forged, so fail closed here.
+    auto integrity_result = verifyHeaderIntegrity(data);
+    if (!integrity_result) {
+        return std::unexpected(integrity_result.error());
     }
 
     // wMagicClient at offset 8 — content type (SM or SO)
@@ -1331,6 +1445,12 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
+    // Authenticate the page via its PAGETRAILER before walking it as a BTree.
+    auto trailer_ok = verifyPageTrailer(*page_data, fmt, page_offset);
+    if (!trailer_ok) {
+        return std::unexpected(trailer_ok.error());
+    }
+
     int meta_offset = trailer_offset - fmt.meta_pad - fmt.meta_size;
     if (meta_offset < 0) {
         return std::unexpected(error_code::pst_corrupted_btree);
@@ -1339,6 +1459,35 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
     BTreePageInfo info;
     info.data = std::move(*page_data);
     info.meta_offset = meta_offset;
+    parsePageMeta(info, meta_offset);
+    return info;
+}
+
+std::expected<void, error_code> PstParser::verifyPageTrailer(const QByteArray& page_data,
+                                                             const PageFormatSizes& fmt,
+                                                             uint64_t page_offset) {
+    // §2.2.2.7.1: dwCRC over the page body preceding the trailer, and
+    // wSig == ComputeSig(page ib, page bid). A structurally-typed-but-corrupt page
+    // (bit rot, or a crafted page whose ptype matches by luck) fails here.
+    const int trailer_offset = fmt.page_size - fmt.trailer_size;
+    uint32_t page_crc = 0;
+    if (!msPstWeakCrc(page_data, 0, fmt.page_size - fmt.trailer_size, page_crc)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if (page_crc != readLE<uint32_t>(page_data, trailer_offset + kPageTrailerCrcOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    uint16_t page_sig = readLE<uint16_t>(page_data, trailer_offset + kPageTrailerSigOffset);
+    uint64_t page_bid = m_is_unicode
+                            ? readLE<uint64_t>(page_data, trailer_offset + kPageTrailerBidOffset)
+                            : readLE<uint32_t>(page_data, trailer_offset + kPageTrailerBidOffset);
+    if (msPstComputeSig(page_offset, page_bid) != page_sig) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return {};
+}
+
+void PstParser::parsePageMeta(BTreePageInfo& info, int meta_offset) {
     if (m_is_4k) {
         info.entry_count = readLE<uint16_t>(info.data, meta_offset);
         info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kUnicode4kEntrySizeOffset]);
@@ -1348,7 +1497,6 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
         info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kLegacyEntrySizeOffset]);
         info.level = static_cast<uint8_t>(info.data[meta_offset + kLegacyLevelOffset]);
     }
-    return info;
 }
 
 // ============================================================================
@@ -1494,12 +1642,24 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
         return std::unexpected(error_code::read_error);
     }
 
-    auto& raw = *block_data;
+    return postProcessBlock(std::move(*block_data), file_offset, cb, bid);
+}
 
-    // Unicode4K files (wVer >= 36) may have zlib-compressed blocks.
-    // The block footer contains an uncompressed_data_size field;
-    // when it differs from cb the block must be deflate-decompressed.
-    // Reference: libpff pff_block_footer_64bit_4k_page_t
+std::expected<QByteArray, error_code> PstParser::postProcessBlock(QByteArray raw,
+                                                                  uint64_t file_offset,
+                                                                  int cb,
+                                                                  uint64_t bid) {
+    // Authenticate the block via its on-disk trailer (§2.2.2.8.1) BEFORE any
+    // decompression or decryption -- the dwCRC is authored over the raw cb bytes
+    // exactly as stored. A corrupt or forged block fails closed here.
+    auto trailer_result = verifyBlockTrailer(raw, file_offset, cb, bid);
+    if (!trailer_result) {
+        return std::unexpected(trailer_result.error());
+    }
+
+    // Unicode4K files (wVer >= 36) may have zlib-compressed blocks. The block footer
+    // carries an uncompressed_data_size; when it differs from cb the block is
+    // deflate-compressed. Reference: libpff pff_block_footer_64bit_4k_page_t.
     if (m_is_4k && cb > 0) {
         auto decompressed = decompressBlockIf4k(raw, file_offset, cb);
         if (!decompressed) {
@@ -1508,13 +1668,11 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
         raw = std::move(*decompressed);
     }
 
-    if (m_encryption_type == sak::email::kEncryptCompressible) {
-        bool is_internal = (bid & kBidInternalFlag) != 0;
-        if (!is_internal) {
-            auto span = std::span<uint8_t>(reinterpret_cast<uint8_t*>(raw.data()),
-                                           static_cast<size_t>(raw.size()));
-            decryptBlock(span);
-        }
+    // Compressible encryption applies only to external (non-internal) blocks.
+    if (m_encryption_type == sak::email::kEncryptCompressible && (bid & kBidInternalFlag) == 0) {
+        auto span = std::span<uint8_t>(reinterpret_cast<uint8_t*>(raw.data()),
+                                       static_cast<size_t>(raw.size()));
+        decryptBlock(span);
     }
 
     return raw;
@@ -1673,6 +1831,68 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
 // ============================================================================
 // NDB Layer — Block Decompression (Unicode4K / wVer ≥ 36)
 // ============================================================================
+
+std::expected<QByteArray, error_code> PstParser::readBlockTrailer(uint64_t file_offset, int cb) {
+    using namespace sak::email;  // kBlock4kAlignment / kBlock4kFooterSize
+    // Locate the on-disk trailer. The two format families pad differently:
+    //   * non-4k: data+trailer rounds up to a 64-byte boundary (BLOCKTRAILER at end).
+    //   * 4k:     cb rounds up to 512, then a 512 pad is added if the 24-byte footer
+    //             would not otherwise fit -- the same rule decompressBlockIf4k uses.
+    const int trailer_size = m_is_4k        ? kBlock4kFooterSize
+                             : m_is_unicode ? kBlockTrailerSizeUnicode
+                                            : kBlockTrailerSizeAnsi;
+    int64_t trailer_pos = 0;
+    if (m_is_4k) {
+        int aligned = ((cb + kBlock4kAlignment - 1) / kBlock4kAlignment) * kBlock4kAlignment;
+        if ((aligned - cb) < kBlock4kFooterSize) {
+            aligned += kBlock4kAlignment;
+        }
+        trailer_pos = static_cast<int64_t>(file_offset) + aligned - kBlock4kFooterSize;
+    } else {
+        int64_t disk =
+            ((static_cast<int64_t>(cb) + trailer_size + kBlockAlignment - 1) / kBlockAlignment) *
+            kBlockAlignment;
+        trailer_pos = static_cast<int64_t>(file_offset) + disk - trailer_size;
+    }
+
+    auto trailer = readBytes(trailer_pos, trailer_size);
+    if (!trailer || trailer->size() != trailer_size) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return std::move(*trailer);
+}
+
+std::expected<void, error_code> PstParser::verifyBlockTrailer(const QByteArray& raw,
+                                                              uint64_t file_offset,
+                                                              int cb,
+                                                              uint64_t bid) {
+    auto trailer = readBlockTrailer(file_offset, cb);
+    if (!trailer) {
+        return std::unexpected(trailer.error());
+    }
+    // Declared size must repeat the BBT's cb.
+    if (readLE<uint16_t>(*trailer, kBlockTrailerCbOffset) != static_cast<uint16_t>(cb)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    // dwCRC over the raw cb bytes.
+    uint32_t block_crc = 0;
+    if (!msPstWeakCrc(raw, 0, cb, block_crc)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if (block_crc != readLE<uint32_t>(*trailer, kBlockTrailerCrcOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    // wSig authenticates offset+bid; the trailer's own bid must match the BBT bid.
+    if (msPstComputeSig(file_offset, bid) != readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    uint64_t trailer_bid = m_is_unicode ? readLE<uint64_t>(*trailer, kBlockTrailerBidOffset)
+                                        : readLE<uint32_t>(*trailer, kBlockTrailerBidOffset);
+    if (trailer_bid != bid) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return {};
+}
 
 std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByteArray& raw,
                                                                      uint64_t file_offset,

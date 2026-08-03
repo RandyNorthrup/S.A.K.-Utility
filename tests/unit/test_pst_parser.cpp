@@ -68,6 +68,86 @@ void writeLe64(QByteArray& data, int offset, uint64_t value) {
     }
 }
 
+// MS-PST weak CRC-32 (reflected poly 0xEDB88320, init 0, no final XOR) -- the
+// same algorithm the parser authenticates against, so these fixtures are genuine
+// spec-conformant PST/OST byte streams rather than files that only parsed because
+// integrity was unchecked.
+uint32_t weakCrcForTest(const QByteArray& data, int offset, int len) {
+    static const std::array<uint32_t, 256> kTable = [] {
+        std::array<uint32_t, 256> table{};
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int bit = 0; bit < 8; ++bit) {
+                c = (c & 1u) ? ((c >> 1) ^ 0xED'B8'83'20u) : (c >> 1);
+            }
+            table[i] = c;
+        }
+        return table;
+    }();
+    uint32_t crc = 0;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data.constData()) + offset;
+    for (int i = 0; i < len; ++i) {
+        crc = (crc >> 8) ^ kTable[(crc ^ bytes[i]) & 0xFFu];
+    }
+    return crc;
+}
+
+// MS-PST 5.4 ComputeSig: fold (ib XOR bid) to 16 bits.
+uint16_t computeSigForTest(uint64_t ib, uint64_t bid) {
+    uint64_t value = ib ^ bid;
+    value ^= (value >> 16);
+    value ^= (value >> 32);
+    return static_cast<uint16_t>(value & 0xFFFFu);
+}
+
+// Stamp dwCRCPartial (471 bytes from offset 8) and, for Unicode/Unicode4k,
+// dwCRCFull (516 bytes from offset 8 at offset 0x20C). Call AFTER every other
+// header byte -- including the ROOT BREF pointers -- is written.
+void finalizeHeaderCrcForTest(QByteArray& file, bool unicode) {
+    writeLe32(file, 4, weakCrcForTest(file, 8, 471));
+    if (unicode) {
+        writeLe32(file, 0x20C, weakCrcForTest(file, 8, 516));
+    }
+}
+
+// Stamp a PAGETRAILER: bid, wSig = ComputeSig(page_offset, bid), and dwCRC over
+// the page body preceding the trailer. Call AFTER the page body (meta + ptype) is
+// in place; the CRC does not cover the trailer itself.
+void finalizePageTrailerForTest(
+    QByteArray& file, int page_offset, int page_size, int trailer_size, uint64_t bid) {
+    // 12-byte trailer == ANSI (4-byte bid); 16/24 == Unicode/Unicode4k (8-byte bid).
+    const bool unicode = trailer_size != 12;
+    const int trailer_off = page_offset + page_size - trailer_size;
+    if (unicode) {
+        writeLe64(file, trailer_off + 8, bid);
+    } else {
+        writeLe32(file, trailer_off + 8, static_cast<uint32_t>(bid));
+    }
+    writeLe16(file, trailer_off + 2, computeSigForTest(static_cast<uint64_t>(page_offset), bid));
+    writeLe32(file, trailer_off + 4, weakCrcForTest(file, page_offset, page_size - trailer_size));
+}
+
+// Write cb raw bytes at file_offset followed by a spec-conformant BLOCKTRAILER
+// (Unicode 16 / ANSI 12) at the padded 64-byte boundary. Returns the total on-disk
+// span (data + padding + trailer) so the caller can size the file.
+int writeBlockWithTrailerForTest(
+    QByteArray& file, int file_offset, const QByteArray& raw, bool unicode, uint64_t bid) {
+    const int trailer_size = unicode ? 16 : 12;
+    const int cb = static_cast<int>(raw.size());
+    const int disk = ((cb + trailer_size + 63) / 64) * 64;
+    file.replace(file_offset, cb, raw);
+    const int trailer_off = file_offset + disk - trailer_size;
+    writeLe16(file, trailer_off + 0, static_cast<uint16_t>(cb));
+    writeLe16(file, trailer_off + 2, computeSigForTest(static_cast<uint64_t>(file_offset), bid));
+    writeLe32(file, trailer_off + 4, weakCrcForTest(raw, 0, cb));
+    if (unicode) {
+        writeLe64(file, trailer_off + 8, bid);
+    } else {
+        writeLe32(file, trailer_off + 8, static_cast<uint32_t>(bid));
+    }
+    return disk;
+}
+
 uint8_t encodePermuteByteForTest(uint8_t plain) {
     for (const auto& pair : kPermuteEncodePairsForTest) {
         if (pair.plain == plain) {
@@ -143,6 +223,11 @@ private Q_SLOTS:
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
+
+    // -- Integrity (CRC / signature) -------------------------------------
+    void rejectsHeaderCrcMismatch();
+    void rejectsPageCrcMismatch();
+    void rejectsBlockCrcMismatch();
 
     // -- Encryption Detection --------------------------------------------
     void detectsNoEncryption();
@@ -249,6 +334,12 @@ QByteArray TestPstParser::buildStoreWithEmptyBTrees(uint16_t content_type, uint1
 
     file.replace(nbt_offset, page_size, make_page(0x81, nbt_entry_size));
     file.replace(bbt_offset, page_size, make_page(0x80, bbt_entry_size));
+
+    // Stamp spec-conformant PAGETRAILER CRC/sig now that both pages are placed,
+    // then the header CRCs over the finished ROOT pointers.
+    finalizePageTrailerForTest(file, nbt_offset, page_size, trailer_size, 0);
+    finalizePageTrailerForTest(file, bbt_offset, page_size, trailer_size, 0);
+    finalizeHeaderCrcForTest(file, unicode);
     return file;
 }
 
@@ -259,7 +350,11 @@ QByteArray TestPstParser::buildCompressibleEncryptedRootPst() {
     constexpr int kDataOffset = kBbtOffset + kPageSize;
     const QByteArray encoded_heap = encodePermuteBytesForTest(buildRootPcHeapForTest());
 
-    const int file_size = kDataOffset + encoded_heap.size();
+    // The data block occupies cb bytes + padding + a 16-byte BLOCKTRAILER, rounded
+    // up to a 64-byte boundary; size the file to hold the whole on-disk block.
+    const int cb = static_cast<int>(encoded_heap.size());
+    const int block_disk = ((cb + 16 + 63) / 64) * 64;
+    const int file_size = kDataOffset + block_disk;
     QByteArray file(file_size, '\0');
     QByteArray header = buildMinimalPstHeader(true,
                                               sak::email::kEncryptCompressible,
@@ -279,9 +374,15 @@ QByteArray TestPstParser::buildCompressibleEncryptedRootPst() {
     QByteArray bbt_page = makeLegacyUnicodeBTreePageForTest(0x80, 1, 24);
     writeLe64(bbt_page, 0, kRootPcDataBidForTest);
     writeLe64(bbt_page, 8, kDataOffset);
-    writeLe16(bbt_page, 16, static_cast<uint16_t>(encoded_heap.size()));
+    writeLe16(bbt_page, 16, static_cast<uint16_t>(cb));
     file.replace(kBbtOffset, kPageSize, bbt_page);
-    file.replace(kDataOffset, encoded_heap.size(), encoded_heap);
+
+    // Write the data block with a conformant BLOCKTRAILER (dwCRC over the encoded
+    // on-disk bytes), then stamp both page trailers and the header CRCs.
+    writeBlockWithTrailerForTest(file, kDataOffset, encoded_heap, true, kRootPcDataBidForTest);
+    finalizePageTrailerForTest(file, kNbtOffset, kPageSize, kLegacyPageTrailerSizeForTest, 0);
+    finalizePageTrailerForTest(file, kBbtOffset, kPageSize, kLegacyPageTrailerSizeForTest, 0);
+    finalizeHeaderCrcForTest(file, true);
 
     return file;
 }
@@ -335,6 +436,7 @@ void TestPstParser::rejectsInvalidMagic() {
 
 void TestPstParser::parsesValidPstMagic() {
     QByteArray header = buildMinimalPstHeader(true);
+    finalizeHeaderCrcForTest(header, true);
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
     temp_file.write(header);
@@ -467,6 +569,78 @@ void TestPstParser::rejectsMistypedNodeBTreePage() {
     QVERIFY2(error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
 }
 
+// A header whose stored dwCRCPartial no longer matches its body is corrupt or
+// forged; the parser must fail closed at header parse rather than trusting the
+// ROOT pointers it is about to read.
+void TestPstParser::rejectsHeaderCrcMismatch() {
+    QByteArray store = buildStoreWithEmptyBTrees(sak::email::kPstContentType,
+                                                 sak::email::kUnicodeVersion);
+    // Flip one byte of the stored dwCRCPartial (offset 4) without recomputing.
+    store[4] = static_cast<char>(store[4] ^ 0xFF);
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(store);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+}
+
+// Corrupting a byte inside the Node BTree page body (covered by the PAGETRAILER
+// dwCRC, but leaving ptype intact) must fail the Node BTree load closed.
+void TestPstParser::rejectsPageCrcMismatch() {
+    QByteArray store = buildStoreWithEmptyBTrees(sak::email::kPstContentType,
+                                                 sak::email::kUnicodeVersion);
+    constexpr int kPageSize = sak::email::kLegacyUnicodePageSize;
+    const int nbt_offset = kPageSize * 2;
+    // Byte 0 of the NBT page is inside the CRC-covered body and is not the trailer.
+    store[nbt_offset] = static_cast<char>(store[nbt_offset] ^ 0xFF);
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(store);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
+}
+
+// Corrupting a byte of a data block breaks its BLOCKTRAILER dwCRC; the otherwise
+// valid encrypted-root store must then fail to open rather than mining garbage
+// from the block.
+void TestPstParser::rejectsBlockCrcMismatch() {
+    QByteArray store = buildCompressibleEncryptedRootPst();
+    constexpr int kPageSize = sak::email::kLegacyUnicodePageSize;
+    constexpr int kDataOffset = kPageSize * 4;  // kBbtOffset + kPageSize
+    // Flip a byte of the block's on-disk data (not its trailer).
+    store[kDataOffset] = static_cast<char>(store[kDataOffset] ^ 0xFF);
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(store);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+}
+
 // ============================================================================
 // Encryption Detection
 // ============================================================================
@@ -488,6 +662,7 @@ void TestPstParser::detectsCompressibleEncryption() {
 void TestPstParser::ansiHeaderReadsEncryptionFromOffset461() {
     QByteArray header = buildMinimalPstHeader(false, sak::email::kEncryptHigh);
     header[465] = static_cast<char>(sak::email::kEncryptNone);  // decoy at old offset
+    finalizeHeaderCrcForTest(header, false);
 
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
@@ -587,6 +762,7 @@ void TestPstParser::openAndClose() {
     QVERIFY(!parser.isOpen());
 
     QByteArray header = buildMinimalPstHeader(true);
+    finalizeHeaderCrcForTest(header, true);
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
     temp_file.write(header);

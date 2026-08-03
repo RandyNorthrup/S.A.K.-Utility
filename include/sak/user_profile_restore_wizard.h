@@ -154,6 +154,10 @@ public:
     explicit UserProfileRestoreAppDataPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-source checkbox state onto the wizard so the restore worker
+    /// skips app-data trees the user unchecked. Reconstructed from the tree (name,
+    /// relative_path, checkstate) -- no display-only selection is discarded.
+    bool validatePage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -230,6 +234,10 @@ public:
     explicit UserProfileRestoreNetworksPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-profile checkbox state (including each profile's XML) onto
+    /// the wizard so the restore worker re-imports exactly the selected WiFi
+    /// profiles via netsh.
+    bool validatePage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -246,6 +254,9 @@ private:
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
+    // Retained so validatePage() can carry each profile's xml_data (never shown in
+    // the tree) back to the wizard; row order matches the tree.
+    QVector<WifiProfileInfo> m_profiles;
     bool m_loaded{false};
 };
 
@@ -259,6 +270,10 @@ public:
     explicit UserProfileRestoreEthernetPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-adapter checkbox state (with full static-IP/DNS fields) onto
+    /// the wizard so the restore worker applies exactly the selected configs via
+    /// netsh.
+    bool validatePage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -274,6 +289,9 @@ private:
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
+    // Retained so validatePage() can carry the full IP/DNS fields back to the
+    // wizard; row order matches the table.
+    QVector<EthernetConfigInfo> m_configs;
     bool m_loaded{false};
 };
 
@@ -379,11 +397,27 @@ public:
     QVector<RestoreAppInfo> restoreApps() const { return m_restoreApps; }
     void setRestoreApps(const QVector<RestoreAppInfo>& apps) { m_restoreApps = apps; }
 
+    QVector<WifiProfileInfo> wifiProfiles() const { return m_wifiProfiles; }
+    void setWifiProfiles(const QVector<WifiProfileInfo>& profiles) { m_wifiProfiles = profiles; }
+
+    QVector<EthernetConfigInfo> ethernetConfigs() const { return m_ethernetConfigs; }
+    void setEthernetConfigs(const QVector<EthernetConfigInfo>& configs) {
+        m_ethernetConfigs = configs;
+    }
+
+    QVector<AppDataSourceInfo> appDataSources() const { return m_appDataSources; }
+    void setAppDataSources(const QVector<AppDataSourceInfo>& sources) {
+        m_appDataSources = sources;
+    }
+
 private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_userMappings;
     QVector<RestoreAppInfo> m_restoreApps;
+    QVector<WifiProfileInfo> m_wifiProfiles;
+    QVector<EthernetConfigInfo> m_ethernetConfigs;
+    QVector<AppDataSourceInfo> m_appDataSources;
     ConflictResolution m_conflictResolution;
     PermissionMode m_permissionMode;
     bool m_verifyFiles;

@@ -1,12 +1,16 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include "sak/user_profile_restore_worker.h"
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
 #include "sak/permission_manager.h"
+#include "sak/process_runner.h"
 #include "sak/smart_file_filter.h"
 #include "sak/windows_user_scanner.h"
 
@@ -14,10 +18,24 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QTemporaryFile>
 #include <QtGlobal>
 
 #include <algorithm>
 #include <limits>
+#include <optional>
+#include <vector>
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <windows.h>
+
+#include <iphlpapi.h>
+
+// Link against IP Helper API (structural, locale-independent DHCP-state query).
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 namespace sak {
 
@@ -25,6 +43,39 @@ namespace {
 constexpr int kRestoreProgressFileInterval = 100;
 constexpr qint64 kRestoreProgressByteInterval = kRestoreProgressFileInterval * kBytesPerMB;
 constexpr int kRestoreConflictMaxAttempts = 1000;
+constexpr int kNetshTimeoutMs = 30'000;
+constexpr unsigned long kAdapterEnumInitialBytes = 15'000;
+
+// Structural, locale-independent DHCP-enabled query for an adapter by its friendly
+// name, via the IP Helper API. Returns nullopt when enumeration fails or the
+// adapter is not present (so callers never treat "unknown" as "already DHCP").
+std::optional<bool> adapterDhcpEnabled(const QString& adapterName) {
+    constexpr ULONG kFlags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                             GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = kAdapterEnumInitialBytes;
+    std::vector<uint8_t> buffer(size);
+    ULONG rc = GetAdaptersAddresses(
+        AF_UNSPEC, kFlags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()), &size);
+    if (rc == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        rc = GetAdaptersAddresses(AF_UNSPEC,
+                                  kFlags,
+                                  nullptr,
+                                  reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()),
+                                  &size);
+    }
+    if (rc != NO_ERROR) {
+        return std::nullopt;
+    }
+    for (auto* addr = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()); addr != nullptr;
+         addr = addr->Next) {
+        if (QString::fromWCharArray(addr->FriendlyName).compare(adapterName, Qt::CaseInsensitive) ==
+            0) {
+            return (addr->Flags & IP_ADAPTER_DHCP_ENABLED) != 0;
+        }
+    }
+    return std::nullopt;
+}
 
 bool buildSafePath(const QString& basePath, const QString& relativePath, QString& outPath) {
     Q_ASSERT(!basePath.isEmpty());
@@ -133,7 +184,8 @@ UserProfileRestoreWorker::~UserProfileRestoreWorker() {
 void UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             const BackupManifest& manifest,
                                             const QVector<UserMapping>& mappings,
-                                            const RestoreConfig& config) {
+                                            const RestoreConfig& config,
+                                            const RestoreSelections& selections) {
     Q_ASSERT_X(!backupPath.isEmpty(), "startRestore", "backupPath must not be empty");
     Q_ASSERT_X(!mappings.isEmpty(), "startRestore", "mappings must not be empty");
     if (isRunning()) {
@@ -146,6 +198,9 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     m_backupPath = backupPath;
     m_manifest = manifest;
     m_mappings = mappings;
+    m_wifiProfiles = selections.wifi_profiles;
+    m_ethernetConfigs = selections.ethernet_configs;
+    m_appDataSources = selections.app_data_sources;
     m_conflictMode = config.conflict_mode;
     m_permissionMode = config.perm_mode;
     m_verify = config.verify;
@@ -217,7 +272,11 @@ void UserProfileRestoreWorker::run() {
             userIndex, m_mappings.size(), m_bytesRestored, m_totalBytesToRestore);
     }
 
-    // Complete
+    // Apply the selected machine-level WiFi/Ethernet settings after the file restore.
+    if (!m_cancelled) {
+        applyNetworkSettings();
+    }
+
     QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
                          "%3\nTotal size: %4 MB")
                           .arg(m_filesRestored)
@@ -385,13 +444,15 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
         }
     }
 
-    // Recursively copy directory contents
-    return copyDirectory(sourcePath, destPath, folder);
+    // Recursively copy directory contents. The folder's own relative_path seeds the
+    // profile-relative path used for AppData source filtering.
+    return copyDirectory(sourcePath, destPath, folder, folder.relative_path);
 }
 
 bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
                                              const QString& destDir,
-                                             const FolderSelection& folderConfig) {
+                                             const FolderSelection& folderConfig,
+                                             const QString& profileRelativeDir) {
     Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
     Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     QDir dir(sourceDir);
@@ -415,32 +476,50 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
             return false;
         }
 
-        QString sourceItem = entry.absoluteFilePath();
-        QString destItem = destDir + "/" + entry.fileName();
+        const QString destItem = destDir + "/" + entry.fileName();
+        const QString entryRelative = profileRelativeDir.isEmpty()
+                                          ? entry.fileName()
+                                          : profileRelativeDir + "/" + entry.fileName();
 
-        // Refuse junctions/symlinks on either side: they can read outside the
-        // backup or write outside the approved profile root (e.g. into System32).
-        if (restoreEntryEscapesRoot(entry, destItem)) {
-            Q_EMIT logMessage(
-                tr("Skipping reparse point to prevent restore escape: %1").arg(sourceItem), true);
-            m_filesErrored++;
+        // Honor the AppData page: an entry under an app-data source the user
+        // unchecked is intentionally skipped (not an error).
+        if (isAppDataPathExcluded(entryRelative, m_appDataSources)) {
+            m_filesSkipped++;
             continue;
         }
 
-        // Recursively copy subdirectory
-        if (entry.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
-            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
-            m_filesErrored++;  // A subtree that failed to copy must not read as success.
-            continue;
-        }
-
-        // Copy file with conflict resolution
-        if (entry.isFile()) {
-            copyFileWithConflictResolution(sourceItem, destItem, entry.size());
-        }
+        copyDirectoryEntry(entry, destItem, folderConfig, entryRelative);
     }
 
     return true;
+}
+
+void UserProfileRestoreWorker::copyDirectoryEntry(const QFileInfo& entry,
+                                                  const QString& destItem,
+                                                  const FolderSelection& folderConfig,
+                                                  const QString& entryRelative) {
+    const QString sourceItem = entry.absoluteFilePath();
+
+    // Refuse junctions/symlinks on either side: they can read outside the backup or
+    // write outside the approved profile root (e.g. into System32).
+    if (restoreEntryEscapesRoot(entry, destItem)) {
+        Q_EMIT logMessage(
+            tr("Skipping reparse point to prevent restore escape: %1").arg(sourceItem), true);
+        m_filesErrored++;
+        return;
+    }
+
+    if (entry.isDir()) {
+        if (!copyDirectory(sourceItem, destItem, folderConfig, entryRelative)) {
+            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
+            m_filesErrored++;  // A subtree that failed to copy must not read as success.
+        }
+        return;
+    }
+
+    if (entry.isFile()) {
+        copyFileWithConflictResolution(sourceItem, destItem, entry.size());
+    }
 }
 
 bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& source,
@@ -813,6 +892,263 @@ QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
         return {};
     }
     return newPath;
+}
+
+// ============================================================================
+// Network restore (WiFi / Ethernet) + AppData source filtering
+// ============================================================================
+
+QString UserProfileRestoreWorker::resolveSystem32Netsh() {
+    // System32-qualify netsh so a hostile netsh.exe planted in the working
+    // directory cannot win the search order. No "bare netsh.exe" fallback: if
+    // %SystemRoot% is unset we cannot safely resolve it, so fail closed.
+    const QString root = QString::fromLocal8Bit(qgetenv("SystemRoot"));
+    if (root.isEmpty()) {
+        return {};
+    }
+    return QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("System32/netsh.exe")));
+}
+
+bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelativePath,
+                                                     const QVector<AppDataSourceInfo>& sources) {
+    // No AppData selection forwarded (legacy backup, or the page was never shown)
+    // means restore everything -- the filter only ever removes, never adds.
+    if (sources.isEmpty()) {
+        return false;
+    }
+    const QString norm = QDir::fromNativeSeparators(profileRelativePath).toLower();
+    int bestLen = -1;
+    bool excluded = false;
+    for (const auto& src : sources) {
+        QString base = QDir::fromNativeSeparators(src.relative_path).toLower();
+        while (base.endsWith(QLatin1Char('/'))) {
+            base.chop(1);
+        }
+        if (base.isEmpty()) {
+            continue;
+        }
+        // Segment-aware prefix match: the path is the source root or lives under
+        // it. The most specific (longest) matching source decides, so an unchecked
+        // "AppData/Local/Google/Chrome" excludes without affecting a checked
+        // sibling under "AppData/Local/Google".
+        if (norm == base || norm.startsWith(base + QLatin1Char('/'))) {
+            if (base.length() > bestLen) {
+                bestLen = base.length();
+                excluded = !src.selected;
+            }
+        }
+    }
+    return excluded;
+}
+
+bool UserProfileRestoreWorker::restoreWifiProfile(const WifiProfileInfo& profile) {
+    if (profile.xml_data.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("WiFi profile '%1' has no stored XML; cannot restore").arg(profile.profile_name),
+            true);
+        return false;
+    }
+    const QString netsh = resolveSystem32Netsh();
+    if (netsh.isEmpty()) {
+        Q_EMIT logMessage(tr("Cannot locate netsh.exe (SystemRoot unset)"), true);
+        return false;
+    }
+
+    // Stage the profile XML to a temp file for `netsh wlan add profile`.
+    QTemporaryFile xmlFile(QDir::tempPath() + QStringLiteral("/sak_wlan_XXXXXX.xml"));
+    xmlFile.setAutoRemove(true);
+    if (!xmlFile.open()) {
+        Q_EMIT logMessage(tr("Failed to stage WiFi profile XML for: %1").arg(profile.profile_name),
+                          true);
+        return false;
+    }
+    const QByteArray xmlBytes = profile.xml_data.toUtf8();
+    if (xmlFile.write(xmlBytes) != xmlBytes.size()) {
+        Q_EMIT logMessage(tr("Failed to write WiFi profile XML for: %1").arg(profile.profile_name),
+                          true);
+        return false;
+    }
+    xmlFile.flush();
+
+    const QString xmlPath = QDir::toNativeSeparators(xmlFile.fileName());
+    const ProcessResult result = runProcess(netsh,
+                                            {QStringLiteral("wlan"),
+                                             QStringLiteral("add"),
+                                             QStringLiteral("profile"),
+                                             QStringLiteral("filename=") + xmlPath,
+                                             QStringLiteral("user=all")},
+                                            kNetshTimeoutMs,
+                                            [this] { return m_cancelled.load(); });
+    if (!result.completedSuccessfully()) {
+        Q_EMIT logMessage(tr("netsh wlan add profile failed for '%1': %2")
+                              .arg(profile.profile_name, result.std_err.trimmed()),
+                          true);
+        return false;
+    }
+    return true;
+}
+
+bool UserProfileRestoreWorker::runNetshLogged(const QString& netsh,
+                                              const QStringList& args,
+                                              const QString& adapter) {
+    const ProcessResult r =
+        runProcess(netsh, args, kNetshTimeoutMs, [this] { return m_cancelled.load(); });
+    if (!r.completedSuccessfully()) {
+        Q_EMIT logMessage(tr("netsh %1 failed for adapter '%2': %3")
+                              .arg(args.join(QLatin1Char(' ')), adapter, r.std_err.trimmed()),
+                          true);
+    }
+    return r.completedSuccessfully();
+}
+
+bool UserProfileRestoreWorker::restoreEthernetDhcp(const QString& adapter, const QString& netsh) {
+    // Return the address to DHCP. netsh returns a non-zero "DHCP is already enabled
+    // on this interface" when the adapter is ALREADY DHCP -- that is the desired
+    // end-state, not a failure. Skip the redundant switch when already DHCP, and if
+    // the switch does error, accept it only when the adapter is verifiably DHCP
+    // afterward (IP Helper API, locale-independent). Fail closed otherwise.
+    bool addrOk = true;
+    const std::optional<bool> alreadyDhcp = adapterDhcpEnabled(adapter);
+    if (!(alreadyDhcp.has_value() && *alreadyDhcp)) {
+        addrOk = runNetshLogged(netsh,
+                                {QStringLiteral("interface"),
+                                 QStringLiteral("ip"),
+                                 QStringLiteral("set"),
+                                 QStringLiteral("address"),
+                                 QStringLiteral("name=") + adapter,
+                                 QStringLiteral("source=dhcp")},
+                                adapter);
+        if (!addrOk) {
+            const std::optional<bool> nowDhcp = adapterDhcpEnabled(adapter);
+            addrOk = nowDhcp.has_value() && *nowDhcp;
+        }
+    }
+    const bool dnsOk = runNetshLogged(netsh,
+                                      {QStringLiteral("interface"),
+                                       QStringLiteral("ip"),
+                                       QStringLiteral("set"),
+                                       QStringLiteral("dnsservers"),
+                                       QStringLiteral("name=") + adapter,
+                                       QStringLiteral("source=dhcp")},
+                                      adapter);
+    return addrOk && dnsOk;
+}
+
+bool UserProfileRestoreWorker::restoreEthernetStatic(const EthernetConfigInfo& config,
+                                                     const QString& netsh) {
+    const QString& name = config.adapter_name;
+    // Static configuration requires at least an address + mask; anything less would
+    // leave netsh to guess, so fail closed.
+    if (config.ip_address.isEmpty() || config.subnet_mask.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("Ethernet config '%1' is static but missing IP address/subnet").arg(name), true);
+        return false;
+    }
+
+    QStringList addressArgs{QStringLiteral("interface"),
+                            QStringLiteral("ip"),
+                            QStringLiteral("set"),
+                            QStringLiteral("address"),
+                            QStringLiteral("name=") + name,
+                            QStringLiteral("static"),
+                            config.ip_address,
+                            config.subnet_mask};
+    if (!config.default_gateway.isEmpty()) {
+        addressArgs << config.default_gateway;
+    }
+    bool ok = runNetshLogged(netsh, addressArgs, name);
+
+    if (config.dns_primary.isEmpty()) {
+        return ok;
+    }
+    ok = runNetshLogged(netsh,
+                        {QStringLiteral("interface"),
+                         QStringLiteral("ip"),
+                         QStringLiteral("set"),
+                         QStringLiteral("dnsservers"),
+                         QStringLiteral("name=") + name,
+                         QStringLiteral("static"),
+                         config.dns_primary,
+                         QStringLiteral("primary")},
+                        name) &&
+         ok;
+    if (!config.dns_secondary.isEmpty()) {
+        ok = runNetshLogged(netsh,
+                            {QStringLiteral("interface"),
+                             QStringLiteral("ip"),
+                             QStringLiteral("add"),
+                             QStringLiteral("dnsservers"),
+                             QStringLiteral("name=") + name,
+                             config.dns_secondary,
+                             QStringLiteral("index=2")},
+                            name) &&
+             ok;
+    }
+    return ok;
+}
+
+bool UserProfileRestoreWorker::restoreEthernetConfig(const EthernetConfigInfo& config) {
+    if (config.adapter_name.isEmpty()) {
+        Q_EMIT logMessage(tr("Ethernet configuration has no adapter name; cannot restore"), true);
+        return false;
+    }
+    const QString netsh = resolveSystem32Netsh();
+    if (netsh.isEmpty()) {
+        Q_EMIT logMessage(tr("Cannot locate netsh.exe (SystemRoot unset)"), true);
+        return false;
+    }
+    return config.dhcp_enabled ? restoreEthernetDhcp(config.adapter_name, netsh)
+                               : restoreEthernetStatic(config, netsh);
+}
+
+void UserProfileRestoreWorker::applyNetworkSettings() {
+    const auto selectedWifi = std::count_if(m_wifiProfiles.begin(),
+                                            m_wifiProfiles.end(),
+                                            [](const WifiProfileInfo& p) { return p.selected; });
+    const auto selectedEth = std::count_if(m_ethernetConfigs.begin(),
+                                           m_ethernetConfigs.end(),
+                                           [](const EthernetConfigInfo& c) { return c.selected; });
+    if (selectedWifi == 0 && selectedEth == 0) {
+        return;
+    }
+    Q_EMIT logMessage(tr("=== Applying network settings ==="), false);
+    applyWifiProfiles();
+    applyEthernetConfigs();
+}
+
+void UserProfileRestoreWorker::applyWifiProfiles() {
+    for (const auto& profile : m_wifiProfiles) {
+        if (m_cancelled) {
+            return;
+        }
+        if (!profile.selected) {
+            continue;
+        }
+        Q_EMIT statusUpdate(profile.profile_name, tr("Restoring WiFi profile..."));
+        if (restoreWifiProfile(profile)) {
+            Q_EMIT logMessage(tr("Restored WiFi profile: %1").arg(profile.profile_name), false);
+        } else {
+            m_filesErrored++;  // A selected item that could not be applied fails the result.
+        }
+    }
+}
+
+void UserProfileRestoreWorker::applyEthernetConfigs() {
+    for (const auto& config : m_ethernetConfigs) {
+        if (m_cancelled) {
+            return;
+        }
+        if (!config.selected) {
+            continue;
+        }
+        Q_EMIT statusUpdate(config.adapter_name, tr("Restoring Ethernet configuration..."));
+        if (restoreEthernetConfig(config)) {
+            Q_EMIT logMessage(tr("Restored Ethernet configuration: %1").arg(config.adapter_name),
+                              false);
+        } else {
+            m_filesErrored++;
+        }
+    }
 }
 
 }  // namespace sak

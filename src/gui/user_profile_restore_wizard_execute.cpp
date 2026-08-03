@@ -137,8 +137,13 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     m_worker = worker;
     connectRestoreWorkerSignals(worker);
 
-    worker->startRestore(
-        backupPath, manifest, mappings, {conflictMode, permMode, verify, createBackup});
+    // Forward the WiFi/Ethernet/AppData selections persisted by their pages'
+    // validatePage() so the worker actually applies them (previously dead state).
+    worker->startRestore(backupPath,
+                         manifest,
+                         mappings,
+                         {conflictMode, permMode, verify, createBackup},
+                         {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources()});
 
     m_overallProgressBar->setRange(0, mappings.size());
     m_currentProgressBar->setRange(0, 0);  // Indeterminate

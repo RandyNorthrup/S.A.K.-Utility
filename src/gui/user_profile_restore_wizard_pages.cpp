@@ -838,6 +838,31 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
     populateTree(sources);
 }
 
+bool UserProfileRestoreAppDataPage::validatePage() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) {
+        return false;
+    }
+    // Reconstruct the selection directly from the tree: each category's leaf items
+    // carry the source name (col 0) and profile-relative path (col 1). The worker
+    // uses the unchecked paths to skip those app-data subtrees during restore.
+    QVector<AppDataSourceInfo> sources;
+    for (int c = 0; c < m_appDataTree->topLevelItemCount(); ++c) {
+        auto* category = m_appDataTree->topLevelItem(c);
+        for (int i = 0; i < category->childCount(); ++i) {
+            auto* leaf = category->child(i);
+            AppDataSourceInfo info;
+            info.name = leaf->text(0);
+            info.relative_path = leaf->text(1);
+            info.category = category->text(0);
+            info.selected = leaf->checkState(0) == Qt::Checked;
+            sources.append(info);
+        }
+    }
+    wiz->setAppDataSources(sources);
+    return true;
+}
+
 void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo>& sources) {
     Q_ASSERT(m_appDataTree);
     Q_ASSERT(m_summaryLabel);
@@ -1095,7 +1120,25 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
 
+    // Retain the full profiles (with xml_data) so validatePage() can forward them.
+    m_profiles = profiles;
     populateTree(profiles);
+}
+
+bool UserProfileRestoreNetworksPage::validatePage() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) {
+        return false;
+    }
+    // Tree row order matches m_profiles; carry each profile's checkbox state
+    // (with its xml_data) back to the wizard for the worker to re-import.
+    QVector<WifiProfileInfo> selected = m_profiles;
+    const int rows = m_networkTree->topLevelItemCount();
+    for (int i = 0; i < selected.size() && i < rows; ++i) {
+        selected[i].selected = m_networkTree->topLevelItem(i)->checkState(0) == Qt::Checked;
+    }
+    wiz->setWifiProfiles(selected);
+    return true;
 }
 
 void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>& profiles) {
@@ -1293,7 +1336,26 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     m_selectAllButton->setEnabled(true);
     m_selectNoneButton->setEnabled(true);
 
+    // Retain the full configs (IP/DNS fields) so validatePage() can forward them.
+    m_configs = configs;
     populateTable(configs);
+}
+
+bool UserProfileRestoreEthernetPage::validatePage() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) {
+        return false;
+    }
+    // Table row order matches m_configs; carry each adapter's checkbox state
+    // (with its full static-IP/DNS fields) back to the wizard.
+    QVector<EthernetConfigInfo> selected = m_configs;
+    const int rows = m_ethernetTable->rowCount();
+    for (int i = 0; i < selected.size() && i < rows; ++i) {
+        auto* checkItem = m_ethernetTable->item(i, 0);
+        selected[i].selected = checkItem != nullptr && checkItem->checkState() == Qt::Checked;
+    }
+    wiz->setEthernetConfigs(selected);
+    return true;
 }
 
 void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigInfo>& configs) {

@@ -43,17 +43,27 @@ public:
         bool create_backup;  // Save a recoverable copy before overwriting an existing file
     };
 
+    /// @brief WiFi/Ethernet/AppData selections forwarded from the restore wizard's
+    ///        network + app-data pages.
+    struct RestoreSelections {
+        QVector<WifiProfileInfo> wifi_profiles;
+        QVector<EthernetConfigInfo> ethernet_configs;
+        QVector<AppDataSourceInfo> app_data_sources;
+    };
+
     /**
      * @brief Start restore operation
      * @param backupPath Path to backup directory
      * @param manifest Backup manifest with source data
      * @param mappings User mappings (source -> destination)
      * @param config Restore behavior configuration
+     * @param selections WiFi/Ethernet/AppData selections (empty = none)
      */
     void startRestore(const QString& backupPath,
                       const BackupManifest& manifest,
                       const QVector<UserMapping>& mappings,
-                      const RestoreConfig& config);
+                      const RestoreConfig& config,
+                      const RestoreSelections& selections = {});
 
     /**
      * @brief Cancel the restore operation
@@ -76,6 +86,17 @@ public:
     /// The username whose ownership a restore assigns: the explicit destination, or
     /// the source when none is given. Exposed for unit testing (B7-21).
     [[nodiscard]] static QString effectiveDestUser(const UserMapping& mapping);
+
+    /// True if @p profileRelativePath falls under an app-data source in @p sources
+    /// that the user unchecked (longest path-segment prefix wins). An empty
+    /// @p sources never excludes. Pure decision, exposed for unit testing.
+    [[nodiscard]] static bool isAppDataPathExcluded(const QString& profileRelativePath,
+                                                    const QVector<AppDataSourceInfo>& sources);
+
+    /// Resolve the System32-qualified netsh.exe path to defeat cwd search-order
+    /// hijack. Returns empty (caller fails closed) when %SystemRoot% is unset.
+    /// Exposed for unit testing.
+    [[nodiscard]] static QString resolveSystem32Netsh();
 
     // isRunning() is intentionally NOT overridden -- QThread::isRunning() is the source of truth
     // (true from the moment start() returns), so the destructor and the second-start guard cannot
@@ -167,14 +188,50 @@ private:
     /// @brief SHA-256 a file's contents into @p outDigest; false if it cannot be read
     static bool hashFile(const QString& filePath, QByteArray& outDigest);
     QString resolveConflict(const QString& destPath);
+    /// @param profileRelativeDir Path of @p destDir relative to the profile root
+    ///        (e.g. "AppData/Local/Google"), used to honor the AppData page's
+    ///        per-source selection: entries under an unchecked source are skipped.
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,
-                       const FolderSelection& folderConfig);
+                       const FolderSelection& folderConfig,
+                       const QString& profileRelativeDir);
+    /// Copy one directory entry (reparse-guarded recurse for a dir, conflict-resolved
+    /// copy for a file). Errors are accumulated into m_filesErrored.
+    void copyDirectoryEntry(const QFileInfo& entry,
+                            const QString& destItem,
+                            const FolderSelection& folderConfig,
+                            const QString& entryRelative);
+
+    // -- Network restore (WiFi / Ethernet) + AppData selection --------------
+
+    /// Apply the selected WiFi + Ethernet settings after the file restore. A
+    /// failure to apply any selected item counts as an error (fail closed).
+    void applyNetworkSettings();
+    /// Apply every selected WiFi profile; a failure is counted as an error.
+    void applyWifiProfiles();
+    /// Apply every selected Ethernet config; a failure is counted as an error.
+    void applyEthernetConfigs();
+    /// Re-import one WLAN profile via `netsh wlan add profile` from its stored XML.
+    bool restoreWifiProfile(const WifiProfileInfo& profile);
+    /// Apply one adapter's static-IP/DNS (or DHCP) config via `netsh interface ip`.
+    bool restoreEthernetConfig(const EthernetConfigInfo& config);
+    /// Return @p adapter to DHCP for address + DNS (idempotent: already-DHCP is
+    /// success, verified structurally via the IP Helper API).
+    bool restoreEthernetDhcp(const QString& adapter, const QString& netsh);
+    /// Apply @p config as a static address + DNS on its adapter.
+    bool restoreEthernetStatic(const EthernetConfigInfo& config, const QString& netsh);
+    /// Run one netsh invocation, logging its stderr on failure. Returns true only on
+    /// a clean exit-0 completion.
+    bool runNetshLogged(const QString& netsh, const QStringList& args, const QString& adapter);
 
     // Data
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_mappings;
+    // Selections forwarded from the restore wizard's WiFi/Ethernet/AppData pages.
+    QVector<WifiProfileInfo> m_wifiProfiles;
+    QVector<EthernetConfigInfo> m_ethernetConfigs;
+    QVector<AppDataSourceInfo> m_appDataSources;
     /// Effective destination username of the mapping currently being restored, set
     /// at the top of restoreUser(). Passed to applyPermissions so
     /// PermissionMode::AssignToDestination actually assigns ownership to the target
