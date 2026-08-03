@@ -68,6 +68,7 @@ private slots:
     void renderSnapshot_emitsAriaStateAndValue();
     void buildCommand_selectTabCopiesIntArgument();
     void buildCommand_clickAtRequiresXAndY();
+    void buildCommand_rejectsWrongTypedArgInsteadOfCoercing();
     void buildCommand_dialogCopiesOptionalActionAndText();
     void buildCommand_inspectionToolsBuild();
     void buildCommand_jsClickNeedsRef();
@@ -578,6 +579,36 @@ void BrowserContractTests::buildCommand_clickAtRequiresXAndY() {
     QCOMPARE(ok.command.value(QStringLiteral("cmd")).toString(), QStringLiteral("clickAt"));
     QCOMPARE(ok.command.value(QStringLiteral("x")).toInt(), 120);
     QCOMPARE(ok.command.value(QStringLiteral("y")).toInt(), 340);
+}
+
+void BrowserContractTests::buildCommand_rejectsWrongTypedArgInsteadOfCoercing() {
+    // A wrong-typed scalar arg must be REFUSED, never silently coerced to a default. A string
+    // "abc" where an int x/y is required previously coerced to 0 and produced a real (0,0)
+    // click; it must now fail closed with a type error instead.
+    const ExtensionCommand badX = buildExtensionCommand(
+        QStringLiteral("browser_click_at"),
+        QJsonObject{{QStringLiteral("x"), QStringLiteral("abc")}, {QStringLiteral("y"), 20}},
+        {});
+    QVERIFY(!badX.ok);
+    QVERIFY(badX.error.contains(QStringLiteral("x")));
+    QVERIFY(badX.error.contains(QStringLiteral("number")));
+
+    // A string where a bool is required is likewise rejected (not coerced to false).
+    const ExtensionCommand badBool =
+        buildExtensionCommand(QStringLiteral("browser_emulate"),
+                              QJsonObject{{QStringLiteral("mobile"), QStringLiteral("yes")}},
+                              {});
+    QVERIFY(!badBool.ok);
+    QVERIFY(badBool.error.contains(QStringLiteral("mobile")));
+    QVERIFY(badBool.error.contains(QStringLiteral("boolean")));
+
+    // A number where a string is required is rejected (not coerced to an empty string).
+    const ExtensionCommand badStr = buildExtensionCommand(QStringLiteral("browser_navigate"),
+                                                          QJsonObject{{QStringLiteral("url"), 42}},
+                                                          {});
+    QVERIFY(!badStr.ok);
+    QVERIFY(badStr.error.contains(QStringLiteral("url")));
+    QVERIFY(badStr.error.contains(QStringLiteral("string")));
 }
 
 void BrowserContractTests::buildCommand_inspectionToolsBuild() {

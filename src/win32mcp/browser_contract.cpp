@@ -456,11 +456,28 @@ QString resolveRef(const QJsonObject& args,
     return QString();
 }
 
+// Empty on a type match, else an error naming the expected JSON type. A wrong-typed value
+// (e.g. a string where an int is required) is rejected rather than coerced: silent coercion
+// would turn a malformed "x":"abc" into a real (0,0) command instead of surfacing the error.
+QString argTypeMismatch(const QString& key, const QString& type, const QJsonValue& value) {
+    if (type == QLatin1String("int") || type == QLatin1String("number")) {
+        return value.isDouble() ? QString() : QStringLiteral("%1 must be a number").arg(key);
+    }
+    if (type == QLatin1String("bool")) {
+        return value.isBool() ? QString() : QStringLiteral("%1 must be a boolean").arg(key);
+    }
+    return value.isString() ? QString() : QStringLiteral("%1 must be a string").arg(key);
+}
+
 QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& command) {
     if (!args.contains(spec.key)) {
         return spec.required ? QStringLiteral("%1 is required").arg(spec.key) : QString();
     }
     const QJsonValue value = args.value(spec.key);
+    const QString mismatch = argTypeMismatch(spec.key, spec.type, value);
+    if (!mismatch.isEmpty()) {
+        return mismatch;
+    }
     if (spec.type == QLatin1String("int")) {
         command.insert(spec.key, value.toInt());
     } else if (spec.type == QLatin1String("number")) {
