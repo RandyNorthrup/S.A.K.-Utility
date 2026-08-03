@@ -6,15 +6,34 @@ against the CURRENT tree by 9 skeptical Claude subagents (knowing review-1 and
 review-2 guards already exist). Only CONFIRMED + PARTIAL are tracked here;
 30 findings were verified FALSE-POSITIVE (guard already present / misread) and dropped.
 
-STATUS: 53 CONFIRMED + 321 PARTIAL = 374 items. Remediate ALL fail-closed
-(user scope decision: everything). No fallbacks; fail closed; surface the real error.
-Intentional-design items get the decision recorded in-line, never silently skipped.
+STATUS: COMPLETE (2026-08-03). All 374 items (53 CONFIRMED + 321 PARTIAL) resolved:
+372 fixed/decided ([x]) + 2 documented LOW residuals ([~]) + 0 open. Remediated across
+6 fix-agent waves, each gated by a full Release build + serial ctest 208/208 and
+hand-review of every security diff before commit:
+  wave A netdiag (60)          -> commit ba43479
+  wave B appdeploy (77)        -> commit a7c44ee
+  wave C apfshfs+diskflash (64)-> commit 51599ff
+  wave D misc/tools/actions(58)-> commit a566d2f
+  wave E1 ai + win32mcp (61)   -> commit f287d01
+  wave E2 email + gui (55)     -> commit 21efdf8
+User scope decision: everything. No fallbacks; fail closed; surface the real error.
+Intentional-design items carry the decision in-line ([x] with a DECISION/no_change note),
+never silently skipped. The central gate caught and corrected ~10 agent-introduced
+regressions before commit (incl. reverting an overseer-phase over-reach that broke every
+workflow, and a GLOBALROOT raw-target resolution that had to keep the app's own canonical
+path working while still failing closed on an unresolvable target).
+
+Two LOW residuals ([~], not fail-open): (1) PST header/trailer CRC verification deferred --
+needs a real PST fixture to avoid rejecting valid files (readLE bounds + encryption
+fail-closed ARE done); (2) profile-restore WiFi/Ethernet wizard checkboxes -- the worker
+has no WiFi/Ethernet restore, so wiring them is feature-dev, not a fix.
 
 Method: parallel fix-agent waves partitioned by disjoint files; central serial
 ctest gate (ctest -C Release -j1) + hand-review of every security diff before each
 commit. Same rigor as CODEX_REVIEW_2_REMEDIATION.md.
 
 Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial.
+[x] = fixed or resolved-by-decision; [~] = documented residual; [ ] = open (none).
 
 ## Pass: diskflash (Disk / flash / drive / permission)
 35 items (5 confirmed / 30 partial)
