@@ -386,6 +386,18 @@ void AdvancedUninstallTypesTests::provenanceKey_distinctForDifferentItems() {
     // Different filesystem paths are distinct.
     QVERIFY(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\a.dll")) !=
             sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\b.dll")));
+    // CROSS-HIVE: the SAME subkey under a different hive must NOT collide (a proof for HKCU cannot
+    // authorize the equivalent HKLM deletion, and vice versa).
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKLM\\Software\\Acme")) !=
+            sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKCU\\Software\\Acme")));
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKLM\\Software\\Acme", "Run")) !=
+            sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Run")));
+    // TYPE-BINDING: a File proof must not authorize a Folder delete at the same path (File->Folder
+    // recursion escalation), nor RegistryKey vs ShellExtension at the same key.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\data")) !=
+            sak::leftoverProvenanceKey(makeItem(T::Folder, "C:\\Acme\\data")));
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKCR\\CLSID\\{x}")) !=
+            sak::leftoverProvenanceKey(makeItem(T::ShellExtension, "HKCR\\CLSID\\{x}")));
 }
 
 void AdvancedUninstallTypesTests::provenanceStore_recordsAndMatches() {

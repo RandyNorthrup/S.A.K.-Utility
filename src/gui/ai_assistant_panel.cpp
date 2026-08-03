@@ -305,7 +305,9 @@ constexpr int kOpenAiResponsePreviewMaxChars = 3000;
 // A batch action whose 'items' array exceeds this is refused (the model must split it) so every
 // item the human confirms is actually shown per-item, never hidden behind a truncated JSON blob.
 constexpr int kMaxReviewableCatastrophicItems = 100;
-constexpr int kConfirmItemFieldMaxChars = 300;
+// Large enough that a real filesystem path (<4096) or registry key is never truncated; only absurd
+// strings are clipped, and then with an explicit marker so the reviewer knows something was hidden.
+constexpr int kConfirmItemFieldMaxChars = 2048;
 constexpr int kSubagentTranscriptFindingLimit = 4;
 constexpr int kSubagentTranscriptActionLimit = 4;
 constexpr int kSubagentTranscriptNextStepLimit = 3;
@@ -6565,34 +6567,98 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
 // one-line-per-item preview for the catastrophic-confirm dialog, instead of a truncated JSON blob a
 // human cannot vet. Each line shows the item's type + path (+ registry value name), clamped per
 // field so a hostile long value cannot push the rest off-screen but the whole batch stays visible.
+// Make one confirm field human-verifiable: control chars / newlines become VISIBLE tokens (never
+// collapse whitespace -- a registry value name's spaces are significant, and two distinct
+// destructive targets must not render identically), and truncation is marked explicitly.
+static QString confirmFieldText(const QString& raw) {
+    QString out = raw;
+    out.replace(QLatin1Char('\r'), QStringLiteral("<CR>"));
+    out.replace(QLatin1Char('\n'), QStringLiteral("<LF>"));
+    out.replace(QLatin1Char('\t'), QStringLiteral("<TAB>"));
+    if (out.size() > kConfirmItemFieldMaxChars) {
+        out = out.left(kConfirmItemFieldMaxChars) +
+              QObject::tr("...[+%1 chars TRUNCATED]").arg(out.size() - kConfirmItemFieldMaxChars);
+    }
+    return out;
+}
+
 static QString renderItemsConfirmPreview(const QJsonArray& items) {
     QStringList lines;
     lines.reserve(items.size() + 1);
-    lines << QObject::tr("%1 item(s) to permanently delete:").arg(items.size());
+    lines << QObject::tr("%1 item(s) to delete:").arg(items.size());
     for (int i = 0; i < items.size(); ++i) {
         const QJsonObject obj = items.at(i).toObject();
         const QString type = obj.value(QStringLiteral("type")).toString();
-        QString path = obj.value(QStringLiteral("path")).toString().simplified();
-        if (path.size() > kConfirmItemFieldMaxChars) {
-            path = path.left(kConfirmItemFieldMaxChars) + QStringLiteral("...");
-        }
-        QString line = QStringLiteral("%1. [%2] %3").arg(i + 1).arg(type, path);
-        QString value = obj.value(QStringLiteral("registry_value_name")).toString().simplified();
+        // Quote the field so leading/trailing whitespace is visible at the boundaries.
+        QString line = QStringLiteral("%1. [%2] \"%3\"")
+                           .arg(i + 1)
+                           .arg(type,
+                                confirmFieldText(obj.value(QStringLiteral("path")).toString()));
+        const QString value = obj.value(QStringLiteral("registry_value_name")).toString();
         if (!value.isEmpty()) {
-            if (value.size() > kConfirmItemFieldMaxChars) {
-                value = value.left(kConfirmItemFieldMaxChars) + QStringLiteral("...");
-            }
-            line += QStringLiteral("  value=%1").arg(value);
+            line += QStringLiteral("  value=\"%1\"").arg(confirmFieldText(value));
         }
         lines << line;
     }
     return lines.join(QLatin1Char('\n'));
 }
 
+// Count items whose type has NO Recycle Bin and is therefore always deleted PERMANENTLY, regardless
+// of use_recycle_bin (registry keys/values, services, scheduled tasks, firewall rules, shell
+// extensions, and registry-backed startup entries).
+static int countInherentlyPermanentItems(const QJsonArray& items) {
+    static const QSet<QString> kPermanentTypes = {QStringLiteral("registry_key"),
+                                                  QStringLiteral("registry_value"),
+                                                  QStringLiteral("service"),
+                                                  QStringLiteral("scheduled_task"),
+                                                  QStringLiteral("firewall_rule"),
+                                                  QStringLiteral("shell_extension")};
+    int count = 0;
+    for (const QJsonValue& value : items) {
+        const QJsonObject obj = value.toObject();
+        // Match how validateCleanupItem accepts the type: trimmed + case-insensitive, so " Service
+        // " or "Registry_Key" still trigger the permanent-delete warning they would execute under.
+        const QString type = obj.value(QStringLiteral("type")).toString().trimmed().toLower();
+        const bool registry_startup =
+            type == QStringLiteral("startup_entry") &&
+            !obj.value(QStringLiteral("registry_value_name")).toString().isEmpty();
+        if (kPermanentTypes.contains(type) || registry_startup) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// Warning lines that must be surfaced to the human ABOVE the item list: an overridden proof-of-scan
+// check, a permanent (non-recoverable) deletion, and any inherently-permanent (no-Recycle-Bin) item
+// types -- all otherwise invisible in a per-item path list a confused/injected model could set.
+static QStringList confirmBatchWarnings(const QJsonObject& action_args, const QJsonArray& items) {
+    QStringList warnings;
+    if (action_args.value(QStringLiteral("technician_override")).toBool(false)) {
+        warnings << QObject::tr(
+            "WARNING: proof-of-scan verification is OVERRIDDEN -- these items were NOT confirmed "
+            "to come from a scan.");
+    }
+    if (!action_args.value(QStringLiteral("use_recycle_bin")).toBool(true)) {
+        warnings << QObject::tr(
+            "WARNING: PERMANENT deletion -- files/folders are NOT sent to the Recycle Bin and "
+            "cannot be recovered.");
+    }
+    const int permanent = countInherentlyPermanentItems(items);
+    if (permanent > 0) {
+        warnings << QObject::tr(
+                        "WARNING: %1 item(s) (registry/service/task/firewall) have no Recycle Bin "
+                        "and are deleted PERMANENTLY even in Recycle-Bin mode.")
+                        .arg(permanent);
+    }
+    return warnings;
+}
+
 // Build the confirm-dialog detail for an app action's arguments. A batch action carrying an 'items'
-// array is rendered per-item (fully reviewable); everything else falls back to a compact JSON
-// summary. Sets @p tooLargeToReview when a CATASTROPHIC item batch exceeds what a human can vet in
-// one modal -- the caller then refuses so the batch is never confirmed behind a truncated preview.
+// array is rendered per-item (fully reviewable) with any override/permanent-delete warnings on top;
+// everything else falls back to a compact JSON summary. Sets @p tooLargeToReview when a
+// CATASTROPHIC item batch exceeds what a human can vet in one modal -- the caller then refuses so
+// the batch is never confirmed behind a truncated preview.
 static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
                                         const QJsonObject& action_args,
                                         bool& tooLargeToReview) {
@@ -6606,7 +6672,9 @@ static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
             tooLargeToReview = true;
             return {};
         }
-        return renderItemsConfirmPreview(items);
+        QStringList blocks = confirmBatchWarnings(action_args, items);
+        blocks << renderItemsConfirmPreview(items);
+        return blocks.join(QLatin1Char('\n'));
     }
     QString detail = QString::fromUtf8(QJsonDocument(action_args).toJson(QJsonDocument::Compact));
     constexpr int kMaxDetailChars = 200;

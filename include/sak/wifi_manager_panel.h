@@ -19,6 +19,8 @@
 #include <QToolButton>
 #include <QWidget>
 
+#include <atomic>
+
 class QLabel;
 class QFormLayout;
 class QStackedWidget;
@@ -271,13 +273,17 @@ private:
     QList<int> checkedWifiRows() const;
     QList<WifiConfig> configsFromRows(const QList<int>& rows) const;
     void startAddToWindowsProfiles(const QList<WifiConfig>& configs);
-    static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs);
+    /// Install each profile via netsh, checking @p cancel between profiles so teardown can stop the
+    /// loop after at most one bounded netsh call rather than after all N.
+    static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs,
+                                               const std::atomic<bool>* cancel);
 
     // In-flight "add to Windows profiles" install (netsh wlan add profile). Tracked so the
-    // destructor can bounded-wait it instead of letting the mutation run detached past teardown.
-    // The finished handler is already UAF-safe via a QPointer, but the netsh writes are short and
-    // bounded, so joining them at teardown is cheap and keeps the mutation owned.
+    // destructor can COOPERATIVELY cancel (via m_wlanInstallCancel, checked between profiles) and
+    // then bounded-wait it, instead of letting the mutation run detached past teardown or blocking
+    // teardown for one netsh call per selected network.
     QFuture<QPair<int, int>> m_wlanInstallFuture;
+    std::atomic<bool> m_wlanInstallCancel{false};
 
     // -------------------------------------------------------------------------
     // Persistence

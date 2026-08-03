@@ -43,6 +43,12 @@ public:
     CleanupWorker(CleanupWorker&&) = delete;
     CleanupWorker& operator=(CleanupWorker&&) = delete;
 
+    /// @brief Require RECOVERABLE deletion: when set, a file/folder that cannot be sent to the
+    ///        Recycle Bin is reported FAILED and left in place rather than permanently deleted or
+    ///        scheduled for reboot removal. Used by AUTOMATIC (no human review) cleanup so an
+    ///        auto-deleted item is always undoable. Must be paired with useRecycleBin=true.
+    void setRequireRecoverable(bool require) { m_requireRecoverable = require; }
+
 Q_SIGNALS:
     void itemCleaned(const QString& path, bool success);
     void cleanupComplete(int succeeded, int failed, qint64 bytesRecovered);
@@ -61,11 +67,22 @@ protected:
 private:
     QVector<LeftoverItem> m_items;
     bool m_useRecycleBin = false;
+    bool m_requireRecoverable = false;   ///< Recycle-only: never permanently delete on recycle fail
     QStringList m_rebootPendingPaths;    ///< Paths scheduled for removal on reboot
     QStringList m_recycleFallbackPaths;  ///< Recycle failed -> deleted permanently instead
 
     /// @brief Record @p path as a recycle->permanent fallback when @p fallback.
     void noteRecycleFallback(bool fallback, const QString& path);
+
+    /// Outcome of the shared recycle attempt.
+    enum class RecycleOutcome {
+        Recycled,            ///< Sent to the Recycle Bin (done)
+        RefusedRecoverable,  ///< Recoverable-only + could not recycle -> leave in place (failed)
+        FallThrough          ///< Proceed to permanent deletion
+    };
+    /// @brief Try the Recycle Bin (when enabled), honoring recoverable-only mode. Sets
+    ///        @p recycleFallback when a recycle failure falls through to permanent deletion.
+    [[nodiscard]] RecycleOutcome attemptRecycle(const QString& path, bool& recycleFallback);
 
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);
@@ -82,6 +99,11 @@ private:
     ///        the handle -- no path re-resolution after the check), falling back to a string unlink
     ///        only when the object could not be opened (locked/denied) and was NOT redirected.
     [[nodiscard]] bool removeFilePermanent(const QString& path);
+
+    /// @brief Permanent-file removal tail of deleteFile: try by-handle delete, a writable-bit
+    /// retry,
+    ///        then reboot scheduling for a locked file. Split out to keep deleteFile within budget.
+    [[nodiscard]] bool removeFilePermanentWithRetry(const QString& path, bool recycleFallback);
 
 #ifdef Q_OS_WIN
     /// Outcome of a by-handle permanent delete attempt.
@@ -102,9 +124,31 @@ private:
     /// @brief Delete a folder, falling back to reboot scheduling for locked contents
     [[nodiscard]] bool deleteFolder(const QString& path);
 
-    /// @brief Permanently remove a (non-reparse, redirect-verified) folder: recursive delete, else
-    ///        a forced per-entry sweep + rmdir, scheduling locked leftovers for reboot removal.
+    /// @brief Recycle-or-permanent tail of deleteFolder (after the reparse/redirect screens): try
+    ///        the Recycle Bin, else permanently remove. Split out to keep deleteFolder within the
+    ///        complexity budget.
+    [[nodiscard]] bool finishFolderDelete(QDir& dir, const QString& path);
+
+    /// @brief Permanently remove a (non-reparse, redirect-verified) folder. On Windows this is a
+    ///        HANDLE-VERIFIED recursive delete (each file deleted by verified handle, each subdir
+    ///        re-verified, the emptied dir removed by handle) so an ancestor-junction swap
+    ///        mid-delete cannot redirect the recursion into a real target. Elsewhere:
+    ///        removeRecursively + a forced per-entry sweep + rmdir, scheduling locked leftovers for
+    ///        reboot removal.
     [[nodiscard]] bool removeFolderPermanent(QDir& dir, const QString& path);
+
+#ifdef Q_OS_WIN
+    /// @brief Handle-verified recursive delete of @p path's tree (Windows). Every destructive
+    ///        syscall is preceded by an immediate open+GetFinalPathNameByHandleW verification of
+    ///        the exact target, so a swapped ancestor is caught at every node (fail-closed).
+    [[nodiscard]] bool removeFolderTreeVerified(const QString& path);
+    /// @brief Remove one child during removeFolderTreeVerified: reparse -> unlink the link only;
+    ///        subdir -> recurse; file -> delete by verified handle.
+    [[nodiscard]] bool removeVerifiedFolderEntry(const QFileInfo& entry);
+    /// @brief Remove an (expected-empty) directory by a redirect-verified handle (POSIX unlink),
+    ///        falling back to RemoveDirectoryW / reboot scheduling only when it cannot be opened.
+    [[nodiscard]] bool removeEmptyDirByVerifiedHandle(const QString& path);
+#endif
 
     /// @brief Unlink a reparse point (junction / symlink) WITHOUT touching its target
     [[nodiscard]] bool unlinkReparsePoint(const QString& path);

@@ -86,6 +86,7 @@ private Q_SLOTS:
     void onCleanupStarted(int totalItems);
     void onItemCleaned(const QString& path, bool success);
     void onCleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
+    void onCleanupCancelled();
     void onRebootPendingItems(QStringList paths);
     void onRecycleFallbackItems(QStringList paths);
 

@@ -9,6 +9,8 @@
 #include "sak/advanced_uninstall_types.h"
 
 #include <QObject>
+#include <QSet>
+#include <QString>
 #include <QThread>
 #include <QVector>
 
@@ -83,6 +85,22 @@ public:
     ///        Review/Risky leftovers are deliberately excluded (they always require human review).
     ///        Pure/static so it is unit-testable without driving an uninstall.
     static QVector<LeftoverItem> safeLeftovers(const QVector<LeftoverItem>& items);
+
+    /// @brief The non-Safe (Review/Risky) subset of @p items, kept for human review after an
+    ///        automatic Safe cleanup so they do not vanish from the panel. Pure/static (complement
+    ///        of safeLeftovers).
+    static QVector<LeftoverItem> nonSafeLeftovers(const QVector<LeftoverItem>& items);
+
+    /// @brief True if @p item's type can go to the Recycle Bin (File/Folder or a file-shortcut
+    ///        StartupEntry). Registry keys/values, services, tasks, firewall rules, shell
+    ///        extensions have NO Recycle Bin and are IRREVERSIBLE -- auto-clean must never
+    ///        auto-delete them.
+    [[nodiscard]] static bool isRecoverableLeftoverType(const LeftoverItem& item);
+
+    /// @brief Items eligible for AUTOMATIC (no human review) cleanup: Safe AND recoverable-type,
+    ///        each marked selected. Safe-but-irreversible items are deliberately excluded so an
+    ///        automatic delete can never be unrecoverable.
+    static QVector<LeftoverItem> autoCleanableLeftovers(const QVector<LeftoverItem>& items);
 
     /// @brief Cancel the current operation
     void cancelOperation();
@@ -251,9 +269,32 @@ private:
     QVector<LeftoverItem> screenCleanupItems(const QVector<LeftoverItem>& selectedItems,
                                              int* refusedCount);
 
-    /// @brief If @p autoClean and @p report has SAFE leftovers, start an automatic cleanup of just
-    ///        those (screened + recycle-bin by default). Returns true iff a cleanup was started.
+    /// @brief If @p autoClean and @p report has SAFE leftovers, start an automatic RECOVERABLE
+    ///        (Recycle Bin, always) cleanup of just those, screened. Returns true iff a cleanup was
+    ///        started; when it does, the caller must NOT emit uninstallFinished -- it is deferred
+    ///        to onCleanupComplete so the panel does not flip the controller to Enumerating and
+    ///        refuse the cleanup.
     bool maybeAutoCleanSafeLeftovers(const UninstallReport& report, bool autoClean);
+
+    /// @brief Start a CleanupWorker on already-screened items. Shared by the manual clean path and
+    ///        auto-clean. @p useRecycleBin forces the Recycle Bin; @p requireRecoverable
+    ///        (auto-clean) makes a recycle failure leave the item in place rather than permanently
+    ///        delete it.
+    void startCleanupWorker(const QVector<LeftoverItem>& screenedItems,
+                            bool useRecycleBin,
+                            bool requireRecoverable);
+
+    /// @brief Complete a deferred single-uninstall auto-clean: clear the in-progress flag, re-show
+    ///        the leftovers STILL PRESENT (not just risk-based -- anything not confirmed removed),
+    ///        and emit the deferred uninstallFinished. Safe to call from the cleanup success,
+    ///        failure, AND cancel paths (a no-op unless an auto-clean was in progress).
+    void finalizeDeferredAutoClean();
+
+    /// @brief The subset of @p all whose item was NOT confirmed removed by the auto-clean (path not
+    ///        in m_autoCleanedPaths) -- so a screened-out or failed Safe item, and every
+    ///        Review/Risky item, stays visible for review instead of silently vanishing.
+    [[nodiscard]] QVector<LeftoverItem> leftoversStillPresent(
+        const QVector<LeftoverItem>& all) const;
 
     /// @brief Wire a freshly created CleanupWorker's signals to this controller (incl. the
     ///        recycle-fallback re-emit so the UI can warn about permanent deletions).
@@ -304,6 +345,15 @@ private:
     // set); auto-cleaned in one pass at batch end so a cleanup never runs concurrently with the
     // next queued uninstall.
     QVector<LeftoverItem> m_batchAutoCleanItems;
+
+    // Single-uninstall auto-clean in flight: uninstallFinished is deferred until the auto-clean
+    // CleanupWorker completes (see maybeAutoCleanSafeLeftovers / onCleanupComplete), so the panel's
+    // refreshPrograms() cannot flip the controller to Enumerating and refuse the cleanup.
+    bool m_autoCleanInProgress = false;
+    UninstallReport m_pendingAutoCleanReport;
+    // Lower-cased paths/names the in-progress auto-clean CONFIRMED removed (from itemCleaned
+    // success), so finalizeDeferredAutoClean can re-show exactly the items still on disk.
+    QSet<QString> m_autoCleanedPaths;
 
     // Preferences
     ScanLevel m_defaultScanLevel = ScanLevel::Moderate;

@@ -536,7 +536,17 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
         }
         worker->requestStop();
         if (!worker->wait(kIoWorkerJoinMs)) {
+            // Refuses to stop: detach so ~QObject cannot destroy a live QThread. Its finish->
+            // deleteLater connection had THIS panel as receiver and is severed here, so wire a
+            // self-owned deleteLater (receiver = the worker) so the detached thread still frees
+            // itself once it finishes instead of leaking permanently.
             worker->setParent(nullptr);
+            QObject::connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            // Race: the worker may have finished between the wait() timeout and the connect above,
+            // so its finished signal already fired and will not replay -- delete it directly then.
+            if (worker->isFinished()) {
+                worker->deleteLater();
+            }
         }
     }
     m_active_io_workers.clear();

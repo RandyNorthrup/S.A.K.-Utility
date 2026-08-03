@@ -27,40 +27,67 @@ namespace sak {
 
 namespace detail {
 
-/// Filesystem identity: case/separator/trailing-dot-insensitive normalized path.
-[[nodiscard]] inline QString fsProvenanceKey(const QString& path) {
-    return QStringLiteral("fs|") +
-           cleanupCanonicalLower(QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed())));
+/// Filesystem identity BODY: case/separator/trailing-dot-insensitive normalized path (no type tag).
+[[nodiscard]] inline QString fsBody(const QString& path) {
+    return cleanupCanonicalLower(QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed())));
 }
 
-/// Registry key identity: hive-prefixed subkey canonicalized (case/separator-insensitive).
-[[nodiscard]] inline QString regKeyProvenanceKey(const QString& path) {
-    QString subkey;
-    if (!cleanupRegistryHive(path.trimmed(), subkey)) {
-        return QStringLiteral("regkey|") + path.trimmed().toLower();
+/// Registry identity BODY: the WHOLE path lower-cased with separators collapsed -- crucially this
+/// KEEPS the hive (hklm\... vs hkcu\...) so a proof for one hive can never authorize deletion in
+/// another (cleanupNormalizedSubkey does not strip the hive; it just canonicalizes the string).
+[[nodiscard]] inline QString regBody(const QString& path) {
+    return cleanupNormalizedSubkey(path.trimmed());
+}
+
+/// Registry value NAME normalized for identity: lower-cased (Windows value-name lookup is
+/// case-INSENSITIVE, so the same value under a different casing must match) but whitespace
+/// PRESERVED
+/// ("Foo " and "Foo" are distinct values).
+[[nodiscard]] inline QString valueBody(const QString& valueName) {
+    return valueName.toLower();
+}
+
+/// Scheduled-task identity BODY: leading backslash + separator style normalized, lower-cased.
+[[nodiscard]] inline QString taskBody(const QString& path) {
+    QString name = path.trimmed();
+    name.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    while (name.startsWith(QLatin1Char('\\'))) {
+        name.remove(0, 1);
     }
-    return QStringLiteral("regkey|") + cleanupNormalizedSubkey(subkey);
+    return name.toLower();
 }
 
-/// Registry value identity: canonical key + exact value name (value names are significant).
-[[nodiscard]] inline QString regValProvenanceKey(const QString& path, const QString& valueName) {
-    QString subkey;
-    const QString base = cleanupRegistryHive(path.trimmed(), subkey)
-                             ? cleanupNormalizedSubkey(subkey)
-                             : path.trimmed().toLower();
-    return QStringLiteral("regval|") + base + QStringLiteral("|") + valueName;
+/// Filesystem family (File / Folder / StartupEntry): each type gets a DISTINCT tag so a File proof
+/// cannot authorize Folder (recursive) deletion of the same path, and a shortcut startup entry
+/// cannot authorize a plain-file delete.
+[[nodiscard]] inline QString fsFamilyKey(const LeftoverItem& item) {
+    if (item.type == LeftoverItem::Type::Folder) {
+        return QStringLiteral("folder|") + fsBody(item.path);
+    }
+    if (item.type == LeftoverItem::Type::StartupEntry) {
+        return item.registryValueName.isEmpty()
+                   ? QStringLiteral("startup-file|") + fsBody(item.path)
+                   : QStringLiteral("startup-val|") + regBody(item.path) + QStringLiteral("|") +
+                         valueBody(item.registryValueName);
+    }
+    return QStringLiteral("file|") + fsBody(item.path);
 }
 
-/// StartupEntry is either a filesystem shortcut or a registry Run value.
-[[nodiscard]] inline QString startupProvenanceKey(const LeftoverItem& item) {
-    return item.registryValueName.isEmpty()
-               ? fsProvenanceKey(item.path)
-               : regValProvenanceKey(item.path, item.registryValueName);
+/// Registry family (RegistryKey / ShellExtension / RegistryValue): distinct tags + hive-preserving
+/// body. Value names are case-normalized but whitespace-preserved (see valueBody).
+[[nodiscard]] inline QString registryFamilyKey(const LeftoverItem& item) {
+    if (item.type == LeftoverItem::Type::RegistryValue) {
+        return QStringLiteral("regval|") + regBody(item.path) + QStringLiteral("|") +
+               valueBody(item.registryValueName);
+    }
+    if (item.type == LeftoverItem::Type::ShellExtension) {
+        return QStringLiteral("shellext|") + regBody(item.path);
+    }
+    return QStringLiteral("regkey|") + regBody(item.path);
 }
 
-/// Name-based identity (service / scheduled task / firewall rule): lower-cased, task path
-/// normalized.
-[[nodiscard]] inline QString namedProvenanceKey(LeftoverItem::Type type, const QString& path) {
+/// Name-based family (Service / ScheduledTask / FirewallRule / other): distinct tags, lower-cased.
+[[nodiscard]] inline QString namedKey(LeftoverItem::Type type, const QString& path) {
     const QString name = path.trimmed();
     if (type == LeftoverItem::Type::Service) {
         return QStringLiteral("svc|") + name.toLower();
@@ -69,12 +96,7 @@ namespace detail {
         return QStringLiteral("fw|") + name.toLower();
     }
     if (type == LeftoverItem::Type::ScheduledTask) {
-        QString normalized = name;
-        normalized.replace(QLatin1Char('/'), QLatin1Char('\\'));
-        while (normalized.startsWith(QLatin1Char('\\'))) {
-            normalized.remove(0, 1);
-        }
-        return QStringLiteral("task|") + normalized.toLower();
+        return QStringLiteral("task|") + taskBody(name);
     }
     return QStringLiteral("other|") + name.toLower();
 }
@@ -82,23 +104,23 @@ namespace detail {
 }  // namespace detail
 
 /// A stable identity key for a leftover item, normalized so the SAME real item produces the SAME
-/// key whether it came from the scanner or from the model's clean request
-/// (case/separator/trailing-dot insensitive for paths; lower-cased names; registry hive+subkey
-/// canonicalized). Pure -> testable.
+/// key whether it came from the scanner or from the model's clean request (case/separator/trailing-
+/// dot insensitive paths; lower-cased names; registry hive+subkey canonicalized). Every key is
+/// TYPE-tagged and registry keys KEEP the hive, so a proof can only authorize deletion of the exact
+/// same object KIND at the exact same identity -- an injected item of a different type/hive is
+/// refused even if a path string coincides. Pure -> testable.
 [[nodiscard]] inline QString leftoverProvenanceKey(const LeftoverItem& item) {
     switch (item.type) {
     case LeftoverItem::Type::File:
     case LeftoverItem::Type::Folder:
-        return detail::fsProvenanceKey(item.path);
     case LeftoverItem::Type::StartupEntry:
-        return detail::startupProvenanceKey(item);
+        return detail::fsFamilyKey(item);
     case LeftoverItem::Type::RegistryKey:
     case LeftoverItem::Type::ShellExtension:
-        return detail::regKeyProvenanceKey(item.path);
     case LeftoverItem::Type::RegistryValue:
-        return detail::regValProvenanceKey(item.path, item.registryValueName);
+        return detail::registryFamilyKey(item);
     default:
-        return detail::namedProvenanceKey(item.type, item.path);
+        return detail::namedKey(item.type, item.path);
     }
 }
 

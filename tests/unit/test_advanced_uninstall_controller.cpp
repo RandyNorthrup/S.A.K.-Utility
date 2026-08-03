@@ -31,6 +31,8 @@ private Q_SLOTS:
     void autoRestorePoint_setAndGet();
     void autoCleanSafe_setAndGet();
     void safeLeftovers_filtersSafeOnlyAndSelects();
+    void nonSafeLeftovers_keepsReviewAndRisky();
+    void autoCleanableLeftovers_excludesIrreversibleSafeTypes();
     void defaultScanLevel_setAndGet();
     void showSystemComponents_setAndGet();
     void defaultScanLevel_allValues();
@@ -139,6 +141,88 @@ void AdvancedUninstallControllerTests::safeLeftovers_filtersSafeOnlyAndSelects()
     QVERIFY(safe.first().selected);  // marked selected so CleanupWorker acts on it
     // Empty in -> empty out (no auto-clean when nothing is safe).
     QVERIFY(AdvancedUninstallController::safeLeftovers({}).isEmpty());
+}
+
+void AdvancedUninstallControllerTests::nonSafeLeftovers_keepsReviewAndRisky() {
+    // After a Safe auto-clean, the Review/Risky items must be surfaced back to the panel so they do
+    // not vanish. nonSafeLeftovers() is the complement of safeLeftovers().
+    QVector<sak::LeftoverItem> items;
+    sak::LeftoverItem safeFile;
+    safeFile.type = sak::LeftoverItem::Type::File;
+    safeFile.risk = sak::LeftoverItem::RiskLevel::Safe;
+    safeFile.path = QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.log");
+    items.append(safeFile);
+
+    sak::LeftoverItem reviewItem;
+    reviewItem.type = sak::LeftoverItem::Type::Folder;
+    reviewItem.risk = sak::LeftoverItem::RiskLevel::Review;
+    reviewItem.path = QStringLiteral("C:\\ProgramData\\Shared");
+    items.append(reviewItem);
+
+    sak::LeftoverItem riskyItem;
+    riskyItem.type = sak::LeftoverItem::Type::RegistryKey;
+    riskyItem.risk = sak::LeftoverItem::RiskLevel::Risky;
+    riskyItem.path = QStringLiteral("HKLM\\SOFTWARE\\AcmeCorp");
+    items.append(riskyItem);
+
+    const QVector<sak::LeftoverItem> rest = AdvancedUninstallController::nonSafeLeftovers(items);
+    QCOMPARE(rest.size(), 2);  // the Review + Risky items, never the Safe one
+    for (const sak::LeftoverItem& item : rest) {
+        QVERIFY(item.risk != sak::LeftoverItem::RiskLevel::Safe);
+    }
+    // safeLeftovers + nonSafeLeftovers partition the input (1 + 2 == 3).
+    QCOMPARE(AdvancedUninstallController::safeLeftovers(items).size() + rest.size(), items.size());
+}
+
+void AdvancedUninstallControllerTests::autoCleanableLeftovers_excludesIrreversibleSafeTypes() {
+    using T = sak::LeftoverItem::Type;
+    // An AUTOMATIC (no-review) delete must be undoable, so auto-clean only takes Recycle-Bin-able
+    // types even when an irreversible type is classified Safe.
+    QVERIFY(AdvancedUninstallController::isRecoverableLeftoverType([] {
+        sak::LeftoverItem i;
+        i.type = T::File;
+        return i;
+    }()));
+    QVERIFY(AdvancedUninstallController::isRecoverableLeftoverType([] {
+        sak::LeftoverItem i;
+        i.type = T::Folder;
+        return i;
+    }()));
+    QVERIFY(!AdvancedUninstallController::isRecoverableLeftoverType([] {
+        sak::LeftoverItem i;
+        i.type = T::RegistryKey;
+        return i;
+    }()));
+    QVERIFY(!AdvancedUninstallController::isRecoverableLeftoverType([] {
+        sak::LeftoverItem i;
+        i.type = T::Service;
+        return i;
+    }()));
+    // A registry StartupEntry (has a value name) is irreversible; a file-shortcut one is not.
+    QVERIFY(!AdvancedUninstallController::isRecoverableLeftoverType([] {
+        sak::LeftoverItem i;
+        i.type = T::StartupEntry;
+        i.registryValueName = QStringLiteral("Run");
+        return i;
+    }()));
+
+    QVector<sak::LeftoverItem> items;
+    sak::LeftoverItem safeFile;
+    safeFile.type = T::File;
+    safeFile.risk = sak::LeftoverItem::RiskLevel::Safe;
+    safeFile.path = QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.log");
+    items.append(safeFile);
+    sak::LeftoverItem safeRegKey;  // SAFE but irreversible -> must NOT be auto-cleaned
+    safeRegKey.type = T::RegistryKey;
+    safeRegKey.risk = sak::LeftoverItem::RiskLevel::Safe;
+    safeRegKey.path = QStringLiteral("HKCU\\Software\\AcmeCorp");
+    items.append(safeRegKey);
+
+    const QVector<sak::LeftoverItem> cleanable =
+        AdvancedUninstallController::autoCleanableLeftovers(items);
+    QCOMPARE(cleanable.size(), 1);  // only the file, never the Safe registry key
+    QCOMPARE(cleanable.first().type, T::File);
+    QVERIFY(cleanable.first().selected);
 }
 
 void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet() {

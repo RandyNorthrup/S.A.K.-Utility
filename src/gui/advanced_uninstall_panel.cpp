@@ -431,6 +431,10 @@ void AdvancedUninstallPanel::connectCleanupSignals() {
             this,
             &AdvancedUninstallPanel::onCleanupFinished);
     connect(m_controller.get(),
+            &AdvancedUninstallController::cleanupCancelled,
+            this,
+            &AdvancedUninstallPanel::onCleanupCancelled);
+    connect(m_controller.get(),
             &AdvancedUninstallController::rebootPendingItems,
             this,
             &AdvancedUninstallPanel::onRebootPendingItems);
@@ -849,6 +853,16 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
 
     // Refresh program list
     m_controller->refreshPrograms();
+}
+
+void AdvancedUninstallPanel::onCleanupCancelled() {
+    // A cancelled cleanup must un-busy the UI (otherwise the panel stays stuck "running") and leave
+    // the leftover table as-is for the user to retry. The controller re-emits the leftovers still
+    // present if this cancel ended a deferred auto-clean.
+    setOperationRunning(false);
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Cleanup cancelled"), sak::kTimerStatusDefaultMs);
+    logMessage("Cleanup cancelled.");
 }
 
 void AdvancedUninstallPanel::onRebootPendingItems(QStringList paths) {

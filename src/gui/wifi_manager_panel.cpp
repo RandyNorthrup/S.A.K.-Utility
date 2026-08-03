@@ -212,9 +212,11 @@ WifiManagerPanel::WifiManagerPanel(QWidget* parent) : QWidget(parent) {
 }
 
 WifiManagerPanel::~WifiManagerPanel() {
-    // Bounded-join the in-flight "add to Windows profiles" install so the netsh mutation does not
-    // run detached past teardown. Each netsh call carries its own process timeout, so this cannot
-    // hang teardown for more than a few bounded seconds.
+    // Cooperatively cancel then bounded-join the in-flight "add to Windows profiles" install so the
+    // netsh mutation does not run detached past teardown. installWlanProfiles checks the flag
+    // between profiles, so teardown blocks for at most ONE in-flight netsh call (its own process
+    // timeout), not one per selected network. The panel (and this atomic) outlive the wait.
+    m_wlanInstallCancel.store(true);
     if (m_wlanInstallFuture.isRunning()) {
         m_wlanInstallFuture.waitForFinished();
     }
@@ -1767,6 +1769,14 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::configsFromRows(
 }
 
 void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& configs) {
+    // Refuse a second concurrent install: m_wlanInstallFuture holds a SINGLE future, and both tasks
+    // would capture &m_wlanInstallCancel -- overwriting it would leave the older task tracked by
+    // nothing, so the destructor could not join it and it could deref the destroyed atomic. One
+    // install at a time (the button is also disabled during a run; this guards a re-entrant path).
+    if (m_wlanInstallFuture.isRunning()) {
+        Q_EMIT statusMessage("A WiFi profile install is already in progress.", 0);
+        return;
+    }
     m_add_to_windows_btn->setEnabled(false);
     Q_EMIT statusMessage("Adding selected network(s) to Windows WiFi profiles...", 0);
 
@@ -1792,15 +1802,23 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
         }
     });
 
-    m_wlanInstallFuture =
-        QtConcurrent::run([configs]() { return WifiManagerPanel::installWlanProfiles(configs); });
+    m_wlanInstallCancel.store(false);
+    const std::atomic<bool>* cancel = &m_wlanInstallCancel;
+    m_wlanInstallFuture = QtConcurrent::run(
+        [configs, cancel]() { return WifiManagerPanel::installWlanProfiles(configs, cancel); });
     watcher->setFuture(m_wlanInstallFuture);
 }
 
-QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& configs) {
+QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& configs,
+                                                      const std::atomic<bool>* cancel) {
     int added = 0;
     int failed = 0;
     for (int index = 0; index < configs.size(); ++index) {
+        // Cooperative cancellation: stop between profiles so teardown does not wait for every
+        // remaining netsh call. Already-installed profiles stay (a partial install is honest).
+        if (cancel && cancel->load()) {
+            break;
+        }
         const QString xml = WifiManagerPanel::buildWlanProfileXml(configs.at(index));
         if (WifiManagerPanel::installWlanProfile(xml, index)) {
             ++added;

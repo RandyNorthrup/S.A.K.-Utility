@@ -13,6 +13,7 @@
 #include "sak/recycle_bin.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 
@@ -88,6 +89,64 @@ bool unlinkByHandle(HANDLE handle) {
     return SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)) != 0;
 }
 #endif  // Q_OS_WIN
+
+// True if @p path is on a volume that actually HAS a Recycle Bin. On a removable / network /
+// optical volume, the shell's FOF_ALLOWUNDO "recycle" silently PERMANENTLY deletes, so recycle-only
+// (auto-clean) mode must refuse there rather than assume recoverability. A fixed drive is the fast,
+// reliable proxy for "has a Recycle Bin".
+bool volumeSupportsRecycleBin(const QString& path) {
+#ifdef Q_OS_WIN
+    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
+    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+        return false;
+    }
+    return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16())) == DRIVE_FIXED;
+#else
+    Q_UNUSED(path)
+    return true;
+#endif
+}
+
+// Above this the item is deemed too large to GUARANTEE it fits the Recycle Bin (the shell silently
+// PERMANENTLY deletes an item exceeding the bin's configured max). Conservative: a default bin
+// holds GBs, so 4 GiB leaves the common small app leftover recyclable while a huge one is left for
+// review.
+constexpr qint64 kRecoverableRecycleSizeCap = 4LL * 1024 * 1024 * 1024;
+
+// On-disk size of @p path, summed but SHORT-CIRCUITED once it exceeds @p limit (so a huge tree is
+// not fully walked). Does not follow symlinks (QDirIterator default).
+qint64 boundedItemSize(const QString& path, qint64 limit) {
+    const QFileInfo info(path);
+    if (info.isFile()) {
+        return info.size();
+    }
+    if (!info.isDir()) {
+        return 0;
+    }
+    qint64 total = 0;
+    // NoSymLinks: never list (and never size()/stat) a nested symlink -- following one to a UNC
+    // target would trigger a remote handshake and mis-measure by the target's size. QDirIterator
+    // also does not recurse INTO symlinked directories (FollowSymlinks is not set).
+    QDirIterator it(path,
+                    QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+        if (total > limit) {
+            return total;
+        }
+    }
+    return total;
+}
+
+// True if recycle-only (auto-clean) mode can SAFELY recycle @p path: the volume has a Recycle Bin
+// AND the item is small enough to actually fit it. A huge item can be silently nuked past the bin's
+// max even on a fixed drive, so it is left for human review instead.
+bool recoverableRecycleAllowed(const QString& path) {
+    return volumeSupportsRecycleBin(path) &&
+           boundedItemSize(path, kRecoverableRecycleSizeCap) <= kRecoverableRecycleSizeCap;
+}
 }  // namespace
 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
@@ -223,9 +282,19 @@ CleanupWorker::HandleDeleteOutcome CleanupWorker::deleteFileByVerifiedHandle(con
                         refusal.toStdString());
         return HandleDeleteOutcome::Redirected;
     }
-    const bool ok = unlinkByHandle(handle);
+    if (unlinkByHandle(handle)) {
+        CloseHandle(handle);
+        return HandleDeleteOutcome::Deleted;
+    }
+    // The object was opened and verified NOT redirected, but the unlink itself failed (typically a
+    // sharing/lock violation). Surface the Win32 error so the caller's string-unlink/reboot
+    // fallback is not silent; the earlier redirect check means the fallback cannot hit a swapped-in
+    // target.
+    const DWORD err = GetLastError();
     CloseHandle(handle);
-    return ok ? HandleDeleteOutcome::Deleted : HandleDeleteOutcome::NotOpenable;
+    sak::logWarning("By-handle delete of " + path.toStdString() +
+                    " failed (GetLastError=" + std::to_string(err) + "); using fallback removal");
+    return HandleDeleteOutcome::NotOpenable;
 }
 #endif
 
@@ -249,9 +318,67 @@ bool CleanupWorker::removeFilePermanent(const QString& path) {
 #endif
 }
 
+CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
+                                                            bool& recycleFallback) {
+    if (m_useRecycleBin) {
+        // Recycle-only mode GUARANTEES recoverability: refuse when the volume has no Recycle Bin OR
+        // the item is too large to fit it (the shell silently permanent-deletes in both cases),
+        // leaving it in place for review instead.
+        if (m_requireRecoverable && !recoverableRecycleAllowed(path)) {
+            sak::logWarning("Auto-clean leaves " + path.toStdString() +
+                            " in place: no Recycle Bin on volume, or too large to guarantee "
+                            "recoverable");
+            return RecycleOutcome::RefusedRecoverable;
+        }
+        if (sendPathToRecycleBin(path)) {
+            return RecycleOutcome::Recycled;
+        }
+        // Recycle-only (automatic) mode: never fall through to permanent deletion -- report failed
+        // and leave the item in place so an auto-deleted item is always recoverable.
+        if (m_requireRecoverable) {
+            sak::logWarning("Recycle bin failed for " + path.toStdString() +
+                            "; auto-clean leaves it in place (no permanent delete)");
+            return RecycleOutcome::RefusedRecoverable;
+        }
+        // Recycle failed: the item is about to be deleted PERMANENTLY despite the recycle choice.
+        // Record it so the silent escalation is surfaced.
+        recycleFallback = true;
+        sak::logWarning("Recycle bin failed for " + path.toStdString() +
+                        "; falling back to permanent deletion");
+        return RecycleOutcome::FallThrough;
+    }
+    // Recoverable required but recycle disabled: refuse to permanently delete (defensive -- auto-
+    // clean always pairs requireRecoverable with useRecycleBin, but never destroy from this mode).
+    if (m_requireRecoverable) {
+        sak::logWarning("Recoverable-only cleanup with recycle disabled; leaving " +
+                        path.toStdString() + " in place");
+        return RecycleOutcome::RefusedRecoverable;
+    }
+    return RecycleOutcome::FallThrough;
+}
+
 bool CleanupWorker::deleteFile(const QString& path) {
     Q_ASSERT(!path.isEmpty());
-    QFileInfo info(path);
+    // Ancestor reparse guard FIRST, before any stat that FOLLOWS the path: an ancestor swapped to a
+    // (UNC) symlink would otherwise make exists() trigger a remote handshake. pathHasReparsePoint
+    // Ancestor reads each ancestor's own attributes WITHOUT following, so it is safe to call first.
+    if (sak::pathHasReparsePointAncestor(path)) {
+        sak::logWarning("Refusing file delete of " + path.toStdString() +
+                        ": an ancestor is a symlink/junction");
+        return false;
+    }
+    const QFileInfo info(path);
+    // Leaf reparse check uses isSymLink/isJunction (which read the LINK's own attributes, no
+    // follow) BEFORE exists() (which FOLLOWS the link and would trigger an SMB/NTLM handshake if
+    // the leaf was swapped to a UNC symlink). A file symlink leftover is unlinked as the LINK only.
+    if (info.isSymLink() || info.isJunction()) {
+        if (m_requireRecoverable) {
+            sak::logWarning("Auto-clean leaves reparse-point leftover for review: " +
+                            path.toStdString());
+            return false;
+        }
+        return unlinkReparsePoint(path);
+    }
     if (!info.exists()) {
         return true;  // Already gone
     }
@@ -262,25 +389,26 @@ bool CleanupWorker::deleteFile(const QString& path) {
         return false;
     }
 
-    // If recycle bin mode is enabled, try that first.
+    // Recycle first (when enabled), honoring recoverable-only mode.
     bool recycleFallback = false;
-    if (m_useRecycleBin) {
-        if (sendPathToRecycleBin(path)) {
-            return true;
-        }
-        // Recycle failed: every path below deletes PERMANENTLY despite the user's
-        // recycle-bin choice. Record it so the silent escalation is surfaced.
-        recycleFallback = true;
-        sak::logWarning("Recycle bin failed for " + path.toStdString() +
-                        "; falling back to permanent deletion");
+    switch (attemptRecycle(path, recycleFallback)) {
+    case RecycleOutcome::Recycled:
+        return true;
+    case RecycleOutcome::RefusedRecoverable:
+        return false;
+    case RecycleOutcome::FallThrough:
+        break;
     }
+    return removeFilePermanentWithRetry(path, recycleFallback);
+}
 
+bool CleanupWorker::removeFilePermanentWithRetry(const QString& path, bool recycleFallback) {
     if (removeFilePermanent(path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
     }
 
-    // Try setting writable and retry
+    // Try setting writable and retry.
     QFile file(path);
     file.setPermissions(QFile::ReadOther | QFile::WriteOther);
     if (removeFilePermanent(path)) {
@@ -288,7 +416,7 @@ bool CleanupWorker::deleteFile(const QString& path) {
         return true;
     }
 
-    // File is locked -- schedule removal on next reboot
+    // File is locked -- schedule removal on next reboot.
     if (scheduleRebootRemoval(path)) {
         m_rebootPendingPaths.append(path);
         noteRecycleFallback(recycleFallback, path);
@@ -300,18 +428,33 @@ bool CleanupWorker::deleteFile(const QString& path) {
 
 bool CleanupWorker::deleteFolder(const QString& path) {
     Q_ASSERT(!path.isEmpty());
+    // Ancestor reparse guard FIRST, before dir.exists() (which FOLLOWS the path -- a UNC-symlink
+    // ancestor would trigger a remote handshake). Also catches a leaf junction with a swapped
+    // ancestor before the leaf-reparse branch below.
+    if (sak::pathHasReparsePointAncestor(path)) {
+        sak::logWarning("Refusing folder delete of " + path.toStdString() +
+                        ": an ancestor is a symlink/junction");
+        return false;
+    }
+
+    // Leaf reparse check via isSymLink/isJunction (no follow) BEFORE QDir::exists() (which FOLLOWS
+    // the link -- a leaf swapped to a UNC junction would trigger a remote handshake). A reparse
+    // point is UNLINKED (link only), never recursed into.
+    const QFileInfo info(path);
+    if (info.isSymLink() || info.isJunction()) {
+        // Recycle-only (auto-clean): unlinking a reparse point is a permanent (non-recycled)
+        // operation, so leave it for human review rather than auto-remove it.
+        if (m_requireRecoverable) {
+            sak::logWarning("Auto-clean leaves reparse-point leftover for review: " +
+                            path.toStdString());
+            return false;
+        }
+        return unlinkReparsePoint(path);
+    }
+
     QDir dir(path);
     if (!dir.exists()) {
         return true;
-    }
-
-    // A reparse point (junction / directory symlink) must be UNLINKED, never recursed into -- else
-    // removeRecursively()/entryInfoList would enumerate THROUGH it and permanently delete the
-    // target's contents (e.g. a nested junction to System32). This function re-enters itself during
-    // the forced fallback, so screen it here too.
-    const QFileInfo info(path);
-    if (info.isSymLink() || info.isJunction()) {
-        return unlinkReparsePoint(path);
     }
 
     // Ancestor-junction-swap close: verify the folder's real resolved path is still the validated,
@@ -321,16 +464,18 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     if (!deleteTimeRedirectSafe(path)) {
         return false;
     }
+    return finishFolderDelete(dir, path);
+}
 
+bool CleanupWorker::finishFolderDelete(QDir& dir, const QString& path) {
     bool recycleFallback = false;
-    if (m_useRecycleBin) {
-        if (sendPathToRecycleBin(path)) {
-            return true;
-        }
-        // Recycle failed: the folder is about to be deleted PERMANENTLY.
-        recycleFallback = true;
-        sak::logWarning("Recycle bin failed for folder " + path.toStdString() +
-                        "; falling back to permanent deletion");
+    switch (attemptRecycle(path, recycleFallback)) {
+    case RecycleOutcome::Recycled:
+        return true;
+    case RecycleOutcome::RefusedRecoverable:
+        return false;
+    case RecycleOutcome::FallThrough:
+        break;
     }
 
     if (removeFolderPermanent(dir, path)) {
@@ -341,6 +486,14 @@ bool CleanupWorker::deleteFolder(const QString& path) {
 }
 
 bool CleanupWorker::removeFolderPermanent(QDir& dir, const QString& path) {
+#ifdef Q_OS_WIN
+    // Handle-verified recursive delete: QDir::removeRecursively re-resolves the path STRING for the
+    // whole subtree, so a swapped ancestor junction would redirect the recursion into a real
+    // target. The verified walk instead opens+verifies the exact object before every destructive
+    // syscall.
+    Q_UNUSED(dir)
+    return removeFolderTreeVerified(path);
+#else
     if (dir.removeRecursively()) {
         return true;
     }
@@ -349,7 +502,95 @@ bool CleanupWorker::removeFolderPermanent(QDir& dir, const QString& path) {
         all_handled = tryScheduleReboot(path) && all_handled;
     }
     return all_handled;
+#endif
 }
+
+#ifdef Q_OS_WIN
+bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry) {
+    const QString child = entry.absoluteFilePath();
+    // Guard the string-based paths below against an ANCESTOR swapped into a junction after the
+    // parent verify: if any ancestor is now a reparse point the child string would resolve
+    // elsewhere, so refuse fail-closed (the leaf being a reparse itself is fine to unlink).
+    if (sak::pathHasReparsePointAncestor(child)) {
+        sak::logWarning("Refusing folder-entry delete of " + child.toStdString() +
+                        ": an ancestor is a symlink/junction");
+        return false;
+    }
+    // A reparse point (junction / dir-symlink): unlink the LINK only, never recurse through it.
+    if (entry.isSymLink() || entry.isJunction()) {
+        return unlinkReparsePoint(child);
+    }
+    if (entry.isDir()) {
+        return removeFolderTreeVerified(child);  // recurse; re-verifies the subdir by handle
+    }
+    // Plain file: delete by verified handle (redirect -> refuse). A locked (NotOpenable) file falls
+    // back to a string unlink / reboot schedule -- safe now that the ancestor chain is verified.
+    const HandleDeleteOutcome outcome = deleteFileByVerifiedHandle(child);
+    if (outcome == HandleDeleteOutcome::Deleted) {
+        return true;
+    }
+    if (outcome == HandleDeleteOutcome::Redirected) {
+        return false;
+    }
+    return QFile::remove(child) || tryScheduleReboot(child);
+}
+
+bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
+    HANDLE handle = openForVerifiedDelete(path);
+    if (handle == INVALID_HANDLE_VALUE) {
+        // Cannot open to verify: refuse if an ancestor is now a reparse point; else best-effort
+        // rmdir (only succeeds on an empty dir) or schedule for reboot.
+        if (sak::pathReparseUnsafe(path)) {
+            return false;
+        }
+        return RemoveDirectoryW(reinterpret_cast<LPCWSTR>(path.utf16())) != 0 ||
+               tryScheduleReboot(path);
+    }
+    const QString final_path = finalPathOfHandle(handle);
+    const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
+    if (!refusal.isEmpty()) {
+        CloseHandle(handle);
+        sak::logWarning("Refusing folder removal of " + path.toStdString() + ": " +
+                        refusal.toStdString());
+        return false;
+    }
+    const bool ok = unlinkByHandle(handle);  // POSIX-deletes an EMPTY directory
+    CloseHandle(handle);
+    if (ok) {
+        return true;
+    }
+    // Verified handle but unlink failed (dir not empty / locked). Only schedule the string-based
+    // reboot removal if no ancestor is a reparse point (else the reboot path could resolve
+    // elsewhere).
+    if (sak::pathHasReparsePointAncestor(path)) {
+        return false;
+    }
+    return tryScheduleReboot(path);
+}
+
+bool CleanupWorker::removeFolderTreeVerified(const QString& path) {
+    // Verify THIS directory still resolves to the validated, non-protected target before touching
+    // its contents (catches an ancestor swap at this level).
+    if (!deleteTimeRedirectSafe(path)) {
+        return false;
+    }
+    bool all_handled = true;
+    const QDir dir(path);
+    const auto entries = dir.entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
+    for (const QFileInfo& entry : entries) {
+        if (!removeVerifiedFolderEntry(entry)) {
+            all_handled = false;
+        }
+    }
+    // Remove the now-empty directory by a verified handle. If some children survived (redirected /
+    // locked), the dir is not empty and this fails -> the failure is surfaced via all_handled.
+    if (!removeEmptyDirByVerifiedHandle(path)) {
+        all_handled = false;
+    }
+    return all_handled;
+}
+#endif  // Q_OS_WIN
 
 bool CleanupWorker::unlinkReparsePoint(const QString& path) {
     // rmdir (RemoveDirectoryW) unlinks a directory reparse point; QFile::remove unlinks a file

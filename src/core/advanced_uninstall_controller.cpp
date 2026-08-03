@@ -278,7 +278,10 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
         return;
     }
 
-    if (m_state != State::Idle && m_state != State::Uninstalling) {
+    // Idle-only: a manual clean never runs concurrently with an uninstall/enumeration/another
+    // cleanup. (Auto-clean does NOT go through here; it starts from the controlled Uninstalling
+    // state via startCleanupWorker, so it cannot be triggered re-entrantly.)
+    if (m_state != State::Idle) {
         Q_EMIT statusMessage("Cannot clean while another operation is in progress.",
                              kStatusTimeoutShortMs);
         return;
@@ -301,6 +304,13 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
         return;
     }
 
+    // Manual clean honors the user's recycle preference and MAY permanently delete (they reviewed).
+    startCleanupWorker(screenedItems, m_useRecycleBin, /*requireRecoverable=*/false);
+}
+
+void AdvancedUninstallController::startCleanupWorker(const QVector<LeftoverItem>& screenedItems,
+                                                     bool useRecycleBin,
+                                                     bool requireRecoverable) {
     setState(State::Cleaning);
 
     const int total = static_cast<int>(screenedItems.size());
@@ -308,9 +318,21 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
     retireWorker(m_cleanup_worker);
-    m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, m_useRecycleBin, this);
+    m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, useRecycleBin, this);
+    m_cleanup_worker->setRequireRecoverable(requireRecoverable);
     connectCleanupWorkerSignals(m_cleanup_worker.get());
     m_cleanup_worker->start();
+}
+
+QVector<LeftoverItem> AdvancedUninstallController::nonSafeLeftovers(
+    const QVector<LeftoverItem>& items) {
+    QVector<LeftoverItem> out;
+    for (const LeftoverItem& item : items) {
+        if (item.risk != LeftoverItem::RiskLevel::Safe) {
+            out.append(item);
+        }
+    }
+    return out;
 }
 
 QVector<LeftoverItem> AdvancedUninstallController::safeLeftovers(
@@ -326,30 +348,105 @@ QVector<LeftoverItem> AdvancedUninstallController::safeLeftovers(
     return safe;
 }
 
+bool AdvancedUninstallController::isRecoverableLeftoverType(const LeftoverItem& item) {
+    switch (item.type) {
+    case LeftoverItem::Type::File:
+    case LeftoverItem::Type::Folder:
+        return true;
+    case LeftoverItem::Type::StartupEntry:
+        // A file-shortcut startup entry recycles; a registry Run VALUE does not.
+        return item.registryValueName.isEmpty();
+    default:
+        return false;  // registry key/value, service, task, firewall, shell ext -> irreversible
+    }
+}
+
+QVector<LeftoverItem> AdvancedUninstallController::autoCleanableLeftovers(
+    const QVector<LeftoverItem>& items) {
+    QVector<LeftoverItem> out;
+    for (const LeftoverItem& item : items) {
+        if (item.risk == LeftoverItem::RiskLevel::Safe && isRecoverableLeftoverType(item)) {
+            LeftoverItem copy = item;
+            copy.selected = true;
+            out.append(copy);
+        }
+    }
+    return out;
+}
+
+QVector<LeftoverItem> AdvancedUninstallController::leftoversStillPresent(
+    const QVector<LeftoverItem>& all) const {
+    QVector<LeftoverItem> out;
+    for (const LeftoverItem& item : all) {
+        if (!m_autoCleanedPaths.contains(item.path.trimmed().toLower())) {
+            out.append(item);
+        }
+    }
+    return out;
+}
+
+void AdvancedUninstallController::finalizeDeferredAutoClean() {
+    if (!m_autoCleanInProgress) {
+        return;
+    }
+    m_autoCleanInProgress = false;
+    const UninstallReport report = m_pendingAutoCleanReport;
+    m_pendingAutoCleanReport = UninstallReport{};
+    // Re-show everything still on disk (nonSafe + any Safe item screened out or not confirmed
+    // removed), then surface the deferred uninstall completion.
+    Q_EMIT leftoverScanFinished(leftoversStillPresent(report.foundLeftovers));
+    m_autoCleanedPaths.clear();
+    Q_EMIT uninstallFinished(report);
+}
+
 bool AdvancedUninstallController::maybeAutoCleanSafeLeftovers(const UninstallReport& report,
                                                               bool autoClean) {
     if (!autoClean) {
         return false;
     }
-    const QVector<LeftoverItem> safe = safeLeftovers(report.foundLeftovers);
-    if (safe.isEmpty()) {
+    // ONLY recoverable-type Safe items are auto-deleted: registry keys/values, services, tasks,
+    // firewall rules and shell extensions have no Recycle Bin (irreversible), so even when Safe
+    // they stay for human review -- an AUTOMATIC delete must always be undoable.
+    const QVector<LeftoverItem> cleanable = autoCleanableLeftovers(report.foundLeftovers);
+    if (cleanable.isEmpty()) {
         return false;
     }
-    Q_EMIT autoCleanSafeStarted(static_cast<int>(safe.size()));
-    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from %2 "
-                                 "(Review/Risky items kept for your review)...")
-                             .arg(safe.size())
+    // Re-screen against the OS-critical denylist (defense in depth) before anything reaches the
+    // worker.
+    int refused = 0;
+    const QVector<LeftoverItem> screened = screenCleanupItems(cleanable, &refused);
+    if (screened.isEmpty()) {
+        return false;
+    }
+    // Defer uninstallFinished until this cleanup completes (onCleanupComplete) so the panel's
+    // refreshPrograms() cannot flip the controller to Enumerating and refuse the clean; remember
+    // the report so onCleanupComplete can then surface it + the leftovers still present.
+    m_autoCleanInProgress = true;
+    m_pendingAutoCleanReport = report;
+    m_autoCleanedPaths.clear();
+    Q_EMIT autoCleanSafeStarted(static_cast<int>(screened.size()));
+    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from %2 to the Recycle "
+                                 "Bin (Review/Risky items kept for your review)...")
+                             .arg(screened.size())
                              .arg(report.programName),
                          0);
-    // Reuse the vetted GUI cleanup path: it re-screens against the OS-critical denylist and runs
-    // CleanupWorker with the recycle-bin default, so an auto-clean is recoverable and can never
-    // permanently delete a misclassified protected target.
-    cleanLeftovers(safe);
-    return m_state == State::Cleaning;
+    // Auto-clean is automatic (no per-item human review), so it ALWAYS uses the Recycle Bin AND
+    // requires recoverability -- if an item cannot be recycled it is left in place (reported
+    // failed), never permanently deleted. Started from the current (Uninstalling) state via
+    // startCleanupWorker so it is not subject to the manual clean's Idle-only reentrancy guard.
+    startCleanupWorker(screened, /*useRecycleBin=*/true, /*requireRecoverable=*/true);
+    return true;
 }
 
 void AdvancedUninstallController::connectCleanupWorkerSignals(CleanupWorker* worker) {
-    connect(worker, &CleanupWorker::itemCleaned, this, &AdvancedUninstallController::itemCleaned);
+    connect(worker, &CleanupWorker::itemCleaned, this, [this](const QString& path, bool success) {
+        // Track what an in-progress auto-clean actually removed so finalizeDeferredAutoClean can
+        // re-show exactly the items still on disk (not just a risk-based guess).
+        if (success && m_autoCleanInProgress) {
+            m_autoCleanedPaths.insert(path.trimmed().toLower());
+        }
+        Q_EMIT itemCleaned(path, success);
+    });
     connect(worker,
             &CleanupWorker::cleanupComplete,
             this,
@@ -572,15 +669,25 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
                         : UninstallQueueItem::Status::Failed;
         Q_EMIT queueItemStatusChanged(m_batchIndex, qi.status);
 
-        // Accumulate this item's SAFE leftovers for a single auto-clean pass at batch end (only if
-        // the item opted in). Running a cleanup now would race the next queued uninstall, so it is
-        // deferred until the whole batch is done and no uninstall worker is active.
+        // Accumulate this item's auto-cleanable (Safe AND recoverable-type) leftovers for a single
+        // pass at batch end (only if the item opted in). Running a cleanup now would race the next
+        // queued uninstall, so it is deferred until the whole batch is done.
         if (qi.autoCleanSafeLeftovers) {
-            m_batchAutoCleanItems.append(safeLeftovers(report.foundLeftovers));
+            m_batchAutoCleanItems.append(autoCleanableLeftovers(report.foundLeftovers));
         }
 
         // Process next queued item
         processNextQueueItem();
+        return;
+    }
+
+    // Auto-clean the SAFE leftovers if enabled (Review/Risky always stay for human review). This
+    // must run BEFORE uninstallFinished is emitted: the panel's uninstallFinished slot calls
+    // refreshPrograms() synchronously, flipping the controller to Enumerating, which would make the
+    // clean refuse. When an auto-clean starts, uninstallFinished + the completion status are
+    // DEFERRED to onCleanupComplete (state is Uninstalling now -> Cleaning). No-op when
+    // disabled/nothing safe.
+    if (maybeAutoCleanSafeLeftovers(report, m_autoCleanSafe)) {
         return;
     }
 
@@ -590,10 +697,6 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
                              .arg(report.programName)
                              .arg(report.foundLeftovers.size()),
                          kStatusTimeoutLongMs);
-
-    // Auto-clean the SAFE leftovers if enabled (Review/Risky always stay for human review). Starts
-    // a recoverable, denylist-screened CleanupWorker; a no-op when disabled or nothing is safe.
-    maybeAutoCleanSafeLeftovers(report, m_autoCleanSafe);
 }
 
 void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
@@ -651,11 +754,20 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
         msg += QString(" (%1 MB recovered)").arg(mb, 0, 'f', kRecoveredSizeDisplayPrecision);
     }
     Q_EMIT statusMessage(msg, kStatusTimeoutLongMs);
+
+    // If this was the deferred SINGLE-uninstall auto-clean, NOW surface the uninstall completion
+    // and re-show the leftovers still on disk (the successfully-cleaned Safe ones are dropped;
+    // anything screened out or failed stays visible). No-op for a manual/batch cleanup.
+    finalizeDeferredAutoClean();
 }
 
 void AdvancedUninstallController::onCleanupWorkerFailed(int /*errorCode*/, const QString& message) {
     setState(State::Idle);
     Q_EMIT statusMessage(QString("Cleanup failed: %1").arg(message), kStatusTimeoutLongMs);
+    // The UNINSTALL succeeded; only the deferred auto-clean failed. Still surface the uninstall
+    // completion + all leftovers (nothing was reliably removed), and clear the deferred state so a
+    // later cleanup cannot re-emit this stale report.
+    finalizeDeferredAutoClean();
 }
 
 void AdvancedUninstallController::onCleanupWorkerCancelled() {
@@ -664,6 +776,8 @@ void AdvancedUninstallController::onCleanupWorkerCancelled() {
     setState(State::Idle);
     Q_EMIT cleanupCancelled();
     Q_EMIT statusMessage("Cleanup cancelled.", kStatusTimeoutShortMs);
+    // Same as the failure path: finish the deferred uninstall + re-show leftovers, clear the flag.
+    finalizeDeferredAutoClean();
 }
 
 // -- Private -----------------------------------------------------------------
@@ -797,16 +911,23 @@ void AdvancedUninstallController::finishBatchUninstall() {
     m_batchIndex = -1;
 
     // Now that no uninstall worker is running, auto-clean the SAFE leftovers accumulated from every
-    // opted-in batch item in one recoverable, denylist-screened CleanupWorker pass.
+    // opted-in batch item in one RECOVERABLE (Recycle Bin, forced), denylist-screened pass.
     const QVector<LeftoverItem> auto_clean = m_batchAutoCleanItems;
     m_batchAutoCleanItems.clear();
-    if (!auto_clean.isEmpty()) {
-        Q_EMIT autoCleanSafeStarted(static_cast<int>(auto_clean.size()));
-        Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from the batch...")
-                                 .arg(auto_clean.size()),
-                             0);
-        cleanLeftovers(auto_clean);
+    if (auto_clean.isEmpty()) {
+        return;
     }
+    int refused = 0;
+    const QVector<LeftoverItem> screened = screenCleanupItems(auto_clean, &refused);
+    if (screened.isEmpty()) {
+        return;
+    }
+    Q_EMIT autoCleanSafeStarted(static_cast<int>(screened.size()));
+    Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from the batch to the "
+                                 "Recycle Bin...")
+                             .arg(screened.size()),
+                         0);
+    startCleanupWorker(screened, /*useRecycleBin=*/true, /*requireRecoverable=*/true);
 }
 
 void AdvancedUninstallController::processNextQueueItem() {
