@@ -149,11 +149,19 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& 
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-NonInteractive"),
          QStringLiteral("-Command"),
-         QStringLiteral("Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
+         // Fail closed: SilentlyContinue would swallow a WMI/query failure and
+         // emit empty output with a zero exit, which reads as a genuine "no
+         // restore points". Force errors to terminate and exit non-zero so a
+         // failed query is surfaced (queryOk stays false) instead of masqueraded
+         // as an empty result. A true zero-restore-point machine still exits 0
+         // with empty output.
+         QStringLiteral("$ErrorActionPreference='Stop'; try { "
+                        "Get-ComputerRestorePoint | "
                         "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
                         "Description | "
                         "Sort-Object Date -Descending | "
-                        "ConvertTo-Json -Compress")},
+                        "ConvertTo-Json -Compress "
+                        "} catch { exit 1 }")},
         kCheckTimeoutMs);
 
     if (!result.succeeded()) {

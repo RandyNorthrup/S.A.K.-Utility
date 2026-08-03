@@ -16,12 +16,22 @@
 #include <QDir>
 #include <QTemporaryFile>
 
+#include <optional>
+
 namespace sak {
 
 namespace {
 
 constexpr int kEscapedTextReserveMultiplier = 2;
 constexpr int kMaxSsidBytes = 32;  // an 802.11 SSID is at most 32 octets
+
+// Fully-qualified System32 paths for the tools the generated elevated .cmd invokes.
+// Emitting absolute paths (rather than bare `powershell`/`netsh`) defeats a planted-exe
+// hijack: a malicious powershell.exe/netsh.exe dropped in the script's working directory
+// or earlier on %PATH% would otherwise run with the administrator rights of the script.
+constexpr const char* kPowershellExe =
+    "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"";
+constexpr const char* kNetshExe = "\"%SystemRoot%\\System32\\netsh.exe\"";
 
 // True if the SSID fits the 802.11 32-octet limit. Uses UTF-8 byte length, not
 // QString character count: a multi-byte SSID can be <=32 chars yet >32 bytes.
@@ -34,15 +44,32 @@ struct WlanAuthConfig {
     QString enc_type;
 };
 
-WlanAuthConfig resolveWlanAuth(const QString& security) {
+// True if the security string names an enterprise / 802.1X (EAP) network. Such a
+// profile needs a full <OneX>/<EAPConfig> block (EAP method, server validation, cert
+// or credential selection) that this passphrase-only builder cannot produce, so we
+// fail closed rather than emit a WPA2PSK profile that silently downgrades the security.
+bool securityIsEnterprise(const QString& upper) {
+    return upper.contains("ENTERPRISE") || upper.contains("802.1X") || upper.contains("802.11X") ||
+           upper.contains("EAP") || upper.contains("ONEX");
+}
+
+// Resolve a Windows WLAN authentication/encryption pair, or std::nullopt for an
+// unsupported security type (enterprise/802.1X) that must fail closed.
+std::optional<WlanAuthConfig> resolveWlanAuth(const QString& security) {
     const QString upper = security.toUpper();
+    if (securityIsEnterprise(upper)) {
+        return std::nullopt;
+    }
     if (upper.contains("WEP")) {
-        return {"open", "WEP"};
+        return WlanAuthConfig{"open", "WEP"};
     }
     if (upper.contains("NONE") || upper.contains("OPEN")) {
-        return {"open", "none"};
+        return WlanAuthConfig{"open", "none"};
     }
-    return {"WPA2PSK", "AES"};
+    if (upper.contains("WPA3") || upper.contains("SAE")) {
+        return WlanAuthConfig{"WPA3SAE", "AES"};
+    }
+    return WlanAuthConfig{"WPA2PSK", "AES"};
 }
 
 QString buildWlanXmlContent(const QString& ssid,
@@ -132,22 +159,24 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
     // that a local attacker could pre-create/symlink and that two runs would collide on.
     script +=
         "for /f \"usebackq delims=\" %%i in "
-        "(`powershell -NoProfile -Command \"[System.IO.Path]::GetTempFileName()\"`) "
+        "(`" +
+        QString::fromLatin1(kPowershellExe) +
+        " -NoProfile -Command \"[System.IO.Path]::GetTempFileName()\"`) "
         "do set \"PROFILE_XML=%%i\"\r\n";
     script += "if not defined PROFILE_XML (\r\n";
     script += "    echo Failed to allocate a temporary profile file.\r\n";
     script += "    pause\r\n";
     script += "    exit /b 1\r\n";
     script += ")\r\n";
-    script +=
-        "powershell -NoProfile -Command \"[System.Text.Encoding]::UTF8."
-        "GetString([System.Convert]::FromBase64String('" +
-        xml_base64 +
-        "')) | Set-Content -LiteralPath $env:PROFILE_XML"
-        " -Encoding UTF8\"\r\n";
-    script +=
-        "netsh wlan add profile filename=\"%PROFILE_XML%\""
-        " user=all\r\n";
+    script += QString::fromLatin1(kPowershellExe) +
+              " -NoProfile -Command \"[System.Text.Encoding]::UTF8."
+              "GetString([System.Convert]::FromBase64String('" +
+              xml_base64 +
+              "')) | Set-Content -LiteralPath $env:PROFILE_XML"
+              " -Encoding UTF8\"\r\n";
+    script += QString::fromLatin1(kNetshExe) +
+              " wlan add profile filename=\"%PROFILE_XML%\""
+              " user=all\r\n";
     // Wipe the plaintext-password XML immediately after netsh consumes it, on BOTH the
     // failure and success paths, so the credentials do not linger in %TEMP%.
     script += "if %errorlevel% neq 0 (\r\n";
@@ -159,7 +188,7 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
     script += "    exit /b 1\r\n";
     script += ")\r\n";
     script += "del \"%PROFILE_XML%\" 2>nul\r\n";
-    script += "netsh wlan connect name=" + quoted_ssid + "\r\n";
+    script += QString::fromLatin1(kNetshExe) + " wlan connect name=" + quoted_ssid + "\r\n";
     script += "if %errorlevel% neq 0 (\r\n";
     script +=
         "    echo Network profile added but could not connect"
@@ -190,38 +219,57 @@ QString buildWifiSetupScriptWindows(const QString& ssid,
         sak::logWarning("Refusing to build WiFi script: SSID exceeds the 32-byte WLAN limit");
         return {};
     }
-    const WlanAuthConfig auth = resolveWlanAuth(security);
-    const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
+    const std::optional<WlanAuthConfig> auth = resolveWlanAuth(security);
+    if (!auth) {
+        sak::logWarning(
+            "Refusing to build WiFi script: enterprise/802.1X security is not supported");
+        return {};
+    }
+    const QString xml = buildWlanXmlContent(ssid, password, *auth, hidden);
     const QString xml_base64 = QString::fromLatin1(xml.toUtf8().toBase64());
     return buildBatchScript(ssid, xml_base64);
 }
 
 bool wifiSecurityUsesPassphrase(const QString& security) {
     // Mirrors buildWlanXmlContent's keyMaterial guard: it emits <keyMaterial> only when the
-    // resolved auth is NOT "open" (i.e. WPA2-PSK). Uses the SAME resolveWlanAuth so the two never
-    // drift.
-    return resolveWlanAuth(security).auth_type != QLatin1String("open");
+    // resolved auth is NOT "open" (i.e. WPA2-PSK / WPA3-SAE). Uses the SAME resolveWlanAuth so the
+    // two never drift. An unsupported (enterprise/802.1X) type has no passphrase and fails closed.
+    const std::optional<WlanAuthConfig> auth = resolveWlanAuth(security);
+    return auth && auth->auth_type != QLatin1String("open");
+}
+
+// Fail closed on empty / unsafe (quote or control char) / over-length SSID and on
+// an unsupported enterprise/802.1X security type BEFORE touching a temp file or
+// running netsh. Returns the resolved auth, or nullopt with @p error set.
+std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
+                                                    const QString& security,
+                                                    QString& error) {
+    if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
+        error = QStringLiteral("SSID is empty or contains a double quote / control character");
+        return std::nullopt;
+    }
+    if (!ssidWithinByteLimit(ssid)) {
+        error = QStringLiteral("SSID exceeds the 32-byte WLAN limit");
+        return std::nullopt;
+    }
+    const std::optional<WlanAuthConfig> auth = resolveWlanAuth(security);
+    if (!auth) {
+        error =
+            QStringLiteral("Enterprise/802.1X WiFi security is not supported by this connector");
+    }
+    return auth;
 }
 
 WifiConnectResult connectWifiWindows(const QString& ssid,
                                      const QString& password,
                                      const QString& security,
                                      bool hidden) {
-    // A WLAN SSID is at most 32 octets; fail closed on empty / unsafe (quote or control
-    // char) / over-length BEFORE touching a temp file or running netsh.
     WifiConnectResult result;
-    if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
-        result.error =
-            QStringLiteral("SSID is empty or contains a double quote / control character");
+    const std::optional<WlanAuthConfig> auth = validateConnectInputs(ssid, security, result.error);
+    if (!auth) {
         return result;
     }
-    if (!ssidWithinByteLimit(ssid)) {
-        result.error = QStringLiteral("SSID exceeds the 32-byte WLAN limit");
-        return result;
-    }
-
-    const WlanAuthConfig auth = resolveWlanAuth(security);
-    const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
+    const QString xml = buildWlanXmlContent(ssid, password, *auth, hidden);
 
     // Write the profile XML to a private, auto-removed temp file for `netsh wlan add profile`.
     QTemporaryFile xml_file(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));

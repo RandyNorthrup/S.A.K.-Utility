@@ -20,6 +20,22 @@ namespace sak {
 namespace {
 constexpr int kDefaultBackupThreadCount = 4;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
+
+// Getter-side invariant enforcement: a stored value can be out of range (older
+// config, hand-edited INI, or a foreign writer) even though the setters reject
+// bad input. Re-clamp on read so callers never receive a value the setter would
+// have refused; fall back to the default when the stored value is invalid.
+int positiveOrDefault(int value, int default_value) {
+    return value > 0 ? value : default_value;
+}
+
+qint64 nonNegativeOrDefault(qint64 value, qint64 default_value) {
+    return value >= 0 ? value : default_value;
+}
+
+QString nonEmptyOrDefault(const QString& value, const QString& default_value) {
+    return value.isEmpty() ? default_value : value;
+}
 }  // namespace
 
 ConfigManager& ConfigManager::instance() {
@@ -183,7 +199,8 @@ bool ConfigManager::sync() {
 
 // Backup settings
 int ConfigManager::getBackupThreadCount() const {
-    return getValue("backup/thread_count", kDefaultBackupThreadCount).toInt();
+    return positiveOrDefault(getValue("backup/thread_count", kDefaultBackupThreadCount).toInt(),
+                             kDefaultBackupThreadCount);
 }
 
 void ConfigManager::setBackupThreadCount(int count) {
@@ -221,7 +238,7 @@ void ConfigManager::setOrganizerPreviewMode(bool preview) {
 
 // Duplicate finder settings
 qint64 ConfigManager::getDuplicateMinimumFileSize() const {
-    return getValue("duplicate/minimum_file_size", 0).toLongLong();
+    return nonNegativeOrDefault(getValue("duplicate/minimum_file_size", 0).toLongLong(), 0);
 }
 
 void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
@@ -233,7 +250,8 @@ void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
 }
 
 QString ConfigManager::getDuplicateKeepStrategy() const {
-    return getValue("duplicate/keep_strategy", "oldest").toString();
+    return nonEmptyOrDefault(getValue("duplicate/keep_strategy", "oldest").toString(),
+                             QStringLiteral("oldest"));
 }
 
 void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
@@ -246,7 +264,8 @@ void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
 
 // Image Flasher settings
 QString ConfigManager::getImageFlasherValidationMode() const {
-    return getValue("image_flasher/validation_mode", "full").toString();
+    return nonEmptyOrDefault(getValue("image_flasher/validation_mode", "full").toString(),
+                             QStringLiteral("full"));
 }
 
 void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
@@ -258,7 +277,9 @@ void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
 }
 
 int ConfigManager::getImageFlasherBufferSize() const {
-    return getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt();
+    return positiveOrDefault(
+        getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt(),
+        static_cast<int>(sak::kBufferAlignment));
 }
 
 void ConfigManager::setImageFlasherBufferSize(int size) {
@@ -294,7 +315,9 @@ void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show) {
 }
 
 int ConfigManager::getImageFlasherLargeDriveThreshold() const {
-    return getValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb).toInt();
+    return positiveOrDefault(
+        getValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb).toInt(),
+        kDefaultLargeDriveThresholdGb);
 }
 
 void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
@@ -307,7 +330,7 @@ void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
 }
 
 int ConfigManager::getImageFlasherMaxConcurrentWrites() const {
-    return getValue("image_flasher/max_concurrent_writes", 1).toInt();
+    return positiveOrDefault(getValue("image_flasher/max_concurrent_writes", 1).toInt(), 1);
 }
 
 void ConfigManager::setImageFlasherMaxConcurrentWrites(int max) {

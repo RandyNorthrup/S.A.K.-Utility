@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFile>
 #include <QIODevice>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -256,6 +257,93 @@ private Q_SLOTS:
         const QByteArray content = file.readAll();
         QVERIFY(content.contains("NEW_SUBJECT"));
         QVERIFY(!content.contains("OLD_SUBJECT"));  // stale run truncated, not merged
+    }
+
+    // ====================================================================
+    // Combined output namespaced by source basename so jobs don't collide
+    // ====================================================================
+
+    void combinedBasenameNamespacesOutput() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::PstItemDetail item;
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        sak::MboxWriter writer(temp_dir.path(), false, QStringLiteral("job_alpha"));
+        std::ignore = writer.writeMessage(item, {}, QString());
+        writer.finalize();
+
+        // The single combined mailbox is named for the source, not the fixed mailbox.mbox, so a
+        // second job in the same directory cannot silently truncate this one.
+        QVERIFY(QFile::exists(temp_dir.path() + QStringLiteral("/job_alpha.mbox")));
+        QVERIFY(!QFile::exists(temp_dir.path() + QStringLiteral("/mailbox.mbox")));
+    }
+
+    // ====================================================================
+    // Sender CR/LF must not forge a second From_ separator line
+    // ====================================================================
+
+    void senderCrlfDoesNotForgeSeparator() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("hi");
+        item.sender_email =
+            QStringLiteral("a@test.com\r\nFrom attacker@evil.com Mon Jan  1 00:00:00 2000");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        std::ignore = writer.writeMessage(item, {}, QString());
+        writer.finalize();
+
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        // The injected CRLF was collapsed, so no forged "From " separator line appears.
+        QVERIFY(!content.contains("\nFrom attacker@evil.com"));
+    }
+
+    // ====================================================================
+    // MIME boundary is high-entropy random, not a predictable derivation
+    // ====================================================================
+
+    void boundaryIsRandomPerMessage() {
+        const auto emit_and_read = [](const QString& dir) {
+            sak::MboxWriter writer(dir, false);
+            sak::PstItemDetail item;
+            item.sender_email = QStringLiteral("s@test.com");
+            item.body_html = QStringLiteral("<p>hello world</p>");
+            item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+            std::ignore = writer.writeMessage(item, {}, QString());
+            writer.finalize();
+            QFile f(dir + QStringLiteral("/mailbox.mbox"));
+            if (!f.open(QIODevice::ReadOnly)) {
+                return QString();
+            }
+            return QString::fromUtf8(f.readAll());
+        };
+
+        QTemporaryDir d1;
+        QTemporaryDir d2;
+        QVERIFY(d1.isValid() && d2.isValid());
+        const QString a = emit_and_read(d1.path());
+        const QString b = emit_and_read(d2.path());
+
+        static const QRegularExpression re(QStringLiteral("boundary=\"([^\"]+)\""));
+        const auto ma = re.match(a);
+        const auto mb = re.match(b);
+        QVERIFY(ma.hasMatch());
+        QVERIFY(mb.hasMatch());
+        // Identical input (same node_id 0, same timestamp) once produced identical boundaries; the
+        // randomized generator must now differ, and the boundary must not appear in the body.
+        QVERIFY(ma.captured(1) != mb.captured(1));
+        QVERIFY(!a.contains(ma.captured(1) + QStringLiteral("hello")));
     }
 
     // ====================================================================

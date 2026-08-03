@@ -72,6 +72,29 @@ public:
     /// @brief Request cancellation of the currently running task
     void cancelCurrentTask();
 
+    /// @brief Whether the pipe server's PID is the helper we actually launched.
+    /// @param expectedHelperPid PID of the process the broker launched (from the
+    ///        pinned m_helper_process handle -- immune to PID reuse).
+    /// @param serverPid PID reported by GetNamedPipeServerProcessId for the pipe.
+    /// @return true ONLY when expectedHelperPid is valid (>0) AND serverPid == it.
+    /// @note Fail-closed: an unknown/invalid helper PID (<=0) trusts NOBODY. Pure +
+    ///       static (inline) so the check is unit-testable without launching a helper.
+    [[nodiscard]] static bool serverPidMatchesHelper(qint64 expectedHelperPid, qint64 serverPid) {
+        return expectedHelperPid > 0 && serverPid == expectedHelperPid;
+    }
+
+    /// @brief Whether two Win32 image paths identify the same executable.
+    /// @param expectedImagePath the executable the server MUST be (the helper).
+    /// @param actualImagePath the image path resolved for the server process.
+    /// @return true ONLY when both are non-empty AND compare equal case-insensitively.
+    /// @note Fail-closed: an empty expected or actual path matches NOTHING. Pure +
+    ///       static (inline) for unit testing without a live process.
+    [[nodiscard]] static bool imagePathsMatch(const QString& expectedImagePath,
+                                              const QString& actualImagePath) {
+        return !expectedImagePath.isEmpty() && !actualImagePath.isEmpty() &&
+               QString::compare(expectedImagePath, actualImagePath, Qt::CaseInsensitive) == 0;
+    }
+
     /// @brief Shut down the helper process gracefully
     void shutdown();
 
@@ -91,6 +114,15 @@ private:
 
     /// @brief Connect to the helper's named pipe
     [[nodiscard]] auto connectPipe() -> std::expected<void, sak::error_code>;
+
+#ifdef _WIN32
+    /// @brief Verify the connected pipe's server process is the launched helper
+    [[nodiscard]] auto verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code>;
+
+    /// @brief Verify the pipe server's image path is the helper executable
+    [[nodiscard]] auto verifyServerImage(unsigned long server_pid)
+        -> std::expected<void, sak::error_code>;
+#endif
 
     /// @brief Ensure the helper is running, connected, and ready
     [[nodiscard]] auto ensureConnected() -> std::expected<void, sak::error_code>;
@@ -128,16 +160,21 @@ private:
     QString m_pipe_name;
     QString m_current_task_id;
     mutable std::mutex m_task_state_mutex;
-    std::mutex m_send_mutex;
+    // Serializes every pipe write AND pins the handle across each ReadFile/PeekNamedPipe
+    // in the lock-free readers, so cleanup()'s close cannot land mid-I/O. mutable so the
+    // const peekAvailable() can take it.
+    mutable std::mutex m_send_mutex;
 
 #ifdef _WIN32
     // B5-06: the pipe handle is read on the GUI/AI thread (isConnected / cancel /
     // shutdown) while the worker thread connects, reads, and tears it down.
     // A plain HANDLE read concurrently with a write is a data race (UB); make it
-    // atomic so every access is well-defined. m_send_mutex still serializes the
-    // WriteFile-vs-CloseHandle sequence in sendRaw()/cleanup() -- the atomic only
-    // makes the lock-free reads (isConnected, readExact/peek) safe; it does not
-    // replace that mutex.
+    // atomic so every access is well-defined. The atomic makes the value read
+    // (isConnected) safe. Any access that DEREFERENCES the handle in an I/O call
+    // (sendRaw's WriteFile, readExact's ReadFile, peekAvailable's PeekNamedPipe)
+    // additionally holds m_send_mutex, under which cleanup() stores INVALID and
+    // CloseHandle -- so the close cannot land between a reader's load and its I/O
+    // and tear the handle mid-call. The atomic does NOT replace that mutex.
     std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
 #endif

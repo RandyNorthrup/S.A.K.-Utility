@@ -141,7 +141,13 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
         } while (QFile::exists(full_path));
     }
 
-    QString attachments_dir = saveFileAttachments(attachment_data, dir_path, filename);
+    if (!saveFileAttachments(attachment_data, dir_path, filename)) {
+        // A listed attachment failed to save. The HTML page enumerates every
+        // attachment, so emitting it now would advertise files that are not on
+        // disk; fail closed instead of reporting a partial message as success.
+        logError("HtmlEmailWriter: attachment save failed for: {}", full_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
 
     // Build and write HTML
     QString html = buildHtmlPage(item, attachment_data);
@@ -165,22 +171,21 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
     return full_path;
 }
 
-QString HtmlEmailWriter::saveFileAttachments(
+bool HtmlEmailWriter::saveFileAttachments(
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& dir_path,
     const QString& filename) {
-    QString attachments_dir;
-    if (!attachment_data.isEmpty()) {
-        QFileInfo fi(filename);
-        attachments_dir = dir_path + QStringLiteral("/") + fi.completeBaseName() +
-                          QStringLiteral("_files");
-        QDir().mkpath(attachments_dir);
+    if (attachment_data.isEmpty()) {
+        return true;
     }
 
+    QFileInfo fi(filename);
+    const QString attachments_dir = dir_path + QStringLiteral("/") + fi.completeBaseName() +
+                                    QStringLiteral("_files");
+    QDir().mkpath(attachments_dir);
+
+    bool all_saved = true;
     for (const auto& [name, data] : attachment_data) {
-        if (attachments_dir.isEmpty()) {
-            continue;
-        }
         // saveAttachmentToDirectory sanitizes the bare filename (QFileInfo::fileName
         // first, so a hostile "../../../pwned.html" cannot escape the _files dir),
         // DEDUPES colliding names (a second "image.png" becomes "image_1.png" instead
@@ -191,15 +196,16 @@ QString HtmlEmailWriter::saveFileAttachments(
         if (result.success) {
             m_bytes_written += data.size();
         } else {
-            // Do not silently drop: the generated HTML lists this attachment, so a
-            // failed write must at least be logged.
+            // The generated HTML lists this attachment, so a failed write must fail
+            // the whole message (fail closed), not just be logged and dropped.
             logError("HtmlEmailWriter: failed to write attachment '{}': {}",
                      name.toStdString(),
                      result.error_message.toStdString());
+            all_saved = false;
         }
     }
 
-    return attachments_dir;
+    return all_saved;
 }
 
 // ============================================================================

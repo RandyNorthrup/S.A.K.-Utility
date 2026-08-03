@@ -63,6 +63,9 @@ private Q_SLOTS:
     // B5-08: write-probe must not clobber and must leave no leftover.
     void ensureLogDirectory_leavesNoProbeFile();
 
+    // Fail closed: a failed file write must not advance the rotation counter.
+    void bytesToCommit_zeroOnStreamFailure();
+
 private:
     /// @brief Reads all content from the singleton log file
     std::string readLogContent();
@@ -318,6 +321,19 @@ void LoggerTests::ensureLogDirectory_leavesNoProbeFile() {
         const std::string name = entry.path().filename().string();
         QVERIFY2(name.rfind(".sak_log_probe_", 0) != 0, "probe file must be cleaned up");
     }
+}
+
+// ============================================================================
+// Fail-closed write accounting
+// ============================================================================
+
+// A good write commits the full entry size; a write that left the stream in a
+// bad state (full disk, revoked handle) must commit zero so m_bytes_written
+// never counts bytes that were not durably written.
+void LoggerTests::bytesToCommit_zeroOnStreamFailure() {
+    QCOMPARE(sak::logger::bytesToCommit(true, 128), std::size_t{128});
+    QCOMPARE(sak::logger::bytesToCommit(false, 128), std::size_t{0});
+    QCOMPARE(sak::logger::bytesToCommit(true, 0), std::size_t{0});
 }
 
 QTEST_GUILESS_MAIN(LoggerTests)

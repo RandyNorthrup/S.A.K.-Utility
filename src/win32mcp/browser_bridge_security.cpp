@@ -108,7 +108,11 @@ bool writeRendezvousRecord(const QString& path, const RendezvousRecord& record, 
                  QStringLiteral("Cannot open %1 for writing: %2").arg(path, file.errorString()));
         return false;
     }
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        setError(error, QStringLiteral("Cannot write %1: %2").arg(path, file.errorString()));
+        return false;
+    }
     return true;
 }
 

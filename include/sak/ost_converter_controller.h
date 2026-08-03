@@ -59,6 +59,12 @@ public:
     /// Get the path to the last generated report
     [[nodiscard]] const QString& reportPath() const;
 
+    /// Classify a finished conversion into a queue status. Fail closed: any failed
+    /// item or recorded error demotes the job to Failed even when some items
+    /// converted, so a partial/errored run is never reported as a clean Complete.
+    [[nodiscard]] static OstConversionJob::Status classifyOutcome(
+        const OstConversionResult& result);
+
 Q_SIGNALS:
     void fileAdded(int index, sak::OstConversionJob job);
     void fileRemoved(int index);

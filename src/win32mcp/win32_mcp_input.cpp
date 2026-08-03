@@ -79,18 +79,6 @@ ScreenBox virtualScreen() {
                      GetSystemMetrics(SM_CYVIRTUALSCREEN)};
 }
 
-// Send an input sequence; true only when EVERY event was accepted. SendInput returns the count it
-// actually inserted -- 0 or a short count when a higher-integrity foreground window (UIPI), the
-// secure desktop, or BlockInput refuses the injection -- so a mismatch means the input did not land
-// and the tool must report failure instead of a false success.
-bool sendInputAll(QVector<INPUT>& seq) {
-    if (seq.isEmpty()) {
-        return true;
-    }
-    const UINT sent = SendInput(static_cast<UINT>(seq.size()), seq.data(), sizeof(INPUT));
-    return sent == static_cast<UINT>(seq.size());
-}
-
 INPUT mouseInput(DWORD flags, LONG nx, LONG ny) {
     INPUT in{};
     in.type = INPUT_MOUSE;
@@ -98,6 +86,67 @@ INPUT mouseInput(DWORD flags, LONG nx, LONG ny) {
     in.mi.dx = nx;
     in.mi.dy = ny;
     return in;
+}
+
+// Map a mouse button-down flag to its matching button-up flag; 0 for a non-button event (move).
+DWORD mouseDownToUp(DWORD down_flags) {
+    if ((down_flags & MOUSEEVENTF_LEFTDOWN) != 0u) {
+        return MOUSEEVENTF_LEFTUP;
+    }
+    if ((down_flags & MOUSEEVENTF_RIGHTDOWN) != 0u) {
+        return MOUSEEVENTF_RIGHTUP;
+    }
+    if ((down_flags & MOUSEEVENTF_MIDDLEDOWN) != 0u) {
+        return MOUSEEVENTF_MIDDLEUP;
+    }
+    if ((down_flags & MOUSEEVENTF_XDOWN) != 0u) {
+        return MOUSEEVENTF_XUP;
+    }
+    return 0u;
+}
+
+// Build the key-up / button-up events (in reverse order) that release whatever the first `count`
+// events of `seq` pressed down. A redundant up for an already-released key/button is a harmless
+// no-op, so this over-releases rather than track exact pairing.
+QVector<INPUT> releaseSequenceForPartial(const QVector<INPUT>& seq, UINT count) {
+    QVector<INPUT> ups;
+    const int n = std::min(static_cast<int>(count), static_cast<int>(seq.size()));
+    for (int i = n - 1; i >= 0; --i) {
+        const INPUT& in = seq[i];
+        if (in.type == INPUT_KEYBOARD && (in.ki.dwFlags & KEYEVENTF_KEYUP) == 0u) {
+            INPUT up = in;
+            up.ki.dwFlags |= KEYEVENTF_KEYUP;
+            ups.append(up);
+        } else if (in.type == INPUT_MOUSE) {
+            const DWORD up_flag = mouseDownToUp(in.mi.dwFlags);
+            if (up_flag != 0u) {
+                ups.append(mouseInput(up_flag, 0, 0));
+            }
+        }
+    }
+    return ups;
+}
+
+// Send an input sequence; true only when EVERY event was accepted. SendInput returns the count it
+// actually inserted -- 0 or a short count when a higher-integrity foreground window (UIPI), the
+// secure desktop, or BlockInput refuses the injection -- so a mismatch means the input did not land
+// and the tool must report failure instead of a false success. On a partial delivery we first
+// release any modifier/button the accepted prefix pressed, so a failed chord cannot strand a held
+// Ctrl/Shift or mouse button on the desktop.
+bool sendInputAll(QVector<INPUT>& seq) {
+    if (seq.isEmpty()) {
+        return true;
+    }
+    const UINT total = static_cast<UINT>(seq.size());
+    const UINT sent = SendInput(total, seq.data(), sizeof(INPUT));
+    if (sent == total) {
+        return true;
+    }
+    QVector<INPUT> ups = releaseSequenceForPartial(seq, sent);
+    if (!ups.isEmpty()) {
+        SendInput(static_cast<UINT>(ups.size()), ups.data(), sizeof(INPUT));
+    }
+    return false;
 }
 
 INPUT keyUnicode(wchar_t ch, bool key_up) {
@@ -164,25 +213,35 @@ void activateWindow(HWND hwnd) {
     }
 }
 
-// Activate whichever window an input tool is aimed at: foreground=true is a no-op that confirms
-// the active pop-up, window_title raises that titled window; neither leaves focus untouched. Gives
-// the OS a moment to repaint/focus before the caller clicks or types.
-void activateTarget(const QJsonObject& args) {
+// Activate whichever window an input tool is aimed at: foreground=true confirms the active pop-up,
+// window_title raises that titled window; neither leaves focus untouched. Gives the OS a moment to
+// repaint/focus before the caller clicks or types. Returns an empty string on success (or when no
+// target was requested), else a non-empty error: when a target IS named but cannot be raised we
+// surface it (like focus_window) so the caller aborts instead of injecting into the wrong window.
+QString activateTarget(const QJsonObject& args) {
     WindowRect wr;
     QString err;
     bool ok = false;
+    bool requested = false;
     if (args.value(QStringLiteral("foreground")).toBool()) {
+        requested = true;
         ok = foregroundWindowRect(wr, err);
     } else {
         const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
         if (!title.isEmpty()) {
+            requested = true;
             ok = windowRectByTitle(title.toLower(), wr, err);
         }
     }
-    if (ok) {
-        activateWindow(static_cast<HWND>(wr.hwnd));
-        Sleep(120);
+    if (!requested) {
+        return {};  // no target named -> leave focus untouched, not an error
     }
+    if (!ok) {
+        return err.isEmpty() ? QStringLiteral("Could not raise the requested window.") : err;
+    }
+    activateWindow(static_cast<HWND>(wr.hwnd));
+    Sleep(120);
+    return {};
 }
 
 // -- tools -------------------------------------------------------------------
@@ -191,8 +250,15 @@ ToolResult toolMouseClick(const QJsonObject& args) {
     if (!args.contains(QStringLiteral("x")) || !args.contains(QStringLiteral("y"))) {
         return errorResult(QStringLiteral("x and y are required (virtual-screen coordinates)"));
     }
-    const int x = args.value(QStringLiteral("x")).toInt();
-    const int y = args.value(QStringLiteral("y")).toInt();
+    const QJsonValue xv = args.value(QStringLiteral("x"));
+    const QJsonValue yv = args.value(QStringLiteral("y"));
+    // Reject a non-numeric coordinate rather than letting toInt() coerce it to 0 and fire a
+    // (0, 0) click at the desktop corner.
+    if (!xv.isDouble() || !yv.isDouble()) {
+        return errorResult(QStringLiteral("x and y must be numbers (virtual-screen coordinates)"));
+    }
+    const int x = xv.toInt();
+    const int y = yv.toInt();
     DWORD down = 0;
     DWORD up = 0;
     unsigned long down_flags = 0;
@@ -214,7 +280,12 @@ ToolResult toolMouseClick(const QJsonObject& args) {
                                .arg(vs.w)
                                .arg(vs.h));
     }
-    activateTarget(args);  // optional window_title / foreground raises the target first
+    // optional window_title / foreground raises the target first; abort if a named target could
+    // not be raised rather than clicking whatever happens to be focused.
+    const QString activate_err = activateTarget(args);
+    if (!activate_err.isEmpty()) {
+        return errorResult(activate_err);
+    }
     const int clicks = args.value(QStringLiteral("double")).toBool() ? 2 : 1;
     if (!clickAt(x, y, down, up, clicks)) {
         return errorResult(injectionBlockedError());
@@ -230,7 +301,12 @@ ToolResult toolClickText(const QJsonObject& args) {
     if (text.isEmpty()) {
         return errorResult(QStringLiteral("text is required"));
     }
-    activateTarget(args);  // raise the target window so the click actuates, not just activates
+    // raise the target window so the click actuates, not just activates; abort if a named target
+    // could not be raised rather than OCR-clicking the wrong window.
+    const QString activate_err = activateTarget(args);
+    if (!activate_err.isEmpty()) {
+        return errorResult(activate_err);
+    }
     int cx = 0;
     int cy = 0;
     const QString err = ocrLocateText(args, cx, cy);

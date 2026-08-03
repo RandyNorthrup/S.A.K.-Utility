@@ -137,12 +137,36 @@ void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexc
     }
 
     m_file_stream << log_entry;
-    m_bytes_written.fetch_add(log_entry.size(), std::memory_order_relaxed);
 
     // Flush immediately for error and critical messages
     if (level >= log_level::error) {
         m_file_stream.flush();
     }
+
+    // Fail closed: only charge bytes against the rotation counter when the
+    // stream is still good. A failed write/flush (full disk, revoked handle)
+    // must not advance m_bytes_written -- otherwise rotation math drifts and
+    // the loss is invisible -- and must surface via a one-shot notice.
+    const bool stream_good = m_file_stream.good();
+    m_bytes_written.fetch_add(bytesToCommit(stream_good, log_entry.size()),
+                              std::memory_order_relaxed);
+    if (!stream_good) {
+        noteWriteFailure();
+    }
+}
+
+std::size_t logger::bytesToCommit(bool stream_good, std::size_t entry_size) noexcept {
+    return stream_good ? entry_size : 0;
+}
+
+void logger::noteWriteFailure() noexcept {
+    // Announce the first failure only (persistent failures would otherwise spam
+    // stderr). Clear the stream error bits so a later recovered write can resume
+    // instead of the stream staying wedged in a failed state forever.
+    if (!m_write_failed.exchange(true, std::memory_order_relaxed)) {
+        std::fprintf(stderr, "SAK Logger: file log write failed (log entries may be lost)\n");
+    }
+    m_file_stream.clear();
 }
 
 void logger::writeEntryToConsole(std::string_view log_entry, log_level level) noexcept {

@@ -21,6 +21,11 @@ namespace {
 
 constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 
+// A response with no caller-supplied cap (max_response_bytes <= 0) would let QNetworkReply
+// buffer an arbitrarily large body into memory. Clamp any such request to this bound so no
+// caller can trigger unbounded growth; callers that legitimately need more must opt in.
+constexpr qint64 kDefaultMaxResponseBytes = 512LL * 1024 * 1024;  // 512 MiB
+
 struct NetworkTransferSinks {
     NetworkTransferResult* result{nullptr};
     QSemaphore* finished{nullptr};
@@ -177,10 +182,18 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
         return result;
     }
 
+    // Fail closed on unbounded responses: clamp a missing/unlimited cap to the default bound
+    // before the worker ever starts reading, so an omitted max_response_bytes cannot let the
+    // reply buffer grow without limit.
+    NetworkTransferRequest bounded = request;
+    if (bounded.max_response_bytes <= 0) {
+        bounded.max_response_bytes = kDefaultMaxResponseBytes;
+    }
+
     QThread thread;
     QSemaphore finished;
     auto* worker = new NetworkTransferWorker(
-        request,
+        bounded,
         should_cancel,
         progress,
         {.result = &result, .finished = &finished, .owner_thread = &thread});

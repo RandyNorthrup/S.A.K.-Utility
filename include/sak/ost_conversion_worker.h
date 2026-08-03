@@ -77,8 +77,9 @@ private:
     [[nodiscard]] bool initializeFormatWriters(const OstConversionConfig& config,
                                                const QString& source_path,
                                                OstConversionResult& result);
-    /// Create the persistent per-item writer for a non-PST format.
-    void createPerItemWriter(const OstConversionConfig& config);
+    /// Create the persistent per-item writer for a non-PST format. @p source_path
+    /// discriminates per-source output (e.g. a unique MBOX subdirectory).
+    void createPerItemWriter(const OstConversionConfig& config, const QString& source_path);
 
     void computeSourceChecksumIfRequested(const QString& source_path,
                                           const OstConversionConfig& config,
@@ -147,10 +148,13 @@ private:
                                     const OstConversionConfig& config,
                                     OstConversionResult& result);
 
-    /// Collect attachment data for an item. Records an error for every
-    /// attachment whose bytes could not be read so the loss is not silent.
-    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachments(
-        const PstItemDetail& item, PstParser* parser, OstConversionResult& result);
+    /// Collect attachment data for an item into @p out. Records an error for every
+    /// attachment whose bytes could not be read and returns false so the caller
+    /// fails the item closed instead of writing a silently incomplete message.
+    [[nodiscard]] bool collectAttachments(const PstItemDetail& item,
+                                          PstParser* parser,
+                                          OstConversionResult& result,
+                                          QVector<QPair<QString, QByteArray>>& out);
 
     /// Check if an item passes sender/recipient filter
     [[nodiscard]] bool itemPassesSenderFilter(const PstItemDetail& item,

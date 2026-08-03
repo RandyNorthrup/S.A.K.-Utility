@@ -71,6 +71,17 @@ static constexpr std::array<uint8_t, 256> kDecryptTable = {
 /// Maximum BTree depth to prevent infinite recursion
 static constexpr int kMaxBTreeDepth = 20;
 
+/// MS-PST page-trailer ptype for a Node BTree page (ptypeNBT, MS-PST 2.2.2.7.7.1)
+static constexpr uint8_t kPageTypeNbt = 0x81;
+
+/// MS-PST page-trailer ptype for a Block BTree page (ptypeBBT)
+static constexpr uint8_t kPageTypeBbt = 0x80;
+
+/// Upper bound on a single assembled data tree (bytes). Kept well under INT_MAX so the
+/// cumulative int offsets used while stitching XBLOCK/XXBLOCK children can never overflow;
+/// a data tree that would exceed this is treated as a corrupt/hostile fan-out and fails closed.
+static constexpr int kMaxAssembledDataTreeSize = 1024 * 1024 * 1024;
+
 /// ANSI PST BTree page size (512 bytes)
 static constexpr int kAnsiPageSizeLocal = sak::email::kAnsiPageSize;
 
@@ -1160,7 +1171,11 @@ std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray&
     m_is_unicode = (m_header.data_version >= sak::email::kUnicodeVersion);
     m_is_4k = (m_header.data_version == sak::email::kUnicode4kVersion);
     if (!isKnownDataVersion(m_header.data_version)) {
-        sak::logWarning("PstParser: Unusual version: {}", m_header.data_version);
+        // Fail closed: an unrecognized wVer means the on-disk layout (page/trailer/entry sizes,
+        // BREF widths) is unknown, so continuing would parse every downstream field at guessed
+        // offsets. Reject rather than mine garbage from a mislabeled or crafted file.
+        sak::logError("PstParser: Unsupported data version: {}", m_header.data_version);
+        return std::unexpected(error_code::pst_invalid_header);
     }
 
     m_header.client_version = readLE<uint16_t>(data, kHeaderClientVersionOffset);
@@ -1270,8 +1285,8 @@ PstParser::PageFormatSizes PstParser::pageFormatSizes() const {
     return fmt;
 }
 
-std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(uint64_t page_offset,
-                                                                              int depth) {
+std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
+    uint64_t page_offset, int depth, uint8_t expected_ptype) {
     if (depth > kMaxBTreeDepth) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
@@ -1290,7 +1305,12 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
 
     int trailer_offset = fmt.page_size - fmt.trailer_size;
     uint8_t ptype = static_cast<uint8_t>((*page_data)[trailer_offset]);
-    if (ptype != static_cast<uint8_t>((*page_data)[trailer_offset + 1])) {
+    // ptype and its duplicate (ptypeRepeat) must agree, and the page must be exactly the BTree
+    // type the caller expected (ptypeNBT vs ptypeBBT). The all-zeros page that a truncated or
+    // crafted file yields satisfies the duplicate check by coincidence; the expected-type gate
+    // rejects it so a non-BTree region is never walked as one.
+    if (ptype != static_cast<uint8_t>((*page_data)[trailer_offset + 1]) ||
+        ptype != expected_ptype) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
@@ -1319,7 +1339,22 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
 // ============================================================================
 
 std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, int depth) {
-    auto page = parseBTreePage(page_offset, depth);
+    QSet<uint64_t> visited;
+    return loadNodeBTreeGuarded(page_offset, depth, visited);
+}
+
+std::expected<void, error_code> PstParser::loadNodeBTreeGuarded(uint64_t page_offset,
+                                                                int depth,
+                                                                QSet<uint64_t>& visited) {
+    // Expand each page offset at most once per traversal: a valid NBT visits every page once,
+    // so a repeat is a cycle or a fan-out bomb (an internal page listing the same child many
+    // times). Fail closed on both before doing any further work.
+    if (visited.contains(page_offset)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited.insert(page_offset);
+
+    auto page = parseBTreePage(page_offset, depth, kPageTypeNbt);
     if (!page) {
         return std::unexpected(page.error());
     }
@@ -1348,7 +1383,7 @@ std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, i
             uint64_t child_page = m_is_unicode
                                       ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
                                       : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
-            auto child_result = loadNodeBTree(child_page, depth + 1);
+            auto child_result = loadNodeBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
             }
@@ -1358,7 +1393,21 @@ std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, i
 }
 
 std::expected<void, error_code> PstParser::loadBlockBTree(uint64_t page_offset, int depth) {
-    auto page = parseBTreePage(page_offset, depth);
+    QSet<uint64_t> visited;
+    return loadBlockBTreeGuarded(page_offset, depth, visited);
+}
+
+std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_offset,
+                                                                 int depth,
+                                                                 QSet<uint64_t>& visited) {
+    // See loadNodeBTreeGuarded: reject a revisited page offset so a crafted BBT cannot cycle
+    // or fan out without bound.
+    if (visited.contains(page_offset)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited.insert(page_offset);
+
+    auto page = parseBTreePage(page_offset, depth, kPageTypeBbt);
     if (!page) {
         return std::unexpected(page.error());
     }
@@ -1387,7 +1436,7 @@ std::expected<void, error_code> PstParser::loadBlockBTree(uint64_t page_offset, 
             uint64_t child_page = m_is_unicode
                                       ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
                                       : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
-            auto child_result = loadBlockBTree(child_page, depth + 1);
+            auto child_result = loadBlockBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
             }
@@ -1416,10 +1465,16 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
         return QByteArray{};
     }
 
-    // Read exactly cb bytes of block data (§2.2.2.8 — data precedes trailer)
+    // Read exactly cb bytes of block data (§2.2.2.8 — data precedes trailer).
+    // readBytes returns whatever the file has, so a truncated file yields a short buffer;
+    // downstream fixed-offset reads treat the block as cb bytes, so require the full length
+    // and fail closed on a short read rather than parsing past the end.
     auto block_data = readBytes(static_cast<qint64>(file_offset), cb);
     if (!block_data) {
         return std::unexpected(block_data.error());
+    }
+    if (block_data->size() != cb) {
+        return std::unexpected(error_code::read_error);
     }
 
     auto& raw = *block_data;
@@ -1429,7 +1484,11 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
     // when it differs from cb the block must be deflate-decompressed.
     // Reference: libpff pff_block_footer_64bit_4k_page_t
     if (m_is_4k && cb > 0) {
-        raw = decompressBlockIf4k(raw, file_offset, cb);
+        auto decompressed = decompressBlockIf4k(raw, file_offset, cb);
+        if (!decompressed) {
+            return std::unexpected(decompressed.error());
+        }
+        raw = std::move(*decompressed);
     }
 
     if (m_encryption_type == sak::email::kEncryptCompressible) {
@@ -1549,6 +1608,11 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
             return std::unexpected(child_data.error());
         }
         result.append(*child_data);
+        // Cap the assembled size so the cumulative int offsets below cannot overflow and a
+        // hostile tree cannot balloon memory: fail closed once past the sane ceiling.
+        if (result.size() > kMaxAssembledDataTreeSize) {
+            return std::unexpected(error_code::pst_corrupted_btree);
+        }
         if (block_offsets) {
             for (int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
@@ -1575,6 +1639,11 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
             return std::unexpected(child_data.error());
         }
         result.append(*child_data);
+        // Cap the assembled size (see readXblockChildren): keeps cumulative int offsets safe and
+        // bounds memory against a fan-out bomb; fail closed past the ceiling.
+        if (result.size() > kMaxAssembledDataTreeSize) {
+            return std::unexpected(error_code::pst_corrupted_btree);
+        }
         if (block_offsets) {
             for (int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
@@ -1588,7 +1657,9 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
 // NDB Layer — Block Decompression (Unicode4K / wVer ≥ 36)
 // ============================================================================
 
-QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_offset, int cb) {
+std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByteArray& raw,
+                                                                     uint64_t file_offset,
+                                                                     int cb) {
     using namespace sak::email;
 
     // Calculate aligned block size (512-byte increments for 4K pages)
@@ -1597,11 +1668,13 @@ QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_o
         aligned += kBlock4kAlignment;
     }
 
-    // Read the 24-byte block footer from the end of the aligned allocation
+    // Read the 24-byte block footer from the end of the aligned allocation. A truncated or
+    // corrupt allocation that cannot yield the full footer is unreadable; fail closed rather
+    // than returning the still-compressed bytes as if they were the block payload.
     qint64 footer_pos = static_cast<qint64>(file_offset) + aligned - kBlock4kFooterSize;
     auto footer_result = readBytes(footer_pos, kBlock4kFooterSize);
     if (!footer_result || footer_result->size() != kBlock4kFooterSize) {
-        return raw;
+        return std::unexpected(error_code::read_error);
     }
 
     uint16_t uncompressed_size = readLE<uint16_t>(*footer_result, kBlock4kUncompSizeOffset);
@@ -1621,8 +1694,10 @@ QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_o
 
     QByteArray decompressed = qUncompress(prefixed);
     if (decompressed.isEmpty()) {
-        sak::logWarning("Block decompression failed at offset {}", std::to_string(file_offset));
-        return raw;
+        // The footer said this block is compressed; a decompress failure means the block is
+        // corrupt. Fail closed -- returning the compressed bytes would feed garbage upstream.
+        sak::logError("Block decompression failed at offset {}", std::to_string(file_offset));
+        return std::unexpected(error_code::pst_decompression_failed);
     }
 
     return decompressed;
@@ -1812,10 +1887,14 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
     ctx.heap_data = std::move(*data_result);
 
     if (node.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure: silently continuing leaves subnode_map empty,
+        // so every HNID that points into a sub-node resolves to an empty value and the property
+        // context is returned as if those (often the body/large properties) were simply absent.
         auto sn_result = readSubNodeBTree(node.subnode_bid);
-        if (sn_result) {
-            ctx.subnode_map = std::move(*sn_result);
+        if (!sn_result) {
+            return std::unexpected(sn_result.error());
         }
+        ctx.subnode_map = std::move(*sn_result);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -2078,8 +2157,13 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
         cell_exists = (static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1;
     }
 
+    // Bound the cell against THIS row's end (row_off + row_size), not the whole matrix buffer:
+    // a column whose ib_data/cb_data run past the fixed-row layout must not be allowed to read
+    // bytes that belong to the next row (or the block padding) just because the matrix is large.
     int cell_off = row_view.row_off + col.ib_data;
-    if (cell_exists && cell_off + col.cb_data <= row_data.size()) {
+    int row_end = row_view.row_off + row_view.row_size;
+    if (cell_exists && cell_off >= row_view.row_off && cell_off + col.cb_data <= row_end &&
+        row_end <= row_data.size()) {
         prop.raw_value = row_data.mid(cell_off, col.cb_data);
         if (isHnidResolvableType(col.prop_type) && col.cb_data == kPropertyValueRefSize) {
             uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
@@ -2510,11 +2594,23 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
     auto child_nids = extractChildNids(*htable_result);
     for (uint64_t child_nid : child_nids) {
         auto child_tree = buildFolderHierarchyGuarded(child_nid, depth + 1, visited_nids);
-        if (child_tree && !child_tree->isEmpty()) {
-            auto child_folder = (*child_tree)[0];
-            child_folder.parent_node_id = root_nid;
-            folder.children.append(std::move(child_folder));
+        // Surface, rather than silently swallow, a child that fails to parse or yields no
+        // subtree: dropping it produces a partial folder tree that looks complete. Log each drop
+        // (with the NID and reason) so a truncated/corrupt hierarchy is visible in diagnostics.
+        if (!child_tree) {
+            sak::logWarning("PstParser: child folder 0x{:X} failed to parse: {} (partial tree)",
+                            child_nid,
+                            sak::to_string(child_tree.error()));
+            continue;
         }
+        if (child_tree->isEmpty()) {
+            sak::logWarning("PstParser: child folder 0x{:X} produced an empty subtree (dropped)",
+                            child_nid);
+            continue;
+        }
+        auto child_folder = (*child_tree)[0];
+        child_folder.parent_node_id = root_nid;
+        folder.children.append(std::move(child_folder));
     }
 }
 
@@ -2583,10 +2679,15 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
         }
     }
 
+    // Propagate an attachment-read failure rather than returning an attachment-free message:
+    // silently dropping it would present a message that has attachments as if it had none
+    // (data loss the caller cannot detect). A message with no attachments returns an empty
+    // vector (success), so this only fails on a genuine parse error.
     auto att_result = readAttachments(message_nid);
-    if (att_result) {
-        detail.attachments = std::move(*att_result);
+    if (!att_result) {
+        return std::unexpected(att_result.error());
     }
+    detail.attachments = std::move(*att_result);
 
     // Ensure both body representations are always populated when the message
     // has any body at all.  Many PST messages store only PR_HTML (no PR_BODY);

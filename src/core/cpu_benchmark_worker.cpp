@@ -158,6 +158,12 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runSingleThreadBenchmar
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.zlib_compression_time_ms = runZlibCompression();
+    // A non-positive throughput means compress2 returned non-Z_OK: the subtest
+    // produced no valid measurement, so fail the whole benchmark rather than scoring
+    // a failed compression.
+    if (m_zlib_throughput_mbps <= 0.0) {
+        return std::unexpected(sak::error_code::execution_failed);
+    }
 
     reportProgress(kProgressStepAes, kBenchmarkStepTotal, "Running AES encryption benchmark...");
     if (checkStop()) {
@@ -280,6 +286,10 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
     Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
+    // Reset the throughput channel so a failed compression cannot leave a stale,
+    // positive value behind: runSingleThreadBenchmarks reads it back as the
+    // pass/fail signal for this subtest.
+    m_zlib_throughput_mbps = 0.0;
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
     // Generate compressible data (mixed patterns)
@@ -310,6 +320,9 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
     const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
 
     if (ret != Z_OK) {
+        // Leave m_zlib_throughput_mbps at 0.0 so the caller fails the benchmark
+        // instead of scoring the elapsed time of a compression that never produced
+        // valid output.
         logError("ZLIB compression failed with code {}", ret);
         return elapsed_ms;
     }

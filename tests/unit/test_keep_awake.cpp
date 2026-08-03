@@ -23,6 +23,7 @@ private Q_SLOTS:
     void guard_nonCopyable();
     void guard_scopeActivation();
     void powerRequest_values();
+    void executionStateForFlags_unionOfFlags();
 };
 
 void TestKeepAwake::initialState_inactive() {
@@ -112,6 +113,26 @@ void TestKeepAwake::powerRequest_values() {
     QCOMPARE(static_cast<int>(KeepAwake::PowerRequest::System), 0x01);
     QCOMPARE(static_cast<int>(KeepAwake::PowerRequest::Display), 0x02);
     QCOMPARE(static_cast<int>(KeepAwake::PowerRequest::Both), 0x03);
+}
+
+void TestKeepAwake::executionStateForFlags_unionOfFlags() {
+    // Win32 documented constants (avoid pulling in <windows.h> in the test).
+    constexpr unsigned kContinuous = 0x80'00'00'00u;  // ES_CONTINUOUS
+    constexpr unsigned kSystem = 0x00'00'00'01u;      // ES_SYSTEM_REQUIRED
+    constexpr unsigned kDisplay = 0x00'00'00'02u;     // ES_DISPLAY_REQUIRED
+
+    const auto systemOnly =
+        KeepAwake::executionStateForFlags(static_cast<int>(KeepAwake::PowerRequest::System));
+    QCOMPARE(systemOnly, kContinuous | kSystem);
+
+    // Regression: a later Display request must add its flag to the union rather
+    // than being ignored (the old refcount installed only the first request's
+    // flags and dropped every later one).
+    const int unioned = static_cast<int>(KeepAwake::PowerRequest::System) |
+                        static_cast<int>(KeepAwake::PowerRequest::Display);
+    QCOMPARE(KeepAwake::executionStateForFlags(unioned), kContinuous | kSystem | kDisplay);
+    QCOMPARE(KeepAwake::executionStateForFlags(static_cast<int>(KeepAwake::PowerRequest::Both)),
+             kContinuous | kSystem | kDisplay);
 }
 
 QTEST_MAIN(TestKeepAwake)

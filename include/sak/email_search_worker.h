@@ -80,24 +80,19 @@ private:
     [[nodiscard]] std::optional<MatchResult> matchPstSender(
         const sak::PstItemSummary& item, const sak::EmailSearchCriteria& criteria) const;
 
-    /// Match PST item body text
+    /// Match PST item body text. Operates on an already-loaded detail so the item
+    /// is parsed only once for all detail-based fields (B7-B: reparse-once).
     [[nodiscard]] std::optional<MatchResult> matchPstItemBody(
-        const sak::PstItemSummary& item,
-        const sak::EmailSearchCriteria& criteria,
-        PstParser* parser) const;
+        const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const;
 
-    /// Match PST item attachment filenames
+    /// Match PST item attachment filenames (from an already-loaded detail).
     [[nodiscard]] std::optional<MatchResult> matchPstItemAttachments(
-        const sak::PstItemSummary& item,
-        const sak::EmailSearchCriteria& criteria,
-        PstParser* parser) const;
+        const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const;
 
-    /// Match PST item recipient fields (To/Cc/Bcc) -- criteria.search_recipients
-    /// was never evaluated before (B7-34).
+    /// Match PST item recipient fields (To/Cc/Bcc) from an already-loaded detail --
+    /// criteria.search_recipients was never evaluated before (B7-34).
     [[nodiscard]] std::optional<MatchResult> matchPstItemRecipients(
-        const sak::PstItemSummary& item,
-        const sak::EmailSearchCriteria& criteria,
-        PstParser* parser) const;
+        const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const;
 
     /// Match a specific MAPI property value (advanced search) -- criteria's
     /// mapi_property_id / mapi_property_value were never evaluated before (B7-34).
@@ -115,6 +110,16 @@ private:
                                                            int message_index,
                                                            const sak::EmailSearchCriteria& criteria,
                                                            MboxParser* parser) const;
+
+    /// MBOX detail-based matchers (body/recipients/attachment names), mirroring the
+    /// PST matchers so the MBOX path evaluates the same criteria (B7-34). Each reads
+    /// from an already-loaded detail so the message is parsed only once.
+    [[nodiscard]] std::optional<MatchResult> matchMboxBody(
+        const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const;
+    [[nodiscard]] std::optional<MatchResult> matchMboxRecipients(
+        const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const;
+    [[nodiscard]] std::optional<MatchResult> matchMboxAttachments(
+        const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const;
 
     /// Search items within a single PST folder
     void searchSingleFolder(PstParser* parser,

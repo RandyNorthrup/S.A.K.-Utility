@@ -63,7 +63,12 @@ private Q_SLOTS:
     void regContent_rejectsMixedGoodAndBad();
     void regContent_rejectsDeletionOutsideSubtree();
     void regContent_rejectsEmpty();
+    void regContent_rejectsProfilesPrefixNotSegment();
     void decodeRegFile_handlesUtf16Bom();
+
+    // -- Backup .reg name sanitization / manifest size cap ---------------
+    void registryBackupFileName_sanitizesTraversal();
+    void restoreRejectsOversizedManifest();
 
     // -- B7-16: single-flight guard --------------------------------------
     void singleFlightRefusesReentry();
@@ -407,6 +412,67 @@ void TestEmailProfileManager::regContent_rejectsEmpty() {
     QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(
         QStringLiteral("Windows Registry Editor Version 5.00\n")));
     QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(QString()));
+}
+
+void TestEmailProfileManager::regContent_rejectsProfilesPrefixNotSegment() {
+    // '\OUTLOOK\PROFILES' must match as a whole path segment, not a bare substring: a key that
+    // merely begins with 'Profiles' ("ProfilesEvil") writes OUTSIDE the backed-up subtree and
+    // must be refused.
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\ProfilesEvil\\Run]\n"
+        "\"Evil\"=\"C:\\\\evil.exe\"\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+    // The exact segment (no trailing subkey) and a subkey under it both stay allowed.
+    QVERIFY(EmailProfileManager::regKeyPathAllowed(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles")));
+    QVERIFY(!EmailProfileManager::regKeyPathAllowed(QStringLiteral(
+        "HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\ProfilesHack")));
+}
+
+void TestEmailProfileManager::registryBackupFileName_sanitizesTraversal() {
+    // A clean profile name passes through unchanged.
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("Default")),
+             QStringLiteral("registry_Default.reg"));
+    // Path separators and traversal are neutralized so the .reg stays a bare basename.
+    for (const QString& hostile : {QStringLiteral("../evil"),
+                                   QStringLiteral("..\\..\\evil"),
+                                   QStringLiteral("a/b\\c"),
+                                   QStringLiteral("x:y*z?")}) {
+        const QString name = EmailProfileManager::registryBackupFileName(hostile);
+        QVERIFY2(!name.contains(QLatin1Char('/')), qPrintable(name));
+        QVERIFY2(!name.contains(QLatin1Char('\\')), qPrintable(name));
+        QVERIFY(name.startsWith(QStringLiteral("registry_")));
+        QVERIFY(name.endsWith(QStringLiteral(".reg")));
+    }
+    // A name that would collapse to nothing / "." / ".." falls back to a fixed placeholder.
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("..")),
+             QStringLiteral("registry_profile.reg"));
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QString()),
+             QStringLiteral("registry_profile.reg"));
+}
+
+void TestEmailProfileManager::restoreRejectsOversizedManifest() {
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+    const QString manifest = backup_root.path() + QStringLiteral("/backup_manifest.json");
+
+    // Write a manifest just over the 8 MiB cap; it must be refused before parse.
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray blob(9 * 1024 * 1024, ' ');
+        file.write(blob);
+    }
+
+    EmailProfileManager manager;
+    QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
+    manager.restoreProfiles(manifest);
+
+    QVERIFY(error_spy.count() > 0);
+    QCOMPARE(complete_spy.count(), 0);  // oversized manifest never reaches a restore result
 }
 
 void TestEmailProfileManager::decodeRegFile_handlesUtf16Bom() {

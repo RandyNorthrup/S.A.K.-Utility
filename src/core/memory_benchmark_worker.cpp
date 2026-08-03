@@ -127,6 +127,12 @@ auto MemoryBenchmarkWorker::runLatencyAndAllocationBenchmarks()
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.random_latency_ns = runRandomLatency();
+    // A non-positive latency means the pointer-chase buffer could not be allocated
+    // (see runRandomLatency's 0.0 sentinel). Fail closed instead of feeding a 0 ns
+    // latency into calculateScore, which would massively inflate the score.
+    if (m_result.random_latency_ns <= 0.0) {
+        return std::unexpected(sak::error_code::out_of_memory);
+    }
 
     // Allocation stress
     reportProgress(kMemoryProgressAllocation,
@@ -285,6 +291,12 @@ double MemoryBenchmarkWorker::runRandomLatency() {
     const size_t element_count = kLatencyArrayElements;
     VirtualBuffer buf(element_count * sizeof(size_t));
     if (!buf.valid()) {
+        // Return 0.0 as a failure sentinel: a real pointer-chase always measures a
+        // positive latency. runLatencyAndAllocationBenchmarks fails the benchmark on
+        // this rather than scoring an (impossible) 0 ns latency, which would inflate
+        // the score.
+        logError("Failed to allocate {} MB for random latency test",
+                 (element_count * sizeof(size_t)) / sak::kBytesPerMB);
         return 0.0;
     }
 

@@ -11,6 +11,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QTextStream>
 #include <QTimeZone>
@@ -48,8 +49,12 @@ QString sanitizeQuotedParam(const QString& value) {
 // Construction / Destruction
 // ============================================================================
 
-MboxWriter::MboxWriter(const QString& output_dir, bool one_per_folder)
-    : m_output_dir(output_dir), m_one_per_folder(one_per_folder) {}
+MboxWriter::MboxWriter(const QString& output_dir,
+                       bool one_per_folder,
+                       const QString& combined_basename)
+    : m_output_dir(output_dir)
+    , m_one_per_folder(one_per_folder)
+    , m_combined_basename(combined_basename) {}
 
 MboxWriter::~MboxWriter() {
     finalize();
@@ -68,15 +73,18 @@ std::expected<void, error_code> MboxWriter::writeMessage(
         return std::unexpected(error_code::write_error);
     }
 
-    QByteArray entry = formatMboxEntry(item, attachment_data);
-    if (!writeFully(*file, entry)) {
+    auto entry = formatMboxEntry(item, attachment_data);
+    if (!entry) {
+        return std::unexpected(entry.error());
+    }
+    if (!writeFully(*file, *entry)) {
         // A short write splits one message mid-stream and corrupts the mbox (the
         // next From_ line lands inside the previous body); fail closed.
         logError("MboxWriter: incomplete write for folder: {}", folder_path.toStdString());
         return std::unexpected(error_code::write_error);
     }
 
-    m_bytes_written += entry.size();
+    m_bytes_written += entry->size();
     return {};
 }
 
@@ -113,7 +121,12 @@ QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
             file_path = base + QStringLiteral(" (%1).mbox").arg(suffix);
         }
     } else {
-        file_path = m_output_dir + QStringLiteral("/mailbox.mbox");
+        // Namespace the single combined mailbox by source-derived basename so distinct jobs sharing
+        // one output directory do not truncate each other; empty keeps the legacy "mailbox.mbox".
+        const QString base = m_combined_basename.isEmpty()
+                                 ? QStringLiteral("mailbox")
+                                 : sanitizeFolderName(m_combined_basename);
+        file_path = m_output_dir + QStringLiteral("/") + base + QStringLiteral(".mbox");
     }
     m_used_file_paths.insert(file_path);
 
@@ -138,11 +151,27 @@ QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
 // MBOX Formatting
 // ============================================================================
 
-QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
-                                        const QString& sender,
-                                        const QDateTime& date,
-                                        const QVector<QPair<QString, QByteArray>>& attachments) {
-    QByteArray message;
+QString MboxWriter::makeUniqueBoundary(const PstItemDetail& item) {
+    constexpr int kMaxBoundaryAttempts = 8;
+    constexpr int kHexBase = 16;
+    auto* rng = QRandomGenerator::global();
+    for (int attempt = 0; attempt < kMaxBoundaryAttempts; ++attempt) {
+        const QString candidate = QStringLiteral("----=_Part_%1_%2")
+                                      .arg(rng->generate64(), 0, kHexBase)
+                                      .arg(rng->generate64(), 0, kHexBase);
+        // Verify the delimiter cannot collide with anything emitted raw in the body. Attachments
+        // are base64 (no '-'), so only the plain/html bodies can contain arbitrary bytes.
+        if (!item.body_html.contains(candidate) && !item.body_plain.contains(candidate)) {
+            return candidate;
+        }
+    }
+    return QString();
+}
+
+void MboxWriter::appendMessageHeaders(QByteArray& message,
+                                      const PstItemDetail& item,
+                                      const QString& sender,
+                                      const QDateTime& date) {
     const QString from_value = item.sender_name.isEmpty() ? sender
                                                           : item.sender_name + " <" + sender + ">";
     message.append("From: " + sanitizeHeaderValue(from_value).toUtf8() + "\r\n");
@@ -160,54 +189,74 @@ QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
     if (!item.message_id.isEmpty()) {
         message.append("Message-ID: " + sanitizeHeaderValue(item.message_id).toUtf8() + "\r\n");
     }
+}
 
-    if (!item.body_html.isEmpty() || !attachments.isEmpty()) {
-        QString boundary =
-            QStringLiteral("----=_Part_%1_%2").arg(item.node_id).arg(date.toSecsSinceEpoch());
-        message.append("MIME-Version: 1.0\r\n");
-        message.append("Content-Type: multipart/mixed;\r\n");
-        message.append(" boundary=\"" + boundary.toUtf8() + "\"\r\n");
+void MboxWriter::appendMultipartBody(QByteArray& message,
+                                     const PstItemDetail& item,
+                                     const QString& boundary,
+                                     const QVector<QPair<QString, QByteArray>>& attachments) {
+    message.append("MIME-Version: 1.0\r\n");
+    message.append("Content-Type: multipart/mixed;\r\n");
+    message.append(" boundary=\"" + boundary.toUtf8() + "\"\r\n");
+    message.append("\r\n");
+
+    message.append("--" + boundary.toUtf8() + "\r\n");
+    if (!item.body_html.isEmpty()) {
+        message.append("Content-Type: text/html; charset=utf-8\r\n");
+        // The body is emitted raw, not quoted-printable-encoded; labelling it
+        // quoted-printable makes a reader decode "=XX" sequences in the HTML
+        // (e.g. tracking URLs) and swallow trailing '=' as soft breaks. mbox
+        // bodies are 8-bit clean, so 8bit is the correct label.
+        message.append("Content-Transfer-Encoding: 8bit\r\n");
         message.append("\r\n");
-
-        message.append("--" + boundary.toUtf8() + "\r\n");
-        if (!item.body_html.isEmpty()) {
-            message.append("Content-Type: text/html; charset=utf-8\r\n");
-            // The body is emitted raw, not quoted-printable-encoded; labelling it
-            // quoted-printable makes a reader decode "=XX" sequences in the HTML
-            // (e.g. tracking URLs) and swallow trailing '=' as soft breaks. mbox
-            // bodies are 8-bit clean, so 8bit is the correct label.
-            message.append("Content-Transfer-Encoding: 8bit\r\n");
-            message.append("\r\n");
-            message.append(item.body_html.toUtf8());
-        } else {
-            message.append("Content-Type: text/plain; charset=utf-8\r\n");
-            message.append("\r\n");
-            message.append(item.body_plain.toUtf8());
-        }
-        message.append("\r\n");
-
-        for (const auto& [att_name, att_data] : attachments) {
-            message.append("--" + boundary.toUtf8() + "\r\n");
-            message.append("Content-Type: application/octet-stream\r\n");
-            message.append("Content-Disposition: attachment; filename=\"" +
-                           sanitizeQuotedParam(att_name).toUtf8() + "\"\r\n");
-            message.append("Content-Transfer-Encoding: base64\r\n");
-            message.append("\r\n");
-            message.append(att_data.toBase64());
-            message.append("\r\n");
-        }
-        message.append("--" + boundary.toUtf8() + "--\r\n");
+        message.append(item.body_html.toUtf8());
     } else {
         message.append("Content-Type: text/plain; charset=utf-8\r\n");
         message.append("\r\n");
         message.append(item.body_plain.toUtf8());
     }
+    message.append("\r\n");
 
+    for (const auto& [att_name, att_data] : attachments) {
+        message.append("--" + boundary.toUtf8() + "\r\n");
+        message.append("Content-Type: application/octet-stream\r\n");
+        message.append("Content-Disposition: attachment; filename=\"" +
+                       sanitizeQuotedParam(att_name).toUtf8() + "\"\r\n");
+        message.append("Content-Transfer-Encoding: base64\r\n");
+        message.append("\r\n");
+        message.append(att_data.toBase64());
+        message.append("\r\n");
+    }
+    message.append("--" + boundary.toUtf8() + "--\r\n");
+}
+
+std::expected<QByteArray, error_code> MboxWriter::buildMimeMessage(
+    const PstItemDetail& item,
+    const QString& sender,
+    const QDateTime& date,
+    const QVector<QPair<QString, QByteArray>>& attachments) {
+    QByteArray message;
+    appendMessageHeaders(message, item, sender, date);
+
+    if (item.body_html.isEmpty() && attachments.isEmpty()) {
+        message.append("Content-Type: text/plain; charset=utf-8\r\n");
+        message.append("\r\n");
+        message.append(item.body_plain.toUtf8());
+        return message;
+    }
+
+    const QString boundary = makeUniqueBoundary(item);
+    if (boundary.isEmpty()) {
+        // No collision-free boundary could be produced: fail closed rather than emit a
+        // multipart whose delimiter might appear in the body and corrupt the structure.
+        return std::unexpected(error_code::internal_error);
+    }
+    appendMultipartBody(message, item, boundary, attachments);
     return message;
 }
 
-QByteArray MboxWriter::formatMboxEntry(const PstItemDetail& item,
-                                       const QVector<QPair<QString, QByteArray>>& attachments) {
+std::expected<QByteArray, error_code> MboxWriter::formatMboxEntry(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
     QByteArray entry;
 
     QString sender = item.sender_email.isEmpty() ? QStringLiteral("unknown@localhost")
@@ -218,15 +267,20 @@ QByteArray MboxWriter::formatMboxEntry(const PstItemDetail& item,
     QString date_str = date.toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
 
     entry.append("From ");
-    entry.append(sender.toUtf8());
+    // Strip CR/LF/controls from the sender: an unescaped newline here would forge a second From_
+    // line and split one message into two on the next read.
+    entry.append(sanitizeHeaderValue(sender).toUtf8());
     entry.append(' ');
     entry.append(date_str.toUtf8());
     entry.append('\n');
 
-    QByteArray message = buildMimeMessage(item, sender, date, attachments);
+    auto message = buildMimeMessage(item, sender, date, attachments);
+    if (!message) {
+        return std::unexpected(message.error());
+    }
 
     // Escape "From " at the start of lines within message body
-    entry.append(escapeFromLines(message));
+    entry.append(escapeFromLines(*message));
 
     // Blank line separator between messages
     entry.append('\n');

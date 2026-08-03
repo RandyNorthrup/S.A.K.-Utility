@@ -40,10 +40,72 @@ namespace {
 // The provider gateway sets this in the spawned server's environment (providers.json).
 constexpr char kWin32McpModeEnv[] = "SAK_WIN32_MCP_MODE";
 
+// A single MCP request is one compact JSON object on its own line; a legitimate one is small. Cap
+// the read so a peer that never sends a newline cannot force unbounded memory growth on this
+// process. 4 MiB comfortably clears any real tool call while bounding a hostile/runaway stream.
+constexpr std::size_t kMaxRequestLineBytes = 4u * 1024u * 1024u;
+
+enum class LineRead {
+    Ok,
+    Eof,
+    TooLong
+};
+
+// Read one newline-delimited line, failing closed (TooLong) once the ceiling is crossed instead of
+// letting std::getline grow the string without bound. A trailing unterminated line at EOF is
+// returned once as Ok, then Eof.
+LineRead readBoundedLine(std::istream& in, std::string& line) {
+    line.clear();
+    char ch = 0;
+    while (in.get(ch)) {
+        if (ch == '\n') {
+            return LineRead::Ok;
+        }
+        line.push_back(ch);
+        if (line.size() > kMaxRequestLineBytes) {
+            return LineRead::TooLong;
+        }
+    }
+    return line.empty() ? LineRead::Eof : LineRead::Ok;
+}
+
 void writeResponse(const QJsonObject& response) {
     const QByteArray out = sak::ai::mcp::jsonLine(response);
     std::fwrite(out.constData(), 1, static_cast<size_t>(out.size()), stdout);
     std::fflush(stdout);
+}
+
+// Serve newline-delimited JSON-RPC until EOF, or until a line exceeds the size ceiling -- at which
+// point we stop serving (the stream is desynchronized and cannot be trusted to re-frame).
+void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& policy) {
+    std::string line;
+    while (true) {
+        const LineRead status = readBoundedLine(std::cin, line);
+        if (status == LineRead::Eof) {
+            break;
+        }
+        if (status == LineRead::TooLong) {
+            std::fprintf(stderr,
+                         "win32 mcp: request line exceeded %zu bytes; closing stream\n",
+                         kMaxRequestLineBytes);
+            break;
+        }
+        if (line.empty()) {
+            continue;
+        }
+        QString parse_error;
+        const QJsonObject request = sak::ai::mcp::parseJsonLine(QByteArray::fromStdString(line),
+                                                                &parse_error);
+        if (!parse_error.isEmpty()) {
+            // A malformed line carries no reliable id to answer against; drop it and
+            // keep serving rather than desynchronizing the stream.
+            continue;
+        }
+        const std::optional<QJsonObject> response = handleRequest(request, browser_ptr, policy);
+        if (response.has_value()) {
+            writeResponse(response.value());
+        }
+    }
 }
 
 // Chrome launches a native messaging host with the calling extension's origin
@@ -117,25 +179,7 @@ int runWin32McpProcess(int argc, char** argv) {
     const sak::win32mcp::Win32McpServerPolicy policy =
         sak::win32mcp::Win32McpServerPolicy::fromEnvironment();
 
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) {
-            continue;
-        }
-        QString parse_error;
-        const QJsonObject request = sak::ai::mcp::parseJsonLine(QByteArray::fromStdString(line),
-                                                                &parse_error);
-        if (!parse_error.isEmpty()) {
-            // A malformed line carries no reliable id to answer against; drop it and
-            // keep serving rather than desynchronizing the stream.
-            continue;
-        }
-        const std::optional<QJsonObject> response =
-            sak::win32mcp::handleRequest(request, browser_ptr, policy);
-        if (response.has_value()) {
-            writeResponse(response.value());
-        }
-    }
+    serveRequests(browser_ptr, policy);
     browser.stop();
     return 0;
 }

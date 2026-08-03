@@ -43,6 +43,22 @@ constexpr int kLanUploadConnectTimeoutMs = sak::kTimeoutProcessShortMs;
 constexpr int kLanSocketQueueBlocks = 64;
 constexpr int kDefaultLanDurationSec = 10;
 constexpr int kDefaultLanBlockSizeKb = 64;
+// A silent (idle) LAN client socket is closed after this long so an unauthenticated peer
+// cannot hold the single accepted slot open indefinitely without sending data.
+constexpr int kLanIdleTimeoutMs = 30'000;
+// Cap the per-session speed-sample history so a long-lived transfer cannot grow the sample
+// vector without bound; once reached, further samples are measured but not retained.
+constexpr int kLanMaxSpeedSamples = 100'000;
+
+// Drain and drop any client sockets queued behind the one already being served, enforcing the
+// single-client cap even if several peers connect within one event-loop turn.
+void rejectExtraPendingClients(QTcpServer* server) {
+    for (auto* extra = server->nextPendingConnection(); extra != nullptr;
+         extra = server->nextPendingConnection()) {
+        extra->abort();
+        extra->deleteLater();
+    }
+}
 }  // namespace
 
 NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObject(parent) {
@@ -170,24 +186,21 @@ void NetworkDiagnosticController::cleanupThread(State op) {
         return;
     }
     QThread* thread = it.value();
-    bool joined = true;
     if (thread->isRunning()) {
         thread->quit();
         constexpr int kThreadQuitTimeoutMs = 5000;
         if (!thread->wait(kThreadQuitTimeoutMs)) {
-            thread->terminate();
-            constexpr int kThreadTermTimeoutMs = 2000;
-            joined = thread->wait(kThreadTermTimeoutMs);
+            // The worker ignored the cooperative cancel (cancel() is issued before teardown)
+            // and did not return within the timeout. QThread::terminate() would kill it
+            // mid-syscall and can corrupt shared state or leak held locks, so instead detach
+            // the still-running thread as a bounded safe leak: unparented, ~QObject never
+            // destroys a live QThread (which would abort), and it exits once its work returns.
+            thread->setParent(nullptr);
+            m_workerThreads.erase(it);
+            return;
         }
     }
-    if (joined) {
-        thread->deleteLater();
-    } else {
-        // The thread is parented to this controller; letting ~QObject destroy a
-        // still-running QThread would abort. Detach it as a bounded safe leak so
-        // teardown completes instead of crashing.
-        thread->setParent(nullptr);
-    }
+    thread->deleteLater();
     m_workerThreads.erase(it);
 }
 
@@ -780,6 +793,7 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
         m_lanTransferServer = new QTcpServer(this);
     }
 
+    m_lanTransferServer->setMaxPendingConnections(1);
     if (!m_lanTransferServer->listen(QHostAddress::Any, port)) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to start LAN transfer server "
                                             "on port %1: %2")
@@ -797,6 +811,10 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
         if (!socket) {
             return;
         }
+        // Single-client cap: stop accepting new peers while one transfer is in flight (the
+        // socket is re-opened for accepting on disconnect) and drop any that already queued.
+        m_lanTransferServer->pauseAccepting();
+        rejectExtraPendingClients(m_lanTransferServer);
         handleLanClientConnection(socket);
     });
 }
@@ -809,7 +827,20 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
     auto* ctx = new LanClientContext();
     ctx->timer.start();
 
-    connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx]() {
+    // Idle-timeout: an unauthenticated peer that connects but goes silent must not hold the
+    // single accepted slot open forever. The timer (parented to the socket, so it dies with
+    // it) aborts a socket that sends nothing for kLanIdleTimeoutMs; each read resets it.
+    auto* idle_timer = new QTimer(socket);
+    idle_timer->setSingleShot(true);
+    connect(idle_timer, &QTimer::timeout, this, [this, socket]() {
+        Q_EMIT logOutput(QStringLiteral("LAN transfer: closing idle peer %1")
+                             .arg(socket->peerAddress().toString()));
+        socket->abort();
+    });
+    idle_timer->start(kLanIdleTimeoutMs);
+
+    connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx, idle_timer]() {
+        idle_timer->start(kLanIdleTimeoutMs);
         qint64 bytes = socket->bytesAvailable();
         QByteArray received_data = socket->read(bytes);
         ctx->total_received += received_data.size();
@@ -821,7 +852,9 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
             double currentMbps = deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit))
                                               : 0.0;
             ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
-            ctx->speed_samples.append(currentMbps);
+            if (ctx->speed_samples.size() < kLanMaxSpeedSamples) {
+                ctx->speed_samples.append(currentMbps);
+            }
             ctx->last_report_time = elapsed;
             ctx->last_report_bytes = ctx->total_received;
 
@@ -864,6 +897,11 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
 
     delete ctx;
     socket->deleteLater();
+
+    // The single served client is gone: re-open the server for the next peer.
+    if (m_lanTransferServer && m_lanTransferServer->isListening()) {
+        m_lanTransferServer->resumeAccepting();
+    }
 }
 
 void NetworkDiagnosticController::stopLanTransferServer() {
@@ -960,7 +998,9 @@ private:
         const double currentMbps =
             deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
         m_peakMbps = std::max(m_peakMbps, currentMbps);
-        m_speedSamples.append(currentMbps);
+        if (m_speedSamples.size() < kLanMaxSpeedSamples) {
+            m_speedSamples.append(currentMbps);
+        }
         m_lastReportTime = elapsed;
         m_lastReportBytes = m_totalSent;
         if (m_request.progress) {

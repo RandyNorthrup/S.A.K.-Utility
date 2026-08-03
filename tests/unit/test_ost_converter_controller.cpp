@@ -267,6 +267,54 @@ private Q_SLOTS:
     // leave the batch permanently stuck (no worker, no completion signal).
     // ====================================================================
 
+    // ====================================================================
+    // FB (review 2): a run with any failed item OR recorded error is not a
+    // clean conversion -- even when some items converted, it must NOT be
+    // classified Complete. classifyOutcome centralizes that fail-closed rule.
+    // ====================================================================
+
+    void testClassifyCleanRunIsComplete() {
+        sak::OstConversionResult result;
+        result.items_converted = 10;
+        result.items_failed = 0;
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Complete);
+    }
+
+    void testClassifyPartialRunIsFailed() {
+        // 9 converted but 1 failed -> the whole job is a failure, not Complete.
+        sak::OstConversionResult result;
+        result.items_converted = 9;
+        result.items_failed = 1;
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Failed);
+    }
+
+    void testClassifyErroredRunIsFailed() {
+        // Items converted but an error was recorded (e.g. a dropped attachment).
+        sak::OstConversionResult result;
+        result.items_converted = 5;
+        result.items_failed = 0;
+        result.errors.append(QStringLiteral("Attachment 'a.pdf' dropped (read failed)"));
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Failed);
+    }
+
+    void testClassifySourceOpenFailureIsFailed() {
+        // Nothing converted, no per-item failures, but a fatal error was recorded.
+        sak::OstConversionResult result;
+        result.errors.append(QStringLiteral("Failed to open file"));
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Failed);
+    }
+
+    void testClassifyEmptyCleanRunIsComplete() {
+        // A validly empty mailbox (no items, no failures, no errors) is Complete.
+        sak::OstConversionResult result;
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Complete);
+    }
+
     void testZeroThreadsDoesNotWedgeBatch() {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());

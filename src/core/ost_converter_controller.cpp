@@ -268,6 +268,17 @@ void OstConverterController::finalizeBatch() {
 // Worker Slots
 // ============================================================================
 
+OstConversionJob::Status OstConverterController::classifyOutcome(
+    const OstConversionResult& result) {
+    // Any failed item or recorded error (e.g. a source-open failure, or a message
+    // whose attachment could not be read) means the conversion was not clean.
+    // Everything else -- including a validly empty mailbox -- is Complete.
+    if (result.items_failed > 0 || !result.errors.isEmpty()) {
+        return OstConversionJob::Status::Failed;
+    }
+    return OstConversionJob::Status::Complete;
+}
+
 void OstConverterController::onWorkerFinished(OstConversionResult result) {
     auto* sender_worker = qobject_cast<OstConversionWorker*>(sender());
 
@@ -288,17 +299,16 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
 
     auto& job = m_queue[file_index];
 
-    // A run that converted nothing but recorded errors is a failure -- notably a
-    // source-open failure emits conversionFinished with items_failed==0,
-    // items_converted==0 and a non-empty errors list, which the old
-    // items_failed-only gate mis-classified as success.
-    if ((result.items_failed > 0 || !result.errors.isEmpty()) && result.items_converted == 0) {
-        job.status = OstConversionJob::Status::Failed;
-        job.error_message = result.errors.isEmpty() ? tr("All items failed")
-                                                    : result.errors.first();
+    // Fail closed: a run with any failed item OR a recorded error is not a clean
+    // conversion, even when some items were written -- a partial export must not be
+    // reported as Complete. classifyOutcome centralizes that rule.
+    job.status = classifyOutcome(result);
+    if (job.status == OstConversionJob::Status::Failed) {
+        job.error_message = result.errors.isEmpty()
+                                ? tr("%1 item(s) failed").arg(result.items_failed)
+                                : result.errors.first();
         ++m_batch_result.files_failed;
     } else {
-        job.status = OstConversionJob::Status::Complete;
         ++m_batch_result.files_succeeded;
     }
 

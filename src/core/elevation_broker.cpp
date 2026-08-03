@@ -25,6 +25,27 @@ namespace sak {
 
 namespace {
 constexpr int kHelperExitWaitMs = kTimerStatusBriefMs;
+
+#ifdef _WIN32
+// Resolve the full image path of a process by PID via PROCESS_QUERY_LIMITED_INFORMATION.
+// Returns an empty string on any failure so callers fail closed.
+QString processImagePath(DWORD pid) {
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) {
+        sak::logWarning("ElevationBroker: OpenProcess({}) failed: {}", pid, GetLastError());
+        return {};
+    }
+    wchar_t buffer[MAX_PATH];
+    DWORD size = MAX_PATH;
+    const BOOL ok = QueryFullProcessImageNameW(proc, 0, buffer, &size);
+    CloseHandle(proc);
+    if (!ok) {
+        sak::logWarning("ElevationBroker: QueryFullProcessImageNameW failed: {}", GetLastError());
+        return {};
+    }
+    return QString::fromWCharArray(buffer, static_cast<int>(size));
+}
+#endif
 }  // namespace
 
 // ======================================================================
@@ -257,6 +278,13 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
         m_pipe_handle.store(handle, std::memory_order_release);
 
         if (handle != INVALID_HANDLE_VALUE) {
+            // Before trusting the pipe, prove its server IS the helper we launched.
+            // An attacker could have raced us to create a pipe of this name; the
+            // per-session nonce makes that hard, but we still fail closed on mismatch.
+            auto verified = verifyPipeServer(handle);
+            if (!verified) {
+                return std::unexpected(verified.error());
+            }
             // Set pipe to message mode
             DWORD mode = PIPE_READMODE_BYTE;
             SetNamedPipeHandleState(handle, &mode, nullptr, nullptr);
@@ -287,6 +315,43 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
     return std::unexpected(sak::error_code::platform_not_supported);
 #endif
 }
+
+#ifdef _WIN32
+auto ElevationBroker::verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code> {
+    ULONG server_pid = 0;
+    if (!GetNamedPipeServerProcessId(handle, &server_pid)) {
+        sak::logError("ElevationBroker: GetNamedPipeServerProcessId failed: {}", GetLastError());
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    const qint64 expected_pid = static_cast<qint64>(GetProcessId(m_helper_process));
+    if (!serverPidMatchesHelper(expected_pid, static_cast<qint64>(server_pid))) {
+        sak::logError("ElevationBroker: pipe server PID {} does not match launched helper PID {}",
+                      server_pid,
+                      expected_pid);
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    return verifyServerImage(server_pid);
+}
+
+auto ElevationBroker::verifyServerImage(unsigned long server_pid)
+    -> std::expected<void, sak::error_code> {
+    // Bind identity to the image too: the server MUST run from the helper executable
+    // we resolved, not merely hold the expected PID. Fail closed if either path is
+    // unresolvable.
+    auto expected_image = findHelperPath();
+    if (!expected_image) {
+        return std::unexpected(expected_image.error());
+    }
+    const QString server_image = processImagePath(static_cast<DWORD>(server_pid));
+    if (!imagePathsMatch(*expected_image, server_image)) {
+        sak::logError("ElevationBroker: pipe server image '{}' does not match helper '{}'",
+                      server_image.toStdString(),
+                      expected_image->toStdString());
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    return {};
+}
+#endif
 
 // ======================================================================
 // Private — Pipe I/O
@@ -368,11 +433,18 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
 
         DWORD to_read = qMin(static_cast<DWORD>(size - total_read), available);
         DWORD bytes_read = 0;
-        // Load once per read: cleanup() may store INVALID from another thread.
-        const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
-        if (handle == INVALID_HANDLE_VALUE ||
-            !ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
-            return false;
+        {
+            // Pin the handle across the ReadFile under m_send_mutex: cleanup() stores
+            // INVALID and CloseHandle under the same lock, so the close cannot land
+            // between this load and the ReadFile. peekAvailable() already reported
+            // available>0, so this read does not block long enough to starve a
+            // concurrent cancel (which only sends between polls, outside the lock).
+            std::lock_guard<std::mutex> lock(m_send_mutex);
+            const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
+            if (handle == INVALID_HANDLE_VALUE ||
+                !ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
+                return false;
+            }
         }
         total_read += static_cast<int>(bytes_read);
         elapsed = 0;  // Reset timeout on successful read
@@ -389,6 +461,9 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
 
 DWORD ElevationBroker::peekAvailable() const {
     DWORD available = 0;
+    // Pin the handle across PeekNamedPipe under m_send_mutex so a concurrent
+    // cleanup() close (which holds the same lock) cannot tear it mid-peek.
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
     if (handle == INVALID_HANDLE_VALUE ||
         !PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr)) {

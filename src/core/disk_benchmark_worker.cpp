@@ -57,6 +57,10 @@ constexpr double kNanosecondsPerMicrosecond = 1000.0;
 constexpr int kBenchmarkMillisecondsPerSecond = 1000;
 constexpr size_t kLatencySampleReserve = 100'000;
 constexpr double kP99Percentile = 0.99;
+// Smallest sane test-file size. Below this the random-I/O offset math
+// (file_size / kRandomBlockSize - 1) underflows to a huge value at 0, and there
+// are too few 4K slots for a meaningful random benchmark.
+constexpr uint64_t kMinTestFileSizeMb = 16;
 constexpr double kSeqReadScoreWeight = 0.20;
 constexpr double kSeqWriteScoreWeight = 0.20;
 constexpr double kRandReadScoreWeight = 0.30;
@@ -78,6 +82,43 @@ HANDLE openRandomWriteFile(const std::wstring& path) {
                        OPEN_EXISTING,
                        FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_RANDOM_ACCESS,
                        nullptr);
+}
+
+HANDLE openRandomReadFile(const std::wstring& path) {
+    return CreateFileW(path.c_str(),
+                       GENERIC_READ,
+                       FILE_SHARE_READ,
+                       nullptr,
+                       OPEN_EXISTING,
+                       FILE_FLAG_NO_BUFFERING | FILE_FLAG_RANDOM_ACCESS,
+                       nullptr);
+}
+
+// Reopen the already-claimed benchmark file for overwriting WITHOUT traversing a
+// reparse point. createTestFile() exclusively claimed a unique file via CREATE_NEW;
+// reopening the guessable path with CREATE_ALWAYS would follow a symlink or junction
+// swapped in between subtests and truncate/create an unrelated target. OPEN_EXISTING
+// + FILE_FLAG_OPEN_REPARSE_POINT opens the name itself, and we fail closed if it turns
+// out to be a reparse point rather than our regular file.
+HANDLE openBenchmarkFileForOverwrite(const std::wstring& path) {
+    HANDLE h =
+        CreateFileW(path.c_str(),
+                    GENERIC_WRITE,
+                    0,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return INVALID_HANDLE_VALUE;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h, &info) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        CloseHandle(h);
+        return INVALID_HANDLE_VALUE;
+    }
+    return h;
 }
 
 void fillRandomWriteBuffer(AlignedBuffer& buffer) {
@@ -162,6 +203,16 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     if (m_config.drive_path.isEmpty()) {
         logError("Disk benchmark: no drive path specified");
         return std::unexpected(sak::error_code::invalid_path);
+    }
+
+    // Fail closed on a test-file size too small for the random-I/O offset math:
+    // max_offset underflows to a huge value when test_file_size_mb is 0, which would
+    // seek to a garbage offset. Validate before any offset arithmetic.
+    if (m_config.test_file_size_mb < kMinTestFileSizeMb) {
+        logError("Disk benchmark: test_file_size_mb {} below minimum {} MB",
+                 m_config.test_file_size_mb,
+                 kMinTestFileSizeMb);
+        return std::unexpected(sak::error_code::invalid_argument);
     }
 
     logInfo("Starting disk benchmark on {}", m_config.drive_path.toStdString());
@@ -415,6 +466,17 @@ auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_
 
         size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
+        // A short read means ReadFile failed or hit an early EOF mid-run: a genuine
+        // disk error, not a measurement. Fail closed rather than scoring the partial
+        // transfer as throughput.
+        if (bytes_read_total < total_bytes) {
+            CloseHandle(h);
+            logError("Sequential read: short read ({} of {} bytes) -- disk I/O error",
+                     bytes_read_total,
+                     total_bytes);
+            return std::unexpected(sak::error_code::read_error);
+        }
+
         const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
         const double mbps = static_cast<double>(bytes_read_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
@@ -474,13 +536,11 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
     double best_mbps = 0.0;
 
     for (int pass = 0; pass < m_config.sequential_passes; ++pass) {
-        HANDLE h = CreateFileW(wpath.c_str(),
-                               GENERIC_WRITE,
-                               0,
-                               nullptr,
-                               CREATE_ALWAYS,
-                               FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
-                               nullptr);
+        // Overwrite the file createTestFile() already claimed (which is full-size)
+        // rather than re-creating the guessable path with CREATE_ALWAYS, which would
+        // follow a reparse point swapped in between subtests. See
+        // openBenchmarkFileForOverwrite.
+        HANDLE h = openBenchmarkFileForOverwrite(wpath);
 
         if (h == INVALID_HANDLE_VALUE) {
             logError("Sequential write: Failed to open test file");
@@ -493,11 +553,20 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
         size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
         FlushFileBuffers(h);
+        CloseHandle(h);
+
+        // A short write means WriteFile failed mid-run: a genuine disk error, not a
+        // measurement. Fail closed rather than scoring the partial transfer.
+        if (written_total < total_bytes) {
+            logError("Sequential write: short write ({} of {} bytes) -- disk I/O error",
+                     written_total,
+                     total_bytes);
+            return std::unexpected(sak::error_code::write_error);
+        }
+
         const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
         const double mbps = static_cast<double>(written_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
-
-        CloseHandle(h);
     }
 
     m_result.seq_write_mbps = best_mbps;
@@ -541,13 +610,7 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 
-    HANDLE h = CreateFileW(wpath.c_str(),
-                           GENERIC_READ,
-                           FILE_SHARE_READ,
-                           nullptr,
-                           OPEN_EXISTING,
-                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_RANDOM_ACCESS,
-                           nullptr);
+    HANDLE h = openRandomReadFile(wpath);
 
     if (h == INVALID_HANDLE_VALUE) {
         logError("Random read: Failed to open test file");
@@ -574,6 +637,13 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
     const double elapsed_sec = runRandom4KReadLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
+
+    // Zero completed ops means every read in the timed window failed: a genuine disk
+    // error, not a 0-IOPS measurement. Fail closed instead of scoring it.
+    if (total_ops == 0) {
+        logError("Random read: zero I/O operations completed -- disk error");
+        return std::unexpected(sak::error_code::read_error);
+    }
 
     iops = static_cast<double>(total_ops) / elapsed_sec;
     read_mbps = static_cast<double>(total_bytes) / sak::kBytesPerMBf / elapsed_sec;
@@ -761,6 +831,14 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
     const double elapsed_sec = runRandom4KWriteLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
+
+    // Zero completed ops means every write in the timed window failed: a genuine disk
+    // error, not a 0-IOPS measurement. Fail closed instead of scoring it.
+    if (total_ops == 0) {
+        logError("Random write: zero I/O operations completed -- disk error");
+        return std::unexpected(sak::error_code::write_error);
+    }
+
     setRandomWriteResults(total_ops, total_bytes, elapsed_sec, write_mbps, iops);
 
     finalizeLatencies(latencies, avg_latency_us, latencies_out);

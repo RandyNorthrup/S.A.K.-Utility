@@ -238,17 +238,32 @@ private:
     /// Compute format-dependent page sizes for BTree parsing
     [[nodiscard]] PageFormatSizes pageFormatSizes() const;
 
-    /// Parse a BTree page: read, validate, and extract metadata
-    [[nodiscard]] std::expected<BTreePageInfo, sak::error_code> parseBTreePage(uint64_t page_offset,
-                                                                               int depth);
+    /// Parse a BTree page: read, validate, and extract metadata. @p expected_ptype is the
+    /// MS-PST page type this page must carry (ptypeNBT/ptypeBBT); a mismatch fails closed so a
+    /// zeroed or mistyped page cannot be walked as a BTree.
+    [[nodiscard]] std::expected<BTreePageInfo, sak::error_code> parseBTreePage(
+        uint64_t page_offset, int depth, uint8_t expected_ptype);
 
-    /// Load the Node BTree from the given page offset
+    /// Load the Node BTree from the given page offset. Public entry point: seeds a fresh
+    /// per-traversal visited-page-offset set and delegates to loadNodeBTreeGuarded.
     [[nodiscard]] std::expected<void, sak::error_code> loadNodeBTree(uint64_t page_offset,
                                                                      int depth = 0);
 
-    /// Load the Block BTree from the given page offset
+    /// Recursive worker for loadNodeBTree. @p visited rejects a revisited page offset so a crafted
+    /// NBT whose internal pages point back at one another (or fan out to the same child thousands
+    /// of times) cannot drive unbounded work -- a valid NBT visits each page once.
+    [[nodiscard]] std::expected<void, sak::error_code> loadNodeBTreeGuarded(
+        uint64_t page_offset, int depth, QSet<uint64_t>& visited);
+
+    /// Load the Block BTree from the given page offset. Public entry point: seeds a fresh
+    /// per-traversal visited-page-offset set and delegates to loadBlockBTreeGuarded.
     [[nodiscard]] std::expected<void, sak::error_code> loadBlockBTree(uint64_t page_offset,
                                                                       int depth = 0);
+
+    /// Recursive worker for loadBlockBTree. @p visited rejects a revisited page offset; see
+    /// loadNodeBTreeGuarded.
+    [[nodiscard]] std::expected<void, sak::error_code> loadBlockBTreeGuarded(
+        uint64_t page_offset, int depth, QSet<uint64_t>& visited);
 
     /// Read a single data block by Block ID
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlock(uint64_t bid);
@@ -302,10 +317,11 @@ private:
         QVector<int>* block_offsets,
         DataTreeGuard guard);
 
-    /// Decompress a 4K-page block if the footer indicates zlib compression
-    [[nodiscard]] QByteArray decompressBlockIf4k(const QByteArray& raw,
-                                                 uint64_t file_offset,
-                                                 int cb);
+    /// Decompress a 4K-page block if the footer indicates zlib compression. Fails closed
+    /// (std::unexpected) on a footer-read or decompression failure so a corrupt 4K block never
+    /// yields still-compressed bytes as if they were plaintext.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> decompressBlockIf4k(
+        const QByteArray& raw, uint64_t file_offset, int cb);
 
     /// Decrypt a block in-place using compressible encryption
     void decryptBlock(std::span<uint8_t> data) const;

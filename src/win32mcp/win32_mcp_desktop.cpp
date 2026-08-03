@@ -292,6 +292,7 @@ struct UiaNode {
 constexpr int kMaxUiaNodes = 400;
 constexpr int kDefaultUiaDepth = 40;
 constexpr int kMaxUiaNameChars = 200;
+constexpr int kMaxUiaValueChars = 400;
 constexpr int kMaxIndentDepth = 20;
 
 // COM apartment scoped to one tool call. UIA lives in the MTA; tolerate a thread that is
@@ -449,7 +450,7 @@ UiaNode describeElement(IUIAutomationElement* element, int depth) {
         node.left = bounds.left;
         node.top = bounds.top;
     }
-    node.value = readElementValue(element);
+    node.value = readElementValue(element).left(kMaxUiaValueChars);
     return node;
 }
 
@@ -523,6 +524,18 @@ QString inspectHwnd(HWND hwnd,
     return {};
 }
 
+// Escape a control's name/value so an embedded quote or newline (which can be attacker-influenced
+// window text) cannot break the outline's one-node-per-line, quoted-field shape.
+QString escapeOutlineText(const QString& text) {
+    QString out = text;
+    out.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+    out.replace(QLatin1Char('"'), QLatin1String("\\\""));
+    out.replace(QLatin1Char('\n'), QLatin1String("\\n"));
+    out.replace(QLatin1Char('\r'), QLatin1String("\\r"));
+    out.replace(QLatin1Char('\t'), QLatin1String("\\t"));
+    return out;
+}
+
 QString buildOutline(const QVector<UiaNode>& nodes) {
     QStringList lines;
     lines.reserve(nodes.size());
@@ -531,10 +544,10 @@ QString buildOutline(const QVector<UiaNode>& nodes) {
         const QString indent(std::min(node.depth, kMaxIndentDepth) * 2, QLatin1Char(' '));
         QString line = QStringLiteral("%1[%2] %3").arg(indent).arg(i).arg(node.role);
         if (!node.name.isEmpty()) {
-            line += QStringLiteral(" \"%1\"").arg(node.name);
+            line += QStringLiteral(" \"%1\"").arg(escapeOutlineText(node.name));
         }
         if (!node.value.isEmpty()) {
-            line += QStringLiteral(" = \"%1\"").arg(node.value);
+            line += QStringLiteral(" = \"%1\"").arg(escapeOutlineText(node.value));
         }
         if (!node.enabled) {
             line += QStringLiteral(" (disabled)");

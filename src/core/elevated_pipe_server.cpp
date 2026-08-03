@@ -8,6 +8,8 @@
 
 #include "sak/logger.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QThread>
 
 #ifdef _WIN32
@@ -49,8 +51,12 @@ HANDLE createServerPipe(const QString& pipe_name, SECURITY_ATTRIBUTES& attribute
     // FILE_FLAG_OVERLAPPED so ConnectNamedPipe returns ERROR_IO_PENDING and the overlapped wait
     // (and its timeout) in waitForPipeClient can actually fire; a blocking handle would ignore
     // the OVERLAPPED and hang forever if the parent dies before connecting.
+    // FILE_FLAG_FIRST_PIPE_INSTANCE so creation fails with ERROR_ALREADY_EXISTS if a pipe of this
+    // name is already open: an attacker who pre-created the (per-session-nonce) name to impersonate
+    // the server cannot make us silently attach to their instance -- we fail closed instead.
     return CreateNamedPipeW(wide_name.c_str(),
-                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
+                                FILE_FLAG_FIRST_PIPE_INSTANCE,
                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                             1,
                             static_cast<DWORD>(kPipeMaxPayload),
@@ -115,6 +121,40 @@ int overlappedPipeIo(HANDLE handle, bool is_write, char* buffer, DWORD size, DWO
     }
     CloseHandle(ov.hEvent);
     return ok ? static_cast<int>(transferred) : -1;
+}
+
+// Resolve the full image path of a process by PID via PROCESS_QUERY_LIMITED_INFORMATION.
+// Returns an empty string on any failure so callers fail closed.
+QString processImagePath(DWORD pid) {
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) {
+        sak::logWarning("ElevatedPipeServer: OpenProcess({}) failed: {}", pid, GetLastError());
+        return {};
+    }
+    wchar_t buffer[MAX_PATH];
+    DWORD size = MAX_PATH;
+    const BOOL ok = QueryFullProcessImageNameW(proc, 0, buffer, &size);
+    CloseHandle(proc);
+    if (!ok) {
+        sak::logWarning("ElevatedPipeServer: QueryFullProcessImageNameW failed: {}",
+                        GetLastError());
+        return {};
+    }
+    return QString::fromWCharArray(buffer, static_cast<int>(size));
+}
+
+// The image path the client is REQUIRED to be: the main app executable colocated with
+// this helper (both ship in the same directory). Empty on failure so callers fail closed.
+QString expectedClientImagePath() {
+    wchar_t module[MAX_PATH];
+    const DWORD len = GetModuleFileNameW(nullptr, module, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        sak::logWarning("ElevatedPipeServer: GetModuleFileNameW failed: {}", GetLastError());
+        return {};
+    }
+    const QString helper_path = QString::fromWCharArray(module, static_cast<int>(len));
+    const QString dir = QFileInfo(helper_path).absolutePath();
+    return QDir(dir).absoluteFilePath(QStringLiteral("sak_utility.exe"));
 }
 }  // namespace
 #endif
@@ -346,10 +386,28 @@ bool ElevatedPipeServer::validateClient() const {
         return false;
     }
 
-    return true;
+    return validateClientImage(client_pid);
 #else
     return false;
 #endif
 }
+
+#ifdef _WIN32
+bool ElevatedPipeServer::validateClientImage(unsigned long client_pid) const {
+    // A PID match alone can be forged by an unrelated process that inherited the
+    // recycled parent PID. Bind identity to the image path as well: the client MUST
+    // be the main app executable that ships alongside this helper. Fail closed if
+    // either path cannot be resolved.
+    const QString expected_image = expectedClientImagePath();
+    const QString client_image = processImagePath(static_cast<DWORD>(client_pid));
+    if (!clientImageMatchesExpected(expected_image, client_image)) {
+        sak::logError("ElevatedPipeServer: client image '{}' does not match expected '{}'",
+                      client_image.toStdString(),
+                      expected_image.toStdString());
+        return false;
+    }
+    return true;
+}
+#endif
 
 }  // namespace sak

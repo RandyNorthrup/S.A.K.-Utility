@@ -378,6 +378,41 @@ private Q_SLOTS:
         QVERIFY(!content.toLower().contains("onerror"));
         QVERIFY(content.contains("<p>Body</p>"));  // real body still rendered
     }
+
+    // Fail closed: if a listed attachment cannot be saved, writeMessage must NOT
+    // emit an HTML page that advertises a file not on disk. Here the per-message
+    // "_files" directory cannot be created because a regular file already occupies
+    // that exact path, so the attachment save fails and the whole write is refused.
+    void attachmentSaveFailureFailsClosed() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, false);
+
+        // The _files dir is "<base>_files" where <base> is the sanitized subject.
+        const QString blocker = temp_dir.path() + QStringLiteral("/AttFail_files");
+        {
+            QFile f(blocker);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("BLOCK");
+            f.close();
+        }
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("AttFail");
+        item.sender_email = QStringLiteral("a@test.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        QVector<QPair<QString, QByteArray>> attachments;
+        attachments.append({QStringLiteral("doc.pdf"), QByteArray("DATA")});
+
+        const auto result = writer.writeMessage(item, attachments, QString());
+        QVERIFY(!result.has_value());  // fail closed, not a partial success
+        QCOMPARE(result.error(), sak::error_code::write_error);
+
+        // No HTML page was left behind claiming a complete message.
+        QVERIFY(!QFile::exists(temp_dir.path() + QStringLiteral("/AttFail.html")));
+    }
 };
 
 QTEST_MAIN(TestHtmlEmailWriter)

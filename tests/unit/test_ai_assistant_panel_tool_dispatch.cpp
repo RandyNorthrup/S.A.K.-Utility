@@ -1988,8 +1988,9 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         const QString script = data.value(QStringLiteral("script")).toString();
-        QVERIFY(script.contains(QStringLiteral("netsh wlan add profile")));
-        QVERIFY(script.contains(QStringLiteral("netsh wlan connect name=\"MyNet\"")));
+        // netsh is invoked by its absolute System32 path (anti-hijack).
+        QVERIFY(script.contains(QStringLiteral("netsh.exe\" wlan add profile")));
+        QVERIFY(script.contains(QStringLiteral("wlan connect name=\"MyNet\"")));
         QVERIFY(data.value(QStringLiteral("embeds_password")).toBool());
     }
 

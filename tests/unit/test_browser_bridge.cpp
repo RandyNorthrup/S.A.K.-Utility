@@ -91,6 +91,7 @@ private slots:
     void onReply_errorFrameSurfacesMessageAndRetires();
     void hostReconnect_clearsRefIndexSoStaleRefFails();
     void onDetached_refusesRefActionButAllowsSnapshot();
+    void onDetached_refusesDragByToRefEndpoint();
     void externalNavigationViaDomEpochInvalidatesRefs();
     void onReply_unexpectedTypeIsError();
     void reply_forgedSnapshotCmdCannotInstallRefIndex();
@@ -272,6 +273,28 @@ void BrowserBridgeTests::onDetached_refusesRefActionButAllowsSnapshot() {
                                       QStringLiteral("snapshot"),
                                       snapshotPayload(9, QStringLiteral("Next"))));
     QVERIFY(!session.refIndexStale());
+}
+
+void BrowserBridgeTests::onDetached_refusesDragByToRefEndpoint() {
+    // browser_drag targets a second element via to_ref. onDetached() marks the snapshot stale
+    // but leaves ref_index populated, so a drag carrying ONLY to_ref would resolve against a
+    // now-dead DOM. The stale gate must refuse an action carrying EITHER ref, not just ref.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    (void)session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    (void)session.onReply(resultFrame(QStringLiteral("b-1"),
+                                      QStringLiteral("snapshot"),
+                                      snapshotPayload(7, QStringLiteral("Go"))));
+    QVERIFY(session.refIndex().contains(QStringLiteral("e1")));
+
+    session.onDetached();
+    QVERIFY(session.refIndexStale());
+    // to_ref=e1 is still present in ref_index, but the page changed: refuse it.
+    const auto drag =
+        session.beginCommand(QStringLiteral("browser_drag"),
+                             QJsonObject{{QStringLiteral("to_ref"), QStringLiteral("e1")}});
+    QVERIFY(!drag.ok);
+    QVERIFY(drag.error.contains(QStringLiteral("page changed")));
 }
 
 void BrowserBridgeTests::onReply_unexpectedTypeIsError() {

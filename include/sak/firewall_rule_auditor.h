@@ -58,6 +58,13 @@ public:
     /// @brief Check if two port ranges overlap
     [[nodiscard]] static bool portsOverlap(const QString& a, const QString& b);
 
+    /// @brief Whether a rule's LocalPorts string covers a specific port for gap
+    ///        analysis. An empty or "*" LocalPorts is the Windows default "no
+    ///        port restriction" == ALL ports, so it covers the port; otherwise
+    ///        the parsed port set must contain it. Exposed as a pure seam
+    ///        (mirrors portsOverlap's wildcard/empty handling).
+    [[nodiscard]] static bool localPortsCoverPort(const QString& localPorts, uint16_t port);
+
     /// @brief Whether two rules genuinely conflict (an enabled same-direction
     ///        Allow-vs-Block pair whose profile, protocol, LOCAL AND REMOTE
     ///        ports, application, and service all overlap). Exposed as a pure
@@ -83,6 +90,12 @@ private:
     bool m_enumerationOk{true};
 
     [[nodiscard]] QVector<FirewallRule> enumerateViaCOM();
+    // Fail-closed outcome check for the COM enumeration loop: returns true (and
+    // sets m_enumerationOk=false + emits errorOccurred) when the enumeration broke
+    // partway (FAILED HRESULT) or dropped an unreadable rule, so the caller
+    // returns an empty set instead of a truncated "clean" audit. next_hr is an
+    // HRESULT (long avoids leaking <windows.h> into this header).
+    [[nodiscard]] bool handleEnumerationBreak(long next_hr, int dropped);
     [[nodiscard]] QVector<FirewallConflict> findConflicts(const QVector<FirewallRule>& rules) const;
     [[nodiscard]] QVector<FirewallGap> findGaps(const QVector<FirewallRule>& rules) const;
 

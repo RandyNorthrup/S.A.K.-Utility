@@ -57,6 +57,13 @@ private Q_SLOTS:
     void singlePartAttachmentNotTreatedAsBody();
     void boundaryPrefixLineNotTreatedAsBoundary();
 
+    // -- CODEX_REVIEW_2 remediation --------------------------------------
+    void summaryAttachmentHeuristicBroadened();
+    void quotedFilenameWithSpacesPreserved();
+    void malformedBase64AttachmentFailsClosed();
+    void fromPrefixedBodyLineIsNotASeparator();
+    void multipartWithManyPartsSplitsCorrectly();
+
 private:
     /// Create a temp file with valid MBOX content
     QTemporaryFile* createSampleMboxFile();
@@ -639,6 +646,150 @@ void TestMboxParser::boundaryPrefixLineNotTreatedAsBoundary() {
     // The whole part body survived: the prefix-sharing line stayed in the text.
     QVERIFY(detail->body_plain.contains(QStringLiteral("--ABCDEF is not a boundary.")));
     QVERIFY(detail->body_plain.contains(QStringLiteral("Line three.")));
+    parser.close();
+}
+
+// Summary has_attachments must match what parseMimeMessage would surface: any multipart, an
+// explicit attachment disposition, or a lone non-text part -- not just multipart/mixed.
+void TestMboxParser::summaryAttachmentHeuristicBroadened() {
+    QByteArray content;
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: plain\r\n";
+    content += "Content-Type: text/plain\r\n\r\n";
+    content += "just text\r\n\r\n";
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: pdf\r\n";
+    content += "Content-Type: application/pdf\r\n\r\n";
+    content += "%PDF-1.4\r\n\r\n";
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: related\r\n";
+    content += "Content-Type: multipart/related; boundary=\"B\"\r\n\r\n";
+    content += "--B\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n--B--\r\n\r\n";
+
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(content);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 3);
+
+    auto msgs = parser.readMessages(0, 10);
+    QVERIFY(msgs.has_value());
+    QCOMPARE(msgs->size(), 3);
+    QVERIFY(!msgs->at(0).has_attachments);  // plain text
+    QVERIFY(msgs->at(1).has_attachments);   // lone non-text part
+    QVERIFY(msgs->at(2).has_attachments);   // multipart/related (old code missed this)
+    parser.close();
+}
+
+// A quoted filename containing spaces must survive intact (old regex truncated at the first space).
+void TestMboxParser::quotedFilenameWithSpacesPreserved() {
+    QByteArray c;
+    c += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: attach\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\n";
+    c += "Content-Type: application/octet-stream\r\n";
+    c += "Content-Disposition: attachment; filename=\"my long report.pdf\"\r\n";
+    c += "\r\n";
+    c += "data\r\n";
+    c += "--B--\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("my long report.pdf"));
+    parser.close();
+}
+
+// Malformed base64 must fail closed: strict decoding rejects it instead of handing back the
+// partial bytes Qt's permissive decoder would otherwise produce.
+void TestMboxParser::malformedBase64AttachmentFailsClosed() {
+    QByteArray c;
+    c += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: bad b64\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\n";
+    c += "Content-Type: application/octet-stream\r\n";
+    c += "Content-Disposition: attachment; filename=\"x.bin\"\r\n";
+    c += "Content-Transfer-Encoding: base64\r\n\r\n";
+    c += "@@@not-valid-base64@@@\r\n";
+    c += "--B--\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    QVERIFY(!parser.readMessageDetail(0).has_value());
+    QVERIFY(!parser.readAttachmentData(0, 0).has_value());
+    QVERIFY(!parser.readAllAttachments(0).has_value());
+    parser.close();
+}
+
+// A body line beginning "From " but lacking an asctime-style time+year must NOT be indexed as a
+// new message separator (RFC 4155 shape tightening).
+void TestMboxParser::fromPrefixedBodyLineIsNotASeparator() {
+    QByteArray c;
+    c += "From real@sender.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: prose\r\n\r\n";
+    c += "Dear friend,\r\n";
+    c += "From now on we meet on Tuesdays.\r\n";
+    c += "Regards\r\n\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 1);
+    parser.close();
+}
+
+// Regression for the streaming (no per-line QList) splitMimeParts rewrite: a body with several
+// parts still splits into every part.
+void TestMboxParser::multipartWithManyPartsSplitsCorrectly() {
+    QByteArray c;
+    c += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: many\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n\r\nbody text\r\n";
+    for (int i = 0; i < 3; ++i) {
+        c += "--B\r\n";
+        c += "Content-Type: application/octet-stream\r\n";
+        c += "Content-Disposition: attachment; filename=\"f" + QByteArray::number(i) +
+             ".bin\"\r\n\r\n";
+        c += "chunk" + QByteArray::number(i) + "\r\n";
+    }
+    c += "--B--\r\n";
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QCOMPARE(detail->attachments.size(), 3);
+    QVERIFY(detail->body_plain.contains(QStringLiteral("body text")));
     parser.close();
 }
 

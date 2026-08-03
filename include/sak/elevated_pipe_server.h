@@ -82,6 +82,23 @@ public:
         return expectedParentPid > 0 && clientPid == expectedParentPid;
     }
 
+    /// @brief Whether a connecting client's image path is the authorized executable.
+    /// @param expectedImagePath the full path of the executable the client MUST be.
+    /// @param clientImagePath the full image path reported for the connected client.
+    /// @return true ONLY when both paths are non-empty AND compare equal
+    ///         case-insensitively (Win32 paths are case-insensitive).
+    /// @note Defense against PID reuse: a raw PID match alone can be satisfied by an
+    ///       unrelated process that inherited the recycled parent PID. Binding to the
+    ///       image path requires the client to also be running from the exact expected
+    ///       executable. Fail-closed: an empty expected or client path authorizes
+    ///       NOBODY. Pure + static (inline) for unit testing without linking the
+    ///       server implementation.
+    [[nodiscard]] static bool clientImageMatchesExpected(const QString& expectedImagePath,
+                                                         const QString& clientImagePath) {
+        return !expectedImagePath.isEmpty() && !clientImagePath.isEmpty() &&
+               QString::compare(expectedImagePath, clientImagePath, Qt::CaseInsensitive) == 0;
+    }
+
 private:
     /// @brief Send raw bytes
     [[nodiscard]] bool sendRaw(const QByteArray& data);
@@ -91,6 +108,11 @@ private:
 
     /// @brief Validate the connecting client's parent PID
     [[nodiscard]] bool validateClient() const;
+
+#ifdef _WIN32
+    /// @brief Verify the client PID's image path is the authorized app executable
+    [[nodiscard]] bool validateClientImage(unsigned long client_pid) const;
+#endif
 
     QString m_pipe_name;
     qint64 m_parent_pid{0};

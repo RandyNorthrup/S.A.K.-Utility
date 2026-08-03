@@ -41,7 +41,10 @@ private:
 
     void buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item) const;
 
-    [[nodiscard]] QString saveFileAttachments(
+    /// Saves each listed attachment into a per-message _files dir. Returns false if
+    /// ANY listed attachment fails to save (fail closed) so the caller can refuse to
+    /// emit an HTML page that references files not actually on disk.
+    [[nodiscard]] bool saveFileAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& dir_path,
         const QString& filename);

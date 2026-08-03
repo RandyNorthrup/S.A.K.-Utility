@@ -42,6 +42,10 @@ private Q_SLOTS:
 
     // -- B7-28: body search maps a hit to the correct message index ------
     void mboxBodySearchUsesMessageIndex();
+
+    // -- B7-34: MBOX honors recipient / attachment-name criteria ---------
+    void mboxRecipientSearchMatchesToField();
+    void mboxAttachmentNameSearchMatches();
 };
 
 // ============================================================================
@@ -251,6 +255,96 @@ void TestEmailSearchWorker::mboxBodySearchUsesMessageIndex() {
     const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
     QCOMPARE(hit.item_node_id, static_cast<uint64_t>(1));  // the SECOND message
     QCOMPARE(hit.match_field, QStringLiteral("body"));
+    parser.close();
+}
+
+// A recipient-only search must evaluate the To/Cc/Bcc fields on the MBOX path (these
+// were never checked before -- B7-34), reporting a "recipient" hit.
+void TestEmailSearchWorker::mboxRecipientSearchMatchesToField() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: Zebra Recipient <zebracontact@example.com>\r\n";
+    content += "Subject: Ordinary\r\n";
+    content += "\r\n";
+    content += "Plain body without the keyword.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("zebracontact");
+    criteria.search_subject = false;
+    criteria.search_sender = false;
+    criteria.search_body = false;
+    criteria.search_recipients = true;
+
+    EmailSearchWorker worker;
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(hit_spy.count(), 1);
+    const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
+    QCOMPARE(hit.match_field, QStringLiteral("recipient"));
+    parser.close();
+}
+
+// An attachment-name-only search must evaluate attachment filenames on the MBOX path
+// (never checked before -- B7-34), reporting an "attachment" hit.
+void TestEmailSearchWorker::mboxAttachmentNameSearchMatches() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Subject: Ordinary\r\n";
+    content += "MIME-Version: 1.0\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n";
+    content += "\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: text/plain; charset=UTF-8\r\n";
+    content += "\r\n";
+    content += "Body text.\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: application/octet-stream; name=\"zebrafile.bin\"\r\n";
+    content += "Content-Transfer-Encoding: base64\r\n";
+    content += "Content-Disposition: attachment; filename=\"zebrafile.bin\"\r\n";
+    content += "\r\n";
+    content += "SGVsbG8gQXR0YWNo\r\n";
+    content += "--BOUND--\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("zebrafile");
+    criteria.search_subject = false;
+    criteria.search_sender = false;
+    criteria.search_body = false;
+    criteria.search_attachment_names = true;
+
+    EmailSearchWorker worker;
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(hit_spy.count(), 1);
+    const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
+    QCOMPARE(hit.match_field, QStringLiteral("attachment"));
     parser.close();
 }
 

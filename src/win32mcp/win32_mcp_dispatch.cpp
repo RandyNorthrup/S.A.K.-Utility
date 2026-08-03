@@ -128,16 +128,15 @@ Win32McpServerPolicy Win32McpServerPolicy::fromEnvironment() {
 bool win32McpToolIsReadOnly(const QString& tool_name) {
     // Mirror of AiProviderGateway::isWin32ReadOnlyTool -- the server enforces the read-only
     // profile independently, never trusting the client. KEEP IN SYNC with that list.
+    // browser_focus/hover/reveal are deliberately NOT here: they mutate UI state (move focus,
+    // dispatch hover, scroll into view), so they are not passive inspectors.
     static const QSet<QString> read_only{
         QStringLiteral("assert_text_visible"),
         QStringLiteral("browser_box"),
         QStringLiteral("browser_extension_status"),
-        QStringLiteral("browser_focus"),
         QStringLiteral("browser_get_attribute"),
         QStringLiteral("browser_get_value"),
-        QStringLiteral("browser_hover"),
         QStringLiteral("browser_read"),
-        QStringLiteral("browser_reveal"),
         QStringLiteral("browser_screenshot"),
         QStringLiteral("browser_snapshot"),
         QStringLiteral("browser_tabs"),
@@ -177,12 +176,15 @@ QString redactWin32McpSensitiveText(const QString& text) {
     }
     QString redacted = text;
     // key = value / key: value where key names a secret (password, token, secret, api key,
-    // client_secret, ...). Capture the key + separator, replace the value with a marker.
+    // client_secret, ...). Capture the key + separator, replace the value with a marker. An
+    // optional closing quote after the key and an optional opening quote before the value let
+    // this also catch quoted-JSON forms like "token":"secret"; the value stops at a quote,
+    // whitespace, comma, or closing brace so structural punctuation is not swallowed.
     static const QRegularExpression assignment(
         QStringLiteral(
-            R"((?i)\b(pass(word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|bearer)\b\s*([:=]\s*|\s+)(\S+))"),
+            R"RX((\b(?:pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|bearer)\b"?(?:\s*[:=]\s*|\s+)"?)([^"\s,}]+))RX"),
         QRegularExpression::CaseInsensitiveOption);
-    redacted.replace(assignment, QStringLiteral("\\1\\3[REDACTED]"));
+    redacted.replace(assignment, QStringLiteral("\\1[REDACTED]"));
     return redacted;
 }
 

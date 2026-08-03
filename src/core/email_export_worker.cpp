@@ -30,38 +30,10 @@ namespace {
 constexpr int kProgressInterval = 10;
 constexpr int kMaxFilenameLength = 200;
 constexpr int kCsvBodyPreviewLength = 500;
-constexpr int kRfc5322HeaderLineLimit = 78;
-constexpr int kRfc5322HeaderContinuationLimit = 76;
 constexpr int kImportanceHigh = 2;
 constexpr int kTaskStatusComplete = 2;
 constexpr ushort kMinimumPrintableCodePoint = 32;
 constexpr int kFirstConflictAttempt = 2;
-
-/// Fold a long header line per RFC 5322 §2.2.3 (max 78 chars)
-QString foldHeaderLine(const QString& name, const QString& value) {
-    QString line = name + QStringLiteral(": ") + value;
-    if (line.length() <= kRfc5322HeaderLineLimit) {
-        return line;
-    }
-    // Fold at word boundaries
-    QString result;
-    int pos = 0;
-    while (pos < line.length()) {
-        int remaining = line.length() - pos;
-        const int chunk = (pos == 0) ? kRfc5322HeaderLineLimit : kRfc5322HeaderContinuationLimit;
-        if (remaining <= chunk) {
-            result += line.mid(pos);
-            break;
-        }
-        int break_at = line.lastIndexOf(QLatin1Char(' '), pos + chunk);
-        if (break_at <= pos) {
-            break_at = pos + chunk;
-        }
-        result += line.mid(pos, break_at - pos) + QStringLiteral("\r\n ");
-        pos = break_at;
-    }
-    return result;
-}
 
 /// True when a cell value would be interpreted as a formula by a spreadsheet
 /// application (leading = + - @, or a leading tab/CR).
@@ -108,15 +80,6 @@ QString escapeCalendarText(const QString& value) {
     out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
     out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
     return out;
-}
-
-/// Format a datetime for RFC 5322 (email headers)
-QString toRfc5322Date(const QDateTime& datetime) {
-    if (!datetime.isValid()) {
-        return {};
-    }
-    // Format: "Thu, 05 Jan 2024 14:30:00 +0000"
-    return datetime.toUTC().toString(QStringLiteral("ddd, dd MMM yyyy HH:mm:ss +0000"));
 }
 
 /// Format a datetime for iCalendar (DTSTART/DTEND)
@@ -295,6 +258,14 @@ void appendTextHeader(QTextStream& stream, const QString& label, const QString& 
     if (!value.isEmpty()) {
         stream << label << QStringLiteral(": ") << value << "\r\n";
     }
+}
+
+/// Flush a text stream and confirm both the stream and its backing file report no
+/// error. A QTextStream swallows write failures, so without this a disk-full / I/O
+/// error would let a truncated CSV/TXT export return success (B7-B).
+bool textStreamOk(QTextStream& stream, QFile& file) {
+    stream.flush();
+    return stream.status() == QTextStream::Ok && file.error() == QFileDevice::NoError;
 }
 
 QString senderDisplayText(const sak::PstItemDetail& item) {
@@ -625,15 +596,22 @@ void EmailExportWorker::exportIcsFormat(PstParser* parser,
             break;
         }
         auto detail = parser->readItemDetail(item_ids[index]);
-        if (detail.has_value() && detail.value().item_type == sak::EmailItemType::Calendar) {
+        if (!detail.has_value()) {
+            // A dropped item is a partial export: surface it and count it as failed
+            // rather than silently reporting the remaining items as a clean run (B7-B).
+            result.errors.append(QStringLiteral("Failed to read item NID %1").arg(item_ids[index]));
+            ++result.items_failed;
+            continue;
+        }
+        if (detail.value().item_type == sak::EmailItemType::Calendar) {
             events.append(detail.value());
         }
     }
     QString ics_path = config.output_path + QStringLiteral("/calendar_export.ics");
     if (writeIcs(events, ics_path)) {
-        result.items_exported = events.size();
+        result.items_exported += events.size();
     } else {
-        result.items_failed = events.size();
+        result.items_failed += events.size();
         result.errors.append(QStringLiteral("Failed to write ICS file"));
     }
     result.finished = QDateTime::currentDateTime();
@@ -652,6 +630,11 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
         auto detail = parser->readItemDetail(item_ids[index]);
         if (detail.has_value()) {
             items.append(detail.value());
+        } else {
+            // A dropped item is a partial export: surface it and count it as failed
+            // rather than reporting only the readable rows as a clean run (B7-B).
+            result.errors.append(QStringLiteral("Failed to read item NID %1").arg(item_ids[index]));
+            ++result.items_failed;
         }
         if ((index + 1) % kProgressInterval == 0) {
             Q_EMIT exportProgress(index + 1, item_ids.size(), 0);
@@ -667,11 +650,11 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
     QString csv_path = config.output_path + QLatin1Char('/') + csv_name;
 
     if (writeCsv(items, csv_path, columns, config.csv_delimiter)) {
-        result.items_exported = items.size();
+        result.items_exported += items.size();
         QFileInfo fi(csv_path);
         result.total_bytes = fi.size();
     } else {
-        result.items_failed = items.size();
+        result.items_failed += items.size();
         result.errors.append(QStringLiteral("Failed to write CSV file"));
     }
     result.finished = QDateTime::currentDateTime();
@@ -775,57 +758,6 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
     return written && attachments.dropped == 0;
 }
 
-void EmailExportWorker::exportSingleMboxMessage(MboxParser* parser,
-                                                int message_index,
-                                                const sak::EmailExportConfig& config,
-                                                sak::EmailExportResult& result) {
-    auto detail = parser->readMessageDetail(message_index);
-    if (!detail.has_value()) {
-        result.items_failed++;
-        return;
-    }
-
-    const auto& msg = detail.value();
-    QString safe_sub = sanitizeFilename(msg.subject, kMaxFilenameLength);
-    if (safe_sub.isEmpty()) {
-        safe_sub = QStringLiteral("message_%1").arg(message_index);
-    }
-
-    QString filename = resolveFilenameConflict(config.output_path,
-                                               safe_sub + QStringLiteral(".eml"));
-    QFile file(config.output_path + QLatin1Char('/') + filename);
-    if (!file.open(QIODevice::WriteOnly)) {
-        result.items_failed++;
-        return;
-    }
-
-    QByteArray content = buildMboxEmlContent(msg);
-    file.write(content);
-    file.close();
-    result.items_exported++;
-    result.total_bytes += content.size();
-}
-
-QByteArray EmailExportWorker::buildMboxEmlContent(const sak::MboxMessageDetail& msg) {
-    QByteArray content;
-    content += "From: " + msg.from.toUtf8() + "\r\n";
-    content += "To: " + msg.to.toUtf8() + "\r\n";
-    if (!msg.cc.isEmpty()) {
-        content += "Cc: " + msg.cc.toUtf8() + "\r\n";
-    }
-    content += "Subject: " + msg.subject.toUtf8() + "\r\n";
-    content += "Date: " + toRfc5322Date(msg.date).toUtf8() + "\r\n";
-    if (!msg.message_id.isEmpty()) {
-        content += "Message-ID: " + msg.message_id.toUtf8() + "\r\n";
-    }
-    content += "MIME-Version: 1.0\r\n";
-    content += "Content-Type: text/plain; charset=UTF-8\r\n";
-    content += "Content-Transfer-Encoding: 8bit\r\n";
-    content += "\r\n";
-    content += msg.body_plain.toUtf8();
-    return content;
-}
-
 // ============================================================================
 // Cancel
 // ============================================================================
@@ -878,48 +810,6 @@ bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
         return attachment_data.isEmpty();
     }
     return true;
-}
-
-QByteArray EmailExportWorker::buildEmlContent(const sak::PstItemDetail& item) {
-    QByteArray eml;
-
-    // Headers
-    eml += "From: " + item.sender_email.toUtf8() + "\r\n";
-    if (!item.display_to.isEmpty()) {
-        eml += "To: " + item.display_to.toUtf8() + "\r\n";
-    }
-    if (!item.display_cc.isEmpty()) {
-        eml += "Cc: " + item.display_cc.toUtf8() + "\r\n";
-    }
-    if (!item.display_bcc.isEmpty()) {
-        eml += "Bcc: " + item.display_bcc.toUtf8() + "\r\n";
-    }
-    eml += "Subject: " + item.subject.toUtf8() + "\r\n";
-    if (item.date.isValid()) {
-        eml += "Date: " + toRfc5322Date(item.date).toUtf8() + "\r\n";
-    }
-    if (!item.message_id.isEmpty()) {
-        eml += "Message-ID: " + item.message_id.toUtf8() + "\r\n";
-    }
-    if (!item.in_reply_to.isEmpty()) {
-        eml += "In-Reply-To: " + item.in_reply_to.toUtf8() + "\r\n";
-    }
-    eml += "MIME-Version: 1.0\r\n";
-
-    // Body — prefer HTML, fallback to plain
-    if (!item.body_html.isEmpty()) {
-        eml += "Content-Type: text/html; charset=UTF-8\r\n";
-        eml += "Content-Transfer-Encoding: 8bit\r\n";
-        eml += "\r\n";
-        eml += item.body_html.toUtf8();
-    } else {
-        eml += "Content-Type: text/plain; charset=UTF-8\r\n";
-        eml += "Content-Transfer-Encoding: 8bit\r\n";
-        eml += "\r\n";
-        eml += item.body_plain.toUtf8();
-    }
-
-    return eml;
 }
 
 // ============================================================================
@@ -1089,6 +979,10 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
         stream << "\r\n";
     }
 
+    if (!textStreamOk(stream, file)) {
+        file.close();
+        return false;  // A truncated/failed CSV write is not a successful export.
+    }
     file.close();
     return true;
 }
@@ -1221,6 +1115,10 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     stream << item.body_plain;
     if (item.body_plain.isEmpty() && !item.body_html.isEmpty()) {
         stream << item.body_html;
+    }
+    if (!textStreamOk(stream, file)) {
+        file.close();
+        return false;  // A truncated/failed .txt write is not a successful export.
     }
     file.close();
     QFileInfo info(full_path);

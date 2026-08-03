@@ -141,6 +141,8 @@ private Q_SLOTS:
     void legacyUnicodePstReads512ByteBTreePages();
     void unicode4kOstReads4096ByteBTreePages();
     void compressibleEncryptedPstDecodesRootPropertyContext();
+    void rejectsUnknownDataVersion();
+    void rejectsMistypedNodeBTreePage();
 
     // -- Encryption Detection --------------------------------------------
     void detectsNoEncryption();
@@ -413,6 +415,56 @@ void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {
     QCOMPARE(info.is_ost, false);
     QCOMPARE(info.encryption_type, sak::email::kEncryptCompressible);
     QCOMPARE(info.total_folders, 1);
+}
+
+void TestPstParser::rejectsUnknownDataVersion() {
+    // An unrecognized wVer means the on-disk layout is unknown; the parser must fail closed
+    // (pst_invalid_header) at header parse rather than guessing offsets from a mislabeled or
+    // crafted file. 0x0063 is neither ANSI (14), Unicode (23), nor Unicode4K (36).
+    constexpr uint16_t kUnknownVersion = 0x0063;
+    QByteArray header = buildMinimalPstHeader(
+        true, sak::email::kEncryptNone, sak::email::kPstContentType, kUnknownVersion);
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(header);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+}
+
+void TestPstParser::rejectsMistypedNodeBTreePage() {
+    // The Node BTree root page must carry ptypeNBT (0x81). A page whose trailer type byte is
+    // anything else (here zeroed, which still passes the ptype==ptypeRepeat duplicate check)
+    // must fail the Node BTree load closed rather than being walked as a valid BTree.
+    QByteArray store = buildStoreWithEmptyBTrees(sak::email::kPstContentType,
+                                                 sak::email::kUnicodeVersion);
+    constexpr int kPageSize = sak::email::kLegacyUnicodePageSize;
+    constexpr int kTrailerSize = 16;
+    const int nbt_offset = kPageSize * 2;
+    const int ptype_offset = nbt_offset + kPageSize - kTrailerSize;
+    store[ptype_offset] = '\0';
+    store[ptype_offset + 1] = '\0';
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(store);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!error_spy.isEmpty());
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
 }
 
 // ============================================================================

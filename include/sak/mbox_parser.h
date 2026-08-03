@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstdint>
 #include <expected>
+#include <optional>
 
 namespace sak {
 enum class error_code;
@@ -121,6 +122,16 @@ private:
     /// attachment's decoded bytes here so names (detail.attachments) and content stay index-aligned
     /// from ONE recursive pass. Never set for the GUI's readMessageDetail path (stays nullptr).
     QVector<QByteArray>* m_attachment_sink = nullptr;
+
+    /// Set true by decodeTransferEncoding when a strict (AbortOnBase64DecodingErrors) base64 decode
+    /// fails during a parseMimeMessage() pass. Reset at the start of every parse. The public detail
+    /// / attachment reads inspect it afterward and fail closed rather than hand back partial bytes
+    /// that Qt's permissive decoder would otherwise silently produce.
+    bool m_mime_decode_failed = false;
+
+    /// After a parseMimeMessage() pass, return the fail-closed error (cancellation or a strict
+    /// base64 decode failure) that must abort the read, or nullopt when the parse was clean.
+    [[nodiscard]] std::optional<sak::error_code> mimeParseFailure() const;
 
     /// Scan file for all "From " line boundaries
     void buildMessageIndex();

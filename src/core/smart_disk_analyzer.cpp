@@ -66,7 +66,11 @@ constexpr uint32_t kUnsafeShutdownWarningThreshold = 100;
 constexpr double kElevatedTemperatureCelsius = 55.0;
 constexpr int64_t kHighPowerOnHoursThreshold = 50'000;
 constexpr int64_t kHoursPerYear = 8760;
-constexpr uint32_t kPhysicalDriveProbeCount = 16;
+// Drive numbering is not guaranteed contiguous and can exceed 15 (many
+// controllers, removable media). Probe past absent indices and stop only after
+// a run of consecutive misses, bounded by an absolute cap.
+constexpr uint32_t kPhysicalDriveProbeMax = 256;
+constexpr uint32_t kPhysicalDriveMissRun = 8;
 
 }  // anonymous namespace
 
@@ -585,24 +589,48 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     }
 }
 
+#ifdef SAK_PLATFORM_WINDOWS
+namespace {
+
+// True when \\.\PhysicalDriveN exists. Opened with zero access -- an existence
+// probe only, never read/write. A genuine not-found is the only "absent" answer;
+// any other open failure (in use, access denied) means the device IS present, so
+// enumeration neither drops a real drive nor stops the scan run prematurely.
+bool physicalDriveExists(uint32_t index) {
+    const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(index);
+    HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
+                           0,  // No read/write access needed -- just checking existence
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr,
+                           OPEN_EXISTING,
+                           0,
+                           nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        CloseHandle(h);
+        return true;
+    }
+    const DWORD err = GetLastError();
+    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
+}
+
+}  // namespace
+#endif
+
 QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
     QVector<uint32_t> drives;
 
 #ifdef SAK_PLATFORM_WINDOWS
-    // Probe PhysicalDrive0..15
-    for (uint32_t i = 0; i < kPhysicalDriveProbeCount; ++i) {
-        const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(i);
-        HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
-                               0,  // No read/write access needed -- just checking existence
-                               FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               nullptr,
-                               OPEN_EXISTING,
-                               0,
-                               nullptr);
-
-        if (h != INVALID_HANDLE_VALUE) {
-            CloseHandle(h);
+    // Probe PhysicalDriveN tolerating gaps in numbering; stop after a run of
+    // consecutive misses rather than a fixed 0..15 window that hides higher or
+    // sparsely numbered drives.
+    uint32_t consecutive_misses = 0;
+    for (uint32_t i = 0; i < kPhysicalDriveProbeMax && consecutive_misses < kPhysicalDriveMissRun;
+         ++i) {
+        if (physicalDriveExists(i)) {
             drives.append(i);
+            consecutive_misses = 0;
+        } else {
+            ++consecutive_misses;
         }
     }
 #endif

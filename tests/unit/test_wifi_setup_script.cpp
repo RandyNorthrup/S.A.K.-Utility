@@ -37,6 +37,10 @@ private Q_SLOTS:
     void neutralizesBatchMetacharacters();
     void usesUniqueTempFileAndWipesOnBothPaths();
     void usesPassphraseOnlyForWpa();
+    void usesFullyQualifiedToolPaths();
+    void buildsWpa3SaeProfile();
+    void refusesEnterpriseSecurity();
+    void connectRefusesEnterpriseSecurity();
     void connectRefusesEmptySsid();
     void connectRefusesUnsafeSsid();
     void connectRefusesOverlongSsid();
@@ -98,12 +102,72 @@ void TestWifiSetupScript::usesPassphraseOnlyForWpa() {
     QVERIFY(!sak::wifiSecurityUsesPassphrase(QStringLiteral("wep")));
 }
 
+void TestWifiSetupScript::usesFullyQualifiedToolPaths() {
+    // The generated elevated .cmd must invoke powershell/netsh via their absolute
+    // System32 paths so a planted-exe on %PATH% or in the CWD cannot hijack them.
+    const QString script = sak::buildWifiSetupScriptWindows(
+        QStringLiteral("MyNet"), QStringLiteral("secret123"), QStringLiteral("wpa2"), false);
+    QVERIFY(!script.isEmpty());
+    QVERIFY(script.contains(
+        QStringLiteral("\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"")));
+    QVERIFY(script.contains(QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\"")));
+    // No bare tool invocation may survive (would be resolved via %PATH%).
+    QVERIFY(!script.contains(QStringLiteral("(`powershell ")));
+    QVERIFY(!script.contains(QStringLiteral("\r\npowershell ")));
+    QVERIFY(!script.contains(QStringLiteral("\r\nnetsh ")));
+}
+
+void TestWifiSetupScript::buildsWpa3SaeProfile() {
+    // WPA3-Personal must map to WPA3SAE/AES and still emit the passphrase, not be
+    // silently downgraded to WPA2PSK.
+    const QString script = sak::buildWifiSetupScriptWindows(QStringLiteral("MyNet"),
+                                                            QStringLiteral("secret123"),
+                                                            QStringLiteral("WPA3-Personal"),
+                                                            false);
+    QVERIFY(!script.isEmpty());
+    const QString xml = decodedXml(script);
+    QVERIFY(xml.contains(QStringLiteral("<authentication>WPA3SAE</authentication>")));
+    QVERIFY(xml.contains(QStringLiteral("<keyMaterial>secret123</keyMaterial>")));
+    QVERIFY(sak::wifiSecurityUsesPassphrase(QStringLiteral("WPA3-Personal")));
+}
+
+void TestWifiSetupScript::refusesEnterpriseSecurity() {
+    // Enterprise/802.1X needs an EAP/OneX config this builder cannot produce; fail
+    // closed rather than emit a downgraded WPA2PSK profile.
+    QVERIFY(sak::buildWifiSetupScriptWindows(QStringLiteral("CorpNet"),
+                                             QStringLiteral("pw"),
+                                             QStringLiteral("WPA2-Enterprise"),
+                                             false)
+                .isEmpty());
+    QVERIFY(sak::buildWifiSetupScriptWindows(QStringLiteral("CorpNet"),
+                                             QStringLiteral("pw"),
+                                             QStringLiteral("WPA3-Enterprise"),
+                                             false)
+                .isEmpty());
+    QVERIFY(sak::buildWifiSetupScriptWindows(
+                QStringLiteral("CorpNet"), QStringLiteral("pw"), QStringLiteral("802.1X"), false)
+                .isEmpty());
+    // An unsupported type has no passphrase.
+    QVERIFY(!sak::wifiSecurityUsesPassphrase(QStringLiteral("WPA2-Enterprise")));
+}
+
+void TestWifiSetupScript::connectRefusesEnterpriseSecurity() {
+    // connectWifiWindows must fail closed before touching a temp file or netsh.
+    const auto r = sak::connectWifiWindows(
+        QStringLiteral("CorpNet"), QStringLiteral("pw"), QStringLiteral("WPA2-Enterprise"), false);
+    QVERIFY(!r.profile_added);
+    QVERIFY(!r.connect_issued);
+    QVERIFY(!r.error.isEmpty());
+}
+
 void TestWifiSetupScript::buildsWpaScriptWithProfileAndConnect() {
     const QString script = sak::buildWifiSetupScriptWindows(
         QStringLiteral("MyNet"), QStringLiteral("secret123"), QStringLiteral("wpa2"), false);
     QVERIFY(!script.isEmpty());
-    QVERIFY(script.contains(QStringLiteral("netsh wlan add profile")));
-    QVERIFY(script.contains(QStringLiteral("netsh wlan connect name=\"MyNet\"")));
+    QVERIFY(
+        script.contains(QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\" wlan add profile")));
+    QVERIFY(script.contains(
+        QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\" wlan connect name=\"MyNet\"")));
     QVERIFY(script.contains(QStringLiteral("echo Network: MyNet")));
 
     const QString xml = decodedXml(script);

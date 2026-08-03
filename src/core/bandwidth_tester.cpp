@@ -36,6 +36,9 @@ constexpr int kIperfProgressPollMs = kTimerRetryBaseMs;
 constexpr int kCloudflareLatencyTimeoutMs = kTimeoutProcessShortMs;
 constexpr double kBitsPerByte = 8.0;
 constexpr double kMegabit = 1'000'000.0;
+// Upload ACK / HEAD responses carry no meaningful body; cap them small so a hostile
+// server cannot make us buffer a large reply on the control legs of the speed test.
+constexpr qint64 kSpeedTestControlResponseCap = 64 * 1024;  // 64 KB
 
 const auto kIperf3Exe = QStringLiteral("iperf3.exe");
 
@@ -126,12 +129,17 @@ IperfProcessResult runIperfClientProcess(const QString& program,
     return result;
 }
 
-HttpSample downloadHttpSample(const QString& url) {
+HttpSample downloadHttpSample(const QString& url, qint64 maxResponseBytes) {
     Q_ASSERT(!url.isEmpty());
+    Q_ASSERT(maxResponseBytes > 0);
     HttpSample sample;
     NetworkTransferRequest request;
     request.url = QUrl(url);
     request.timeout_ms = kSpeedTestDurationMs;
+    // Bound the in-memory body: a hostile/oversized response must abort, not be
+    // buffered whole. The download URL requests a known byte count, so the cap is
+    // that count plus a small margin.
+    request.max_response_bytes = maxResponseBytes;
     const auto transfer = runNetworkTransfer(request);
     if (transfer.success) {
         sample.bytes = static_cast<double>(transfer.body.size());
@@ -152,6 +160,7 @@ HttpSample uploadHttpSample(const QString& url, int payloadBytes) {
     request.timeout_ms = kSpeedTestDurationMs;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{
         QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/octet-stream")});
+    request.max_response_bytes = kSpeedTestControlResponseCap;
     const auto transfer = runNetworkTransfer(request);
     HttpSample sample;
     if (transfer.success) {
@@ -168,6 +177,7 @@ double measureHttpHeadLatencyMs(const QString& url, int timeoutMs) {
     request.url = QUrl(url);
     request.method = NetworkTransferMethod::Head;
     request.timeout_ms = timeoutMs;
+    request.max_response_bytes = kSpeedTestControlResponseCap;
     const auto transfer = runNetworkTransfer(request);
     if (!transfer.success) {
         // A failed HEAD (timeout / DNS / refused) elapses the full timeout; returning
@@ -294,23 +304,29 @@ void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint1
         Q_EMIT serverStarted(port);
     });
 
-    connect(m_serverProcess,
-            &QProcess::errorOccurred,
-            this,
-            [this, ruleName](QProcess::ProcessError error) {
-                if (error != QProcess::FailedToStart || m_serverProcess == nullptr) {
-                    return;
-                }
-                Q_EMIT errorOccurred(QStringLiteral("Failed to start iPerf3 server: %1")
-                                         .arg(m_serverProcess->errorString()));
-                m_serverProcess->deleteLater();
-                m_serverProcess = nullptr;
-                // FailedToStart never emits finished(), so the finished-handler's cleanup never
-                // runs; tear down the inbound firewall rule here or it leaks (idempotent:
-                // delete-by-name is harmless if the add had not completed). removeFirewallRule
-                // uses its own QProcess, not m_serverProcess.
-                removeFirewallRule(ruleName);
-            });
+    connect(
+        m_serverProcess,
+        &QProcess::errorOccurred,
+        this,
+        [this, ruleName](QProcess::ProcessError error) {
+            // Mirror the finished-handler: act only on the specific process that
+            // errored, and only when it is still our current server process. A
+            // stale signal from a superseded process must not touch m_serverProcess.
+            auto* process = qobject_cast<QProcess*>(sender());
+            if (error != QProcess::FailedToStart || process == nullptr ||
+                m_serverProcess != process) {
+                return;
+            }
+            Q_EMIT errorOccurred(
+                QStringLiteral("Failed to start iPerf3 server: %1").arg(process->errorString()));
+            m_serverProcess = nullptr;
+            process->deleteLater();
+            // FailedToStart never emits finished(), so the finished-handler's cleanup never
+            // runs; tear down the inbound firewall rule here or it leaks (idempotent:
+            // delete-by-name is harmless if the add had not completed). removeFirewallRule
+            // uses its own QProcess, not m_serverProcess.
+            removeFirewallRule(ruleName);
+        });
 }
 
 void BandwidthTester::stopIperfServer() {
@@ -489,6 +505,9 @@ void BandwidthTester::runHttpSpeedTest() {
 
     constexpr int kDownloadBytes = 10'000'000;  // 10 MB
     constexpr int kUploadBytes = 2'000'000;     // 2 MB
+    // Cap the download body at the requested count plus a 1 MB margin: enough for
+    // the expected payload, but bounded so a server returning more aborts.
+    constexpr qint64 kDownloadResponseCap = kDownloadBytes + 1'048'576;
 
     const QString downloadUrl =
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
@@ -507,7 +526,7 @@ void BandwidthTester::runHttpSpeedTest() {
 
     constexpr int kSampleCount = 2;
     auto downloadMbps = measureTransferMbps(kSampleCount, [&]() -> std::pair<double, double> {
-        auto sample = downloadHttpSample(downloadUrl);
+        auto sample = downloadHttpSample(downloadUrl, kDownloadResponseCap);
         return {sample.bytes, sample.timeMs};
     });
     if (!downloadMbps.has_value()) {
@@ -543,28 +562,58 @@ QString BandwidthTester::composeFirewallRuleName(uint16_t port, const QString& u
     return QStringLiteral("SAK_Utility_iPerf3_%1_%2").arg(port).arg(uniqueToken);
 }
 
+QString BandwidthTester::composeNetshPath(const QString& systemRoot) {
+    // Fail closed: with no known Windows root we cannot resolve a trusted netsh, and
+    // invoking a bare "netsh" would let a PATH/CWD-planted binary run with our (often
+    // elevated) rights. Callers treat empty as "do not run".
+    if (systemRoot.isEmpty()) {
+        return {};
+    }
+    return QDir::cleanPath(systemRoot + QStringLiteral("/System32/netsh.exe"));
+}
+
+QString BandwidthTester::resolveNetshPath() {
+    return composeNetshPath(qEnvironmentVariable("SystemRoot"));
+}
+
 void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port) {
+    const QString netsh = resolveNetshPath();
+    if (netsh.isEmpty()) {
+        sak::logWarning("Cannot resolve netsh.exe path; skipping inbound rule for port {}", port);
+        return;
+    }
     auto* proc = new QProcess(this);
-    connect(proc, &QProcess::errorOccurred, proc, [port, proc](QProcess::ProcessError error) {
+    // Track the in-flight add so a remove requested before it finishes serializes
+    // behind it (see removeFirewallRule) instead of racing and leaking a rule.
+    m_firewallAddProcess = proc;
+    connect(proc, &QProcess::errorOccurred, proc, [this, port, proc](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
             sak::logWarning("Failed to start netsh for firewall rule on port {}: {}",
                             port,
                             proc->errorString().toStdString());
+            if (m_firewallAddProcess == proc) {
+                m_firewallAddProcess = nullptr;
+            }
             proc->deleteLater();
         }
     });
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [port, proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+            [this, port, proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
                 if (exitCode != 0) {
                     sak::logWarning("Failed to add firewall rule for port {}: {}",
                                     port,
                                     QString::fromUtf8(proc->readAllStandardError()).toStdString());
                 }
+                if (m_firewallAddProcess == proc) {
+                    m_firewallAddProcess = nullptr;
+                }
                 proc->deleteLater();
             });
-    proc->start(QStringLiteral("netsh"),
+    // Scope the inbound allow tightly: private profile only (never public networks),
+    // remote peers on the local subnet only, and only the bundled iperf3 binary.
+    proc->start(netsh,
                 {QStringLiteral("advfirewall"),
                  QStringLiteral("firewall"),
                  QStringLiteral("add"),
@@ -573,13 +622,39 @@ void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port)
                  QStringLiteral("dir=in"),
                  QStringLiteral("action=allow"),
                  QStringLiteral("protocol=tcp"),
-                 QStringLiteral("localport=%1").arg(port)});
+                 QStringLiteral("localport=%1").arg(port),
+                 QStringLiteral("profile=private"),
+                 QStringLiteral("remoteip=LocalSubnet"),
+                 QStringLiteral("program=%1").arg(QDir::toNativeSeparators(m_iperf3Path))});
 }
 
 void BandwidthTester::removeFirewallRule(const QString& ruleName) {
     // No rule was ever installed (server never started) -> nothing to delete, and
     // deleting name="" would nuke an unrelated unnamed rule set.
     if (ruleName.isEmpty()) {
+        return;
+    }
+    // Serialize behind an in-flight add: deleting the rule name before the add
+    // process has installed it would delete nothing, then the add would land and
+    // leave a permanent inbound rule. Defer the delete until the add finishes.
+    if (m_firewallAddProcess != nullptr && m_firewallAddProcess->state() != QProcess::NotRunning) {
+        connect(m_firewallAddProcess,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this,
+                [this, ruleName]([[maybe_unused]] int exitCode,
+                                 [[maybe_unused]] QProcess::ExitStatus status) {
+                    executeFirewallDelete(ruleName);
+                });
+        return;
+    }
+    executeFirewallDelete(ruleName);
+}
+
+void BandwidthTester::executeFirewallDelete(const QString& ruleName) {
+    const QString netsh = resolveNetshPath();
+    if (netsh.isEmpty()) {
+        sak::logWarning("Cannot resolve netsh.exe path; firewall rule '{}' not removed",
+                        ruleName.toStdString());
         return;
     }
     auto* proc = new QProcess(this);
@@ -600,7 +675,7 @@ void BandwidthTester::removeFirewallRule(const QString& ruleName) {
                 }
                 proc->deleteLater();
             });
-    proc->start(QStringLiteral("netsh"),
+    proc->start(netsh,
                 {QStringLiteral("advfirewall"),
                  QStringLiteral("firewall"),
                  QStringLiteral("delete"),

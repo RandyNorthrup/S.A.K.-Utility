@@ -34,6 +34,10 @@ private Q_SLOTS:
     void parseIperf_rejectsGarbage();
     void parseIperf_rejectsJsonWithoutEndSummary();
     void parseIperf_acceptsValidTcpResult();
+
+    // -- composeNetshPath (absolute netsh, fail closed on empty root) --
+    void netshPath_absoluteUnderSystemRoot();
+    void netshPath_emptyRootFailsClosed();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -171,6 +175,27 @@ void TestBandwidthTester::parseIperf_acceptsValidTcpResult() {
     QCOMPARE(r->uploadMbps, 100.0);   // 100 Mbit/s
     QCOMPARE(r->downloadMbps, 90.0);  // 90 Mbit/s
     QCOMPARE(r->retransmissions, 2.0);
+}
+
+// ===================================================================
+// composeNetshPath -- absolute path only, fail closed on empty root
+// ===================================================================
+
+void TestBandwidthTester::netshPath_absoluteUnderSystemRoot() {
+    // The privileged firewall calls must resolve netsh under System32, never a bare
+    // "netsh" that a PATH/CWD-planted binary could hijack.
+    const QString path = BandwidthTester::composeNetshPath(QStringLiteral("C:/Windows"));
+    QVERIFY(path.endsWith(QStringLiteral("System32/netsh.exe")));
+    QVERIFY(path.contains(QStringLiteral("C:/Windows")));
+    // Backslash-style root resolves to the same cleaned path.
+    const QString back = BandwidthTester::composeNetshPath(QStringLiteral("C:\\Windows"));
+    QVERIFY(back.endsWith(QStringLiteral("System32/netsh.exe")));
+}
+
+void TestBandwidthTester::netshPath_emptyRootFailsClosed() {
+    // No known Windows root -> no trusted netsh -> empty means "do not run" (fail
+    // closed), never a fallback to bare "netsh".
+    QVERIFY(BandwidthTester::composeNetshPath(QString()).isEmpty());
 }
 
 QTEST_MAIN(TestBandwidthTester)

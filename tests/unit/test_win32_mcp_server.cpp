@@ -72,12 +72,16 @@ private slots:
     void invokeTool_pixelColorReadsAShape();
     void invokeTool_watchToolsValidateArgs();
     void invokeTool_inputToolsValidateArgsWithoutInjecting();
+    void invokeTool_mouseClickRejectsNonNumericCoordinates();
+    void invokeTool_mouseClickRefusesWhenNamedTargetMissing();
     void invokeTool_closeWindowRequiresTitle();
     void toolsCall_browserExtensionRoutesToInstallerNotBridge();
     void toolCallResult_textOnlyIsSingleTextBlock();
     void toolCallResult_imageBecomesImageBlockPlusSummary();
     void readOnlyProfileFiltersCatalogAndRefusesMutatingCall();
     void redactionMasksSecretsInResultText();
+    void redactionMasksQuotedJsonSecrets();
+    void readOnlySetExcludesActiveBrowserTools();
     void relayModeRequiresOurPinnedExtensionOrigin();
 };
 
@@ -416,6 +420,32 @@ void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
     QVERIFY(invokeTool(QStringLiteral("dismiss_dialog"), {}).is_error);
 }
 
+void Win32McpServerTests::invokeTool_mouseClickRejectsNonNumericCoordinates() {
+    // A non-numeric x/y must be rejected outright rather than coerced to 0 and fired as a
+    // (0, 0) click at the desktop corner. The key is present but the wrong JSON type.
+    QVERIFY(invokeTool(QStringLiteral("mouse_click"),
+                       QJsonObject{{QStringLiteral("x"), QStringLiteral("5")},
+                                   {QStringLiteral("y"), 0}})
+                .is_error);
+    QVERIFY(invokeTool(QStringLiteral("mouse_click"),
+                       QJsonObject{{QStringLiteral("x"), 0},
+                                   {QStringLiteral("y"), QStringLiteral("5")}})
+                .is_error);
+}
+
+void Win32McpServerTests::invokeTool_mouseClickRefusesWhenNamedTargetMissing() {
+    // With valid coordinates but a window_title that matches nothing, the click must fail closed
+    // (surface the lookup error) instead of silently proceeding to click whatever is focused.
+    // (0, 0) is always inside the virtual screen, so this exercises the activation-abort path.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("mouse_click"),
+                   QJsonObject{{QStringLiteral("x"), 0},
+                               {QStringLiteral("y"), 0},
+                               {QStringLiteral("window_title"),
+                                QStringLiteral("zzq-no-such-window-to-raise-42")}});
+    QVERIFY(result.is_error);
+}
+
 void Win32McpServerTests::invokeTool_closeWindowRequiresTitle() {
     // Missing/unmatched title is a clean error that closes nothing. We deliberately do NOT
     // exercise the success path -- it would close a real window on the test host; the live
@@ -543,6 +573,34 @@ void Win32McpServerTests::redactionMasksSecretsInResultText() {
     // Non-secret text is preserved.
     QVERIFY(masked.contains(QStringLiteral("user=admin")));
     QVERIFY(masked.contains(QStringLiteral("note=ok")));
+}
+
+void Win32McpServerTests::redactionMasksQuotedJsonSecrets() {
+    // Quoted-JSON secrets (a UIA value or tool payload carrying "token":"secret") must also be
+    // masked -- the earlier regex only caught bare key=value / key: value forms.
+    const QString masked = sak::win32mcp::redactWin32McpSensitiveText(
+        QStringLiteral(R"({"token":"s3cr3tValue","note":"ok"})"));
+    QVERIFY(!masked.contains(QStringLiteral("s3cr3tValue")));
+    QVERIFY(masked.contains(QStringLiteral("[REDACTED]")));
+    // A non-secret field is preserved.
+    QVERIFY(masked.contains(QStringLiteral("ok")));
+
+    const QString masked_pw =
+        sak::win32mcp::redactWin32McpSensitiveText(QStringLiteral(R"("password" : "Hunter2")"));
+    QVERIFY(!masked_pw.contains(QStringLiteral("Hunter2")));
+    QVERIFY(masked_pw.contains(QStringLiteral("[REDACTED]")));
+}
+
+void Win32McpServerTests::readOnlySetExcludesActiveBrowserTools() {
+    // browser_focus/hover/reveal mutate UI state (move focus, dispatch hover, scroll into view),
+    // so they must NOT be classified read-only -- otherwise the read-only profile would advertise
+    // and permit them. The genuinely passive browser inspectors stay read-only.
+    using sak::win32mcp::win32McpToolIsReadOnly;
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_focus")));
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_hover")));
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_reveal")));
+    QVERIFY(win32McpToolIsReadOnly(QStringLiteral("browser_read")));
+    QVERIFY(win32McpToolIsReadOnly(QStringLiteral("browser_snapshot")));
 }
 
 void Win32McpServerTests::relayModeRequiresOurPinnedExtensionOrigin() {

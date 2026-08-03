@@ -48,6 +48,12 @@ void flattenFolderTree(const sak::PstFolderTree& tree,
     }
 }
 
+/// Whether any enabled criterion needs the full item/message detail loaded (body,
+/// recipients, or attachment names). Lets matchers load the detail exactly once.
+bool needsDetailLoad(const sak::EmailSearchCriteria& criteria) {
+    return criteria.search_body || criteria.search_recipients || criteria.search_attachment_names;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -299,14 +305,21 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItem(
     if (auto r = matchPstSender(item, criteria)) {
         return r;
     }
-    if (auto r = matchPstItemBody(item, criteria, parser)) {
-        return r;
-    }
-    if (auto r = matchPstItemAttachments(item, criteria, parser)) {
-        return r;
-    }
-    if (auto r = matchPstItemRecipients(item, criteria, parser)) {
-        return r;
+    // Body/attachment/recipient all live in the item detail: load it ONCE and share
+    // it across those matchers instead of each re-parsing the same item (reparse-once).
+    if (needsDetailLoad(criteria)) {
+        auto detail = parser->readItemDetail(item.node_id);
+        if (detail) {
+            if (auto r = matchPstItemBody(*detail, criteria)) {
+                return r;
+            }
+            if (auto r = matchPstItemAttachments(*detail, criteria)) {
+                return r;
+            }
+            if (auto r = matchPstItemRecipients(*detail, criteria)) {
+                return r;
+            }
+        }
     }
     return matchPstItemMapiProperty(item, criteria, parser);
 }
@@ -338,17 +351,11 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstSender(
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemRecipients(
-    const sak::PstItemSummary& item,
-    const sak::EmailSearchCriteria& criteria,
-    PstParser* parser) const {
+    const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const {
     if (!criteria.search_recipients) {
         return std::nullopt;
     }
-    auto detail = parser->readItemDetail(item.node_id);
-    if (!detail) {
-        return std::nullopt;
-    }
-    const QStringList fields = {detail->display_to, detail->display_cc, detail->display_bcc};
+    const QStringList fields = {detail.display_to, detail.display_cc, detail.display_bcc};
     for (const QString& field : fields) {
         if (!field.isEmpty() && matchesQuery(field, criteria.query_text, criteria.case_sensitive)) {
             return MatchResult{QStringLiteral("recipient"), field};
@@ -384,17 +391,11 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemMap
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemBody(
-    const sak::PstItemSummary& item,
-    const sak::EmailSearchCriteria& criteria,
-    PstParser* parser) const {
+    const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const {
     if (!criteria.search_body) {
         return std::nullopt;
     }
-    auto detail = parser->readItemDetail(item.node_id);
-    if (!detail) {
-        return std::nullopt;
-    }
-    const QString& body = detail->body_plain.isEmpty() ? detail->body_html : detail->body_plain;
+    const QString& body = detail.body_plain.isEmpty() ? detail.body_html : detail.body_plain;
     if (!matchesQuery(body, criteria.query_text, criteria.case_sensitive)) {
         return std::nullopt;
     }
@@ -404,17 +405,11 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemBod
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemAttachments(
-    const sak::PstItemSummary& item,
-    const sak::EmailSearchCriteria& criteria,
-    PstParser* parser) const {
-    if (!criteria.search_attachment_names || !item.has_attachments) {
+    const sak::PstItemDetail& detail, const sak::EmailSearchCriteria& criteria) const {
+    if (!criteria.search_attachment_names || detail.attachments.isEmpty()) {
         return std::nullopt;
     }
-    auto detail = parser->readItemDetail(item.node_id);
-    if (!detail) {
-        return std::nullopt;
-    }
-    for (const auto& att : detail->attachments) {
+    for (const auto& att : detail.attachments) {
         const QString& att_name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         if (matchesQuery(att_name, criteria.query_text, criteria.case_sensitive)) {
             return MatchResult{QStringLiteral("attachment"), att_name};
@@ -455,19 +450,63 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
         return MatchResult{QStringLiteral("sender"), msg.from};
     }
 
-    if (criteria.search_body) {
-        auto detail = parser->readMessageDetail(message_index);
-        if (detail) {
-            const QString& body = detail->body_plain.isEmpty() ? detail->body_html
-                                                               : detail->body_plain;
-            if (matchesQuery(body, criteria.query_text, criteria.case_sensitive)) {
-                return MatchResult{QStringLiteral("body"),
-                                   extractContextSnippet(body,
-                                                         criteria.query_text,
-                                                         sak::email::kSearchContextSnippetChars)};
-            }
+    // Body/recipient/attachment-name all live in the message detail: load it ONCE and
+    // share it, mirroring the PST matchers so the MBOX path honors the same criteria
+    // (previously only subject/sender/body were evaluated -- B7-34).
+    if (!needsDetailLoad(criteria)) {
+        return std::nullopt;
+    }
+    auto detail = parser->readMessageDetail(message_index);
+    if (!detail) {
+        return std::nullopt;
+    }
+    if (auto r = matchMboxBody(*detail, criteria)) {
+        return r;
+    }
+    if (auto r = matchMboxRecipients(*detail, criteria)) {
+        return r;
+    }
+    return matchMboxAttachments(*detail, criteria);
+}
+
+std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxBody(
+    const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const {
+    if (!criteria.search_body) {
+        return std::nullopt;
+    }
+    const QString& body = detail.body_plain.isEmpty() ? detail.body_html : detail.body_plain;
+    if (!matchesQuery(body, criteria.query_text, criteria.case_sensitive)) {
+        return std::nullopt;
+    }
+    return MatchResult{
+        QStringLiteral("body"),
+        extractContextSnippet(body, criteria.query_text, sak::email::kSearchContextSnippetChars)};
+}
+
+std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxRecipients(
+    const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const {
+    if (!criteria.search_recipients) {
+        return std::nullopt;
+    }
+    const QStringList fields = {detail.to, detail.cc, detail.bcc};
+    for (const QString& field : fields) {
+        if (!field.isEmpty() && matchesQuery(field, criteria.query_text, criteria.case_sensitive)) {
+            return MatchResult{QStringLiteral("recipient"), field};
         }
     }
+    return std::nullopt;
+}
 
+std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxAttachments(
+    const sak::MboxMessageDetail& detail, const sak::EmailSearchCriteria& criteria) const {
+    if (!criteria.search_attachment_names || detail.attachments.isEmpty()) {
+        return std::nullopt;
+    }
+    for (const auto& att : detail.attachments) {
+        const QString& att_name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        if (matchesQuery(att_name, criteria.query_text, criteria.case_sensitive)) {
+            return MatchResult{QStringLiteral("attachment"), att_name};
+        }
+    }
     return std::nullopt;
 }

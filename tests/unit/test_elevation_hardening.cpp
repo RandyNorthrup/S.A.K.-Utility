@@ -6,7 +6,9 @@
 ///        gate behavior, cancellation, and elevated-mode bypass
 
 #include "sak/elevated_pipe_protocol.h"
+#include "sak/elevated_pipe_server.h"
 #include "sak/elevated_task_dispatcher.h"
+#include "sak/elevation_broker.h"
 #include "sak/elevation_gate.h"
 #include "sak/elevation_manager.h"
 #include "sak/elevation_tier.h"
@@ -117,6 +119,16 @@ private Q_SLOTS:
     // ====================================================================
     void ipc_cancelRequestRoundTrip();
     void ipc_taskRequestPreservesPayload();
+
+    // ====================================================================
+    // Identity binding — fail-closed client/server verification seams
+    // ====================================================================
+    void identity_clientPidFailsClosedOnMissingParent();
+    void identity_clientImageFailsClosedOnEmpty();
+    void identity_clientImageMatchIsCaseInsensitive();
+    void identity_clientImageRejectsDifferentExecutable();
+    void identity_serverPidFailsClosedOnInvalidHelper();
+    void identity_serverImageFailsClosedOnEmpty();
 };
 
 // ============================================================================
@@ -552,6 +564,59 @@ void TestElevationHardening::ipc_taskRequestPreservesPayload() {
     QCOMPARE(parsed["payload"].toObject()["path"].toString(),
              QString("C:\\Windows\\System32\\test.dll"));
     QCOMPARE(parsed["payload"].toObject()["recursive"].toBool(), true);
+}
+
+// ============================================================================
+// Identity binding — fail-closed client/server verification seams
+// ============================================================================
+
+void TestElevationHardening::identity_clientPidFailsClosedOnMissingParent() {
+    // A missing/invalid expected parent PID must authorize NOBODY, even if the
+    // client PID happens to be the same non-positive value.
+    QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(0, 0));
+    QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(-1, -1));
+    QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(0, 1234));
+    QVERIFY(sak::ElevatedPipeServer::clientPidMatchesParent(1234, 1234));
+    QVERIFY(!sak::ElevatedPipeServer::clientPidMatchesParent(1234, 5678));
+}
+
+void TestElevationHardening::identity_clientImageFailsClosedOnEmpty() {
+    // An unresolvable expected OR client image path must match nothing.
+    QVERIFY(!sak::ElevatedPipeServer::clientImageMatchesExpected(QString(), QString()));
+    QVERIFY(!sak::ElevatedPipeServer::clientImageMatchesExpected(
+        QStringLiteral("C:\\App\\sak_utility.exe"), QString()));
+    QVERIFY(!sak::ElevatedPipeServer::clientImageMatchesExpected(
+        QString(), QStringLiteral("C:\\App\\sak_utility.exe")));
+}
+
+void TestElevationHardening::identity_clientImageMatchIsCaseInsensitive() {
+    QVERIFY(sak::ElevatedPipeServer::clientImageMatchesExpected(
+        QStringLiteral("C:\\App\\sak_utility.exe"), QStringLiteral("c:\\app\\SAK_UTILITY.EXE")));
+}
+
+void TestElevationHardening::identity_clientImageRejectsDifferentExecutable() {
+    QVERIFY(!sak::ElevatedPipeServer::clientImageMatchesExpected(
+        QStringLiteral("C:\\App\\sak_utility.exe"), QStringLiteral("C:\\Temp\\evil.exe")));
+}
+
+void TestElevationHardening::identity_serverPidFailsClosedOnInvalidHelper() {
+    // An unknown launched-helper PID (<=0) trusts nobody; a real match is required.
+    QVERIFY(!sak::ElevationBroker::serverPidMatchesHelper(0, 0));
+    QVERIFY(!sak::ElevationBroker::serverPidMatchesHelper(-1, -1));
+    QVERIFY(!sak::ElevationBroker::serverPidMatchesHelper(0, 4321));
+    QVERIFY(sak::ElevationBroker::serverPidMatchesHelper(4321, 4321));
+    QVERIFY(!sak::ElevationBroker::serverPidMatchesHelper(4321, 9999));
+}
+
+void TestElevationHardening::identity_serverImageFailsClosedOnEmpty() {
+    QVERIFY(!sak::ElevationBroker::imagePathsMatch(QString(), QString()));
+    QVERIFY(!sak::ElevationBroker::imagePathsMatch(
+        QStringLiteral("C:\\App\\sak_elevated_helper.exe"), QString()));
+    QVERIFY(
+        sak::ElevationBroker::imagePathsMatch(QStringLiteral("C:\\App\\sak_elevated_helper.exe"),
+                                              QStringLiteral("c:\\app\\SAK_ELEVATED_HELPER.EXE")));
+    QVERIFY(!sak::ElevationBroker::imagePathsMatch(
+        QStringLiteral("C:\\App\\sak_elevated_helper.exe"), QStringLiteral("C:\\App\\other.exe")));
 }
 
 QTEST_MAIN(TestElevationHardening)

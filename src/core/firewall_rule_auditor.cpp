@@ -454,6 +454,35 @@ std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& c
 
 }  // namespace
 
+bool FirewallRuleAuditor::handleEnumerationBreak(long next_hr, int dropped) {
+    // A clean end is SUCCEEDED (S_OK/S_FALSE) with fetched == 0. A FAILED Next means the
+    // enumeration broke partway: fail CLOSED (return true -> caller returns empty) rather than
+    // silently reporting a TRUNCATED rule set as a complete audit. A cooperative cancel leaves
+    // next_hr SUCCEEDED and is handled by fullAudit's separate m_cancelled check.
+    if (FAILED(next_hr)) {
+        m_enumerationOk = false;
+        Q_EMIT errorOccurred(
+            QStringLiteral("Firewall rule enumeration failed partway (HRESULT 0x%1)")
+                .arg(static_cast<unsigned long>(next_hr),
+                     kHResultHexWidth,
+                     kHexBase,
+                     QLatin1Char('0')));
+        return true;
+    }
+    // A dropped rule (COM object entirely unreadable) silently shrinks the audit, so fail
+    // CLOSED exactly like a partway break: mark the enumeration not-OK so no clean result is
+    // emitted over a truncated rule set (B9-12).
+    if (dropped > 0) {
+        m_enumerationOk = false;
+        Q_EMIT errorOccurred(
+            QStringLiteral("%1 firewall rule(s) could not be read at all and were dropped; the "
+                           "audit is incomplete.")
+                .arg(dropped));
+        return true;
+    }
+    return false;
+}
+
 QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     QVector<FirewallRule> rules;
     m_enumerationOk = true;
@@ -471,6 +500,7 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
 
     ULONG fetched = 0;
     VariantHolder var;
+    int dropped = 0;
     HRESULT next_hr = (*enumerator)->Next(1, &var.var, &fetched);
     while (SUCCEEDED(next_hr) && fetched > 0) {
         if (m_cancelled.load()) {
@@ -480,23 +510,18 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
         FirewallRule rule;
         if (tryExtractFirewallRuleFromVariant(var.var, rule)) {
             rules.append(rule);
+        } else {
+            // The COM object for this element could not be obtained at all
+            // (non-dispatch variant or a failed QueryInterface to INetFwRule).
+            // Unlike a partial-read rule it is not even present to be flagged --
+            // it is DROPPED, silently shrinking the audit.
+            ++dropped;
         }
         var.reset();
         next_hr = (*enumerator)->Next(1, &var.var, &fetched);
     }
 
-    // A clean end is SUCCEEDED (S_OK/S_FALSE) with fetched == 0. A FAILED Next means the
-    // enumeration broke partway: fail CLOSED (emit + return empty) rather than silently
-    // reporting a TRUNCATED rule set as a complete audit. A cooperative cancel leaves next_hr
-    // SUCCEEDED and is handled by fullAudit's separate m_cancelled check.
-    if (FAILED(next_hr)) {
-        m_enumerationOk = false;
-        Q_EMIT errorOccurred(
-            QStringLiteral("Firewall rule enumeration failed partway (HRESULT 0x%1)")
-                .arg(static_cast<unsigned long>(next_hr),
-                     kHResultHexWidth,
-                     kHexBase,
-                     QLatin1Char('0')));
+    if (handleEnumerationBreak(next_hr, dropped)) {
         return {};
     }
 
@@ -635,8 +660,7 @@ void FirewallRuleAuditor::checkRdpGap(const QVector<FirewallRule>& rules,
         if (rule.direction != FirewallRule::Direction::Inbound) {
             continue;
         }
-        auto ports = parsePorts(rule.localPorts);
-        if (!ports.contains(kRdpPort) && rule.localPorts != QStringLiteral("*")) {
+        if (!localPortsCoverPort(rule.localPorts, kRdpPort)) {
             continue;
         }
         if (rule.remoteAddresses != QStringLiteral("*") && !rule.remoteAddresses.isEmpty()) {
@@ -705,11 +729,10 @@ void FirewallRuleAuditor::checkSmbGap(const QVector<FirewallRule>& rules,
         if (rule.direction != FirewallRule::Direction::Inbound) {
             continue;
         }
-        // A wildcard ("*") port rule allows ALL ports, which includes SMB (445);
-        // matching only the explicit-445 case missed a wildcard rule that exposes
-        // SMB on Public just as much (B9-11), mirroring checkRdpGap.
-        auto ports = parsePorts(rule.localPorts);
-        if (!ports.contains(kSmbPort) && rule.localPorts != QStringLiteral("*")) {
+        // A wildcard ("*") OR empty port rule allows ALL ports, which includes SMB
+        // (445); matching only the explicit-445 case missed an all-ports rule that
+        // exposes SMB on Public just as much (B9-11/B9-12), mirroring checkRdpGap.
+        if (!localPortsCoverPort(rule.localPorts, kSmbPort)) {
             continue;
         }
         if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
@@ -779,6 +802,17 @@ QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr) {
     }
 
     return ports;
+}
+
+bool FirewallRuleAuditor::localPortsCoverPort(const QString& localPorts, uint16_t port) {
+    // An empty LocalPorts is the Windows default "no port restriction" == ALL
+    // ports, which includes `port`; treat it as a wildcard exactly like "*"
+    // (mirrors portsOverlap). Missing the empty case made an all-ports RDP/SMB
+    // allow rule skip its gap check and silently hide the exposure (B9-12).
+    if (localPorts.isEmpty() || localPorts == QStringLiteral("*")) {
+        return true;
+    }
+    return parsePorts(localPorts).contains(port);
 }
 
 bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {

@@ -79,6 +79,13 @@ public:
     /// delete the still-running other's rule. Pure and deterministic; testable.
     [[nodiscard]] static QString composeFirewallRuleName(uint16_t port, const QString& uniqueToken);
 
+    /// @brief Resolve the absolute netsh.exe path under a given Windows @p systemRoot.
+    ///
+    /// Returns "<systemRoot>/System32/netsh.exe" (cleaned). Fails closed with an empty
+    /// string when @p systemRoot is empty, so callers never fall back to invoking a
+    /// bare "netsh" that a PATH/CWD-planted binary could hijack. Pure and testable.
+    [[nodiscard]] static QString composeNetshPath(const QString& systemRoot);
+
     void cancel();
 
 Q_SIGNALS:
@@ -94,8 +101,9 @@ Q_SIGNALS:
 
 private:
     QString m_iperf3Path;
-    QProcess* m_serverProcess = nullptr;  ///< Owned; destroyed in destructor
-    QString m_firewallRuleName;           ///< Unique inbound rule for the running server
+    QProcess* m_serverProcess = nullptr;       ///< Owned; destroyed in destructor
+    QProcess* m_firewallAddProcess = nullptr;  ///< In-flight add; removes serialize behind it
+    QString m_firewallRuleName;                ///< Unique inbound rule for the running server
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] QString findIperf3Path() const;
@@ -104,6 +112,8 @@ private:
     void connectServerProcessSignals(const QString& ruleName, uint16_t port);
     void createFirewallRule(const QString& ruleName, uint16_t port);
     void removeFirewallRule(const QString& ruleName);
+    void executeFirewallDelete(const QString& ruleName);
+    [[nodiscard]] static QString resolveNetshPath();
 };
 
 }  // namespace sak

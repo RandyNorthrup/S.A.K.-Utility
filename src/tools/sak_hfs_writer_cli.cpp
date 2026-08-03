@@ -22,6 +22,15 @@
 #include <functional>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
+
 namespace {
 
 constexpr int kExitOk = 0;
@@ -79,18 +88,68 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
     return true;
 }
 
+// OS-level identity of an existing filesystem object: two paths that are
+// symlink/hardlink aliases of one file share this token. Returns nullopt when
+// the path does not exist / cannot be opened (a not-yet-created report file or
+// a raw device that requires elevation), so the caller falls back to the
+// string/canonical comparison rather than treating "unknown" as "distinct".
+std::optional<QString> fileIdentityToken(const QString& path) {
+#ifdef Q_OS_WIN
+    const std::wstring wide = path.toStdWString();
+    HANDLE handle = ::CreateFileW(wide.c_str(),
+                                  0,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_FLAG_BACKUP_SEMANTICS,
+                                  nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return std::nullopt;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    const bool ok = ::GetFileInformationByHandle(handle, &info) != 0;
+    ::CloseHandle(handle);
+    if (!ok) {
+        return std::nullopt;
+    }
+    return QStringLiteral("win:%1:%2:%3")
+        .arg(info.dwVolumeSerialNumber)
+        .arg(info.nFileIndexHigh)
+        .arg(info.nFileIndexLow);
+#else
+    struct stat st{};
+    if (::stat(path.toLocal8Bit().constData(), &st) != 0) {
+        return std::nullopt;
+    }
+    return QStringLiteral("posix:%1:%2")
+        .arg(static_cast<qulonglong>(st.st_dev))
+        .arg(static_cast<qulonglong>(st.st_ino));
+#endif
+}
+
 // True when the --output-json path would truncate-write onto the operation's
-// target image, clobbering the filesystem result with JSON. Compares both
-// literally (raw device paths) and canonicalized (file paths, case-insensitive).
+// target image, clobbering the filesystem result with JSON. Detects three kinds
+// of aliasing: identical strings (raw device paths), symlink aliases (via
+// canonicalFilePath), and hardlink aliases (via OS volume+file-id identity).
 bool outputJsonAliasesTarget(const QString& outputJson, const QString& targetImagePath) {
-    if (outputJson.trimmed().isEmpty() || targetImagePath.trimmed().isEmpty()) {
+    const QString out = outputJson.trimmed();
+    const QString target = targetImagePath.trimmed();
+    if (out.isEmpty() || target.isEmpty()) {
         return false;
     }
+    if (out.compare(target, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
     const auto canon = [](const QString& p) {
-        return QDir::cleanPath(QFileInfo(p).absoluteFilePath());
+        const QString resolved = QFileInfo(p).canonicalFilePath();
+        return resolved.isEmpty() ? QDir::cleanPath(QFileInfo(p).absoluteFilePath()) : resolved;
     };
-    return outputJson.trimmed().compare(targetImagePath.trimmed(), Qt::CaseInsensitive) == 0 ||
-           canon(outputJson).compare(canon(targetImagePath), Qt::CaseInsensitive) == 0;
+    if (canon(out).compare(canon(target), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    const std::optional<QString> outId = fileIdentityToken(out);
+    const std::optional<QString> targetId = fileIdentityToken(target);
+    return outId.has_value() && outId == targetId;
 }
 
 QString evidenceIdForCommand(const QCommandLineParser& parser,

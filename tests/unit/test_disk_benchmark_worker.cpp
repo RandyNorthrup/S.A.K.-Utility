@@ -10,6 +10,15 @@
 
 using namespace sak;
 
+namespace {
+// Exposes the protected execute() so a test can drive the validation-only fast
+// path without launching the worker thread or touching the disk.
+class DiskExecProbe : public DiskBenchmarkWorker {
+public:
+    std::expected<void, sak::error_code> runExecute() { return execute(); }
+};
+}  // namespace
+
 class TestDiskBenchmarkWorker : public QObject {
     Q_OBJECT
 
@@ -24,6 +33,9 @@ private Q_SLOTS:
     void result_fieldAssignment();
     // B5-09: unique per-run temp file name (no fixed-name TOCTOU).
     void uniqueBenchmarkFileName_isUniqueAndWellFormed();
+    // Codex-2 disk:564: a too-small test-file size must fail closed before any
+    // offset arithmetic (max_offset underflows at 0).
+    void execute_undersizedTestFile_failsClosed();
 };
 
 void TestDiskBenchmarkWorker::construction_default() {
@@ -111,6 +123,23 @@ void TestDiskBenchmarkWorker::uniqueBenchmarkFileName_isUniqueAndWellFormed() {
     QVERIFY(a.contains("1234"));
     QVERIFY(b.contains("1000"));
     QVERIFY(c.contains("2000"));
+}
+
+// Codex-2 disk:564: test_file_size_mb of 0 (or anything below the minimum) would
+// underflow max_offset = (file_size / block - 1) * block into a huge value. execute()
+// must reject it up front with invalid_argument rather than seek to a garbage offset.
+// The drive path is non-empty so validation reaches the size check, and the size check
+// returns before any test file is created -- no disk I/O happens.
+void TestDiskBenchmarkWorker::execute_undersizedTestFile_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    config.test_file_size_mb = 0;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
 }
 
 QTEST_MAIN(TestDiskBenchmarkWorker)

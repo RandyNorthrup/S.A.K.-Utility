@@ -57,20 +57,36 @@ void drainProcessOutput(QProcess* proc,
     appendOutput(result, on_output, proc->readAllStandardError(), true);
 }
 
+// Dispatch a detached whole-tree kill (taskkill /T) for the child rooted at
+// @p pid. Returns true only if the kill helper was actually launched. A false
+// return (no pid, or startDetached refused to spawn) MUST NOT be read as
+// "terminated" -- the caller falls back to QProcess::kill so the direct child
+// is always signalled rather than the cancel silently no-opping.
+bool dispatchDetachedTreeKill(qint64 pid) {
+#ifdef Q_OS_WIN
+    if (pid <= 0) {
+        return false;
+    }
+    return QProcess::startDetached(QStringLiteral("cmd.exe"),
+                                   {QStringLiteral("/C"),
+                                    QStringLiteral("taskkill /PID %1 /T /F >NUL 2>NUL").arg(pid)});
+#else
+    Q_UNUSED(pid);
+    return false;
+#endif
+}
+
 void terminateProcess(QProcess* proc, const ProcessTerminationCallback& on_terminate) {
     if (on_terminate) {
         on_terminate();
     }
-#ifdef Q_OS_WIN
-    const qint64 pid = proc->processId();
-    if (pid > 0) {
-        QProcess::startDetached(QStringLiteral("cmd.exe"),
-                                {QStringLiteral("/C"),
-                                 QStringLiteral("taskkill /PID %1 /T /F >NUL 2>NUL").arg(pid)});
-        return;
+    // Prefer the tree kill (reaps orphaned grandchildren), but never rely on it:
+    // if it could not be launched, fall through to kill the direct child so a
+    // cancel/timeout can never leave the child running while we report it torn
+    // down.
+    if (!dispatchDetachedTreeKill(proc->processId())) {
+        proc->kill();
     }
-#endif
-    proc->kill();
 }
 
 bool startProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResult* result) {

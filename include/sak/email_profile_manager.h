@@ -75,6 +75,12 @@ private:
     /// original basename or a file that never got copied.
     QHash<QString, QString> m_backup_dest_names;
 
+    /// Profile paths whose registry key exported successfully (only populated on a
+    /// successful reg.exe export). Consumed by createBackupManifest so the manifest
+    /// references a registry_file only when that .reg was actually written -- a
+    /// failed export must not leave the manifest pointing at a missing file.
+    QSet<QString> m_backup_reg_exports;
+
     // Discovery per client
     QVector<sak::EmailClientProfile> discoverOutlookProfiles();
     QVector<sak::EmailClientProfile> discoverThunderbirdProfiles();
@@ -93,6 +99,11 @@ private:
                              qint64& bytes_copied);
     [[nodiscard]] static QString uniqueBackupDestination(const QString& backup_path,
                                                          const QFileInfo& source);
+    /// @brief Backup .reg basename for an untrusted profile name. Reduces the name to a bare,
+    /// separator-free filename component (every char outside [A-Za-z0-9._-] -> '_', a name that
+    /// would collapse to empty or "."/".." -> a fixed placeholder) so the export stays confined to
+    /// a single file inside the backup dir and cannot traverse out. Pure; unit-tested.
+    [[nodiscard]] static QString registryBackupFileName(const QString& profile_name);
 
     // Restore helpers
     [[nodiscard]] bool importRegistryKey(const QString& reg_file);

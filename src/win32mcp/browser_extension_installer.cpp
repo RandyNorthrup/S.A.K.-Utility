@@ -295,9 +295,13 @@ struct RegValue {
     QString data;
 };
 
-// Enumerate the string values under an already-open key.
-std::vector<RegValue> enumStringValues(HKEY key) {
+// Enumerate the string values under an already-open key. On any genuine enumeration or
+// value-read error sets *ok=false (fail closed) and returns the partial list gathered so far;
+// callers must refuse rather than act on a truncated view. *ok is true only when the walk ran
+// clean to ERROR_NO_MORE_ITEMS with every REG_SZ value fully read.
+std::vector<RegValue> enumStringValues(HKEY key, bool* ok) {
     std::vector<RegValue> values;
+    *ok = true;
     DWORD index = 0;
     for (;;) {
         wchar_t nameBuf[16'384];
@@ -310,15 +314,18 @@ std::vector<RegValue> enumStringValues(HKEY key) {
             break;
         }
         if (s != ERROR_SUCCESS && s != ERROR_MORE_DATA) {
+            *ok = false;  // genuine enumeration error: list is truncated, do not trust it
             break;
         }
         RegValue v;
         v.name = QString::fromWCharArray(nameBuf, static_cast<int>(nameLen));
         if (type == REG_SZ || type == REG_EXPAND_SZ) {
             QString data;
-            if (readString(key, v.name.isEmpty() ? nullptr : toW(v.name).c_str(), data)) {
-                v.data = data;
+            if (!readString(key, v.name.isEmpty() ? nullptr : toW(v.name).c_str(), data)) {
+                *ok = false;  // a value we must inspect could not be read: fail closed
+                break;
             }
+            v.data = data;
         }
         values.push_back(std::move(v));
         ++index;
@@ -353,7 +360,14 @@ bool writeForcelistEntry(const ExtensionInstallConfig& c, QString* failDetail) {
         *failDetail = c.forcelist_key_path;
         return false;
     }
-    const auto values = enumStringValues(key.get());
+    bool enumOk = false;
+    const auto values = enumStringValues(key.get(), &enumOk);
+    if (!enumOk) {
+        // Cannot see the existing values: writing a slot blindly could clobber a foreign
+        // policy entry or duplicate ours. Refuse rather than guess.
+        *failDetail = c.forcelist_key_path + QStringLiteral(" (could not read existing values)");
+        return false;
+    }
     QString slot;
     for (const auto& v : values) {
         if (isOurForcelistData(v.data)) {
@@ -390,7 +404,12 @@ int forcelistPresence(const ExtensionInstallConfig& c) {
     if (s != ERROR_SUCCESS) {
         return -1;
     }
-    for (const auto& v : enumStringValues(key.get())) {
+    bool enumOk = false;
+    const auto values = enumStringValues(key.get(), &enumOk);
+    if (!enumOk) {
+        return -1;  // read error: never downgrade an unreadable key to "absent"
+    }
+    for (const auto& v : values) {
         if (isOurForcelistData(v.data)) {
             return 1;
         }
@@ -434,7 +453,12 @@ ForcelistRemoval removeOurForcelistEntries(const QString& forcelist_key_path) {
             out.read_error = true;
             return out;
         }
-        values = enumStringValues(key.get());
+        bool enumOk = false;
+        values = enumStringValues(key.get(), &enumOk);
+        if (!enumOk) {
+            out.read_error = true;  // truncated view: refuse rather than claim a clean removal
+            return out;
+        }
     }
     RegKey wkey;
     if (!openOrCreate(forcelist_key_path, wkey)) {
@@ -491,18 +515,21 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
         return r;
     }
 
+    // Native messaging host FIRST: point Chrome at our host manifest before writing any
+    // force-install policy. If host registration fails we return here having written no
+    // forcelist entry, so a force-install policy is never left stranded without its
+    // native messaging host (fail closed).
+    if (!registerNativeHostKey(config_)) {
+        r.summary = QStringLiteral("Could not register native host key");
+        r.detail = config_.native_host_key_path;
+        return r;
+    }
+
     // Force-install policy entry (idempotent: reuse our slot if already present).
     QString failDetail;
     if (!writeForcelistEntry(config_, &failDetail)) {
         r.summary = QStringLiteral("Could not write force-install policy entry");
         r.detail = failDetail;
-        return r;
-    }
-
-    // Native messaging host: default value points Chrome at our host manifest.
-    if (!registerNativeHostKey(config_)) {
-        r.summary = QStringLiteral("Could not register native host key");
-        r.detail = config_.native_host_key_path;
         return r;
     }
 

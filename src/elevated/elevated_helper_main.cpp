@@ -324,6 +324,31 @@ ElevatedPowerShellConfig elevatedPowerShellConfig(const QJsonObject& payload) {
     return config;
 }
 
+// Resolve powershell.exe to its absolute path under the system directory. Launching an
+// unqualified "powershell.exe" resolves via PATH, which an attacker who controls a PATH
+// entry (or the working directory) could hijack -- especially dangerous in an elevated
+// process. Returns an empty string on any failure so the caller fails closed rather than
+// falling back to the unqualified name.
+QString resolveSystemPowerShellPath() {
+#ifdef _WIN32
+    wchar_t system_dir[MAX_PATH];
+    const UINT len = GetSystemDirectoryW(system_dir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        sak::logError("ElevatedHelper: GetSystemDirectoryW failed: {}", GetLastError());
+        return {};
+    }
+    const QString dir = QString::fromWCharArray(system_dir, static_cast<int>(len));
+    const QString path = dir + QStringLiteral("\\WindowsPowerShell\\v1.0\\powershell.exe");
+    if (!QFile::exists(path)) {
+        sak::logError("ElevatedHelper: PowerShell not found at '{}'", path.toStdString());
+        return {};
+    }
+    return path;
+#else
+    return QStringLiteral("powershell.exe");
+#endif
+}
+
 QStringList elevatedPowerShellArgs(const QString& command) {
     return {QStringLiteral("-NoProfile"),
             QStringLiteral("-ExecutionPolicy"),
@@ -390,6 +415,12 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
         return elevatedPowerShellFailure(data, QStringLiteral("PowerShell command is empty"));
     }
 
+    const QString powershell_path = resolveSystemPowerShellPath();
+    if (powershell_path.isEmpty()) {
+        return elevatedPowerShellFailure(
+            data, QStringLiteral("Could not resolve system PowerShell path"));
+    }
+
     QElapsedTimer timer;
     timer.start();
 
@@ -401,7 +432,7 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
 
     bool started = false;
     sak::ProcessStreamingRequest request;
-    request.program = QStringLiteral("powershell.exe");
+    request.program = powershell_path;
     request.args = elevatedPowerShellArgs(config.command);
     request.timeout_ms = config.timeout_ms;
     configureElevatedPowerShellProgress(&request, &progress);

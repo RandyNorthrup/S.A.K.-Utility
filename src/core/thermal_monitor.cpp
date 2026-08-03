@@ -106,8 +106,15 @@ void ThermalMonitor::clearHistory() {
 }
 
 bool ThermalMonitor::hasCpuTemperature() const {
-    for (const auto& reading : m_history) {
-        if (reading.component == QLatin1String("CPU Package")) {
+    if (m_history.isEmpty()) {
+        return false;
+    }
+    // Readings from a single poll share one timestamp and sit contiguously at the
+    // tail of the history. Inspect only that most-recent poll so a stale CPU entry
+    // from an earlier cycle never reports a currently-present CPU sensor.
+    const QDateTime latest = m_history.back().timestamp;
+    for (auto it = m_history.crbegin(); it != m_history.crend() && it->timestamp == latest; ++it) {
+        if (it->component == QLatin1String("CPU Package")) {
             return true;
         }
     }

@@ -187,8 +187,15 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
         }
     } while (status == ERROR_MORE_DATA && !m_cancelled.load());
 
-    // Reached a terminal NERR_Success (or the user cancelled) with every returned
-    // buffer consumed: a complete read, not a silently truncated one.
+    // A cancel can break the ERROR_MORE_DATA loop (or truncate a buffer mid-append) before
+    // every share was read. Fail closed: report ok=false so callers never treat a truncated
+    // list as a complete enumeration.
+    if (m_cancelled.load()) {
+        return shares;  // ok stays false: partial/cancelled result, not authoritative
+    }
+
+    // Reached a terminal NERR_Success with every returned buffer consumed: a complete read,
+    // not a silently truncated one.
     ok = true;
     return shares;
 }

@@ -11,6 +11,7 @@
 
 #include <QtGlobal>
 
+#include <cstdlib>
 #include <stdexcept>
 
 WorkerBase::WorkerBase(QObject* parent) : QThread(parent) {}
@@ -27,10 +28,22 @@ void WorkerBase::stopAndJoin() noexcept {
         return;
     }
     requestStop();
-    if (!wait(sak::kTimeoutThreadShutdownMs)) {
-        sak::logError("Worker thread did not stop within 15s -- forcing termination");
-        terminate();
-        wait(sak::kTimeoutThreadTerminateMs);
+    if (wait(sak::kTimeoutThreadShutdownMs)) {
+        return;
+    }
+    // Cooperative stop failed. terminate() is a last resort (it can corrupt the
+    // worker's own state), but a still-live thread about to run execute() into
+    // freed members is worse. If even the post-terminate join fails the thread
+    // is genuinely still running -- there is no safe way to proceed past this
+    // point, so abort loudly rather than silently returning into a
+    // use-after-free that would corrupt memory unpredictably.
+    sak::logError("Worker thread did not stop within 15s -- forcing termination");
+    terminate();
+    if (!wait(sak::kTimeoutThreadTerminateMs)) {
+        sak::logError(
+            "Worker thread did not terminate after 5s -- aborting to avoid "
+            "use-after-free on freed worker state");
+        std::abort();
     }
 }
 

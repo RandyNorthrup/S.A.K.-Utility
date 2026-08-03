@@ -120,6 +120,45 @@ std::wstring claimUniqueStressFile(const QString& drive) {
     CloseHandle(claim);
     return wpath;
 }
+
+/// @brief Reopen the already-claimed stress file ONCE for the whole run, without
+///        traversing a reparse point.
+/// @return The pinned handle, or INVALID_HANDLE_VALUE if the open failed or the name
+///         resolved to a reparse point.
+/// @note claimUniqueStressFile() exclusively created the file via CREATE_NEW.
+///       Re-creating the guessable path with CREATE_ALWAYS every loop would follow a
+///       symlink or junction swapped in between iterations; a single pinned handle,
+///       opened with FILE_FLAG_OPEN_REPARSE_POINT and verified not to be a reparse
+///       point, can only ever touch the file we claimed.
+HANDLE openClaimedStressFile(const std::wstring& path) {
+    HANDLE h =
+        CreateFileW(path.c_str(),
+                    GENERIC_WRITE | GENERIC_READ,
+                    0,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return INVALID_HANDLE_VALUE;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h, &info) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        CloseHandle(h);
+        return INVALID_HANDLE_VALUE;
+    }
+    return h;
+}
+
+/// @brief Fill a disk-stress block buffer with reproducible pseudo-random data.
+void fillDiskStressBuffer(uint8_t* buf, size_t size) {
+    std::mt19937 rng(kDiskStressRandomSeed);
+    auto* data32 = reinterpret_cast<uint32_t*>(buf);
+    for (size_t i = 0; i < size / sizeof(uint32_t); ++i) {
+        data32[i] = rng();
+    }
+}
 #endif
 
 }  // anonymous namespace
@@ -493,40 +532,41 @@ void StressTestWorker::runDiskStress() {
         return;
     }
 
-    // Fill buffer
-    std::mt19937 rng(kDiskStressRandomSeed);
-    auto* data32 = reinterpret_cast<uint32_t*>(buf);
-    for (size_t i = 0; i < kBlockSize / sizeof(uint32_t); ++i) {
-        data32[i] = rng();
+    // Fill buffer with reproducible pseudo-random data.
+    fillDiskStressBuffer(buf, kBlockSize);
+
+    // Pin ONE handle to the claimed file for the whole run instead of re-creating
+    // the guessable path with CREATE_ALWAYS every loop (which would follow a reparse
+    // point swapped in between iterations). See openClaimedStressFile.
+    HANDLE h = openClaimedStressFile(wpath);
+    if (h == INVALID_HANDLE_VALUE) {
+        logError("Disk stress: could not open claimed test file -- refusing to overwrite");
+        m_result.disk_errors = 1;
+        _aligned_free(buf);
+        DeleteFileW(wpath.c_str());
+        return;
     }
 
     uint64_t total_bytes_written = 0;
     int disk_errors = 0;
 
     while (!childrenShouldStop()) {
-        HANDLE h = CreateFileW(wpath.c_str(),
-                               GENERIC_WRITE | GENERIC_READ,
-                               0,
-                               nullptr,
-                               CREATE_ALWAYS,
-                               FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
-                               nullptr);
-
-        if (h == INVALID_HANDLE_VALUE) {
+        // Rewind and overwrite the same pinned file each pass.
+        LARGE_INTEGER zero{};
+        if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
             ++disk_errors;
-            logError("Disk stress: failed to create test file");
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            continue;
+            logError("Disk stress: failed to rewind test file");
+            break;
         }
 
         // Write phase
         disk_errors += writeDiskStressFile(h, buf, kBlockSize, kFileSize, total_bytes_written);
 
         FlushFileBuffers(h);
-        CloseHandle(h);
     }
 
     // Cleanup
+    CloseHandle(h);
     _aligned_free(buf);
     DeleteFileW(wpath.c_str());
 

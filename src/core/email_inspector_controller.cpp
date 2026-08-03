@@ -40,6 +40,27 @@ bool writeReportFile(const QString& path, const QByteArray& content, const char*
     }
     return true;
 }
+
+/// Accumulate per-item-type totals from the folder tree into the report statistics.
+/// Folders are classified by their container class (mail folders -- IPF.Note or an
+/// unset class -- count as emails); walked recursively so subfolders are included.
+void accumulateFolderStats(const sak::PstFolderTree& tree, EmailReportGenerator::ReportData& data) {
+    for (const auto& folder : tree) {
+        const QString& cls = folder.container_class;
+        if (cls.startsWith(QStringLiteral("IPF.Contact"), Qt::CaseInsensitive)) {
+            data.total_contacts += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.Appointment"), Qt::CaseInsensitive)) {
+            data.total_calendar_items += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.Task"), Qt::CaseInsensitive)) {
+            data.total_tasks += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.StickyNote"), Qt::CaseInsensitive)) {
+            data.total_notes += folder.content_count;
+        } else {
+            data.total_emails += folder.content_count;
+        }
+        accumulateFolderStats(folder.children, data);
+    }
+}
 }  // namespace
 
 // ============================================================================
@@ -77,6 +98,22 @@ void EmailInspectorController::setState(State new_state) {
     if (m_state != new_state) {
         m_state = new_state;
         Q_EMIT stateChanged(new_state);
+    }
+}
+
+bool EmailInspectorController::isBusyWithBackgroundOp() const {
+    switch (m_state) {
+    case State::Idle:
+    case State::LoadingFolderItems:
+    case State::LoadingItemDetail:
+    case State::LoadingProperties:
+        // Idle, or a parser-serialized navigation load already in flight: safe to
+        // dispatch the next navigation call.
+        return false;
+    default:
+        // Opening / Searching / Exporting / profile ops / report: a background task
+        // or file open is reading the parser; navigating now would race its QFile.
+        return true;
     }
 }
 
@@ -155,6 +192,10 @@ sak::PstFileInfo EmailInspectorController::fileInfo() const {
 // ============================================================================
 
 void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
+    if (isBusyWithBackgroundOp()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingFolderItems);
         m_pst_parser->loadFolderItems(folder_node_id, offset, limit);
@@ -165,6 +206,10 @@ void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offs
 }
 
 void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
+    if (isBusyWithBackgroundOp()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingItemDetail);
         m_pst_parser->loadItemDetail(item_node_id);
@@ -176,6 +221,10 @@ void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
 }
 
 void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
+    if (isBusyWithBackgroundOp()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingProperties);
         m_pst_parser->loadItemProperties(item_node_id);
@@ -187,6 +236,10 @@ void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
 
 void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                                                      int attachment_index) {
+    if (isBusyWithBackgroundOp()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->loadAttachmentContent(message_node_id, attachment_index);
     } else if (m_file_type == FileType::Mbox) {
@@ -345,24 +398,34 @@ void EmailInspectorController::generateReport(const QString& output_path,
     data.discovered_profiles = m_cached_profiles;
     data.searches_performed = m_search_count;
     data.total_search_hits = m_total_search_hits;
+    // Populate the per-item-type totals from the cached folder tree so the report's
+    // statistics section is not left at zero (B7-B).
+    accumulateFolderStats(m_cached_folder_tree, data);
 
-    bool any_written = false;
-
+    // Both outputs must succeed: a report where only one of HTML/JSON was written is a
+    // partial, misleading deliverable, so surface which output failed and fail closed
+    // rather than reporting the report generated (B7-B).
     const QString html_path = output_path + QStringLiteral("/email_report.html");
-    any_written |=
+    const bool html_ok =
         writeReportFile(html_path, m_report_generator->generateHtml(data).toUtf8(), "HTML");
 
     const QString json_path = output_path + QStringLiteral("/email_report.json");
-    any_written |= writeReportFile(json_path, m_report_generator->generateJson(data), "JSON");
+    const bool json_ok = writeReportFile(json_path, m_report_generator->generateJson(data), "JSON");
 
-    if (any_written) {
+    if (html_ok && json_ok) {
         sak::logInfo("Report generated at: {}", output_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Report saved to %1").arg(output_path));
         Q_EMIT reportGenerated(output_path);
     } else {
-        const auto message = QStringLiteral(
-            "Report generation failed: "
-            "could not write any files");
+        QStringList failed;
+        if (!html_ok) {
+            failed.append(QStringLiteral("HTML"));
+        }
+        if (!json_ok) {
+            failed.append(QStringLiteral("JSON"));
+        }
+        const auto message = QStringLiteral("Report generation failed: could not write %1")
+                                 .arg(failed.join(QStringLiteral(", ")));
         sak::logError("Report: {}", message.toStdString());
         Q_EMIT errorOccurred(message);
     }

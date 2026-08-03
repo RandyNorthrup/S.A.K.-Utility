@@ -96,22 +96,23 @@ QString adapterTypeFromIfType(ULONG ifType) {
     }
 }
 
-bool tryQueryAdapterAddresses(std::unique_ptr<uint8_t[]>& buffer,
-                              PIP_ADAPTER_ADDRESSES& addresses,
-                              ULONG& result) {
+// Populates `result` with the terminal GetAdaptersAddresses status. The caller checks that
+// out-param for success/failure, so this helper reports nothing via its return.
+void queryAdapterAddresses(std::unique_ptr<uint8_t[]>& buffer,
+                           PIP_ADAPTER_ADDRESSES& addresses,
+                           ULONG& result) {
     ULONG bufferSize = kInitialBufferSize;
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
 
     result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
     if (result != ERROR_BUFFER_OVERFLOW) {
-        return true;
+        return;
     }
 
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
     result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
-    return true;
 }
 
 void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
@@ -292,7 +293,7 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
     std::unique_ptr<uint8_t[]> buffer;
     PIP_ADAPTER_ADDRESSES addresses = nullptr;
     ULONG result = NO_ERROR;
-    tryQueryAdapterAddresses(buffer, addresses, result);
+    queryAdapterAddresses(buffer, addresses, result);
 
     if (result != NO_ERROR) {
         Q_EMIT errorOccurred(

@@ -31,6 +31,7 @@ private Q_SLOTS:
     void findRules_afterEnumeration();
     void portsOverlap_unknownExpressionOverlapsConservatively();
     void rulesConflict_requiresAllSelectorsToOverlap();
+    void localPortsCoverPort_emptyAndWildcardCoverAllPorts();
 };
 
 void TestFirewallRuleAuditor::construction_default() {
@@ -199,6 +200,21 @@ void TestFirewallRuleAuditor::rulesConflict_requiresAllSelectorsToOverlap() {
     // Same service still conflicts (overlapping traffic).
     blockSvc.serviceName = QStringLiteral("ServiceA");
     QVERIFY(FirewallRuleAuditor::rulesConflict(allowSvc, blockSvc));
+}
+
+void TestFirewallRuleAuditor::localPortsCoverPort_emptyAndWildcardCoverAllPorts() {
+    // B9-12: an empty LocalPorts is the Windows default "no port restriction" ==
+    // ALL ports, so the RDP/SMB gap checks must treat it as a wildcard. Previously
+    // an all-ports allow rule (empty LocalPorts) slipped past the gap check.
+    QVERIFY(FirewallRuleAuditor::localPortsCoverPort(QString(), 3389));
+    QVERIFY(FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("*"), 445));
+    // Concrete ports: covered iff the parsed set contains the port.
+    QVERIFY(FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("3389"), 3389));
+    QVERIFY(FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("440-450"), 445));
+    QVERIFY(!FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("80,443"), 3389));
+    // A named-service expression that parses to no ports does NOT cover 445 here
+    // (gap analysis needs the specific port present, unlike conflict overlap).
+    QVERIFY(!FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("RPC"), 445));
 }
 
 QTEST_MAIN(TestFirewallRuleAuditor)

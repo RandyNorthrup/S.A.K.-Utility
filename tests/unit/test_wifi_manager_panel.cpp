@@ -26,8 +26,10 @@ private Q_SLOTS:
 void WifiManagerPanelTests::normalSsidProducesScript() {
     const QString script = WifiManagerPanel::buildWindowsScript("MyNetwork", "pw", "WPA2", false);
     QVERIFY(!script.isEmpty());
-    QVERIFY(script.contains(QStringLiteral("netsh wlan add profile")));
-    QVERIFY(script.contains(QStringLiteral("netsh wlan connect name=\"MyNetwork\"")));
+    // netsh is invoked by its absolute System32 path (anti-hijack), so match the
+    // command + args rather than a bare "netsh" token.
+    QVERIFY(script.contains(QStringLiteral("netsh.exe\" wlan add profile")));
+    QVERIFY(script.contains(QStringLiteral("wlan connect name=\"MyNetwork\"")));
 }
 
 // P-W10 (SSID injection): '%' must be doubled so it is not expanded as an

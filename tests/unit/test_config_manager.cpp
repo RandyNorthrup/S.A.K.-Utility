@@ -52,6 +52,9 @@ private Q_SLOTS:
     void imageFlasherValidationMode_setGet();
     void imageFlasherBufferSize_setGet();
 
+    // Getter-side invariant enforcement (mirror setter invariants on read)
+    void typedGetters_reclampOutOfRangeStoredValues();
+
 
     // Clear
     void clear_removesAllKeys();
@@ -221,6 +224,39 @@ void ConfigManagerTests::imageFlasherBufferSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setImageFlasherBufferSize(2048);
     QCOMPARE(mgr.getImageFlasherBufferSize(), 2048);
+}
+
+// ============================================================================
+// Getter-side invariant enforcement
+// ============================================================================
+
+// A stored value can be out of range (older config, hand-edited INI, foreign
+// writer) even though the setters reject bad input. The typed getters must
+// re-clamp on read and hand back the default rather than the invalid value.
+void ConfigManagerTests::typedGetters_reclampOutOfRangeStoredValues() {
+    auto& mgr = sak::ConfigManager::instance();
+
+    // Poke invalid values straight into the store, bypassing the setter guards.
+    mgr.setValue("backup/thread_count", -5);
+    QCOMPARE(mgr.getBackupThreadCount(), 4);
+
+    mgr.setValue("duplicate/minimum_file_size", qint64{-1});
+    QCOMPARE(mgr.getDuplicateMinimumFileSize(), qint64{0});
+
+    mgr.setValue("duplicate/keep_strategy", QString());
+    QCOMPARE(mgr.getDuplicateKeepStrategy(), QString("oldest"));
+
+    mgr.setValue("image_flasher/validation_mode", QString());
+    QCOMPARE(mgr.getImageFlasherValidationMode(), QString("full"));
+
+    mgr.setValue("image_flasher/buffer_size", 0);
+    QVERIFY(mgr.getImageFlasherBufferSize() > 0);
+
+    mgr.setValue("image_flasher/large_drive_threshold", -10);
+    QCOMPARE(mgr.getImageFlasherLargeDriveThreshold(), 128);
+
+    mgr.setValue("image_flasher/max_concurrent_writes", 0);
+    QCOMPARE(mgr.getImageFlasherMaxConcurrentWrites(), 1);
 }
 
 // ============================================================================

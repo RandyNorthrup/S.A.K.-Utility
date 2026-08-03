@@ -157,7 +157,10 @@ BrowserBridgeSession::Outgoing BrowserBridgeSession::beginCommand(const QString&
     if (!outstanding_id_.isEmpty()) {
         return refuse(QStringLiteral("A browser action is already in progress."));
     }
-    if (ref_index_stale_ && arguments.contains(QStringLiteral("ref"))) {
+    // Both ref endpoints are gated: browser_drag targets a second element via to_ref, so a
+    // stale snapshot must refuse an action carrying EITHER ref, not just the primary ref.
+    if (ref_index_stale_ && (arguments.contains(QStringLiteral("ref")) ||
+                             arguments.contains(QStringLiteral("to_ref")))) {
         return refuse(
             QStringLiteral("The page changed since the last snapshot; call browser_snapshot "
                            "again before acting on an element."));

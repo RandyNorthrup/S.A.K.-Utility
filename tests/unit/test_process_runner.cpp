@@ -6,6 +6,7 @@
 
 #include "sak/process_runner.h"
 
+#include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QtTest/QtTest>
 
@@ -21,6 +22,7 @@ private Q_SLOTS:
     void runProcess_timeout();
     void runProcess_timeoutKillsChildTree();
     void runProcess_cancellation();
+    void runProcess_cancellationKillsChild();
 
     // runPowerShell
     void runPowerShell_simpleScript();
@@ -117,6 +119,49 @@ void ProcessRunnerTests::runProcess_cancellation() {
                                   [&shouldCancel]() -> bool { return shouldCancel; });
 
     QVERIFY(result.cancelled);
+}
+
+// CODEX-2 HIGH (process_runner.cpp:67): cancel/timeout teardown must never
+// fire-and-forget. A cancel of a long-lived child must actually terminate it
+// (via the tree kill, or the QProcess::kill fallback when the tree kill cannot
+// be launched) rather than leaving it running while reporting cancelled. The
+// child sleeps far longer than the wait below, so a returned+gone process
+// proves the teardown really killed it instead of just detaching.
+void ProcessRunnerTests::runProcess_cancellationKillsChild() {
+#ifndef Q_OS_WIN
+    QSKIP("Process teardown assertion is Windows-specific");
+#else
+    QElapsedTimer timer;
+    timer.start();
+
+    bool shouldCancel = false;
+    qint64 childPid = -1;
+    sak::ProcessStreamingRequest request;
+    request.program = QStringLiteral("cmd.exe");
+    request.args = {QStringLiteral("/C"), QStringLiteral("ping -n 60 127.0.0.1")};
+    request.timeout_ms = 60'000;
+    request.should_cancel = [&shouldCancel]() -> bool {
+        return shouldCancel;
+    };
+    request.on_started = [&](qint64 pid) {
+        childPid = pid;
+        shouldCancel = true;  // request cancellation as soon as the child is up
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+
+    QVERIFY(result.cancelled);
+    // Cancellation must have returned promptly -- nowhere near the 60s child life.
+    QVERIFY2(timer.elapsed() < 20'000,
+             qPrintable(QStringLiteral("Cancel took %1 ms").arg(timer.elapsed())));
+
+    QVERIFY(childPid > 0);
+    QTest::qWait(750);  // let the async tree kill land
+    const auto tasklist = sak::runProcess(
+        "cmd.exe", {"/C", QStringLiteral("tasklist /FI \"PID eq %1\"").arg(childPid)}, 5000);
+    QVERIFY2(!tasklist.std_out.contains(QString::number(childPid)),
+             qPrintable(QStringLiteral("Cancelled child still running: %1").arg(tasklist.std_out)));
+#endif
 }
 
 // ============================================================================

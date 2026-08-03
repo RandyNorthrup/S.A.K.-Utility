@@ -113,10 +113,8 @@ private:
                                          const QString& output_dir);
 
     // Content builders
-    [[nodiscard]] QByteArray buildEmlContent(const sak::PstItemDetail& item);
     [[nodiscard]] QByteArray buildVcfContent(const sak::PstItemDetail& contact);
     [[nodiscard]] QByteArray buildIcsContent(const QVector<sak::PstItemDetail>& events);
-    [[nodiscard]] static QByteArray buildMboxEmlContent(const sak::MboxMessageDetail& msg);
 
     // Per-item helpers
     [[nodiscard]] bool writePlainText(const PlainTextWriteRequest& request, qint64& bytes_written);
@@ -180,10 +178,6 @@ private:
                          const QVector<uint64_t>& item_ids,
                          const sak::EmailExportConfig& config,
                          sak::EmailExportResult& result);
-    void exportSingleMboxMessage(MboxParser* parser,
-                                 int message_index,
-                                 const sak::EmailExportConfig& config,
-                                 sak::EmailExportResult& result);
     [[nodiscard]] bool exportOneMboxItem(const MboxItemExportContext& context,
                                          int message_index,
                                          int loop_index);

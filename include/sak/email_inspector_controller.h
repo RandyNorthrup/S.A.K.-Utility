@@ -175,6 +175,10 @@ Q_SIGNALS:
 
 private:
     void setState(State new_state);
+    /// True when a tracked background task (search/export/profile/report) or a file
+    /// open is in flight. Navigation must be refused in these states because it would
+    /// race the same parser QFile that the background task is reading (B7-B).
+    [[nodiscard]] bool isBusyWithBackgroundOp() const;
     void runTracked(std::function<void()> task);
     void connectPstSignals();
     void connectMboxSignals();

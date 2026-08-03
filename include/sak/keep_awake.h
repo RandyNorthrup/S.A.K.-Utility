@@ -5,8 +5,8 @@
 
 #include "sak/error_codes.h"
 
-#include <atomic>
 #include <expected>
+#include <mutex>
 
 #ifdef _WIN32
 
@@ -53,11 +53,32 @@ public:
      */
     [[nodiscard]] static bool isActive() noexcept;
 
+    /**
+     * @brief Translate accumulated PowerRequest bits to the Win32
+     *        EXECUTION_STATE bitmask (ES_CONTINUOUS always set).
+     * @param power_flags OR of PowerRequest values currently requested.
+     * @return EXECUTION_STATE bitmask (returned as unsigned so the header need
+     *         not pull in <windows.h>).
+     * @note Pure + static so the flag-union logic can be unit tested directly.
+     */
+    [[nodiscard]] static unsigned executionStateForFlags(int power_flags) noexcept;
+
 private:
-    // Reference count of outstanding requests. Overlapping guards on
-    // different threads each hold one; the real execution-state request is
-    // installed on 0 -> 1 and cleared only on the final 1 -> 0 transition.
-    static inline std::atomic<int> s_active_count{0};
+    // Serializes every execution-state transition so the refcount, the
+    // accumulated flag union, and the SetThreadExecutionState call stay
+    // coherent when overlapping guards start/stop from different threads.
+    static inline std::mutex s_mutex;
+
+    // Reference count of outstanding requests. The real execution-state request
+    // is installed on 0 -> 1 and cleared only on the final 1 -> 0 transition.
+    static inline int s_active_count{0};
+
+    // Union of PowerRequest bits requested by outstanding guards. A later
+    // request's flags (e.g. Display added after a System-only guard) are OR'd
+    // in and re-applied so they are no longer ignored. Accumulates while any
+    // guard is active (never downgraded early -- staying awake is the safe
+    // direction) and resets to 0 on full release.
+    static inline int s_active_flags{0};
 };
 
 /**
