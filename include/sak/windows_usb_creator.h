@@ -303,4 +303,6 @@ private:
     QString m_lastError;          ///< Protected by m_errorMutex
     QString m_volumeLabel;        // Volume label extracted from ISO
     QString m_diskNumber;         // Hardware disk number (e.g., "1" for PhysicalDrive1)
+    qint64 m_targetDiskSizeBytes{
+        -1};                      ///< Target disk capacity from guardTargetDiskSafe(); -1 = unknown
 };

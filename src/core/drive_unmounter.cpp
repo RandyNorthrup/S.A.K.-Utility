@@ -25,20 +25,29 @@ constexpr int kBackoffMultiplier = 2;
 constexpr int kRestartManagerProcessCapacity = 10;
 
 /// @brief Query the physical drive number for a volume path
+// Sentinels distinguishing the two failure modes so the caller can fail closed on
+// the dangerous one without over-blocking on the benign one:
+constexpr int kVolumeUnopenable = -1;   // could not open the volume (e.g. empty
+                                        // card-reader slot / no media) -- such a
+                                        // volume is never the mounted target.
+constexpr int kVolumeProbeFailed = -2;  // opened but the device-number IOCTL
+                                        // failed -- identity unknown; treat as
+                                        // possibly-on-target and fail closed.
+
 /// @param volumePath Volume GUID path (with or without trailing backslash)
-/// @return Drive number, or -1 on failure
+/// @return Drive number (>=0), kVolumeUnopenable, or kVolumeProbeFailed
 int queryVolumeDriveNumber(const wchar_t* volumePath) {
     Q_ASSERT(volumePath);
     HANDLE hVolume = CreateFileW(
         volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
 
     if (hVolume == INVALID_HANDLE_VALUE) {
-        return -1;
+        return kVolumeUnopenable;
     }
 
     STORAGE_DEVICE_NUMBER deviceNumber = {};
     DWORD bytesReturned = 0;
-    int result = -1;
+    int result = kVolumeProbeFailed;
 
     if (DeviceIoControl(hVolume,
                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
@@ -53,6 +62,37 @@ int queryVolumeDriveNumber(const wchar_t* volumePath) {
 
     CloseHandle(hVolume);
     return result;
+}
+
+// Classify one enumerated volume against the target drive. Returns true to keep
+// scanning; on an openable-but-unprobeable volume returns false and sets *fatal
+// (fail closed). Appends the volume (without trailing backslash) to @p volumes on
+// a match, then restores the trailing backslash for the next FindNextVolumeW.
+bool classifyEnumeratedVolume(wchar_t* volumeName,
+                              int driveNumber,
+                              QStringList& volumes,
+                              bool* fatal) {
+    const size_t length = wcslen(volumeName);
+    const bool hadSlash = (length > 0 && volumeName[length - 1] == L'\\');
+    if (hadSlash) {
+        volumeName[length - 1] = L'\0';
+    }
+    const int volumeDrive = queryVolumeDriveNumber(volumeName);
+    bool keepScanning = true;
+    if (volumeDrive == kVolumeProbeFailed) {
+        // Opened but its physical-disk identity could not be read -- it could be a
+        // mounted volume on the target we are about to raw-write, so fail closed.
+        // (An unopenable volume -- e.g. an empty card-reader slot -- is never the
+        // mounted target and is simply not matched.)
+        *fatal = true;
+        keepScanning = false;
+    } else if (volumeDrive == driveNumber) {
+        volumes.append(QString::fromWCharArray(volumeName));
+    }
+    if (hadSlash) {
+        volumeName[length - 1] = L'\\';
+    }
+    return keepScanning;
 }
 
 }  // anonymous namespace
@@ -85,13 +125,9 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
         sak::logError(m_lastError.toStdString());
         return false;
     }
-    if (volumes.isEmpty()) {
-        sak::logInfo(QString("No volumes found on drive, proceeding").toStdString());
-        return true;
-    }
-
-    // Step 2: Prevent auto-mount (fail closed: the persistent offline attribute is
-    // the only guard against remount once volume locks are released in step 4).
+    // Step 2: Set the persistent offline attribute BEFORE releasing any volume
+    // locks -- and even when the disk currently has no volumes -- so Windows cannot
+    // auto-mount the partitions we write mid-flash. Fail closed if it can't be set.
     if (!preventAutoMount(driveNumber)) {
         m_lastError = QString("Failed to prevent auto-mount on drive %1: %2")
                           .arg(driveNumber)
@@ -99,6 +135,13 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
         Q_EMIT statusMessage("Failed to prevent auto-mount; aborting");
         sak::logError(m_lastError.toStdString());
         return false;
+    }
+
+    if (volumes.isEmpty()) {
+        sak::logInfo(QString("No volumes on drive %1; offline attribute set")
+                         .arg(driveNumber)
+                         .toStdString());
+        return true;
     }
 
     // Step 3: Lock and dismount each volume
@@ -188,20 +231,21 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
     }
 
     do {
-        // Remove trailing backslash for CreateFile
-        size_t length = wcslen(volumeName);
-        if (length > 0 && volumeName[length - 1] == L'\\') {
-            volumeName[length - 1] = L'\0';
+        bool fatal = false;
+        if (!classifyEnumeratedVolume(volumeName, driveNumber, volumes, &fatal)) {
+            if (fatal && enumerationOk != nullptr) {
+                *enumerationOk = false;
+            }
+            FindVolumeClose(hFind);
+            return volumes;
         }
-
-        if (queryVolumeDriveNumber(volumeName) == driveNumber) {
-            volumes.append(QString::fromWCharArray(volumeName));
-        }
-
-        // Restore trailing backslash for FindNextVolume
-        volumeName[length - 1] = L'\\';
-
     } while (FindNextVolumeW(hFind, volumeName, ARRAYSIZE(volumeName)));
+
+    // FindNextVolumeW returns FALSE at the end of enumeration; only ERROR_NO_MORE_FILES
+    // is a clean end. Any other error means the list may be incomplete -> fail closed.
+    if (GetLastError() != ERROR_NO_MORE_FILES && enumerationOk != nullptr) {
+        *enumerationOk = false;
+    }
 
     FindVolumeClose(hFind);
     return volumes;

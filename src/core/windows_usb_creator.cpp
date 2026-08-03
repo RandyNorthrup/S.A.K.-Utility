@@ -127,38 +127,101 @@ bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString&
         return false;
     }
 
-    // Engine-level safety gate: never DiskPart-clean the OS boot/system disk.
+    // Engine-level safety gate: never DiskPart-clean the OS boot/system disk. This
+    // also captures the target capacity into m_targetDiskSizeBytes.
     if (!guardTargetDiskSafe(diskNumber)) {
+        return false;
+    }
+
+    // Capacity gate BEFORE any destructive DiskPart clean: an undersized disk must
+    // be rejected here, not cleaned/formatted and only then failed at copy time.
+    // The extracted Windows payload is approximately the ISO size, so require the
+    // ISO to fit the disk (necessary condition; fail closed if capacity unknown).
+    const qint64 isoBytes = QFileInfo(isoPath).size();
+    if (m_targetDiskSizeBytes <= 0 || isoBytes <= 0 || isoBytes > m_targetDiskSizeBytes) {
+        setError(QString("Target disk %1 (%2 bytes) is too small for the ISO (%3 bytes)")
+                     .arg(diskNumber)
+                     .arg(m_targetDiskSizeBytes)
+                     .arg(isoBytes));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
         return false;
     }
 
     return true;
 }
 
+namespace {
+struct DiskSafetyRow {
+    bool isBoot = false;
+    bool isSystem = false;
+    bool isReadOnly = false;
+    qint64 sizeBytes = -1;
+};
+
+// Parse a single "True"/"False" token (case-insensitive). Returns false if it is
+// neither -- an unrecognized value must fail closed, never default to "safe".
+bool parseTriBool(const QString& field, bool* value) {
+    const QString t = field.trimmed();
+    if (t.compare(QStringLiteral("True"), Qt::CaseInsensitive) == 0) {
+        *value = true;
+        return true;
+    }
+    if (t.compare(QStringLiteral("False"), Qt::CaseInsensitive) == 0) {
+        *value = false;
+        return true;
+    }
+    return false;
+}
+
+// Parse the "IsBoot|IsSystem|IsReadOnly|Size" probe row. Fails closed (returns
+// false) on a wrong field count, an unparseable flag, or a non-positive size, so
+// a short/malformed row can never be read as "not boot/system, safe to erase".
+bool parseDiskSafetyRow(const QString& out, DiskSafetyRow& row) {
+    const QStringList parts = out.split(QLatin1Char('|'));
+    if (parts.size() != 4) {
+        return false;
+    }
+    if (!parseTriBool(parts.at(0), &row.isBoot) || !parseTriBool(parts.at(1), &row.isSystem) ||
+        !parseTriBool(parts.at(2), &row.isReadOnly)) {
+        return false;
+    }
+    bool sizeOk = false;
+    row.sizeBytes = parts.at(3).trimmed().toLongLong(&sizeOk);
+    return sizeOk && row.sizeBytes > 0;
+}
+}  // namespace
+
 bool WindowsUSBCreator::guardTargetDiskSafe(const QString& diskNumber) {
     // diskNumber is already validated as a pure integer by the caller.
+    m_targetDiskSizeBytes = -1;
     const QString query =
         QString(
             "try { $d = Get-Disk -Number %1 -ErrorAction Stop; "
-            "Write-Output ('{0}|{1}|{2}' -f $d.IsBoot, $d.IsSystem, $d.IsReadOnly) } "
+            "Write-Output ('{0}|{1}|{2}|{3}' -f $d.IsBoot, $d.IsSystem, $d.IsReadOnly, $d.Size) } "
             "catch { Write-Output 'ERROR' }")
             .arg(diskNumber);
     const auto result = sak::runPowerShell(
         query, sak::kTimeoutProcessShortMs, true, false, [this]() { return m_cancelled.load(); });
     const QString out = result.std_out.trimmed();
-    // Fail closed: if the disk cannot be verified, refuse to erase it.
-    if (result.timed_out || result.cancelled || out.isEmpty() || out == QStringLiteral("ERROR")) {
+    // Fail closed: the probe must have run to a clean exit (exit 0, not timed out,
+    // not cancelled) AND produced parseable output. A non-zero exit whose stdout
+    // merely happens to be non-empty must NOT be accepted as a verification.
+    if (!result.completedSuccessfully() || out.isEmpty() || out == QStringLiteral("ERROR")) {
         setError(QString("Could not verify target disk %1 is safe to erase").arg(diskNumber));
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
         return false;
     }
-    const QStringList parts = out.split(QLatin1Char('|'));
-    const auto isTrue = [&parts](int index) {
-        return parts.value(index).trimmed().compare(QStringLiteral("True"), Qt::CaseInsensitive) ==
-               0;
-    };
-    if (isTrue(0) || isTrue(1) || isTrue(2)) {
+    DiskSafetyRow row;
+    if (!parseDiskSafetyRow(out, row)) {
+        setError(QString("Malformed/unverifiable disk-safety output for disk %1: '%2'")
+                     .arg(diskNumber, out));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    if (row.isBoot || row.isSystem || row.isReadOnly) {
         setError(QString("Refusing to erase disk %1: it is the current OS boot/system disk or is "
                          "read-only")
                      .arg(diskNumber));
@@ -166,6 +229,7 @@ bool WindowsUSBCreator::guardTargetDiskSafe(const QString& diskNumber) {
         Q_EMIT failed(lastError());
         return false;
     }
+    m_targetDiskSizeBytes = row.sizeBytes;
     return true;
 }
 
