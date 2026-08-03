@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 #include <windows.h>
 
@@ -103,6 +104,64 @@ void markIncompleteVerification(sak::ValidationResult& result, int verified, int
                 .arg(expected));
     }
 }
+
+// Parse the physical-drive number from a "\\.\PhysicalDriveN" path; -1 if absent.
+int parseTargetDriveNumber(const QString& path) {
+    const QString prefix = QStringLiteral("PhysicalDrive");
+    const int idx = path.lastIndexOf(prefix);
+    if (idx < 0) {
+        return -1;
+    }
+    bool ok = false;
+    const int number = path.mid(idx + prefix.size()).toInt(&ok);
+    return ok ? number : -1;
+}
+
+// Defense-in-depth OS-disk self-guard: does physical drive @p driveNumber back the
+// running %WINDIR% volume? Returns true ONLY on a positive match. The authoritative
+// fail-closed guard is FlashCoordinator; this independent check just ensures a
+// FlashWorker constructed directly (bypassing the coordinator) still cannot raw-
+// write the current system disk. An indeterminate probe returns false (proceed) so
+// it never blocks a legitimate flash the coordinator already cleared.
+bool physicalDriveBacksWindows(int driveNumber) {
+    if (driveNumber < 0) {
+        return false;
+    }
+    wchar_t winDir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+        return false;
+    }
+    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
+    HANDLE hVol = CreateFileW(
+        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVol == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    constexpr DWORD kMaxExtents = 16;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(hVol,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(hVol);
+    if (!ok) {
+        return false;
+    }
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
+        if (static_cast<int>(extents->Extents[i].DiskNumber) == driveNumber) {
+            return true;
+        }
+    }
+    return false;
+}
 }  // namespace
 
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
@@ -177,6 +236,12 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::file_not_found);
     }
 
+    // Defense in depth: refuse to raw-write the running OS disk even if this worker
+    // was constructed directly, bypassing FlashCoordinator's authoritative guard.
+    if (refuseIfTargetIsOsDisk()) {
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
     // Fail closed when the image cannot fit (oversized write would clobber the
     // whole device before the tail write fails at end-of-media).
     if (!ensureImageFitsTarget()) {
@@ -195,19 +260,8 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
 
     Q_EMIT writeCompleted(m_bytesWritten.load(std::memory_order_relaxed));
 
-    // Verify if enabled
-    if (m_verificationEnabled && !stopRequested()) {
-        sak::ValidationResult result = verifyImage();
-        Q_EMIT verificationCompleted(result);
-
-        if (!result.passed) {
-            sak::logError("Verification failed");
-            // Don't emit error() here -- verificationCompleted already carries
-            // the failure info, and the coordinator handles it via
-            // onWorkerCompleted(). Emitting error() would double-count.
-            cleanupFlashResources();
-            return std::unexpected(sak::error_code::operation_cancelled);
-        }
+    if (auto verified = runVerificationStage(); !verified) {
+        return verified;
     }
 
     // Cleanup
@@ -227,6 +281,35 @@ void FlashWorker::cleanupFlashResources() {
     m_imageSource->close();
 }
 
+auto FlashWorker::runVerificationStage() -> std::expected<void, sak::error_code> {
+    if (!m_verificationEnabled || stopRequested()) {
+        return {};
+    }
+    sak::ValidationResult result = verifyImage();
+    Q_EMIT verificationCompleted(result);
+    if (!result.passed) {
+        sak::logError("Verification failed");
+        // Do NOT emit error() here -- verificationCompleted already carries the failure
+        // info and the coordinator handles it via onWorkerCompleted(); a second signal
+        // would double-count the drive as failed.
+        cleanupFlashResources();
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+    return {};
+}
+
+bool FlashWorker::refuseIfTargetIsOsDisk() {
+    if (!physicalDriveBacksWindows(parseTargetDriveNumber(m_targetDevice))) {
+        return false;
+    }
+    sak::logError(QString("Refusing raw write to %1: it backs the current OS disk")
+                      .arg(m_targetDevice)
+                      .toStdString());
+    Q_EMIT error("Refusing to write the current OS disk");
+    cleanupFlashResources();
+    return true;
+}
+
 bool FlashWorker::ensureImageFitsTarget() {
     // Fail closed: the device capacity MUST be known before writing. A previous
     // "capacity unknown -> write anyway, it fails at end-of-device" fallback would
@@ -238,12 +321,14 @@ bool FlashWorker::ensureImageFitsTarget() {
         cleanupFlashResources();
         return false;
     }
-    // Fail closed on an undetermined image size (e.g. a compressed stream whose
-    // decompressed length is unknown): without a known size the capacity gate
-    // cannot bound the write, so refuse rather than risk clobbering the device.
-    if (m_totalBytes < 0) {
-        sak::logError("Refusing to flash: could not determine the image size");
-        Q_EMIT error("Could not determine the image size");
+    // Fail closed on an undetermined (<0) OR empty (0) image size. An undetermined
+    // size (e.g. a compressed stream whose decompressed length is unknown) leaves
+    // the capacity gate unable to bound the write. A zero-length image would write
+    // nothing yet pass an empty-hash verify as a false "success" -- refuse it here
+    // too (defense in depth; the coordinator also rejects it up front).
+    if (m_totalBytes <= 0) {
+        sak::logError("Refusing to flash: image size is unknown or zero");
+        Q_EMIT error("Image size is unknown or empty");
         cleanupFlashResources();
         return false;
     }
@@ -394,9 +479,15 @@ bool FlashWorker::lockVolume() {
 
 bool FlashWorker::unlockVolume() {
     DWORD bytesReturned = 0;
-    DeviceIoControl(
+    // Report the real outcome instead of an unconditional true. Non-fatal on the
+    // cleanup path (a physical-drive handle may hold no volume lock to release), but
+    // the caller should not be told the unlock succeeded when it did not.
+    const BOOL ok = DeviceIoControl(
         m_deviceHandle, FSCTL_UNLOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
-    return true;
+    if (!ok) {
+        sak::logInfo("Volume unlock not performed (physical-drive target / no lock held)");
+    }
+    return ok != 0;
 }
 
 bool FlashWorker::dismountVolume() {
@@ -457,6 +548,14 @@ bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 
     // Fail closed on bogus geometry rather than dividing by zero / under-padding.
     if (sectorSize <= 0) {
         sak::logError(QString("Invalid sector size for padding: %1").arg(sectorSize).toStdString());
+        return false;
+    }
+    // Fail closed on a negative valid-byte count. A negative bytesRead would make the
+    // zero-fill loop below write buffer[i] at NEGATIVE indices (out-of-bounds/UB), and
+    // -100 % 512 != 0 would even reach that loop. A valid count is never negative.
+    if (bytesRead < 0) {
+        sak::logError(
+            QString("Invalid negative bytesRead for padding: %1").arg(bytesRead).toStdString());
         return false;
     }
     if (bytesRead % sectorSize == 0) {
@@ -561,14 +660,16 @@ bool FlashWorker::finalizeWrite() {
     const qint64 written = m_bytesWritten.load(std::memory_order_relaxed);
     sak::logInfo(QString("Wrote %1 bytes").arg(written).toStdString());
 
-    // Fail closed on a truncated source: a premature zero-length read breaks the
-    // write loop; without this length check a short or corrupt image would report
-    // success. Padding only ever grows the tail, so a complete write has written
-    // >= m_totalBytes.
-    if (!stopRequested() && written < m_totalBytes) {
+    // Fail closed on a truncated source. Compare the DECOMPRESSED CONTENT length
+    // (m_contentBytesWritten, before sector padding) against the expected size --
+    // NOT m_bytesWritten, which includes up to sectorSize-1 padding bytes and would
+    // mask a sub-sector tail truncation (a source shrunk by <512 bytes mid-write
+    // would still pad up to >= m_totalBytes and pass).
+    const qint64 content = m_contentBytesWritten;
+    if (!stopRequested() && content < m_totalBytes) {
         sak::logError(
-            QString("Incomplete write: wrote %1 of %2 expected bytes (source ended early)")
-                .arg(written)
+            QString("Incomplete write: wrote %1 of %2 expected content bytes (source ended early)")
+                .arg(content)
                 .arg(m_totalBytes)
                 .toStdString());
         return false;

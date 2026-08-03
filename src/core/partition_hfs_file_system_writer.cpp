@@ -26,6 +26,10 @@ namespace {
         blockers->append(QStringLiteral("Image path is required"));
         return nullptr;
     }
+    // image_only is the explicit raw-target opt-in: a raw device is refused unless the caller
+    // clears it (the sak_hfs_writer_cli --allow-raw-target flag maps to image_only=false, paired
+    // with --confirm-target -> options.target_write_confirmed, which the HfsReader write engine
+    // independently requires before mutating). A raw path left image_only fails closed here.
     if (options.image_only && isWindowsRawDevicePath(image_path)) {
         blockers->append(QStringLiteral("HFS+ %1 is image-only; raw targets require a "
                                         "separate hardware gate")
@@ -39,6 +43,23 @@ namespace {
         blockers->append(QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
     }
     return image;
+}
+
+// Flush @p image's buffers to durable storage after a successful *FromImage write commit,
+// recording a blocker on @p result when the flush fails. A *FromImage write owns the image
+// handle and tears it down when the returned QIODevice unique_ptr leaves scope; that close()
+// flush is best-effort and cannot surface a failure, so a raw/image write-back that FlushFile
+// -Buffers rejects (I/O error, removable write-cache failure, device yanked) would otherwise be
+// reported as success. Fail closed: only flush a write that itself reported no blocker.
+template <typename ResultT>
+[[nodiscard]] ResultT flushHfsImageWrite(QIODevice* image, ResultT result) {
+    QString flushError;
+    if (result.blockers.isEmpty() && !flushDeviceBuffers(image, &flushError)) {
+        result.blockers.append(
+            QStringLiteral("HFS+ image durable flush failed: %1").arg(flushError));
+        result.ok = false;
+    }
+    return result;
 }
 
 }  // namespace
@@ -72,7 +93,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::overwriteFileSameSizeF
     if (!image) {
         return result;
     }
-    return overwriteFileSameSize(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(), overwriteFileSameSize(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithinAllocatedBlocks(
@@ -104,7 +125,8 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithinAlloc
     if (!image) {
         return result;
     }
-    return replaceFileWithinAllocatedBlocks(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceFileWithinAllocatedBlocks(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceResourceForkWithinAllocatedBlocks(
@@ -137,7 +159,8 @@ PartitionHfsFileSystemWriter::replaceResourceForkWithinAllocatedBlocksFromImage(
     if (!image) {
         return result;
     }
-    return replaceResourceForkWithinAllocatedBlocks(image.get(), path, data, options);
+    return flushHfsImageWrite(
+        image.get(), replaceResourceForkWithinAllocatedBlocks(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowth(
@@ -169,7 +192,8 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithAllocat
     if (!image) {
         return result;
     }
-    return replaceFileWithAllocationGrowth(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceFileWithAllocationGrowth(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowth(
@@ -217,7 +241,8 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceCompressedFileC
     if (!image) {
         return result;
     }
-    return replaceCompressedFileContent(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceCompressedFileContent(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult
@@ -236,7 +261,8 @@ PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowthFromImage(
     if (!image) {
         return result;
     }
-    return replaceResourceForkWithAllocationGrowth(image.get(), path, data, options);
+    return flushHfsImageWrite(
+        image.get(), replaceResourceForkWithAllocationGrowth(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocks(
@@ -263,7 +289,8 @@ PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocksFromImage(
     if (!image) {
         return result;
     }
-    return truncateFileWithinAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(image.get(),
+                              truncateFileWithinAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::truncateResourceForkWithinAllocatedBlocks(
@@ -290,7 +317,8 @@ PartitionHfsFileSystemWriter::truncateResourceForkWithinAllocatedBlocksFromImage
     if (!image) {
         return result;
     }
-    return truncateResourceForkWithinAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(
+        image.get(), truncateResourceForkWithinAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::renameOrMoveCatalogEntry(
@@ -325,7 +353,8 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::renameOrMoveCatalogEnt
     if (!image) {
         return result;
     }
-    return renameOrMoveCatalogEntry(image.get(), source_path, destination_path, options);
+    return flushHfsImageWrite(
+        image.get(), renameOrMoveCatalogEntry(image.get(), source_path, destination_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFile(
@@ -350,7 +379,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFileFromIma
     if (!image) {
         return result;
     }
-    return createEmptyFile(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), createEmptyFile(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithData(
@@ -382,7 +411,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithDataFrom
     if (!image) {
         return result;
     }
-    return createFileWithData(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(), createFileWithData(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPathStreamed(
@@ -416,7 +445,9 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPath
     if (!image) {
         return result;
     }
-    return createFileFromHostPathStreamed(image.get(), path, host_file_path, size, options);
+    return flushHfsImageWrite(
+        image.get(),
+        createFileFromHostPathStreamed(image.get(), path, host_file_path, size, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlink(
@@ -448,7 +479,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlinkFromImage
     if (!image) {
         return result;
     }
-    return createSymlink(image.get(), path, target, options);
+    return flushHfsImageWrite(image.get(), createSymlink(image.get(), path, target, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlink(
@@ -481,7 +512,8 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlinkFromImag
     if (!image) {
         return result;
     }
-    return createHardlink(image.get(), existing_path, link_path, options);
+    return flushHfsImageWrite(image.get(),
+                              createHardlink(image.get(), existing_path, link_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlink(
@@ -510,7 +542,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlinkFromImag
     if (!image) {
         return result;
     }
-    return deleteHardlink(image.get(), link_path, options);
+    return flushHfsImageWrite(image.get(), deleteHardlink(image.get(), link_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFile(
@@ -535,7 +567,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFileFromIma
     if (!image) {
         return result;
     }
-    return deleteEmptyFile(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), deleteEmptyFile(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocks(
@@ -561,7 +593,8 @@ PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
     if (!image) {
         return result;
     }
-    return deleteFileAndReleaseAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(image.get(),
+                              deleteFileAndReleaseAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocks(
@@ -587,7 +620,8 @@ PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocksFromImage
     if (!image) {
         return result;
     }
-    return deleteFolderTreeAndReleaseAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(
+        image.get(), deleteFolderTreeAndReleaseAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFolder(
@@ -612,7 +646,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFolderFromI
     if (!image) {
         return result;
     }
-    return createEmptyFolder(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), createEmptyFolder(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFolder(
@@ -637,7 +671,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFolderFromI
     if (!image) {
         return result;
     }
-    return deleteEmptyFolder(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), deleteEmptyFolder(image.get(), path, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createInlineAttributeValue(
@@ -673,7 +707,9 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createInlineAttri
     if (!image) {
         return result;
     }
-    return createInlineAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(),
+        createInlineAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replayJournal(
@@ -699,7 +735,7 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replayJournalFromImage
     if (!image) {
         return result;
     }
-    return replayJournal(image.get(), options);
+    return flushHfsImageWrite(image.get(), replayJournal(image.get(), options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createForkAttributeValue(
@@ -735,7 +771,8 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createForkAttribu
     if (!image) {
         return result;
     }
-    return createForkAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(), createForkAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::deleteAttributeValue(
@@ -769,7 +806,8 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::deleteAttributeVa
     if (!image) {
         return result;
     }
-    return deleteAttributeValue(image.get(), file_id, attribute_name, options);
+    return flushHfsImageWrite(image.get(),
+                              deleteAttributeValue(image.get(), file_id, attribute_name, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::replaceInlineAttributeValue(
@@ -805,7 +843,9 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::replaceInlineAttr
     if (!image) {
         return result;
     }
-    return replaceInlineAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(),
+        replaceInlineAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult
@@ -844,8 +884,9 @@ PartitionHfsFileSystemWriter::replaceForkAttributeValueWithinAllocatedBlocksFrom
     if (!image) {
         return result;
     }
-    return replaceForkAttributeValueWithinAllocatedBlocks(
-        image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceForkAttributeValueWithinAllocatedBlocks(
+                                  image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult
@@ -886,8 +927,9 @@ PartitionHfsFileSystemWriter::replaceForkAttributeValueWithAllocationGrowthFromI
     if (!image) {
         return result;
     }
-    return replaceForkAttributeValueWithAllocationGrowth(
-        image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceForkAttributeValueWithAllocationGrowth(
+                                  image.get(), file_id, attribute_name, data, options));
 }
 
 }  // namespace sak

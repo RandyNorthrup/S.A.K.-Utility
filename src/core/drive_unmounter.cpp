@@ -331,9 +331,20 @@ bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
         // Success with a zero-length buffer means there are no mount points.
         return true;
     }
-    if (GetLastError() != ERROR_MORE_DATA || charCount == 0) {
-        // Any other failure means "no path names"; nothing to delete.
-        return true;
+    const DWORD firstError = GetLastError();
+    if (firstError != ERROR_MORE_DATA) {
+        // Do NOT treat access-denied / invalid-parameter as "no mount points" (a
+        // fail-open coercion that would drop this volume's mount points silently).
+        // Fail closed: report the real failure. ERROR_MORE_DATA is the ONLY expected
+        // outcome here (the zero-length probe could not hold the path-name list).
+        sak::logWarning(QString("GetVolumePathNamesForVolumeNameW probe failed for %1: error %2")
+                            .arg(volumePath)
+                            .arg(firstError)
+                            .toStdString());
+        return false;
+    }
+    if (charCount == 0) {
+        return true;  // MORE_DATA with a zero required length -> genuinely no mount points.
     }
 
     std::vector<wchar_t> names(charCount, L'\0');
@@ -478,48 +489,13 @@ bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAt
     return false;
 }
 
-int DriveUnmounter::getDriveNumberForVolume(const QString& volumePath) const {
-    Q_ASSERT(!volumePath.isEmpty());
-    std::wstring wVolumePath = volumePath.toStdWString();
-
-    // Remove trailing backslash
-    if (!wVolumePath.empty() && wVolumePath.back() == L'\\') {
-        wVolumePath.pop_back();
-    }
-
-    HANDLE hVolume = CreateFileW(wVolumePath.c_str(),
-                                 0,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                 nullptr,
-                                 OPEN_EXISTING,
-                                 0,
-                                 nullptr);
-
-    if (hVolume == INVALID_HANDLE_VALUE) {
-        return -1;
-    }
-
-    STORAGE_DEVICE_NUMBER deviceNumber = {};
-    DWORD bytesReturned = 0;
-
-    if (!DeviceIoControl(hVolume,
-                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                         nullptr,
-                         0,
-                         &deviceNumber,
-                         sizeof(deviceNumber),
-                         &bytesReturned,
-                         nullptr)) {
-        CloseHandle(hVolume);
-        return -1;
-    }
-
-    CloseHandle(hVolume);
-    return static_cast<int>(deviceNumber.DeviceNumber);
-}
-
 bool DriveUnmounter::closeAllHandles(int driveNumber) {
     Q_ASSERT(driveNumber >= 0);
+    // Releasing the exclusive volume locks here (before the raw write) is BY DESIGN:
+    // the authoritative, persistent concurrent-access guard is the DISK_ATTRIBUTE_OFFLINE
+    // set by preventAutoMount(), which survives the flash and blocks Windows auto-mount.
+    // The volume locks were belt-and-suspenders; they cannot be held across the separate
+    // FlashWorker write handle anyway. Fail-closed protection does not depend on them.
     for (auto it = m_lockedVolumes.constBegin(); it != m_lockedVolumes.constEnd(); ++it) {
         if (it.value() != INVALID_HANDLE_VALUE) {
             CloseHandle(it.value());

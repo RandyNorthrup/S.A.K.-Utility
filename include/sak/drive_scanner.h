@@ -49,6 +49,18 @@ struct DriveScanResult {
     bool enumeration_ok{false};
 };
 
+/**
+ * @brief Tri-state result of a fail-closed physical-disk probe.
+ *
+ * Undetermined MUST be treated as unsafe by safety-critical callers (fail closed):
+ * an inability to inspect the disk is never reported as "safe".
+ */
+enum class DiskProbe {
+    No,
+    Yes,
+    Undetermined
+};
+
 }  // namespace sak
 
 /**
@@ -66,7 +78,12 @@ struct DriveScanResult {
  * - Volume mount point detection
  * - Read-only/write-protection detection
  *
- * Thread-Safety: All methods are thread-safe. Signals emitted on main thread.
+ * Thread-Safety: NOT thread-safe. Instance state (m_drives, the timer, the
+ * notification window/handle, and the s_instance singleton) is mutated only on
+ * the owning (GUI) thread -- construct, start/stop, and query from that thread.
+ * The one exception is the static enumerateDrivesOnce(), which touches no instance
+ * state and is safe to call from a worker thread. Signals are emitted on the
+ * owning thread.
  *
  * Example:
  * @code
@@ -173,12 +190,6 @@ Q_SIGNALS:
      */
     void drivesUpdated(const QList<sak::DriveInfo>& drives);
 
-    /**
-     * @brief Emitted on error during scanning
-     * @param error Error message
-     */
-    void scanError(const QString& error);
-
 private Q_SLOTS:
     void onRefreshTimer();
     void onScanFinished();
@@ -219,7 +230,22 @@ private:
     /// @brief True if the given volume root (drive letter OR \\?\Volume{GUID}\ path) holds a
     ///        Windows installation. Uses GetFileAttributesW so it works for unmounted volumes.
     static bool hasWindowsIndicators(const QString& root);
+    /// @brief True if the given volume root carries Windows boot-loader files
+    ///        (bootmgfw.efi / bootmgr / BOOTNXT). On split-boot hardware the ESP that
+    ///        boots the OS can live on a SEPARATE physical disk from \Windows, so this
+    ///        catches a boot/system disk the \Windows-volume check alone would miss.
+    static bool hasBootManagerIndicators(const QString& root);
 
+public:
+    /// @brief Fail-closed engine guard: is physical drive @p driveNumber boot-critical?
+    ///        DiskProbe::Yes when a NON-removable volume on it carries boot-loader files;
+    ///        No when it provably does not (or is removable -- a bootable USB re-flash
+    ///        target); Undetermined when volume enumeration failed. Independent of the
+    ///        \Windows disk, so it also protects a split-boot ESP on another disk. Public so
+    ///        FlashCoordinator's engine-level OS-disk guard can consult it.
+    [[nodiscard]] static sak::DiskProbe physicalDriveBootProbe(int driveNumber);
+
+private:
     // These per-drive queries are pure (no instance state); they are static so the
     // headless enumerateDrivesOnce() path can share them without constructing a scanner.
     static sak::DriveInfo queryDriveInfo(int driveNumber);
@@ -239,12 +265,19 @@ private:
     /// @brief Inspectable roots for every volume on @p driveNumber: the mount path(s) when the
     ///        volume is mounted, otherwise the \\?\Volume{GUID}\ path so an UNMOUNTED Windows
     ///        partition is still inspected (closes the "system drive missed" hazard).
-    static QStringList getVolumeRootsForDrive(int driveNumber);
+    /// @param enumerationOk Optional out-param set to false when the volume enumeration itself
+    ///        failed (FindFirstVolume/FindNextVolume error); lets a fail-closed caller refuse
+    ///        rather than treat an empty result as "no system/boot volumes".
+    static QStringList getVolumeRootsForDrive(int driveNumber, bool* enumerationOk = nullptr);
+    /// @brief Append the inspectable root(s) of one enumerated volume to @p roots when it
+    ///        lives on @p driveNumber (mount path(s) if mounted, else its GUID path).
+    static void appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots);
 
-    static LRESULT CALLBACK deviceNotificationProc(HWND hwnd,
-                                                   UINT message,
-                                                   WPARAM wParam,
-                                                   LPARAM lParam);
+    /// @brief True when two DriveInfo records for the same device differ in a user-visible
+    ///        property (size, block size, name, read-only, system, removable, mount points,
+    ///        volume label), so an in-place property change still emits drivesUpdated.
+    static bool driveInfoChanged(const sak::DriveInfo& a, const sak::DriveInfo& b);
+
     static LRESULT CALLBACK deviceChangeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
     QList<sak::DriveInfo> m_drives;

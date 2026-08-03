@@ -20,6 +20,7 @@
 #include <vector>
 
 class FlashWorker;
+class DriveUnmounter;
 
 namespace sak {
 
@@ -108,8 +109,11 @@ struct FlashResult {
  * 6. Verify each drive
  * 7. Report results
  *
- * Thread-Safety: Methods can be called from any thread.
- * Signals are emitted on the calling thread.
+ * Thread-Safety: the state/progress GETTERS (state(), progress(), isFlashing())
+ * are mutex-guarded and callable from any thread. startFlash()/cancel() drive the
+ * run and are intended to be called from a single (GUI) thread; startFlash refuses
+ * re-entry atomically while a run is active. Signals are emitted on the calling
+ * thread.
  *
  * Example:
  * @code
@@ -256,8 +260,22 @@ private:
     ///        on an unparseable drive number, a system-volume disk, or an
     ///        indeterminate probe -- never assumes "safe".
     bool passesOsDiskGuard(const QString& devicePath);
+    /// @brief Fail-closed boot/ESP-disk guard, independent of the %WINDIR% disk. True
+    ///        only when the drive provably does NOT carry the Windows boot loader;
+    ///        refuses on a boot disk OR an indeterminate probe. Protects a split-boot
+    ///        ESP that lives on a different physical disk than \Windows.
+    bool passesBootDiskGuard(const QString& devicePath, int driveNumber);
     bool unmountVolumes(const QStringList& targetDrives);
+    /// @brief Roll back (clear OFFLINE on) drives already offlined this run when a
+    ///        later target fails to unmount, so earlier targets are not stranded.
+    static void rollbackOfflinedDrives(DriveUnmounter& unmounter, const std::vector<int>& offlined);
+    /// @brief Atomically refuse re-entry and, if idle, claim the run by moving the
+    ///        state to Validating under the lock. Returns false if a run is active.
+    bool beginFlashClaim();
     void updateProgress();
+    /// Record one drive's success/failure into m_progress + m_result. Call with
+    /// m_mutex held. Returns the error message on failure (empty on success).
+    QString recordDriveCompletion(const QString& devicePath, const sak::ValidationResult& result);
     /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at
     /// finalize. Call with m_mutex held. (These were previously left at zero.)
     void finalizeResultMetrics();
@@ -296,6 +314,5 @@ private:
     std::atomic<bool> m_isCancelled;
 
     QStringList m_targetDrives;
-    QString m_sourceChecksum;
     QElapsedTimer m_flashTimer;  ///< Wall-clock for FlashResult::elapsedSeconds
 };

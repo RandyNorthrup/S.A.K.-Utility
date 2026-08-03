@@ -7,13 +7,13 @@
 #include "sak/windows_usb_creator.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QStorageInfo>
-#include <QTemporaryFile>
 #include <QThread>
 
 namespace {
@@ -34,6 +34,22 @@ constexpr int kBootableFlagVerifiedProgress = 95;
 constexpr int kFileCountVerifiedProgress = 98;
 }  // namespace
 
+bool WindowsUSBCreator::isSafeBundledExecutable(const QString& path, const QString& appDir) {
+    const QFileInfo fi(path);
+    // Must be a real, existing regular file -- never a symlink/reparse/junction.
+    if (!fi.exists() || !fi.isFile() || fi.isSymLink()) {
+        return false;
+    }
+    // The fully resolved path must live inside the resolved application directory,
+    // so a redirected/relative path can never point execution outside the tree.
+    const QString canonical = fi.canonicalFilePath();
+    const QString canonicalDir = QFileInfo(appDir).canonicalFilePath();
+    if (canonical.isEmpty() || canonicalDir.isEmpty()) {
+        return false;
+    }
+    return canonical.startsWith(canonicalDir, Qt::CaseInsensitive);
+}
+
 bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString& destPath) {
     Q_ASSERT(!sourcePath.isEmpty());
     Q_ASSERT(!destPath.isEmpty());
@@ -51,8 +67,12 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     QString appDir = QCoreApplication::applicationDirPath();
     QString sevenZipPath = appDir + "/tools/chocolatey/tools/7z.exe";
 
-    if (!QFile::exists(sevenZipPath)) {
-        m_lastError = QString("7z.exe not found at: %1").arg(sevenZipPath);
+    // Defense in depth: only execute the bundled 7z if it is a real regular file
+    // that canonically resides under the app directory -- never a symlink/reparse
+    // point that could redirect execution outside the install tree.
+    if (!isSafeBundledExecutable(sevenZipPath, appDir)) {
+        m_lastError =
+            QString("Refusing to run untrusted or missing 7z.exe at: %1").arg(sevenZipPath);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -140,7 +160,11 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
         m_volumeLabel = sak::sanitizeVolumeLabel(parseVolumeLabelFromOutput(label_result.std_out));
     }
 
-    // Default to WINDOWS if label not found
+    // Default to WINDOWS if label not found. Correct-by-design, not an error-hiding
+    // fallback: a volume MUST carry some name, the label is purely cosmetic (no
+    // bearing on bootability or data integrity), and this is a fixed safe constant
+    // -- never attacker-influenced. m_volumeLabel is reset per run in
+    // createBootableUSB(), so a prior run's label can no longer persist here.
     if (m_volumeLabel.isEmpty()) {
         m_volumeLabel = "WINDOWS";
         sak::logInfo(QString("Using default volume label: %1").arg(m_volumeLabel).toStdString());
@@ -524,6 +548,10 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
         return;
     }
 
+    // Best-effort by design: the volume label is cosmetic and has no bearing on
+    // bootability or data integrity, so a Set-Volume failure is logged but does NOT
+    // fail the creation (failing usable media over a cosmetic rename would be the
+    // harmful outcome). Every correctness-relevant property is verified elsewhere.
     if (label_result.exit_code == 0) {
         sak::logInfo("Volume label set successfully");
     } else {
@@ -554,12 +582,13 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
 
     cleanDrive = cleanDrive.toUpper();
 
-    // Resolve a runnable bcdboot: prefer the copy extracted onto the media, then
-    // the host's System32 copy. If neither exists we cannot configure boot, so we
-    // must NOT certify the media bootable (was: silently returned success).
-    const QString bcdbootPath = resolveBcdbootPath(cleanDrive);
+    // SECURITY: resolve bcdboot ONLY to the host's Authenticode-signed System32
+    // copy -- never a copy extracted from the (untrusted) ISO, which could be an
+    // attacker-planted binary that would then run elevated. If the host copy
+    // cannot be resolved we must NOT certify the media bootable.
+    const QString bcdbootPath = resolveBcdbootPath();
     if (bcdbootPath.isEmpty()) {
-        const QString err = "bcdboot.exe not found (media or host) -- cannot configure boot files";
+        const QString err = "Host System32 bcdboot.exe not found -- cannot configure boot files";
         setError(err);
         sak::logError(err.toStdString());
         return false;
@@ -572,18 +601,11 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
     return runBcdboot(bcdbootPath, cleanDrive);
 }
 
-QString WindowsUSBCreator::resolveBcdbootPath(const QString& cleanDrive) {
-    const QString mediaPath = QString("%1:\\sources\\recovery\\bcdboot.exe").arg(cleanDrive);
-    if (QFile::exists(mediaPath)) {
-        return mediaPath;
-    }
-    // %SystemRoot%\System32\bcdboot.exe is present on every running Windows.
-    const QString systemRoot = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
-    const QString hostPath = QDir(systemRoot).filePath("System32/bcdboot.exe");
-    if (QFile::exists(hostPath)) {
-        return QDir::toNativeSeparators(hostPath);
-    }
-    return {};
+QString WindowsUSBCreator::resolveBcdbootPath() {
+    // ONLY the host's %SystemRoot%\System32 bcdboot.exe (Authenticode-signed,
+    // present on every running Windows). A media-sourced copy is NEVER trusted or
+    // executed. %SystemRoot% is resolved with no C:\Windows fallback: fail closed.
+    return system32ExePath(QStringLiteral("bcdboot.exe"));
 }
 
 bool WindowsUSBCreator::bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode) {
@@ -593,6 +615,16 @@ bool WindowsUSBCreator::bcdbootReportsSuccess(bool timedOut, bool cancelled, int
 bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
     Q_ASSERT(!bcdbootPath.isEmpty());
     Q_ASSERT(!cleanDrive.isEmpty());
+    // KNOWN LIMITATIONS (tracked; see Codex-review-3 findings 4 and 5 -- fixing
+    // either is a design change beyond this file, so they are NOT silently masked
+    // here; the run is still gated on bcdboot's real exit below):
+    //  - #5: bcdboot's positional <source> must be a Windows directory (e.g.
+    //    X:\Windows). Install media has no \Windows tree, so a drive-root source
+    //    can make bcdboot error; a correct fix must supply a valid Windows source
+    //    (or drop bcdboot in favour of the ISO's own already-extracted BCD).
+    //  - #4: the media is NTFS with no FAT32 ESP / UEFI:NTFS shim, so /f ALL's UEFI
+    //    files may be unreadable by firmware that cannot boot NTFS. A universal fix
+    //    needs a FAT32 ESP or bundled UEFI:NTFS loader (Rufus-style).
     QStringList args;
     args << QString("%1:\\").arg(cleanDrive);
     args << "/s" << QString("%1:").arg(cleanDrive);
@@ -628,39 +660,25 @@ bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cl
 
 bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     Q_ASSERT(!diskNumber.isEmpty());
-    // Use diskpart to check if partition is active
-    QString diskpartScript = QString(
-                                 "select disk %1\n"
-                                 "select partition 1\n"
-                                 "detail partition\n")
-                                 .arg(diskNumber);
-
-    QTemporaryFile scriptFile;
-    if (!scriptFile.open()) {
-        sak::logError("Failed to create temporary diskpart script for verification");
+    // Integer-validate before interpolating into the diskpart script (same class of
+    // value as createBootableUSB validates), so no stray tokens can be injected.
+    static const QRegularExpression diskNumRe(QStringLiteral("^\\d{1,3}$"));
+    if (!diskNumRe.match(diskNumber).hasMatch()) {
+        m_lastError = QString("Invalid disk number for partition check: '%1'").arg(diskNumber);
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 
-    const QByteArray script_bytes = diskpartScript.toLocal8Bit();
-    if (scriptFile.write(script_bytes) != script_bytes.size()) {
-        sak::logError("Failed to write diskpart verification script");
+    const QString diskpartScript = QString(
+                                       "select disk %1\n"
+                                       "select partition 1\n"
+                                       "detail partition\n")
+                                       .arg(diskNumber);
+
+    QString output;
+    if (!runDiskpartScript(diskpartScript, sak::kTimeoutProcessLongMs, output)) {
         return false;
     }
-    scriptFile.flush();
-
-    const auto diskpart_result = sak::runProcess(QStringLiteral("cmd.exe"),
-                                                 {QStringLiteral("/c"),
-                                                  QStringLiteral("diskpart"),
-                                                  QStringLiteral("/s"),
-                                                  scriptFile.fileName()},
-                                                 sak::kTimeoutProcessLongMs,
-                                                 [this]() { return m_cancelled.load(); });
-    if (!diskpart_result.succeeded()) {
-        sak::logError("diskpart verification timed out");
-        return false;
-    }
-
-    QString output = diskpart_result.std_out;
     sak::logInfo(QString("Diskpart detail output: %1").arg(output).toStdString());
 
     // Match the VALUE, not just the label: `detail partition` always prints an "Active : No/Yes"
@@ -723,6 +741,18 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
         return false;
     }
 
+    // Identity pin: the drive letter must still map back to the ORIGINAL target
+    // disk. A hot-plug that reassigned the letter to a different disk would
+    // otherwise let us "verify" the wrong disk. Compare as integers so "1"/"01"
+    // never causes a spurious mismatch. Fail closed on any divergence.
+    if (diskNumber.toInt() != m_diskNumber.toInt()) {
+        m_lastError =
+            QString("VERIFICATION FAILED: drive %1 now maps to disk %2, not target disk %3")
+                .arg(cleanDrive, diskNumber, m_diskNumber);
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+
     return checkPartitionActive(diskNumber);
 }
 
@@ -731,6 +761,17 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath,
                                                   const QString& sevenZipPath) {
     sak::logInfo("Starting extraction integrity verification...");
     Q_EMIT statusChanged("Verifying extraction integrity...");
+
+    // TOCTOU immutability check: the user-selected ISO is re-opened here (and was
+    // re-opened during extraction). Confirm it has not been swapped/modified since
+    // it was pinned at validation -- fail closed on any size/mtime change.
+    const QFileInfo isoInfo(isoPath);
+    if (isoInfo.size() != m_isoSizeBytes ||
+        isoInfo.lastModified().toMSecsSinceEpoch() != m_isoModifiedMs) {
+        m_lastError = "ISO changed during processing (size/timestamp mismatch) -- aborting";
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
 
     // Get detailed file list from ISO with sizes
     QStringList listArgs;
@@ -791,7 +832,10 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
             bool ok = false;
             currentSize = trimmed.mid(kSevenZipSizePrefixLength).toLongLong(&ok);
             if (!ok) {
-                currentSize = 0;
+                // A malformed size must not degrade to 0 (which would then "match" a
+                // truncated/empty file on disk); mark it invalid so verification
+                // fails closed for that critical file.
+                currentSize = -1;
             }
             continue;
         }
@@ -815,43 +859,49 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
     return criticalFiles;
 }
 
+bool WindowsUSBCreator::criticalFileOnDiskMatches(const QPair<QString, qint64>& fileInfo,
+                                                  const QString& destPath) {
+    // A critical file whose expected (ISO) size is non-positive is malformed or
+    // zero-length; fail closed rather than letting a 0==0 match pass.
+    if (fileInfo.second <= 0) {
+        sak::logError(
+            QString("[ ]-- Invalid expected size for: %1").arg(fileInfo.first).toStdString());
+        return false;
+    }
+    // Normalize path from ISO (may use forward slashes); ensure trailing backslash.
+    QString relativePath = fileInfo.first;
+    relativePath.replace(QChar('/'), QChar('\\'));
+    QString basePath = destPath;
+    if (!basePath.endsWith("\\")) {
+        basePath += "\\";
+    }
+    const QFileInfo destFileInfo(basePath + relativePath);
+    if (!destFileInfo.exists()) {
+        sak::logError(QString("[ ]-- Missing file: %1").arg(fileInfo.first).toStdString());
+        return false;
+    }
+    if (destFileInfo.size() != fileInfo.second) {
+        sak::logError(QString("[ ]-- Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
+                          .arg(fileInfo.first)
+                          .arg(fileInfo.second)
+                          .arg(destFileInfo.size())
+                          .toStdString());
+        return false;
+    }
+    return true;
+}
+
 bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
     const QList<QPair<QString, qint64>>& criticalFiles, const QString& destPath) {
     int verifiedCount = 0;
     int failedCount = 0;
 
     for (const auto& fileInfo : criticalFiles) {
-        // Normalize path from ISO (may use forward slashes)
-        QString relativePath = fileInfo.first;
-        relativePath.replace(QChar('/'), QChar('\\'));
-
-        // Ensure destPath has trailing backslash
-        QString basePath = destPath;
-        if (!basePath.endsWith("\\")) {
-            basePath += "\\";
-        }
-
-        QString destFile = basePath + relativePath;
-
-        QFileInfo destFileInfo(destFile);
-        if (!destFileInfo.exists()) {
-            sak::logError(QString("[ ]-- Missing file: %1").arg(fileInfo.first).toStdString());
+        if (criticalFileOnDiskMatches(fileInfo, destPath)) {
+            verifiedCount++;
+        } else {
             failedCount++;
-            continue;
         }
-
-        qint64 destSize = destFileInfo.size();
-        if (destSize != fileInfo.second) {
-            sak::logError(QString("[ ]-- Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
-                              .arg(fileInfo.first)
-                              .arg(fileInfo.second)
-                              .arg(destSize)
-                              .toStdString());
-            failedCount++;
-            continue;
-        }
-
-        verifiedCount++;
     }
 
     sak::logInfo(QString("Verification complete: %1 files verified, %2 failures")

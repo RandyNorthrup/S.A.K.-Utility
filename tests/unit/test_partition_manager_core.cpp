@@ -1857,6 +1857,9 @@ private Q_SLOTS:
     void extFileSystemReader_listsDirectoriesAndReadsFiles();
     void extFileSystemReader_exportsDirectoriesRecursively();
     void extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths();
+    void extFileSystemReader_rejectsMalformedSuperblockGeometry();
+    void extFileSystemReader_rejectsUnknownIncompatFeature();
+    void extFileSystemReader_rejectsMalformedExtentTree();
     void hfsFileSystemReader_listsDirectoriesAndReadsFiles();
     void hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd();
     void hfsFileSystemReader_exportsDirectoriesAndResourceForks();
@@ -1895,8 +1898,10 @@ private Q_SLOTS:
     void hfsFileSystemWriter_createsHardlinksAndSymlinks();
     void hfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsFileSystemReader_rejectsCorruptMetadataChecksum();
+    void apfsFileSystemReader_rejectsUnknownVolumeIncompatFeature();
     void apfsWriter_computesAndVerifiesObjectChecksums();
     void apfsWriter_computesMultiChunkContainerGeometry();
+    void apfsWriter_geometryChunkCountDoesNotOverflowNearUint64Max();
     void apfsWriter_blocksOversizedGeneratedContainers();
     void apfsWriter_preflightFailsClosedUntilCertified();
     void partitionExecutor_honorsPreDispatchCancel();
@@ -2044,8 +2049,13 @@ private Q_SLOTS:
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
     void flushDeviceBuffers_surfacesFailureAndFlushesFile();
+    void rawDeviceIo_copyFileSparsePreservesContentAndSucceeds();
     void scriptBuilder_createImageEmitsDestinationGuard();
     void scriptBuilder_vssFallbackFailsClosedForVssCapableFs();
+    void scriptBuilder_waveCDriveLetterAndSizeFailClosed();
+    void scriptBuilder_waveCBackupAndCloneDurabilityFailClosed();
+    void scriptBuilder_waveCIdentityDismountImageGuardFailClosed();
+    void scriptBuilder_waveCHfsStagedWritebackFailsClosed();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
     void safetyValidator_blocksCreateImageVolumeGuidAliasToSource();
     void safetyValidator_restoreImageRequiresSizesAndOverwriteConfirmation();
@@ -3664,6 +3674,59 @@ void PartitionManagerCoreTests::extFileSystemReader_readsExtentMappedFilesAndBlo
         PartitionExtFileSystemReader::readFile(&buffer, QStringLiteral("/hello.txt"), 4);
     QVERIFY(!capped.ok);
     QVERIFY(capped.blockers.join(' ').contains(QStringLiteral("read cap")));
+}
+
+void PartitionManagerCoreTests::extFileSystemReader_rejectsMalformedSuperblockGeometry() {
+    // F17: a zero on-disk inode_size must fail closed, not silently default to 128 and slip past
+    // the geometry check.
+    QByteArray image = extReaderFixture();
+    writeLe16(&image, kTestExtSuperblockOffset + kTestExtInodeSizeOffset, 0);
+    QBuffer buffer(&image);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    const auto listing =
+        PartitionExtFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
+    QVERIFY(!listing.ok);
+    QVERIFY(listing.blockers.join(' ').contains(QStringLiteral("inode size")));
+}
+
+void PartitionManagerCoreTests::extFileSystemReader_rejectsUnknownIncompatFeature() {
+    // F18: an unrecognized INCOMPAT bit means the volume cannot be read correctly, so refuse it
+    // instead of parsing on regardless.
+    constexpr uint32_t kUnknownIncompatBit = 0x00'80'00'00;
+    QByteArray image = extReaderFixture();
+    writeLe32(&image,
+              kTestExtSuperblockOffset + kTestExtFeatureIncompatOffset,
+              kUnknownIncompatBit);
+    QBuffer buffer(&image);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    const auto listing =
+        PartitionExtFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
+    QVERIFY(!listing.ok);
+    QVERIFY(listing.blockers.join(' ').contains(QStringLiteral("unknown incompatible")));
+}
+
+void PartitionManagerCoreTests::extFileSystemReader_rejectsMalformedExtentTree() {
+    // F20: eh_entries exceeding eh_max is a structurally invalid extent header and must fail
+    // closed rather than reading whatever bytes follow as extent records.
+    const qsizetype extentHeader = testExtInodeOffset(12) + kTestExtInodeBlocksOffset;
+    QByteArray overCount = extReaderFixture(true);
+    writeLe16(&overCount, extentHeader + 2, 5);  // eh_entries=5 > eh_max=4
+    QBuffer overBuffer(&overCount);
+    QVERIFY(overBuffer.open(QIODevice::ReadOnly));
+    const auto overListing =
+        PartitionExtFileSystemReader::readFile(&overBuffer, QStringLiteral("/hello.txt"), 1024);
+    QVERIFY(!overListing.ok);
+    QVERIFY(overListing.blockers.join(' ').contains(QStringLiteral("exceeds node capacity")));
+
+    // A physical block outside the volume's block count is equally rejected.
+    QByteArray badPhysical = extReaderFixture(true);
+    writeLe32(&badPhysical, extentHeader + 20, 4096);  // physical block >> blocks_count (64)
+    QBuffer physicalBuffer(&badPhysical);
+    QVERIFY(physicalBuffer.open(QIODevice::ReadOnly));
+    const auto physicalRead =
+        PartitionExtFileSystemReader::readFile(&physicalBuffer, QStringLiteral("/hello.txt"), 1024);
+    QVERIFY(!physicalRead.ok);
+    QVERIFY(physicalRead.blockers.join(' ').contains(QStringLiteral("out-of-range")));
 }
 
 void PartitionManagerCoreTests::hfsFileSystemReader_listsDirectoriesAndReadsFiles() {
@@ -6926,6 +6989,20 @@ void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry()
     verifyApfsMultiCibTierGeometry();
 }
 
+void PartitionManagerCoreTests::apfsWriter_geometryChunkCountDoesNotOverflowNearUint64Max() {
+    // F34 regression: the chunk-count ceiling division must not wrap. A block_count within
+    // blocks_per_chunk-1 of UINT64_MAX would, under the naive (n + step - 1) / step form,
+    // overflow to a tiny quotient and grossly under-size the spaceman chunk map. The
+    // overflow-safe ceiling division must instead yield the true ceil(n / 32768).
+    constexpr uint64_t kBlocksPerChunk = 32'768;
+    constexpr uint64_t kNearMax = std::numeric_limits<uint64_t>::max() - 5;
+    const auto geometry = PartitionApfsWriter::computeContainerGeometry(kNearMax);
+    const uint64_t expected = kNearMax / kBlocksPerChunk +
+                              (kNearMax % kBlocksPerChunk != 0 ? 1 : 0);
+    QCOMPARE(geometry.chunk_count, expected);
+    QVERIFY(geometry.chunk_count > kNearMax / kBlocksPerChunk - 1);  // no wrap to a tiny value
+}
+
 PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
     PartitionApfsWriteOptions options;
     options.enable_experimental_writer = true;
@@ -7068,6 +7145,46 @@ bool tamperApfsBlockField(
                                    .value = value,
                                    .field32 = field32}) &&
            writeBytes(imagePath, image);
+}
+
+void PartitionManagerCoreTests::apfsFileSystemReader_rejectsUnknownVolumeIncompatFeature() {
+    // F16: the container path already rejects unknown incompat bits; the volume path must be
+    // symmetric. Build a valid image, set an unsupported volume-incompat bit (DATALESS_SNAPS)
+    // on the live APSB, re-stamp its object checksum, and confirm the reader now fails closed.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath =
+        QDir(temp.path()).filePath(QStringLiteral("apfs-unknown-incompat.img"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = imagePath,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAK Incompat"),
+         .options = certifiedApfsImageOnlyOptions()});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    const auto baseline =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 20);
+    QVERIFY2(baseline.ok, qPrintable(baseline.blockers.join(QStringLiteral("; "))));
+
+    QByteArray image = readBytes(imagePath);
+    constexpr qsizetype kVolumeIncompatOffset = 0x38;
+    constexpr uint64_t kDatalessSnapsBit = 0x00'00'00'00'00'00'00'02ULL;
+    const qsizetype apsbOffset = static_cast<qsizetype>(apfsApsbBlockOf(imagePath)) *
+                                 kTestApfsTamperBlockSize;
+    const uint64_t patched = readTestApfsLe64(image, apsbOffset + kVolumeIncompatOffset) |
+                             kDatalessSnapsBit;
+    QVERIFY(patchAndStampApfsBlock(&image,
+                                   {.block_offset = apsbOffset,
+                                    .field_offset = kVolumeIncompatOffset,
+                                    .value = patched,
+                                    .field32 = false}));
+    QVERIFY(writeBytes(imagePath, image));
+
+    const auto rejected =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 20);
+    QVERIFY(!rejected.ok);
+    QVERIFY(rejected.blockers.join(' ').contains(QStringLiteral("unsupported incompatible")));
 }
 
 void verifyApfsWriterBlockedByDefault(const PartitionFileSystemDetection& detection) {
@@ -17259,6 +17376,38 @@ void PartitionManagerCoreTests::flushDeviceBuffers_surfacesFailureAndFlushesFile
     file.close();
 }
 
+void PartitionManagerCoreTests::rawDeviceIo_copyFileSparsePreservesContentAndSucceeds() {
+    // F36 regression: copyFileSparse now flushes the destination durably before close (the
+    // FlushFileBuffers is folded into the success chain). This asserts the success path still
+    // completes and the copied bytes are byte-identical -- i.e. the added durable flush did not
+    // regress a normal, non-sparse copy.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString source = QDir(temp.path()).filePath(QStringLiteral("src.bin"));
+    const QString dest = QDir(temp.path()).filePath(QStringLiteral("dst.bin"));
+    QByteArray payload;
+    payload.reserve(8192);
+    for (int i = 0; i < 8192; ++i) {
+        payload.append(static_cast<char>(i * 31 + 7));
+    }
+    QFile in(source);
+    QVERIFY(in.open(QIODevice::WriteOnly));
+    QCOMPARE(in.write(payload), static_cast<qint64>(payload.size()));
+    in.close();
+
+    QString copyError;
+    QVERIFY2(sak::copyFileSparse(source, dest, &copyError), qPrintable(copyError));
+
+    QFile out(dest);
+    QVERIFY(out.open(QIODevice::ReadOnly));
+    QCOMPARE(out.readAll(), payload);
+    out.close();
+
+    // The destination must not already exist for a second copy (fail closed on CREATE_NEW).
+    QString reCopyError;
+    QVERIFY(!sak::copyFileSparse(source, dest, &reCopyError));
+}
+
 void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard() {
     // B2-13: Create Image must emit the runtime destination guard that resolves
     // the real volume identity of the destination and refuses if it lands on the
@@ -17309,6 +17458,142 @@ void PartitionManagerCoreTests::scriptBuilder_vssFallbackFailsClosedForVssCapabl
     QVERIFY(script.script.contains(QStringLiteral("DriveFormat")));
     QVERIFY(script.script.contains(
         QStringLiteral("refusing to reformat without a point-in-time-consistent backup")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_waveCDriveLetterAndSizeFailClosed() {
+    // Codex-3 F35: a Windows drive letter is strictly ASCII A-Z; a Unicode homoglyph
+    // (e.g. Cyrillic capital A, U+0410) must be rejected, not accepted via isLetter().
+    QVERIFY(PartitionScriptBuilder::isValidDriveLetter(QStringLiteral("A")));
+    QVERIFY(PartitionScriptBuilder::isValidDriveLetter(QStringLiteral("z")));
+    QVERIFY(!PartitionScriptBuilder::isValidDriveLetter(QString(QChar(0x0410))));
+    QVERIFY(!PartitionScriptBuilder::isValidDriveLetter(QStringLiteral("AB")));
+
+    // Codex-3 F26: a destructive DiskPart recreate must round the byte size UP to whole
+    // MiB so it never rebuilds a partition smaller than the source it just deleted. A
+    // 100 MiB + 1 byte source must request 101 MB (flooring would have requested 100).
+    PartitionScriptBuilder builder;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 3;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857601");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    QVERIFY(script.script.contains(QStringLiteral("$sourceSizeMb = 101")));
+    QVERIFY(!script.script.contains(QStringLiteral("$sourceSizeMb = 100")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_waveCBackupAndCloneDurabilityFailClosed() {
+    PartitionScriptBuilder builder;
+    // Codex-3 F6/F9: the backup mirror must fail closed on Robocopy mismatch/failure
+    // codes (>= 4, not just > 7) and the live (non-point-in-time) fallback must verify the
+    // backup against the source before the source is destroyed.
+    PartitionTarget diskTarget;
+    diskTarget.kind = PartitionTargetKind::Disk;
+    diskTarget.disk_number = 3;
+    QJsonObject backupPayload;
+    backupPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
+    backupPayload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    backupPayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    backupPayload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    backupPayload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto backup = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, diskTarget, backupPayload));
+    QVERIFY2(backup.valid(), qPrintable(backup.blockers.join(QStringLiteral("; "))));
+    QVERIFY(backup.script.contains(QStringLiteral("if ($code -ge 4)")));
+    QVERIFY(!backup.script.contains(QStringLiteral("if ($code -gt 7)")));
+    QVERIFY(backup.script.contains(
+        QStringLiteral("Live backup is incomplete or the source changed during copy")));
+
+    // Codex-3 F25: the clone/image byte copy must commit the target with a durable flush
+    // (Flush($true)/FlushFileBuffers), not the non-durable Flush().
+    PartitionTarget imageTarget;
+    imageTarget.kind = PartitionTargetKind::Disk;
+    imageTarget.disk_number = 0;
+    QJsonObject imagePayload;
+    imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, imageTarget, imagePayload));
+    QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
+    QVERIFY(image.script.contains(QStringLiteral("$out.Flush($true)")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFailClosed() {
+    PartitionScriptBuilder builder;
+    // Codex-3 F23: the runtime TOCTOU identity guard must also pin the on-disk offset and,
+    // when carried, the GPT partition GUID -- size + number alone let a recycled same-sized
+    // partition pass.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 1;
+    target.partition_number = 3;
+    target.size_bytes = 10 * 1024 * 1024;
+    target.offset_bytes = 1'048'576;
+    target.partition_guid = QStringLiteral("{11112222-3333-4444-5555-666677778888}");
+    QJsonObject formatPayload;
+    formatPayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    const auto fmt = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, target, formatPayload));
+    QVERIFY2(fmt.valid(), qPrintable(fmt.blockers.join(QStringLiteral("; "))));
+    QVERIFY(fmt.script.contains(QStringLiteral("Partition identity mismatch (offset)")));
+    QVERIFY(fmt.script.contains(QStringLiteral("[uint64]$p.Offset -ne [uint64]1048576")));
+    QVERIFY(fmt.script.contains(QStringLiteral("Partition identity mismatch (GUID)")));
+
+    // Codex-3 F10: APFS raw mutation dismount must not swallow terminating errors -- the
+    // blanket `catch {}` is gone; volume lookup is SilentlyContinue and a real dismount
+    // failure still propagates via -ErrorAction Stop.
+    PartitionTarget apfsTarget = extToolPartitionTarget();
+    apfsTarget.size_bytes = 128ULL * 1024ULL * 1024ULL;
+    QJsonObject apfsPayload = baseExtToolPayload();
+    apfsPayload[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    apfsPayload[QStringLiteral("label")] = QStringLiteral("SAK_APFS");
+    const auto apfs = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, apfsTarget, apfsPayload));
+    QVERIFY2(apfs.valid(), qPrintable(apfs.blockers.join(QStringLiteral("; "))));
+    QVERIFY(apfs.script.contains(QStringLiteral("$p | Get-Volume -ErrorAction SilentlyContinue")));
+    QVERIFY(!apfs.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
+
+    // Codex-3 F5: Create Image's destination off-source-disk guard must fail closed when
+    // the destination volume identity cannot be resolved (no swallow) and must enumerate the
+    // source disk with -ErrorAction Stop.
+    PartitionTarget imageTarget;
+    imageTarget.kind = PartitionTargetKind::Disk;
+    imageTarget.disk_number = 0;
+    QJsonObject imagePayload;
+    imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, imageTarget, imagePayload));
+    QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
+    QVERIFY(
+        image.script.contains(QStringLiteral("cannot resolve the destination volume identity")));
+    QVERIFY(image.script.contains(
+        QStringLiteral("Get-Partition -DiskNumber $srcDiskNumber -ErrorAction Stop")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_waveCHfsStagedWritebackFailsClosed() {
+    // Codex-3 F7: HFS staged write-back must fail CLOSED on an allocated range beyond the
+    // target size (no silent clipping), commit with a durable flush, and perform a real
+    // post-copy read-back verification (the surrounding comments assert one exists).
+    PartitionScriptBuilder builder;
+    const PartitionTarget target = extToolPartitionTarget();
+    QJsonObject hfsFormatPayload = baseExtToolPayload();
+    hfsFormatPayload[QStringLiteral("file_system")] = QStringLiteral("HFSX");
+    hfsFormatPayload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
+    const auto hfs = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, target, hfsFormatPayload));
+    QVERIFY2(hfs.valid(), qPrintable(hfs.blockers.join(QStringLiteral("; "))));
+    QVERIFY(hfs.script.contains(QStringLiteral("refusing to clip filesystem data")));
+    QVERIFY(hfs.script.contains(QStringLiteral("Assert-SakFileRangeReadBack")));
+    QVERIFY(hfs.script.contains(QStringLiteral("Post-copy read-back mismatch")));
+    QVERIFY(hfs.script.contains(QStringLiteral("$target.Flush($true)")));
+    QVERIFY(!hfs.script.contains(QStringLiteral("clipped={2}")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmation() {
@@ -17373,6 +17658,26 @@ void PartitionManagerCoreTests::
     const auto rawTargetScript = PartitionScriptBuilder().buildScript(operation);
     QVERIFY(!rawTargetScript.valid());
     QVERIFY(rawTargetScript.blockers.join(' ').contains(QStringLiteral("file path")));
+
+    // Codex review 3 / F4: the validator's raw-device classifier must recognize the same
+    // extended-length \\?\ device spellings the executor's raw writer opens, so a CreateImage
+    // to any of them is blocked as a raw destination rather than slipping past as a file path.
+    for (const auto& rawForm :
+         {QStringLiteral("\\\\?\\PhysicalDrive1"),
+          QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition0"),
+          QStringLiteral("\\\\?\\Volume{22222222-2222-2222-2222-222222222222}")}) {
+        operation.payload[QStringLiteral("target_path")] = rawForm;
+        preview = planner.previewOperation(inventory, operation);
+        QVERIFY2(!preview.canApply(), qPrintable(rawForm));
+        QVERIFY2(preview.blockers.join(' ').contains(QStringLiteral("file path")),
+                 qPrintable(rawForm));
+    }
+    // A \\?\Volume{GUID}\path\file form is an extended-length FILE path (separator after the
+    // closing brace), not a raw device, so it must NOT trip the raw-destination blocker.
+    operation.payload[QStringLiteral("target_path")] =
+        QStringLiteral("\\\\?\\Volume{22222222-2222-2222-2222-222222222222}\\images\\disk0.img");
+    preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.blockers.join(' ').contains(QStringLiteral("file path")));
 
     operation.payload[QStringLiteral("target_path")] = QStringLiteral("C:\\disk0.img");
     preview = planner.previewOperation(inventory, operation);
@@ -17506,6 +17811,14 @@ void PartitionManagerCoreTests::safetyValidator_requiresPartitionRegionCloneConf
 
     PartitionOperationPlanner planner;
     auto preview = planner.previewOperation(inventory, operation);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("overwrite confirmation")));
+
+    // Codex review 3 / F3: a stringly-typed "true" must NOT be coerced into a real
+    // confirmation. payloadBool now requires a genuine JSON bool, so the destructive clone
+    // still fails closed on the overwrite-confirmation blocker rather than proceeding.
+    operation.payload[QStringLiteral("target_wipe_confirmed")] = QStringLiteral("true");
+    preview = planner.previewOperation(inventory, operation);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("overwrite confirmation")));
 

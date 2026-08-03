@@ -56,7 +56,12 @@ struct ValidationResult {
  * - Automatic retry on transient errors
  * - Graceful cancellation
  *
- * Thread-Safety: All methods are thread-safe. Run() executes on worker thread.
+ * Thread-Safety: the progress GETTERS (bytesWritten(), speedMBps()) are atomic and
+ * readable from any thread while execute() runs on the worker thread. The setters
+ * (verification/validation-mode/buffer-size) must be configured BEFORE start().
+ * FlashWorker performs no OS-disk guard itself beyond a defense-in-depth self-check;
+ * the authoritative fail-closed guard is FlashCoordinator, which is the only intended
+ * constructor of this class.
  *
  * Example:
  * @code
@@ -197,6 +202,16 @@ private:
     bool openDevice();
     void closeDevice();
     void cleanupFlashResources();
+    /// @brief Defense-in-depth OS-disk self-guard. If the target physical drive backs
+    ///        the running %WINDIR% volume, emits error(), cleans up, and returns true
+    ///        (refused). Returns false to proceed. The authoritative fail-closed guard
+    ///        is FlashCoordinator; this only catches a direct, coordinator-bypassing
+    ///        construction and never blocks a flash the coordinator already cleared.
+    [[nodiscard]] bool refuseIfTargetIsOsDisk();
+    /// @brief Run the post-write verification stage (if enabled and not cancelled),
+    ///        emitting verificationCompleted. Returns an error (after cleanup) when
+    ///        verification fails; {} when it passes or is skipped.
+    [[nodiscard]] auto runVerificationStage() -> std::expected<void, sak::error_code>;
     /// @brief Fail-closed capacity gate: emits error()+cleans up and returns
     ///        false when the image is larger than the (known) device capacity.
     bool ensureImageFitsTarget();

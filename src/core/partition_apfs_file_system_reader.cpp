@@ -128,6 +128,18 @@ constexpr uint64_t kApfsSupportedContainerIncompat = kApfsContainerIncompatVersi
 constexpr uint64_t kApfsVolumeIncompatIncompleteRestore = 0x00'00'00'10;
 constexpr uint64_t kApfsVolumeIncompatCaseInsensitive =
     0x00'00'00'01;  // APFS_INCOMPAT_CASE_INSENSITIVE
+constexpr uint64_t kApfsVolumeIncompatNormalizationInsensitive =
+    0x00'00'00'08;  // APFS_INCOMPAT_NORMALIZATION_INSENSITIVE
+constexpr uint64_t kApfsVolumeIncompatSealed = 0x00'00'00'20;  // APFS_INCOMPAT_SEALED_VOLUME
+// Volume-incompat bits this read-only browser knows it can traverse correctly: case- and
+// normalization-insensitivity affect only name comparison (the reader reads names verbatim),
+// and a sealed volume is merely integrity-protected/read-only. INCOMPLETE_RESTORE is rejected
+// with its own message below; any bit outside this set (dataless snaps, encryption-rolling,
+// or a future unknown) is refused fail-closed, symmetric with validateContainerFeatures.
+constexpr uint64_t kApfsSupportedVolumeIncompat = kApfsVolumeIncompatCaseInsensitive |
+                                                  kApfsVolumeIncompatNormalizationInsensitive |
+                                                  kApfsVolumeIncompatSealed |
+                                                  kApfsVolumeIncompatIncompleteRestore;
 constexpr uint64_t kApfsObjIdMask = 0x0F'FF'FF'FF'FF'FF'FF'FFULL;
 constexpr uint64_t kApfsObjTypeMask = 0xF0'00'00'00'00'00'00'00ULL;
 constexpr int kApfsObjTypeShift = 60;
@@ -368,7 +380,10 @@ bool writeExportFile(const QString& path,
                      QStringList* blockers,
                      const QString& sourcePath) {
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size()) {
+    // NewOnly (O_EXCL/CREATE_NEW) fails closed if anything already exists at `path`: uniquePath
+    // returned a non-existent candidate, so a file/symlink appearing here is a TOCTOU race and
+    // Truncate would have followed it to overwrite an arbitrary target. Refuse instead.
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly) || file.write(data) != data.size()) {
         blockers->append(
             QStringLiteral("Unable to write exported APFS file for %1").arg(sourcePath));
         return false;
@@ -686,6 +701,12 @@ private:
         volumeCaseInsensitive_ = (volumeIncompatible & kApfsVolumeIncompatCaseInsensitive) != 0;
         if ((volumeIncompatible & kApfsVolumeIncompatIncompleteRestore) != 0) {
             result->blockers.append(QStringLiteral("APFS volume has incomplete-restore state"));
+            return false;
+        }
+        if ((volumeIncompatible & ~kApfsSupportedVolumeIncompat) != 0) {
+            result->blockers.append(
+                QStringLiteral("APFS volume has unsupported incompatible features 0x%1")
+                    .arg(volumeIncompatible, 0, kDisplayHexBase));
             return false;
         }
         if (!unlockEncryptedVolume(volumeBlock, result)) {
@@ -1242,6 +1263,13 @@ private:
 
         const uint32_t descBlockCount = descBlockCountRaw;
         if (descBlockCount == 0 || descBlockCount > kMaxCheckpointDescriptorBlocks) {
+            // The descriptor ring is unusable, so the latest checkpoint cannot be located.
+            // Block zero holds a structurally valid nx_superblock copy and mount() re-validates
+            // its magic and feature masks before use, but surface the fallback (previously
+            // silent) so a stale-but-consistent view is never mistaken for the newest state.
+            result->warnings.append(
+                QStringLiteral("APFS checkpoint descriptor ring is empty or oversized; block-zero "
+                               "superblock used"));
             return firstBlock;
         }
         const uint64_t descBase = le64(firstBlock, kApfsNxDescBaseOffset);
@@ -1354,7 +1382,13 @@ private:
         QByteArray node = root;
         for (int depth = 0; depth < kMaxObjectMapDepth; ++depth) {
             const uint16_t level = le16(node, kApfsBtreeNodeLevelOffset);
-            const auto entries = btreeEntries(node, info);
+            bool wellFormed = true;
+            const auto entries = btreeEntries(node, info, &wellFormed);
+            if (!wellFormed) {
+                result->blockers.append(
+                    QStringLiteral("APFS object-map B-tree node is structurally invalid"));
+                return std::nullopt;
+            }
             if (entries.isEmpty()) {
                 result->blockers.append(QStringLiteral("APFS object-map B-tree node is empty"));
                 return std::nullopt;
@@ -1476,7 +1510,12 @@ private:
             return false;
         }
         if (state->seen_nodes.contains(paddr)) {
-            return true;
+            // The fs-tree is a strict tree; a paddr reached twice is a cycle (corruption or a
+            // hostile image). Silently returning true would yield a truncated-but-"successful"
+            // scan, so fail closed.
+            result->blockers.append(
+                QStringLiteral("APFS file-system tree contains a cycle at block %1").arg(paddr));
+            return false;
         }
         if (++state->nodes_visited > kMaxFsTreeNodes) {
             result->blockers.append(QStringLiteral("APFS file-system tree node limit exceeded"));
@@ -1487,7 +1526,13 @@ private:
         if (!readDecryptedNode(paddr, encrypted, &node, result)) {
             return false;
         }
-        const auto entries = btreeEntries(node, state->info);
+        bool wellFormed = true;
+        const auto entries = btreeEntries(node, state->info, &wellFormed);
+        if (!wellFormed) {
+            result->blockers.append(
+                QStringLiteral("APFS file-system tree node %1 is structurally invalid").arg(paddr));
+            return false;
+        }
         const uint16_t level = le16(node, kApfsBtreeNodeLevelOffset);
         return level == 0 ? processFileSystemLeaf(node, entries, state, result)
                           : visitFileSystemChildren(node, entries, depth, state, result);
@@ -1514,7 +1559,12 @@ private:
                                                PartitionApfsFileReadResult* result) {
         for (const auto& entry : entries) {
             if (entry.value_length < kApfsBtreeChildPointerBytes) {
-                continue;
+                // Every entry in an index node maps a key to an 8-byte child OID. A value too
+                // small to hold that pointer is a malformed node; skipping it would drop a whole
+                // subtree from an otherwise "successful" scan, so fail closed.
+                result->blockers.append(QStringLiteral(
+                    "APFS index node has a child record too small to hold a node pointer"));
+                return false;
             }
             if (!visitMappedFileSystemChild(node, entry, depth, state, result)) {
                 return false;
@@ -2014,8 +2064,13 @@ private:
                 le64(rootBlock, offset + kApfsBtreeInfoNodeCountOffset)};
     }
 
+    // wellFormed is set false when the node's table-of-contents or any entry is out of bounds.
+    // Callers MUST fail closed on that: a malformed node silently yielding fewer/zero entries
+    // would otherwise produce a truncated-but-"successful" scan or object-map lookup.
     [[nodiscard]] QVector<BtreeEntryView> btreeEntries(const QByteArray& node,
-                                                       const BtreeInfo& info) const {
+                                                       const BtreeInfo& info,
+                                                       bool* wellFormed) const {
+        *wellFormed = true;
         QVector<BtreeEntryView> entries;
         const uint16_t flags = le16(node, kApfsBtreeNodeFlagsOffset);
         const uint16_t level = le16(node, kApfsBtreeNodeLevelOffset);
@@ -2032,6 +2087,7 @@ private:
         const qsizetype tocEntryBytes = fixed ? kApfsBtreeFixedTocEntryBytes
                                               : kApfsBtreeVariableTocEntryBytes;
         if (!btreeTableInBounds(node, count, tableStart, keyAreaStart, tocEntryBytes)) {
+            *wellFormed = false;
             return entries;
         }
         entries.reserve(static_cast<int>(std::min<uint32_t>(count, kApfsBtreeMaxEntryCount)));
@@ -2040,9 +2096,11 @@ private:
             const qsizetype toc = tableStart + static_cast<qsizetype>(index) * tocEntryBytes;
             const auto entry = fixed ? fixedBtreeEntry(node, toc, context)
                                      : variableBtreeEntry(node, toc, context);
-            if (entry.has_value() && btreeEntryInBounds(node, *entry)) {
-                entries.append(*entry);
+            if (!entry.has_value() || !btreeEntryInBounds(node, *entry)) {
+                *wellFormed = false;
+                return {};
             }
+            entries.append(*entry);
         }
         return entries;
     }
@@ -2335,7 +2393,11 @@ private:
 
     [[nodiscard]] bool consumeEntrySlot() {
         if (result_.entries_scanned >= options_.max_entries) {
-            result_.warnings.append(QStringLiteral("APFS export entry cap reached"));
+            // The cap halted the walk with the tree unfinished; reporting ok=true would claim a
+            // complete export. Record a blocker (symmetric with the byte-cap path and the ext
+            // exporter) so ok resolves false on a truncated export.
+            result_.blockers.append(
+                QStringLiteral("APFS export entry cap reached before the tree was fully exported"));
             return false;
         }
         ++result_.entries_scanned;

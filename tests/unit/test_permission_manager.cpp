@@ -44,6 +44,10 @@ private Q_SLOTS:
 
     // Reparse-point (junction/symlink) redirect hardening
     void stripPermissions_refusesReparsePoint();
+    void stripPermissions_refusesAncestorJunction();
+
+    // SDDL round-trip must not silently drop the primary group
+    void setSddl_appliesGroup();
 
     // applyPermissionStrategy
     void applyStrategy_stripAll();
@@ -255,6 +259,74 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
     QVERIFY2(!result.has_value(), "strip must refuse a reparse point, not follow it");
     QVERIFY2(mgr.getLastError().contains("reparse", Qt::CaseInsensitive),
              qPrintable(mgr.getLastError()));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// An ANCESTOR-directory junction/symlink must also be refused: FILE_FLAG_OPEN_
+// REPARSE_POINT only guards the FINAL component, so the kernel still traverses an
+// intermediate junction. Opening base\file.txt THROUGH a junction that replaces an
+// ancestor dir must be caught by verifying the handle's resolved path.
+void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString base = m_tempDir.filePath("anc_base");
+    QVERIFY(QDir().mkpath(base));
+    const QString realFile = base + "\\file.txt";
+    QFile ff(realFile);
+    QVERIFY(ff.open(QIODevice::WriteOnly));
+    ff.write("x");
+    ff.close();
+
+    const QString link = m_tempDir.filePath("anc_link");
+    QProcess proc;
+    proc.start(
+        "cmd",
+        {"/c", "mklink", "/J", QDir::toNativeSeparators(link), QDir::toNativeSeparators(base)});
+    QVERIFY(proc.waitForFinished(10'000));
+    if (proc.exitCode() != 0) {
+        QSKIP("Could not create a directory junction (non-NTFS or policy)");
+    }
+
+    // Reach the (non-reparse) file THROUGH the junction ancestor.
+    const auto result = mgr.tryStripPermissions(link + "\\file.txt");
+    QVERIFY2(!result.has_value(), "must refuse a path redirected through an ancestor junction");
+    const QString err = mgr.getLastError();
+    QVERIFY2(err.contains("redirect", Qt::CaseInsensitive) ||
+                 err.contains("junction", Qt::CaseInsensitive) ||
+                 err.contains("reparse", Qt::CaseInsensitive),
+             qPrintable(err));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// B-fix: applyParsedSecurityDescriptor previously applied only OWNER and DACL, so a
+// save-then-restore round-trip silently DROPPED the primary group. Setting an SDDL
+// that specifies a group must actually apply it.
+void PermissionManagerTests::setSddl_appliesGroup() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = m_tempDir.filePath("sddl_group.txt");
+    QFile file(f);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+
+    // Set owner AND group to the current user's SID (the owner may set its own token
+    // SID as the primary group). Before the fix, the G: field was ignored on apply.
+    const QString sddl = QStringLiteral("O:%1G:%1D:(A;;FA;;;%1)").arg(ownerSid);
+    if (!mgr.setSecurityDescriptorSddl(f, sddl)) {
+        QSKIP("Environment does not permit setting the primary group");
+    }
+    const QString out = mgr.getSecurityDescriptorSddl(f);
+    QVERIFY(!out.isEmpty());
+    QVERIFY2(out.contains(QStringLiteral("G:%1").arg(ownerSid)),
+             qPrintable(QStringLiteral("primary group was not applied on restore: %1").arg(out)));
 #else
     QVERIFY(true);
 #endif

@@ -27,7 +27,6 @@ constexpr int kDosDeviceInitialBufferChars = 32'768;
 constexpr int kDosDeviceQueryAttempts = 3;
 constexpr int kDosDeviceBufferGrowthFactor = 2;
 constexpr DWORD kStorageDescriptorBufferBytes = 1024;
-constexpr quint32 kDefaultDiskBlockSizeBytes = 512;
 constexpr int kVolumePathBufferMultiplier = 4;
 
 /// @brief Check if any drive in the list has the given devicePath
@@ -77,12 +76,11 @@ QVector<int> enumeratePhysicalDriveNumbers(bool& query_ok) {
                         drive_numbers.end());
 
     if (drive_numbers.isEmpty()) {
-        // No authoritative PhysicalDrive entry (query failed, or the table had none): probing
-        // drive 0 is a best-effort guess, so the enumeration is NOT complete. Keep query_ok
-        // tracking the REPORTED set, not just the raw QueryDosDeviceW return code, so a caller's
-        // "complete" flag never labels a drive-0 fallback as the authoritative drive set.
+        // No authoritative PhysicalDrive entry (the query failed, or the table had none). Do
+        // NOT coerce to a probe of drive 0: guessing a device number is a fail-open default.
+        // Report the enumeration as non-authoritative and return an empty set so callers keep
+        // their cached drives instead of dropping them (mergeDriveList / drivesDetached).
         query_ok = false;
-        drive_numbers.append(0);
     }
 
     return drive_numbers;
@@ -197,7 +195,13 @@ QList<sak::DriveInfo> DriveScanner::enumerateDrivesOnce(bool& enumeration_ok) {
         sak::DriveInfo info = queryDriveInfo(driveNumber);
         if (info.isValid()) {
             newDrives.append(info);
+            continue;
         }
+        // The device table listed this drive but its per-disk query (CreateFile/IOCTL)
+        // failed THIS pass. That is not proof the drive is gone -- treat the scan as
+        // non-authoritative so a transient failure does not spuriously detach a cached
+        // drive (a genuinely-removed drive simply drops out of the table on a later pass).
+        enumeration_ok = false;
     }
     return newDrives;
 }
@@ -251,16 +255,24 @@ void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives, bool e
         hasChanges = true;
     }
 
-    // New drives (a freshly-seen drive is real even under a partial scan -- attach is additive).
+    // New drives (a freshly-seen drive is real even under a partial scan -- attach is additive),
+    // and in-place property changes on an already-known drive (size/read-only/system/mount-point
+    // changes on the SAME devicePath) -- both must refresh subscribers via drivesUpdated.
     for (const auto& newDrive : newDrives) {
-        if (containsDevicePath(m_drives, newDrive.devicePath)) {
-            continue;
+        const auto it = std::find_if(m_drives.begin(), m_drives.end(), [&newDrive](const auto& d) {
+            return d.devicePath == newDrive.devicePath;
+        });
+        if (it == m_drives.end()) {
+            sak::logInfo(QString("Drive attached: %1 (%2)")
+                             .arg(newDrive.devicePath, newDrive.name)
+                             .toStdString());
+            Q_EMIT driveAttached(newDrive);
+            hasChanges = true;
+        } else if (driveInfoChanged(*it, newDrive)) {
+            sak::logInfo(
+                QString("Drive properties changed: %1").arg(newDrive.devicePath).toStdString());
+            hasChanges = true;
         }
-        sak::logInfo(QString("Drive attached: %1 (%2)")
-                         .arg(newDrive.devicePath, newDrive.name)
-                         .toStdString());
-        Q_EMIT driveAttached(newDrive);
-        hasChanges = true;
     }
 
     m_drives = mergeDriveList(m_drives, newDrives, enumeration_ok);
@@ -268,6 +280,13 @@ void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives, bool e
     if (hasChanges) {
         Q_EMIT drivesUpdated(m_drives);
     }
+}
+
+bool DriveScanner::driveInfoChanged(const sak::DriveInfo& a, const sak::DriveInfo& b) {
+    return a.size != b.size || a.blockSize != b.blockSize || a.name != b.name ||
+           a.isReadOnly != b.isReadOnly || a.isSystem != b.isSystem ||
+           a.isRemovable != b.isRemovable || a.mountPoints != b.mountPoints ||
+           a.volumeLabel != b.volumeLabel || a.busType != b.busType;
 }
 
 sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
@@ -422,7 +441,10 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
         return geometry.BytesPerSector;
     }
 
-    return kDefaultDiskBlockSizeBytes;
+    // No default coercion: a failed geometry query returns 0 (unknown) rather than a
+    // guessed 512. This field is display-only; the flash path queries the real logical
+    // sector size itself, fail-closed, in FlashWorker::queryDeviceSectorSize().
+    return 0;
 }
 
 QString DriveScanner::getBusType(HANDLE hDrive) {
@@ -614,38 +636,53 @@ bool DriveScanner::volumeMatchesDrive(const wchar_t* volumeName, int driveNumber
     return match;
 }
 
-QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber) {
+void DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots) {
+    const QString guidRoot = QString::fromWCharArray(volumeName);  // keeps trailing backslash
+    size_t len = wcslen(volumeName);
+    if (len > 0 && volumeName[len - 1] == L'\\') {
+        volumeName[len - 1] = L'\0';
+    }
+    if (!volumeMatchesDrive(volumeName, driveNumber)) {
+        return;
+    }
+    QStringList mounts;
+    collectMountPaths(volumeName, len, mounts);
+    if (mounts.isEmpty()) {
+        // Unmounted volume: it has no drive letter, but its \\?\Volume{GUID}\ path is still
+        // inspectable -- so an unmounted Windows partition is not missed by the system check.
+        roots.append(guidRoot);
+    } else {
+        roots += mounts;
+    }
+}
+
+QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerationOk) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "getVolumeRootsForDrive", "driveNumber must be non-negative");
     QStringList roots;
+    bool ok = true;
 
     wchar_t volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
     if (hFind == INVALID_HANDLE_VALUE) {
-        return roots;
+        // Enumeration itself failed: signal it so a fail-closed caller does not read the
+        // empty result as "this drive holds no system/boot volume".
+        ok = false;
+    } else {
+        do {
+            appendVolumeRoot(volumeName, driveNumber, roots);
+        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+        // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
+        // list may be incomplete -> report non-authoritative so the caller fails closed.
+        if (GetLastError() != ERROR_NO_MORE_FILES) {
+            ok = false;
+        }
+        FindVolumeClose(hFind);
     }
 
-    do {
-        const QString guidRoot = QString::fromWCharArray(volumeName);  // keeps trailing backslash
-        size_t len = wcslen(volumeName);
-        if (len > 0 && volumeName[len - 1] == L'\\') {
-            volumeName[len - 1] = L'\0';
-        }
-        if (!volumeMatchesDrive(volumeName, driveNumber)) {
-            continue;
-        }
-        QStringList mounts;
-        collectMountPaths(volumeName, len, mounts);
-        if (mounts.isEmpty()) {
-            // Unmounted volume: it has no drive letter, but its \\?\Volume{GUID}\ path is still
-            // inspectable -- so an unmounted Windows partition is not missed by the system check.
-            roots.append(guidRoot);
-        } else {
-            roots += mounts;
-        }
-    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
-
-    FindVolumeClose(hFind);
+    if (enumerationOk != nullptr) {
+        *enumerationOk = ok;
+    }
     return roots;
 }
 
@@ -705,14 +742,6 @@ bool nativePathExists(const QString& root, const char* rel) {
     return attrs != INVALID_FILE_ATTRIBUTES;
 }
 
-// Windows boot-loader files. On a split-boot system the ESP that boots the OS
-// lives on a SEPARATE disk from the \Windows tree, so these appear with no Windows
-// dir; a disk carrying them is boot-critical and must not be erased.
-bool hasBootManagerIndicators(const QString& root) {
-    return nativePathExists(root, "EFI/Microsoft/Boot/bootmgfw.efi") ||
-           nativePathExists(root, "bootmgr") || nativePathExists(root, "BOOTNXT");
-}
-
 }  // namespace
 
 bool DriveScanner::hasWindowsIndicators(const QString& root) {
@@ -735,12 +764,26 @@ bool DriveScanner::hasWindowsIndicators(const QString& root) {
     return false;
 }
 
+// Windows boot-loader files. On a split-boot system the ESP that boots the OS
+// lives on a SEPARATE disk from the \Windows tree, so these appear with no Windows
+// dir; a disk carrying them is boot-critical and must not be erased.
+bool DriveScanner::hasBootManagerIndicators(const QString& root) {
+    return nativePathExists(root, "EFI/Microsoft/Boot/bootmgfw.efi") ||
+           nativePathExists(root, "bootmgr") || nativePathExists(root, "BOOTNXT");
+}
+
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     // Inspect EVERY volume on the drive -- including unmounted ones (GUID path) -- so a Windows
     // partition without a drive letter is still classified as a system drive.
-    const QStringList roots = getVolumeRootsForDrive(driveNumber);
+    bool enumerationOk = true;
+    const QStringList roots = getVolumeRootsForDrive(driveNumber, &enumerationOk);
+    if (!enumerationOk) {
+        // Volume enumeration failed: we cannot prove this disk is NOT a system disk, so fail
+        // closed and classify it as system rather than exposing an unknown state as "safe".
+        return true;
+    }
 
     if (std::any_of(roots.begin(), roots.end(), [](const QString& root) {
             return hasWindowsIndicators(root);
@@ -757,6 +800,26 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     return std::any_of(roots.begin(), roots.end(), [](const QString& root) {
         return hasBootManagerIndicators(root);
     });
+}
+
+sak::DiskProbe DriveScanner::physicalDriveBootProbe(int driveNumber) {
+    if (driveNumber < 0) {
+        return sak::DiskProbe::Undetermined;
+    }
+    bool enumerationOk = false;
+    const QStringList roots = getVolumeRootsForDrive(driveNumber, &enumerationOk);
+    if (!enumerationOk) {
+        // Could not enumerate the drive's volumes -> cannot prove it is not boot-critical.
+        return sak::DiskProbe::Undetermined;
+    }
+    // Removable media carrying boot files is a legitimate re-flash target, not a boot disk.
+    if (isDriveRemovable(driveNumber)) {
+        return sak::DiskProbe::No;
+    }
+    const bool boot = std::any_of(roots.begin(), roots.end(), [](const QString& root) {
+        return hasBootManagerIndicators(root);
+    });
+    return boot ? sak::DiskProbe::Yes : sak::DiskProbe::No;
 }
 
 LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
@@ -836,16 +899,4 @@ void DriveScanner::unregisterDeviceNotification() {
         DestroyWindow(m_notificationWindow);
         m_notificationWindow = nullptr;
     }
-}
-
-LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd,
-                                                      UINT message,
-                                                      WPARAM wParam,
-                                                      LPARAM lParam) {
-    if (message == WM_DEVICECHANGE &&
-        (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) && s_instance) {
-        s_instance->refresh();
-    }
-
-    return DefWindowProc(hwnd, message, wParam, lParam);
 }

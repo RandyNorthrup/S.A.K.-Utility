@@ -118,6 +118,7 @@ private slots:
     void padToSectorSizePads4Kn();
     void padToSectorSizeAlreadyAligned4Kn();
     void padToSectorSizeRejectsBogusSectorSize();
+    void padToSectorSizeRejectsNegativeBytesRead();
 
     // ---- B4-04/06: device-capacity fit + sector-aligned read length ----
     void alignUpToSectorSizeAlreadyAligned();
@@ -393,6 +394,18 @@ void FlashWorkerTests::padToSectorSizeRejectsBogusSectorSize() {
     qint64 bytesRead = 500;
     QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, 0));
     QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, -512));
+}
+
+// A negative valid-byte count must be REFUSED, not padded: -100 % 512 != 0 would
+// otherwise reach the zero-fill loop and write buffer[i] at negative indices
+// (out-of-bounds / undefined behaviour). A real read never yields a negative count.
+void FlashWorkerTests::padToSectorSizeRejectsNegativeBytesRead() {
+    QByteArray buf(1024, 'x');
+    qint64 bytesRead = -100;
+    QVERIFY(!FlashWorker::padToSectorSize(buf, bytesRead, 512));
+    QCOMPARE(bytesRead, static_cast<qint64>(-100));  // left unchanged on refusal
+    qint64 aligned = -512;                           // negative but a sector multiple
+    QVERIFY(!FlashWorker::padToSectorSize(buf, aligned, 512));
 }
 
 // ===========================================================================

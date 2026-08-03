@@ -44,13 +44,29 @@ constexpr uint16_t kExtMagic = 0xEF53;
 constexpr uint16_t kExtExtentMagic = 0xF30A;
 constexpr uint32_t kExtCompatHasJournal = 0x0004;
 constexpr uint32_t kExtIncompatCompression = 0x0001;
+constexpr uint32_t kExtIncompatFiletype = 0x0002;
 constexpr uint32_t kExtIncompatNeedsRecovery = 0x0004;
 constexpr uint32_t kExtIncompatJournalDevice = 0x0008;
 constexpr uint32_t kExtIncompatMetaBg = 0x0010;
 constexpr uint32_t kExtIncompatExtents = 0x0040;
 constexpr uint32_t kExtIncompat64Bit = 0x0080;
+constexpr uint32_t kExtIncompatMmp = 0x0100;
+constexpr uint32_t kExtIncompatFlexBg = 0x0200;
+constexpr uint32_t kExtIncompatEaInode = 0x0400;
+constexpr uint32_t kExtIncompatCsumSeed = 0x2000;
+constexpr uint32_t kExtIncompatLargedir = 0x4000;
 constexpr uint32_t kExtIncompatInlineData = 0x8000;
 constexpr uint32_t kExtIncompatEncrypt = 0x10000;
+// Every incompat bit this reader recognizes -- whether it traverses the volume anyway (dir
+// filetype byte, journal recovery, extents, 64-bit, MMP, flex-bg, EA-in-inode, csum-seed,
+// large dirs) or refuses it with a specific message below (compression, external journal,
+// meta-bg, inline-data, encryption). Any bit outside this set means the volume relies on a
+// feature we do not understand, so it is rejected fail-closed rather than misread.
+constexpr uint32_t kExtRecognizedIncompat =
+    kExtIncompatCompression | kExtIncompatFiletype | kExtIncompatNeedsRecovery |
+    kExtIncompatJournalDevice | kExtIncompatMetaBg | kExtIncompatExtents | kExtIncompat64Bit |
+    kExtIncompatMmp | kExtIncompatFlexBg | kExtIncompatEaInode | kExtIncompatCsumSeed |
+    kExtIncompatLargedir | kExtIncompatInlineData | kExtIncompatEncrypt;
 constexpr uint32_t kExtRoCompatHugeFile = 0x0008;
 constexpr uint32_t kExtRoCompatGdtCsum = 0x0010;
 constexpr uint32_t kExtRoCompatDirNlink = 0x0020;
@@ -94,6 +110,10 @@ constexpr int kBitsPerUint32 = 32;
 constexpr uint32_t kMaxExtLogBlockSizeShift = 31;
 constexpr int kExtentHeaderBytes = 12;
 constexpr int kExtentRecordBytes = 12;
+constexpr qsizetype kExtentHeaderEntriesOffset = 2;  // eh_entries
+constexpr qsizetype kExtentHeaderMaxOffset = 4;      // eh_max
+constexpr qsizetype kExtentHeaderDepthOffset = 6;    // eh_depth
+constexpr int kExtentRootDepth = -1;                 // sentinel: root node's depth is authoritative
 constexpr qsizetype kExtentLogicalBlockOffset = 0;
 constexpr qsizetype kExtentLengthOffset = 4;
 constexpr qsizetype kExtentPhysicalHighOffset = 6;
@@ -288,6 +308,11 @@ class ExtReader {
 public:
     explicit ExtReader(QIODevice* device) : m_device(device) {}
 
+    // Detailed load-time blockers (bad geometry, unknown incompat feature, ...). Callers surface
+    // these instead of discarding them behind a generic "unable to open" so the fail-closed
+    // reason reaches the user rather than being silently flattened.
+    [[nodiscard]] const QStringList& blockers() const { return m_blockers; }
+
     [[nodiscard]] bool load() {
         if (!m_device || !m_device->isReadable()) {
             m_blockers.append(QStringLiteral("Readable ext device or image is required"));
@@ -402,15 +427,13 @@ private:
             extFamilyName(m_superblock.compat, m_superblock.incompat, m_superblock.ro_compat);
         m_superblock.block_size =
             logBlockSize <= kMaxExtLogBlockSizeShift ? kMinimumBlockSize << logBlockSize : 0;
+        // Do NOT coerce a zero/undersized on-disk value to a default: that would mask a
+        // malformed superblock and let the reader compute inode/group offsets from an invented
+        // geometry. Store the raw value and let the geometry blockers below fail closed.
         m_superblock.inode_size = le16(bytes, kExtInodeSizeOffset);
-        if (m_superblock.inode_size == 0) {
-            m_superblock.inode_size = kDefaultInodeSize;
-        }
-        m_superblock.group_desc_size =
-            (m_superblock.incompat & kExtIncompat64Bit) != 0
-                ? std::max<uint32_t>(le16(bytes, kExtGroupDescSizeOffset),
-                                     kMinimumGroupDescriptorSize)
-                : kMinimumGroupDescriptorSize;
+        m_superblock.group_desc_size = (m_superblock.incompat & kExtIncompat64Bit) != 0
+                                           ? le16(bytes, kExtGroupDescSizeOffset)
+                                           : kMinimumGroupDescriptorSize;
         m_superblock.blocks_per_group = le32(bytes, kExtBlocksPerGroupOffset);
         m_superblock.inodes_per_group = le32(bytes, kExtInodesPerGroupOffset);
         m_superblock.first_data_block = le32(bytes, kExtFirstDataBlockOffset);
@@ -425,9 +448,21 @@ private:
 
     void validateSuperblock() {
         appendSuperblockGeometryBlockers();
+        appendGroupDescriptorSizeBlocker();
         appendUnsupportedIncompatBlockers();
         appendUnsupportedRoCompatBlockers();
         appendSuperblockWarnings();
+    }
+
+    void appendGroupDescriptorSizeBlocker() {
+        // A 64-bit volume stores an on-disk s_desc_size; a legacy volume uses the fixed 32-byte
+        // descriptor. Either way the value must be a power of two, at least the 32-byte minimum,
+        // and fit within a block. Reject anything else instead of bumping it to the minimum.
+        if (m_superblock.group_desc_size < kMinimumGroupDescriptorSize ||
+            m_superblock.group_desc_size > m_superblock.block_size ||
+            !isPowerOfTwo(m_superblock.group_desc_size)) {
+            m_blockers.append(QStringLiteral("Unsupported ext group descriptor size"));
+        }
     }
 
     void appendSuperblockGeometryBlockers() {
@@ -444,6 +479,11 @@ private:
     }
 
     void appendUnsupportedIncompatBlockers() {
+        if ((m_superblock.incompat & ~kExtRecognizedIncompat) != 0) {
+            m_blockers.append(
+                QStringLiteral("Ext volume has unknown incompatible feature bits 0x%1")
+                    .arg(m_superblock.incompat, 0, kHexBase));
+        }
         if ((m_superblock.incompat & kExtIncompatCompression) != 0) {
             m_blockers.append(QStringLiteral("Compressed ext volumes are not supported"));
         }
@@ -841,47 +881,71 @@ private:
 
     [[nodiscard]] std::optional<QVector<ExtentRecord>> collectExtents(const ExtInode& inode) {
         QVector<ExtentRecord> extents;
-        if (!collectExtentsFromNode(inode.blocks, 0, &extents)) {
+        if (!collectExtentsFromNode(inode.blocks, 0, kExtentRootDepth, &extents)) {
             return std::nullopt;
         }
         std::sort(extents.begin(), extents.end(), [](const auto& left, const auto& right) {
             return left.logical_start < right.logical_start;
         });
+        if (!extentsNonOverlapping(extents)) {
+            return std::nullopt;
+        }
         return extents;
     }
 
-    bool collectExtentsFromNode(const QByteArray& node,
-                                int recursionDepth,
-                                QVector<ExtentRecord>* extents) {
+    // expectedDepth is the on-disk eh_depth this node must carry (kExtentRootDepth on the root,
+    // where the value is authoritative and used to validate children). Rejecting a mismatch
+    // catches a forged index that points a "leaf" at deeper structure or vice versa.
+    [[nodiscard]] bool validateExtentNode(const QByteArray& node,
+                                          int recursionDepth,
+                                          int expectedDepth) {
         if (recursionDepth > kExtentTreeMaxDepth || !hasBytes(node, 0, kExtentHeaderBytes) ||
             le16(node, 0) != kExtExtentMagic) {
             m_blockers.append(QStringLiteral("Invalid ext extent tree"));
             return false;
         }
-
-        const uint16_t entries = le16(node, 2);
-        const uint16_t depth = le16(node, 6);
-        if (!hasBytes(node, kExtentHeaderBytes, entries * kExtentRecordBytes)) {
-            m_blockers.append(QStringLiteral("Ext extent entries exceed node size"));
+        const uint16_t entries = le16(node, kExtentHeaderEntriesOffset);
+        const uint16_t maxEntries = le16(node, kExtentHeaderMaxOffset);
+        const uint16_t depth = le16(node, kExtentHeaderDepthOffset);
+        if (expectedDepth != kExtentRootDepth && depth != static_cast<uint16_t>(expectedDepth)) {
+            m_blockers.append(QStringLiteral("Ext extent tree depth is inconsistent"));
             return false;
         }
+        if (maxEntries == 0 || entries > maxEntries ||
+            !hasBytes(node, kExtentHeaderBytes, entries * kExtentRecordBytes)) {
+            m_blockers.append(QStringLiteral("Ext extent entry count exceeds node capacity"));
+            return false;
+        }
+        return true;
+    }
 
+    bool collectExtentsFromNode(const QByteArray& node,
+                                int recursionDepth,
+                                int expectedDepth,
+                                QVector<ExtentRecord>* extents) {
+        if (!validateExtentNode(node, recursionDepth, expectedDepth)) {
+            return false;
+        }
+        const uint16_t entries = le16(node, kExtentHeaderEntriesOffset);
+        const uint16_t depth = le16(node, kExtentHeaderDepthOffset);
         for (uint16_t index = 0; index < entries; ++index) {
             const qsizetype offset = kExtentHeaderBytes + index * kExtentRecordBytes;
             if (depth == 0) {
-                appendLeafExtent(node, offset, extents);
+                if (!appendLeafExtent(node, offset, extents)) {
+                    return false;
+                }
                 continue;
             }
-            if (!collectExtentsFromIndex(node, offset, recursionDepth, extents)) {
+            if (!collectExtentsFromIndex(node, offset, recursionDepth, depth, extents)) {
                 return false;
             }
         }
         return true;
     }
 
-    void appendLeafExtent(const QByteArray& node,
+    bool appendLeafExtent(const QByteArray& node,
                           qsizetype offset,
-                          QVector<ExtentRecord>* extents) const {
+                          QVector<ExtentRecord>* extents) {
         const uint16_t rawLength = le16(node, offset + kExtentLengthOffset);
         // Only ee_len STRICTLY greater than 32768 is uninitialized. ee_len == 32768
         // is a fully-written 32768-block run; the old `& ~0x8000` decoded it as
@@ -893,16 +957,25 @@ private:
         const uint64_t physical = joinLowHigh32(le32(node, offset + kExtentPhysicalLowOffset),
                                                 le16(node, offset + kExtentPhysicalHighOffset),
                                                 true);
+        if (length == 0 || physical == 0 || length > m_superblock.blocks_count ||
+            physical > m_superblock.blocks_count - length) {
+            m_blockers.append(
+                QStringLiteral("Ext extent has zero length or an out-of-range "
+                               "physical range"));
+            return false;
+        }
         extents->append(
             ExtentRecord{.logical_start = le32(node, offset + kExtentLogicalBlockOffset),
                          .length = length,
                          .physical_start = physical,
                          .initialized = !uninitialized});
+        return true;
     }
 
     bool collectExtentsFromIndex(const QByteArray& node,
                                  qsizetype offset,
                                  int recursionDepth,
+                                 uint16_t parentDepth,
                                  QVector<ExtentRecord>* extents) {
         const uint64_t leafBlock = joinLowHigh32(le32(node, offset + kExtentIndexLeafLowOffset),
                                                  le16(node, offset + kExtentIndexLeafHighOffset),
@@ -912,7 +985,23 @@ private:
             m_blockers.append(QStringLiteral("Unable to read ext extent leaf"));
             return false;
         }
-        return collectExtentsFromNode(*leaf, recursionDepth + 1, extents);
+        return collectExtentsFromNode(
+            *leaf, recursionDepth + 1, static_cast<int>(parentDepth) - 1, extents);
+    }
+
+    // Post-sort overlap guard: two extents must not both claim the same logical block, which
+    // would make the exported file content depend on iteration order (a real hostile-tree risk).
+    // Contiguous ranges (cur.start == prev end) are fine.
+    [[nodiscard]] bool extentsNonOverlapping(const QVector<ExtentRecord>& extents) {
+        for (qsizetype index = 1; index < extents.size(); ++index) {
+            const auto& prev = extents[index - 1];
+            const uint64_t prevEnd = static_cast<uint64_t>(prev.logical_start) + prev.length;
+            if (extents[index].logical_start < prevEnd) {
+                m_blockers.append(QStringLiteral("Ext extent tree has overlapping logical ranges"));
+                return false;
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] std::optional<uint64_t> physicalBlockFromExtents(
@@ -1194,6 +1283,7 @@ PartitionExtFileReadResult PartitionExtFileSystemReader::listDirectory(QIODevice
     ExtReader reader(device);
     if (!reader.load()) {
         PartitionExtFileReadResult result;
+        result.blockers = reader.blockers();
         result.blockers.append(QStringLiteral("Unable to open ext filesystem for listing"));
         return result;
     }
@@ -1213,6 +1303,7 @@ PartitionExtFileReadResult PartitionExtFileSystemReader::readFile(QIODevice* dev
     ExtReader reader(device);
     if (!reader.load()) {
         PartitionExtFileReadResult result;
+        result.blockers = reader.blockers();
         result.blockers.append(QStringLiteral("Unable to open ext filesystem for reading"));
         return result;
     }

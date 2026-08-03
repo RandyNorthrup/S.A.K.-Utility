@@ -131,13 +131,6 @@ private:
     bool lockAndDismountVolume(const QString& volumePath);
 
     /**
-     * @brief Get physical drive number for a volume
-     * @param volumePath Volume path
-     * @return Drive number, or -1 on failure
-     */
-    int getDriveNumberForVolume(const QString& volumePath) const;
-
-    /**
      * @brief Close all handles to a drive
      * @param driveNumber Physical drive number
      * @return true if the Restart Manager handle-close pass completed; false if it

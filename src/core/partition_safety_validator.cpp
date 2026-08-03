@@ -260,13 +260,12 @@ uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) 
 }
 
 bool payloadBool(const PartitionOperation& operation, const QString& key) {
+    // Fail closed on type: a confirmation/marker flag counts only when supplied as a real
+    // JSON bool. A stringly-typed "true"/"1"/"yes" is a wrong-typed input and must never be
+    // coerced into authorizing a destructive operation; anything but a genuine bool reads
+    // false so absent/malformed confirmations block rather than proceed.
     const auto value = operation.payload.value(key);
-    if (value.isBool()) {
-        return value.toBool();
-    }
-    const QString text = value.toString().trimmed().toLower();
-    return text == QStringLiteral("true") || text == QStringLiteral("1") ||
-           text == QStringLiteral("yes");
+    return value.isBool() && value.toBool();
 }
 
 bool isNonNativeFileSystemToolOperation(const PartitionOperation& operation) {
@@ -455,25 +454,45 @@ QString normalizedBackupDirectory(const PartitionOperation& operation) {
     return path;
 }
 
+// Extended-length raw-device spellings the \\.\ prefix misses, mirroring the canonical
+// executor classifier (isWindowsRawDevicePath in partition_raw_device_io.cpp): a
+// \\?\PhysicalDriveN handle, the \\?\GLOBALROOT\ device namespace, and a BARE
+// \\?\Volume{GUID} device handle. A \\?\Volume{GUID}\path\file form has a separator
+// after the closing brace and is an ordinary extended-length FILE path, not a device;
+// the generic \\?\ long-path prefix is deliberately NOT matched here.
+bool isExtendedRawDevicePath(const QString& path) {
+    if (path.startsWith(QStringLiteral("\\\\?\\PhysicalDrive"), Qt::CaseInsensitive) ||
+        path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive)) {
+        return true;
+    }
+    if (path.startsWith(QStringLiteral("\\\\?\\Volume{"), Qt::CaseInsensitive)) {
+        const int closing = path.indexOf(QLatin1Char('}'));
+        return closing >= 0 && path.indexOf(QLatin1Char('\\'), closing) < 0;
+    }
+    return false;
+}
+
 bool targetPathIsRawDevice(const PartitionOperation& operation) {
-    return normalizedTargetPath(operation).startsWith(QStringLiteral("\\\\.\\"),
-                                                      Qt::CaseInsensitive);
+    const QString path = normalizedTargetPath(operation);
+    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
+           isExtendedRawDevicePath(path);
 }
 
 std::optional<uint32_t> physicalDriveNumberFromPath(const QString& targetPath) {
     QString path = targetPath.trimmed();
     path.replace('/', '\\');
-    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
-    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
-        return std::nullopt;
+    // Accept both the \\.\ device namespace and the \\?\ extended-length spelling; the
+    // executor's raw writer opens either as a physical drive, so the validator must too.
+    for (const auto& prefix :
+         {QStringLiteral("\\\\.\\PhysicalDrive"), QStringLiteral("\\\\?\\PhysicalDrive")}) {
+        if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
+            continue;
+        }
+        bool ok = false;
+        const uint value = path.mid(prefix.size()).toUInt(&ok);
+        return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
     }
-
-    bool ok = false;
-    const uint value = path.mid(prefix.size()).toUInt(&ok);
-    if (!ok) {
-        return std::nullopt;
-    }
-    return static_cast<uint32_t>(value);
+    return std::nullopt;
 }
 
 std::optional<uint32_t> targetPhysicalDriveNumber(const PartitionOperation& operation) {
@@ -507,6 +526,33 @@ const PartitionDiskInfo* diskForDriveLetter(const PartitionInventory& inventory,
         }
     }
     return nullptr;
+}
+
+// Disk number a raw device target addresses. Covers \\.\ and \\?\ PhysicalDriveN plus the
+// app's own canonical raw target \\?\GLOBALROOT\Device\HarddiskN\PartitionM (built from
+// target.disk_number). Lets the disk-safety checks resolve a raw GLOBALROOT/PhysicalDrive
+// write to a known disk by NUMBER (not only a \\.\X: drive letter); an unparseable/unknown
+// target still fails closed at the call site.
+std::optional<uint32_t> rawTargetDiskNumber(const QString& targetPath) {
+    if (const auto physical = physicalDriveNumberFromPath(targetPath)) {
+        return physical;
+    }
+    QString path = targetPath.trimmed();
+    path.replace('/', '\\');
+    const QString marker = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk");
+    if (!path.startsWith(marker, Qt::CaseInsensitive)) {
+        return std::nullopt;
+    }
+    QString digits;
+    for (const QChar c : path.mid(marker.size())) {
+        if (!c.isDigit()) {
+            break;
+        }
+        digits.append(c);
+    }
+    bool ok = false;
+    const uint value = digits.toUInt(&ok);
+    return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
 }
 
 bool targetPathIsPhysicalDrive(const PartitionOperation& operation) {
@@ -636,6 +682,10 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation) {
     return true;
 }
 
+// Fit is checked against the queued region (operation.target). Detecting a layout change
+// between preview and apply is the app layer's job via confirm_layout_hash drift detection
+// plus the recovery-candidate overlap/exceeds guards; this validator intentionally reasons
+// only about the region the operation was queued against.
 bool createFitsSelectedRegion(const PartitionOperation& operation) {
     const uint64_t requestedSize = payloadUInt64(operation, QStringLiteral("size_bytes"));
     const uint64_t relativeOffset = payloadUInt64(operation,
@@ -978,10 +1028,10 @@ bool cloneOrMigrateMissingKnownSizes(const PartitionOperation& operation) {
 }
 
 bool clonePartitionTargetsRawDevice(const PartitionOperation& operation) {
-    const QString targetPath =
-        operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
+    // Use the shared raw-device classifier so an extended-length \\?\ device spelling is
+    // recognized here too and still requires the target-wipe confirmation below.
     return operation.type == PartitionOperationType::ClonePartition &&
-           targetPath.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive);
+           targetPathIsRawDevice(operation);
 }
 
 bool clonePartitionTargetsRegion(const PartitionOperation& operation) {
@@ -1355,6 +1405,10 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  hasLockedBitLockerVolume(partition) &&
                      operation.type != PartitionOperationType::BitLockerUnlock,
                  QStringLiteral("BitLocker volume is locked"));
+    // Deliberate warning-level policy (not a blocker): this is a technician tool, so an
+    // unlocked-BitLocker or dirty-volume state advises suspend/repair but does not force it
+    // -- the technician may knowingly proceed. The fail-closed guards above (read-only,
+    // locked BitLocker, protected partitions) still hard-block; these two stay advisory.
     addWarningIf(
         result,
         hasUnlockedBitLockerVolume(partition) && !isBitLockerManagementOperation(operation.type),
@@ -1981,10 +2035,18 @@ void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
     if (!targetPathIsRawDevice(operation)) {
         return;  // An image-file target: covered by the image-destination checks.
     }
-    const auto letter = rawVolumeAliasLetter(normalizedTargetPath(operation));
+    const QString rawPath = normalizedTargetPath(operation);
+    const auto letter = rawVolumeAliasLetter(rawPath);
     const PartitionDiskInfo* targetDisk =
         letter.has_value() ? diskForDriveLetter(inventory, *letter) : nullptr;
-    // A raw \\.\ device alias we cannot resolve to a known disk must fail closed rather than
+    // A \\.\X: alias resolves by drive letter; a PhysicalDriveN / GLOBALROOT\HarddiskN raw
+    // target (incl. the app's own canonical target) resolves by disk number.
+    if (targetDisk == nullptr) {
+        if (const auto diskNo = rawTargetDiskNumber(rawPath)) {
+            targetDisk = findDisk(inventory, *diskNo);
+        }
+    }
+    // A raw device target we cannot resolve to a known disk must fail closed rather than
     // slip past every disk-safety check below.
     addBlockerIf(result,
                  targetDisk == nullptr,

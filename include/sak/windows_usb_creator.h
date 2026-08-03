@@ -45,6 +45,16 @@ public:
     ///        failure -- boot support must NOT be certified in those cases.
     [[nodiscard]] static bool bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode);
 
+    /// @brief True iff diskpart stdout contains a known hard-failure marker.
+    ///        diskpart frequently exits 0 even when an individual command failed,
+    ///        so a clean exit code alone is not proof of success. Pure/testable.
+    [[nodiscard]] static bool diskpartOutputIsError(const QString& output);
+
+    /// @brief Defense in depth: only a real regular file (not a symlink/reparse
+    ///        point) that canonically resides under @p appDir may be executed as a
+    ///        bundled tool. Fails closed. Pure/testable.
+    [[nodiscard]] static bool isSafeBundledExecutable(const QString& path, const QString& appDir);
+
     /**
      * @brief Create a bootable Windows USB drive from an ISO
      * @param isoPath Path to the Windows ISO file
@@ -100,7 +110,29 @@ private:
     /// @brief Engine-level guard: refuse to clean/format a disk that is the
     /// current OS boot or system disk, or is read-only. Defense in depth behind
     /// the GUI's removable-only selection so a bad caller cannot wipe the OS disk.
+    /// Also pins the disk's UniqueId and size for later TOCTOU re-verification.
     bool guardTargetDiskSafe(const QString& diskNumber);
+
+    /// @brief TOCTOU guard re-run immediately before the destructive DiskPart
+    /// clean: confirms @p diskNumber still resolves to the exact same safe disk
+    /// (matching UniqueId + size) that guardTargetDiskSafe() vetted. Fails closed
+    /// if a hot-plug reassigned the number to a different disk.
+    bool reverifyTargetDiskIdentity(const QString& diskNumber);
+
+    /// @brief Resolve a Windows system executable to its absolute
+    /// %SystemRoot%\\System32 path so it can never be satisfied by a hijacked copy
+    /// earlier in the process search order. Empty if %SystemRoot% is unset or the
+    /// file is absent (fail closed -- never guess C:\\Windows).
+    [[nodiscard]] static QString system32ExePath(const QString& exeName);
+
+    /// @brief Stage @p script to a temp file and run the absolute System32
+    /// diskpart on it. Fails closed if diskpart cannot be resolved/staged, the run
+    /// times out/cancels, exits non-zero, or its stdout contains an error marker.
+    bool runDiskpartScript(const QString& script, int timeoutMs, QString& outputOut);
+
+    /// @brief Evaluate a finished diskpart process result, failing closed on
+    /// timeout/cancel/non-zero exit or an error marker in stdout.
+    bool checkDiskpartResult(const sak::ProcessResult& result);
 
     /// @brief Format drive, wait for partition, and verify NTFS filesystem (Step 1)
     QString formatAndVerifyDrive(const QString& diskNumber);
@@ -235,9 +267,12 @@ private:
     /// @return true only when bcdboot completes successfully; false otherwise
     bool runBcdboot(const QString& bcdbootPath, const QString& cleanDrive);
 
-    /// @brief Resolve a runnable bcdboot.exe: the one extracted onto the media
-    ///        first, else the host's %SystemRoot%\\System32 copy. Empty if none.
-    [[nodiscard]] static QString resolveBcdbootPath(const QString& cleanDrive);
+    /// @brief Resolve a runnable bcdboot.exe. SECURITY: only ever the host's
+    ///        Authenticode-signed %SystemRoot%\\System32 copy -- NEVER a copy
+    ///        extracted from the (untrusted) ISO/media, which could be an
+    ///        attacker-planted binary. Empty if it cannot be resolved (e.g.
+    ///        %SystemRoot% unset), whereupon the caller fails closed.
+    [[nodiscard]] static QString resolveBcdbootPath();
 
     /**
      * @brief Verify that the bootable flag is set on the partition
@@ -273,6 +308,10 @@ private:
     bool verifyCriticalFilesOnDisk(const QList<QPair<QString, qint64>>& criticalFiles,
                                    const QString& destPath);
 
+    /// @brief True iff one critical file exists on disk with the exact expected
+    /// (positive) ISO size. A non-positive expected size fails closed.
+    bool criticalFileOnDiskMatches(const QPair<QString, qint64>& fileInfo, const QString& destPath);
+
     /**
      * @brief Final comprehensive verification - ONLY path to success
      * @param driveLetter Drive letter to verify
@@ -299,10 +338,13 @@ private:
     }
 
     std::atomic<bool> m_cancelled{false};
-    mutable QMutex m_errorMutex;  ///< Guards m_lastError for cross-thread access
-    QString m_lastError;          ///< Protected by m_errorMutex
-    QString m_volumeLabel;        // Volume label extracted from ISO
-    QString m_diskNumber;         // Hardware disk number (e.g., "1" for PhysicalDrive1)
+    mutable QMutex m_errorMutex;   ///< Guards m_lastError for cross-thread access
+    QString m_lastError;           ///< Protected by m_errorMutex
+    QString m_volumeLabel;         // Volume label extracted from ISO
+    QString m_diskNumber;          // Hardware disk number (e.g., "1" for PhysicalDrive1)
+    QString m_targetDiskUniqueId;  ///< Get-Disk UniqueId pinned by guardTargetDiskSafe()
     qint64 m_targetDiskSizeBytes{
-        -1};                      ///< Target disk capacity from guardTargetDiskSafe(); -1 = unknown
+        -1};                     ///< Target disk capacity from guardTargetDiskSafe(); -1 = unknown
+    qint64 m_isoSizeBytes{-1};   ///< ISO size pinned at validation for TOCTOU immutability check
+    qint64 m_isoModifiedMs{-1};  ///< ISO mtime (ms since epoch) pinned for immutability check
 };

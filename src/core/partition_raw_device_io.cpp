@@ -76,9 +76,15 @@ public:
             return false;
         }
         const DWORD desiredAccess = writable_ ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_READ;
+        // A writable commit takes the device with write access UNshared so a concurrent
+        // third-party writer cannot open it for writing and corrupt an APFS/HFS commit
+        // mid-flight; readers are still permitted. A read-only opener shares fully. The
+        // app's own post-commit read-back opens only after the write handle is closed, so
+        // the tighter share mode never blocks it.
+        const DWORD shareMode = writable_ ? FILE_SHARE_READ : (FILE_SHARE_READ | FILE_SHARE_WRITE);
         handle_ = CreateFileW(reinterpret_cast<LPCWSTR>(path_.utf16()),
                               desiredAccess,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              shareMode,
                               nullptr,
                               OPEN_EXISTING,
                               FILE_ATTRIBUTE_NORMAL,
@@ -242,7 +248,12 @@ private:
     [[nodiscard]] qint64 readUnaligned(char* data, qint64 maxSize) {
         const qint64 start = alignedStart();
         const qint64 prefixBytes = position_ - start;
-        const qint64 alignedBytes = alignedReadSize(prefixBytes + maxSize);
+        // Bound the request before adding prefixBytes so prefix + span can never overflow
+        // qint64 (an absurd maxSize would wrap negative in alignedReadSize). A larger read is
+        // satisfied as a short read the caller loops over; the single scratch ReadFile is
+        // already capped to kMaxAlignedRequest via clampedDword.
+        const qint64 span = std::min<qint64>(maxSize, kMaxAlignedRequest);
+        const qint64 alignedBytes = alignedReadSize(prefixBytes + span);
         const DWORD bytesRequested = clampedDword(alignedBytes);
         if (!seekHandle(start)) {
             return -1;
@@ -258,8 +269,7 @@ private:
             return 0;
         }
 
-        const qint64 copied = std::min<qint64>(maxSize,
-                                               static_cast<qint64>(bytesRead) - prefixBytes);
+        const qint64 copied = std::min<qint64>(span, static_cast<qint64>(bytesRead) - prefixBytes);
         std::copy_n(scratch.data() + prefixBytes, copied, data);
         position_ += copied;
         return copied;
@@ -458,8 +468,12 @@ bool copyFileSparseWindows(const QString& source,
     }
     DWORD returned = 0;
     DeviceIoControl(dst, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
+    // FlushFileBuffers before close fails closed on a copy the OS could not durably persist,
+    // so a caller never treats a write-cache/media failure as a completed sparse copy. The
+    // FSCTL_SET_SPARSE result is intentionally not checked -- a non-sparse destination is a
+    // space-efficiency loss, not an incorrect copy, so it must not fail the operation.
     const bool ok = SetFilePointerEx(dst, size, nullptr, FILE_BEGIN) && SetEndOfFile(dst) &&
-                    copyAllocatedRanges(src, dst, size.QuadPart);
+                    copyAllocatedRanges(src, dst, size.QuadPart) && FlushFileBuffers(dst);
     if (!ok) {
         setError(errorMessage, win32ErrorMessage(GetLastError()));
     }

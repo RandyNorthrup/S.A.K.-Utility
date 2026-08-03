@@ -4835,14 +4835,28 @@ struct ApfsRepairCounters {
     uint64_t repairedBlocks{0};
 };
 
+// Byte offset of an APFS block, failing closed when blockIndex * blockSize would overflow
+// uint64 (a wrapped product would seek/write to a wrong-but-valid offset and silently corrupt
+// the container) or land past the qint64 seek range. Leaves *offset untouched on failure.
+[[nodiscard]] bool apfsBlockByteOffset(uint64_t blockIndex, uint32_t blockSize, qint64* offset) {
+    if (blockSize == 0 || blockIndex > std::numeric_limits<uint64_t>::max() / blockSize) {
+        return false;
+    }
+    const uint64_t bytes = blockIndex * static_cast<uint64_t>(blockSize);
+    if (bytes > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
+        return false;
+    }
+    *offset = static_cast<qint64>(bytes);
+    return true;
+}
+
 bool readApfsRepairBlock(QIODevice* image,
                          const ApfsRepairGeometry& geometry,
                          uint64_t blockIndex,
                          QByteArray* block,
                          QStringList* blockers) {
-    const uint64_t offset = blockIndex * static_cast<uint64_t>(geometry.blockSize);
-    if (offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) ||
-        !image->seek(static_cast<qint64>(offset))) {
+    qint64 offset = 0;
+    if (!apfsBlockByteOffset(blockIndex, geometry.blockSize, &offset) || !image->seek(offset)) {
         blockers->append(QStringLiteral("Unable to seek APFS repair block %1").arg(blockIndex));
         return false;
     }
@@ -4902,8 +4916,9 @@ bool writeApfsRepairBlock(QIODevice* image,
                      16));
         return false;
     }
-    const uint64_t offset = blockIndex * static_cast<uint64_t>(geometry.blockSize);
-    if (!image->seek(static_cast<qint64>(offset)) || image->write(block) != block.size()) {
+    qint64 offset = 0;
+    if (!apfsBlockByteOffset(blockIndex, geometry.blockSize, &offset) || !image->seek(offset) ||
+        image->write(block) != block.size()) {
         blockers->append(QStringLiteral("Unable to write APFS repair block %1: %2")
                              .arg(blockIndex)
                              .arg(image->errorString()));
@@ -18875,6 +18890,16 @@ QString PartitionApfsWriter::operationName(PartitionApfsWriteOperation operation
     return QStringLiteral("APFS operation");
 }
 
+// Ceiling division that cannot overflow for any uint64 numerator. The naive
+// (numerator + divisor - 1) / divisor wraps to a tiny quotient when numerator is within
+// divisor-1 of UINT64_MAX, which would understate the chunk/cib/cab counts. Divisor is a
+// non-zero compile-time geometry constant here.
+namespace {
+[[nodiscard]] constexpr uint64_t apfsCeilDivU64(uint64_t numerator, uint64_t divisor) {
+    return numerator / divisor + (numerator % divisor != 0 ? 1 : 0);
+}
+}  // namespace
+
 PartitionApfsContainerGeometry PartitionApfsWriter::computeContainerGeometry(uint64_t block_count,
                                                                              uint32_t block_size) {
     PartitionApfsContainerGeometry geometry;
@@ -18889,13 +18914,11 @@ PartitionApfsContainerGeometry PartitionApfsWriter::computeContainerGeometry(uin
     }
     // One spaceman chunk covers blocks_per_chunk (32768) blocks; one 4096-byte
     // allocation bitmap (32768 bits) covers exactly one chunk.
-    geometry.chunk_count = (block_count + geometry.blocks_per_chunk - 1) /
-                           geometry.blocks_per_chunk;
+    geometry.chunk_count = apfsCeilDivU64(block_count, geometry.blocks_per_chunk);
     geometry.chunk_bitmap_block_count = geometry.chunk_count;
     // Chunk-info entries pack chunks_per_cib (126) per chunk-info block; CIBs
     // pack cibs_per_cab (507) per chunk-info address block.
-    geometry.cib_count = (geometry.chunk_count + geometry.chunks_per_cib - 1) /
-                         geometry.chunks_per_cib;
+    geometry.cib_count = apfsCeilDivU64(geometry.chunk_count, geometry.chunks_per_cib);
     if (geometry.cib_count == 0) {
         geometry.cib_count = 1;
     }
@@ -18905,8 +18928,7 @@ PartitionApfsContainerGeometry PartitionApfsWriter::computeContainerGeometry(uin
     // inline, so cab_count stays 0 (matching Apple newfs_apfs / mkapfs, e.g. a
     // 100 GiB container has 7 cibs and cab_count 0).
     geometry.cab_count = geometry.cib_count > geometry.cibs_per_cab
-                             ? (geometry.cib_count + geometry.cibs_per_cab - 1) /
-                                   geometry.cibs_per_cab
+                             ? apfsCeilDivU64(geometry.cib_count, geometry.cibs_per_cab)
                              : 0;
     // Internal-pool block count derived from real Apple newfs_apfs containers
     // (see PartitionApfsContainerGeometry doc): 3 * (cib_count + chunk_count).
@@ -21014,6 +21036,21 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingImageOnlyContai
     return formatExistingContainerTarget(imageOnlyRequest);
 }
 
+// Flush a committed write target's buffers to durable storage, recording a blocker when the
+// flush fails, then close it. An in-place COW commit reports ok=blockers.isEmpty(), so it must
+// never succeed on a write the device could not durably flush (raw-device I/O error, removable
+// write-cache failure, device yanked mid-commit). WindowsRawDevice::close()'s teardown
+// FlushFileBuffers is best-effort and cannot surface a failure, so every commit path routes its
+// close through this checked flush -- matching the format path's flushDeviceBuffers gate.
+void flushCommitTargetThenClose(QIODevice* target, QStringList* blockers) {
+    QString flushError;
+    if (!flushDeviceBuffers(target, &flushError)) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit durable flush failed: %1").arg(flushError));
+    }
+    target->close();
+}
+
 // Build the full format block set, then (only if construction raised no blocker)
 // zero the target's stale signatures and write the blocks. Ordering matters: a
 // construction failure must never leave the (possibly raw-device) target zeroed
@@ -21394,7 +21431,7 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
     QStringList commitBlockers;
     commitInPlaceVolumeLabel(
         target.get(), {files, directories, result.new_volume_name}, &commit, &commitBlockers);
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     appendVolumeLabelReadback(result.target_path,
                               result.new_volume_name,
@@ -21482,7 +21519,7 @@ PartitionApfsRawRepairResult PartitionApfsWriter::repairRawObjectChecksums(
     }
 
     runRawRepairChecksumScanOnTarget(target.get(), request.target_container_bytes, &result);
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -22593,7 +22630,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22651,7 +22688,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
                                 .compressLzvn = request.compress_lzvn,
                                 .compressLzbitmap = request.compress_lzbitmap},
                                &result);
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -22700,7 +22737,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileDelet
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22753,7 +22790,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRenam
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22803,7 +22840,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22857,7 +22894,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22927,7 +22964,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -22979,7 +23016,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23035,7 +23072,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23093,7 +23130,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileMove(
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23145,7 +23182,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFilePatch
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23190,7 +23227,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileClone
                                 .cloneSourcePrivateId = cloneSource.privateId,
                                 .cloneLogicalSize = cloneSource.logicalSize},
                                &result);
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -23234,7 +23271,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileHardl
                                 .directories = directories,
                                 .hardlinkTargetId = targetId},
                                &result);
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -23271,7 +23308,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawResize(
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23373,7 +23410,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotC
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23444,7 +23481,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotD
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -23515,7 +23552,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotR
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    target->close();
+    flushCommitTargetThenClose(target.get(), &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;

@@ -15,6 +15,8 @@
 
 #include "sak/windows_usb_creator.h"
 
+#include <QDir>
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -56,6 +58,15 @@ private slots:
 
     // ---- bcdboot success gating (B10-22) ----
     void bcdbootReportsSuccess_onlyCleanZeroExit();
+
+    // ---- diskpart 0-exit-but-failed detection (CR3-9) ----
+    void diskpartOutputIsError_detectsFailureMarkers();
+    void diskpartOutputIsError_ignoresSuccessChatter();
+
+    // ---- bundled-executable trust check (CR3-6) ----
+    void isSafeBundledExecutable_acceptsRegularFileUnderAppDir();
+    void isSafeBundledExecutable_rejectsMissingFile();
+    void isSafeBundledExecutable_rejectsFileOutsideAppDir();
 };
 
 // ===========================================================================
@@ -281,6 +292,71 @@ void WindowsUSBCreatorTests::bcdbootReportsSuccess_onlyCleanZeroExit() {
     QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, true, 0));
     QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, 1));
     QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, -1));
+}
+
+// ===========================================================================
+// diskpart 0-exit-but-failed detection (CR3 finding 9)
+// ===========================================================================
+
+// diskpart frequently exits 0 even when an individual command failed, printing a
+// hard-failure marker to stdout. Those markers must be treated as failure so the
+// flow does not report broken media as success.
+void WindowsUSBCreatorTests::diskpartOutputIsError_detectsFailureMarkers() {
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("DiskPart has encountered an error: The parameter is incorrect.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("Virtual Disk Service error:\nThe object is not found.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(QStringLiteral("Access is denied.")));
+    // Case-insensitive.
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("diskpart has encountered an error")));
+}
+
+void WindowsUSBCreatorTests::diskpartOutputIsError_ignoresSuccessChatter() {
+    QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("DiskPart succeeded in cleaning the disk.")));
+    QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("DiskPart successfully formatted the volume.")));
+    QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("DiskPart marked the current partition as active.")));
+    QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(QString()));
+}
+
+// ===========================================================================
+// bundled-executable trust check (CR3 finding 6)
+// ===========================================================================
+
+void WindowsUSBCreatorTests::isSafeBundledExecutable_acceptsRegularFileUnderAppDir() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString exe = dir.path() + QStringLiteral("/7z.exe");
+    QFile f(exe);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("MZ");
+    f.close();
+    QVERIFY(WindowsUSBCreator::isSafeBundledExecutable(exe, dir.path()));
+}
+
+void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsMissingFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A path that does not exist must fail closed.
+    QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(dir.path() + QStringLiteral("/nope.exe"),
+                                                        dir.path()));
+}
+
+void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsFileOutsideAppDir() {
+    QTemporaryDir dirA;
+    QTemporaryDir dirB;
+    QVERIFY(dirA.isValid());
+    QVERIFY(dirB.isValid());
+    const QString exe = dirA.path() + QStringLiteral("/7z.exe");
+    QFile f(exe);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("MZ");
+    f.close();
+    // Real regular file, but NOT under the claimed application directory.
+    QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(exe, dirB.path()));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

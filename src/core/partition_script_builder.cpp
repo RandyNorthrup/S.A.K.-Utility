@@ -120,13 +120,35 @@ QString commonHeader(const QString& title) {
                                                      title));
 }
 
-QString requirePartitionIdentity(uint32_t disk, uint32_t partition, uint64_t size) {
-    return QStringLiteral(
-               "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
-               "if ([uint64]$p.Size -ne [uint64]%3) { throw 'Partition identity mismatch' }\n")
-        .arg(disk)
-        .arg(partition)
-        .arg(uintArg(size));
+QString requirePartitionIdentity(const PartitionTarget& target) {
+    // Runtime TOCTOU guard: pin the target between preview and apply. Size alone let a
+    // deleted-then-recreated same-sized partition at the same number pass, so we also pin
+    // the on-disk OFFSET (a recycled partition almost always lands at a different offset)
+    // and, when the caller carries it, the GPT partition GUID (regenerated on recreate).
+    // Offset/GUID checks are emitted only when known so operations that legitimately do not
+    // populate them are not falsely rejected; the app-layer layout-hash drift check remains
+    // the primary guard and this is the secondary runtime belt.
+    QString script =
+        QStringLiteral(
+            "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
+            "if ([uint64]$p.Size -ne [uint64]%3) { throw 'Partition identity mismatch' }\n")
+            .arg(target.disk_number)
+            .arg(target.partition_number)
+            .arg(uintArg(target.size_bytes));
+    if (target.offset_bytes != 0) {
+        script += QStringLiteral(
+                      "if ([uint64]$p.Offset -ne [uint64]%1) { throw 'Partition identity "
+                      "mismatch (offset)' }\n")
+                      .arg(uintArg(target.offset_bytes));
+    }
+    if (!target.partition_guid.trimmed().isEmpty()) {
+        script +=
+            QStringLiteral(
+                "if ($p.Guid -and ($p.Guid.Trim('{}') -ne "
+                "%1.Trim('{}'))) { throw 'Partition identity mismatch (GUID)' }\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(target.partition_guid.trimmed()));
+    }
+    return script;
 }
 
 QString payloadString(const PartitionOperation& operation,
@@ -363,10 +385,7 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as Linux swap")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
                                            QStringLiteral("[uint64]$p.Size"),
                                            label,
@@ -494,10 +513,7 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                                ? QStringLiteral("plaintext")
                                : QStringLiteral("FileVault-encrypted"));
     out.credential_files = encryption.credentials;
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
@@ -541,10 +557,7 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
             .arg(operation.target.disk_number)
             .arg(operation.target.partition_number)
             .arg(fileSystem.toUpper());
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
@@ -1489,19 +1502,24 @@ QString runtimeFilesystemManifestPath() {
 }
 
 QString runtimeApfsWriterCliPath() {
-    const QString appDir = QCoreApplication::applicationDirPath();
-    if (!appDir.trimmed().isEmpty()) {
-        return QDir(appDir).filePath(QStringLiteral("sak_apfs_writer_cli.exe"));
+    // Resolve the elevated helper strictly from the trusted (code-signed) application
+    // directory -- same root of trust as the running exe. Fail CLOSED if the app dir is
+    // unknown instead of falling back to a CWD-relative path an attacker could plant; the
+    // emitted script rejects an empty path before running anything.
+    const QString appDir = QCoreApplication::applicationDirPath().trimmed();
+    if (appDir.isEmpty()) {
+        return {};
     }
-    return QDir::current().filePath(QStringLiteral("sak_apfs_writer_cli.exe"));
+    return QDir(appDir).filePath(QStringLiteral("sak_apfs_writer_cli.exe"));
 }
 
 QString runtimeHfsWriterCliPath() {
-    const QString appDir = QCoreApplication::applicationDirPath();
-    if (!appDir.trimmed().isEmpty()) {
-        return QDir(appDir).filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
+    // See runtimeApfsWriterCliPath: trusted application directory only, no CWD fallback.
+    const QString appDir = QCoreApplication::applicationDirPath().trimmed();
+    if (appDir.isEmpty()) {
+        return {};
     }
-    return QDir::current().filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
+    return QDir(appDir).filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
 }
 
 // The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
@@ -1588,8 +1606,9 @@ QString apfsWriterCliFunctionScript() {
                "[string]$VolumePasswordFile = '', [string]$RecoveryKeyFile = '', "
                "[string]$NewFileName = '')\n"
                "  $cliPath = %1\n"
-               "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
-               "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
+               "  if ([string]::IsNullOrWhiteSpace($cliPath) -or -not (Test-Path -LiteralPath "
+               "$cliPath -PathType Leaf)) {\n"
+               "    throw ('APFS writer helper missing or unresolved: {0}' -f $cliPath)\n"
                "  }\n"
                "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
                "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
@@ -1617,8 +1636,9 @@ QString hfsWriterCliFunctionScript() {
                "[string]$EvidenceId, [bool]$AllowJournaled = $false, [bool]$AllowWrapped = $false, "
                "[bool]$SecureWipeReleasedBlocks = $false)\n"
                "  $cliPath = %1\n"
-               "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
-               "    throw ('HFS writer helper missing: {0}' -f $cliPath)\n"
+               "  if ([string]::IsNullOrWhiteSpace($cliPath) -or -not (Test-Path -LiteralPath "
+               "$cliPath -PathType Leaf)) {\n"
+               "    throw ('HFS writer helper missing or unresolved: {0}' -f $cliPath)\n"
                "  }\n"
                "  $args = @($Command, '--target', $ImagePath, '--evidence-id', $EvidenceId, "
                "'--confirm-target')\n"
@@ -1732,9 +1752,13 @@ QString filesystemToolCallScriptWithArgsExpression(
 }
 
 QString dismountSelectedPartitionVolumeScript() {
+    // A partition with no OS-mountable volume (the normal case for APFS/HFS foreign
+    // targets) yields nothing under SilentlyContinue -- that is expected and safe. But we
+    // must NOT swallow a terminating failure the way a blanket `catch {}` did: if a volume
+    // IS present with a drive letter, the dismount runs with -ErrorAction Stop so a failed
+    // dismount fails the whole op closed rather than raw-writing a still-mounted volume.
     return QStringLiteral(
-        "$volume = $null\n"
-        "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
+        "$volume = $p | Get-Volume -ErrorAction SilentlyContinue\n"
         "if ($volume -and $volume.DriveLetter) {\n"
         "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
         "}\n");
@@ -1757,7 +1781,11 @@ QString diskPartLabel(QString label) {
 }
 
 QString sizeMbArg(uint64_t bytes) {
-    return QString::number(std::max<uint64_t>(kMinimumDiskPartSizeMb, bytes / kCloneIoBufferBytes));
+    // DiskPart sizes are whole MiB. Round UP so a destructive recreate never rebuilds a
+    // partition smaller than the source it just deleted (flooring could shave off up to
+    // <1MiB and leave the restore unable to fit). Ceiling only ever grows the request.
+    const uint64_t megabytes = (bytes + kCloneIoBufferBytes - 1) / kCloneIoBufferBytes;
+    return QString::number(std::max<uint64_t>(kMinimumDiskPartSizeMb, megabytes));
 }
 
 QString sakVolumeGuidFunctionScript() {
@@ -1818,6 +1846,17 @@ QString sakShadowBackupFunctionScript() {
         "    Write-Output ('WARNING: VSS shadow copy unavailable for {0} ({1}); backing up the "
         "live volume (not point-in-time consistent)' -f $volume, $fsFormat)\n"
         "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
+        // The live (non-point-in-time) copy has no snapshot, so verify the backup actually
+        // matches the source before the caller destroys the source. If a file changed or
+        // could not be read during the copy the manifests differ and we fail closed rather
+        // than accept a torn backup as the baseline.
+        "    $srcManifest = @(Get-SakFileManifest $sourceRoot)\n"
+        "    $bakManifest = @(Get-SakFileManifest $backupPath)\n"
+        "    $diff = @(Compare-Object -ReferenceObject $srcManifest -DifferenceObject "
+        "$bakManifest -Property RelativePath,Length,Hash)\n"
+        "    if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
+        "'Live backup is incomplete or the source changed during copy; refusing to reformat "
+        "without a consistent backup' }\n"
         "  }\n"
         "}\n");
 }
@@ -1828,7 +1867,12 @@ QString backupRestoreHelpersScript() {
                "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
                "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
                "  $code = $LASTEXITCODE\n"
-               "  if ($code -gt 7) { exit $code }\n"
+               // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
+               // could not be copied, 16=fatal. A clean mirror to a fresh target is only
+               // ever 0-3; any code >= 4 is a mismatch or copy failure and MUST fail closed
+               // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
+               "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
+               "code {0}' -f $code); exit $code }\n"
                "}\n"
                "function Get-SakFileManifest([string]$root) {\n"
                "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
@@ -2227,7 +2271,7 @@ QString cloneTransferCopyBodyScript() {
         "- $sourceOffset } catch {} }; [void]$in.Seek([int64]$sourceOffset, "
         "[System.IO.SeekOrigin]::Begin); $out = Open-SakWrite $dst; try { "
         "[void]$out.Seek([int64]$targetOffset, [System.IO.SeekOrigin]::Begin); "
-        "Copy-SakBytes $in $out $expectedBytes; $out.Flush() } finally { $out.Dispose() } } "
+        "Copy-SakBytes $in $out $expectedBytes; $out.Flush($true) } finally { $out.Dispose() } } "
         "finally { $in.Dispose() }\n");
 }
 
@@ -2273,14 +2317,17 @@ QString createImageDestinationGuardScript(const QString& target, uint32_t source
                "$srcDiskNumber = %2\n"
                "$destGuid = $null\n"
                "try { $destGuid = (Get-SakVolumeGuid $imgDest).TrimEnd('\\') } catch "
-               "{ $destGuid = $null }\n"
-               "if ($destGuid) {\n"
-               "  $srcVolGuids = @(Get-Partition -DiskNumber $srcDiskNumber -ErrorAction "
-               "SilentlyContinue | Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
+               "{ throw ('Create Image cannot resolve the destination volume identity for {0}: "
+               "{1}; refusing to proceed without the off-source-disk guard' -f $imgDest, "
+               "$_.Exception.Message) }\n"
+               "if (-not $destGuid) { throw ('Create Image destination volume identity for {0} "
+               "resolved empty; refusing to proceed without the off-source-disk guard' -f "
+               "$imgDest) }\n"
+               "$srcVolGuids = @(Get-Partition -DiskNumber $srcDiskNumber -ErrorAction Stop | "
+               "Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
                "{ if ($_.UniqueId) { $_.UniqueId.TrimEnd('\\') } })\n"
-               "  if ($srcVolGuids -contains $destGuid) { throw 'Create Image destination "
-               "resolves onto the source disk; choose an off-disk destination' }\n"
-               "}\n")
+               "if ($srcVolGuids -contains $destGuid) { throw 'Create Image destination "
+               "resolves onto the source disk; choose an off-disk destination' }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(target)),
                     QString::number(sourceDiskNumber));
 }
@@ -2442,10 +2489,7 @@ PartitionScript buildNativeResizeScript(const PartitionOperation& operation, uin
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number)
                       .arg(formatPartitionBytes(targetSize));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
@@ -2546,10 +2590,7 @@ PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
             .arg(operation.target.disk_number)
             .arg(operation.target.partition_number)
             .arg(fs.toLower());
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
                  filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
                                           e2fsck,
@@ -2580,7 +2621,12 @@ QString robocopyManifestFunctionsScript() {
                "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
                "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
                "  $code = $LASTEXITCODE\n"
-               "  if ($code -gt 7) { exit $code }\n"
+               // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
+               // could not be copied, 16=fatal. A clean mirror to a fresh target is only
+               // ever 0-3; any code >= 4 is a mismatch or copy failure and MUST fail closed
+               // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
+               "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
+               "code {0}' -f $code); exit $code }\n"
                "}\n"
                "function Get-SakFileManifest([string]$root) {\n"
                "  $rootFull = [System.IO.Path]::GetFullPath($root)\n"
@@ -3036,6 +3082,35 @@ QString hfsRangeCopyFunctionsScript() {
                "    $TargetStream.Write($buffer, 0, $read)\n"
                "    $remaining -= [uint64]$read\n"
                "  }\n"
+               "}\n"
+               "function Read-SakExactInto {\n"
+               "  param([System.IO.FileStream]$Stream, [byte[]]$Buffer, [int]$Count)\n"
+               "  $off = 0\n"
+               "  while ($off -lt $Count) {\n"
+               "    $read = $Stream.Read($Buffer, $off, $Count - $off)\n"
+               "    if ($read -le 0) { throw 'Read-back ended before expected byte count' }\n"
+               "    $off += $read\n"
+               "  }\n"
+               "}\n"
+               "function Assert-SakFileRangeReadBack {\n"
+               "  param([System.IO.FileStream]$SourceStream, [System.IO.FileStream]$TargetStream, "
+               "[uint64]$Offset, [uint64]$Length)\n"
+               "  $srcBuffer = New-Object byte[] ([int]%1)\n"
+               "  $dstBuffer = New-Object byte[] ([int]%1)\n"
+               "  [void]$SourceStream.Seek([int64]$Offset, [System.IO.SeekOrigin]::Begin)\n"
+               "  [void]$TargetStream.Seek([int64]$Offset, [System.IO.SeekOrigin]::Begin)\n"
+               "  $remaining = $Length\n"
+               "  while ($remaining -gt 0) {\n"
+               "    $chunk = [int][Math]::Min([uint64]$srcBuffer.Length, $remaining)\n"
+               "    Read-SakExactInto -Stream $SourceStream -Buffer $srcBuffer -Count $chunk\n"
+               "    Read-SakExactInto -Stream $TargetStream -Buffer $dstBuffer -Count $chunk\n"
+               "    for ($i = 0; $i -lt $chunk; $i += 1) {\n"
+               "      if ($srcBuffer[$i] -ne $dstBuffer[$i]) { throw ('Post-copy read-back "
+               "mismatch at raw-target offset {0}' -f ($Offset + ($Length - $remaining) + "
+               "[uint64]$i)) }\n"
+               "    }\n"
+               "    $remaining -= [uint64]$chunk\n"
+               "  }\n"
                "}\n")
         .arg(uintArg(kHfsStagedCopyBufferBytes));
 }
@@ -3050,31 +3125,45 @@ QString hfsSparseImageWritebackFunctionScript() {
                "  $target = [System.IO.File]::Open($RawTarget, [System.IO.FileMode]::Open, "
                "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)\n"
                "  $copiedBytes = [uint64]0\n"
-               "  $clippedRanges = 0\n"
                "  try {\n"
                "    $edgeBytes = [uint64][Math]::Min([uint64]%1, $TargetSizeBytes)\n"
                "    Write-SakZeroRange -TargetStream $target -Offset 0 -Length $edgeBytes\n"
                "    if ($TargetSizeBytes -gt $edgeBytes) { Write-SakZeroRange -TargetStream "
                "$target -Offset ($TargetSizeBytes - $edgeBytes) -Length $edgeBytes }\n"
+               // The staging image is sized from the raw-target size, so no allocated range
+               // can legitimately extend past it. A range that does indicates corruption or a
+               // sizing bug: fail CLOSED instead of silently clipping (the old code just
+               // counted $clippedRanges and continued, dropping filesystem data).
                "    foreach ($range in $ranges) {\n"
-               "      if ([uint64]$range.offset -ge $TargetSizeBytes) { $clippedRanges += 1; "
-               "continue }\n"
+               "      if ([uint64]$range.offset -ge $TargetSizeBytes) { throw ('Staged HFS "
+               "allocated range at offset {0} lies beyond raw target size {1}; refusing to "
+               "clip filesystem data' -f $range.offset, $TargetSizeBytes) }\n"
                "      $rangeLength = [uint64]$range.length\n"
                "      $maxLength = $TargetSizeBytes - [uint64]$range.offset\n"
-               "      if ($rangeLength -gt $maxLength) { $rangeLength = $maxLength; "
-               "$clippedRanges += 1 }\n"
+               "      if ($rangeLength -gt $maxLength) { throw ('Staged HFS allocated range at "
+               "offset {0} length {1} exceeds raw target size {2}; refusing to clip filesystem "
+               "data' -f $range.offset, $rangeLength, $TargetSizeBytes) }\n"
                "      if ($rangeLength -eq 0) { continue }\n"
                "      Copy-SakFileRange -SourceStream $source -TargetStream $target -Offset "
                "$range.offset -Length $rangeLength\n"
                "      $copiedBytes += $rangeLength\n"
                "    }\n"
-               "    $target.Flush()\n"
+               "    $target.Flush($true)\n"
+               // Post-copy read-back: re-read every written range from the raw target and
+               // compare it against the staged image so a torn/short write fails closed. This
+               // is the verification the surrounding flow's comments assert must pass.
+               "    foreach ($range in $ranges) {\n"
+               "      $verifyLength = [uint64]$range.length\n"
+               "      if ($verifyLength -eq 0) { continue }\n"
+               "      Assert-SakFileRangeReadBack -SourceStream $source -TargetStream $target "
+               "-Offset $range.offset -Length $verifyLength\n"
+               "    }\n"
                "  } finally {\n"
                "    $source.Dispose()\n"
                "    $target.Dispose()\n"
                "  }\n"
-               "  Write-Output ('Copied staged HFS image to raw target: ranges={0}; bytes={1}; "
-               "clipped={2}' -f $ranges.Count, $copiedBytes, $clippedRanges)\n"
+               "  Write-Output ('Copied staged HFS image to raw target and verified read-back: "
+               "ranges={0}; bytes={1}' -f $ranges.Count, $copiedBytes)\n"
                "}\n")
         .arg(uintArg(kHfsStaleSignatureClearBytes));
 }
@@ -3172,10 +3261,7 @@ PartitionScript buildStagedHfsFormatScript(
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     const QStringList formatArgs = request.command.arguments;
     out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         hfsStagedFunctionsScript() +
         QStringLiteral(
             "$targetPath = %1\n"
@@ -3222,10 +3308,7 @@ PartitionScript buildStagedHfsRepairScript(const PartitionOperation& operation,
     PartitionScript out;
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         hfsStagedFunctionsScript() +
         QStringLiteral(
             "$targetPath = %1\n"
@@ -3705,7 +3788,14 @@ QString PartitionScriptBuilder::quotePowerShell(const QString& value) {
 }
 
 bool PartitionScriptBuilder::isValidDriveLetter(const QString& value) {
-    return value.size() == 1 && value.at(0).isLetter();
+    // A Windows drive letter is strictly an ASCII A-Z. QChar::isLetter() would also
+    // accept Unicode letters (e.g. Cyrillic 'Е'), which are not valid mount points and
+    // could smuggle a homoglyph past letter-based gates; reject anything non-ASCII.
+    if (value.size() != 1) {
+        return false;
+    }
+    const char16_t code = value.at(0).unicode();
+    return (code >= u'A' && code <= u'Z') || (code >= u'a' && code <= u'z');
 }
 
 bool PartitionScriptBuilder::isSupportedFileSystem(const QString& value) {
@@ -3758,10 +3848,7 @@ PartitionScript PartitionScriptBuilder::buildDeleteScript(
     out.preview = QStringLiteral("Delete Disk %1 Partition %2")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-Confirm:$false\n")
@@ -3823,10 +3910,7 @@ PartitionScript PartitionScriptBuilder::buildFormatScript(
                       .arg(operation.target.partition_number)
                       .arg(fs.toUpper());
     out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         QStringLiteral(
             "$p | Format-Volume -FileSystem %1 -NewFileSystemLabel %2%3%4 "
             "-Confirm:$false\n")
@@ -3847,10 +3931,7 @@ PartitionScript PartitionScriptBuilder::buildSetDriveLetterScript(
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number)
                       .arg(letter.toUpper());
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-NewDriveLetter %3\n")
@@ -3873,10 +3954,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionLabelScript(
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number)
                       .arg(label.isEmpty() ? QStringLiteral("(blank)") : label);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("Set-Volume -DriveLetter %1 -NewFileSystemLabel %2\n")
                      .arg(letter.toUpper(), quotePowerShell(label));
     return out;
@@ -3948,10 +4026,7 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                            apfsRootFileMutationDisplayName(input),
                            QString::number(operation.target.disk_number),
                            QString::number(operation.target.partition_number));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
@@ -3985,10 +4060,7 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
                            snapshotName,
                            QString::number(operation.target.disk_number),
                            QString::number(operation.target.partition_number));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
@@ -4030,10 +4102,7 @@ PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
                       .arg(apfsA7Verb(operation.type),
                            QString::number(operation.target.disk_number),
                            QString::number(operation.target.partition_number));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
@@ -4072,10 +4141,7 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
                            QString::number(operation.target.disk_number),
                            QString::number(operation.target.partition_number));
     out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         hfsStagedFunctionsScript() + hfsWriterCliFunctionScript() +
         QStringLiteral(
             "$targetPath = %1\n"
@@ -4150,10 +4216,7 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
 
     PartitionScript out;
     out.preview = request.preview;
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  request.pre_tool_script + filesystemToolFunctionScript() +
                  dismountSelectedPartitionVolumeScript() +
                  filesystemToolCallScript(request.command.tool_id,
@@ -4294,10 +4357,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionHiddenScript(
                       .arg(hidden ? QStringLiteral("Hide") : QStringLiteral("Unhide"))
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-IsHidden $%3 -NoDefaultDriveLetter $%3\n")
@@ -4324,10 +4384,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionActiveScript(
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number)
                       .arg(active ? QStringLiteral("active") : QStringLiteral("inactive"));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsActive $%3\n")
                      .arg(operation.target.disk_number)
                      .arg(operation.target.partition_number)
@@ -4347,10 +4404,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number)
                       .arg(typeId);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "$d = Get-Disk -Number %1 -ErrorAction Stop\n"
                      "$typeId = %2\n"
@@ -4451,10 +4505,7 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
                       .arg(operation.target.disk_number)
                       .arg(payload.source_partition)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  sakVolumeGuidFunctionScript() +
                  allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
                  robocopyManifestFunctionsScript() + allocateExecutionScript(operation, payload);
@@ -4521,10 +4572,7 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                       .arg(operation.target.disk_number)
                       .arg(source_partition)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "$target = $p\n"
                      "$source = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
@@ -4574,10 +4622,7 @@ PartitionScript PartitionScriptBuilder::buildSplitScript(
     out.preview = QStringLiteral("Split Disk %1 Partition %2")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n"
                      "$new = New-Partition -DiskNumber %1 -UseMaximumSize -AssignDriveLetter\n"
@@ -4617,10 +4662,7 @@ PartitionScript PartitionScriptBuilder::buildChangeClusterSizeScript(
     out.preview = QStringLiteral("Change %1: cluster size to %2 bytes")
                       .arg(payload.drive.toUpper())
                       .arg(uintArg(payload.allocation_unit));
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  sakVolumeGuidFunctionScript() + clusterSetupScript(payload) +
                  robocopyManifestFunctionsScript() + clusterExecutionScript();
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -4845,10 +4887,7 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
     out.preview = QStringLiteral("Full format Disk %1 Partition %2")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full -Confirm:$false\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -4866,10 +4905,7 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
     out.preview = QStringLiteral("Move Disk %1 Partition %2")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script = commonHeader(out.preview) +
-                 requirePartitionIdentity(operation.target.disk_number,
-                                          operation.target.partition_number,
-                                          operation.target.size_bytes) +
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  backupRestoreHelpersScript() +
                  QStringLiteral(
                      "$drive = %1\n"
@@ -4925,10 +4961,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
                       .arg(payload.make_logical ? QStringLiteral("logical")
                                                 : QStringLiteral("primary"));
     out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         backupRestoreHelpersScript() + diskPartRunnerScript() +
         QStringLiteral(
             "$drive = %1\n"

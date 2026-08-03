@@ -17,6 +17,10 @@ class QIODevice;
 
 namespace sak {
 
+// Advisory, signature-based detection result: a match reports the family plus raw
+// geometry/metadata in `details` for the technician to inspect. It is intentionally NOT a
+// validity verdict -- the FS readers/writers that actually mutate a volume re-validate
+// geometry independently and fail closed there, so this detector stays informational.
 struct PartitionFileSystemDetection {
     QString file_system;
     QString source;

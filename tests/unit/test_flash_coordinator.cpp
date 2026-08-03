@@ -35,6 +35,7 @@ private Q_SLOTS:
 
     // ── startFlash guards ───────────────────────────────────
     void testStartFlashEmptyDrives();
+    void testStartFlashRejectsZeroLengthImage();
     void testStartFlashRejectsDuplicateTargets();
     void testFirstDuplicateTargetSeam();
     void testParsePhysicalDriveNumberSeam();
@@ -111,6 +112,31 @@ void TestFlashCoordinator::testStartFlashEmptyDrives() {
     bool result = m_coord->startFlash("C:/test.iso", QStringList{});
     QVERIFY(!result);
     QVERIFY(spy.count() >= 1);
+}
+
+// A 0-byte image must be refused BEFORE any drive work: it would write nothing yet
+// pass verification (source==target==SHA-512 of empty), reporting a false success.
+// The guard fires in validateImagePath, before target validation, so no drive is
+// needed to exercise it headlessly.
+void TestFlashCoordinator::testStartFlashRejectsZeroLengthImage() {
+    QTemporaryFile img;
+    QVERIFY(img.open());
+    img.close();  // created, but left at 0 bytes
+
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
+    const bool result = m_coord->startFlash(img.fileName(),
+                                            QStringList{QStringLiteral("\\\\.\\PhysicalDrive99")});
+
+    QVERIFY(!result);
+    bool sawEmpty = false;
+    for (const QList<QVariant>& args : spy) {
+        if (!args.isEmpty() &&
+            args.first().toString().contains(QStringLiteral("empty"), Qt::CaseInsensitive)) {
+            sawEmpty = true;
+        }
+    }
+    QVERIFY2(sawEmpty, "expected an empty-image flashError for a 0-byte image");
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
 }
 
 void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {

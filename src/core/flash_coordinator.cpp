@@ -9,6 +9,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QFileInfo>
 #include <QMutexLocker>
 #include <QSet>
 #include <QThread>
@@ -32,6 +33,39 @@ enum class OsDiskCheck {
     IsSystem,
     Undetermined
 };
+
+// The flash run is "active" (busy) from the moment targets start validating
+// through verification. A second startFlash arriving in ANY of these states must
+// be refused -- not just during Flashing/Verifying -- or two runs race the shared
+// worker/state members.
+bool isActiveFlashState(sak::FlashState state) {
+    return state == sak::FlashState::Validating || state == sak::FlashState::Unmounting ||
+           state == sak::FlashState::Decompressing || state == sak::FlashState::Flashing ||
+           state == sak::FlashState::Verifying;
+}
+
+// Reads the actual physical-disk number the given open device handle refers to
+// (IOCTL_STORAGE_GET_DEVICE_NUMBER). Returns -1 on failure or a non-disk device.
+// Used to confirm a "\\.\PhysicalDriveN" path really opens disk N, closing a
+// DosDevice-alias bypass where the parsed number differs from the opened device.
+int queryHandleDriveNumber(HANDLE handle) {
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD bytesReturned = 0;
+    if (!DeviceIoControl(handle,
+                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                         nullptr,
+                         0,
+                         &deviceNumber,
+                         sizeof(deviceNumber),
+                         &bytesReturned,
+                         nullptr)) {
+        return -1;
+    }
+    if (deviceNumber.DeviceType != FILE_DEVICE_DISK) {
+        return -1;
+    }
+    return static_cast<int>(deviceNumber.DeviceNumber);
+}
 
 // A file the flasher recognizes as a compressed container but the streaming
 // DecompressorFactory cannot turn into a raw disk image (currently .zip -- a
@@ -115,14 +149,17 @@ FlashCoordinator::~FlashCoordinator() {
 bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& targetDrives) {
     // m_imageSource is null on entry and created by prepareImageSource() below; do not assert it.
     Q_ASSERT(!imagePath.isEmpty());
-    if (isFlashing()) {
-        sak::logError("Flash already in progress");
-        return false;
-    }
-
     if (targetDrives.isEmpty()) {
         sak::logError("No target drives specified");
         Q_EMIT flashError("No target drives specified");
+        return false;
+    }
+
+    // Atomically refuse re-entry AND claim the run (-> Validating). Closes the window
+    // where a second startFlash slips past a plain isFlashing() check while the first
+    // is still in its synchronous Validating/Unmounting phase.
+    if (!beginFlashClaim()) {
+        sak::logError("Flash already in progress");
         return false;
     }
 
@@ -190,6 +227,17 @@ bool FlashCoordinator::validateImagePath(const QString& imagePath) {
         Q_EMIT stateChanged(m_state, "Invalid image path");
         Q_EMIT flashError(
             QString::fromStdString("Image path validation failed: " + path_result.error_message));
+        return false;
+    }
+    // Reject a zero-length image (fail closed). It would write nothing yet pass:
+    // imageFitsDevice(0,cap) is true, the write loop is skipped, and a full verify
+    // hashes 0 bytes so source==target==SHA512(empty) -> a false "success". The
+    // path validator only checks existence/type, not that there is data to flash.
+    if (QFileInfo(imagePath).size() == 0) {
+        sak::logError("Refusing to flash a zero-length image");
+        m_state = sak::FlashState::Failed;
+        Q_EMIT stateChanged(m_state, "Empty image");
+        Q_EMIT flashError("Image file is empty (0 bytes); nothing to flash");
         return false;
     }
     return true;
@@ -276,8 +324,20 @@ void FlashCoordinator::cancel() {
 
 bool FlashCoordinator::isFlashing() const {
     QMutexLocker locker(&m_mutex);
-    return m_state == sak::FlashState::Flashing || m_state == sak::FlashState::Verifying ||
-           m_state == sak::FlashState::Decompressing;
+    // Reports "busy" for the WHOLE active run (including the synchronous Validating/
+    // Unmounting phases), so the re-entry guard cannot be slipped during them.
+    return isActiveFlashState(m_state);
+}
+
+bool FlashCoordinator::beginFlashClaim() {
+    QMutexLocker locker(&m_mutex);
+    if (isActiveFlashState(m_state)) {
+        return false;  // A run is already active -- refuse re-entry atomically.
+    }
+    // Claim the run under the lock so a concurrent startFlash cannot also pass the
+    // gate before the first one has moved the state out of Idle/Completed/Failed.
+    m_state = sak::FlashState::Validating;
+    return true;
 }
 
 sak::FlashState FlashCoordinator::state() const {
@@ -339,6 +399,30 @@ void FlashCoordinator::connectWorkerSignals(FlashWorker* worker) {
     }
 }
 
+QString FlashCoordinator::recordDriveCompletion(const QString& devicePath,
+                                                const sak::ValidationResult& result) {
+    // Called with m_mutex held. completedDrives counts SUCCESSES only (failures bump
+    // failedDrives); a failed verification must not bump both counters or it would
+    // contribute 2 to the finalize sum and tear down still-active workers early.
+    // Returns the error message on failure (empty on success).
+    if (!result.passed) {
+        sak::logError(QString("Verification failed for drive: %1").arg(devicePath).toStdString());
+        m_progress.failedDrives++;
+        m_result.failedDrives.append(devicePath);
+        const QString errorMsg = result.errors.isEmpty() ? QStringLiteral("Verification failed")
+                                                         : result.errors.first();
+        m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
+        return errorMsg;
+    }
+    m_progress.completedDrives++;
+    m_result.successfulDrives.append(devicePath);
+    // The verified device checksum (== source when verification is on).
+    if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
+        m_result.sourceChecksum = result.targetChecksum;
+    }
+    return QString();
+}
+
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     Q_ASSERT(!m_targetDrives.isEmpty());
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
@@ -366,34 +450,22 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         // failed()/cancelled() for the same drive is not double-counted as a failure.
         m_reportedWorkers.insert(worker);
         m_progress.activeDrives--;
-
-        // completedDrives counts SUCCESSES only (onWorkerFailed increments failedDrives);
-        // a failed verification must not bump both counters or it would contribute 2 to
-        // the finalize sum below and tear down still-active workers early.
-        if (!result.passed) {
-            sak::logError(
-                QString("Verification failed for drive: %1").arg(devicePath).toStdString());
-            m_progress.failedDrives++;
-            m_result.failedDrives.append(devicePath);
-            errorMsg = result.errors.isEmpty() ? "Verification failed" : result.errors.first();
-            m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
-        } else {
-            m_progress.completedDrives++;
-            m_result.successfulDrives.append(devicePath);
-            // The verified device checksum (== source when verification is on).
-            if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
-                m_result.sourceChecksum = result.targetChecksum;
-            }
-        }
+        errorMsg = recordDriveCompletion(devicePath, result);
 
         if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
-            m_state = sak::FlashState::Completed;
-            m_result.success = m_progress.failedDrives == 0;
+            // The terminal state must reflect the RUN outcome, not which handler fired
+            // last: if any drive failed (e.g. the last worker to report failed its
+            // verification), the run FAILED even though this is the success handler.
+            const bool anyFailed = m_progress.failedDrives > 0;
+            m_state = anyFailed ? sak::FlashState::Failed : sak::FlashState::Completed;
+            m_result.success = !anyFailed;
             finalizeResultMetrics();
             terminal = true;
             terminalState = m_state;
             terminalResult = m_result;
-            terminalMessage = QString("Completed: %1 successful, %2 failed")
+            terminalMessage = QString("%1: %2 successful, %3 failed")
+                                  .arg(anyFailed ? QStringLiteral("Failed")
+                                                 : QStringLiteral("Completed"))
                                   .arg(m_result.successfulDrives.size())
                                   .arg(m_result.failedDrives.size());
         }
@@ -477,11 +549,13 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
 void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
                                            const sak::FlashResult& result,
                                            const QString& statusMessage) {
-    // Re-online every drive that was successfully flashed+verified. The unmount
-    // step set a PERSISTENT OFFLINE attribute (so Windows could not auto-mount and
-    // corrupt the write); it survives the flash, so completed media would be left
-    // permanently offline unless we clear it here.
-    reonlineDrives(result.successfulDrives);
+    // Re-online every drive we took offline -- BOTH successful AND failed targets.
+    // The unmount step set a PERSISTENT OFFLINE attribute (so Windows could not
+    // auto-mount and corrupt the write); it survives the flash. Leaving a FAILED
+    // target offline would strand it, requiring a manual `diskpart online disk`.
+    // Re-onlining a half-written disk is safe: it cannot corrupt anything further,
+    // and the user can immediately re-partition or re-flash it.
+    reonlineDrives(result.successfulDrives + result.failedDrives);
     Q_EMIT stateChanged(state, statusMessage);
     Q_EMIT flashCompleted(result);
     cleanupWorkers();
@@ -593,7 +667,26 @@ bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
         return false;
     }
 
+    // Confirm the path really opens the physical disk its name claims. A crafted
+    // DosDevice alias could make "\\.\PhysicalDriveN" open a DIFFERENT device than
+    // disk N, so the parsed-number OS guard below would probe the wrong disk. Read
+    // the ACTUAL device number from THIS handle and require it to match (fail
+    // closed on any mismatch or on a query failure).
+    const int actualNumber = queryHandleDriveNumber(hDevice);
     CloseHandle(hDevice);
+
+    const int parsedNumber = parsePhysicalDriveNumber(devicePath);
+    if (actualNumber < 0 || parsedNumber < 0 || actualNumber != parsedNumber) {
+        sak::logError(QString("Refusing %1: device number mismatch (path %2, actual %3)")
+                          .arg(devicePath)
+                          .arg(parsedNumber)
+                          .arg(actualNumber)
+                          .toStdString());
+        Q_EMIT flashError(
+            QString("Refusing to write %1: it does not resolve to the named physical disk")
+                .arg(devicePath));
+        return false;
+    }
 
     // Engine-level safety gate: never raw-write the current OS disk (fail closed).
     if (!passesOsDiskGuard(devicePath)) {
@@ -635,12 +728,39 @@ bool FlashCoordinator::passesOsDiskGuard(const QString& devicePath) {
                 : QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
         return false;
     }
-    return true;
+    return passesBootDiskGuard(devicePath, driveNumber);
+}
+
+bool FlashCoordinator::passesBootDiskGuard(const QString& devicePath, int driveNumber) {
+    // The OS-disk check above only covers the disk backing the running %WINDIR%
+    // volume. On split-boot hardware the boot manager / ESP that actually boots the
+    // OS can live on a SEPARATE physical disk; erasing it makes the system
+    // unbootable. This independent, fail-closed probe protects that disk too.
+    const sak::DiskProbe boot = DriveScanner::physicalDriveBootProbe(driveNumber);
+    if (boot == sak::DiskProbe::No) {
+        return true;
+    }
+    const bool undetermined = (boot == sak::DiskProbe::Undetermined);
+    sak::logError(QString("Refusing raw write to %1: %2")
+                      .arg(devicePath,
+                           undetermined
+                               ? QStringLiteral("boot-disk status could not be established")
+                               : QStringLiteral("it carries the Windows boot loader"))
+                      .toStdString());
+    Q_EMIT flashError(
+        undetermined
+            ? QString("Refusing to write %1: could not verify it is not a boot disk")
+                  .arg(devicePath)
+            : QString("Refusing to write %1: it is a Windows boot/system disk").arg(devicePath));
+    return false;
 }
 
 bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
     Q_ASSERT(!targetDrives.isEmpty());
     DriveUnmounter unmounter;
+    // Track drives we successfully took offline so we can roll them back online if a
+    // LATER target fails to unmount -- otherwise earlier targets are stranded offline.
+    std::vector<int> offlined;
 
     for (const QString& devicePath : targetDrives) {
         sak::logInfo(QString("Unmounting volumes on %1").arg(devicePath).toStdString());
@@ -653,6 +773,7 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
                               .arg(devicePath)
                               .toStdString());
             Q_EMIT flashError(QString("Invalid device path format: %1").arg(devicePath));
+            rollbackOfflinedDrives(unmounter, offlined);
             return false;
         }
 
@@ -662,13 +783,29 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
                 QString("Failed to unmount volumes on %1. "
                         "Please close any applications using this drive and try again.")
                     .arg(devicePath));
+            rollbackOfflinedDrives(unmounter, offlined);
             return false;
         }
 
+        offlined.push_back(driveNumber);
         sak::logInfo(QString("Successfully unmounted volumes on %1").arg(devicePath).toStdString());
     }
 
     return true;
+}
+
+void FlashCoordinator::rollbackOfflinedDrives(DriveUnmounter& unmounter,
+                                              const std::vector<int>& offlined) {
+    // Best-effort: clear the persistent OFFLINE attribute on drives we already
+    // offlined this run, so a mid-list unmount failure does not strand them.
+    for (const int driveNumber : offlined) {
+        if (!unmounter.allowAutoMount(driveNumber)) {
+            sak::logWarning(QString("Rollback: failed to bring drive %1 back online: %2")
+                                .arg(driveNumber)
+                                .arg(unmounter.lastError())
+                                .toStdString());
+        }
+    }
 }
 
 void FlashCoordinator::updateProgress() {

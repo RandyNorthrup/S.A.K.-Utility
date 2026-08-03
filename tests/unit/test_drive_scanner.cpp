@@ -61,6 +61,15 @@ private Q_SLOTS:
     // --- B6-26: Windows indicators detected on a volume root ---
     void hasWindowsIndicators_detectsSystem32();
     void hasWindowsIndicators_emptyRootIsNotSystem();
+
+    // --- C3-09: boot-loader (ESP/boot) indicators + fail-closed engine boot probe ---
+    void hasBootManagerIndicators_detectsBootmgr();
+    void hasBootManagerIndicators_emptyRootIsNotBoot();
+    void physicalDriveBootProbe_negativeIsUndetermined();
+
+    // --- C3-30: an in-place property change still reports a change ---
+    void driveInfoChanged_detectsSizeChange();
+    void driveInfoChanged_identicalIsUnchanged();
 };
 
 namespace {
@@ -303,6 +312,61 @@ void DriveScannerTests::hasWindowsIndicators_emptyRootIsNotSystem() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     QVERIFY(!DriveScanner::hasWindowsIndicators(temp.path()));
+}
+
+// ============================================================================
+// C3-09: split-boot ESP/boot disk protection
+// ============================================================================
+
+// A disk carrying only the boot loader (no \Windows) is boot-critical: on a
+// split-boot system the ESP that boots the OS lives on a separate physical disk.
+void DriveScannerTests::hasBootManagerIndicators_detectsBootmgr() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QFile bootmgr(root.filePath("bootmgr"));
+    QVERIFY(bootmgr.open(QIODevice::WriteOnly));
+    bootmgr.write("stub");
+    bootmgr.close();
+
+    QVERIFY(DriveScanner::hasBootManagerIndicators(temp.path()));
+}
+
+void DriveScannerTests::hasBootManagerIndicators_emptyRootIsNotBoot() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QVERIFY(!DriveScanner::hasBootManagerIndicators(temp.path()));
+}
+
+// The engine boot probe fails closed on an unusable drive number rather than
+// reporting "not a boot disk".
+void DriveScannerTests::physicalDriveBootProbe_negativeIsUndetermined() {
+    QCOMPARE(DriveScanner::physicalDriveBootProbe(-1), sak::DiskProbe::Undetermined);
+}
+
+// ============================================================================
+// C3-30: an in-place property change on the same devicePath is a real change
+// ============================================================================
+
+void DriveScannerTests::driveInfoChanged_detectsSizeChange() {
+    sak::DriveInfo a = makeDrive("\\\\.\\PhysicalDrive0");
+    sak::DriveInfo b = a;
+    b.size = a.size + 4096;
+    QVERIFY(DriveScanner::driveInfoChanged(a, b));
+
+    sak::DriveInfo c = a;
+    c.isReadOnly = !a.isReadOnly;
+    QVERIFY(DriveScanner::driveInfoChanged(a, c));
+
+    sak::DriveInfo d = a;
+    d.mountPoints = QStringList{QStringLiteral("E:\\")};
+    QVERIFY(DriveScanner::driveInfoChanged(a, d));
+}
+
+void DriveScannerTests::driveInfoChanged_identicalIsUnchanged() {
+    sak::DriveInfo a = makeDrive("\\\\.\\PhysicalDrive0");
+    sak::DriveInfo b = a;
+    QVERIFY(!DriveScanner::driveInfoChanged(a, b));
 }
 
 QTEST_GUILESS_MAIN(DriveScannerTests)
