@@ -151,6 +151,8 @@ private Q_SLOTS:
     void contentlessSubagentFailureIsDegradedNotComplete();
     void agentModelPolicySelectsReasoningEffortTier();
     void preflightFailsClosedWhenRequiredSoftwareMissing();
+    void overseerPhaseWithoutHandlerPassesAsNoOp();
+    void resumeDoesNotSkipPhaseWithoutPriorRecord();
 };
 
 void AiOrchestratorTests::runsAllPhasesSequentially() {
@@ -1003,6 +1005,63 @@ void AiOrchestratorTests::preflightFailsClosedWhenRequiredSoftwareMissing() {
     auto root3 = sak::ai::CancellationToken::createRoot(QStringLiteral("pf3"));
     QCOMPARE(unresolved.run(workflow, QStringLiteral("pf3"), root3).status,
              sak::ai::AiRunStatus::Completed);
+}
+
+void AiOrchestratorTests::overseerPhaseWithoutHandlerPassesAsNoOp() {
+    // The overseer handler is an OPTIONAL review hook that no caller wires, and the seeded
+    // workflows include overseer phases by design. With no handler the phase is an
+    // informational no-op that passes (failing closed here would break every workflow
+    // carrying an overseer phase). The real destructive-work gates are per-tool
+    // policy/lease/human-gate, not this phase.
+    FakeModelClient model;
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);  // no overseer handler set
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("overseer_no_handler");
+    sak::ai::WorkflowPhase phase;
+    phase.id = QStringLiteral("clarify");
+    phase.type = QStringLiteral("overseer");
+    workflow.phases << phase;
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("ovh1"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("ovh1"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QCOMPARE(result.phases.size(), 1);
+    QVERIFY(result.phases.first().success);
+}
+
+void AiOrchestratorTests::resumeDoesNotSkipPhaseWithoutPriorRecord() {
+    // A bumped resume_start_phase_index must NOT skip earlier phases that have no prior
+    // execution record: without a persisted record proving a phase ran, it must run now,
+    // so resume state cannot be used to bypass an earlier approval/preflight phase.
+    FakeModelClient model;
+    model.default_response = makeJsonResponse(QStringLiteral("complete"), QStringLiteral("ok"));
+    FakeToolExecutor tool;
+    sak::ai::AiSubagentRunner runner(&model);
+    sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+
+    sak::ai::AiOrchestrationOptions options;
+    options.resume_enabled = true;
+    options.resume_start_phase_index = 2;  // claims phases 0 and 1 are already done...
+    // ...but supplies NO prior phase records to back that claim.
+    orchestrator.setOptions(options);
+
+    sak::ai::WorkflowTemplate workflow;
+    workflow.id = QStringLiteral("resume_no_record");
+    workflow.agents << makeAgent(QStringLiteral("a"), QStringLiteral("read_only_pc"));
+    workflow.phases << makeDelegate(QStringLiteral("preflight"), QStringLiteral("a"));
+    workflow.phases << makeDelegate(QStringLiteral("work"), QStringLiteral("a"));
+
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("rnr1"));
+    const auto result = orchestrator.run(workflow, QStringLiteral("rnr1"), root);
+
+    QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
+    QCOMPARE(result.phases.size(), 2);  // both phases ran; neither was skipped by index
+    QVERIFY(result.phases[0].ran);
+    QVERIFY(result.phases[1].ran);
 }
 
 QTEST_GUILESS_MAIN(AiOrchestratorTests)

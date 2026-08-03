@@ -55,6 +55,9 @@ public:
     [[nodiscard]] static OpenAIFunctionOutput functionOutputFromJson(const QJsonObject& obj);
 
 private:
+    [[nodiscard]] static bool validateCall(const OpenAIFunctionCall& call,
+                                           int index,
+                                           QString* error_message);
     [[nodiscard]] static bool validateCalls(const QVector<OpenAIFunctionCall>& calls,
                                             QString* error_message);
     [[nodiscard]] static bool decodeCalls(const QJsonArray& calls_json,

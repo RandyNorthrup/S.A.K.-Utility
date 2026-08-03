@@ -188,6 +188,20 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
                                       const QJsonObject& frame,
                                       Incoming& incoming) {
     const QJsonObject payload = frame.value(QStringLiteral("payload")).toObject();
+    // A result-typed frame is NOT implicitly a success: the extension may report an
+    // operation-level failure as {ok:false} inside the payload. Treat that as an error rather
+    // than passing the failed payload through as a successful text/ref/screenshot/PDF result.
+    if (payload.value(QStringLiteral("ok")).isBool() &&
+        !payload.value(QStringLiteral("ok")).toBool()) {
+        incoming.is_error = true;
+        QString message = payload.value(QStringLiteral("error")).toString();
+        if (message.isEmpty()) {
+            message = payload.value(QStringLiteral("message")).toString();
+        }
+        incoming.error = message.isEmpty() ? QStringLiteral("Browser command reported failure.")
+                                           : message;
+        return;
+    }
     // Only a reply to a snapshot WE issued may install ref_index -- and only if the
     // browser session has not changed underneath it (no detach/reconnect since we
     // asked), so a snapshot of a now-dead DOM is never trusted for act-by-ref.
@@ -224,7 +238,16 @@ void BrowserBridgeSession::reconcileDomEpoch(const QString& sent_cmd, const QJso
     if (!frame.contains(QStringLiteral("domEpoch"))) {
         return;  // an older extension omits the marker: leave the check disabled
     }
-    const auto epoch = static_cast<quint64>(frame.value(QStringLiteral("domEpoch")).toDouble());
+    // A present marker must be a non-negative integer within the exact-integer double range.
+    // A malformed value (string, negative, NaN, or beyond 2^53) cannot be trusted as a
+    // baseline, and casting it straight to quint64 is UB -- fail closed by marking refs stale.
+    const QJsonValue epoch_value = frame.value(QStringLiteral("domEpoch"));
+    const double epoch_raw = epoch_value.toDouble(-1.0);
+    if (!epoch_value.isDouble() || epoch_raw < 0.0 || epoch_raw > 9.0e15) {
+        onDetached();
+        return;
+    }
+    const auto epoch = static_cast<quint64>(epoch_raw);
     // A successful snapshot re-baselines: its ref_index matches THIS DOM generation.
     if (sent_cmd == QLatin1String("snapshot") && !ref_index_stale_) {
         dom_epoch_ = epoch;
@@ -251,6 +274,16 @@ void BrowserBridgeSession::fillScreenshotResult(const QJsonObject& payload, Inco
         incoming.error = QStringLiteral(
             "The screenshot is too large to return; capture the viewport instead of the "
             "full page.");
+        return;
+    }
+    // Strictly decode the payload before handing it to the client: a frame whose "data" is not
+    // valid base64 is refused with an honest error rather than forwarded as an opaque, unusable
+    // image block. AbortOnBase64DecodingErrors rejects any stray non-base64 byte.
+    const auto decoded = QByteArray::fromBase64Encoding(
+        data.toLatin1(), QByteArray::Base64Encoding | QByteArray::AbortOnBase64DecodingErrors);
+    if (!decoded) {
+        incoming.is_error = true;
+        incoming.error = QStringLiteral("The browser returned a malformed screenshot payload.");
         return;
     }
     incoming.image_base64 = data;
@@ -290,7 +323,11 @@ void BrowserBridgeSession::fillPrintResult(const QJsonObject& payload, Incoming&
         return;
     }
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(pdf) != pdf.size()) {
+    // flush() forces the buffered bytes to the OS and surfaces a write error (disk full, quota)
+    // that a bare write()==size check would miss because Qt buffers -- fail closed on any of the
+    // three so a truncated/half-written PDF is never reported as a successful save.
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(pdf) != pdf.size() ||
+        !file.flush()) {
         incoming.is_error = true;
         incoming.error = QStringLiteral("Cannot write the PDF to %1.").arg(path);
         return;
@@ -319,7 +356,11 @@ BrowserBridgeSession::Incoming BrowserBridgeSession::onReply(const QJsonObject& 
     const QString type = frame.value(QStringLiteral("type")).toString();
     if (type == QLatin1String("result")) {
         fillResult(sent_cmd, sent_epoch, frame, incoming);
-        reconcileDomEpoch(sent_cmd, frame);
+        // Only reconcile the DOM-generation baseline for a result we actually accepted; an
+        // {ok:false}/failed result must not re-baseline the epoch off a DOM we never snapshotted.
+        if (!incoming.is_error) {
+            reconcileDomEpoch(sent_cmd, frame);
+        }
         return incoming;
     }
     incoming.is_error = true;

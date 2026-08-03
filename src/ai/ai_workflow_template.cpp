@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QSet>
 
 namespace sak::ai {
 
@@ -167,9 +168,17 @@ void validateWorkflowRequiredFields(const WorkflowTemplate& workflow, QStringLis
 }
 
 void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
     for (const auto& phase : workflow.phases) {
         if (phase.id.isEmpty()) {
             errors->append(QStringLiteral("Phase missing id in workflow %1").arg(workflow.id));
+        } else if (seen_ids.contains(phase.id)) {
+            // Duplicate phase ids alias each other in phase_results (later results silently
+            // overwrite earlier ones and placeholders resolve to the wrong phase): reject.
+            errors->append(QStringLiteral("Duplicate phase id '%1' in workflow %2")
+                               .arg(phase.id, workflow.id));
+        } else {
+            seen_ids.insert(phase.id);
         }
         if (phase.type.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 missing type").arg(phase.id));
@@ -181,6 +190,24 @@ void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* error
         }
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
+        }
+    }
+}
+
+void validateWorkflowInputs(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
+    for (const auto& input : workflow.required_inputs) {
+        if (input.id.isEmpty()) {
+            errors->append(
+                QStringLiteral("Workflow %1 has a required input with no id").arg(workflow.id));
+            continue;
+        }
+        if (seen_ids.contains(input.id)) {
+            // Duplicate input ids collide in input_values; the second wins silently.
+            errors->append(QStringLiteral("Duplicate required-input id '%1' in workflow %2")
+                               .arg(input.id, workflow.id));
+        } else {
+            seen_ids.insert(input.id);
         }
     }
 }
@@ -260,6 +287,7 @@ bool WorkflowTemplate::isValid(QStringList* errors) const {
     const qsizetype before = target->size();
     validateWorkflowRequiredFields(*this, target);
     validateWorkflowPhases(*this, target);
+    validateWorkflowInputs(*this, target);
     return target->size() == before;
 }
 

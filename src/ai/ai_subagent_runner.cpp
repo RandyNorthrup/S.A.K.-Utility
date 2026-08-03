@@ -301,6 +301,43 @@ struct ActingLoopOutcome {
     SubagentAttempt early_attempt;  ///< Valid only when early_return is true.
 };
 
+// Executes one response's tool_calls, rechecking cancellation and the wall-clock
+// deadline BEFORE each individual call -- not just once per response. A user cancel or
+// deadline that fires part-way through a multi-call batch stops the remaining calls
+// immediately (populating outcome->early_attempt) instead of running the whole batch.
+// Returns false when it terminated early; true when the batch completed and the model
+// was continued with the collected outputs.
+bool executeToolCallsForTurn(const AttemptContext& ctx,
+                             const CancellationToken& agent_token,
+                             const QDeadlineTimer& deadline,
+                             const TokenUsage& accumulated,
+                             ActingLoopOutcome* outcome) {
+    QVector<AiSubagentToolOutput> outputs;
+    outputs.reserve(outcome->response.tool_calls.size());
+    for (const auto& call : outcome->response.tool_calls) {
+        if (tokenCancelled(agent_token)) {
+            AiSubagentResult cancelled =
+                baseResult(*ctx.task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
+            cancelled.usage = accumulated;
+            recordExecutedTools(&cancelled, outcome->executed_tools);
+            outcome->early_return = true;
+            outcome->early_attempt = {cancelled, false};
+            return false;
+        }
+        if (deadline.hasExpired()) {
+            outcome->early_return = true;
+            outcome->early_attempt = {
+                toolLoopTimeoutResult(*ctx.task, outcome->executed_tools, accumulated), false};
+            return false;
+        }
+        outcome->executed_tools << call.name;
+        outputs.append(ctx.tools.executor->executeToolCall(*ctx.task, call, agent_token));
+    }
+    outcome->response = ctx.model_client->continueWithToolOutputs(
+        *ctx.request, outcome->response.response_id, outputs, agent_token);
+    return true;
+}
+
 // Drives model<->tool round trips: while the model keeps requesting tool calls,
 // execute them through the injected executor and continue the turn, until the
 // model returns a final answer or the iteration cap / deadline / cancellation
@@ -340,14 +377,9 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
                                      false};
             return outcome;
         }
-        QVector<AiSubagentToolOutput> outputs;
-        outputs.reserve(outcome.response.tool_calls.size());
-        for (const auto& call : outcome.response.tool_calls) {
-            outcome.executed_tools << call.name;
-            outputs.append(ctx.tools.executor->executeToolCall(task, call, agent_token));
+        if (!executeToolCallsForTurn(ctx, agent_token, deadline, accumulated, &outcome)) {
+            return outcome;
         }
-        outcome.response = ctx.model_client->continueWithToolOutputs(
-            *ctx.request, outcome.response.response_id, outputs, agent_token);
         addUsage(&accumulated, outcome.response.usage);
         ++iterations;
     }

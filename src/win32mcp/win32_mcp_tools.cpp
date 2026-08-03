@@ -10,6 +10,7 @@
 #include "sak/win32mcp/win32_mcp_watch.h"
 
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QLatin1String>
 #include <QVector>
 
@@ -115,26 +116,64 @@ BOOL CALLBACK collectWindowProc(HWND hwnd, LPARAM param) {
     return TRUE;
 }
 
-HWND findWindowByTitle(const QString& needle_lower) {
-    struct FindState {
-        QString needle_lower;
-        HWND match{nullptr};
-    } state{needle_lower, nullptr};
-    EnumWindows(
-        [](HWND hwnd, LPARAM param) -> BOOL {
-            auto* find = reinterpret_cast<FindState*>(param);
-            if (IsWindowVisible(hwnd) == FALSE) {
-                return TRUE;
-            }
-            const QString title = windowTitle(hwnd);
-            if (title.isEmpty() || !title.toLower().contains(find->needle_lower)) {
-                return TRUE;
-            }
-            find->match = hwnd;
-            return FALSE;  // stop at the first match
-        },
-        reinterpret_cast<LPARAM>(&state));
-    return state.match;
+struct WindowMatch {
+    HWND hwnd;
+    QString title_lower;
+};
+
+struct FindState {
+    QString needle_lower;
+    QVector<WindowMatch> matches;
+};
+
+BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
+    auto* find = reinterpret_cast<FindState*>(param);
+    if (IsWindowVisible(hwnd) == FALSE) {
+        return TRUE;
+    }
+    const QString title = windowTitle(hwnd);
+    const QString lower = title.toLower();
+    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
+        return TRUE;
+    }
+    find->matches.append(WindowMatch{hwnd, lower});
+    return TRUE;  // collect every match, then disambiguate rather than taking the first
+}
+
+// Pick the single window a title substring unambiguously names. One match wins; when several
+// match, a lone EXACT (case-insensitive) title match wins; otherwise fail closed rather than
+// silently acting on whichever window enumerated first (which could close/drive the wrong app).
+HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
+                      const QString& needle_lower,
+                      QString& err) {
+    if (matches.isEmpty()) {
+        err = QStringLiteral("No visible window matching '%1'").arg(needle_lower);
+        return nullptr;
+    }
+    if (matches.size() == 1) {
+        return matches.first().hwnd;
+    }
+    HWND exact = nullptr;
+    int exact_count = 0;
+    for (const WindowMatch& m : matches) {
+        if (m.title_lower == needle_lower) {
+            exact = m.hwnd;
+            ++exact_count;
+        }
+    }
+    if (exact_count == 1) {
+        return exact;
+    }
+    err = QStringLiteral("'%1' matches %2 visible windows; use a more specific title.")
+              .arg(needle_lower)
+              .arg(matches.size());
+    return nullptr;
+}
+
+HWND findWindowByTitle(const QString& needle_lower, QString& err) {
+    FindState state{needle_lower, {}};
+    EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
+    return pickUniqueWindow(state.matches, needle_lower, err);
 }
 
 ToolResult toolHealthCheck(const QJsonObject&) {
@@ -160,9 +199,10 @@ ToolResult toolGetWindowInfo(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    HWND hwnd = findWindowByTitle(title.toLower());
+    QString find_err;
+    HWND hwnd = findWindowByTitle(title.toLower(), find_err);
     if (!hwnd) {
-        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+        return errorResult(find_err);
     }
     return jsonResult(describeWindow(hwnd));
 }
@@ -172,9 +212,10 @@ ToolResult toolCloseWindow(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    HWND hwnd = findWindowByTitle(title.toLower());
+    QString find_err;
+    HWND hwnd = findWindowByTitle(title.toLower(), find_err);
     if (!hwnd) {
-        return errorResult(QStringLiteral("No visible window matching '%1'").arg(title));
+        return errorResult(find_err);
     }
     // WM_CLOSE is the graceful request a window's own close button sends: the app can still run
     // its shutdown path and prompt to save. We never TerminateProcess, so no unsaved-work loss
@@ -196,7 +237,9 @@ BOOL CALLBACK collectMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
     MONITORINFO info{};
     info.cbSize = sizeof(info);
     if (GetMonitorInfoW(monitor, &info) == FALSE) {
-        return TRUE;
+        // Abort the whole enumeration so a read failure surfaces as an error below, rather than
+        // silently omitting a monitor and returning a short list as if it were complete.
+        return FALSE;
     }
     UINT dpi_x = 96;
     UINT dpi_y = 96;
@@ -212,7 +255,13 @@ BOOL CALLBACK collectMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
 
 ToolResult toolListMonitors(const QJsonObject&) {
     QJsonArray monitors;
-    EnumDisplayMonitors(nullptr, nullptr, collectMonitorProc, reinterpret_cast<LPARAM>(&monitors));
+    // EnumDisplayMonitors returns FALSE on a genuine enumeration failure OR when collectMonitorProc
+    // aborted on a GetMonitorInfo failure; either way we cannot vouch for a complete list, so fail
+    // closed instead of returning a partial/empty set as success.
+    if (EnumDisplayMonitors(
+            nullptr, nullptr, collectMonitorProc, reinterpret_cast<LPARAM>(&monitors)) == FALSE) {
+        return errorResult(QStringLiteral("Could not enumerate the monitors."));
+    }
     return jsonResult(QJsonObject{{QStringLiteral("count"), monitors.size()},
                                   {QStringLiteral("monitors"), monitors}});
 }
@@ -297,7 +346,13 @@ ToolResult toolClipboardWrite(const QJsonObject& arguments) {
     if (!arguments.contains(QStringLiteral("text"))) {
         return errorResult(QStringLiteral("clipboard_write requires 'text'"));
     }
-    const QString text = arguments.value(QStringLiteral("text")).toString();
+    // Reject a non-string text rather than coercing it to "" -- an empty coercion would clear the
+    // clipboard (destroying prior contents) and report success for what was actually caller error.
+    const QJsonValue text_value = arguments.value(QStringLiteral("text"));
+    if (!text_value.isString()) {
+        return errorResult(QStringLiteral("text must be a string"));
+    }
+    const QString text = text_value.toString();
     if (text.size() > kMaxClipboardChars) {
         return errorResult(QStringLiteral("Text exceeds the clipboard write limit."));
     }

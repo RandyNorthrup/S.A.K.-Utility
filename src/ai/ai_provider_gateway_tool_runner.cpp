@@ -418,8 +418,13 @@ Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGa
     // would run against the wrong screen. Treat it as a tool error (optional steps still tolerate
     // it). The classification lives in the pure, unit-tested win32WaitExpectationFailure.
     if (!outcome.tool_error) {
+        // A wait_for_* step MUST prove its awaited condition held: require a satisfied flag so a
+        // truncated/garbled result_text (which parses to {}) fails closed instead of passing.
+        const bool is_wait_step = call_plan.tool_name.contains(QLatin1String("wait_for"),
+                                                               Qt::CaseInsensitive);
         const QJsonObject payload = QJsonDocument::fromJson(outcome.result_text.toUtf8()).object();
-        if (const std::optional<QString> failure = win32WaitExpectationFailure(payload)) {
+        if (const std::optional<QString> failure = win32WaitExpectationFailure(payload,
+                                                                               is_wait_step)) {
             outcome.tool_error = true;
             outcome.error = *failure;
         }

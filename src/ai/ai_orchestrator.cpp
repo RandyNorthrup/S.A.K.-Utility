@@ -320,7 +320,7 @@ void AiOrchestrator::setOptions(const AiOrchestrationOptions& options) {
     }
 }
 
-AiOrchestrationOptions AiOrchestrator::options() const {
+const AiOrchestrationOptions& AiOrchestrator::options() const {
     return m_options;
 }
 
@@ -445,19 +445,26 @@ AiPhaseExecution AiOrchestrator::executeOverseerPhase(const WorkflowPhase& phase
     execution.phase_id = phase.id;
     execution.phase_type = phase.type;
     execution.ran = true;
-    if (m_overseer_handler) {
-        QElapsedTimer timer;
-        timer.start();
-        const auto result = m_overseer_handler(phase, parent_token);
-        execution.duration_ms = timer.elapsed();
-        execution.metadata = result;
-        execution.success = !result.value(QStringLiteral("failed")).toBool(false) &&
-                            !parent_token.isCancellationRequested();
-        if (!execution.success) {
-            execution.error_message = result.value(QStringLiteral("error_message")).toString();
-        }
-    } else {
-        execution.success = !parent_token.isCancellationRequested();
+    if (!m_overseer_handler) {
+        // The overseer handler is an OPTIONAL review hook (see setOverseerHandler doc): no
+        // caller in this codebase wires one, and the seeded workflows include overseer
+        // phases by design. When absent the phase is an informational no-op that passes --
+        // failing closed here would break every workflow carrying an overseer phase. A
+        // wired handler CAN still short-circuit/gate the run (below); the security gates
+        // that actually block destructive work are the per-tool policy/lease/human-gate
+        // checks, not this optional phase.
+        execution.success = true;
+        return execution;
+    }
+    QElapsedTimer timer;
+    timer.start();
+    const auto result = m_overseer_handler(phase, parent_token);
+    execution.duration_ms = timer.elapsed();
+    execution.metadata = result;
+    execution.success = !result.value(QStringLiteral("failed")).toBool(false) &&
+                        !parent_token.isCancellationRequested();
+    if (!execution.success) {
+        execution.error_message = result.value(QStringLiteral("error_message")).toString();
     }
     if (parent_token.isCancellationRequested()) {
         execution.success = false;
@@ -770,8 +777,13 @@ QVector<int> AiOrchestrator::runnableGroupPositions(
     runnable_positions.reserve(group.phase_indices.size());
     for (int slot = 0; slot < group.phase_indices.size(); ++slot) {
         const int phase_index = group.phase_indices.at(slot);
-        if (m_options.resume_enabled && phase_index < m_options.resume_start_phase_index) {
-            state->executed_indices.insert(phase_index);
+        // Resume may only skip a phase that actually has a prior execution record
+        // (applyResumeState seeded executed_indices from resume_prior_phases). A phase
+        // before resume_start_phase_index with NO prior record is NOT skipped by index
+        // alone -- otherwise a bumped resume_start_phase_index could silently skip an
+        // earlier approval/preflight phase that never ran (fail closed).
+        if (m_options.resume_enabled && phase_index < m_options.resume_start_phase_index &&
+            state->executed_indices.contains(phase_index)) {
             continue;
         }
         const auto& phase = workflow.phases.at(phase_index);

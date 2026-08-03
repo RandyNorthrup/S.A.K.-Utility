@@ -3,6 +3,7 @@
 
 #include "sak/win32mcp/browser_bridge_security.h"
 
+#include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -42,6 +43,7 @@ private slots:
     void token_is128BitHexAndUnique();
     void rendezvous_roundTripsAllFields();
     void rendezvous_readMissingFileFails();
+    void rendezvous_invalidAppPidFailsClosed();
     void security_daclIsCurrentUserOnlyWithMediumLabel();
 };
 
@@ -97,6 +99,25 @@ void BrowserBridgeSecurityTests::rendezvous_readMissingFileFails() {
     QString error;
     QVERIFY(!readRendezvousRecord(QStringLiteral("Z:/nope/does_not_exist.json"), &out, &error));
     QVERIFY(!error.isEmpty());
+}
+
+void BrowserBridgeSecurityTests::rendezvous_invalidAppPidFailsClosed() {
+    // F26: app_pid must be a positive integer within the exact-integer double range. A record
+    // carrying an out-of-range app_pid must FAIL the read (casting such a double to qint64 is
+    // UB) rather than yielding a garbage pid the relay would then try to bind against.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("bad.json"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    // 1e19 is beyond both int64 and the exact-integer double range.
+    file.write(R"({"pipe_name":"\\\\.\\pipe\\x","token":"deadbeef","protocol":1,"app_pid":1e19})");
+    file.close();
+
+    RendezvousRecord out;
+    QString error;
+    QVERIFY(!readRendezvousRecord(path, &out, &error));
+    QVERIFY(error.contains(QStringLiteral("app_pid")));
 }
 
 void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel() {

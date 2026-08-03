@@ -61,6 +61,19 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     return QDir::cleanPath(QDir(app_dir).filePath(trimmed));
 }
 
+// True only when @p command resolves to a path inside @p app_dir. A bundled stdio MCP
+// command must live within the application directory; an on-disk providers.json (which
+// silently overrides the embedded manifest) pointing "command" at an arbitrary absolute
+// path -- or escaping via ../ -- must NOT be treated as an available bundled executable.
+[[nodiscard]] bool commandWithinAppDir(const QString& app_dir, const QString& command) {
+    if (command.isEmpty()) {
+        return false;
+    }
+    const QString base = QDir::cleanPath(QDir(app_dir).absolutePath());
+    const QString target = QDir::cleanPath(QFileInfo(command).absoluteFilePath());
+    return target == base || target.startsWith(base + QLatin1Char('/'), Qt::CaseInsensitive);
+}
+
 [[nodiscard]] QJsonObject providerStatusObject(const QString& app_dir,
                                                const QJsonObject& provider) {
     QJsonObject status = provider;
@@ -78,9 +91,14 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
         const QString command =
             resolvedRelativePath(app_dir, provider.value(QStringLiteral("command")).toString());
         status[QStringLiteral("resolved_command")] = command;
-        const bool exists = QFileInfo::exists(command);
+        const bool within = commandWithinAppDir(app_dir, command);
+        const bool exists = within && QFileInfo::exists(command);
         status[QStringLiteral("available")] = exists;
-        if (!exists) {
+        if (!within) {
+            status[QStringLiteral("available")] = false;
+            status[QStringLiteral("missing_reason")] =
+                QStringLiteral("Bundled MCP command must resolve within the application directory");
+        } else if (!exists) {
             status[QStringLiteral("missing_reason")] =
                 QStringLiteral("Bundled MCP command missing");
         }

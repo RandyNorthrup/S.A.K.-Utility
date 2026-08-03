@@ -24,10 +24,10 @@ QJsonObject emptyHandlerResult(const AiToolCallRequest& request) {
 }
 
 bool resultSucceeded(const QJsonObject& result) {
-    if (result.contains(QStringLiteral("success"))) {
-        return result.value(QStringLiteral("success")).toBool(false);
-    }
-    return true;
+    // Fail closed: a handler result that omits (or mistypes) "success" is NOT proof of
+    // success. Recording such a result as healthy would let a malformed result poison the
+    // health ledger as if the tool were working. Only an explicit success:true counts.
+    return result.value(QStringLiteral("success")).toBool(false);
 }
 
 QString resultErrorMessage(const QJsonObject& result) {
@@ -199,7 +199,10 @@ bool AiToolDispatcher::applyAvailabilityGate(DispatchOutcome* outcome,
         return true;
     }
     const QJsonObject availability = checker.value()(arguments, outcome->policy_decision);
-    if (availability.isEmpty() || availability.value(QStringLiteral("success")).toBool(false)) {
+    // Fail closed: a registered checker that returns success:true passes; anything else --
+    // including an empty/malformed object with no explicit success -- denies the call. An
+    // empty result is not evidence of availability.
+    if (availability.value(QStringLiteral("success")).toBool(false)) {
         return true;
     }
     outcome->availability_denied = true;
@@ -238,8 +241,17 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
                                                const AiToolCallRequest& request,
                                                const QString& agent_id,
                                                QString* lease_id) const {
-    if (!m_lease_manager || !outcome->policy_decision.requires_lease) {
+    if (!outcome->policy_decision.requires_lease) {
         return true;
+    }
+    if (!m_lease_manager) {
+        // Fail closed: a call that requires a mutation lease must NOT run when no lease
+        // manager is wired. Proceeding would let a mutating tool execute with no
+        // cross-agent serialization -- the exact guarantee the lease exists to provide.
+        outcome->lease_denied = true;
+        outcome->result = leaseDeniedResult(
+            request, QStringLiteral("Mutating lease required but no lease manager is configured"));
+        return false;
     }
     const auto acquire =
         m_lease_manager->acquire(agent_id,

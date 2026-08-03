@@ -44,6 +44,7 @@ private Q_SLOTS:
     void unknownMainKeyRefused();
     void unknownModifierRefused();
     void emptyOrSeparatorOnlyRefused();
+    void malformedSeparatorRefused();
 };
 
 void Win32McpKeyChordTests::singleLetterMapsToUppercaseVk() {
@@ -110,6 +111,15 @@ void Win32McpKeyChordTests::emptyOrSeparatorOnlyRefused() {
     QVERIFY(!parse(QString()).ok);
     QVERIFY(!parse(QStringLiteral("+")).ok);
     QVERIFY(!parse(QStringLiteral("++")).ok);
+}
+
+void Win32McpKeyChordTests::malformedSeparatorRefused() {
+    // SAFETY: a doubled/leading/trailing '+' is malformed and must be rejected, not silently
+    // collapsed into a different chord (e.g. "+S" quietly becoming "S", or "Ctrl++S" -> "Ctrl+S").
+    QVERIFY(!parse(QStringLiteral("Ctrl++S")).ok);
+    QVERIFY(!parse(QStringLiteral("+S")).ok);
+    QVERIFY(!parse(QStringLiteral("Ctrl+")).ok);
+    QVERIFY(!parse(QStringLiteral("Ctrl+ +S")).ok);  // whitespace-only segment
 }
 
 QTEST_GUILESS_MAIN(Win32McpKeyChordTests)

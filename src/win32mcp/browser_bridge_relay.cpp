@@ -125,8 +125,10 @@ bool writeStdoutFrame(const QJsonObject& message) {
     const QByteArray frame = encodeFrame(message);
     const size_t wrote =
         std::fwrite(frame.constData(), 1, static_cast<size_t>(frame.size()), stdout);
-    std::fflush(stdout);
-    return wrote == static_cast<size_t>(frame.size());
+    // A short write OR a failed flush means the frame did not reach Chrome intact; report it so
+    // relayPumpOnce tears the pipe down instead of treating a lost reply as delivered.
+    const bool flushed = std::fflush(stdout) == 0;
+    return wrote == static_cast<size_t>(frame.size()) && flushed;
 }
 
 }  // namespace

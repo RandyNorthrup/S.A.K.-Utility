@@ -69,10 +69,13 @@ LineRead readBoundedLine(std::istream& in, std::string& line) {
     return line.empty() ? LineRead::Eof : LineRead::Ok;
 }
 
-void writeResponse(const QJsonObject& response) {
+// Write one response line, returning false if the write or flush failed -- a lost response means
+// the client can no longer be trusted to have received a mutating command's result, so the caller
+// stops serving rather than silently continuing (and eventually exiting 0) with a dropped ack.
+bool writeResponse(const QJsonObject& response) {
     const QByteArray out = sak::ai::mcp::jsonLine(response);
-    std::fwrite(out.constData(), 1, static_cast<size_t>(out.size()), stdout);
-    std::fflush(stdout);
+    const size_t want = static_cast<size_t>(out.size());
+    return std::fwrite(out.constData(), 1, want, stdout) == want && std::fflush(stdout) == 0;
 }
 
 // Serve newline-delimited JSON-RPC until EOF, or until a line exceeds the size ceiling -- at which
@@ -102,8 +105,9 @@ void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& poli
             continue;
         }
         const std::optional<QJsonObject> response = handleRequest(request, browser_ptr, policy);
-        if (response.has_value()) {
-            writeResponse(response.value());
+        if (response.has_value() && !writeResponse(response.value())) {
+            std::fprintf(stderr, "win32 mcp: response write failed; closing stream\n");
+            break;
         }
     }
 }
@@ -145,13 +149,21 @@ int runWin32McpProcess(int argc, char** argv) {
     // wrong and any future click/drag would land in the wrong place. Best-effort (older OSes lack
     // the API); the manifest is not used since this is a console child process.
 #if defined(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    if (SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == FALSE) {
+        // Best-effort: on a modern OS this succeeds; surface a failure so a virtualized-coordinate
+        // session is diagnosable rather than silently wrong. (Older OSes lack the API entirely and
+        // compile this branch out.)
+        std::fprintf(stderr, "win32 mcp: could not set per-monitor DPI awareness\n");
+    }
 #endif
 
-    // Binary stdio so message framing is byte-exact in both directions (newline for
-    // MCP JSON-RPC, length-prefixed for native messaging).
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
+    // Binary stdio so message framing is byte-exact in both directions (newline for MCP JSON-RPC,
+    // length-prefixed for native messaging). A failure here would corrupt every frame, so fail
+    // closed rather than serve on a text-translated stream.
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1 || _setmode(_fileno(stdout), _O_BINARY) == -1) {
+        std::fprintf(stderr, "win32 mcp: could not set binary stdio mode; aborting\n");
+        return 1;
+    }
 
     // Relay mode (launched by Chrome for the browser-control extension): pump
     // length-prefixed native-messaging frames between Chrome and the bridge pipe of

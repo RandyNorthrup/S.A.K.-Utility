@@ -97,26 +97,64 @@ QString windowTitleOf(HWND hwnd) {
     return QString::fromWCharArray(buffer.data(), copied);
 }
 
-HWND findVisibleWindowByTitle(const QString& needle_lower) {
-    struct FindState {
-        QString needle_lower;
-        HWND match{nullptr};
-    } state{needle_lower, nullptr};
-    EnumWindows(
-        [](HWND hwnd, LPARAM param) -> BOOL {
-            auto* find = reinterpret_cast<FindState*>(param);
-            if (IsWindowVisible(hwnd) == FALSE) {
-                return TRUE;
-            }
-            const QString title = windowTitleOf(hwnd);
-            if (title.isEmpty() || !title.toLower().contains(find->needle_lower)) {
-                return TRUE;
-            }
-            find->match = hwnd;
-            return FALSE;  // stop at the first match
-        },
-        reinterpret_cast<LPARAM>(&state));
-    return state.match;
+struct WindowMatch {
+    HWND hwnd;
+    QString title_lower;
+};
+
+struct FindState {
+    QString needle_lower;
+    QVector<WindowMatch> matches;
+};
+
+BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
+    auto* find = reinterpret_cast<FindState*>(param);
+    if (IsWindowVisible(hwnd) == FALSE) {
+        return TRUE;
+    }
+    const QString title = windowTitleOf(hwnd);
+    const QString lower = title.toLower();
+    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
+        return TRUE;
+    }
+    find->matches.append(WindowMatch{hwnd, lower});
+    return TRUE;  // collect every match, then disambiguate rather than taking the first
+}
+
+// Pick the single window a title substring unambiguously names. One match wins; when several
+// match, a lone EXACT (case-insensitive) title match wins; otherwise fail closed rather than
+// silently inspecting/driving whichever window enumerated first.
+HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
+                      const QString& needle_lower,
+                      QString& err) {
+    if (matches.isEmpty()) {
+        err = QStringLiteral("No visible window matching '%1'").arg(needle_lower);
+        return nullptr;
+    }
+    if (matches.size() == 1) {
+        return matches.first().hwnd;
+    }
+    HWND exact = nullptr;
+    int exact_count = 0;
+    for (const WindowMatch& m : matches) {
+        if (m.title_lower == needle_lower) {
+            exact = m.hwnd;
+            ++exact_count;
+        }
+    }
+    if (exact_count == 1) {
+        return exact;
+    }
+    err = QStringLiteral("'%1' matches %2 visible windows; use a more specific title.")
+              .arg(needle_lower)
+              .arg(matches.size());
+    return nullptr;
+}
+
+HWND findVisibleWindowByTitle(const QString& needle_lower, QString& err) {
+    FindState state{needle_lower, {}};
+    EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
+    return pickUniqueWindow(state.matches, needle_lower, err);
 }
 
 // Resolve the window an observation tool targets: foreground=true -> the active window (the only
@@ -135,11 +173,7 @@ HWND resolveTargetHwnd(const QJsonObject& args, QString& err) {
         err = QStringLiteral("window_title or foreground is required");
         return nullptr;
     }
-    HWND hwnd = findVisibleWindowByTitle(title.toLower());
-    if (!hwnd) {
-        err = QStringLiteral("No visible window matching '%1'").arg(title);
-    }
-    return hwnd;
+    return findVisibleWindowByTitle(title.toLower(), err);  // sets err on not-found/ambiguous
 }
 
 // -- screen capture ----------------------------------------------------------
@@ -440,10 +474,15 @@ UiaNode describeElement(IUIAutomationElement* element, int depth) {
         SysFreeString(name);
     }
     BOOL enabled = TRUE;
-    element->get_CurrentIsEnabled(&enabled);
+    if (FAILED(element->get_CurrentIsEnabled(&enabled))) {
+        enabled = FALSE;  // fail closed: an unreadable enabled state must not read as enabled --
+                          // it feeds collectButtons/dismiss_dialog, which must not invoke it.
+    }
     node.enabled = enabled != FALSE;
     BOOL offscreen = FALSE;
-    element->get_CurrentIsOffscreen(&offscreen);
+    if (FAILED(element->get_CurrentIsOffscreen(&offscreen))) {
+        offscreen = TRUE;  // fail closed: an unreadable visibility must not read as on-screen.
+    }
     node.offscreen = offscreen != FALSE;
     RECT bounds{};
     if (SUCCEEDED(element->get_CurrentBoundingRectangle(&bounds))) {
@@ -479,8 +518,12 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
         return;
     }
     ComPtr<IUIAutomationElement> child;
-    if (FAILED(state.walker->GetFirstChildElement(element, &child)) || !child) {
+    if (FAILED(state.walker->GetFirstChildElement(element, &child))) {
+        state.truncated = true;  // a walk failure leaves the tree incomplete -- flag, don't hide it
         return;
+    }
+    if (!child) {
+        return;  // genuinely no children
     }
     while (child) {
         walkElement(state, child.Get(), depth + 1);
@@ -490,6 +533,7 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
         }
         ComPtr<IUIAutomationElement> next;
         if (FAILED(state.walker->GetNextSiblingElement(child.Get(), &next))) {
+            state.truncated = true;  // sibling read failed -> remaining peers unseen; flag it
             return;
         }
         child = next;
@@ -855,6 +899,12 @@ ToolResult toolDismissDialog(const QJsonObject& args) {
     const QString err = inspectHwnd(hwnd, kDefaultUiaDepth, nodes, truncated, &elements);
     if (!err.isEmpty()) {
         return errorResult(err);
+    }
+    if (truncated && explicit_button.isEmpty()) {
+        // A truncated tree means the button set may be incomplete, so "lone button" / "best
+        // affirmative" auto-selection is no longer trustworthy; require an explicit caption.
+        return errorResult(QStringLiteral(
+            "The control tree is too large to auto-select a button safely; pass 'button'."));
     }
     QString why;
     const int index = chooseDialogButton(buttonsFromNodes(nodes), explicit_button, why);

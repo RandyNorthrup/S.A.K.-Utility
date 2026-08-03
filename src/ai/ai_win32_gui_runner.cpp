@@ -61,20 +61,32 @@ Rejection rejectionFor(const Win32StepOutcome& outcome, int index, const QString
 
 }  // namespace
 
-std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload) {
+std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload,
+                                                   bool require_satisfied) {
     struct WaitFlag {
         QLatin1String key;
         QLatin1String message;
     };
+    bool any_satisfied = false;
     for (const WaitFlag& flag :
          {WaitFlag{QLatin1String("found"), QLatin1String("awaited text did not appear")},
           WaitFlag{QLatin1String("satisfied"),
                    QLatin1String("awaited window state was not reached")},
           WaitFlag{QLatin1String("idle"), QLatin1String("window did not settle")}}) {
         const QJsonValue value = payload.value(flag.key);
-        if (value.isBool() && !value.toBool()) {
+        if (value.isUndefined()) {
+            continue;
+        }
+        if (!value.isBool()) {
+            return QStringLiteral("%1 (result flag was malformed)").arg(flag.message);
+        }
+        if (!value.toBool()) {
             return QStringLiteral("%1 before the timeout").arg(flag.message);
         }
+        any_satisfied = true;
+    }
+    if (require_satisfied && !any_satisfied) {
+        return QStringLiteral("wait step produced no verifiable found/satisfied/idle result");
     }
     return std::nullopt;
 }

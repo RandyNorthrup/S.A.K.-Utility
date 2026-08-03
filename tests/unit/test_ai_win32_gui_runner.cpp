@@ -54,6 +54,7 @@ private Q_SLOTS:
     void rejectsDisallowedMiddleTierStep();
     void failsWhenAStepCannotBePlanned();
     void waitExpectationFailureFlags();
+    void waitStepRequiresSatisfiedFlag();
 };
 
 void AiWin32GuiRunnerTests::runsEveryStepOnSuccess() {
@@ -166,10 +167,22 @@ void AiWin32GuiRunnerTests::waitExpectationFailureFlags() {
     const auto idle = win32WaitExpectationFailure(QJsonObject{{QStringLiteral("idle"), false}});
     QVERIFY(idle.has_value());
     QVERIFY(idle->contains(QStringLiteral("settle")));
-    // A non-bool flag value is not a failure signal.
+    // A non-bool flag value is MALFORMED and must fail closed (previously treated as satisfied).
     QVERIFY(
-        !win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), QStringLiteral("no")}})
-             .has_value());
+        win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), QStringLiteral("no")}})
+            .has_value());
+}
+
+void AiWin32GuiRunnerTests::waitStepRequiresSatisfiedFlag() {
+    // require_satisfied=true (the step IS a wait_for_* tool): a truncated/empty result_text
+    // parses to {} and must fail closed instead of silently passing.
+    QVERIFY(win32WaitExpectationFailure(QJsonObject{}, /*require_satisfied=*/true).has_value());
+    // A present-and-true flag satisfies the requirement.
+    QVERIFY(!win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), true}},
+                                         /*require_satisfied=*/true)
+                 .has_value());
+    // A non-wait step (require_satisfied=false) with no flags is still fine.
+    QVERIFY(!win32WaitExpectationFailure(QJsonObject{}, /*require_satisfied=*/false).has_value());
 }
 
 QTEST_GUILESS_MAIN(AiWin32GuiRunnerTests)

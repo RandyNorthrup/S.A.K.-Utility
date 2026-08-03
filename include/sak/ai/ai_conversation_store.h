@@ -12,6 +12,10 @@
 #include <QStringList>
 #include <QVector>
 
+// Global-namespace unit-test class, befriended below so it can exercise the pure static
+// path-safety seams (safeArtifactDirectoryName / commandLogPath) directly.
+class AiConversationStoreTests;
+
 namespace sak::ai {
 
 inline constexpr int kDefaultMemoryTextMaxChars = 16'000;
@@ -33,6 +37,8 @@ struct AiSessionSearchResult {
 };
 
 class ConversationStore {
+    friend class ::AiConversationStoreTests;  // unit-test seam for the pure static path guards
+
 public:
     explicit ConversationStore(QString root_dir = {});
 

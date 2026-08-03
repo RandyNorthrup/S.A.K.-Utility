@@ -35,6 +35,9 @@ namespace {
 #ifdef Q_OS_WIN
 constexpr auto kCredentialProvider = "dpapi-current-user-v1";
 constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
+// The credential file holds one Base64 DPAPI blob wrapping a single API key; a few KiB
+// at most. Cap the read so a corrupt/oversized file cannot be slurped whole into memory.
+constexpr qint64 kMaxCredentialFileBytes = 256LL * 1024LL;
 
 [[nodiscard]] QString winErrorMessage(DWORD code) {
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
@@ -52,6 +55,12 @@ std::optional<QJsonObject> readCredentialRoot(const QString& path, QString* erro
     QFile file(path);
     if (!file.exists()) {
         return QJsonObject{};
+    }
+    if (file.size() > kMaxCredentialFileBytes) {
+        setError(error_message,
+                 QStringLiteral("Encrypted API key file is implausibly large (%1 bytes)")
+                     .arg(file.size()));
+        return std::nullopt;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         setError(
@@ -77,13 +86,20 @@ std::optional<QByteArray> encryptedCredentialBytes(const QJsonObject& root,
         setError(error_message, QStringLiteral("Encrypted API key provider is unsupported"));
         return std::nullopt;
     }
-    QByteArray encrypted =
-        QByteArray::fromBase64(root.value(QStringLiteral("ciphertext")).toString().toLatin1());
-    if (encrypted.isEmpty()) {
+    // Strict Base64: reject any non-Base64 byte instead of silently discarding it, so a
+    // corrupted ciphertext fails closed here rather than decoding to a different blob.
+    const auto decoded = QByteArray::fromBase64Encoding(
+        root.value(QStringLiteral("ciphertext")).toString().toLatin1(),
+        QByteArray::Base64Encoding | QByteArray::AbortOnBase64DecodingErrors);
+    if (!decoded) {
+        setError(error_message, QStringLiteral("Encrypted API key payload is not valid Base64"));
+        return std::nullopt;
+    }
+    if (decoded.decoded.isEmpty()) {
         setError(error_message, QStringLiteral("Encrypted API key payload is empty"));
         return std::nullopt;
     }
-    return encrypted;
+    return decoded.decoded;
 }
 
 QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
@@ -183,14 +199,28 @@ bool writeCredentialRoot(const QString& path, const QJsonObject& root, QString* 
             QStringLiteral("Could not write encrypted API key file: %1").arg(file.errorString()));
         return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size()) {
+        setError(
+            error_message,
+            QStringLiteral("Short write to encrypted API key file: %1").arg(file.errorString()));
+        return false;
+    }
     if (!file.commit()) {
         setError(
             error_message,
             QStringLiteral("Could not commit encrypted API key file: %1").arg(file.errorString()));
         return false;
     }
-    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+    // Harden to owner-only; if that fails the file may be world-readable, so remove it and
+    // fail closed rather than reporting success for an unprotected credential file.
+    if (!QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner)) {
+        QFile::remove(path);
+        setError(error_message,
+                 QStringLiteral("Could not restrict permissions on encrypted API key file: %1")
+                     .arg(path));
+        return false;
+    }
     return true;
 }
 #endif

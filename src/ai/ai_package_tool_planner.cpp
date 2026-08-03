@@ -25,16 +25,6 @@ bool packageTokenIsValid(const QString& trimmed) {
 }
 }  // namespace
 
-QString AiPackageToolPlanner::safePackageToken(const QString& value) {
-    QString result;
-    for (const QChar ch : value.trimmed()) {
-        if (isAllowedPackageChar(ch)) {
-            result.append(ch);
-        }
-    }
-    return result;
-}
-
 bool AiPackageToolPlanner::isQueryOperation(const QString& operation) {
     return operation == QLatin1String("version") || operation == QLatin1String("search") ||
            operation == QLatin1String("outdated");

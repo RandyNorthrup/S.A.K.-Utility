@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QMutexLocker>
 #include <QUuid>
 
 #include <utility>
@@ -379,6 +380,7 @@ QString TraceStore::replayPath() const {
 }
 
 bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
+    const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("Trace session directory is empty");
@@ -405,6 +407,7 @@ bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
 }
 
 QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
+    const QMutexLocker locker(&m_io_mutex);
     QVector<AiTraceEvent> events;
     QFile file(tracePath());
     if (!file.exists()) {
@@ -429,6 +432,7 @@ QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
 }
 
 bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_message) const {
+    const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("Trace session directory is empty");
@@ -450,6 +454,7 @@ bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_messa
 }
 
 QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) const {
+    const QMutexLocker locker(&m_io_mutex);
     QVector<AiActivityEvent> events;
     QFile file(activityPath());
     if (!file.exists()) {
@@ -478,6 +483,7 @@ bool TraceStore::appendReplayEvent(const QString& run_id,
                                    const QString& status,
                                    QJsonObject metadata,
                                    QString* error_message) const {
+    const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("Trace session directory is empty");

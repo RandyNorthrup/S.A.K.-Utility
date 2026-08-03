@@ -4,6 +4,9 @@
 #include "sak/ai/ai_tool_turn.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QSet>
 
 #include <algorithm>
 
@@ -103,8 +106,9 @@ AiToolTurn::AdvanceResult AiToolTurn::appendOutput(OpenAIFunctionOutput output) 
 }
 
 QVector<OpenAIFunctionOutput> AiToolTurn::takeOutputs() {
-    QVector<OpenAIFunctionOutput> outputs = std::move(m_outputs);
-    m_outputs.clear();
+    // swap (not move + clear) so m_outputs is left provably empty without a moved-from access.
+    QVector<OpenAIFunctionOutput> outputs;
+    outputs.swap(m_outputs);
     return outputs;
 }
 
@@ -223,19 +227,47 @@ OpenAIFunctionOutput AiToolTurn::functionOutputFromJson(const QJsonObject& obj) 
     return output;
 }
 
+bool AiToolTurn::validateCall(const OpenAIFunctionCall& call, int index, QString* error_message) {
+    if (call.call_id.trimmed().isEmpty()) {
+        setError(error_message,
+                 QStringLiteral("Function call at index %1 missing call id").arg(index));
+        return false;
+    }
+    if (call.name.trimmed().isEmpty()) {
+        setError(error_message, QStringLiteral("Function call %1 missing name").arg(call.call_id));
+        return false;
+    }
+    // Validate the arguments up front so the whole batch is rejected atomically before ANY
+    // call executes -- otherwise an earlier destructive call could run before a later
+    // malformed one is refused. Empty arguments are allowed; a non-empty value must parse
+    // to a JSON object (the function-call argument contract).
+    const QString args = call.arguments_json.trimmed();
+    if (!args.isEmpty()) {
+        QJsonParseError parse_error{};
+        const auto doc = QJsonDocument::fromJson(args.toUtf8(), &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+            setError(error_message,
+                     QStringLiteral("Function call %1 has malformed arguments_json: %2")
+                         .arg(call.call_id, parse_error.errorString()));
+            return false;
+        }
+    }
+    return true;
+}
+
 bool AiToolTurn::validateCalls(const QVector<OpenAIFunctionCall>& calls, QString* error_message) {
+    QSet<QString> seen_ids;
     for (int i = 0; i < calls.size(); ++i) {
         const auto& call = calls.at(i);
-        if (call.call_id.trimmed().isEmpty()) {
-            setError(error_message,
-                     QStringLiteral("Function call at index %1 missing call id").arg(i));
+        if (!validateCall(call, i, error_message)) {
             return false;
         }
-        if (call.name.trimmed().isEmpty()) {
+        if (seen_ids.contains(call.call_id)) {
             setError(error_message,
-                     QStringLiteral("Function call %1 missing name").arg(call.call_id));
+                     QStringLiteral("Duplicate function call id %1 in batch").arg(call.call_id));
             return false;
         }
+        seen_ids.insert(call.call_id);
     }
     return true;
 }

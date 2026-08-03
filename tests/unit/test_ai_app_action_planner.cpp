@@ -35,6 +35,8 @@ private Q_SLOTS:
     void blocksWin32GuiStepMissingTool();
     void blocksWin32GuiNonObjectStep();
     void blocksWin32GuiNonObjectArguments();
+    void mistypedSafetyFlagStaysRisky();
+    void blocksWin32GuiNonBoolOptionalStep();
 };
 
 void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
@@ -198,6 +200,39 @@ void AiAppActionPlannerTests::blocksWin32GuiNonObjectArguments() {
 
     QVERIFY(!plan.ok());
     QVERIFY(plan.error_message.contains(QStringLiteral("'arguments' must be an object")));
+}
+
+void AiAppActionPlannerTests::mistypedSafetyFlagStaysRisky() {
+    // A mistyped safety flag (the string "true" instead of a JSON bool) must NOT silently
+    // downgrade to false and strip the risk/admin treatment. The command itself (Get-Date)
+    // is benign, so risky here can only come from the fail-closed flag reading.
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")},
+                                   {QStringLiteral("high_risk"), QStringLiteral("true")},
+                                   {QStringLiteral("requires_admin"), QStringLiteral("yes")}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(plan.ok());
+    QVERIFY(plan.risky);                   // present-but-mistyped high_risk -> treated as set
+    QVERIFY(plan.request.requires_admin);  // present-but-mistyped requires_admin -> treated as set
+}
+
+void AiAppActionPlannerTests::blocksWin32GuiNonBoolOptionalStep() {
+    // 'optional', when present, must be a boolean -- a mistyped value is a malformed recipe.
+    const QJsonObject manifest = actionManifest(QJsonObject{
+        {QStringLiteral("method"), QStringLiteral("win32_gui")},
+        {QStringLiteral("steps"),
+         QJsonArray{QJsonObject{{QStringLiteral("tool"), QStringLiteral("click_text")},
+                                {QStringLiteral("optional"), QStringLiteral("yes")}}}}});
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("'optional' must be a boolean")));
 }
 
 QTEST_GUILESS_MAIN(AiAppActionPlannerTests)

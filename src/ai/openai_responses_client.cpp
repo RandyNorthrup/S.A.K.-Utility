@@ -18,6 +18,8 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace sak::ai {
@@ -118,6 +120,26 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
                                .toString();
     return reason.isEmpty() ? QStringLiteral("OpenAI response is incomplete")
                             : QStringLiteral("OpenAI response is incomplete: %1").arg(reason);
+}
+
+// Return a non-empty error if the response terminated in a failed state. A status of
+// "failed" carries no usable output and may include partial/dangerous tool calls, so it
+// must fail closed rather than be treated as a normal (empty) completion.
+[[nodiscard]] QString failedResponseError(const QJsonObject& root) {
+    if (root.value(QStringLiteral("status")).toString() != QStringLiteral("failed")) {
+        return {};
+    }
+    const QString reason =
+        root.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString();
+    return reason.isEmpty() ? QStringLiteral("OpenAI response failed")
+                            : QStringLiteral("OpenAI response failed: %1").arg(reason);
+}
+
+// Non-empty when the response reached a terminal non-success state (incomplete or failed)
+// that must fail closed instead of being read as a usable answer.
+[[nodiscard]] QString terminalResponseError(const QJsonObject& root) {
+    const QString incomplete = incompleteResponseError(root);
+    return incomplete.isEmpty() ? failedResponseError(root) : incomplete;
 }
 
 void appendFunctionCallFromOutputItem(OpenAIResponseResult* result, const QJsonObject& item) {
@@ -881,9 +903,9 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     // A status of "incomplete" (e.g. max_output_tokens) can carry a truncated tool call
     // with invalid JSON arguments; treating it as complete would let a partial/dangerous
     // call (e.g. a half-formed delete path) reach dispatch. Fail closed instead.
-    const QString incomplete = incompleteResponseError(*root);
-    if (!incomplete.isEmpty() && error_message) {
-        *error_message = incomplete;
+    const QString terminal = terminalResponseError(*root);
+    if (!terminal.isEmpty() && error_message) {
+        *error_message = terminal;
         return result;
     }
 
@@ -968,14 +990,21 @@ qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
         }
         return -1;
     }
-    const qint64 tokens = static_cast<qint64>(value.toDouble());
-    if (tokens < 0) {
+    // Guard the double->qint64 cast: a non-finite or out-of-range magnitude is UB to cast.
+    const double raw = value.toDouble();
+    if (!std::isfinite(raw) || raw < 0.0) {
         if (error_message) {
-            *error_message = QStringLiteral("OpenAI input token count was negative");
+            *error_message = QStringLiteral("OpenAI input token count was negative or non-finite");
         }
         return -1;
     }
-    return tokens;
+    if (raw >= static_cast<double>(std::numeric_limits<qint64>::max())) {
+        if (error_message) {
+            *error_message = QStringLiteral("OpenAI input token count was out of range");
+        }
+        return -1;
+    }
+    return static_cast<qint64>(raw);
 }
 
 bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {

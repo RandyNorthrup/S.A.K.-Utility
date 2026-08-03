@@ -34,6 +34,8 @@ private Q_SLOTS:
     void restoreRejectsInvalidSchema();
     void restoreRejectsTooManyOutputs();
     void appendRejectsMismatchedCallId();
+    void beginRejectsDuplicateCallIds();
+    void beginRejectsMalformedArguments();
 };
 
 void AiToolTurnTests::beginAndAdvanceThroughCalls() {
@@ -135,6 +137,34 @@ void AiToolTurnTests::appendRejectsMismatchedCallId() {
     QVERIFY(result.error_message.contains(QStringLiteral("mismatch")));
     QCOMPARE(turn.callIndex(), 0);
     QCOMPARE(turn.completedOutputCount(), 0);
+}
+
+void AiToolTurnTests::beginRejectsDuplicateCallIds() {
+    // The whole batch is validated up front: two calls sharing a call_id must be rejected
+    // atomically before ANY of them can run.
+    sak::ai::AiToolTurn turn;
+    QString error;
+    QVERIFY(!turn.begin(QStringLiteral("resp"),
+                        {makeCall(QStringLiteral("dup"), QStringLiteral("take_screenshot")),
+                         makeCall(QStringLiteral("dup"), QStringLiteral("download_file"))},
+                        &error));
+    QVERIFY(error.contains(QStringLiteral("Duplicate")));
+    QVERIFY(!turn.active());
+}
+
+void AiToolTurnTests::beginRejectsMalformedArguments() {
+    // A call whose arguments_json is not a valid JSON object fails the batch up front, so an
+    // earlier destructive call cannot run before the malformed one is refused.
+    sak::ai::OpenAIFunctionCall bad;
+    bad.call_id = QStringLiteral("c1");
+    bad.name = QStringLiteral("run_cmd");
+    bad.arguments_json = QStringLiteral("{not valid json");
+
+    sak::ai::AiToolTurn turn;
+    QString error;
+    QVERIFY(!turn.begin(QStringLiteral("resp"), {bad}, &error));
+    QVERIFY(error.contains(QStringLiteral("malformed")));
+    QVERIFY(!turn.active());
 }
 
 QTEST_GUILESS_MAIN(AiToolTurnTests)

@@ -1,5 +1,11 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// NOT COMPILED INTO THE SHIPPING BINARY. The production Chrome native-messaging host is
+// browser_bridge_relay.cpp (win32 MCP entry.cpp routes relay mode to runBrowserRelay());
+// this translation unit is built ONLY by tests/CMakeLists.txt as an executable, self-checking
+// reference for the native-messaging framing/ping contract (see test_win32_mcp_server). Keep it
+// in lockstep with the relay's framing if that contract changes; do not add production callers.
 
 #include "sak/win32mcp/win32_mcp_native_host.h"
 

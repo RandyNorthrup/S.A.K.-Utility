@@ -21,6 +21,8 @@ private Q_SLOTS:
     void userDirectoryOverridesBuiltInWorkflow();
     void rejectUnknownPhaseType();
     void earlierInvalidFileDoesNotRejectLaterValidOne();
+    void rejectDuplicatePhaseIds();
+    void rejectDuplicateRequiredInputIds();
 };
 
 namespace {
@@ -173,6 +175,33 @@ void AiWorkflowStoreTests::earlierInvalidFileDoesNotRejectLaterValidOne() {
     (void)store.loadDirectory(temp_dir.path(), &errors);
 
     QVERIFY(store.workflowById(QStringLiteral("good_wf")) != nullptr);
+}
+
+void AiWorkflowStoreTests::rejectDuplicatePhaseIds() {
+    // Two phases with the same id alias each other in phase_results; reject at load.
+    QJsonObject object = validWorkflowObject();
+    const QJsonObject phase = object.value(QStringLiteral("phases")).toArray().at(0).toObject();
+    object[QStringLiteral("phases")] = QJsonArray{phase, phase};  // same id twice
+
+    QStringList errors;
+    const auto workflow =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("dup_phase"), &errors);
+    QVERIFY(!workflow.isValid());
+    QVERIFY(errors.join(QStringLiteral("\n")).contains(QStringLiteral("Duplicate phase id")));
+}
+
+void AiWorkflowStoreTests::rejectDuplicateRequiredInputIds() {
+    QJsonObject object = validWorkflowObject();
+    QJsonObject input;
+    input[QStringLiteral("id")] = QStringLiteral("app_name");
+    input[QStringLiteral("label")] = QStringLiteral("App");
+    object[QStringLiteral("required_inputs")] = QJsonArray{input, input};  // same id twice
+
+    QStringList errors;
+    const auto workflow =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("dup_input"), &errors);
+    QVERIFY(!workflow.isValid());
+    QVERIFY(errors.join(QStringLiteral("\n")).contains(QStringLiteral("Duplicate required-input")));
 }
 
 QTEST_MAIN(AiWorkflowStoreTests)

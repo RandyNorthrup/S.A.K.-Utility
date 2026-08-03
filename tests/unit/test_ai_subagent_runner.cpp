@@ -73,6 +73,25 @@ public:
     sak::ai::AiToolPolicy last_policy{sak::ai::AiToolPolicy::NoLocalExecution};
 };
 
+// Cancels the agent token WHILE executing the first tool call, so a later call in the
+// same batch must be skipped by the per-call cancellation recheck.
+class CancelOnFirstToolExecutor : public sak::ai::IAiSubagentToolExecutor {
+public:
+    sak::ai::AiSubagentToolOutput executeToolCall(
+        const sak::ai::AiSubagentTask&,
+        const sak::ai::AiSubagentToolCall& call,
+        const sak::ai::CancellationToken& token) override {
+        executed_calls.append(call.name);
+        token.cancel(QStringLiteral("cancelled mid-batch"));
+        sak::ai::AiSubagentToolOutput out;
+        out.call_id = call.call_id;
+        out.output_json = QStringLiteral("{\"ok\":true}");
+        return out;
+    }
+
+    QStringList executed_calls;
+};
+
 sak::ai::IAiModelClient::Response makeToolCallResponse(const QString& tool_name,
                                                        const QString& call_id,
                                                        const QString& response_id) {
@@ -148,6 +167,7 @@ private Q_SLOTS:
     void noLocalExecutionPolicyStaysSingleShot();
     void usageAccumulatesAcrossToolRoundTrips();
     void executedToolsRecordedWhenContinuationFails();
+    void perCallCancellationStopsRemainingToolCalls();
 };
 
 void AiSubagentRunnerTests::completeRoundTripPopulatesFields() {
@@ -667,6 +687,40 @@ void AiSubagentRunnerTests::executedToolsRecordedWhenContinuationFails() {
     // ground-truth "what did it do" survives on the failure path.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
     QVERIFY(result.actions_taken.contains(QStringLiteral("executed tool: run_powershell")));
+}
+
+void AiSubagentRunnerTests::perCallCancellationStopsRemainingToolCalls() {
+    // A single response asks for TWO tool calls. The first call cancels the agent token;
+    // the second must NOT execute -- cancellation is rechecked BEFORE each call, not just
+    // once per response. Regression for the mid-batch cancellation fix.
+    FakeModelClient client;
+    sak::ai::IAiModelClient::Response two_calls;
+    two_calls.success = true;
+    two_calls.response_id = QStringLiteral("resp_multi");
+    for (const auto& id : {QStringLiteral("call_1"), QStringLiteral("call_2")}) {
+        sak::ai::AiSubagentToolCall call;
+        call.call_id = id;
+        call.name = QStringLiteral("run_powershell");
+        call.arguments_json = QStringLiteral("{}");
+        two_calls.tool_calls.append(call);
+    }
+    client.next_response = two_calls;
+
+    CancelOnFirstToolExecutor executor;
+    sak::ai::AiSubagentRunner runner(&client);
+    runner.setToolExecutor(&executor);
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("mid_batch");
+    task.tool_policy = sak::ai::AiToolPolicy::ReadOnlyPc;
+
+    const auto result = runner.run(task,
+                                   sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
+
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Cancelled);
+    // Only the first call ran; the second was skipped by the per-call recheck.
+    QCOMPARE(executor.executed_calls.size(), 1);
+    // The batch was abandoned before continuing the model with tool outputs.
+    QCOMPARE(client.continuation_count, 0);
 }
 
 QTEST_GUILESS_MAIN(AiSubagentRunnerTests)

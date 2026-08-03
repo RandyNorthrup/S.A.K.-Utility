@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -244,41 +245,64 @@ QString activateTarget(const QJsonObject& args) {
     return {};
 }
 
-// -- tools -------------------------------------------------------------------
+// Extract a screen coordinate as an EXACT integer: a JSON number with a fractional part or beyond
+// int range is rejected (returns false) instead of being truncated / collapsed to a real
+// coordinate by QJsonValue::toInt().
+bool exactScreenInt(const QJsonValue& value, int& out) {
+    const double d = value.toDouble();
+    if (std::floor(d) != d) {
+        return false;
+    }
+    if (d < static_cast<double>(std::numeric_limits<int>::min()) ||
+        d > static_cast<double>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+    out = static_cast<int>(d);
+    return true;
+}
 
-ToolResult toolMouseClick(const QJsonObject& args) {
+// Validate and extract an in-bounds virtual-screen click point. Fails closed on a missing,
+// non-numeric, fractional, out-of-range, or off-screen coordinate: a fractional/out-of-range
+// number must NOT be truncated or collapsed to 0 (a coerced 0 could pass the bounds check and
+// fire at the desktop corner), and an off-screen point would be OS-clamped to a wrong control.
+QString resolveClickPoint(const QJsonObject& args, int& x, int& y) {
     if (!args.contains(QStringLiteral("x")) || !args.contains(QStringLiteral("y"))) {
-        return errorResult(QStringLiteral("x and y are required (virtual-screen coordinates)"));
+        return QStringLiteral("x and y are required (virtual-screen coordinates)");
     }
     const QJsonValue xv = args.value(QStringLiteral("x"));
     const QJsonValue yv = args.value(QStringLiteral("y"));
-    // Reject a non-numeric coordinate rather than letting toInt() coerce it to 0 and fire a
-    // (0, 0) click at the desktop corner.
     if (!xv.isDouble() || !yv.isDouble()) {
-        return errorResult(QStringLiteral("x and y must be numbers (virtual-screen coordinates)"));
+        return QStringLiteral("x and y must be numbers (virtual-screen coordinates)");
     }
-    const int x = xv.toInt();
-    const int y = yv.toInt();
-    DWORD down = 0;
-    DWORD up = 0;
+    if (!exactScreenInt(xv, x) || !exactScreenInt(yv, y)) {
+        return QStringLiteral("x and y must be whole numbers within the coordinate range.");
+    }
+    const ScreenBox vs = virtualScreen();
+    if (!pointInVirtualScreen(x, y, vs)) {
+        return QStringLiteral("(%1, %2) is outside the virtual screen [%3,%4)+%5x%6.")
+            .arg(x)
+            .arg(y)
+            .arg(vs.x)
+            .arg(vs.y)
+            .arg(vs.w)
+            .arg(vs.h);
+    }
+    return {};
+}
+
+// -- tools -------------------------------------------------------------------
+
+ToolResult toolMouseClick(const QJsonObject& args) {
+    int x = 0;
+    int y = 0;
+    const QString point_err = resolveClickPoint(args, x, y);
+    if (!point_err.isEmpty()) {
+        return errorResult(point_err);
+    }
     unsigned long down_flags = 0;
     unsigned long up_flags = 0;
     if (!mouseButtonFlags(args.value(QStringLiteral("button")).toString(), down_flags, up_flags)) {
         return errorResult(QStringLiteral("button must be left, right, or middle"));
-    }
-    down = static_cast<DWORD>(down_flags);
-    up = static_cast<DWORD>(up_flags);
-    const ScreenBox vs = virtualScreen();
-    if (!pointInVirtualScreen(x, y, vs)) {
-        // A coordinate outside the virtual screen would otherwise be clamped by the OS to a
-        // desktop-edge control (Start button, close box, another monitor) and fire a wrong click.
-        return errorResult(QStringLiteral("(%1, %2) is outside the virtual screen [%3,%4)+%5x%6.")
-                               .arg(x)
-                               .arg(y)
-                               .arg(vs.x)
-                               .arg(vs.y)
-                               .arg(vs.w)
-                               .arg(vs.h));
     }
     // optional window_title / foreground raises the target first; abort if a named target could
     // not be raised rather than clicking whatever happens to be focused.
@@ -287,7 +311,7 @@ ToolResult toolMouseClick(const QJsonObject& args) {
         return errorResult(activate_err);
     }
     const int clicks = args.value(QStringLiteral("double")).toBool() ? 2 : 1;
-    if (!clickAt(x, y, down, up, clicks)) {
+    if (!clickAt(x, y, static_cast<DWORD>(down_flags), static_cast<DWORD>(up_flags), clicks)) {
         return errorResult(injectionBlockedError());
     }
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
@@ -325,10 +349,17 @@ ToolResult toolClickText(const QJsonObject& args) {
 }
 
 ToolResult toolTypeText(const QJsonObject& args) {
+    const QJsonValue text_value = args.value(QStringLiteral("text"));
     if (!args.contains(QStringLiteral("text"))) {
         return errorResult(QStringLiteral("text is required"));
     }
-    const QString text = args.value(QStringLiteral("text")).toString();
+    // Reject a non-string text rather than coercing it to "" (which sendInputAll would treat as a
+    // no-op success reporting typed:0); a wrong-typed argument is caller error, not "typed
+    // nothing".
+    if (!text_value.isString()) {
+        return errorResult(QStringLiteral("text must be a string"));
+    }
+    const QString text = text_value.toString();
     if (text.size() > kMaxTypeChars) {
         return errorResult(QStringLiteral("text exceeds the type limit"));
     }

@@ -13,6 +13,7 @@ class AiHumanGateStoreTests : public QObject {
 private Q_SLOTS:
     void appendAndLoadRoundTrips();
     void latestPendingGateIgnoresResolvedGates();
+    void latestPendingGateIgnoresStatuslessForgedRecord();
 };
 
 void AiHumanGateStoreTests::appendAndLoadRoundTrips() {
@@ -78,6 +79,34 @@ void AiHumanGateStoreTests::latestPendingGateIgnoresResolvedGates() {
     const auto pending = store.latestPendingGate(&error);
     QCOMPARE(pending.gate_id, QStringLiteral("gate_2"));
     QCOMPARE(pending.question, QStringLiteral("Create restore point?"));
+}
+
+void AiHumanGateStoreTests::latestPendingGateIgnoresStatuslessForgedRecord() {
+    // A later record for the same gate_id whose status is unrecognized/statusless must NOT
+    // resolve (erase) a genuine pending gate: it is malformed and is ignored, so the gate
+    // stays pending. Regression for the forged-resolving-record hardening.
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    sak::ai::AiHumanGateStore store(temp_dir.path());
+
+    sak::ai::AiHumanGate pending;
+    pending.gate_id = QStringLiteral("gate_forge");
+    pending.run_id = QStringLiteral("run_1");
+    pending.kind = QStringLiteral("approval");
+    pending.name = QStringLiteral("command_approval");
+    pending.status = sak::ai::humanGateWaitingStatus();
+    pending.question = QStringLiteral("Approve command?");
+
+    sak::ai::AiHumanGate forged = pending;
+    forged.status = QStringLiteral("bogus_state");  // not a known lifecycle status
+
+    QString error;
+    QVERIFY2(store.appendGate(pending, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(forged, &error), qPrintable(error));
+
+    const auto latest = store.latestPendingGate(&error);
+    QCOMPARE(latest.gate_id, QStringLiteral("gate_forge"));
+    QVERIFY(latest.isPending());
 }
 
 QTEST_GUILESS_MAIN(AiHumanGateStoreTests)

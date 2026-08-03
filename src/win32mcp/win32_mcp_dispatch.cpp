@@ -18,8 +18,30 @@ namespace sak::win32mcp {
 namespace {
 
 // JSON-RPC 2.0 standard error codes we can surface from a stdio MCP server.
+constexpr int kInvalidRequest = -32'600;
 constexpr int kMethodNotFound = -32'601;
 constexpr int kInvalidParams = -32'602;
+
+// Resolve the server's read-only lockdown from its env token. This profile is the independent
+// fail-closed backstop ("never trust the client"), so an UNSET/empty token is the only value
+// that keeps the intended full-access default; the exact token "read_only" restricts to
+// read-only tools; and ANY OTHER non-empty token is treated as an operator typo (e.g.
+// "readonly", "read-only") that MUST fail CLOSED to read-only rather than silently granting the
+// full mutating/input/process surface.
+bool resolveReadOnlyProfile(const QString& raw) {
+    const QString token = raw.trimmed().toLower();
+    if (token.isEmpty()) {
+        return false;  // unset: the documented, intended full-access default
+    }
+    if (token == QLatin1String("read_only")) {
+        return true;
+    }
+    qWarning(
+        "WIN32_MCP_SECURITY_PROFILE='%s' is not a recognized profile; failing closed to "
+        "read_only.",
+        qUtf8Printable(raw));
+    return true;
+}
 
 QJsonObject resultResponse(const QJsonValue& id, const QJsonObject& result) {
     return QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
@@ -67,7 +89,11 @@ QJsonArray fullToolCatalog(const BrowserControl* browser, const Win32McpServerPo
     return read_only_tools;
 }
 
-// Redact the text blocks of a tools/call result in place when the policy asks for it.
+// Redact the text blocks of a tools/call result in place when the policy asks for it. Scope is
+// deliberately the text blocks and the secret-key regex below: image blocks are opaque binary
+// the client renders, and arbitrary value fields (e.g. cookie values) are out of scope by
+// design -- this is an opt-in best-effort keyword scrubber, not a completeness guarantee. It
+// never claims to have redacted content it does not model, so it does not fail open.
 QJsonObject redactToolCallResult(QJsonObject result, const Win32McpServerPolicy& policy) {
     if (!policy.redact_sensitive_output) {
         return result;
@@ -102,7 +128,16 @@ std::optional<QJsonObject> handleToolsCall(const QJsonValue& id,
                                  "Tool '%1' is not permitted under the read-only security profile")
                                  .arg(name));
     }
-    const QJsonObject arguments = params.value(QStringLiteral("arguments")).toObject();
+    // A present-but-non-object `arguments` must be rejected, not coerced to {}: coercion would
+    // let a command run with its destructive defaults (e.g. browser_close_tab closing the active
+    // tab) off a malformed envelope. Absent arguments legitimately means "no args".
+    const QJsonValue arguments_value = params.value(QStringLiteral("arguments"));
+    if (params.contains(QStringLiteral("arguments")) && !arguments_value.isObject()) {
+        return errorResponse(id,
+                             kInvalidParams,
+                             QStringLiteral("tools/call arguments must be an object"));
+    }
+    const QJsonObject arguments = arguments_value.toObject();
     if (browser != nullptr && browser->handles(name)) {
         return resultResponse(
             id, redactToolCallResult(toolCallResult(browser->invoke(name, arguments)), policy));
@@ -117,8 +152,7 @@ Win32McpServerPolicy Win32McpServerPolicy::fromEnvironment() {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     Win32McpServerPolicy policy;
     policy.read_only_profile =
-        env.value(QStringLiteral("WIN32_MCP_SECURITY_PROFILE")).trimmed().toLower() ==
-        QLatin1String("read_only");
+        resolveReadOnlyProfile(env.value(QStringLiteral("WIN32_MCP_SECURITY_PROFILE")));
     policy.redact_sensitive_output =
         env.value(QStringLiteral("WIN32_MCP_REDACT_SENSITIVE_OUTPUT")).trimmed().toLower() ==
         QLatin1String("true");
@@ -214,6 +248,15 @@ std::optional<QJsonObject> handleRequest(const QJsonObject& request,
     const bool has_id = request.contains(QStringLiteral("id")) &&
                         !request.value(QStringLiteral("id")).isNull();
     const QJsonValue id = request.value(QStringLiteral("id"));
+
+    // Enforce the JSON-RPC 2.0 envelope: a request whose "jsonrpc" is missing or not exactly
+    // "2.0" is malformed and rejected (an id-bearing one gets an Invalid Request error; a
+    // notification is silently dropped since it cannot be answered) rather than dispatched.
+    if (request.value(QStringLiteral("jsonrpc")).toString() != QLatin1String("2.0")) {
+        return has_id ? std::optional<QJsonObject>(errorResponse(
+                            id, kInvalidRequest, QStringLiteral("jsonrpc must be \"2.0\"")))
+                      : std::nullopt;
+    }
 
     // Notifications (no id) get no response, per JSON-RPC 2.0. This covers
     // notifications/initialized and any future one-way message.

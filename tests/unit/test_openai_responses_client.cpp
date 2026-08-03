@@ -20,7 +20,9 @@ private Q_SLOTS:
     void parseResponseObject_extractsUrlCitations();
     void parseResponseObject_apiError_reportsMessage();
     void parseResponseObject_incompleteStatusReportsError();
+    void parseResponseObject_failedStatusReportsError();
     void parseInputTokenCountObject_extractsExactCount();
+    void parseInputTokenCountObject_rejectsOutOfRange();
     void parseModelsList_extractsIds();
     void redactSecrets_redactsOpenAiAndBearerTokens();
     void redactSecrets_redactsGitHubAndCloudTokens();
@@ -423,6 +425,35 @@ void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsErro
     // Fail closed: an incomplete response must surface no usable assistant output that
     // a caller could mistake for a complete answer.
     QVERIFY(result.output_text.isEmpty());
+}
+
+void OpenAIResponsesClientTests::parseResponseObject_failedStatusReportsError() {
+    // A terminal "failed" status must fail closed rather than be treated as an empty
+    // completion, so a failed generation cannot masquerade as a usable (empty) answer.
+    // (A response that also carries a top-level "error" object is caught earlier by
+    // extractApiError; this exercises the bare status:"failed" path added for finding 4.)
+    const QByteArray json = R"({
+      "id": "resp_failed",
+      "status": "failed",
+      "output": []
+    })";
+
+    QString error;
+    const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
+    QVERIFY(!error.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("failed")));
+    QVERIFY(result.output_text.isEmpty());
+}
+
+void OpenAIResponsesClientTests::parseInputTokenCountObject_rejectsOutOfRange() {
+    // A value beyond qint64 range would be UB to cast; it must be rejected, not truncated.
+    const QByteArray json = R"({"input_tokens": 1e30})";
+
+    QString error;
+    const qint64 tokens = sak::ai::OpenAIResponsesClient::parseInputTokenCountObject(json, &error);
+
+    QCOMPARE(tokens, qint64{-1});
+    QVERIFY(!error.isEmpty());
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {

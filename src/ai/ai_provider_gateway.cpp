@@ -87,6 +87,10 @@ QJsonObject mcpDocsQueryResult(const QJsonObject& provider,
     result[QStringLiteral("provider_tool")] = provider_tool;
     result[QStringLiteral("query")] = query;
     result[QStringLiteral("mcp_request_arguments")] = tool_arguments;
+    // Surface the MCP tools/call LOGICAL failure flag (result.isError) so docsQuery can fail
+    // closed instead of reporting a documentation-provider error as a successful lookup.
+    result[QStringLiteral("mcp_is_error")] =
+        result_value.toObject().value(QStringLiteral("isError")).toBool(false);
     result[QStringLiteral("mcp_result_preview_json")] =
         cappedString(compact_result, kMcpResultPreviewChars, &json_truncated);
     result[QStringLiteral("mcp_result_truncated")] = json_truncated;
@@ -99,6 +103,17 @@ QJsonObject mcpDocsQueryResult(const QJsonObject& provider,
         result[QStringLiteral("result_text_truncated")] = text_truncated;
     }
     return result;
+}
+
+// Non-empty when a docs result carries a logical MCP tool error (result.isError); the
+// message embeds any surfaced result_text so the caller can fail closed with context.
+QString docsQueryLogicalError(const QJsonObject& docs_result) {
+    if (!docs_result.value(QStringLiteral("mcp_is_error")).toBool(false)) {
+        return {};
+    }
+    const QString text = docs_result.value(QStringLiteral("result_text")).toString();
+    return text.isEmpty() ? QStringLiteral("docs_query MCP tool reported an error")
+                          : QStringLiteral("docs_query MCP tool error: %1").arg(text);
 }
 
 bool providerHasTool(const QJsonObject& provider, const QString& tool_name) {
@@ -353,6 +368,12 @@ QJsonObject win32ToolArguments(QJsonObject extra) {
     if (!tool_arguments.isEmpty()) {
         return tool_arguments;
     }
+    // By design (certified in test_ai_provider_gateway): when no explicit tool_arguments
+    // object is supplied, the model may pass the tool's arguments inline as siblings of
+    // tool_name. The four control keys below are the ONLY reserved fields; they are removed
+    // so they can never be smuggled in as tool arguments, and whatever remains is passed
+    // through. The resulting tool + arguments are still validated against the bundled
+    // manifest and risk-gated, so this convenience does not widen the trust boundary.
     extra.remove(QStringLiteral("tool"));
     extra.remove(QStringLiteral("tool_name"));
     extra.remove(QStringLiteral("tool_arguments"));
@@ -421,6 +442,36 @@ void populateWin32Plan(AiProviderGateway::Win32McpCallPlan* plan,
                  QString::fromUtf8(QJsonDocument(tool_arguments).toJson(QJsonDocument::Compact)));
 }
 
+// Executes a planned docs tool call over HTTP and builds the surfaced result, failing closed
+// on a transport error (callTool sets error_message and returns {}) or a logical isError.
+QJsonObject runDocsToolCall(const QJsonObject& provider,
+                            const DocsToolPlan& plan,
+                            const QString& query,
+                            QString* error_message) {
+    const QUrl endpoint(provider.value(QStringLiteral("endpoint")).toString());
+    const QJsonObject message = AiMcpHttpClient::callTool(endpoint,
+                                                          plan.provider_tool,
+                                                          plan.tool_arguments,
+                                                          kDefaultProviderGatewayTimeoutMs,
+                                                          error_message);
+    if (message.isEmpty()) {
+        return {};
+    }
+    QJsonObject result =
+        mcpDocsQueryResult(provider, plan.provider_tool, query, plan.tool_arguments, message);
+    const QString logical_error = docsQueryLogicalError(result);
+    if (!logical_error.isEmpty()) {
+        if (error_message) {
+            *error_message = logical_error;
+        }
+        return {};
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return result;
+}
+
 }  // namespace
 
 AiProviderGateway::AiProviderGateway(AiProviderRegistry registry)
@@ -466,17 +517,10 @@ QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error
     if (!requireProviderTool(provider, provider_id, plan.provider_tool, error_message)) {
         return {};
     }
-
-    const QUrl endpoint(provider.value(QStringLiteral("endpoint")).toString());
-    const QJsonObject message = AiMcpHttpClient::callTool(
-        endpoint, plan.provider_tool, plan.tool_arguments, 20'000, error_message);
-    if (message.isEmpty()) {
-        return {};
-    }
-    if (error_message) {
-        error_message->clear();
-    }
-    return mcpDocsQueryResult(provider, plan.provider_tool, query, plan.tool_arguments, message);
+    // Fail closed on a logical tool error: runDocsToolCall does not let the read-op path force
+    // success=true over a documentation provider that reported isError (a prompt-injection
+    // surface otherwise).
+    return runDocsToolCall(provider, plan, query, error_message);
 }
 
 QJsonObject AiProviderGateway::appManifest(const QString& app_id, QString* error_message) const {

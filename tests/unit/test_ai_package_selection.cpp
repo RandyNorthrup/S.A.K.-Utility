@@ -28,6 +28,8 @@ private Q_SLOTS:
     void selectsExactTitleAlias();
     void asksHumanForAmbiguousMatches();
     void reportsNoCandidatesWithoutGuessing();
+    void doesNotAutoSelectLoneNonExactCandidate();
+    void dropsCandidateWithDisallowedIdCharacters();
 };
 
 void AiPackageSelectionTests::normalizesHumanPackageNames() {
@@ -91,6 +93,34 @@ void AiPackageSelectionTests::reportsNoCandidatesWithoutGuessing() {
     QVERIFY(!result.requires_human);
     QVERIFY(result.error_message.contains(QStringLiteral("no candidates")));
     QVERIFY(result.selected.package_id.isEmpty());
+}
+
+void AiPackageSelectionTests::doesNotAutoSelectLoneNonExactCandidate() {
+    // A single search hit that does NOT exactly match the query must not be auto-installed:
+    // fail closed to a human decision rather than guess a fuzzy match.
+    QJsonArray packages;
+    packages.append(packageObject(QStringLiteral("some-unrelated-tool"),
+                                  QStringLiteral("Some Unrelated Tool")));
+
+    const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("firefox"), packages);
+
+    QVERIFY(!result.success);
+    QVERIFY(result.requires_human);
+    QVERIFY(result.selected.package_id.isEmpty());
+}
+
+void AiPackageSelectionTests::dropsCandidateWithDisallowedIdCharacters() {
+    // An id with disallowed characters is REJECTED (not rewritten by deleting them, which
+    // could turn "fire fox!" into the real "firefox" and install the wrong package). The
+    // only candidate therefore has no usable id and the search reports no candidates.
+    QJsonArray packages;
+    packages.append(packageObject(QStringLiteral("fire fox!"), QStringLiteral("Bad Id")));
+
+    const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("firefox"), packages);
+
+    QVERIFY(!result.success);
+    QVERIFY(result.selected.package_id.isEmpty());  // NOT rewritten to a valid "firefox"
+    QVERIFY(result.error_message.contains(QStringLiteral("no candidates")));
 }
 
 QTEST_GUILESS_MAIN(AiPackageSelectionTests)

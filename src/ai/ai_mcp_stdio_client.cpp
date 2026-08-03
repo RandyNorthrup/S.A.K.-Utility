@@ -202,6 +202,13 @@ private:
                      .toString(QStringLiteral("MCP JSON-RPC error")));
             return false;
         }
+        // Fail closed on a malformed id-matching response: a JSON-RPC result MUST be present
+        // and be an object (initialize + tools/call both return objects). Without this an
+        // absent/scalar result would be accepted and later read as an empty {} success.
+        if (!message.value(QStringLiteral("result")).isObject()) {
+            fail(QStringLiteral("MCP stdio response missing a result object"));
+            return false;
+        }
         if (m_phase == StdioPhase::AwaitInitialize) {
             return sendToolCall();
         }

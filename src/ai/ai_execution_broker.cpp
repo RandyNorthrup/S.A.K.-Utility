@@ -94,8 +94,14 @@ void ExecutionBroker::assignProcessToJob() {
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        ::SetInformationJobObject(
-            m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        if (!::SetInformationJobObject(
+                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            // Without KILL_ON_JOB_CLOSE the job cannot guarantee descendant cleanup; drop it
+            // so teardown relies on the direct primary-process kill rather than a job that
+            // will not reap survivors.
+            closeJobHandle();
+            return;
+        }
     }
     const HANDLE process = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
                                          FALSE,
@@ -103,7 +109,12 @@ void ExecutionBroker::assignProcessToJob() {
     if (!process) {
         return;
     }
-    ::AssignProcessToJobObject(m_job_handle, process);
+    if (!::AssignProcessToJobObject(m_job_handle, process)) {
+        // The process is NOT in the job, so TerminateJobObject would silently reap nothing
+        // and grandchildren could survive. Drop the job handle so teardown falls back to
+        // killing the primary process directly instead of trusting an empty job.
+        closeJobHandle();
+    }
     ::CloseHandle(process);
 }
 

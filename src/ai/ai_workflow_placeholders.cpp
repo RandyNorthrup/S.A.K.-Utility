@@ -79,6 +79,13 @@ QString workflowPlaceholderValue(const AiWorkflowPhaseContext& context,
         value = workflowInputValue(context, key);
     }
     if (mode == WorkflowPlaceholderMode::PowerShellSingleQuoted) {
+        // A PowerShell single-quoted literal treats every character literally except the
+        // single quote, which is escaped by doubling; newlines and every metacharacter are
+        // inert. This escaping is therefore COMPLETE if and only if the template places the
+        // placeholder inside a single-quoted literal (the B1-05 remediation audited every
+        // bundled template + splat to guarantee this). It intentionally does not wrap the
+        // value: wrapping here would double-quote the templates that already wrap. Templates
+        // MUST keep ${...} inside '...' in this mode.
         value.replace(QLatin1Char('\''), QStringLiteral("''"));
     }
     return value;

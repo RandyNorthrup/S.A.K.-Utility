@@ -24,10 +24,14 @@ QString firstStringValue(const QJsonObject& object, std::initializer_list<const 
     return {};
 }
 
+// Fail closed: validate a candidate id rather than rewrite it. Deleting disallowed
+// characters could turn one package id into a DIFFERENT valid id and select the wrong
+// package, so an id that is not already well-formed is rejected (returns empty ->
+// candidate is dropped by packageCandidatesFromJson). Case is normalized only.
 QString safePackageIdToken(const QString& value) {
-    QString out = value.trimmed().toLower();
-    out.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9_.+-])")));
-    return out;
+    const QString out = value.trimmed().toLower();
+    static const QRegularExpression valid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
+    return valid.match(out).hasMatch() ? out : QString();
 }
 
 AiPackageCandidate candidateFromJson(const QJsonObject& object) {
@@ -213,10 +217,9 @@ AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
         return noPackageCandidatesResult(clean_query);
     }
 
-    if (all_candidates.size() == 1) {
-        return selectedPackageResult(all_candidates.first());
-    }
-
+    // Fail closed: never auto-select a lone candidate that does not exactly match the
+    // query -- a fuzzy single search hit could install the wrong package. Only an exact
+    // package_id/title/name match is auto-selected below; anything else asks the human.
     const QVector<AiPackageCandidate> exact_matches = exactPackageMatches(query_key,
                                                                           all_candidates);
 

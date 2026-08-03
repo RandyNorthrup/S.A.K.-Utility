@@ -19,6 +19,8 @@ private Q_SLOTS:
     void exclusiveLeaseBlocksConcurrentMutating();
     void leaseReleasedAfterDispatch();
     void availabilityCheckerBlocksBeforeHandler();
+    void availabilityCheckerEmptyResultDeniesCall();
+    void requiresLeaseFailsClosedWithoutLeaseManager();
     void healthLedgerSuppressesRepeatedFailures();
 };
 
@@ -72,6 +74,11 @@ void AiToolDispatcherTests::allowedCallReachesHandler() {
 
 void AiToolDispatcherTests::packageInstallReportsLeaseRequirement() {
     sak::ai::AiToolDispatcher dispatcher;
+    // A mutating call requires a wired lease manager to dispatch (fail closed otherwise --
+    // see requiresLeaseFailsClosedWithoutLeaseManager); this test verifies the decision
+    // carries the lease requirement on the normal, lease-manager-present path.
+    sak::ai::AiLeaseManager leases;
+    dispatcher.setLeaseManager(&leases);
     sak::ai::AiToolPolicyDecision captured_decision;
     dispatcher.registerHandler(QStringLiteral("sak_package_manager"),
                                [&captured_decision](const QJsonObject&,
@@ -207,6 +214,56 @@ void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {
     QVERIFY(outcome.result.value(QStringLiteral("availability_denied")).toBool(false));
     QCOMPARE(outcome.result.value(QStringLiteral("failure_class")).toString(),
              QStringLiteral("invalid_request"));
+}
+
+void AiToolDispatcherTests::availabilityCheckerEmptyResultDeniesCall() {
+    // A registered availability checker that returns an empty object is NOT evidence of
+    // availability: the call must be denied fail-closed, not passed through.
+    sak::ai::AiToolDispatcher dispatcher;
+    bool handler_called = false;
+    dispatcher.registerAvailabilityChecker(
+        QStringLiteral("download_file"),
+        [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) { return QJsonObject{}; });
+    dispatcher.registerHandler(QStringLiteral("download_file"),
+                               [&handler_called](const QJsonObject&,
+                                                 const sak::ai::AiToolPolicyDecision&) {
+                                   handler_called = true;
+                                   return QJsonObject{{QStringLiteral("success"), true}};
+                               });
+
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("download_file");
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::DownloadOnly, request, {});
+    QVERIFY(outcome.availability_denied);
+    QVERIFY(!outcome.dispatched);
+    QVERIFY(!handler_called);
+}
+
+void AiToolDispatcherTests::requiresLeaseFailsClosedWithoutLeaseManager() {
+    // A call that requires a mutation lease must be denied when no lease manager is wired --
+    // running it would grant a mutating tool with no cross-agent serialization (fail open).
+    sak::ai::AiToolDispatcher dispatcher;  // no setLeaseManager()
+    bool handler_called = false;
+    dispatcher.registerHandler(QStringLiteral("sak_package_manager"),
+                               [&handler_called](const QJsonObject&,
+                                                 const sak::ai::AiToolPolicyDecision&) {
+                                   handler_called = true;
+                                   return QJsonObject{{QStringLiteral("success"), true}};
+                               });
+
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("sak_package_manager");
+    request.operation = QStringLiteral("install");
+    request.user_message = QStringLiteral("install the selected package");
+
+    const auto outcome = dispatcher.dispatch(
+        sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, QStringLiteral("agent"));
+    QVERIFY(outcome.policy_decision.allowed);
+    QVERIFY(outcome.policy_decision.requires_lease);
+    QVERIFY(outcome.lease_denied);
+    QVERIFY(!outcome.dispatched);
+    QVERIFY(!handler_called);
+    QVERIFY(outcome.result.value(QStringLiteral("lease_denied")).toBool(false));
 }
 
 void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {

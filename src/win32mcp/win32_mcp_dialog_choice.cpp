@@ -4,6 +4,7 @@
 #include "sak/win32mcp/win32_mcp_dialog_choice.h"
 
 #include <QLatin1String>
+#include <QRegularExpression>
 #include <QStringList>
 
 namespace sak::win32mcp {
@@ -38,9 +39,50 @@ const char* const kAffirmativeCaptions[] = {
     "next",
 };
 
-// Rank a button caption as an affirmative: lower is better, -1 = not affirmative. An exact caption
-// match outranks a substring match, so "OK" beats "OK, don't ask again" when both are present.
+// Destructive/negative verbs that turn an otherwise-affirmative caption into a dangerous action.
+// If any appears as a whole word the caption is NEVER auto-affirmative -- so "Yes, delete all" or
+// "OK, format drive" is refused rather than auto-pressed just because it also contains "yes"/"ok".
+const char* const kDestructiveWords[] = {
+    "delete",
+    "remove",
+    "discard",
+    "erase",
+    "quit",
+    "reset",
+    "format",
+    "wipe",
+    "overwrite",
+    "replace",
+    "uninstall",
+};
+
+// Split a lower-cased caption into its alphanumeric word tokens, so matching is whole-word rather
+// than substring ("yes" must not match inside "Yes, delete all"; "delete" is its own token).
+QStringList captionTokens(const QString& name_lower) {
+    static const QRegularExpression kNonWord(QStringLiteral("[^a-z0-9]+"));
+    return name_lower.split(kNonWord, Qt::SkipEmptyParts);
+}
+
+bool hasDestructiveWord(const QStringList& tokens) {
+    for (const QString& token : tokens) {
+        for (const char* bad : kDestructiveWords) {
+            if (token == QLatin1String(bad)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Rank a button caption as an affirmative: lower is better, -1 = not affirmative. A caption
+// carrying a destructive verb is rejected outright; otherwise an EXACT caption match outranks a
+// whole-WORD match, so "OK" beats "OK, don't ask again", and neither substring-matches a longer
+// destructive phrase.
 int affirmativeRank(const QString& name_lower) {
+    const QStringList tokens = captionTokens(name_lower);
+    if (hasDestructiveWord(tokens)) {
+        return -1;  // destructive verb present -> never auto-affirmative (fail closed)
+    }
     int i = 0;
     for (const char* caption : kAffirmativeCaptions) {
         if (name_lower == QLatin1String(caption)) {
@@ -48,11 +90,11 @@ int affirmativeRank(const QString& name_lower) {
         }
         ++i;
     }
-    constexpr int kSubstringBase = 100;
+    constexpr int kWordBase = 100;
     i = 0;
     for (const char* caption : kAffirmativeCaptions) {
-        if (name_lower.contains(QLatin1String(caption))) {
-            return kSubstringBase + i;
+        if (tokens.contains(QString::fromLatin1(caption))) {  // whole word, not substring
+            return kWordBase + i;
         }
         ++i;
     }

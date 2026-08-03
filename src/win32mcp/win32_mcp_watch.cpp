@@ -121,9 +121,13 @@ BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
     return TRUE;
 }
 
-bool windowVisibleExists(const QString& needle_lower) {
+// Report whether a visible window matches, distinguishing a real enumeration failure from "no
+// match" via enum_ok: EnumWindows returns FALSE both when a callback stops it (our found-and-stop)
+// and on a genuine failure, so a FALSE return is only an error when nothing was found.
+bool windowVisibleExists(const QString& needle_lower, bool& enum_ok) {
     ExistState state{needle_lower, false};
-    EnumWindows(existProc, reinterpret_cast<LPARAM>(&state));
+    const BOOL enum_ret = EnumWindows(existProc, reinterpret_cast<LPARAM>(&state));
+    enum_ok = state.found || enum_ret != FALSE;
     return state.found;
 }
 
@@ -203,13 +207,23 @@ ToolResult toolWaitForWindow(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    const bool want_present = args.value(QStringLiteral("state")).toString().trimmed().toLower() !=
-                              QLatin1String("absent");
+    const QString state_arg = args.value(QStringLiteral("state")).toString().trimmed().toLower();
+    // Reject a malformed state rather than silently treating a typo ('abset') as 'present' and
+    // waiting for the opposite condition.
+    if (!state_arg.isEmpty() && state_arg != QLatin1String("present") &&
+        state_arg != QLatin1String("absent")) {
+        return errorResult(QStringLiteral("state must be 'present' or 'absent'"));
+    }
+    const bool want_present = state_arg != QLatin1String("absent");
     const qint64 timeout_ms = clampMs(args, QStringLiteral("timeout_ms"), 10'000, 200, kMaxWaitMs);
     const qint64 poll_ms = clampMs(args, QStringLiteral("poll_ms"), 300, 100, 5000);
     const ULONGLONG start = GetTickCount64();
     for (;;) {
-        const bool exists = windowVisibleExists(title.toLower());
+        bool enum_ok = true;
+        const bool exists = windowVisibleExists(title.toLower(), enum_ok);
+        if (!enum_ok) {
+            return errorResult(QStringLiteral("Could not enumerate windows."));
+        }
         const qint64 waited = static_cast<qint64>(GetTickCount64() - start);
         if (exists == want_present || waited >= timeout_ms) {
             return jsonResult(QJsonObject{{QStringLiteral("satisfied"), exists == want_present},

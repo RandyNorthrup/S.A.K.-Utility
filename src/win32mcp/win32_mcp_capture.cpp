@@ -52,13 +52,15 @@ HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
     return CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
-// Render the source into memDC (which owns the target DIB). PrintWindow first for a window (so
-// an occluded or DWM-composited window still renders); BitBlt otherwise, and as the fallback
-// when PrintWindow fails.
+// Render the source into memDC (which owns the target DIB). For a specific window we use
+// PrintWindow ONLY: it renders even an occluded/DWM-composited window from its own surface, and
+// on failure we fail closed instead of BitBlt-ing the screen rect -- a desktop BitBlt of an
+// occluded window would capture whatever OTHER window sits on top, feeding OCR/clicks the wrong
+// pixels. BitBlt is used solely for a null-hwnd full-screen / region grab, where the screen rect
+// IS the intended source.
 bool blitSource(void* hwnd, HDC memDC, HDC screen, const RECT& rect) {
-    if (hwnd != nullptr &&
-        PrintWindow(static_cast<HWND>(hwnd), memDC, PW_RENDERFULLCONTENT) != FALSE) {
-        return true;
+    if (hwnd != nullptr) {
+        return PrintWindow(static_cast<HWND>(hwnd), memDC, PW_RENDERFULLCONTENT) != FALSE;
     }
     return BitBlt(memDC,
                   0,
@@ -161,6 +163,13 @@ bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
         return false;
     }
     HGDIOBJ old = SelectObject(s.memDC, s.dib);
+    if (old == nullptr || old == HGDI_ERROR) {
+        // Without the DIB selected the blit renders into the DC's default 1x1 bitmap and we would
+        // return the DIB's zero-filled memory as a "successful" black capture; fail closed instead.
+        freeSurface(s);
+        err = QStringLiteral("Could not prepare the capture surface.");
+        return false;
+    }
     err = renderToBytes(s, req, rect, out);
     SelectObject(s.memDC, old);
     freeSurface(s);
@@ -169,9 +178,14 @@ bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
 
 namespace {
 
+struct WindowMatch {
+    HWND hwnd;
+    QString title_lower;
+};
+
 struct FindWindowState {
     QString needle_lower;
-    HWND match;
+    QVector<WindowMatch> matches;
 };
 
 QString titleOf(HWND hwnd) {
@@ -190,32 +204,64 @@ BOOL CALLBACK findWindowProc(HWND hwnd, LPARAM param) {
         return TRUE;
     }
     const QString title = titleOf(hwnd);
-    if (title.isEmpty() || !title.toLower().contains(find->needle_lower)) {
+    const QString lower = title.toLower();
+    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
         return TRUE;
     }
-    find->match = hwnd;
-    return FALSE;  // first match wins
+    find->matches.append(WindowMatch{hwnd, lower});
+    return TRUE;  // collect every match, then disambiguate rather than blindly taking the first
+}
+
+// Pick the single window a title substring unambiguously names. Exactly one match wins; when
+// several visible windows match, a lone EXACT (case-insensitive) title match wins; otherwise fail
+// closed rather than silently acting on whichever window happened to enumerate first, which could
+// close/capture/drive the wrong application.
+HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
+                      const QString& needle_lower,
+                      QString& err) {
+    if (matches.isEmpty()) {
+        err = QStringLiteral("No visible window matching '%1'").arg(needle_lower);
+        return nullptr;
+    }
+    if (matches.size() == 1) {
+        return matches.first().hwnd;
+    }
+    HWND exact = nullptr;
+    int exact_count = 0;
+    for (const WindowMatch& m : matches) {
+        if (m.title_lower == needle_lower) {
+            exact = m.hwnd;
+            ++exact_count;
+        }
+    }
+    if (exact_count == 1) {
+        return exact;
+    }
+    err = QStringLiteral("'%1' matches %2 visible windows; use a more specific title.")
+              .arg(needle_lower)
+              .arg(matches.size());
+    return nullptr;
 }
 
 }  // namespace
 
 bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& err) {
-    FindWindowState state{needle_lower, nullptr};
+    FindWindowState state{needle_lower, {}};
     EnumWindows(findWindowProc, reinterpret_cast<LPARAM>(&state));
-    if (state.match == nullptr) {
-        err = QStringLiteral("No visible window matching '%1'").arg(needle_lower);
+    HWND match = pickUniqueWindow(state.matches, needle_lower, err);
+    if (match == nullptr) {
         return false;
     }
-    if (IsIconic(state.match) != FALSE) {
+    if (IsIconic(match) != FALSE) {
         err = QStringLiteral("The window is minimized; restore it first.");
         return false;
     }
     RECT rc{};
-    if (GetWindowRect(state.match, &rc) == FALSE) {
+    if (GetWindowRect(match, &rc) == FALSE) {
         err = QStringLiteral("Could not read the window bounds.");
         return false;
     }
-    out.hwnd = state.match;
+    out.hwnd = match;
     out.left = rc.left;
     out.top = rc.top;
     out.right = rc.right;

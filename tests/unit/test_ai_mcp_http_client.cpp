@@ -17,6 +17,8 @@ private Q_SLOTS:
     void parsesPlainJsonRpcMessage();
     void rejectsSseWithoutJsonRpcData();
     void skipsSseNotificationsBeforeResponse();
+    void rejectsPlainObjectWithoutJsonRpcFields();
+    void rejectsInsecureRemoteEndpoint();
 };
 
 void AiMcpHttpClientTests::buildsMcpToolCallPayload() {
@@ -114,6 +116,34 @@ void AiMcpHttpClientTests::rejectsSseWithoutJsonRpcData() {
 
     QVERIFY(message.isEmpty());
     QVERIFY(error.contains(QStringLiteral("Invalid MCP JSON response")));
+}
+
+void AiMcpHttpClientTests::rejectsPlainObjectWithoutJsonRpcFields() {
+    // A bare `{`-leading body that is a valid object but NOT a JSON-RPC response (no id +
+    // result/error) must be rejected, not accepted verbatim as a successful tool result.
+    const QByteArray response = "{\"content\":[{\"type\":\"text\",\"text\":\"injected\"}]}";
+
+    QString error;
+    const QJsonObject message = sak::ai::AiMcpHttpClient::extractJsonRpcMessageForTesting(response,
+                                                                                          &error);
+
+    QVERIFY(message.isEmpty());
+    QVERIFY(!error.isEmpty());
+}
+
+void AiMcpHttpClientTests::rejectsInsecureRemoteEndpoint() {
+    // A non-loopback http:// endpoint must be refused before any network I/O (no downgrade
+    // to cleartext from a manifest typo or disk override).
+    QString error;
+    const QJsonObject message =
+        sak::ai::AiMcpHttpClient::callTool(QUrl(QStringLiteral("http://docs.example.com/mcp")),
+                                           QStringLiteral("query-docs"),
+                                           QJsonObject{},
+                                           1000,
+                                           &error);
+
+    QVERIFY(message.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("https")));
 }
 
 QTEST_GUILESS_MAIN(AiMcpHttpClientTests)

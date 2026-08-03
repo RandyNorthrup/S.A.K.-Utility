@@ -43,6 +43,9 @@ private Q_SLOTS:
     void explicitButtonNoMatchRefuses();
     void affirmativeRankingPrefersEarlierCaption();
     void collectButtonsFiltersToEnabledOnScreenButtons();
+    void destructiveCaptionRejectedDespiteAffirmativeWord();
+    void exactAffirmativeChosenOverDestructiveSibling();
+    void substringAffirmativeNoLongerMatches();
 };
 
 void Win32McpDialogChoiceTests::collectButtonsFiltersToEnabledOnScreenButtons() {
@@ -162,6 +165,35 @@ void Win32McpDialogChoiceTests::affirmativeRankingPrefersEarlierCaption() {
                                        QString(),
                                        why);
     QCOMPARE(idx, 1);  // OK outranks Close
+}
+
+void Win32McpDialogChoiceTests::destructiveCaptionRejectedDespiteAffirmativeWord() {
+    // SAFETY: "Yes, delete all" must NOT be auto-pressed just because it contains "yes"; the
+    // destructive verb "delete" disqualifies it, so with a Cancel sibling the choice refuses.
+    QString why;
+    const int idx = chooseDialogButton(
+        buttons({QStringLiteral("Yes, delete all"), QStringLiteral("Cancel")}), QString(), why);
+    QCOMPARE(idx, -1);
+    QVERIFY(why.contains(QStringLiteral("Yes, delete all")));
+}
+
+void Win32McpDialogChoiceTests::exactAffirmativeChosenOverDestructiveSibling() {
+    // A clean "OK" is still chosen; the destructive "Delete" sibling is never auto-pressed.
+    QString why;
+    const int idx = chooseDialogButton(buttons({QStringLiteral("Delete"), QStringLiteral("OK")}),
+                                       QString(),
+                                       why);
+    QCOMPARE(idx, 1);  // OK, not Delete(0)
+    QVERIFY(why.isEmpty());
+}
+
+void Win32McpDialogChoiceTests::substringAffirmativeNoLongerMatches() {
+    // "Yesterday" contains the substring "yes" but is not the whole word "yes", so it is not an
+    // affirmative; with a non-affirmative sibling the choice refuses instead of pressing it.
+    QString why;
+    const int idx = chooseDialogButton(
+        buttons({QStringLiteral("Yesterday"), QStringLiteral("Retry")}), QString(), why);
+    QCOMPARE(idx, -1);
 }
 
 QTEST_GUILESS_MAIN(Win32McpDialogChoiceTests)

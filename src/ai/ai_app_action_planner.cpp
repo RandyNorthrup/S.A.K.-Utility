@@ -17,26 +17,58 @@ constexpr int kAppActionDefaultTimeoutSeconds = 1800;
 constexpr int kAppActionMinTimeoutSeconds = 5;
 constexpr int kAppActionMaxTimeoutSeconds = 14'400;
 
-// Structurally validate a win32_gui recipe: a non-empty array of {tool:<non-empty string>,
-// arguments?:object, optional?:bool} steps. Deeper checks (tool exists / is not high-risk) are
-// enforced at execution time by the step runner via planWin32McpCall, which sees the live
-// provider manifest and risk classification. Returns empty on success, else an error string.
+// Read a manifest safety flag fail closed. A present-but-mistyped value (e.g. the string
+// "true", or a number) must NOT silently downgrade to false and strip the risk/admin
+// treatment. Only an explicit JSON bool is honored verbatim; any other PRESENT value is
+// treated as set (risky/admin); an absent/null value stays the documented default (false).
+bool safetyFlag(const QJsonObject& profile, const QString& key) {
+    const QJsonValue value = profile.value(key);
+    if (value.isBool()) {
+        return value.toBool();
+    }
+    return !(value.isUndefined() || value.isNull());
+}
+
+// Validate a single win32_gui recipe step: an object with a non-empty 'tool', and -- when
+// present -- correctly-typed 'arguments' (object), 'optional' (bool), and 'timeout_ms'
+// (number). Returns empty on success, else an error string. Mistyped optional fields are a
+// malformed recipe and are rejected rather than silently coerced.
+QString validateWin32GuiStep(const QJsonValue& value, int index) {
+    if (!value.isObject()) {
+        return QStringLiteral("win32_gui step %1 must be an object").arg(index);
+    }
+    const QJsonObject step = value.toObject();
+    if (step.value(QStringLiteral("tool")).toString().trimmed().isEmpty()) {
+        return QStringLiteral("win32_gui step %1 is missing a 'tool' name").arg(index);
+    }
+    if (step.contains(QStringLiteral("arguments")) &&
+        !step.value(QStringLiteral("arguments")).isObject()) {
+        return QStringLiteral("win32_gui step %1 'arguments' must be an object").arg(index);
+    }
+    if (step.contains(QStringLiteral("optional")) &&
+        !step.value(QStringLiteral("optional")).isBool()) {
+        return QStringLiteral("win32_gui step %1 'optional' must be a boolean").arg(index);
+    }
+    if (step.contains(QStringLiteral("timeout_ms")) &&
+        !step.value(QStringLiteral("timeout_ms")).isDouble()) {
+        return QStringLiteral("win32_gui step %1 'timeout_ms' must be a number").arg(index);
+    }
+    return {};
+}
+
+// Structurally validate a win32_gui recipe: a non-empty array of steps (see
+// validateWin32GuiStep). Deeper checks (tool exists / is not high-risk) are enforced at
+// execution time by the step runner via planWin32McpCall, which sees the live provider
+// manifest and risk classification. Returns empty on success, else an error string.
 QString validateWin32GuiSteps(const QJsonArray& steps) {
     if (steps.isEmpty()) {
         return QStringLiteral(
             "win32_gui action requires a non-empty 'steps' array in the manifest");
     }
     for (int i = 0; i < steps.size(); ++i) {
-        if (!steps.at(i).isObject()) {
-            return QStringLiteral("win32_gui step %1 must be an object").arg(i);
-        }
-        const QJsonObject step = steps.at(i).toObject();
-        if (step.value(QStringLiteral("tool")).toString().trimmed().isEmpty()) {
-            return QStringLiteral("win32_gui step %1 is missing a 'tool' name").arg(i);
-        }
-        if (step.contains(QStringLiteral("arguments")) &&
-            !step.value(QStringLiteral("arguments")).isObject()) {
-            return QStringLiteral("win32_gui step %1 'arguments' must be an object").arg(i);
+        const QString step_error = validateWin32GuiStep(steps.at(i), i);
+        if (!step_error.isEmpty()) {
+            return step_error;
         }
     }
     return {};
@@ -81,10 +113,9 @@ void applyCommandMethod(AiAppActionPlan& plan) {
         return;
     }
     plan.guard_approval_reason = commandGuardApprovalReason(plan.request, plan.preview);
-    plan.risky =
-        plan.action_profile.value(QStringLiteral("high_risk")).toBool(false) ||
-        plan.action_profile.value(QStringLiteral("requires_restore_point")).toBool(false) ||
-        AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);
+    plan.risky = safetyFlag(plan.action_profile, QStringLiteral("high_risk")) ||
+                 safetyFlag(plan.action_profile, QStringLiteral("requires_restore_point")) ||
+                 AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);
 }
 }  // namespace
 
@@ -114,8 +145,7 @@ AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
     plan.method = plan.action_profile.value(QStringLiteral("method")).toString();
     plan.request.command =
         plan.action_profile.value(QStringLiteral("command")).toString().trimmed();
-    plan.request.requires_admin =
-        plan.action_profile.value(QStringLiteral("requires_admin")).toBool(false);
+    plan.request.requires_admin = safetyFlag(plan.action_profile, QStringLiteral("requires_admin"));
     plan.request.timeout_seconds =
         std::clamp(arguments.value(QStringLiteral("timeout_seconds"))
                        .toInt(plan.action_profile.value(QStringLiteral("timeout_seconds"))

@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QJsonObject>
+#include <QMutex>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -108,6 +109,10 @@ private:
     QString m_session_dir;
     // 0 => use the per-stream built-in cap; > 0 => operator/test override.
     qint64 m_max_jsonl_bytes{0};
+    // Serializes JSONL append/rotation and the loaders so concurrent AI worker threads
+    // cannot interleave partial audit records or race a rotation rename. Mutable because
+    // the append/load methods are logically const (they do not change the store's config).
+    mutable QMutex m_io_mutex;
 };
 
 }  // namespace sak::ai

@@ -115,13 +115,17 @@ std::optional<AiRecoveryDecision> errorRecoveryDecision(const QString& error,
 std::optional<AiRecoveryDecision> toolRecoveryDecision(const QString& tool,
                                                        const QString& risk,
                                                        const QString& phase) {
+    // A read-only package lookup or a download/bundle step is non-destructive: continue in a
+    // DEGRADED state that surfaces the failure (recorded as ContinueDegraded metadata; cleanup
+    // debt is tracked separately) so the workflow's own next phase can decide. This is honest
+    // degradation, NOT an error-silencing fallback -- no source is silently substituted here.
     if (tool == QLatin1String("sak_package_manager") && risk == QLatin1String("read_only")) {
-        return continueDecision(
-            QStringLiteral("Built-in package lookup failed; allow official-source fallback."));
+        return continueDecision(QStringLiteral(
+            "Built-in package lookup failed; continue degraded and surface the lookup failure."));
     }
     if (isDownloadFailure(tool, phase)) {
-        return continueDecision(
-            QStringLiteral("Built-in download path failed; allow official-source fallback."));
+        return continueDecision(QStringLiteral(
+            "Built-in download step failed; continue degraded and surface the download failure."));
     }
     return std::nullopt;
 }

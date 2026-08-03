@@ -83,6 +83,9 @@ private slots:
     void redactionMasksQuotedJsonSecrets();
     void readOnlySetExcludesActiveBrowserTools();
     void relayModeRequiresOurPinnedExtensionOrigin();
+    void serverProfile_unknownTokenFailsClosedToReadOnly();
+    void request_rejectsWrongJsonRpcVersion();
+    void toolsCall_nonObjectArgumentsRejected();
 };
 
 void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
@@ -619,6 +622,49 @@ void Win32McpServerTests::relayModeRequiresOurPinnedExtensionOrigin() {
     QVERIFY(!isOurExtensionOrigin((ours + "EXTRA").c_str()));      // prefix-collision, wrong id
     QVERIFY(!isOurExtensionOrigin("--browser-relay"));             // not an origin at all
     QVERIFY(!isOurExtensionOrigin(nullptr));
+}
+
+void Win32McpServerTests::serverProfile_unknownTokenFailsClosedToReadOnly() {
+    // F2: the server profile is the independent fail-closed backstop. Only an UNSET token keeps
+    // the intended full-access default; the exact token "read_only" restricts; and any OTHER
+    // non-empty token (an operator typo) MUST fail CLOSED to read-only rather than silently
+    // granting the full mutating/input/process surface.
+    using sak::win32mcp::Win32McpServerPolicy;
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "read_only");
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "readonly");   // typo -> must NOT open up
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "read-only");  // typo -> must NOT open up
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "full");       // any non-empty value locks down
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qunsetenv("WIN32_MCP_SECURITY_PROFILE");  // unset -> the intended full-access default
+    QVERIFY(!Win32McpServerPolicy::fromEnvironment().read_only_profile);
+}
+
+void Win32McpServerTests::request_rejectsWrongJsonRpcVersion() {
+    // F3: a request whose jsonrpc field is not exactly "2.0" is a malformed envelope, answered
+    // with an Invalid Request error rather than dispatched.
+    const QJsonObject bad{{QStringLiteral("jsonrpc"), QStringLiteral("1.0")},
+                          {QStringLiteral("method"), QStringLiteral("ping")},
+                          {QStringLiteral("id"), 9}};
+    const auto response = handleRequest(bad);
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'600);
+}
+
+void Win32McpServerTests::toolsCall_nonObjectArgumentsRejected() {
+    // F3: a present-but-non-object `arguments` must be REJECTED, not coerced to {} -- coercion
+    // would let a command run with its destructive defaults off a malformed envelope.
+    QJsonObject params{{QStringLiteral("name"), QStringLiteral("health_check")}};
+    params.insert(QStringLiteral("arguments"), QJsonArray{1, 2, 3});
+    const auto response = handleRequest(request(QStringLiteral("tools/call"), 11, params));
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'602);
 }
 
 QTEST_MAIN(Win32McpServerTests)

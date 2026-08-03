@@ -27,7 +27,6 @@ struct AiPackageToolPlan {
 class AiPackageToolPlanner {
 public:
     [[nodiscard]] static AiPackageToolPlan buildPlan(const QJsonObject& args);
-    [[nodiscard]] static QString safePackageToken(const QString& value);
     [[nodiscard]] static bool isQueryOperation(const QString& operation);
     [[nodiscard]] static bool isReadOperation(const QString& operation);
     [[nodiscard]] static bool isChangeOperation(const QString& operation);

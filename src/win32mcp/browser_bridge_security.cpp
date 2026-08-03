@@ -133,7 +133,16 @@ bool readRendezvousRecord(const QString& path, RendezvousRecord* out, QString* e
     out->pipe_name = object.value(QStringLiteral("pipe_name")).toString();
     out->token = object.value(QStringLiteral("token")).toString();
     out->protocol = object.value(QStringLiteral("protocol")).toInt();
-    out->app_pid = static_cast<qint64>(object.value(QStringLiteral("app_pid")).toDouble());
+    // app_pid must be a positive integer within the exact-integer double range: casting a
+    // NaN/negative/2^63-overflow double straight to qint64 is UB (the same hazard the codebase
+    // fixed in clampMs). A malformed value fails the record closed rather than yielding garbage.
+    const QJsonValue pid_value = object.value(QStringLiteral("app_pid"));
+    const double pid_raw = pid_value.toDouble(-1.0);
+    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > 9.0e15) {
+        setError(error, QStringLiteral("Rendezvous record has an invalid app_pid."));
+        return false;
+    }
+    out->app_pid = static_cast<qint64>(pid_raw);
     return true;
 }
 

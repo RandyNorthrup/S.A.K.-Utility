@@ -357,7 +357,10 @@ int AiToolHealthLedger::backoffMs(int consecutive_failures) const {
     for (int i = 0; i < exponent && factor < kBackoffFactorMax; ++i) {
         factor *= kBackoffFactorMultiplier;
     }
-    return std::min(m_max_backoff_ms, m_base_backoff_ms * factor);
+    // Compute in qint64 so a large configured base times the capped factor cannot overflow
+    // int (UB) before the max_backoff clamp is applied.
+    const qint64 scaled = static_cast<qint64>(m_base_backoff_ms) * factor;
+    return static_cast<int>(std::min<qint64>(m_max_backoff_ms, scaled));
 }
 
 bool AiToolHealthLedger::recordIsFresh(const AiToolHealthRecord& record, QDateTime now_utc) const {

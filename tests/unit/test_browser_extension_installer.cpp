@@ -238,6 +238,23 @@ private slots:
         QCOMPARE(inst.stateString(), QStringLiteral("not_installed"));
     }
 
+    void installFailsClosedWhenCrxIsDirectory() {
+        // F17: crxPresent() must require a regular FILE. A directory whose name matches the CRX
+        // must NOT be accepted as the package (a force-install policy pointing at a directory is
+        // invalid), so install() fails closed and writes no policy entry.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString crxDir = dir.filePath("sak_browser_control.crx");
+        QVERIFY(QDir().mkpath(crxDir));  // a directory, not a file
+        const QString exe = makeFile(dir.filePath("sak_win32_mcp.exe"), "EXE");
+        BrowserExtensionInstaller inst(testConfig(dir.path(), crxDir, exe));
+
+        QVERIFY(!inst.crxPresent());
+        const ExtensionInstallResult r = inst.install();
+        QVERIFY(!r.ok);
+        QVERIFY(enumReg(forcelistKey()).isEmpty());
+    }
+
     void installPreservesForeignPolicyEntries() {
         QTemporaryDir dir;
         const QString crx = makeFile(dir.filePath("sak_browser_control.crx"), "CRX");

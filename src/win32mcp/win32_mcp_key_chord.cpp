@@ -74,7 +74,14 @@ WORD keyNameVk(const QString& name) {
 bool parseKeyChord(const QString& chord,
                    QVector<unsigned short>& modifiers,
                    unsigned short& main_key) {
-    const QStringList parts = chord.split(QLatin1Char('+'), Qt::SkipEmptyParts);
+    // KeepEmptyParts so a leading/trailing/doubled '+' (e.g. "Ctrl++S", "+S", "Ctrl+") surfaces as
+    // an empty segment and is rejected, rather than being silently dropped into a different chord.
+    const QStringList parts = chord.split(QLatin1Char('+'), Qt::KeepEmptyParts);
+    for (const QString& part : parts) {
+        if (part.trimmed().isEmpty()) {
+            return false;  // empty segment: malformed separator usage
+        }
+    }
     if (parts.isEmpty()) {
         return false;
     }

@@ -4,7 +4,10 @@
 #include "sak/win32mcp/browser_contract.h"
 
 #include <QHash>
+#include <QSet>
 #include <QVector>
+
+#include <limits>
 
 namespace sak::win32mcp::browser {
 
@@ -443,7 +446,14 @@ QString resolveRef(const QJsonObject& args,
                    const QJsonObject& ref_index,
                    bool required,
                    QJsonObject& command) {
-    const QString ref = args.value(QStringLiteral("ref")).toString();
+    const QJsonValue ref_value = args.value(QStringLiteral("ref"));
+    // A wrong-typed ref (e.g. a JSON number) must be REJECTED, not silently coerced: toString()
+    // on a non-string yields "" which would otherwise look like an absent ref and slip past a
+    // required check, or drop an optional ref the caller actually supplied.
+    if (args.contains(QStringLiteral("ref")) && !ref_value.isString()) {
+        return QStringLiteral("ref must be a string");
+    }
+    const QString ref = ref_value.toString();
     if (ref.isEmpty()) {
         return required ? QStringLiteral("ref is required") : QString();
     }
@@ -456,11 +466,29 @@ QString resolveRef(const QJsonObject& args,
     return QString();
 }
 
+// A JSON number is a valid "int" argument only if it is integral and within int32 range. A
+// fractional (12.5) or out-of-range (1e18) value is rejected rather than passed to toInt(),
+// which truncates the fraction and collapses an out-of-range magnitude to a real coordinate
+// (often 0) -- exactly the (0,0)-click hazard the win32 side already guards against.
+bool isRepresentableInt(double raw) {
+    return raw >= static_cast<double>(std::numeric_limits<int>::min()) &&
+           raw <= static_cast<double>(std::numeric_limits<int>::max()) &&
+           static_cast<double>(static_cast<int>(raw)) == raw;
+}
+
 // Empty on a type match, else an error naming the expected JSON type. A wrong-typed value
 // (e.g. a string where an int is required) is rejected rather than coerced: silent coercion
 // would turn a malformed "x":"abc" into a real (0,0) command instead of surfacing the error.
 QString argTypeMismatch(const QString& key, const QString& type, const QJsonValue& value) {
-    if (type == QLatin1String("int") || type == QLatin1String("number")) {
+    if (type == QLatin1String("int")) {
+        if (!value.isDouble()) {
+            return QStringLiteral("%1 must be a number").arg(key);
+        }
+        return isRepresentableInt(value.toDouble())
+                   ? QString()
+                   : QStringLiteral("%1 must be an integer within range").arg(key);
+    }
+    if (type == QLatin1String("number")) {
         return value.isDouble() ? QString() : QStringLiteral("%1 must be a number").arg(key);
     }
     if (type == QLatin1String("bool")) {
@@ -494,29 +522,92 @@ ExtensionCommand fail(const QString& reason) {
     return {QJsonObject{}, false, reason};
 }
 
-// Tool-specific extras the generic ref/scalar-arg copiers do not cover: browser_drag's second
-// ref endpoint (to_ref) and browser_select's array-valued multi-select values (passed through
-// verbatim). Returns an error string (empty on success).
+// browser_drag's second ref endpoint (to_ref). A wrong-typed to_ref is rejected rather than
+// coerced to "" (which would silently drop a supplied endpoint); an absent one is fine.
+QString applyDragExtra(const QJsonObject& arguments,
+                       const QJsonObject& ref_index,
+                       QJsonObject& command) {
+    const QJsonValue to_ref_value = arguments.value(QStringLiteral("to_ref"));
+    if (arguments.contains(QStringLiteral("to_ref")) && !to_ref_value.isString()) {
+        return QStringLiteral("to_ref must be a string");
+    }
+    const QString to_ref = to_ref_value.toString();
+    if (to_ref.isEmpty()) {
+        return QString();
+    }
+    if (!ref_index.contains(to_ref)) {
+        return QStringLiteral("Unknown element ref '%1'; call browser_snapshot to refresh")
+            .arg(to_ref);
+    }
+    command.insert(QStringLiteral("to_backendNodeId"),
+                   ref_index.value(to_ref).toObject().value(QStringLiteral("backendNodeId")));
+    return QString();
+}
+
+// browser_select's array-valued multi-select values. A present-but-non-array (or an array with
+// a non-string entry) is rejected rather than silently ignored, so a malformed multi-select is
+// surfaced instead of degrading to a single-value select.
+QString applySelectValues(const QJsonObject& arguments, QJsonObject& command) {
+    if (!arguments.contains(QStringLiteral("values"))) {
+        return QString();
+    }
+    const QJsonValue values = arguments.value(QStringLiteral("values"));
+    if (!values.isArray()) {
+        return QStringLiteral("values must be an array of strings");
+    }
+    for (const QJsonValue& item : values.toArray()) {
+        if (!item.isString()) {
+            return QStringLiteral("values must be an array of strings");
+        }
+    }
+    command.insert(QStringLiteral("values"), values);
+    return QString();
+}
+
+// Tool-specific extras the generic ref/scalar-arg copiers do not cover. Returns an error
+// string (empty on success).
 QString applyToolExtras(const QString& tool,
                         const QJsonObject& arguments,
                         const QJsonObject& ref_index,
                         QJsonObject& command) {
     if (tool == QLatin1String("browser_drag")) {
-        const QString to_ref = arguments.value(QStringLiteral("to_ref")).toString();
-        if (to_ref.isEmpty()) {
-            return QString();
-        }
-        if (!ref_index.contains(to_ref)) {
-            return QStringLiteral("Unknown element ref '%1'; call browser_snapshot to refresh")
-                .arg(to_ref);
-        }
-        command.insert(QStringLiteral("to_backendNodeId"),
-                       ref_index.value(to_ref).toObject().value(QStringLiteral("backendNodeId")));
-        return QString();
+        return applyDragExtra(arguments, ref_index, command);
     }
-    if (tool == QLatin1String("browser_select") &&
-        arguments.value(QStringLiteral("values")).isArray()) {
-        command.insert(QStringLiteral("values"), arguments.value(QStringLiteral("values")));
+    if (tool == QLatin1String("browser_select")) {
+        return applySelectValues(arguments, command);
+    }
+    return QString();
+}
+
+// The set of argument keys a tool legitimately accepts: its scalar arg specs, the ref/to_ref
+// endpoints, and browser_select's `values`. Mirrors the additionalProperties:false the schema
+// advertises so a caller cannot smuggle an unmodeled key past this layer.
+QSet<QString> allowedArgKeys(const QString& tool, const CmdSpec& spec) {
+    QSet<QString> allowed;
+    if (spec.ref_mode != QLatin1String("none")) {
+        allowed.insert(QStringLiteral("ref"));
+    }
+    for (const ArgSpec& arg : spec.args) {
+        allowed.insert(arg.key);
+    }
+    if (tool == QLatin1String("browser_drag")) {
+        allowed.insert(QStringLiteral("to_ref"));
+    }
+    if (tool == QLatin1String("browser_select")) {
+        allowed.insert(QStringLiteral("values"));
+    }
+    return allowed;
+}
+
+// Reject an argument object carrying any key the tool does not model. Fails closed rather than
+// ignoring the extra: an unknown key is a malformed call (typo, wrong tool, injection attempt),
+// not something to silently drop.
+QString rejectUnknownArgs(const QString& tool, const CmdSpec& spec, const QJsonObject& args) {
+    const QSet<QString> allowed = allowedArgKeys(tool, spec);
+    for (auto it = args.constBegin(); it != args.constEnd(); ++it) {
+        if (!allowed.contains(it.key())) {
+            return QStringLiteral("Unknown argument '%1' for %2").arg(it.key(), tool);
+        }
     }
     return QString();
 }
@@ -1237,6 +1328,10 @@ ExtensionCommand buildExtensionCommand(const QString& tool,
         return fail(QStringLiteral("Unknown browser tool: %1").arg(tool));
     }
     const CmdSpec& spec = it.value();
+    const QString unknown = rejectUnknownArgs(tool, spec, arguments);
+    if (!unknown.isEmpty()) {
+        return fail(unknown);
+    }
     QJsonObject command{{QStringLiteral("cmd"), spec.cmd}};
     if (spec.ref_mode != QLatin1String("none")) {
         const QString error =

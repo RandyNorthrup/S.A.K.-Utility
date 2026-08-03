@@ -68,6 +68,26 @@ QString oneLine(const QString& value) {
     return value.simplified().left(kOneLineMaxChars);
 }
 
+// Confine an id/suffix used to build a log filename to a single safe path segment:
+// strip separators/reserved characters and reject pure dot-segments (".", "..") that
+// would traverse out of the logs directory. Falls back to @p fallback when nothing
+// usable remains.
+QString sanitizeLogToken(const QString& value, const QString& fallback) {
+    QString safe = value.trimmed();
+    safe.replace(QRegularExpression(QStringLiteral(R"([<>:"/\\|?*\x00-\x1f])")),
+                 QStringLiteral("_"));
+    // Collapse any run of 2+ dots so no ".." traversal sequence survives inside a segment
+    // (a lone extension dot is fine); a bare ".."/"..." then reduces to "_".
+    safe.replace(QRegularExpression(QStringLiteral(R"(\.{2,})")), QStringLiteral("_"));
+    const bool all_dots = !safe.isEmpty() && std::all_of(safe.cbegin(), safe.cend(), [](QChar ch) {
+        return ch == QLatin1Char('.');
+    });
+    if (safe.isEmpty() || all_dots) {
+        return fallback;
+    }
+    return safe;
+}
+
 QString memoryHeader() {
     return QStringLiteral(
         "# Session Working Memory\n\n"
@@ -934,10 +954,8 @@ QString ConversationStore::commandLogPath(const QString& command_id,
         }
         return {};
     }
-    const QString safe_id = command_id.trimmed().isEmpty() ? QStringLiteral("cmd")
-                                                           : command_id.trimmed();
-    const QString safe_suffix = suffix.trimmed().isEmpty() ? QStringLiteral("output")
-                                                           : suffix.trimmed();
+    const QString safe_id = sanitizeLogToken(command_id, QStringLiteral("cmd"));
+    const QString safe_suffix = sanitizeLogToken(suffix, QStringLiteral("output"));
     const QString artifact_root = artifactRootDirectory(error_message);
     if (artifact_root.isEmpty()) {
         return {};
@@ -1136,7 +1154,16 @@ bool ConversationStore::writeUsage(const TokenUsage& turn,
 }
 
 QString ConversationStore::sessionPath(const QString& session_id) const {
-    return QDir(m_root_dir).filePath(session_id);
+    // Confine session_id to a direct child of the session root: an id containing a path
+    // separator, an absolute path, or a ".." segment must not resolve to (or above) the
+    // root. Fail closed with an empty path so downstream file ops simply find nothing
+    // rather than reading/writing outside the session tree.
+    const QString base = QDir::cleanPath(m_root_dir);
+    const QString resolved = QDir::cleanPath(QDir(m_root_dir).filePath(session_id));
+    if (resolved == base || !resolved.startsWith(base + QLatin1Char('/'))) {
+        return {};
+    }
+    return resolved;
 }
 
 QString ConversationStore::currentSessionPath() const {
@@ -1269,7 +1296,12 @@ QString ConversationStore::safeArtifactDirectoryName(const QString& title,
                  QStringLiteral("_"));
     safe.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(" "));
     safe = safe.trimmed().left(kSafeFilenameMaxChars);
-    if (safe.isEmpty()) {
+    // A name that is only dots ("." / ".." / "...") would traverse or alias the parent
+    // directory, so collapse it to the safe fallback rather than let it name the dir.
+    const bool all_dots = !safe.isEmpty() && std::all_of(safe.cbegin(), safe.cend(), [](QChar ch) {
+        return ch == QLatin1Char('.');
+    });
+    if (safe.isEmpty() || all_dots) {
         safe = QStringLiteral("AI Session");
     }
     return safe;

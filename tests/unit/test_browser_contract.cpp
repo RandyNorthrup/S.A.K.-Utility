@@ -82,6 +82,10 @@ private slots:
     void buildCommand_httpAuthToolBuilds();
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
+    void buildCommand_rejectsUnknownArgument();
+    void buildCommand_rejectsFractionalAndOutOfRangeInt();
+    void buildCommand_rejectsWrongTypedRef();
+    void buildCommand_rejectsMalformedSelectValues();
 };
 
 void BrowserContractTests::renderSnapshot_assignsSequentialRefsToInteractableNodes() {
@@ -908,6 +912,81 @@ void BrowserContractTests::catalog_advertisesBatch3Tools() {
                                     QStringLiteral("browser_http_auth")}) {
         QVERIFY2(names.contains(expected), qPrintable(expected));
     }
+}
+
+void BrowserContractTests::buildCommand_rejectsUnknownArgument() {
+    // An argument key the tool does not model is a malformed call (typo / wrong tool /
+    // injection), rejected rather than silently dropped -- mirrors the schema's
+    // additionalProperties:false at the runtime layer.
+    const ExtensionCommand cmd = buildExtensionCommand(
+        QStringLiteral("browser_navigate"),
+        QJsonObject{{QStringLiteral("url"), QStringLiteral("https://example.com/")},
+                    {QStringLiteral("evil"), QStringLiteral("payload")}},
+        {});
+    QVERIFY(!cmd.ok);
+    QVERIFY(cmd.error.contains(QStringLiteral("Unknown argument")));
+    QVERIFY(cmd.error.contains(QStringLiteral("evil")));
+}
+
+void BrowserContractTests::buildCommand_rejectsFractionalAndOutOfRangeInt() {
+    // A fractional or out-of-range JSON number for an int arg must be REFUSED, not passed to
+    // toInt() which truncates the fraction and collapses an out-of-range magnitude to a real
+    // coordinate (often 0) -- the (0,0)-click hazard.
+    const ExtensionCommand frac =
+        buildExtensionCommand(QStringLiteral("browser_click_at"),
+                              QJsonObject{{QStringLiteral("x"), 12.5}, {QStringLiteral("y"), 20}},
+                              {});
+    QVERIFY(!frac.ok);
+    QVERIFY(frac.error.contains(QStringLiteral("x")));
+
+    const ExtensionCommand huge =
+        buildExtensionCommand(QStringLiteral("browser_click_at"),
+                              QJsonObject{{QStringLiteral("x"), 1e18}, {QStringLiteral("y"), 20}},
+                              {});
+    QVERIFY(!huge.ok);
+    QVERIFY(huge.error.contains(QStringLiteral("x")));
+}
+
+void BrowserContractTests::buildCommand_rejectsWrongTypedRef() {
+    // A wrong-typed ref (numeric instead of string) must be rejected, not coerced to "" -- which
+    // would look like an absent ref and slip past the required-ref gate.
+    const QJsonObject refIndex{
+        {QStringLiteral("e1"), QJsonObject{{QStringLiteral("backendNodeId"), 5}}}};
+    const ExtensionCommand cmd = buildExtensionCommand(QStringLiteral("browser_click"),
+                                                       QJsonObject{{QStringLiteral("ref"), 1}},
+                                                       refIndex);
+    QVERIFY(!cmd.ok);
+    QVERIFY(cmd.error.contains(QStringLiteral("ref")));
+
+    // A wrong-typed to_ref on drag is likewise rejected (not silently dropped).
+    const ExtensionCommand drag = buildExtensionCommand(
+        QStringLiteral("browser_drag"),
+        QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}, {QStringLiteral("to_ref"), 7}},
+        refIndex);
+    QVERIFY(!drag.ok);
+    QVERIFY(drag.error.contains(QStringLiteral("to_ref")));
+}
+
+void BrowserContractTests::buildCommand_rejectsMalformedSelectValues() {
+    // A present-but-non-array `values`, or an array with a non-string entry, is rejected rather
+    // than silently ignored (which would degrade a multi-select to a single-value select).
+    const QJsonObject refIndex{
+        {QStringLiteral("e2"), QJsonObject{{QStringLiteral("backendNodeId"), 12}}}};
+    const ExtensionCommand notArray =
+        buildExtensionCommand(QStringLiteral("browser_select"),
+                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e2")},
+                                          {QStringLiteral("values"), QStringLiteral("red")}},
+                              refIndex);
+    QVERIFY(!notArray.ok);
+    QVERIFY(notArray.error.contains(QStringLiteral("values")));
+
+    const ExtensionCommand badItem = buildExtensionCommand(
+        QStringLiteral("browser_select"),
+        QJsonObject{{QStringLiteral("ref"), QStringLiteral("e2")},
+                    {QStringLiteral("values"), QJsonArray{QStringLiteral("red"), 7}}},
+        refIndex);
+    QVERIFY(!badItem.ok);
+    QVERIFY(badItem.error.contains(QStringLiteral("values")));
 }
 
 QTEST_MAIN(BrowserContractTests)

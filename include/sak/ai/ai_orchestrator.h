@@ -128,7 +128,7 @@ public:
     AiOrchestrator(AiSubagentRunner* subagent_runner, IAiToolExecutor* tool_executor);
 
     void setOptions(const AiOrchestrationOptions& options);
-    [[nodiscard]] AiOrchestrationOptions options() const;
+    [[nodiscard]] const AiOrchestrationOptions& options() const;
 
     void setOverseerHandler(OverseerPhaseHandler handler);
     void setPhaseStartedCallback(PhaseStartedCallback callback);

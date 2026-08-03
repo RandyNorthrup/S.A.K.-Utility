@@ -36,9 +36,14 @@ using Win32StepExecutor = std::function<Win32StepOutcome(const QJsonObject& step
 // Given a completed wait/OCR tool's parsed result payload, return the failure message when an
 // awaited condition did not hold -- a wait_for_* whose found / satisfied / idle came back false --
 // so the recipe treats the step as failed rather than marching on against a screen that never
-// reached the expected state. Returns nullopt when no awaited flag is present or all are true. Pure
-// (no gateway) so it is unit-testable; the live step executor calls it on each non-error result.
-[[nodiscard]] std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload);
+// reached the expected state. Fails closed on a MALFORMED flag: a found/satisfied/idle value that
+// is present but not a bool is treated as unverified (a truncated/garbled result must not read as
+// satisfied). When @p require_satisfied is true (the step IS a wait_for_* tool), the payload must
+// also carry at least one of those flags as bool==true, so a truncated/empty result (which parses
+// to {}) is a failure rather than a silent pass. Pure (no gateway) so it is unit-testable; the live
+// step executor calls it on each non-error result.
+[[nodiscard]] std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload,
+                                                                 bool require_satisfied = false);
 
 // Run a win32_gui recipe: execute each step in order via `exec`, aggregating per-step results.
 // Stops at the first fatal step -- a planning failure, a high-risk tool, or a non-optional tool

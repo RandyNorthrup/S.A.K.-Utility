@@ -101,6 +101,10 @@ private slots:
     void screenshotReply_nonPngFallsBackToPlainSummary();
     void screenshotReply_emptyDataIsHonestError();
     void screenshotReply_oversizeBase64IsRejected();
+    void onReply_resultWithOkFalseIsError();
+    void onReply_okFalseSnapshotDoesNotInstallRefIndex();
+    void screenshotReply_malformedBase64IsError();
+    void reconcileDomEpoch_malformedEpochMarksRefsStale();
 };
 
 void BrowserBridgeTests::beginCommand_refusedWhenNotConnected() {
@@ -439,6 +443,76 @@ void BrowserBridgeTests::screenshotReply_oversizeBase64IsRejected() {
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
     QVERIFY(in.error.contains(QStringLiteral("too large")));
+}
+
+void BrowserBridgeTests::onReply_resultWithOkFalseIsError() {
+    // A result-typed frame is NOT implicitly success: a payload {ok:false, error:...} is an
+    // operation-level failure and must surface as an error, never pass through as a successful
+    // text result the model would trust.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto out = session.beginCommand(QStringLiteral("browser_reload"), {});
+    const QJsonObject payload{{QStringLiteral("ok"), false},
+                              {QStringLiteral("error"), QStringLiteral("navigation_blocked")}};
+    const auto in = session.onReply(resultFrame(
+        out.frame.value(QStringLiteral("id")).toString(), QStringLiteral("reload"), payload));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QCOMPARE(in.error, QStringLiteral("navigation_blocked"));
+    QVERIFY(!session.hasOutstanding());
+}
+
+void BrowserBridgeTests::onReply_okFalseSnapshotDoesNotInstallRefIndex() {
+    // A snapshot reply that reports {ok:false} failed to capture: it must NOT install a
+    // ref_index (which would let the model act by ref against a DOM we never snapshotted).
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto snap = session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    QJsonObject failed = snapshotPayload(4242, QStringLiteral("Sign in"));
+    failed.insert(QStringLiteral("ok"), false);
+    const auto in = session.onReply(resultFrame(
+        snap.frame.value(QStringLiteral("id")).toString(), QStringLiteral("snapshot"), failed));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY(session.refIndex().isEmpty());
+}
+
+void BrowserBridgeTests::screenshotReply_malformedBase64IsError() {
+    // A screenshot whose "data" is not valid base64 is refused with an honest error rather than
+    // forwarded to the client as an opaque, unrenderable image block.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const auto in =
+        session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                    QStringLiteral("screenshot"),
+                                    screenshotPayload(QStringLiteral("!!!not-base64!!!"))));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY(in.image_base64.isEmpty());
+    QVERIFY(in.error.contains(QStringLiteral("malformed")));
+}
+
+void BrowserBridgeTests::reconcileDomEpoch_malformedEpochMarksRefsStale() {
+    // A present-but-malformed domEpoch (non-integer / out of the exact-integer double range)
+    // cannot be trusted as a baseline; the bridge fails closed by marking refs stale instead of
+    // casting a garbage double to quint64 (UB) and silently re-baselining.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto snap = session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    (void)session.onReply(resultFrameEpoch(snap.frame.value(QStringLiteral("id")).toString(),
+                                           QStringLiteral("snapshot"),
+                                           snapshotPayload(4242, QStringLiteral("Sign in")),
+                                           1));
+    QVERIFY(!session.refIndexStale());
+
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    QJsonObject frame = resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                    QStringLiteral("screenshot"),
+                                    screenshotPayload(pngHeaderBase64(10, 10)));
+    frame.insert(QStringLiteral("domEpoch"), 1e18);  // beyond the exact-integer double range
+    (void)session.onReply(frame);
+    QVERIFY(session.refIndexStale());
 }
 
 QTEST_MAIN(BrowserBridgeTests)

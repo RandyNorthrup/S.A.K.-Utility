@@ -117,7 +117,10 @@ AiHumanGate AiHumanGateStore::latestPendingGate(QString* error_message) const {
     const QVector<AiHumanGate> gates = loadGates(error_message);
     QHash<QString, AiHumanGate> latest_by_id;
     for (const auto& gate : gates) {
-        if (!gate.gate_id.isEmpty()) {
+        // Only a record with a recognized lifecycle status may become the latest state for
+        // a gate_id. A record whose status is missing/empty/unknown is malformed and is
+        // ignored, so it cannot silently overwrite (resolve) a valid pending gate.
+        if (!gate.gate_id.isEmpty() && isKnownHumanGateStatus(gate.status)) {
             latest_by_id.insert(gate.gate_id, gate);
         }
     }

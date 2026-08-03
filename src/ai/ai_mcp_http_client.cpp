@@ -124,7 +124,20 @@ struct HttpWorkerSinks {
                                                 QString* error_message) {
     const QByteArray trimmed = response_body.trimmed();
     if (trimmed.startsWith('{')) {
-        return parseJsonObject(trimmed, error_message);
+        const QJsonObject object = parseJsonObject(trimmed, error_message);
+        if (object.isEmpty()) {
+            return {};
+        }
+        // A bare JSON body must still be a real JSON-RPC response (id + result/error); do not
+        // accept an arbitrary object as a successful tool result. Fail closed on the SSE path's
+        // same requirement rather than trusting any `{`-leading payload.
+        if (!isJsonRpcResponse(object)) {
+            if (error_message) {
+                *error_message = QStringLiteral("MCP response is not a JSON-RPC response");
+            }
+            return {};
+        }
+        return object;
     }
     return scanSseForJsonRpcResponse(response_body, error_message);
 }
@@ -201,10 +214,32 @@ private:
     std::atomic_bool m_tooLarge{false};
 };
 
+// A loopback host may use plain http (a local MCP server is not a MITM/eavesdrop surface); every
+// other host MUST use https so a manifest typo or disk override cannot downgrade to cleartext.
+[[nodiscard]] bool isLoopbackHost(const QString& host) {
+    return host.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0 ||
+           host == QStringLiteral("127.0.0.1") || host == QStringLiteral("::1");
+}
+
+[[nodiscard]] bool endpointSchemeIsSecure(const QUrl& endpoint) {
+    if (endpoint.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    return endpoint.scheme().compare(QStringLiteral("http"), Qt::CaseInsensitive) == 0 &&
+           isLoopbackHost(endpoint.host());
+}
+
 bool validateHttpToolCall(const QUrl& endpoint, const QString& tool_name, QString* error_message) {
     if (!endpoint.isValid() || endpoint.scheme().isEmpty() || endpoint.host().isEmpty()) {
         if (error_message) {
             *error_message = QStringLiteral("Invalid MCP endpoint");
+        }
+        return false;
+    }
+    if (!endpointSchemeIsSecure(endpoint)) {
+        if (error_message) {
+            *error_message = QStringLiteral("MCP endpoint must use https (or http on loopback): %1")
+                                 .arg(endpoint.toString());
         }
         return false;
     }

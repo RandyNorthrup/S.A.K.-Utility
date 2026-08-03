@@ -190,7 +190,10 @@ BrowserExtensionInstaller::BrowserExtensionInstaller(ExtensionInstallConfig conf
 }
 
 bool BrowserExtensionInstaller::crxPresent() const {
-    return QFileInfo::exists(config_.crx_path);
+    // Require a regular FILE, not merely an existing path: a directory named like the CRX must
+    // not be accepted as the package (a force-install policy pointing at a directory is invalid),
+    // so install() fails closed rather than writing a policy that can never load.
+    return QFileInfo(config_.crx_path).isFile();
 }
 
 }  // namespace sak::win32mcp
@@ -207,6 +210,7 @@ bool BrowserExtensionInstaller::crxPresent() const {
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <limits>
 #include <vector>
 
 #include <windows.h>
@@ -258,15 +262,21 @@ LSTATUS openReadStatus(const QString& subkey, RegKey& out) {
     return RegOpenKeyExW(HKEY_CURRENT_USER, toW(subkey).c_str(), 0, KEY_READ, out.addr());
 }
 
-bool openRead(const QString& subkey, RegKey& out) {
-    return openReadStatus(subkey, out) == ERROR_SUCCESS;
-}
-
 bool setString(HKEY key, const wchar_t* name, const QString& value) {
     const std::wstring w = toW(value);
-    const DWORD bytes = static_cast<DWORD>((w.size() + 1) * sizeof(wchar_t));
-    return RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(w.c_str()), bytes) ==
-           ERROR_SUCCESS;
+    const size_t bytes = (w.size() + 1) * sizeof(wchar_t);
+    // Bound the size before the DWORD narrowing RegSetValueExW requires: a value whose byte
+    // length exceeds DWORD would wrap and register a truncated string. Our own config strings
+    // are tiny, so this can only trip on a corrupt input -- fail closed instead of truncating.
+    if (bytes > (std::numeric_limits<DWORD>::max)()) {
+        return false;
+    }
+    return RegSetValueExW(key,
+                          name,
+                          0,
+                          REG_SZ,
+                          reinterpret_cast<const BYTE*>(w.c_str()),
+                          static_cast<DWORD>(bytes)) == ERROR_SUCCESS;
 }
 
 // Read one REG_SZ value ("" name -> default). Returns false if absent/not a string.

@@ -159,14 +159,39 @@ bool hasDirectedRequestMarker(const QString& text) {
                            QStringLiteral("yes ")});
 }
 
+bool hasExplanatoryFraming(const QString& text) {
+    // A how-to / explanatory question mentions the action verb but asks to be TOLD ABOUT
+    // the action, not directed to perform it. "Can you explain how to uninstall X" carries
+    // a request marker ("can you") and the verb, yet consents to nothing -- the
+    // "explain"/"how to"/"what happens" framing is interrogative. Treat it as no consent so
+    // the caller falls through to the stricter gate instead of authorizing the mutation.
+    return textMatchesAny(text,
+                          {QStringLiteral("how to "),
+                           QStringLiteral("how do i"),
+                           QStringLiteral("how do you"),
+                           QStringLiteral("how can i"),
+                           QStringLiteral("how would i"),
+                           QStringLiteral("how does "),
+                           QStringLiteral("explain "),
+                           QStringLiteral("what does "),
+                           QStringLiteral("what happens"),
+                           QStringLiteral("what would happen"),
+                           QStringLiteral("tell me about"),
+                           QStringLiteral("tell me how"),
+                           QStringLiteral("walk me through"),
+                           QStringLiteral("is it safe")});
+}
+
 bool hasDirectedIntentFor(const QString& text,
                           const QStringList& verb_keywords,
                           const QStringList& imperative_prefixes) {
-    // Consent requires (a) not disclaiming the action, (b) the action verb is actually
-    // present, and (c) the message is phrased as a directive to the assistant -- an
-    // imperative opening ("install X") or a request marker ("please/can you ... install
-    // X"). A bare substring mention or a question fails (c) and is not treated as consent.
-    if (hasNegatedActionIntent(text) || !textMatchesAny(text, verb_keywords)) {
+    // Consent requires (a) not disclaiming the action, (b) not an explanatory/how-to
+    // question about it, (c) the action verb is actually present, and (d) the message is
+    // phrased as a directive to the assistant -- an imperative opening ("install X") or a
+    // request marker ("please/can you ... install X"). A bare substring mention, a
+    // question, or a how-to request fails and is not treated as consent.
+    if (hasNegatedActionIntent(text) || hasExplanatoryFraming(text) ||
+        !textMatchesAny(text, verb_keywords)) {
         return false;
     }
     return startsWithAny(text, imperative_prefixes) || hasDirectedRequestMarker(text);
@@ -267,6 +292,22 @@ AiToolPolicyDecision allow(const QString& reason) {
     return decision;
 }
 
+bool commandUsesResolutionIndirection(const QString& preview) {
+    // Command-name indirection and string obfuscation that assemble/resolve a command
+    // token the contiguous-substring risk/catastrophic regexes never see:
+    //   * Get-Command / Invoke-Command / Start-Process / Start-Job / New-Object and the
+    //     "&" call operator resolve and invoke an arbitrary command by name/expression;
+    //   * quote-adjacent "+" concatenation ('For'+'mat-Volume') splices a dangerous verb
+    //     out of harmless-looking fragments so 'format-volume' is never contiguous.
+    // Any of these forfeits the read-only allowlist and is classified risky so a hidden
+    // mutation cannot run without a lease/restore point (fail closed, no silent bypass).
+    static const QRegularExpression indirection(
+        QStringLiteral(
+            R"RX((\bget-command\b|\binvoke-command\b|\bstart-process\b|\bstart-job\b|\bnew-object\b|&\s*[('"$@{]|['"]\s*\+|\+\s*['"]))RX"),
+        QRegularExpression::CaseInsensitiveOption);
+    return indirection.match(preview).hasMatch();
+}
+
 bool commandHasUnsafeConstruct(const QString& preview) {
     // Indirection/injection shapes that let a mutation hide inside a command whose
     // leading token looks read-only: static/type member access ([IO.File]::Delete),
@@ -280,7 +321,7 @@ bool commandHasUnsafeConstruct(const QString& preview) {
         QStringLiteral(
             R"((::|\.\s*\w+\s*\(|`|\$\(|\{|\biex\b|\binvoke-expression\b|>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
-    return unsafe.match(preview).hasMatch();
+    return unsafe.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
 }
 
 bool segmentLeadIsReadOnly(const QString& segment) {
@@ -507,7 +548,7 @@ bool commandLooksObfuscated(const QString& preview) {
         QStringLiteral(
             R"((\s-enc(odedcommand)?\b|\s-e\s+[A-Za-z0-9+/]{24,}={0,2}|\bfrombase64string\b|\b(iex|invoke-expression)\b|\bdownloadstring\b|\bdownloadfile\b|\b(new-object\s+)?net\.webclient\b|\binvoke-webrequest\b.*\|\s*(iex|invoke-expression)\b|\bcertutil\b.*\s-(decode|urlcache|f)\b|\bconvert\]::frombase64))"),
         QRegularExpression::CaseInsensitiveOption);
-    return obfuscated.match(preview).hasMatch();
+    return obfuscated.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
 }
 
 bool commandLooksCatastrophic(const QString& preview) {

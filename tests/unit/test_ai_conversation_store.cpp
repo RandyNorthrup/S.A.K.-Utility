@@ -26,6 +26,8 @@ private Q_SLOTS:
     void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
     void commandLogPath_createsLogsDirectoryAndReturnsPath();
+    void commandLogPath_confinesTraversalTokens();
+    void safeArtifactDirectoryName_rejectsDotSegments();
     void artifactPath_createsSubdirectoryAndReturnsPath();
     void renameSession_updatesTitleAndArtifactRoot();
     void caseOnlyRename_preservesArtifacts();
@@ -173,6 +175,44 @@ void AiConversationStoreTests::commandLogPath_createsLogsDirectoryAndReturnsPath
 
     const QFileInfo info(stdout_path);
     QVERIFY(info.absoluteDir().exists());
+}
+
+void AiConversationStoreTests::commandLogPath_confinesTraversalTokens() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Logs"), &error));
+
+    // A traversal-shaped command_id / suffix must be sanitized so the log file stays inside
+    // the session's logs directory (no "../" and no bare dot-segments in the filename).
+    const QString path =
+        store.commandLogPath(QStringLiteral("../../etc"), QStringLiteral(".."), &error);
+    QVERIFY2(!path.isEmpty(), qPrintable(error));
+    QVERIFY(path.contains(QStringLiteral("/artifacts/Logs/logs/")));
+    const QString file_name = QFileInfo(path).fileName();
+    QVERIFY(!file_name.contains(QStringLiteral("..")));
+    QVERIFY(!file_name.contains(QLatin1Char('/')));
+    QVERIFY(!file_name.contains(QLatin1Char('\\')));
+}
+
+void AiConversationStoreTests::safeArtifactDirectoryName_rejectsDotSegments() {
+    // A title that is only dots would traverse/alias the parent artifacts dir; it must
+    // collapse to the safe fallback rather than name the directory "." or "..".
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(QStringLiteral(".."),
+                                                                   QStringLiteral("ai_x")),
+             QStringLiteral("AI Session"));
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(QStringLiteral("."),
+                                                                   QStringLiteral("ai_x")),
+             QStringLiteral("AI Session"));
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(QStringLiteral("..."),
+                                                                   QStringLiteral("ai_x")),
+             QStringLiteral("AI Session"));
+    // A normal title is preserved.
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(QStringLiteral("My Session"),
+                                                                   QStringLiteral("ai_x")),
+             QStringLiteral("My Session"));
 }
 
 void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() {

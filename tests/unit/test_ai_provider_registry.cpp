@@ -45,6 +45,7 @@ private Q_SLOTS:
     void appManifestRejectsInvalidJson();
     void appCapabilitiesExposeRequestedActionPlan();
     void defaultDocsProvidersDoNotRequireApiKeys();
+    void stdioCommandOutsideAppDirIsUnavailable();
 };
 
 void AiProviderRegistryTests::providerStatusesReportMissingPortableCommand() {
@@ -185,6 +186,33 @@ void AiProviderRegistryTests::defaultDocsProvidersDoNotRequireApiKeys() {
         QVERIFY(!provider.contains(QStringLiteral("api_key")));
         QVERIFY(!provider.contains(QStringLiteral("auth_token")));
     }
+}
+
+void AiProviderRegistryTests::stdioCommandOutsideAppDirIsUnavailable() {
+    // An on-disk providers.json (which silently overrides the embedded manifest) whose stdio
+    // "command" escapes the application directory must be reported unavailable, not launched
+    // as a trusted bundled executable.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString providers_path =
+        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
+    QJsonArray providers;
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                 {QStringLiteral("transport"), QStringLiteral("stdio")},
+                                 {QStringLiteral("command"), QStringLiteral("../evil.exe")}});
+    QVERIFY(writeFile(providers_path,
+                      QJsonDocument(QJsonObject{{QStringLiteral("providers"), providers}})
+                          .toJson(QJsonDocument::Compact)));
+
+    sak::ai::AiProviderRegistry registry(temp.path());
+    QString error;
+    const QJsonObject statuses = registry.providerStatuses(&error);
+    const QJsonObject win32 = providerById(statuses.value(QStringLiteral("providers")).toArray(),
+                                           QStringLiteral("win32_mcp"));
+    QVERIFY(!win32.value(QStringLiteral("available")).toBool(true));
+    QVERIFY(win32.value(QStringLiteral("missing_reason"))
+                .toString()
+                .contains(QStringLiteral("within the application directory")));
 }
 
 QTEST_GUILESS_MAIN(AiProviderRegistryTests)
