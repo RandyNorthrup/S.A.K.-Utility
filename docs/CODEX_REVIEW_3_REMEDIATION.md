@@ -1,0 +1,427 @@
+# CODEX REVIEW 3 -- REMEDIATION TRACKING
+
+Third independent whole-codebase Codex (gpt-5.6-sol, xhigh) review, 2026-08-03.
+9 read-only area passes over src/ + include/; every raw finding then verified
+against the CURRENT tree by 9 skeptical Claude subagents (knowing review-1 and
+review-2 guards already exist). Only CONFIRMED + PARTIAL are tracked here;
+30 findings were verified FALSE-POSITIVE (guard already present / misread) and dropped.
+
+STATUS: 53 CONFIRMED + 321 PARTIAL = 374 items. Remediate ALL fail-closed
+(user scope decision: everything). No fallbacks; fail closed; surface the real error.
+Intentional-design items get the decision recorded in-line, never silently skipped.
+
+Method: parallel fix-agent waves partitioned by disjoint files; central serial
+ctest gate (ctest -C Release -j1) + hand-review of every security diff before each
+commit. Same rigor as CODEX_REVIEW_2_REMEDIATION.md.
+
+Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial.
+
+## Pass: diskflash (Disk / flash / drive / permission)
+35 items (5 confirmed / 30 partial)
+
+- [ ] [HIGH/CONF] 1 (windows_usb_creator_extract.cpp:575,603) -- resolveBcdbootPath() prefers the ISO-extracted media copy E:\sources\recovery\bcdboot.exe over the host System32 copy and runBcdboot() executes it via runProcess() in the elevated USB-creation flow.
+- [ ] [HIGH/CONF] 9 (flash_coordinator.cpp:45,607) -- physicalDriveOsDiskCheck() only maps the %WINDIR% volume to its physical-disk extents; a separate EFI/system/boot disk that backs the running OS is not covered by the engine OS-disk guard.
+- [ ] [MEDI/CONF] 25 (permission_manager.cpp:65) -- applySecurityNoFollow() opens with FILE_FLAG_OPEN_REPARSE_POINT and checks only the FINAL path component for a reparse point; ancestor directory junctions/symlinks are always traversed by CreateFileW.
+- [ ] [MEDI/PART] 2 (windows_usb_creator.cpp:195,462) -- Disk-erase safety is bound to a mutable disk number with no stable hardware-ID pin; the Get-Disk safety probe and the later diskpart clean use the same number across a TOCTOU window.
+- [ ] [MEDI/PART] 3 (flash_coordinator.cpp:511,556; flash_worker.cpp:274) -- Validation, OS guard, and write use separate handles/parses; the guard parses the PhysicalDriveN number while the write opens the raw path string.
+- [ ] [MEDI/PART] 4 (flash_worker.h:61; flash_worker.cpp:156,262) -- FlashWorker performs no OS-disk guard of its own and lockAndDismountBestEffort proceeds even when lock/dismount fail; direct construction could raw-write a system/mounted disk.
+- [ ] [MEDI/PART] 8 (windows_usb_creator.cpp:397,491; extract:581,651) -- cmd.exe/diskpart are launched by unqualified name (search-order hijack surface) and resolveBcdbootPath defaults SystemRoot to C:\Windows.
+- [ ] [MEDI/PART] 19 (windows_usb_creator.cpp:523; extract:597,923) -- Media is always formatted NTFS and only marked MBR-active; there is no FAT32 ESP and no UEFI:NTFS loader, yet bcdboot /f ALL and the flow report the media UEFI-bootable.
+- [ ] [MEDI/PART] 20 (windows_usb_creator_extract.cpp:593) -- runBcdboot passes the drive ROOT (E:\) as bcdboot's source argument, but bcdboot expects the installed Windows directory (e.g. E:\Windows), which does not exist on Windows installation media.
+- [ ] [MEDI/PART] 27 (drive_scanner.cpp:617,738) -- containsWindowsInstallation converts FindFirstVolume/CreateFile/IOCTL/GetFileAttributes failures into empty roots, ultimately yielding isSystem=false (unknown state exposed as 'safe').
+- [ ] [LOW/CONF] 16 (image_source.cpp:34; flash_worker.cpp:371,632) -- A zero-length regular image is accepted and reported as a successful flash despite writing nothing.
+- [ ] [LOW/CONF] 26 (permission_manager.cpp:271,134,331) -- getSecurityDescriptorSddl() exports OWNER|GROUP|DACL, but applyParsedSecurityDescriptor() applies only OWNER and DACL; the group is silently dropped on restore and setSecurityDescriptorSddl() still returns success.
+- [ ] [LOW/PART] 5 (drive_unmounter.cpp:157,521; flash_coordinator.cpp:641) -- closeAllHandles() (invoked by advisoryCloseHandles at end of unmountDrive) closes and clears all volume locks before flashing, so no exclusive lock is held during the raw write.
+- [ ] [LOW/PART] 6 (image_source.cpp:29; flash_worker.cpp:170,428,561) -- finalizeWrite compares sector-PADDED bytes (m_bytesWritten) against the cached content size m_totalBytes, so a tail truncation smaller than one sector is masked by padding and passes.
+- [ ] [LOW/PART] 7 (windows_usb_creator_extract.cpp:50,231) -- Bundled 7z.exe is trusted solely because the path exists; no signature/hash/regular-file/reparse/stable-handle check before execution.
+- [ ] [LOW/PART] 10 (flash_coordinator.h:111; flash_coordinator.cpp:115,277) -- isFlashing() returns true only for Flashing/Verifying/Decompressing, excluding Validating and Unmounting; startFlash mutates m_state/m_targetDrives/m_workers unlocked while the header claims all methods are thread-safe.
+- [ ] [LOW/PART] 11 (windows_usb_creator.cpp:610; extract:684,719) -- The flow switches from disk number to drive letter without pinning volume identity; verifyBootableFlag maps the current letter back to whatever disk it now points to and never compares against the original target disk number.
+- [ ] [LOW/PART] 12 (windows_usb_creator_extract.cpp:707,719,629) -- The disk number produced by (Get-Partition -DriveLetter).DiskNumber is trimmed but not integer-validated before interpolation into the diskpart script in checkPartitionActive.
+- [ ] [LOW/PART] 13 (windows_usb_creator.cpp:505,512,568) -- cleanAndPartitionDisk/formatPartitionNTFS treat diskpart exit code 0 as success while only logging (not failing on) stderr/content errors; diskpart commonly exits 0 even when individual commands fail.
+- [ ] [LOW/PART] 14 (windows_usb_creator.cpp:53,136; extract:176,190) -- The 2*isoSize workspace check runs only in copyISO_checkDiskSpace AFTER the disk is cleaned/formatted; the pre-format gate only requires 1x isoSize. Multiplication isoSize*2 could overflow qint64.
+- [ ] [LOW/PART] 17 (windows_usb_creator.cpp:122,140; extract:37,729) -- The ISO is validated only for existence/size and is re-opened multiple times (extraction, then verification list) with no stable handle/hash/immutability check.
+- [ ] [LOW/PART] 18 (windows_usb_creator_extract.cpp:766,790,818) -- verifyExtractionIntegrity matches critical files by substring (isCriticalWindowsFile 'contains') and compares only file sizes (malformed size->0); no content hashing, so same-size corruption passes.
+- [ ] [LOW/PART] 21 (flash_coordinator.h:39; flash_coordinator.cpp:373,389) -- When the last-finishing worker reports via onWorkerCompleted with result.passed=false, the terminal state is set to FlashState::Completed (documented as 'successfully completed') even though the run had verification failures.
+- [ ] [LOW/PART] 22 (flash_coordinator.cpp:477,490) -- emitTerminalOutcome re-onlines only result.successfulDrives; failed/cancelled targets are left with the persistent OFFLINE attribute set, and re-online failures are warning-only.
+- [ ] [LOW/PART] 23 (flash_coordinator.cpp:641,659) -- On a multi-target run, if unmountVolumes fails on target K it returns immediately without re-onlining targets 0..K-1 that were already successfully offlined.
+- [ ] [LOW/PART] 24 (drive_unmounter.cpp:317,334,193) -- deleteMountPoints returns true (treated as 'nothing to delete') for any GetVolumePathNamesForVolumeNameW failure other than ERROR_MORE_DATA, and lockAndDismountVolume only logs a warning and proceeds when it fails.
+- [ ] [LOW/PART] 28 (drive_scanner.cpp:79,409) -- enumeratePhysicalDriveNumbers falls back to probing disk 0 when no PhysicalDrive entry is found, and getBlockSize returns 512 on IOCTL failure -- both default coercions.
+- [ ] [LOW/PART] 29 (drive_scanner.cpp:193,211) -- enumeration_ok reflects only whether the PhysicalDrive table was read, not whether each queryDriveInfo succeeded; a transient per-disk query failure with an authoritative table drops the cached drive and emits driveDetached.
+- [ ] [LOW/PART] 30 (drive_scanner.cpp:244) -- applyDriveScan sets hasChanges only for attach/detach; when an existing devicePath's properties (size, isReadOnly, isSystem, mountPoints) change, m_drives is updated but drivesUpdated is not emitted.
+- [ ] [LOW/PART] 32 (flash_worker.cpp:455) -- padToSectorSize accepts negative bytesRead (e.g. -100 % 512 != 0 -> pads), then the zero-fill loop 'for i=bytesRead' writes buffer[i] at negative indices -- an OOB/UB write; it also trusts buffer.capacity().
+- [ ] [LOW/PART] 33 (flash_worker.cpp:395; drive_unmounter.cpp:103) -- unlockVolume ignores the DeviceIoControl(FSCTL_UNLOCK_VOLUME) result and always returns true; CloseHandle results are broadly unchecked.
+- [ ] [LOW/PART] 34 (windows_usb_creator_extract.cpp:124,143,496) -- copyISO_extractVolumeLabel defaults the label to WINDOWS on failure, copyISO_setVolumeLabel only logs on Set-Volume failure (creation still succeeds), and m_volumeLabel is not reset per run so a prior run's label can persist if extraction fails.
+- [ ] [LOW/PART] 36 (permission_manager.cpp:172,452) -- enablePrivilege treats AdjustTokenPrivileges!=0 as success without checking GetLastError()==ERROR_NOT_ALL_ASSIGNED, so it can report success when the privilege was not actually enabled; the constructor ignores the return anyway.
+- [ ] [LOW/PART] 37 (drive_scanner.h:69; drive_scanner.cpp:94,148) -- The header states 'All methods are thread-safe' but m_drives/timer/watcher/notification handles/singleton are unsynchronized, and the singleton uniqueness is enforced only by a debug Q_ASSERT.
+- [ ] [LOW/PART] 38 (drive_scanner.h:180; drive_scanner.cpp:841; drive_unmounter.cpp:481; flash_coordinator.h:299) -- Dead/unused API and state: DriveScanner::scanError signal (never emitted), deviceNotificationProc (deviceChangeWndProc is the registered proc), DriveUnmounter::getDriveNumberForVolume (no callers), and FlashCoordinator::m_sourceChecksum (never read; the coordinator uses m_result.sourceChecksum).
+
+## Pass: apfshfs (APFS / HFS / partition writers+readers)
+29 items (1 confirmed / 28 partial)
+
+- [ ] [HIGH/CONF] F11 partition_apfs_writer.cpp:21395,22590; partition_raw_device_io.cpp:94; partition_hfs_internal.h:192 -- In-place APFS COW commits (volume-label 21395, root-file-write 22590, and the other commitInPlace* paths) write then call target->close() and report ok=blockers.isEmpty() WITHOUT a checked durable flush. WindowsRawDevice::close() calls FlushFileBuffers ignoring its return; the checked flushDeviceBuffers/syncToDevice() path is used only by the format path (line 21069), not the COW commit paths. HFS raw write-back uses non-durable FileStream.Flush(). A durable-flush failure is masked and success is reported.
+- [ ] [HIGH/PART] F4 partition_safety_validator.cpp:458; partition_script_builder.cpp:1877,1995; partition_raw_device_io.cpp:619 -- Raw-device classifiers disagree: the validator (targetPathIsRawDevice, physicalDriveNumberFromPath) and script-builder (isRawDevicePath/isPhysicalDrivePath) only recognize \\.\ (and \\.\PhysicalDrive), while the executor's isWindowsRawDevicePath ALSO recognizes \\?\PhysicalDriveN, bare \\?\Volume{GUID}, and \\?\GLOBALROOT\. A CreateImage target of \\?\PhysicalDrive0 slips past both 'destination must be a file path' guards.
+- [ ] [MEDI/PART] F6 partition_script_builder.cpp:1828,4886 -- Backup/recreate accepts Robocopy exit <=7 and verifies restore only against the produced backup manifest, never against the pre-reformat source. An incomplete backup can become the accepted baseline before source deletion.
+- [ ] [MEDI/PART] F7 partition_script_builder.cpp:3060,3126,4096 -- HFS staged write-back silently clips allocated ranges beyond target size (reporting only a $clippedRanges count), accepts fsck_hfs code 8, and the comment claims a post-copy read-back that the emitted script does not actually perform.
+- [ ] [MEDI/PART] F8 partition_raw_device_io.cpp:79; partition_script_builder.cpp:3050,4074 -- Writable raw targets open with FILE_SHARE_READ|FILE_SHARE_WRITE / FileShare::ReadWrite, no FSCTL_LOCK_VOLUME, no exclusive ownership, no mandatory dismount, so a concurrent writer can corrupt APFS/HFS commits.
+- [ ] [MEDI/PART] F5 partition_script_builder.cpp:2275 -- createImageDestinationGuardScript swallows Get-SakVolumeGuid failures (catch { $destGuid=$null }) and uses -ErrorAction SilentlyContinue source-volume enumeration, so a destination that fails GUID resolution or an incomplete source enumeration skips the off-source-disk guard.
+- [ ] [MEDI/PART] F9 partition_script_builder.cpp:1791 -- FAT/FAT32/exFAT backup falls back from VSS to a live, non-point-in-time copy before destructive reformat.
+- [ ] [MEDI/PART] F12 partition_hfs_file_system_reader.h:93; partition_hfs_file_system_writer.cpp:29 -- HFS raw writes lack an independent raw-target opt-in, hardware-certification flag, and target-disk identity gate equivalent to the APFS --allow-raw-target/--confirm-target; image_only=false plus generic confirmation enables raw access.
+- [ ] [MEDI/PART] F13 partition_apfs_file_system_reader.cpp:1232 -- Unsupported/malformed checkpoint layouts (non-contiguous areas, desc block count 0 or >max) fall back to the block-zero superblock and still return ok.
+- [ ] [MEDI/PART] F14 partition_apfs_file_system_reader.cpp:1478,1516,2017 -- Cyclic nodes (seen_nodes -> return true), undersized child records (value_length<childptr -> continue), and out-of-bounds table/entries (btreeTableInBounds/btreeEntryInBounds -> skip) are silently dropped, yielding an incomplete but successful scan.
+- [ ] [MEDI/PART] F16 partition_apfs_file_system_reader.cpp:684; partition_apfs_writer.cpp:18385 -- initializeVolumeState checks only IncompleteRestore among volume incompatible flags; unknown volume-incompat bits (e.g. normalization-insensitive, sealed) are NOT rejected, unlike validateContainerFeatures which rejects unknown container-incompat via &~kSupported.
+- [ ] [MEDI/PART] F18 partition_ext_file_system_reader.cpp:446 -- appendUnsupportedIncompatBlockers rejects only specific ext incompat bits (compression, journal-dev, inline-data, encrypt, meta_bg); unknown incompat bits are not rejected, so a volume with an unknown INCOMPAT feature is read anyway.
+- [ ] [MEDI/PART] F23 partition_script_builder.cpp:123 -- requirePartitionIdentity compares only DiskNumber, PartitionNumber, and Size; a deleted-then-recreated same-sized partition at the same number passes the runtime TOCTOU guard.
+- [ ] [MEDI/PART] F25 partition_script_builder.cpp:2162,2230 -- Clone opens source with FileShare::ReadWrite (no snapshot/lock, concurrent writers allowed) and the target write commits with non-durable FileStream.Flush() (no Flush($true)/FlushFileBuffers).
+- [ ] [MEDI/PART] F27 partition_safety_validator.cpp:1358 -- Unlocked-BitLocker and dirty-filesystem states are warnings only (addWarningIf), so destructive mutations remain allowed.
+- [ ] [MEDI/PART] F28 partition_apfs_file_system_reader.cpp:347,370 -- Export path is check-then-open: uniquePath returns a non-existent candidate, then writeExportFile opens WriteOnly|Truncate. A raced symlink/file at the candidate can redirect the Truncate and overwrite an arbitrary target.
+- [ ] [LOW/PART] F10 partition_script_builder.cpp:1737,4037 -- dismountSelectedPartitionVolumeScript swallows Get-Volume failure (try{...}catch{}) so an APFS raw mutation proceeds when the target volume cannot be resolved or dismounted.
+- [ ] [LOW/PART] F17 partition_ext_file_system_reader.cpp:396 -- Zero inode_size is silently defaulted to kDefaultInodeSize and undersized 64-bit group_desc_size is bumped to the minimum instead of failing.
+- [ ] [LOW/PART] F20 partition_ext_file_system_reader.cpp:853 -- ext4 extent-tree parsing omits eh_max, depth-consistency, sibling ordering, overlap, zero-length, and physical-range validation.
+- [ ] [LOW/PART] F24 partition_script_builder.cpp:1491,1580,1687,2843 -- sak_apfs_writer_cli/sak_hfs_writer_cli are Test-Path existence-only trusted; external tools are hash-verified then executed by path in a separate step (replacement TOCTOU).
+- [ ] [LOW/PART] F26 partition_script_builder.cpp:1759,4949 -- sizeMbArg floors byte sizes to whole MiB (bytes/1048576), so a DiskPart recreation can rebuild a slightly smaller partition after the source is deleted.
+- [ ] [LOW/PART] F3 partition_safety_validator.cpp:262; partition_script_builder.cpp:156 -- payloadBool coerces the strings "true"/"1"/"yes" to true for confirmation booleans instead of requiring a real JSON bool.
+- [ ] [LOW/PART] F29 partition_file_system_detector.cpp:578,615,1943 -- Signature matches return a detection despite invalid geometry or metadata warnings; the detection result type has no validity/fail-closed state.
+- [ ] [LOW/PART] F31 partition_safety_validator.cpp:639,2021 -- Unallocated create validates size fits target.size_bytes but trusts the queued offset/size without confirming the exact region still exists in current inventory.
+- [ ] [LOW/PART] F32 partition_apfs_file_system_reader.cpp:2336; partition_ext_file_system_reader.cpp:1095 -- Export caps and unsupported/missing entries can stop or skip work yet still return ok=true.
+- [ ] [LOW/PART] F34 partition_apfs_writer.cpp:4843,4905,18892; partition_raw_device_io.cpp:245 -- Block-offset, geometry-ceiling, internal-pool, and unaligned-read (prefixBytes+maxSize, alignedReadSize round-up) arithmetic contain unchecked overflow paths.
+- [ ] [LOW/PART] F35 partition_script_builder.cpp:1743,3707 -- Malformed labels are stripped/truncated/defaulted (diskPartLabel -> SAKDATA) rather than rejected, and Unicode letters are accepted as Windows drive letters via QChar::isLetter().
+- [ ] [LOW/PART] F36 partition_raw_device_io.cpp:460,466 -- Sparse-copy ignores FSCTL_SET_SPARSE result, performs no durable flush before CloseHandle, and ignores CloseHandle/DeleteFileW results on cleanup.
+- [ ] [LOW/PART] F37 partition_hfs_file_system_writer.cpp:46 -- Repetitive wrappers discard detailed HfsReader blockers/warnings and replace them with generic errors, weakening diagnostics and duplicating policy code.
+
+## Pass: appdeploy (App scan / choco / deploy / cleanup / leftover / uninstall)
+77 items (9 confirmed / 68 partial)
+
+- [ ] [HIGH/CONF] src/core/offline_deployment_worker.cpp:1504,1446 / src/core/package_internalization_engine.cpp:769 -- Direct-download accepts arbitrary URL scheme/host and treats missing checksum as valid
+- [ ] [HIGH/CONF] src/core/cleanup_worker.cpp:726 -- Empty post-hive registry subkey reaches RegDeleteTreeW root-scoped
+- [ ] [MEDI/CONF] src/core/app_scanner.cpp:303 / src/core/offline_deployment_worker.cpp:1010,1114 -- choco.exe executed without execution-time Authenticode check in inventory + offline-deploy paths
+- [ ] [MEDI/CONF] src/core/cleanup_worker.cpp:812,832,840 / src/core/user_data_manager.cpp:641,750 -- Destructive/elevated ops launch bare sc.exe/schtasks.exe/netsh.exe/powershell.exe
+- [ ] [MEDI/CONF] src/core/app_scanner.cpp:226,240 -- AppX PowerShell path derived from attacker-influenceable %SystemRoot%
+- [ ] [MEDI/CONF] src/core/offline_deployment_worker.cpp:1504 / src/core/package_internalization_engine.cpp:520,886 -- Installer/nupkg binary responses buffered with no response-size cap
+- [ ] [MEDI/CONF] src/core/leftover_scanner.cpp:901,924,878 -- Per-value Run-key read failure silently skipped while scanRunKey still reports reliable
+- [ ] [MEDI/CONF] src/core/user_data_manager.cpp:168,615 -- Compressed backups silently ignore exclude_patterns
+- [ ] [MEDI/PART] src/core/chocolatey_manager.cpp:250,576 -- Chocolatey authenticity cached permanently after first verify
+- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:1024,1132,1744 -- Unsigned manifest self-asserts integrity; package hashed then reopened by pathname (swap TOCTOU)
+- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:228,323,738 -- output_dir unvalidated (empty->/_work) and ownership marker write result ignored
+- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:279,587,599 -- File deletion falls back to lexical checks + pathname delete when handle can't be opened
+- [ ] [MEDI/PART] src/core/user_data_manager.cpp:446,468 -- Backup deletion validates identity then recursively deletes by pathname
+- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:1051,1147,1636 -- Flash/apply relies on mutable %SystemDrive% (silent C: fallback); disk identity not pinned validate->write
+- [ ] [MEDI/PART] include/sak/app_scanner.h:66 / src/core/app_scanner.cpp:41,89,253 -- Scanner APIs have no failure channel; failed hives/AppX/choco become empty inventories
+- [ ] [MEDI/PART] src/core/chocolatey_manager.cpp:279,310 -- Unvalidated extra_args can weaken checksum/security policy; version_locked+empty version installs latest
+- [ ] [MEDI/PART] src/core/app_installation_worker.cpp:115 -- Selected unavailable/package-less migration entries silently dropped; empty locked version -> latest
+- [ ] [MEDI/PART] src/core/app_installation_worker.cpp:405,429 -- Install verification accepts 'installed X/Y' with X>0 and certifies via substring registry/AppX match
+- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:562,866,956 -- Dep-resolution failures retried as depless packages; cycles installed in manifest order under --ignore-dependencies
+- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:379,738 -- Cancelling bundle creation still finalizes, writes and reports completed
+- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:1230,1395,1468 -- Direct-download package success requires only one installer; partial/missing variants still succeed
+- [ ] [MEDI/PART] src/core/package_internalization_engine.cpp:121,294,314 -- Unreadable install script -> empty string -> classified self-contained; token scan can't prove no-network
+- [ ] [MEDI/PART] src/core/package_matcher.cpp:213 -- Parallel matching shares one ChocolateyManager/QObject across worker threads; unchecked thread count
+- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:365 -- Manual recycle failure escalates to permanent deletion
+- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:189,194 -- CleanupWorker accepts arbitrary items without its own denylist; returns success after per-item failures
+- [ ] [MEDI/PART] src/core/leftover_scanner.cpp:1024,1127 -- Prefix/substring risk + object matching can classify unrelated items as safe leftovers
+- [ ] [MEDI/PART] src/core/user_data_manager.cpp:255,507 -- Backup verification bypassed when metadata checksum is empty, even when requested; metadata unauthenticated
+- [ ] [MEDI/PART] src/core/user_data_manager.cpp:713 -- Archive extraction has no expanded-size/entry/link preflight and writes into the live destination
+- [ ] [MEDI/PART] src/core/user_data_manager.cpp:810 -- Overwrite restore deletes destination before copying replacement; Skip mode can restore nothing yet succeed
+- [ ] [MEDI/PART] src/core/advanced_uninstall_controller.cpp:493,509 -- Queue mutation allowed mid-batch shifts m_batchIndex and misattributes/misfires completions
+- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:90,117,388,465 -- Malformed export format -> EML; invalid item_ids dropped to empty -> whole-mailbox scope; PST fractional IDs truncated
+- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:251,1323,2990 -- Export/conversion/recovery return success when only part of the output was written
+- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:1488,1567,1619 -- Partition byte fields coerce wrong types to 0/fractional; omitted dry_run defaults to destructive apply
+- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:179,3288 -- Export/archive destination safety checked before the writer opens files (reparse/existing TOCTOU)
+- [ ] [LOW/CONF] include/sak/app_mutating_actions.h:1 -- Header lacks include guard/#pragma once; AppX charset doc disagrees with impl
+- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:60,715 -- Choco signer accepts any trusted subject containing 'Chocolatey'; revocation disabled
+- [ ] [LOW/PART] src/core/offline_deployment_worker.cpp:1722,1744 -- Manifest parsing coerces wrong types, defaults unknown mode to Bundle, ignores manifest_version, empties non-object entries
+- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:412 -- Predictable extract dir reused without clearing; mkpath result unchecked
+- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:726,1141 -- Repack sets success before requiring nonempty checksum/size; checksum read ignores mid-stream errors
+- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:670 -- No valid SemVer -> resolution falls back to feed's raw last version
+- [ ] [LOW/PART] src/core/package_matcher.cpp:25,400,541 -- Fuzzy matching accepts low-confidence and substring-derived matches as package IDs
+- [ ] [LOW/PART] src/core/package_matcher.cpp:740 -- Mapping import unbounded, non-transactional, coerces types, no package-id validation
+- [ ] [LOW/PART] src/core/cleanup_worker.cpp:840,35 -- Firewall deletion omits unknown qualifiers and can delete every same-named rule
+- [ ] [LOW/PART] src/core/leftover_scanner.cpp:68,113,288 -- Scan roots from mutable env vars while protected roots hard-coded to C:
+- [ ] [LOW/PART] include/sak/leftover_scanner.h:63 -- Reliability out-param optional and null by default, preserving partial-empty success
+- [ ] [LOW/PART] src/core/user_data_manager.cpp:573,666 -- Encryption truncates the only archive in place (non-atomic); encrypt/decrypt buffer whole archive
+- [ ] [LOW/PART] src/core/user_data_manager.cpp:947 -- Metadata parsing reads unbounded JSON and coerces missing/wrong fields to defaults
+- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:908 -- Batch completion sets Idle and emits batchFinished before deferred cleanup starts
+- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:805 -- Enumeration teardown uses QThread::terminate; second wait failure leaves a live thread/enumerator at destruction
+- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:2117 -- Cleanup proof-of-scan can be disabled by an environment variable
+- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:1713,2004 -- AI cleanup/uninstall bridges force-terminate workers and ignore the final wait result
+- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:277,417,612,689,965,1221,1387,3305 -- Read-only ops return success for cancelled/incomplete/warning/unreadable results
+- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:2832 / src/core/app_readonly_actions.cpp:3476 -- WiFi generation/connection treats missing/unknown security as WPA2; wrong-typed bool -> false
+- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:325,382,553 -- Timeout multiplication can overflow int; negative timeouts/limits coerced to fallback/unlimited
+- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:440 -- isPackageInstalled uses substring contains over unvalidated output
+- [ ] [LOW/PART] src/core/app_installation_worker.cpp:53 -- Constructor dereferences a nullable shared ChocolateyManager
+- [ ] [LOW/PART] src/core/app_installation_worker.cpp:287 -- Cancellation during retry sleep can requeue a job after the queue was cleared
+- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:367 -- m_busy check-and-set is non-atomic, allowing two concurrent internalizations to enter
+- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:1067 -- NuGet artifact-cleanup return values ignored, so failed removals don't block repack
+- [ ] [LOW/PART] src/core/package_matcher.cpp:558 -- Levenshtein allocates an unbounded 2D matrix from registry/feed strings
+- [ ] [LOW/PART] src/core/package_matcher.cpp:788 -- Batch search returns cached results before uncached, breaking positional correspondence
+- [ ] [LOW/PART] src/core/cleanup_worker.cpp:130,155 -- Recycle guarantee uses fixed-drive + hard-coded 4GiB cap; size accumulation can overflow
+- [ ] [LOW/PART] src/core/cleanup_worker.cpp:462 -- setPermissions failure ignored; permission change via pathname after identity checks
+- [ ] [LOW/PART] src/core/leftover_scanner.cpp:639 -- Scheduled-task CSV parsed with a naive comma split; quoted commas break task identity
+- [ ] [LOW/PART] src/core/leftover_scanner.cpp:842 -- Run-value decode discards the final wide char even when the payload lacks a terminator
+- [ ] [LOW/PART] src/core/leftover_scanner.cpp:1155 -- Leftover size returns capped/cancelled partial totals with no incomplete flag; unchecked addition
+- [ ] [LOW/PART] src/core/user_data_manager.cpp:85,141,186 -- Backup validation relies on debug-only assertions for empty paths; collision-free naming has a check-then-create race
+- [ ] [LOW/PART] src/core/user_data_manager.cpp:843 -- Directory copy silently skips reparse subdirs and can't distinguish enumeration failure from empty, yet returns success
+- [ ] [LOW/PART] src/core/user_data_manager.cpp:889 -- SHA-256 generation ignores read errors and can hash a partial file
+- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:562,609 -- Settings load coerces types; setDefaultScanLevel accepts invalid enum values
+- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:221 -- removeRegistryEntry only checks a nonempty registry path before destructive removal
+- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:317,362 -- Read-only partition preview repeats wrong-type/NaN/fractional numeric coercions; wrong-typed payload -> empty object
+- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:917,1176,3893,3980 -- Generic read-only numeric config silently clamps malformed/out-of-range values to defaults
+- [ ] [LOW/PART] src/core/app_scanner.cpp:128 -- Registry application identifiers omit the hive, making HKLM/HKCU entries ambiguous
+- [ ] [LOW/PART] src/core/app_installation_worker.cpp:258 -- Configured install concurrency is effectively dead (one synchronous queue loop)
+- [ ] [LOW/PART] src/core/offline_deployment_worker.cpp:1427 / src/core/package_internalization_engine.cpp:49 -- Filename collision sets are case-sensitive on a case-insensitive filesystem
+- [ ] [LOW/PART] include/sak/package_matcher.h:93 / src/core/offline_deployment_worker.cpp:1670 -- exportMappings/importMappings and README writing expose no error result to callers
+
+## Pass: ai (AI orchestration / policy / providers / MCP)
+28 items (2 confirmed / 26 partial)
+
+- [ ] [HIGH/CONF] 1 -- Read-only shell allowlist bypass: `& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force` is classified as an allowed read-only diagnostic and evades the risky/catastrophic regexes via string concatenation.
+- [ ] [MEDI/CONF] 5 -- An active mutation lease can expire mid-operation; a concurrent acquire reclaims the expired lease and grants a new one, letting two destructive ops overlap.
+- [ ] [MEDI/PART] 2 -- Contentless-failure and tool-iteration-cap subagent results become Degraded, Degraded counts as phase success, and the run finishes Completed.
+- [ ] [MEDI/PART] 3 -- Disk files under data/ai/... silently override embedded provider/app manifests and can supply arbitrary stdio executables/env/HTTP endpoints/PowerShell commands; stdio validation checks only existence.
+- [ ] [MEDI/PART] 4 -- A dispatch requiring a mutation lease succeeds when m_lease_manager is null (fail-open).
+- [ ] [MEDI/PART] 6 -- Recovery marks package-lookup/download/cleanup failures safe_to_continue with 'allow official-source fallback' reasoning; these do not set run failure and the run ends Completed.
+- [ ] [MEDI/PART] 9 -- Cancellation/deadline/iteration checks run once per response, not between individual tool calls, so one response's tool_calls all execute even after cancellation/deadline.
+- [ ] [MEDI/PART] 12 -- MCP HTTP transport accepts non-HTTPS endpoints and, for a plain JSON object body, returns any nonempty object without an 'error' key as success (no id/jsonrpc/result requirement).
+- [ ] [MEDI/PART] 14 -- Any package verb plus a directed-request marker like 'can you'/'please' counts as explicit mutation intent, so 'Can you explain how to uninstall Foo?' authorizes an uninstall.
+- [ ] [MEDI/PART] 16 -- PowerShellSingleQuoted placeholder mode only doubles single quotes; it does not wrap values or reject unquoted/double-quoted placeholder positions, so a value used outside single quotes is injectable.
+- [ ] [MEDI/PART] 18 -- Missing orchestrator dependencies fail open: no software resolver => all required software considered present; missing guidance resolver => safety guidance silently omitted; an overseer phase with no handler succeeds without doing anything.
+- [ ] [MEDI/PART] 19 -- Caller-supplied resume indices/flags/phase-results/prior-executions are trusted with no schema/workflow-binding/authenticity/proof-of-success, and phases before resume_start_phase_index are marked executed by index alone, skipping earlier approval/preflight phases.
+- [ ] [MEDI/PART] 20 -- Human-gate persistence: malformed records skipped, missing/wrong-typed status treated as non-pending, and any later record with the same gate_id replaces pending state with no transition/identity/provenance validation.
+- [ ] [MEDI/PART] 21 -- Session/artifact paths not confined: sessionPath uses session_id verbatim; commandLogPath uses command_id/suffix unsanitized; safeArtifactDirectoryName lets '.'/'..' survive; lexical prefix checks don't stop junction/reparse escapes.
+- [ ] [LOW/PART] 7 -- OpenAI responses parsed without strict schema: missing/wrong-typed status/id/output/usage accepted; malformed output items/function calls silently dropped; only exact status 'incomplete' refused.
+- [ ] [LOW/PART] 8 -- Tool-call batches not validated atomically: only nonempty call_id/name checked; arguments_json not parsed up front; duplicate ids allowed; earlier destructive calls execute before a later malformed one is refused.
+- [ ] [LOW/PART] 10 -- MCP stdio JSON-RPC responses accepted on id match without requiring jsonrpc:2.0, a result, or exactly one of result/error; pooled calls convert absent/scalar results to {}.
+- [ ] [LOW/PART] 11 -- win32 wait steps: malformed/empty result_text parses to {} and missing/wrong-typed found/satisfied/idle flags are treated as satisfied, so later input steps run against unverified UI state.
+- [ ] [LOW/PART] 13 -- Wrong-typed high_risk/requires_restore_point/requires_admin coerce to false and invalid timeouts/output limits to defaults; GUI-step validation omits optional/timeout_ms type checks.
+- [ ] [LOW/PART] 15 -- safePackageIdToken rewrites (deletes disallowed chars from) search-result ids instead of rejecting, potentially yielding a different valid id; and a lone remaining candidate is auto-selected with no exact query match.
+- [ ] [LOW/PART] 17 -- Workflow schema parsing coerces wrong-typed required->false, skips malformed arrays/entries, defaults numerics/bools, and validation omits duplicate ids, agent/tool/operation/risk validity, argument schemas and required-input types.
+- [ ] [LOW/PART] 22 -- Process-tree containment ignores Win32 return values (SetInformationJobObject/AssignProcessToJobObject/TerminateJobObject/CloseHandle) so a failed job assignment lets descendants survive; MCP PID-recursive termination ignores results and is PID-reuse TOCTOU-prone.
+- [ ] [LOW/PART] 23 -- Dispatcher fails open: an empty availability-check result is treated as available, and a handler result missing 'success' is recorded as successful.
+- [ ] [LOW/PART] 24 -- docs_query does not surface MCP isError and finalizeResult overwrites any nonempty result with success=true; win32ToolArguments falls back to outer 'arguments' fields when tool_arguments is empty.
+- [ ] [LOW/PART] 25 -- Audit/persistence can lose evidence: no synchronization on trace append/rotation, loaders silently skip corrupt records, rotation deletes the oldest file first; conversation writes ignore search-index failures while returning success.
+- [ ] [LOW/PART] 26 -- JSON doubles cast to qint64 with no finite/integral/range check (UB for out-of-range), token totals use unchecked signed addition, and health backoff multiplies unchecked integers.
+- [ ] [LOW/PART] 27 -- Credential persistence reports success without proving protection: no file size cap, permissive Base64 decode, unchecked write length, ignored permission-hardening result.
+- [ ] [LOW/PART] 29 -- AiPackageToolPlanner::safePackageToken silently deletes invalid characters and is dead code, preserving a dangerous rewrite API even though the active planner rejects invalid ids.
+
+## Pass: win32mcp (Win32 MCP browser+desktop control)
+33 items (1 confirmed / 32 partial)
+
+- [ ] [CRIT/PART] F1 -- dismiss_dialog auto-invokes controls: 'yes'/'continue'/'close' match as substrings, a lone nameless button is always invoked, truncated UIA trees are ignored.
+- [ ] [HIGH/CONF] F2 -- A non-empty but unrecognized WIN32_MCP_SECURITY_PROFILE value (e.g. a typo 'readonly'/'read-only') is silently treated as no-restriction, enabling every mutating/input/process tool.
+- [ ] [HIGH/PART] F3 -- JSON-RPC version unchecked and wrong-typed top-level 'arguments' coerced to {} lets commands run with destructive defaults (browser_close_tab closes active tab).
+- [ ] [HIGH/PART] F4 -- Browser validation ignores unknown args, accepts fractional/out-of-range numbers as ints, treats wrong-typed optional refs as absent, and ignores malformed browser_select.values.
+- [ ] [HIGH/PART] F5 -- activateWindow ignores ShowWindow/AttachThreadInput/BringWindowToTop/SetForegroundWindow results, sleeps, and reports success; later input can land in another app.
+- [ ] [HIGH/PART] F6 -- SetProcessDpiAwarenessContext and _setmode return values are unchecked; failure leaves coordinates virtualized.
+- [ ] [HIGH/PART] F7 -- Mouse coords require only JSON number then toInt truncates fractions / collapses out-of-range to a real coordinate (often 0); wrong-typed button becomes left.
+- [ ] [HIGH/PART] F8 -- type_text/send_keys have no target binding or foreground revalidation; wrong-typed text becomes empty, sendInputAll treats an empty sequence as success, and the tool returns ok:true.
+- [ ] [HIGH/PART] F9 -- click_text defaults to the whole screen when no target is given, picks the first OCR match without uniqueness, and does not revalidate pixels/target before clicking.
+- [ ] [HIGH/PART] F10 -- A failed PrintWindow silently falls back to desktop BitBlt, so an occluded target can be represented by another window's pixels and drive OCR clicks against the wrong UI.
+- [ ] [HIGH/PART] F11 -- Window targeting uses the first visible title-substring match with no uniqueness/PID/class/identity confirmation, so close/capture/UIA/input can hit the wrong window.
+- [ ] [HIGH/PART] F12 -- UIA property failures become safe-looking defaults: unknown->generic 'control', failed enabled->true, failed offscreen->visible, failed bounds->(0,0); tree-walker errors read as clean completion.
+- [ ] [HIGH/PART] F13 -- UIA refs identify controls only by index/role/name/left/top with no runtime ID/process identity/full bounds/final recheck, and invokeElement falls Invoke->Toggle->Select.
+- [ ] [HIGH/PART] F14 -- Any correlated frame with type:'result' is treated successful even with a wrong payload or {ok:false}; missing domEpoch disables stale-ref checking; epoch double->int is unchecked.
+- [ ] [HIGH/PART] F15 -- Wait timeouts return successful results with satisfied/idle/found=false; wait_for_text suppresses target-resolution errors and malformed 'state' defaults to present.
+- [ ] [HIGH/PART] F17 -- Extension install verifies only path existence; CRX signature/hash/version/regular-file/native-host-exe are unchecked, the package can change after checking, and success is reported before Chrome installs.
+- [ ] [HIGH/PART] F18 -- State reports Installed for any forcelist value beginning with the extension id and any non-empty native-host value, without verifying exact paths/manifests/CRX/host/live Chrome; read errors can become absent.
+- [ ] [HIGH/PART] F20 -- Forcelist install enumerates a slot then writes it without revalidation (concurrent overwrite); uninstall enumerates, closes+reopens, then deletes by stale name, risking deletion of a replacement foreign value.
+- [ ] [HIGH/PART] F21 -- clipboard_write coerces wrong-typed text to empty, clears the clipboard, and reports success; EmptyClipboard is unchecked and a later SetClipboardData failure can leave prior contents destroyed.
+- [ ] [HIGH/PART] F22 -- MCP response writes ignore fwrite/fflush, so a mutating command can complete, lose its response, keep serving, and exit with status 0.
+- [ ] [MEDI/PART] F23 -- close_window reports ok:true when WM_CLOSE is merely queued and never verifies the intended window received it or closed.
+- [ ] [MEDI/PART] F24 -- Screenshot payloads are not strictly base64-decoded/image-validated and unknown MIME is coerced to PNG; PDF decoding validates only '%PDF-', truncates a predictable filename, follows reparse points, and ignores flush/close errors.
+- [ ] [MEDI/PART] F25 -- Installer operations are nontransactional: a failed forcelist write leaves native-host registration behind, and uninstall keeps deleting host/files after a policy-delete failure, ignoring file-removal results and possibly claiming success with artifacts.
+- [ ] [MEDI/PART] F26 -- Rendezvous records are truncated in place, use a fallback directory, and coerce untrusted fields with toString/toInt plus an unchecked double->qint64 cast for app_pid (UB on extreme values).
+- [ ] [MEDI/PART] F27 -- Relay output ignores fflush; bridge_unavailable/bridge_ready notifications ignore write failure; connection/handshake failure still exits 0.
+- [ ] [MEDI/PART] F28 -- Browser-pipe startup failure degrades to a reduced server instead of failing closed; teardown ignores SetEvent/handle-close/rendezvous-delete failures.
+- [ ] [MEDI/PART] F29 -- GDI capture ignores SelectObject/stretch-mode/brush-origin/restore/delete/DC-release results; a failed bitmap selection can return uninitialized pixels as a successful capture.
+- [ ] [MEDI/PART] F30 -- EnumWindows failure is indistinguishable from 'window absent', so wait_for_window(state=absent) can succeed on enumeration failure; monitor enumeration returns partial/empty success.
+- [ ] [MEDI/PART] F31 -- Key chords use SkipEmptyParts (accepting malformed 'Ctrl++S'); cleanup SendInput results are ignored, potentially leaving modifiers/buttons held after a partial delivery.
+- [ ] [MEDI/PART] F32 -- Sensitive-output redaction touches only text blocks and a narrow key-name regex, so cookie values, clipboard secrets, screenshots, and other image content stay exposed even when redaction is enabled.
+- [ ] [LOW/PART] F33 -- win32_mcp_native_host.cpp is production-dead duplicate framing/dispatch code: production uses browser_bridge_relay.cpp while the native-host file is compiled only by tests.
+- [ ] [LOW/PART] F34 -- Window-title retrieval, enumeration, first-substring selection, and error handling are duplicated across tools/desktop/capture/watch, yielding inconsistent failure semantics and multiple first-match implementations.
+- [ ] [LOW/PART] F35 -- Registry string length is narrowed to DWORD without a bounds check, permitting overflow/truncation for oversized configuration strings; openRead is unused dead code.
+
+## Pass: email (PST / MBOX / OST / export / IMAP / profiles)
+38 items (3 confirmed / 35 partial)
+
+- [ ] [HIGH/CONF] src/core/email_profile_manager.cpp:575 -- Restore destination validated only for home containment, not approved email roots/extensions, so a manifest can create arbitrary files anywhere under home.
+- [ ] [MEDI/CONF] src/core/email_profile_manager.cpp:457 -- Sanitized registry backup names are not deduplicated; colliding names target the same .reg and reg export /y overwrites.
+- [ ] [MEDI/PART] src/core/email_profile_manager.cpp:959 -- Registry validate-then-import TOCTOU: bytes validated, file closed, reg.exe reopens same path; symlink/reparse or replacement imports unvalidated content.
+- [ ] [MEDI/PART] src/core/email_profile_manager.cpp:928 -- Restore accepts destructive [-HKEY...] deletion sections in a crafted backup.
+- [ ] [MEDI/PART] src/core/pst_parser.cpp:1973 -- Table Context failures fall back to physical row enumeration, potentially exporting stale/deleted/padding rows; subnode/read failures become empty/partial tables.
+- [ ] [MEDI/PART] src/core/email_profile_manager.cpp:417 -- Backup copies live PST/OST/MBOX without locking, snapshot, post-copy size verification, or hashes; concurrent client writes yield inconsistent backups.
+- [ ] [LOW/CONF] src/core/email_profile_manager.cpp:898 -- WMS profiles are exported as Outlook but restore permits only Office Outlook registry paths, so WMS registry backups cannot be restored.
+- [ ] [LOW/PART] src/core/email_profile_manager.cpp:496 -- Manifest lacks strict schema/version/type validation; empty/wrong-typed values coerce to empty and empty objects count as restored; registry changes precede file validation with no rollback.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:3086 -- Malformed page/BTH entry sizes reach fixed-offset reads outside QByteArray; member readLE relies only on release-disabled Q_ASSERT before memcpy.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:1162 -- PST integrity not authenticated: header CRC read but never checked; page/block trailer CRC, signature, BID, declared size not validated.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:1373 -- BTree loaders accept truncated/malformed pages as partial success: undersized entries break, zero/small entry sizes accepted, duplicate NID/BID keys silently overwrite cache.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:1820 -- BTH/property parsing repeatedly converts corruption to empty/partial success: cycles return empty, child errors ignored, invalid layouts discarded, failed HNID resolution leaves empty properties.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:2566 -- Folder hierarchy errors are logged then swallowed; open succeeds with a partial tree after hierarchy-table or child-folder failures.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:2923 -- Attachment subnode failures are silently skipped; readAttachments() returns success with missing attachments.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:332 -- Malformed values coerce to defaults (bounds->0, numeric ok omitted, encoding falls through UTF-8/ACP/Latin-1, unknown encryption accepted as unencrypted, empty class becomes Email); second MultiByteToWideChar return unchecked.
+- [ ] [LOW/PART] src/core/email_profile_manager.cpp:372 -- Backup continues after invalid indices, missing sources, registry-export failures, copy failures, and cancellation, then writes a reduced manifest and emits backupComplete.
+- [ ] [LOW/PART] src/core/email_profile_manager.cpp:786 -- Thunderbird discovery accepts malformed IsRelative via toInt() and never confines relative Path beneath the Thunderbird root; '..' can scan/back up unrelated directories.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:993 -- CSV and ICS exports always truncate fixed existing filenames and write non-atomically; a failed write destroys a prior valid export.
+- [ ] [LOW/PART] src/core/eml_writer.cpp:186 -- Per-message writers use exists() then truncating open/commit; concurrent workers can pick the same free path and overwrite each other.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:594 -- Export writes messages after attachment reads fail, then merely counts item failed; incomplete EML/HTML/PDF artifacts remain on disk. TXT/PDF sidecar failures leave main output and partial attachments.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:529 -- Folder/item read failures and cancellation produce partial output followed by a normal exportComplete with no cancellation state in the result.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:134 -- MBOX export silently coerces every unsupported requested format to EML; uint64 requested message IDs are cast to int without range checks.
+- [ ] [LOW/PART] src/core/mbox_parser.cpp:181 -- MBOX indexing/read errors become partial success: no error result from the index builder, unreadable messages skipped, short raw reads accepted, stale offsets usable if the file changes after indexing.
+- [ ] [LOW/PART] src/core/mbox_parser.cpp:523 -- MIME limits and malformed structures silently truncate/coerce: part-cap/depth exhaustion, missing boundaries/separators, invalid QP, unknown transfer encodings, invalid charset, attachment-vector divergence all return partial/default data.
+- [ ] [LOW/PART] src/core/ost_conversion_worker.cpp:103 -- OST checksum failure does not abort conversion, and the checksum handle closes before the parser reopens the source, so the source can change between hashing and conversion, invalidating the reported SHA-256.
+- [ ] [LOW/PART] src/core/ost_conversion_worker.cpp:448 -- Normal/deep conversion continues after corrupt items and folder-page failures; folder read failure is not added to items_failed; cancellation and finalize errors still flow through normal conversionFinished.
+- [ ] [LOW/PART] src/core/imap_uploader.cpp:393 -- IMAP greeting validation accepts any completed greeting buffer containing the substring 'OK'; malformed/BYE/NO greetings can trigger credential transmission.
+- [ ] [LOW/PART] src/core/imap_uploader.cpp:44 -- IMAP input is coerced instead of rejected: CR/LF stripped from quoted values, invalid flags dropped, invalid dates omitted, invalid auth enum hangs until timeout, timeout multiplication can overflow.
+- [ ] [LOW/PART] src/core/ost_conversion_worker.cpp:39 -- Date-filtered OST items with invalid/missing dates pass filters; folder sanitization replaces malformed segments and does not disambiguate collisions, merging distinct source folders.
+- [ ] [LOW/PART] src/core/mbox_writer.cpp:135 -- MBOX writer invents unknown@localhost and current time for missing sender/date, discards plain body whenever HTML exists, and truncates existing mailbox files.
+- [ ] [LOW/PART] src/core/eml_writer.cpp:52 -- EML/MBOX MIME output is nonconformant: base64 not wrapped to 76 columns, raw UTF-8 headers lack RFC 2047/6532 encoding, body line endings not normalized, EML boundary collisions unchecked.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:955 -- ICS VEVENT omits required UID/DTSTAMP; attendee params use TEXT escaping in an unquoted parameter context; VCF can omit required FN and labels every photo as JPEG unchecked.
+- [ ] [LOW/PART] src/core/email_export_worker.cpp:374 -- CSV configuration not validated: unknown column names -> empty cells, malformed delimiters accepted, invalid importance -> Normal, out-of-range task percentages serialized unchecked.
+- [ ] [LOW/PART] src/core/pdf_email_writer.cpp:114 -- PDF success check only verifies the committed file is nonzero; rendering/page-layout failures can still yield a nonempty corrupt PDF reported successful.
+- [ ] [LOW/PART] src/core/eml_writer.cpp:196 -- EML/HTML/TXT/VCF/ICS/CSV writers do not use atomic replacement consistently, do not verify final close/flush errors, and leave truncated/partial files after failure.
+- [ ] [LOW/PART] src/core/eml_writer.cpp:170 -- Public EML/HTML/PDF writeMessage() append subfolder_path without canonical containment, permitting traversal/reparse escape.
+- [ ] [LOW/PART] src/core/dbx_writer.cpp:94 -- Large unreachable implementations remain behind always-failing DBX/MSG/PST gates, including unchecked writes and unsafe assumptions; dead code raises maintenance/reactivation risk.
+- [ ] [LOW/PART] src/core/pst_parser.cpp:818 -- failOpen() actually closes/refuses and returns false; the name contradicts its fail-closed behavior. Header/MIME/filename sanitization is duplicated across writers with divergent rules.
+
+## Pass: netdiag (Network / vuln / firewall / hardware / wifi / stress / bench)
+60 items (19 confirmed / 41 partial)
+
+- [ ] [HIGH/CONF] network_diagnostic_controller.cpp:183-200 (detached worker UAF) -- Destructor detaches a still-running worker thread after a 5s timeout, then destroys the unique_ptr workers the thread's work() lambda still dereferences.
+- [ ] [MEDI/CONF] disk_benchmark_worker.cpp:82-100,487 (random/seq-read reopen lacks reparse check) -- Random-write/read and sequential-read reopens follow reparse points; only the sequential-write reopen verifies the file is not a reparse point.
+- [ ] [MEDI/CONF] disk_benchmark_worker.cpp:240-244,450-456 (failed fill leaks temp file) -- createTestFile() records m_test_file_path before filling; a fill failure returns without deleting the partially-written file, and execute() early-returns with no cleanup.
+- [ ] [MEDI/CONF] stress_test_worker.cpp:176-220 (no-work config reports PASSED) -- All-components-disabled or zero/negative duration is not rejected; the run does no work yet computeStressPassed() returns PASSED.
+- [ ] [MEDI/CONF] stress_test_worker.cpp:523-597 (disk-stress durability/cleanup unchecked, abort_on_error gap) -- FlushFileBuffers/CloseHandle/DeleteFileW returns unchecked; disk (and GPU) component errors set m_result.disk_errors but never m_error_count, so abort_on_error cannot stop them.
+- [ ] [MEDI/CONF] stress_test_worker.cpp:730-743 (d3dcompiler_47.dll basename load) -- d3dcompiler_47.dll is loaded by basename, permitting search-order DLL planting (app dir / CWD), dangerous when the tool runs elevated.
+- [ ] [MEDI/CONF] network_diagnostic_controller.cpp:1011-1059 (LAN upload success after premature peer close) -- RemoteHostClosedError is ignored and the duration timer still calls finish(true); reported bytes are only QTcpSocket::write-queued, not confirmed delivered.
+- [ ] [MEDI/CONF] network_diagnostic_controller.cpp:453-470,1184-1235 (stale cached results reused in reports) -- Worker caches are written only on success and never cleared on failure/cancel, so a later failed run leaves stale firewall/WiFi/port data eligible for a new report.
+- [ ] [MEDI/CONF] firewall_rule_auditor.cpp:343-361 (cancellation emits clean auditComplete) -- Cancellation during enumeration emits auditComplete({},{},{}), which the controller caches/logs as '0 rules, 0 conflicts, 0 gaps'; cancellation during findConflicts emits partial conflicts with no post-analysis check.
+- [ ] [MEDI/CONF] firewall_rule_auditor.cpp:772-842 (mixed named/numeric port expr loses overlap) -- parsePorts silently drops unrecognized tokens; '80,RPC' vs '443,RPC' are declared disjoint even though the shared named RPC scope overlaps.
+- [ ] [MEDI/CONF] vulnerability_scanner.cpp:1045-1062 (schema check accepts wrong-typed value) -- bodyMatchesSchema only checks top-level type / key presence, so {"vulnerabilities":"bad"} or {"results":null} passes and then .toArray() yields zero findings -- a false clean scan.
+- [ ] [MEDI/CONF] hardware_inventory_scanner.cpp:237-254,541-563 (unqualified powershell.exe) -- WMI queries and the volume-map query launch 'powershell.exe' by basename via runProcess/QProcess, exposing them to Windows executable search-order substitution.
+- [ ] [MEDI/CONF] hardware_inventory_scanner.cpp:128-230 (broken cancellation semantics) -- A cancelled full scan returns from a checkpoint with no terminal signal; component scans never reset m_cancelled, so a stale cancel makes later scans emit an empty scanComplete as success.
+- [ ] [MEDI/CONF] wifi_analyzer.cpp:356-385,574-603 (interface failure becomes empty success) -- readOk is set true if only WlanGetAvailableNetworkList succeeds, even when the BSS-list read failed and the available-list adds no networks; the scan is then reported as a clean empty success.
+- [ ] [MEDI/CONF] advanced_search_worker.cpp:527-582 (missing/inaccessible local root -> clean zero matches) -- No existence/readability/is-directory validation precedes QDirIterator for a local root, so a nonexistent or inaccessible root completes 'successfully' with zero results.
+- [ ] [MEDI/CONF] network_diagnostic_controller.cpp:91-138,1238-1246 (nondeterministic state gate permits concurrent report) -- generateReport consults legacy m_state, which can equal MonitoringConnections while another op is active, so report generation runs concurrently with that op and races the shared caches; currentState()/m_state derive from QSet::constBegin() (arbitrary).
+- [ ] [LOW/CONF] network_diagnostic_controller.cpp:920-926,1045-1049,1129-1142 (LAN params unbounded/overflow) -- durationSec/blockSizeKB are only floored to defaults when <1; large values overflow the int block buffer, the int socket-queue threshold, and the int duration-ms.
+- [ ] [LOW/CONF] advanced_search_worker.cpp:618-620,2042-2135 (binary/hex is text-over-UTF8, not byte search) -- 'hex' search decodes the file as UTF-8 and regex-matches text; the pattern is never parsed as hex bytes, and invalid UTF-8 corrupts offsets and misses byte patterns.
+- [ ] [LOW/CONF] network_diagnostic_controller.cpp:1238-1265 (unknown report format silently becomes HTML) -- Any format string other than case-insensitive 'json' selects HTML rather than being rejected.
+- [ ] [LOW/PART] stress_test_worker.cpp:110-151,511-571 (disk-stress path TOCTOU residual) -- Claimed handle closes then the file reopens by pathname; attacker could swap in a hard link/regular file.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:214-228,672-674 (size arithmetic wrap) -- Unbounded test_file_size_mb multiplies in size_t/uint64_t; a wrapped size underflows file_size/block-1 and seeks to garbage offsets.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:208-238 (no target/free-space validation) -- Any nonempty relative/UNC/junction/unready/nearly-full path proceeds; free space is never checked; negative bytesTotal() casts to a huge capacity.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:717-748,689-704 (partial random I/O scored as success) -- Individual seek/read/write failures are logged and skipped; any single successful op makes the phase pass; short reads/writes count as full ops.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:816-897 (final random-write cancel reports complete) -- Cancellation breaks the timed loop but completed ops return success; no final cancel check precedes scoring/benchmarkComplete.
+- [ ] [LOW/PART] disk_benchmark_worker.h:69-79;disk_benchmark_worker.cpp:398-412 (block-size clamp vs reject) -- Positive out-of-range block sizes are silently clamped; the public helper has undefined std::clamp behavior if a caller supplies min>max.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:467-476 (cleanup ignores QFile::remove result) -- QFile::remove() return is ignored and the path cleared while logging 'removed', leaving orphaned test data.
+- [ ] [LOW/PART] disk_benchmark_worker.cpp:649-897 (QD32 is serial QD1; block size mislabeled) -- The queue-depth loop serially seeks and completes each op on one non-overlapped handle, so reported QD32 metrics are actually QD1; configurable block sizes are always logged as '4K'.
+- [ ] [LOW/PART] stress_test_worker.cpp:206-220 (execute returns success while passed=false) -- Result can log FAILED / passed=false, yet execute() always returns a successful expected.
+- [ ] [LOW/PART] stress_test_worker.cpp:312-328 (thermal monitoring fails open) -- Missing/invalid temperature (0, negative, NaN) disables the thermal abort and the test keeps running under load.
+- [ ] [LOW/PART] stress_test_worker.cpp:407-424,456-487 (memory fallback + unchecked percentage) -- A failed RAM query substitutes 512 MiB; negative/NaN/excessive memory_usage_percent reaches a float->size_t conversion before the clamp.
+- [ ] [LOW/PART] stress_test_worker.cpp:68-79,436-453 (memory error counters signed int) -- One 16-GiB verification pass can exceed INT_MAX mismatches; patternVerify, aggregate errors, and the atomic count are signed int.
+- [ ] [LOW/PART] network_diagnostic_controller.cpp:64-77,156-180 (workers driven off their affinity thread) -- Workers keep controller-thread affinity but their methods execute directly in arbitrary QThread::started callbacks, crossing timer/child-QObject/state affinity boundaries.
+- [ ] [LOW/PART] firewall_rule_auditor.cpp:141-248,528-541 (incomplete rules still analyzed) -- Failed COM getters set complete=false and emit a warning, but the default-filled rules still feed conflict/gap analysis and auditComplete.
+- [ ] [LOW/PART] firewall_rule_auditor.cpp:331-340 (standalone analyses don't check enumeration state) -- detectConflicts()/analyzeGaps() reset cancellation and emit results without checking whether enumeration ever succeeded.
+- [ ] [LOW/PART] firewall_rule_auditor.cpp:364-378,700-720,807-815 (empty-vs-'*' all-port inconsistency) -- Empty LocalPorts means all ports, but findRulesByPort recognizes only '*', and checkWildcardGap counts only '*' -- missing empty all-port rules.
+- [ ] [LOW/PART] firewall_rule_auditor.cpp:122-138,544-548 (unmodeled protocols collapse to Other) -- GRE, ESP, and every other unmodeled protocol map to one Other enum and therefore falsely overlap each other.
+- [ ] [LOW/PART] wifi_analyzer.cpp:307-354 (forced scan falls back to fixed sleep + stale cache) -- WlanScan/notification-registration failure, timeout, or WAIT_FAILED triggers a fixed sleep then reads possibly-stale cached BSS data; wait/unregister/close results unchecked.
+- [ ] [LOW/PART] wifi_analyzer.cpp:153-174,667-694 (RSN presence alone => WPA2-secure) -- Any syntactically bounded RSN IE (including a zero-length/garbage RSN payload) sets rsn=true and is reported WPA2/AES/isSecure without validating cipher/version structure.
+- [ ] [LOW/PART] wifi_analyzer.cpp:530-559 (continuous mode hides errors, interval 0 accepted) -- Background scan errors emit nothing and retain last-good results; interval 0 is accepted, creating a continuously firing timer.
+- [ ] [LOW/PART] wifi_analyzer.cpp:227-266 (unknown auth->WPA3, unknown cipher->secure) -- Every auth enum at/above a threshold becomes WPA3; an unknown cipher becomes secure=true.
+- [ ] [LOW/PART] wifi_analyzer.cpp:387-456 (OUI DB missing -> hardcoded fallback, unsurfaced) -- A missing/corrupt OUI database is not surfaced; a tiny built-in table substitutes results, contrary to the no-fallback rule; malformed lines/read errors are ignored.
+- [ ] [LOW/PART] hardware_inventory_scanner.cpp:256-315 (valid-but-unexpected JSON -> empty clean inventory) -- Valid JSON with a scalar top level or non-object array members becomes an empty success; property conversions coerce missing/wrong types to zero via toUInt/toULongLong/toDouble.
+- [ ] [LOW/PART] hardware_inventory_scanner.cpp:318-325 (errorOccurred then unconditional scanComplete) -- finishScan() emits errorOccurred and then an unconditional scanComplete(partialInventory), a success-shaped terminal signal.
+- [ ] [LOW/PART] hardware_inventory_scanner.cpp:530-609 (volume-map failure not flagged) -- Mapping subprocess/JSON failures only log warnings and do not set m_wmiQueryFailed; out-of-range/negative JSON numbers coerce through toInt()/unsigned cast.
+- [ ] [LOW/PART] hardware_inventory_scanner.cpp:645-718 (GPU association by array index; DXGI->WMI fallback) -- DXGI and WMI lists are zipped by index despite DXGI filtering software adapters, so driver/version/resolution can attach to the wrong GPU; DXGI failure silently falls back to WMI.
+- [ ] [LOW/PART] hardware_inventory_scanner.cpp:392-431,817-839 (silent Win32 substitutions) -- GlobalMemoryStatusEx failure is ignored; missing slot count becomes slots_used; max clock becomes base clock; GetSystemPowerStatus failure returns 'continue'; uptime always uses GetTickCount64 instead of parsing the queried LastBootUpTime.
+- [ ] [LOW/PART] vulnerability_scanner.cpp:1427-1546 (installed-program enumeration drops registry failures) -- RegQueryInfoKeyW result is ignored; failed RegEnumKeyExW/RegOpenKeyExW/value reads are skipped/coerced to empty/zero, so enumeration can return a clean partial/empty program list with no error channel.
+- [ ] [LOW/PART] vulnerability_scanner.cpp:544-580 (cache future-timestamp + unbounded read) -- A future lastModified() clamps age to zero making a poisoned/stale cache 'fresh' indefinitely; readAll() has no size cap; cache writes ignore the short-write result.
+- [ ] [LOW/PART] vulnerability_scanner.h:89-108;vulnerability_scanner.cpp:856-877,1677-1685 (option validation gaps) -- Empty software identity counts as one scanned app; negative request limits mean unlimited in several paths; nonpositive network timeout passes through; installed-program scans ignore queryGithub/queryOsv.
+- [ ] [LOW/PART] network_diagnostic_report_generator.cpp:185-198,484-498 (unescaped report fields) -- Adapter type/IP/MAC and connection addresses/state enter the HTML report unescaped, permitting markup injection from malformed/upstream values.
+- [ ] [LOW/PART] advanced_search_worker.cpp:320-384,489-525 (cancelled/incomplete search returns worker success) -- Directory cancellation returns to execute() which logs completion and returns success; target listing/read failures report incomplete progress but still return a successful worker result.
+- [ ] [LOW/PART] advanced_search_types.h:64-69;advanced_search_worker.cpp:320-332 (file symlinks followed by default) -- skip_symlinks defaults false, so planted file reparse points to local secrets or UNC targets are followed, enabling out-of-scope reads / SMB credential leakage.
+- [ ] [LOW/PART] advanced_search_worker.cpp:122-153,715-731 (user regex can hang cancellation) -- Unbounded PCRE matching runs with no time/backtracking limit; stop checks occur only between lines, so a pathological regex on one long line hangs and cannot be cancelled.
+- [ ] [LOW/PART] advanced_search_worker.cpp:643-657,467-485 (target reads truncated / overshoot max_results) -- With unlimited max_file_size, raw targets default to 100 MiB reads and truncation/read-failure does not mark the target scan incomplete; per-file results can overshoot aggregate max_results.
+- [ ] [LOW/PART] advanced_search_worker.cpp:662-683,1926-1932 (context_lines negative/overflow) -- Negative context_lines silently changes behavior; INT_MIN can overflow line_index-context_lines.
+- [ ] [LOW/PART] advanced_search_worker.cpp:1337-1378,1944-2020 (metadata/archive failures silently yield no matches) -- File-open/read errors, metadata truncation, oversized/malformed archives, unsupported compression, and inflate failures are silently skipped without incrementing an incomplete state.
+- [ ] [LOW/PART] advanced_search_worker.cpp:1996-2020 (ZIP local-header-only parser misses valid archives) -- The local-header-only parser ignores data descriptors, ZIP64, encryption flags, CRCs, and central-directory sizes; the first unsupported/malformed entry ends the remaining search.
+- [ ] [LOW/PART] advanced_search_worker.cpp:967-995 (EXIF/ID3 parsers coerce malformed formats) -- JPEG EXIF treats any non-'II' TIFF as big-endian; ASCII EXIF always drops the final byte; unknown ID3 encoding falls back to Latin-1; ID3 version/frame-size differences are ignored.
+- [ ] [LOW/PART] advanced_search_types.h:119-157;advanced_search_worker.cpp:1156-1231 (declared metadata support exceeds implementation) -- Many advertised audio/video/database/document extensions receive only filesystem metadata; PNG zTXt/compressed iTXt and most real PDF Info dictionaries are not parsed; the PDF head+tail claim only reads the head.
+- [ ] [LOW/PART] advanced_search_types.h:84-89;stress_test_worker.cpp:302-345;hardware_inventory_scanner.cpp:405-420 (dead/misleading fields) -- network_timeout_sec is unused (and checkNetworkPathAccessible can block indefinitely); stress avg_cpu_temp/avg_cpu_usage_percent are never populated; hardware requests DeviceLocator/EstimatedChargeRemaining/BatteryStatus but discards them.
+
+## Pass: misc (input_validator / file-mgmt / tools / actions / elevated)
+57 items (8 confirmed / 49 partial)
+
+- [ ] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:2166-2197 -- OS-disk defense-in-depth guard only inspects \\.\PhysicalDriveN; volume aliases (\\.\C:, \\?\Volume{GUID}, GLOBALROOT) bypass it.
+- [ ] [HIGH/CONF] src/actions/backup_bitlocker_keys_action.cpp:625-721 -- Plaintext recovery keys are written under the default inherited ACL and only hardened at the end; cancellation/crash leaves exposed files; failed cleanup is ignored while claiming keys were removed.
+- [ ] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:709-739 -- APFS arbitrary-import enumerates only the default browse-entry-limit listing and never rejects truncation; files beyond the cap are silently lost in the rebuilt image.
+- [ ] [HIGH/CONF] src/tools/sak_hfs_writer_cli.cpp:213-223,712-730 -- Raw HFS mutation CLI has no PhysicalDrive0/OS-disk identity guard (the APFS CLI has one).
+- [ ] [MEDI/CONF] src/core/file_management_file_system.cpp:843-851 -- Foreign export filenames via confinedHostName are not checked for Windows reserved device names, ADS syntax, trailing-dot/space, or case-fold collisions.
+- [ ] [MEDI/CONF] src/core/uup_iso_builder.cpp:635-642,1079-1137 -- pollConversionProgress watchdog can invoke onConverterFinished before the queued finished() signal; the second invocation flips a completed build to failure.
+- [ ] [MEDI/CONF] src/elevated/elevated_helper_main.cpp:710-732 -- ReadThermalData launches unqualified 'powershell.exe' from the elevated helper, allowing PATH/CWD resolution hijacking.
+- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:408-436,753-755 -- RunPowerShell executes unrestricted elevated PowerShell with ExecutionPolicy Bypass and no command/verb/target allowlist.
+- [ ] [MEDI/PART] src/core/file_management_file_system.cpp:1527-1602,1715-1824 -- createDirectory/writeFile/deleteFile/deleteDirectory ignore can_write_files and read_only at the bridge layer.
+- [ ] [MEDI/PART] src/core/file_management_file_system.cpp:274,888-894 -- Non-local targets are forced read_only=true while raw-writer enablement requires !read_only, so advertised HFS/APFS writes are blocked.
+- [ ] [MEDI/PART] src/core/input_validator.cpp:469-492 -- Containment is verified by pathname (weakly_canonical) and then discarded; destructive opens remain vulnerable to junction/symlink-replacement TOCTOU.
+- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:203-290 -- User/folder/nested-dir/enumeration failures are logged but not reliably counted, so a partial or empty restore can emit success.
+- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:460-471 -- ACL failures and verification failures do not fail the file restore; unknown modes fall back to stripping permissions.
+- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:27-56 -- Path checks use lossy narrow Windows paths and pathname-only reparse checks; ancestor replacement between validation and copy can escape roots.
+- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:1112-1137 -- Converter exit zero plus a nonempty file is accepted as a valid bootable ISO; no ISO structure/expected-content verification.
+- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:227-257,744-784 -- Predictable reusable workspace paths are not reparse-checked before elevated writes / recursive cleanup.
+- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:154-183 -- Bundled aria2c/UUPMediaConverter are checked only for existence before execution; no regular-file/reparse/signature/hash verification at use time.
+- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:186-220 -- Job-object configuration/assignment/termination/close results are ignored; timed-out elevated descendants may survive.
+- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:147-169,691-708 -- Ownership/ACL/file-copy tasks accept arbitrary paths without confinement or reparse checks and ignore cancellation.
+- [ ] [LOW/CONF] src/actions/reset_network_action.cpp:359-386 -- The verification PowerShell has no terminating-error handling or success sentinel; cmdlet failures still exit zero, so the reset is certified on a vacuous verify.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:480-495,773-790 -- Invalid conflict enums overwrite the original destination; exhausted rename attempts return an already-existing candidate and overwrite it.
+- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1116-1137,1318-1321 -- Truncated files, skipped links/special files, and partial directory transfers can return ok=true.
+- [ ] [LOW/PART] src/core/input_validator.cpp:204-227,243-277 -- Failed Win32 attribute / std::filesystem status queries are treated as 'not a reparse point' or 'does not exist', letting optional paths pass validation.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:753-770 -- Destination verification checks readability rather than content; checksum-less manifests/payloads accepted.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:62-105 -- Fixed .sakbak/.sakrestore.tmp/.sakold.tmp names can delete unrelated existing files; rollback/cleanup return values ignored.
+- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:301-340,405-437 -- JSON values are coerced with toObject/toString/toInt/toDouble; malformed entries accepted and recovery protectors silently omitted.
+- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:163-212,959-965 -- Unvalidated drive letters enter PowerShell source (DriveLetter='%1') and key filenames, enabling injection or backup-dir escape.
+- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:523-528 -- Execution reuses cached scan results, so volumes added/changed after scanning can be omitted from a successful backup.
+- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:746-755,780-784 -- Failed conversion-dir cleanup and failed stale-partial removal are ignored; stale/attacker-planted content is then reused.
+- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:1072-1077 -- replaceFinalIso deletes the previous good image before rename; an output under the workspace is deleted by cleanup while completion is reported.
+- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:93-127 -- Malformed metadata not rejected; missing hashes/sizes permit planted resume files; final validation accepts oversized/same-size corrupted payloads.
+- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:117-131;src/tools/sak_hfs_writer_cli.cpp:155-159 -- Both CLIs synthesize evidence IDs; APFS asserts destructive and hardware certification evidence unconditionally.
+- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:130-152;src/tools/sak_apfs_writer_cli.cpp:249-275 -- Report alias checks occur before mutation and report truncation; APFS omits hardlink identity checks.
+- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:103-115,474-490;src/tools/sak_hfs_writer_cli.cpp:57-68 -- Payload and credential readAll() results are accepted without checking read errors or short reads.
+- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:78-86 -- Failure to create the controlled runtime directory silently retains inherited elevated TMP/TEMP.
+- [ ] [LOW/PART] src/actions/generate_system_report_action.cpp:275-360 -- Collector scripts lack strict terminating-error handling; partial PowerShell output treated as a complete collector result.
+- [ ] [LOW/PART] src/actions/optimize_power_settings_action.cpp:133-153,293-306 -- Substring plan matching can activate a custom-named plan; failed discovery falls back to a hard-coded GUID.
+- [ ] [LOW/PART] src/core/file_explorer_command_registry.cpp:527-648 -- Cut, create-folder-with-selection, Undo, and Redo can move/delete data without destructive classification; Undo/Redo lack any write-capability gate.
+- [ ] [LOW/PART] src/core/input_validator.cpp:581-604 -- sanitizeString silently deletes NUL/control/non-ASCII bytes instead of rejecting malformed input.
+- [ ] [LOW/PART] src/core/input_validator.cpp:610-722 -- Zero/invalid limits are guarded only by Q_ASSERT; release accepts zero thread count, zero memory requirement, or zero max buffer size.
+- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1037-1049,1949-1952 -- Post-hash stat failure converts -1 to UINT64_MAX; a failed/inaccessible destination stat is treated as vacant.
+- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1892-1931 -- max_entries + 1 can overflow, turning a bounded replacement check into unbounded enumeration.
+- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:117-121 -- Signed file-size accumulation and progress multiplication can overflow; negative file sizes are not rejected.
+- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:310-324,490-552 -- Wrong-typed timeout/output values are defaulted/clamped; missing backup location silently becomes C:/SAK_Backups.
+- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:555-572 -- Partition probes accept short or zero-byte reads as success and do not require bytes.size()==read_limit.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:332-347 -- Missing SystemDrive silently falls back to C:; an invalid merge mode returns success with no destination.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:685-708 -- Manifest-controlled byte/file totals and restored-byte counters have no overflow checks.
+- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:292-313 -- Malformed --name-pad becomes zero, huge --file-count is unbounded, padding silently clamped.
+- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:463-490 -- Malformed UTF-8 credentials are replacement-decoded, credential-file input silently overrides direct input, missing directory name falls back to --file-name.
+- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:70-88;src/tools/sak_apfs_writer_cli.cpp:227-246 -- Report-directory creation and final flush/close errors are unchecked, permitting truncated reports with success exit status.
+- [ ] [LOW/PART] src/actions/verify_system_files_action.cpp:197-256 -- Failed/unrun checks still produce 'found no issues' summaries; m_cbs_log_path is not reset between runs.
+- [ ] [LOW/PART] src/actions/screenshot_settings_action.cpp:120-172 -- Any successful screenshot makes the whole action successful even when pages fail or the report cannot be written.
+- [ ] [LOW/PART] src/actions/generate_system_report_action.cpp:103-125,407-417 -- Second-resolution filenames can collide and truncate prior reports; direct QFile writing is non-atomic and close errors ignored.
+- [ ] [LOW/PART] src/actions/reset_network_action.cpp:49-79 -- Scan exceptions and malformed adapter counts silently become zero adapters instead of a failed scan.
+- [ ] [LOW/PART] src/core/input_validator.cpp:446-466 -- Any filename containing '..' is rejected, including legitimate non-traversal names.
+- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:648-683 -- Unused restore/screenshot helpers and an unreachable duplicate patch-offset branch add dead/misleading code.
+- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:395-402 -- Command dispatch calls a possibly-empty std::function without checking lookup success, making parser/registry drift a crash.
+
+## Pass: gui (GUI panels (logic / thread-safety / lifetime))
+17 items (5 confirmed / 12 partial)
+
+- [ ] [HIGH/CONF] src/gui/partition_manager_panel.cpp:9672,10327,10541,10591 -- Format/Resize/serial-change/dynamic-disk handlers hold raw PartitionInfoEx*/PartitionDiskInfo* (selectedPartition/selectedDisk into m_controller->inventory()) across dialog.exec() and deref them afterward (and in updatePreview lambdas run during exec).
+- [ ] [HIGH/CONF] src/gui/partition_manager_panel.cpp:10727 -- queueQuickPartitionOperations queues InitializeDisk (10728) and DeleteAllPartitions (10734) BEFORE the MBR-count check (10740) and size-validity check (10749); on validation failure it returns leaving those destructive ops in the pending queue. Also quickPartitionTotalBytes/offset sum uint64 unchecked (3692/10761) and malformed custom sizes silently become equal sizes (3669).
+- [ ] [HIGH/CONF] src/gui/wifi_manager_panel.cpp:1844 -- buildWlanProfileXml maps every non-WEP/non-open security value (WPA3, WPA2/WPA3-Enterprise, unknown, malformed) to authType=WPA2PSK / encType=AES; loadTableFromJson (2363) takes the security field verbatim from JSON with no validation.
+- [ ] [MEDI/CONF] src/gui/file_management_explorer_panel.cpp:524 -- Explorer ~dtor ignores m_search_worker->wait(5000) return and never detaches (unlike the IO workers at 538 which detach on timeout); Organizer ~dtor (organizer_panel.cpp:202) only logs when m_worker/m_dedup_worker->wait times out. All are QThread subclasses parented to the panel, so ~QObject destroys a still-running QThread -> qFatal 'QThread: Destroyed while thread is still running' -> process abort.
+- [ ] [MEDI/CONF] src/gui/wifi_manager_panel.cpp:1389 -- onSaveTableClicked checked-rows path logs a short write (1390) then still emits 'Saved N checked network(s)' (1393); exportSingleWindowsScript (1256), exportMultipleWindowsScripts (1290) and onExportMacosProfile (1334) never check QTextStream status; app_installation_panel_table.cpp:261 logs a short write then reports saved (266); vulnerability_panel.cpp:665-678 never checks out.status()/commit yet logs 'Exported CSV'.
+- [ ] [MEDI/PART] src/gui/partition_manager_panel.cpp:10306 -- onDeleteAllPartitions and onWipeSelected confirm a snapshotted target then call queueOperation()/queueOperation(*type) which re-reads selectedTarget(); the confirmed target is not bound to the queued operation.
+- [ ] [MEDI/PART] src/gui/image_flasher_panel.cpp:732 -- Drive selection stores only \\.\PhysicalDriveN (732/748); the confirmation and isSystemDrive check bind no model/serial/size and hold no stable handle.
+- [ ] [MEDI/PART] src/gui/ai_assistant_panel.cpp:3229 -- drainAndStopAsyncTool/drainWorkflowRun pump the event loop only until kAsyncDrainDeadlineMs then abandon a still-running worker that captured `this` / owns PanelToolExecutor(this), enabling UAF.
+- [ ] [MEDI/PART] src/gui/image_flasher_panel.cpp:690 -- onImageSelected enables Next (690) with no validation; validateImageFile (900) is dead code (never called anywhere); the image is reopened by path at startFlash with no identity/hash recheck.
+- [ ] [MEDI/PART] src/gui/file_management_explorer_panel.cpp:7161 -- deleteSelectionWithConfirmation builds the worker request from entry.path strings with no file ID/handle/reparse identity; the worker re-resolves by path at execution.
+- [ ] [MEDI/PART] src/gui/ai_assistant_panel.cpp:7325 -- packed_only = args.value('packed_only').toBool() -> a JSON string "true" yields false, silently disabling the air-gap packed-only install so installFromBundle may fetch.
+- [ ] [MEDI/PART] src/gui/ai_assistant_panel.cpp:9842 -- resolveWorkflowRunContext validates required inputs with input_values.contains() only (9843); a required field present as null/empty/wrong-type passes and then enters ${} command/path substitution. parseWorkflowToolInputValues turns a non-string/non-object into an empty {} (1200-1203).
+- [ ] [LOW/PART] src/gui/advanced_uninstall_panel.cpp:1465 -- selectedProgram/selectedLeftovers use data(kOriginalIndexRole).toInt(), which defaults to 0 on a missing/wrong-typed role, returning the first program/leftover; selectedTarget (partition_manager_panel.cpp:11360) coerces a missing map to disk 0/partition 0/zero size and unknown kind to Partition.
+- [ ] [LOW/PART] src/gui/ai_assistant_panel.cpp:1302 -- safePackageToken lowercases and strips characters outside [a-z0-9_.+-] instead of rejecting; packagesFromJson (1569) applies it to an AI-supplied package_id so a malformed id can become a different valid package.
+- [ ] [LOW/PART] src/gui/ai_assistant_panel.cpp:9928 -- applyWorkflowResumeState enables resume for any nonempty object, defaults resume_start_phase_index to 0 on missing/wrong type, and silently drops malformed phase_history/flags.
+- [ ] [LOW/PART] src/gui/ai_assistant_panel.cpp:1179 -- workflowRequirementAvailable returns true for every non-sak_tool requirement (OS/system/bundled) without probing it, so a missing OS/system dependency passes preflight.
+- [ ] [LOW/PART] src/gui/user_profile_restore_wizard_execute.cpp:126 -- The AppData page and Networks (WiFi/Ethernet) page checkboxes are dead state -- onStartRestore forwards only backupPath, manifest, mappings and {conflict, permission, verify, createBackup} to the worker; no app-data/WiFi/Ethernet selection is passed.
