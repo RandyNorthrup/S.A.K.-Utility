@@ -52,17 +52,19 @@ QString uniqueBinaryFilename(const QUrl& url, int index, QSet<QString>& used_nam
     QString base = PackageInternalizationEngine::sanitizedBinaryBasename(url.fileName(), index);
     // Two distinct URLs can share a basename (x86 vs x64 setup.exe); disambiguate so the second
     // never overwrites the first on disk and the rewritten script maps each URL to its own file.
+    // used_names holds LOWERCASED keys: on a case-insensitive filesystem 'Setup.exe' and
+    // 'setup.exe' collide, so compare case-insensitively while returning the original-cased name.
     QString candidate = base;
     const QFileInfo info(base);
     const QString stem = info.completeBaseName();
     const QString suffix = info.suffix();
     int counter = 1;
-    while (used_names.contains(candidate)) {
+    while (used_names.contains(candidate.toLower())) {
         candidate = suffix.isEmpty() ? QString("%1_%2").arg(stem).arg(counter)
                                      : QString("%1_%2.%3").arg(stem).arg(counter).arg(suffix);
         ++counter;
     }
-    used_names.insert(candidate);
+    used_names.insert(candidate.toLower());
     return candidate;
 }
 
@@ -70,6 +72,10 @@ NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kDownloadTimeoutMs;
+    // Cap the buffered body: an installer response is hashed whole in memory, so a
+    // hostile URL returning an unbounded body would otherwise exhaust memory (B9-19
+    // parity for binary downloads).
+    request.max_response_bytes = offline::kMaxBinarySizeBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     return request;
@@ -118,12 +124,24 @@ std::optional<QCryptographicHash::Algorithm> resolveChecksumAlgorithm(const QStr
     return hashAlgorithmByHexLength(hex_len);
 }
 
-QString readTextFile(const QString& path) {
+// Read a script for offline-readiness classification. Returns nullopt when the
+// file cannot be opened, so an unreadable (locked/denied) script is NOT read as
+// an empty "no-network" script and mis-classified self-contained -- the caller
+// fails closed to requires-network instead.
+std::optional<QString> readTextFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return {};
+        return std::nullopt;
     }
     return QString::fromUtf8(file.readAll());
+}
+
+// A located install script whose contents force offline-readiness to false: it
+// either performs a network download, or could not be read (fail closed -- an
+// unverifiable script must never be presented as fully offline).
+bool scriptForcesNetwork(const QString& script_path) {
+    const auto text = readTextFile(script_path);
+    return !text || PackageInternalizationEngine::scriptHasNetworkDownload(*text);
 }
 
 bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
@@ -297,7 +315,7 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
         // if the script performs NO network download at all (a config-only or
         // embedded-installer package); if it fetches via a method the parser does
         // not recognize (raw Invoke-WebRequest, WebClient, ...), flag it honestly.
-        const bool needs_net = scriptHasNetworkDownload(readTextFile(script_path));
+        const bool needs_net = scriptForcesNetwork(script_path);
         result.offline_readiness = needs_net ? OfflineReadiness::RequiresNetwork
                                              : OfflineReadiness::SelfContained;
         sak::logInfo("[InternalizationEngine] {} has no recognized download URL; classified {}",
@@ -315,7 +333,7 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     // references a network download (a URL the parser did not recognize, e.g. a
     // raw Invoke-WebRequest for a prerequisite), the package is NOT fully offline
     // -- report RequiresNetwork honestly instead of over-claiming Internalized.
-    const bool residual = scriptHasNetworkDownload(readTextFile(script_path));
+    const bool residual = scriptForcesNetwork(script_path);
     if (residual) {
         result.offline_readiness = OfflineReadiness::RequiresNetwork;
         sak::logWarning(
@@ -368,20 +386,25 @@ bool PackageInternalizationEngine::beginInternalization(const QString& package_i
                                                         const QString& version,
                                                         QString& resolved_version,
                                                         InternalizationResult& result) {
-    if (m_busy) {
+    // Atomic check-and-set: two threads racing into the same engine must not both
+    // acquire it. compare_exchange publishes the busy flag in one step (the prior
+    // read-then-set left a window where both saw not-busy).
+    bool expected = false;
+    if (!m_busy.compare_exchange_strong(expected, true)) {
         Q_EMIT errorOccurred(package_id, "Engine is already busy");
         return false;
     }
 
     // Reject a package id that would escape the work dir (path separators, "..", drive
-    // colon) BEFORE it is composed into extract/nupkg/output paths (B10-11).
+    // colon) BEFORE it is composed into extract/nupkg/output paths (B10-11). Release
+    // the busy flag we just acquired so a rejected id does not wedge the engine.
     if (!isSafePackageComponent(package_id)) {
+        m_busy = false;
         Q_EMIT errorOccurred(package_id,
                              "Invalid package id: path separators or traversal not allowed");
         return false;
     }
 
-    m_busy = true;
     m_cancelled = false;
     m_current_progress = {};
     m_current_progress.package_id = package_id;
@@ -420,6 +443,11 @@ PackageInternalizationEngine::prepareInternalizationPaths(const QString& package
     InternalizationPaths paths;
     paths.extract_dir = work_dir + "/" + package_id + "." + version;
     paths.nupkg_path = work_dir + "/" + package_id + "." + version + ".nupkg";
+    // Clear any leftovers from a crashed prior build in this exact-named dir before
+    // reuse: .NET ExtractToDirectory throws if a file already exists, and stray
+    // unrelated files would otherwise be repacked into the output nupkg. The dir is
+    // our own work tree (validated id/version components), never a user path.
+    QDir(paths.extract_dir).removeRecursively();
     QDir(paths.extract_dir).mkpath(".");
     return paths;
 }
@@ -517,12 +545,9 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
         return false;
     }
 
-    NetworkTransferRequest request;
-    request.url = QUrl(nupkg_url);
-    request.timeout_ms = offline::kDownloadTimeoutMs;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-
+    // Shared builder: timeout + User-Agent + a max_response_bytes cap, so the
+    // buffered .nupkg body cannot exhaust memory before it is hashed (B9-19 parity).
+    const NetworkTransferRequest request = makeBinaryDownloadRequest(QUrl(nupkg_url));
     const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
     if (transfer.cancelled) {
         return false;
@@ -695,12 +720,11 @@ QString PackageInternalizationEngine::parseLatestVersionFromOData(const QByteArr
     }
 
     // No entry flagged latest: pick the SemVer-max rather than trusting feed order
-    // (a hostile/unsorted feed could otherwise push a downgrade via last-entry).
-    const QString best = semverMaxVersion(all_versions);
-    if (!best.isEmpty()) {
-        return best;
-    }
-    return all_versions.isEmpty() ? QString() : all_versions.last();
+    // (a hostile/unsorted feed could otherwise push a downgrade via last-entry). When
+    // NO entry parses as a valid SemVer, fail closed (empty) rather than fall back to
+    // the feed's raw last version -- trusting unparseable feed order is exactly the
+    // downgrade vector this function otherwise avoids.
+    return semverMaxVersion(all_versions);
 }
 
 QPair<QString, QString> PackageInternalizationEngine::parsePackageHashFromOData(
@@ -728,32 +752,42 @@ void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result
                                                    const QString& output_dir,
                                                    const QString& status_message) {
     emitProgress(InternalizationStatus::Repacking, status_message);
-    cleanNugetArtifacts(extract_dir);
-
-    QString output_nupkg = output_dir + "/" + result.package_id + "." + result.version + ".nupkg";
-
-    if (repackNupkg(extract_dir, output_nupkg)) {
-        result.success = true;
-        // True only if binaries were actually downloaded; a no-URL repack leaves
-        // this false so consumers can warn the package may not be fully offline.
-        result.binaries_internalized = !result.internalized_files.isEmpty();
-        result.output_nupkg_path = output_nupkg;
-        result.checksum = computeChecksum(output_nupkg);
-        result.internalized_size = QFileInfo(output_nupkg).size();
-
-        sak::logInfo("[InternalizationEngine] Internalized {} v{}: {} -> {} bytes, {} files",
-                     result.package_id.toStdString(),
-                     result.version.toStdString(),
-                     result.original_size,
-                     result.internalized_size,
-                     static_cast<int>(result.internalized_files.size()));
-
-        emitProgress(InternalizationStatus::Complete, "Internalization complete");
-    } else {
-        result.error_message = "Failed to repack .nupkg";
-        sak::logError("[InternalizationEngine] {}", result.error_message.toStdString());
+    // Fail closed if metadata cleanup did not fully succeed: repacking leftover
+    // NuGet artifacts would ship a malformed offline nupkg.
+    if (!cleanNugetArtifacts(extract_dir)) {
+        finishWithError(result, "Failed to remove NuGet metadata before repack");
+        return;
     }
 
+    const QString output_nupkg = output_dir + "/" + result.package_id + "." + result.version +
+                                 ".nupkg";
+    if (!repackNupkg(extract_dir, output_nupkg)) {
+        finishWithError(result, "Failed to repack .nupkg");
+        return;
+    }
+
+    result.checksum = computeChecksum(output_nupkg);
+    result.internalized_size = QFileInfo(output_nupkg).size();
+    // A repack that yielded no readable checksum or a zero-size file cannot be
+    // integrity-verified at install time, so it is a failure -- never reported as a
+    // successful internalization on the strength of the repack step alone.
+    if (result.checksum.isEmpty() || result.internalized_size <= 0) {
+        finishWithError(result, "Repacked package failed checksum/size verification");
+        return;
+    }
+
+    result.success = true;
+    // True only if binaries were actually downloaded; a no-URL repack leaves this
+    // false so consumers can warn the package may not be fully offline.
+    result.binaries_internalized = !result.internalized_files.isEmpty();
+    result.output_nupkg_path = output_nupkg;
+    sak::logInfo("[InternalizationEngine] Internalized {} v{}: {} -> {} bytes, {} files",
+                 result.package_id.toStdString(),
+                 result.version.toStdString(),
+                 result.original_size,
+                 result.internalized_size,
+                 static_cast<int>(result.internalized_files.size()));
+    emitProgress(InternalizationStatus::Complete, "Internalization complete");
     Q_EMIT packageComplete(result);
     m_busy = false;
 }
@@ -1064,35 +1098,36 @@ QString PackageInternalizationEngine::findInstallScript(const QString& extract_d
 // NuGet Artifact Cleanup
 // ============================================================================
 
-void PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_dir) const {
-    // Remove NuGet metadata files that are not needed in internalized packages
-    static const QStringList kArtifactPatterns = {"_rels", "[Content_Types].xml", "package"};
+bool PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_dir) const {
+    // Remove NuGet metadata not needed in internalized packages, tracking every
+    // removal so a failure is surfaced instead of silently repacking the leftover.
+    bool ok = true;
 
-    QDir dir(extract_dir);
-
-    // Remove _rels directory
     QDir rels_dir(extract_dir + "/_rels");
     if (rels_dir.exists()) {
-        rels_dir.removeRecursively();
+        ok = rels_dir.removeRecursively() && ok;
     }
 
-    // Remove [Content_Types].xml
-    QString content_types = extract_dir + "/[Content_Types].xml";
+    const QString content_types = extract_dir + "/[Content_Types].xml";
     if (QFile::exists(content_types)) {
-        QFile::remove(content_types);
+        ok = QFile::remove(content_types) && ok;
     }
 
-    // Remove package/ directory (NuGet services metadata)
-    QDir pkg_dir(extract_dir + "/package");
+    QDir pkg_dir(extract_dir + "/package");  // NuGet services metadata
     if (pkg_dir.exists()) {
-        pkg_dir.removeRecursively();
+        ok = pkg_dir.removeRecursively() && ok;
     }
 
-    // Remove .psmdcp files
     QDirIterator iter(extract_dir, {"*.psmdcp"}, QDir::Files, QDirIterator::Subdirectories);
     while (iter.hasNext()) {
-        QFile::remove(iter.next());
+        ok = QFile::remove(iter.next()) && ok;
     }
+
+    if (!ok) {
+        sak::logError("[InternalizationEngine] Failed to remove NuGet metadata artifacts in {}",
+                      extract_dir.toStdString());
+    }
+    return ok;
 }
 
 // ============================================================================
@@ -1150,7 +1185,17 @@ QString PackageInternalizationEngine::computeChecksum(const QString& file_path) 
     constexpr qint64 kBlockSize = offline::kChecksumBlockSize;
 
     while (!file.atEnd()) {
-        hasher.addData(file.read(kBlockSize));
+        const QByteArray block = file.read(kBlockSize);
+        // read() returns an empty block on a mid-stream I/O error while atEnd() is
+        // still false. Hashing on regardless would yield a checksum over a partial
+        // file; fail closed (empty) so the caller rejects it rather than shipping a
+        // wrong digest.
+        if (block.isEmpty() && file.error() != QFileDevice::NoError) {
+            sak::logWarning("[InternalizationEngine] Read error during checksum: {}",
+                            file_path.toStdString());
+            return {};
+        }
+        hasher.addData(block);
     }
 
     return hasher.result().toHex();

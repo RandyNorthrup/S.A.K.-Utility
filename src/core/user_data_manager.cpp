@@ -16,7 +16,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonValue>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtGlobal>
 
@@ -72,6 +75,43 @@ void appendExistingVariants(QStringList& paths,
     }
 }
 
+/// @brief Populate a BackupEntry from a metadata object, failing closed on wrong types.
+///
+/// A tampered sidecar must not coerce a wrong-typed field to a silent default (notably
+/// a numeric or absent checksum collapsing to "" which would disable restore verification).
+/// The load-bearing fields (app_name, backup_path, checksum) are type-checked; a mismatch
+/// rejects the whole sidecar rather than proceeding with a fabricated value.
+bool parseMetadataObject(const QJsonObject& json, sak::UserDataManager::BackupEntry& entry) {
+    const QJsonValue name = json.value(QStringLiteral("app_name"));
+    if (!name.isString() || name.toString().isEmpty()) {
+        return false;
+    }
+    const QJsonValue path = json.value(QStringLiteral("backup_path"));
+    if (!path.isString()) {
+        return false;
+    }
+    const QJsonValue checksum = json.value(QStringLiteral("checksum"));
+    if (!checksum.isString()) {
+        return false;  // absent or wrong-typed checksum must not become "" (disables verify)
+    }
+    entry.app_name = name.toString();
+    entry.app_version = json.value(QStringLiteral("app_version")).toString();
+    for (const auto& p : json.value(QStringLiteral("source_paths")).toArray()) {
+        entry.source_paths.append(p.toString());
+    }
+    entry.backup_path = path.toString();
+    entry.backup_date = QDateTime::fromString(json.value(QStringLiteral("backup_date")).toString(),
+                                              Qt::ISODate);
+    entry.total_size_bytes = json.value(QStringLiteral("total_size")).toInteger();
+    entry.compressed_size_bytes = json.value(QStringLiteral("compressed_size")).toInteger();
+    entry.checksum = checksum.toString();
+    entry.encrypted = json.value(QStringLiteral("encrypted")).toBool();
+    for (const auto& pat : json.value(QStringLiteral("excluded_patterns")).toArray()) {
+        entry.excluded_patterns.append(pat.toString());
+    }
+    return true;
+}
+
 }  // namespace
 
 namespace sak {
@@ -87,10 +127,10 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
     const QStringList& source_paths,
     const QString& backup_dir,
     const BackupConfig& config) {
-    Q_ASSERT_X(!app_name.isEmpty(), "backupAppData", "app_name must not be empty");
-    Q_ASSERT_X(!backup_dir.isEmpty(), "backupAppData", "backup_dir must not be empty");
     Q_EMIT operationStarted(app_name, "backup");
 
+    // Empty app_name / backup_dir are enforced fail-closed inside validateBackupRequest
+    // (a runtime check, not a debug-only Q_ASSERT that is compiled out of release).
     if (!validateBackupRequest(app_name, source_paths, backup_dir, config)) {
         return std::nullopt;
     }
@@ -142,6 +182,16 @@ bool UserDataManager::validateBackupRequest(const QString& app_name,
                                             const QStringList& source_paths,
                                             const QString& backup_dir,
                                             const BackupConfig& config) {
+    // Runtime (not just Q_ASSERT) guards: assertions are compiled out of a release
+    // build, so re-check the required inputs here and fail closed.
+    if (app_name.isEmpty()) {
+        Q_EMIT operationError(app_name, "App name must not be empty");
+        return false;
+    }
+    if (backup_dir.isEmpty()) {
+        Q_EMIT operationError(app_name, "Backup directory must not be empty");
+        return false;
+    }
     if (source_paths.isEmpty()) {
         Q_EMIT operationError(app_name, "No source paths specified");
         return false;
@@ -266,14 +316,10 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
     auto entry = entry_opt.value();
     Q_EMIT operationStarted(entry.app_name, "restore");
 
-    // Verify checksum
-    if (config.verify_checksum && !entry.checksum.isEmpty()) {
-        Q_EMIT progressUpdate(0, kPercentMax, "Verifying backup integrity...");
-        QString current_checksum = generateChecksum(backup_path);
-        if (current_checksum != entry.checksum) {
-            Q_EMIT operationError(entry.app_name, "Checksum mismatch - backup may be corrupted");
-            return false;
-        }
+    // Verify integrity. A compressed archive MUST carry a checksum when verification
+    // is requested; an emptied sidecar cannot be used to silently skip the check.
+    if (!verifyRestoreIntegrity(backup_path, entry, config)) {
+        return false;
     }
 
     // Create backup of existing data. Fail closed: if a complete safety copy
@@ -321,6 +367,32 @@ bool UserDataManager::restorePayload(const QString& backup_path,
         config.overwrite_existing ? ExistingFilePolicy::Overwrite : ExistingFilePolicy::Skip;
     if (!copyDirectory(backup_path, restore_dir, {}, restore_policy)) {
         Q_EMIT operationError(entry.app_name, "Failed to copy backup contents");
+        return false;
+    }
+    return true;
+}
+
+bool UserDataManager::verifyRestoreIntegrity(const QString& backup_path,
+                                             const BackupEntry& entry,
+                                             const RestoreConfig& config) {
+    if (!config.verify_checksum) {
+        return true;
+    }
+    // A compressed archive is always checksummed when integrity is requested at backup
+    // time, so an empty checksum on a .zip means the sidecar was tampered (emptied to
+    // disable verification) or made without integrity. We were ASKED to verify and
+    // cannot -- fail closed rather than restore an unverified/swapped payload.
+    if (backup_path.endsWith(QStringLiteral(".zip")) && entry.checksum.isEmpty()) {
+        Q_EMIT operationError(entry.app_name,
+                              "Compressed backup has no checksum to verify - refusing restore");
+        return false;
+    }
+    if (entry.checksum.isEmpty()) {
+        return true;  // Directory payload: no per-archive checksum is recorded.
+    }
+    Q_EMIT progressUpdate(0, kPercentMax, "Verifying backup integrity...");
+    if (generateChecksum(backup_path) != entry.checksum) {
+        Q_EMIT operationError(entry.app_name, "Checksum mismatch - backup may be corrupted");
         return false;
     }
     return true;
@@ -594,48 +666,53 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
         return false;
     }
 
-    // Write encrypted data. On any write failure remove the file so a readable
-    // plaintext (or a truncated) archive is never left behind when encryption
-    // was requested.
-    if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        sak::logWarning("[UserDataManager] Failed to write encrypted file");
+    // Write to a sibling temp, then atomically replace the plaintext archive. Truncating
+    // the only archive in place would, on a crash mid-write, leave an unrecoverable partial
+    // file; staging keeps the plaintext intact until the encrypted copy is fully written.
+    // On any failure remove BOTH temp and plaintext so a readable archive is never left
+    // behind when encryption was requested.
+    const QString tmp = archive_path + QStringLiteral(".enc_tmp");
+    QFile out(tmp);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        sak::logWarning("[UserDataManager] Failed to open temp for encrypted file");
         QFile::remove(archive_path);
         return false;
     }
-    if (archive.write(*encrypted) != encrypted->size()) {
+    if (out.write(*encrypted) != encrypted->size()) {
         sak::logWarning("[UserDataManager] Incomplete write of encrypted file");
-        archive.close();
+        out.close();
+        QFile::remove(tmp);
         QFile::remove(archive_path);
         return false;
     }
-    archive.close();
+    out.close();
+    if (!atomicReplaceFile(tmp, archive_path)) {
+        QFile::remove(archive_path);
+        return false;
+    }
     return true;
 }
 
-bool UserDataManager::createArchive(const QStringList& source_paths,
-                                    const QString& archive_path,
-                                    const BackupConfig& config) {
-    Q_ASSERT_X(!source_paths.isEmpty(), "createArchive", "source_paths must not be empty");
-    Q_ASSERT_X(!archive_path.isEmpty(), "createArchive", "archive_path must not be empty");
+bool UserDataManager::compressSourcePaths(const QStringList& source_paths,
+                                          const QString& archive_path,
+                                          int compression_level) {
+    const QString compressionLevel = mapCompressionLevel(compression_level);
 
-    QString compressionLevel = mapCompressionLevel(config.compression_level);
-
-    // Use PowerShell's Compress-Archive for Windows
+    // Use PowerShell's Compress-Archive for Windows.
     QStringList args;
     args << "-NoProfile" << "-Command";
 
-    // Escape single quotes in paths to prevent PowerShell injection
+    // Escape single quotes in paths to prevent PowerShell injection.
     QStringList escaped_sources;
     for (const auto& path : source_paths) {
         escaped_sources << QString(path).replace("'", "''");
     }
-    QString sources = escaped_sources.join("','");
-    QString safe_archive = QString(archive_path).replace("'", "''");
-    QString command = QString(
-                          "Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel "
-                          "%3 -Force")
-                          .arg(sources, safe_archive, compressionLevel);
-
+    const QString sources = escaped_sources.join("','");
+    const QString safe_archive = QString(archive_path).replace("'", "''");
+    const QString command = QString(
+                                "Compress-Archive -Path '%1' -DestinationPath '%2' "
+                                "-CompressionLevel %3 -Force")
+                                .arg(sources, safe_archive, compressionLevel);
     args << command;
 
     const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
@@ -645,21 +722,52 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         sak::logError("Archive compression timed out after 5 minutes -- killing process");
         return false;
     }
-
     if (result.exit_code != 0 || !QFile::exists(archive_path)) {
         sak::logError("Archive compression failed: exit code {}, archive exists: {}",
                       result.exit_code,
                       QFile::exists(archive_path));
         return false;
     }
+    return true;
+}
 
-    // Encrypt archive if requested
-    if (config.encrypt && !config.password.isEmpty()) {
-        if (!encryptArchiveInPlace(archive_path, config)) {
-            return false;
-        }
+bool UserDataManager::buildArchivePayload(const QStringList& source_paths,
+                                          const QString& archive_path,
+                                          const BackupConfig& config) {
+    if (config.exclude_patterns.isEmpty()) {
+        return compressSourcePaths(source_paths, archive_path, config.compression_level);
+    }
+    // Compress-Archive has no exclusion support, so it would archive the raw sources
+    // verbatim -- a user excluding secrets would still ship them. Stage a filtered copy
+    // (same exclusion + collision rules as an uncompressed backup) and compress THAT.
+    // Fail closed if the staging copy cannot be completed.
+    QTemporaryDir staging;
+    if (!staging.isValid()) {
+        sak::logError("[UserDataManager] Failed to create staging dir for filtered archive");
+        return false;
+    }
+    if (!copySourcesToDest(source_paths, staging.path(), config.exclude_patterns)) {
+        return false;
+    }
+    return compressSourcePaths({QDir(staging.path()).filePath("*")},
+                               archive_path,
+                               config.compression_level);
+}
+
+bool UserDataManager::createArchive(const QStringList& source_paths,
+                                    const QString& archive_path,
+                                    const BackupConfig& config) {
+    Q_ASSERT_X(!source_paths.isEmpty(), "createArchive", "source_paths must not be empty");
+    Q_ASSERT_X(!archive_path.isEmpty(), "createArchive", "archive_path must not be empty");
+
+    if (!buildArchivePayload(source_paths, archive_path, config)) {
+        return false;
     }
 
+    // Encrypt archive if requested.
+    if (config.encrypt && !config.password.isEmpty()) {
+        return encryptArchiveInPlace(archive_path, config);
+    }
     return true;
 }
 
@@ -710,6 +818,41 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
     return temp_path;
 }
 
+bool UserDataManager::archiveWithinLimits(const QString& archive_path) {
+    // Zip-bomb guard: a hostile backup .zip can inflate to exhaust the disk. Enumerate
+    // the archive first and refuse once the entry count or total DECOMPRESSED size
+    // exceeds the cap, BEFORE Expand-Archive writes anything into the live destination.
+    constexpr qint64 kMaxEntries = 100'000;
+    constexpr qint64 kMaxDecompressedBytes = 8LL * 1024 * 1024 * 1024;  // 8 GiB
+    const QString safe = QString(archive_path).replace("'", "''");
+    const QString command =
+        QString(
+            "$ErrorActionPreference='Stop'; "
+            "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+            "$zip=[System.IO.Compression.ZipFile]::OpenRead('%1'); "
+            "try { $n=0; $sz=0; foreach($e in $zip.Entries){ $n++; $sz=$sz+$e.Length; "
+            "if($n -gt %2){ throw 'archive entry count exceeds limit' } "
+            "if($sz -gt %3){ throw 'archive decompressed size exceeds limit' } } } "
+            "finally { $zip.Dispose() }")
+            .arg(safe)
+            .arg(kMaxEntries)
+            .arg(kMaxDecompressedBytes);
+    QStringList args;
+    args << "-NoProfile" << "-Command" << command;
+    const auto result =
+        sak::runProcess(QStringLiteral("powershell.exe"), args, sak::kTimeoutArchiveMs);
+    if (result.timed_out) {
+        sak::logError("[UserDataManager] Archive preflight timed out");
+        return false;
+    }
+    if (!result.succeeded()) {
+        sak::logError("[UserDataManager] Archive rejected by zip-bomb preflight (exit {})",
+                      result.exit_code);
+        return false;
+    }
+    return true;
+}
+
 bool UserDataManager::extractArchive(const QString& archive_path,
                                      const QString& destination,
                                      const RestoreConfig& config) {
@@ -725,6 +868,15 @@ bool UserDataManager::extractArchive(const QString& archive_path,
             return false;
         }
         file_to_extract = temp_decrypted;
+    }
+
+    // Refuse a zip-bomb before extracting into the live destination. Clean up the
+    // decrypted temp (if any) on refusal so no plaintext lingers.
+    if (!archiveWithinLimits(file_to_extract)) {
+        if (!temp_decrypted.isEmpty()) {
+            QFile::remove(temp_decrypted);
+        }
+        return false;
     }
 
     // Use PowerShell's Expand-Archive for Windows
@@ -766,9 +918,18 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 }
 
 bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {
-    return std::any_of(patterns.begin(), patterns.end(), [&path](const auto& pattern) {
-        QRegularExpression re(QRegularExpression::wildcardToRegularExpression(pattern));
-        return re.match(path).hasMatch();
+    const QString normalized = QDir::fromNativeSeparators(path);
+    return std::any_of(patterns.begin(), patterns.end(), [&normalized](const auto& pattern) {
+        // Match wildcards UNANCHORED against the full path. isExcluded is fed absolute
+        // paths, and a DEFAULT (anchored, path-aware) conversion of a glob such as
+        // "*.log" or "cache/*" only ever matches a lone path segment -- so against an
+        // absolute path it matches NOTHING and silently excludes nothing, letting the
+        // very "secret" files a user asked to drop slip into the backup (fail-open).
+        // Unanchored conversion lets the glob match the relevant tail/segment of a
+        // nested path, so exclusions actually take effect. (Available since Qt 6.0.)
+        const QRegularExpression re(QRegularExpression::wildcardToRegularExpression(
+            pattern, QRegularExpression::UnanchoredWildcardConversion));
+        return re.match(normalized).hasMatch();
     });
 }
 
@@ -801,6 +962,29 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
     });
 }
 
+bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& target) {
+    if (!QFile::remove(target)) {
+        QFile::remove(tmp);
+        return false;
+    }
+    if (!QFile::rename(tmp, target)) {
+        QFile::remove(tmp);
+        return false;
+    }
+    return true;
+}
+
+bool UserDataManager::overwriteFile(const QString& source_file, const QString& dest_file) {
+    // Stage the replacement beside the target first: if this copy fails the original
+    // destination is still fully intact (no truncate/remove has happened yet).
+    const QString tmp = dest_file + QStringLiteral(".sak_tmp");
+    QFile::remove(tmp);
+    if (!QFile::copy(source_file, tmp)) {
+        return false;
+    }
+    return atomicReplaceFile(tmp, dest_file);
+}
+
 bool UserDataManager::copyPlainFiles(const QDir& source_dir,
                                      const QDir& dest_dir,
                                      const QStringList& exclude_patterns,
@@ -825,10 +1009,13 @@ bool UserDataManager::copyPlainFiles(const QDir& source_dir,
                                 dest_file.toStdString());
                 return false;
             }
-            if (!QFile::remove(dest_file)) {  // Overwrite
+            // Overwrite WITHOUT a data-loss window: overwriteFile copies to a temp and
+            // atomically swaps, so a failed copy never destroys the original file.
+            if (!overwriteFile(source_file, dest_file)) {
                 sak::logWarning("[UserDataManager] Failed to replace {}", dest_file.toStdString());
                 return false;
             }
+            continue;
         }
         if (!QFile::copy(source_file, dest_file)) {
             // Fail closed: a partial copy must not be reported as a complete
@@ -848,6 +1035,14 @@ bool UserDataManager::copyDirectory(const QString& source,
     Q_ASSERT_X(!destination.isEmpty(), "copyDirectory", "destination must not be empty");
     QDir source_dir(source);
     if (!source_dir.exists()) {
+        return false;
+    }
+    // An unreadable directory enumerates as EMPTY, indistinguishable from a truly empty
+    // one, so a copy would silently omit its contents yet report success. Fail closed:
+    // if the source cannot be read, the backup/restore is incomplete and must not pass.
+    if (!QFileInfo(source).isReadable()) {
+        sak::logWarning("[UserDataManager] Source directory not readable: {}",
+                        source.toStdString());
         return false;
     }
 
@@ -872,8 +1067,11 @@ bool UserDataManager::copyDirectory(const QString& source,
         // one would follow it outside the source root -- pulling in arbitrary
         // external data -- or loop forever if it targets an ancestor.
         if (isReparsePoint(source_subdir)) {
-            sak::logInfo("[UserDataManager] Skipping reparse point {}",
-                         source_subdir.toStdString());
+            // Record the omission at warning level: a junction/symlink is deliberately
+            // NOT followed, so its contents are absent from the backup by design and the
+            // operator should be able to see what was left out.
+            sak::logWarning("[UserDataManager] Skipping reparse point (not backed up): {}",
+                            source_subdir.toStdString());
             continue;
         }
 
@@ -895,10 +1093,21 @@ QString UserDataManager::calculateSHA256(const QString& file_path) const {
 
     QCryptographicHash hash(QCryptographicHash::Sha256);
 
-    // Read in chunks to handle large files
+    // Read in chunks to handle large files. A transient read error must NOT yield a
+    // hash over partial content (which would then compare unequal in a benign case or,
+    // worse, be recorded as the backup's authoritative digest): fail closed instead.
     const qint64 chunk_size = 1024 * 1024;  // 1 MB
     while (!file.atEnd()) {
-        hash.addData(file.read(chunk_size));
+        const QByteArray chunk = file.read(chunk_size);
+        if (file.error() != QFileDevice::NoError) {
+            sak::logWarning("[UserDataManager] Read error while hashing {}",
+                            file_path.toStdString());
+            return QString();
+        }
+        if (chunk.isEmpty()) {
+            break;  // No error and nothing read -> guard against a non-advancing loop.
+        }
+        hash.addData(chunk);
     }
 
     return QString(hash.result().toHex());
@@ -951,35 +1160,25 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::readMetadata(
     if (!file.open(QIODevice::ReadOnly)) {
         return std::nullopt;
     }
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject()) {
+    // Cap the read: a metadata sidecar is small app-authored JSON. An oversized file is
+    // tampered/garbage and readAll()ing it unbounded is a needless memory DoS.
+    constexpr qint64 kMaxMetadataBytes = 1LL * 1024 * 1024;  // 1 MiB
+    if (file.size() > kMaxMetadataBytes) {
+        sak::logWarning("[UserDataManager] Metadata sidecar too large, refusing: {}",
+                        metadata_path.toStdString());
         return std::nullopt;
     }
 
-    QJsonObject json = doc.object();
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        return std::nullopt;
+    }
 
     BackupEntry entry;
-    entry.app_name = json["app_name"].toString();
-    entry.app_version = json["app_version"].toString();
-
-    QJsonArray paths = json["source_paths"].toArray();
-    for (const auto& path : paths) {
-        entry.source_paths.append(path.toString());
+    if (!parseMetadataObject(doc.object(), entry)) {
+        return std::nullopt;  // absent/wrong-typed load-bearing field -> fail closed
     }
-
-    entry.backup_path = json["backup_path"].toString();
-    entry.backup_date = QDateTime::fromString(json["backup_date"].toString(), Qt::ISODate);
-    entry.total_size_bytes = json["total_size"].toInteger();
-    entry.compressed_size_bytes = json["compressed_size"].toInteger();
-    entry.checksum = json["checksum"].toString();
-    entry.encrypted = json["encrypted"].toBool();
-
-    QJsonArray excluded = json["excluded_patterns"].toArray();
-    for (const auto& pattern : excluded) {
-        entry.excluded_patterns.append(pattern.toString());
-    }
-
     return entry;
 }
 

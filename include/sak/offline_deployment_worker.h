@@ -313,6 +313,16 @@ private:
     /// @brief Finalize the bundle: write manifest, clean up, emit completion
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);
 
+    /// @brief Abandon a cancelled build fail-closed: discard the work dir and emit
+    ///        an error (never a completed-bundle signal). Without a manifest the
+    ///        partial packages are un-installable, so nothing is presented as done.
+    void finalizeCancelledBuild(const QString& work_dir);
+
+    /// @brief Assemble the final build stats from the manifest + context and the
+    ///        per-job statuses (offline coverage, cancelled/pending counts).
+    [[nodiscard]] BatchStats computeBuildStats(const DeploymentManifest& manifest,
+                                               const BuildBundleContext& ctx) const;
+
     /// @brief Execute bundle installation on a background thread
     void executeInstallFromBundle(DeploymentManifest manifest,
                                   QString choco_source_dir,

@@ -28,6 +28,7 @@ private Q_SLOTS:
     void nupkgHashMatches_verifiesBase64FeedHash();
     void parsePackageHashFromOData_extractsHashForVersion();
     void parseLatestVersionFromOData_picksSemverMaxWithoutLatestFlag();
+    void parseLatestVersionFromOData_failsClosedOnUnparseableVersions();
     void scriptHasNetworkDownload_detectsUrlsAndRawDownloadPrimitives();
     void scriptHasNetworkDownload_detectsDynamicAndCommandDownloads();
     void scriptHasNetworkDownload_ignoresLocalOnlyScripts();
@@ -201,6 +202,18 @@ void TestPackageInternalizationEngine::
         "<d:IsLatestVersion>true</d:IsLatestVersion></m:properties></entry></feed>");
     QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(flagged),
              QStringLiteral("1.5.0"));
+}
+
+void TestPackageInternalizationEngine::
+    parseLatestVersionFromOData_failsClosedOnUnparseableVersions() {
+    // No entry is flagged latest and NO version parses as a valid SemVer: the result
+    // must be empty (fail closed), never a fall back to the feed's raw last entry --
+    // trusting unparseable feed order is the downgrade vector this must avoid.
+    const QByteArray garbage = QByteArrayLiteral(
+        "<feed xmlns:m='m' xmlns:d='d'>"
+        "<entry><m:properties><d:Version>not-a-version</d:Version></m:properties></entry>"
+        "<entry><m:properties><d:Version>also.bad.$$</d:Version></m:properties></entry></feed>");
+    QVERIFY(PackageInternalizationEngine::parseLatestVersionFromOData(garbage).isEmpty());
 }
 
 void TestPackageInternalizationEngine::

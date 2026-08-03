@@ -34,6 +34,7 @@ private Q_SLOTS:
     void registryKeyRefusesControlChar();
     void registryKeyRefusesSeparatorTricks();
     void registryKeyRefusesBrickCriticalDescendants();
+    void registrySubkeyHiveRootDetection();
 
     // -- Registry values --
     void registryValueRefusesEmptyNameAndSubtree();
@@ -148,6 +149,19 @@ void TestLeftoverCleanupGuard::registryKeyRefusesBrickCriticalDescendants() {
     QVERIFY(!blocked(
         registryKeyDeletionRefusal(QStringLiteral("HKCR\\exefile\\shellex\\ContextMenuHandlers"))));
     QVERIFY(!blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe\\OpenWithProgids"))));
+}
+
+void TestLeftoverCleanupGuard::registrySubkeyHiveRootDetection() {
+    // CleanupWorker's defense-in-depth screen: a post-hive subkey that collapses to nothing targets
+    // the hive ROOT, so RegDeleteTreeW(hive, L"") would wipe the entire hive. It MUST be flagged
+    // regardless of the separator spelling the caller supplied.
+    QVERIFY(cleanupRegistrySubkeyIsHiveRoot(QString()));               // "HKLM\\" -> ""
+    QVERIFY(cleanupRegistrySubkeyIsHiveRoot(QStringLiteral("\\")));    // trailing sep only
+    QVERIFY(cleanupRegistrySubkeyIsHiveRoot(QStringLiteral("\\\\")));  // doubled sep
+    QVERIFY(cleanupRegistrySubkeyIsHiveRoot(QStringLiteral("/")));     // forward slash
+    // A real subkey (even one wrapped in stray separators) is NOT the hive root.
+    QVERIFY(!cleanupRegistrySubkeyIsHiveRoot(QStringLiteral("SOFTWARE\\Acme")));
+    QVERIFY(!cleanupRegistrySubkeyIsHiveRoot(QStringLiteral("\\SYSTEM\\")));
 }
 
 void TestLeftoverCleanupGuard::registryValueRefusesEmptyNameAndSubtree() {

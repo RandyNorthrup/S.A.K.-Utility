@@ -4790,6 +4790,63 @@ private Q_SLOTS:
         QVERIFY(found);
     }
 
+    // W2f(4b): the exposed pure arg-validator fails CLOSED on wrong-typed / fractional byte
+    // fields, a non-object payload, a present-but-non-bool dry_run, and a missing confirm hash --
+    // so a mistyped destructive argument is refused before any disk work, never coerced to 0 /
+    // truncated / a plan-to-apply escalation.
+    void validatePartitionApplyArgsFailsClosed() {
+        const auto base = []() {
+            return QJsonObject{{QStringLiteral("disk_number"), 2},
+                               {QStringLiteral("confirm_layout_hash"), QStringLiteral("h")}};
+        };
+        // A clean args object passes.
+        QVERIFY(!sak::validatePartitionApplyArgs(base()).has_value());
+        // Wrong-typed disk_number (string, not a JSON number).
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("disk_number")] = QStringLiteral("2");
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Wrong-typed byte field (string) -> refused, never coerced to 0.
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("size_bytes")] = QStringLiteral("1024");
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Fractional byte field -> refused, never truncated.
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("offset_bytes")] = 1024.5;
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Non-object payload -> refused (never coerced to an empty {} that drops op fields).
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("payload")] = QStringLiteral("not-an-object");
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Present-but-non-bool dry_run -> refused (never a silent false -> destructive apply).
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("dry_run")] = QStringLiteral("true");
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Missing confirm_layout_hash -> refused (drift guard is mandatory).
+        {
+            const QJsonObject a{{QStringLiteral("disk_number"), 2}};
+            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+        }
+        // Well-formed integral byte field + real bool dry_run + object payload all pass.
+        {
+            QJsonObject a = base();
+            a[QStringLiteral("size_bytes")] = 1048576.0;
+            a[QStringLiteral("dry_run")] = true;
+            a[QStringLiteral("payload")] =
+                QJsonObject{{QStringLiteral("label"), QStringLiteral("X")}};
+            QVERIFY(!sak::validatePartitionApplyArgs(a).has_value());
+        }
+    }
+
     // W2f(5): blocked in a chat/research session (never reaches the executor).
     void applyOperationBlockedInChatSession() {
         AiAssistantPanel panel;

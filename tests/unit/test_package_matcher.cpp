@@ -26,6 +26,7 @@ private Q_SLOTS:
 
     // Mapping export/import
     void exportImport_roundTrip();
+    void importMappings_missingFileReturnsFalse();
 
     // Fuzzy matching internal -- via findMatch
     void findMatch_exactMapping();
@@ -112,14 +113,23 @@ void PackageMatcherTests::exportImport_roundTrip() {
     original.addMapping("UniqueTestApp", "unique-test-pkg");
     [[maybe_unused]] int originalCount = original.getMappingCount();
 
-    original.exportMappings(exportPath);
+    // export/import now report success/failure so callers can detect I/O errors.
+    QVERIFY(original.exportMappings(exportPath));
     QVERIFY(QFile::exists(exportPath));
 
     sak::PackageMatcher imported;
-    imported.importMappings(exportPath);
+    QVERIFY(imported.importMappings(exportPath));
 
     QVERIFY(imported.hasMapping("UniqueTestApp"));
     QCOMPARE(imported.getMapping("UniqueTestApp"), QString("unique-test-pkg"));
+}
+
+void PackageMatcherTests::importMappings_missingFileReturnsFalse() {
+    // A failed open must surface as false (not a silent void), so the caller knows the import did
+    // not happen rather than assuming success.
+    sak::PackageMatcher matcher;
+    QVERIFY(
+        !matcher.importMappings(QStringLiteral("Z:/no-such-dir/absent-mappings-xyz-98765.json")));
 }
 
 // ============================================================================

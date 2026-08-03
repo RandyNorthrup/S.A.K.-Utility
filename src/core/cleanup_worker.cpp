@@ -184,7 +184,20 @@ bool recoverableRecycleAllowed(const QString& path) {
     return volumeSupportsRecycleBin(path) &&
            boundedItemSize(path, kRecoverableRecycleSizeCap) <= kRecoverableRecycleSizeCap;
 }
+
 }  // namespace
+
+QString CleanupWorker::systemToolPath(const QString& systemRoot, const QString& exeName) {
+    // Resolve a Windows system tool (e.g. "sc.exe") to its ABSOLUTE %SystemRoot%\System32 path. A
+    // bare program name handed to CreateProcess resolves through the app dir / CWD / PATH first, so
+    // a portable install with a same-named binary planted alongside it would run the attacker's
+    // tool in our stead (the hijack AppScanner::composePowerShellPath also defends against). Empty
+    // (fail closed) when SystemRoot is unknown -- the caller then refuses to launch.
+    if (systemRoot.isEmpty()) {
+        return {};
+    }
+    return QDir::cleanPath(systemRoot + QStringLiteral("/System32/") + exeName);
+}
 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                              bool useRecycleBin,
@@ -213,7 +226,9 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
 
         reportProgress(idx, total, QString("Cleaning: %1").arg(item.path));
 
-        const bool ok = cleanSingleItem(item);
+        // Defense-in-depth: re-screen each item against the cleanup denylist before dispatching, so
+        // a caller that bypasses AdvancedUninstallController cannot reach the destructive syscalls.
+        const bool ok = cleanItemIfAllowed(item);
 
         if (ok) {
             ++succeeded;
@@ -243,6 +258,47 @@ void CleanupWorker::noteRecycleFallback(bool fallback, const QString& path) {
     if (fallback) {
         m_recycleFallbackPaths.append(path);
     }
+}
+
+QString CleanupWorker::startupEntryCleanupRefusal(const LeftoverItem& item) {
+    // A startup leftover is either a Run/RunOnce registry value or an on-disk shortcut/exe; screen
+    // whichever this one is, mirroring cleanStartupEntry's own dispatch.
+    if (!item.registryValueName.isEmpty()) {
+        return registryValueDeletionRefusal(item.path, item.registryValueName);
+    }
+    return filePathDeletionRefusal(item.path);
+}
+
+QString CleanupWorker::itemCleanupRefusal(const LeftoverItem& item) {
+    switch (item.type) {
+    case LeftoverItem::Type::File:
+    case LeftoverItem::Type::Folder:
+        return filePathDeletionRefusal(item.path);
+    case LeftoverItem::Type::RegistryKey:
+    case LeftoverItem::Type::ShellExtension:
+        return registryKeyDeletionRefusal(item.path);
+    case LeftoverItem::Type::RegistryValue:
+        return registryValueDeletionRefusal(item.path, item.registryValueName);
+    case LeftoverItem::Type::Service:
+        return serviceDeletionRefusal(item.path);
+    case LeftoverItem::Type::ScheduledTask:
+        return scheduledTaskDeletionRefusal(item.path);
+    case LeftoverItem::Type::FirewallRule:
+        return firewallRuleDeletionRefusal(item.path);
+    case LeftoverItem::Type::StartupEntry:
+        return startupEntryCleanupRefusal(item);
+    }
+    return QStringLiteral("unknown leftover item type");
+}
+
+bool CleanupWorker::cleanItemIfAllowed(const LeftoverItem& item) {
+    const QString refusal = itemCleanupRefusal(item);
+    if (!refusal.isEmpty()) {
+        sak::logWarning("Refusing cleanup of " + item.path.toStdString() + ": " +
+                        refusal.toStdString());
+        return false;
+    }
+    return cleanSingleItem(item);
 }
 
 bool CleanupWorker::cleanSingleItem(const LeftoverItem& item) {
@@ -745,6 +801,15 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
         return false;
     }
 
+    // Refuse a bare-hive path ("HKLM\\", "HKCU\\\\", ...): the post-hive subkey collapses to empty,
+    // and RegDeleteTreeW(hive, L"") would delete EVERY subkey/value of the whole hive. Fail closed
+    // (defense-in-depth; the clean_leftovers guard also refuses this before construction).
+    if (cleanupRegistrySubkeyIsHiveRoot(path)) {
+        sak::logWarning("Refusing registry tree delete of " + fullKeyPath.toStdString() +
+                        ": empty post-hive subkey targets the entire hive root");
+        return false;
+    }
+
     // Refuse a REG_LINK symbolic-link key: RegDeleteTreeW would follow it and delete the LINK
     // TARGET's subtree, escaping the path denylist that was screened at validate time.
     if (registryKeyIsSymbolicLink(hive, path)) {
@@ -784,6 +849,14 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
         return false;
     }
 
+    // Refuse a bare-hive path: an empty post-hive subkey makes RegOpenKeyExW(hive, L"") open the
+    // hive ROOT, so the value would be deleted directly under HKLM/HKCU/HKCR. Fail closed.
+    if (cleanupRegistrySubkeyIsHiveRoot(path)) {
+        sak::logWarning("Refusing registry value delete under " + keyPath.toStdString() +
+                        ": empty post-hive subkey targets the hive root");
+        return false;
+    }
+
     // Refuse a REG_LINK symbolic-link key: opening it KEY_SET_VALUE follows the link, so the value
     // would be deleted on the link TARGET rather than the screened key.
     if (registryKeyIsSymbolicLink(hive, path)) {
@@ -811,10 +884,16 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
 
 bool CleanupWorker::removeService(const QString& serviceName) {
     Q_ASSERT(!serviceName.isEmpty());
+    // Launch sc.exe by its absolute System32 path so a same-named binary in the app dir/CWD/PATH
+    // cannot run in our stead. Fail closed when SystemRoot is unknown.
+    const QString sc = systemToolPath(qEnvironmentVariable("SystemRoot"), QStringLiteral("sc.exe"));
+    if (sc.isEmpty()) {
+        sak::logWarning("Refusing service removal: cannot resolve System32 sc.exe");
+        return false;
+    }
     // Stop the service first
-    const auto stop_result = sak::runProcess(QStringLiteral("sc.exe"),
-                                             {QStringLiteral("stop"), serviceName},
-                                             kCleanupCommandTimeoutMs);
+    const auto stop_result =
+        sak::runProcess(sc, {QStringLiteral("stop"), serviceName}, kCleanupCommandTimeoutMs);
     if (stop_result.timed_out) {
         sak::logWarning("Service stop timed out for: {}", serviceName.toStdString());
     }
@@ -823,15 +902,21 @@ bool CleanupWorker::removeService(const QString& serviceName) {
     QThread::msleep(kCleanupServiceStopSettleMs);
 
     // Delete the service
-    const auto del_result = sak::runProcess(QStringLiteral("sc.exe"),
-                                            {QStringLiteral("delete"), serviceName},
-                                            kCleanupCommandTimeoutMs);
+    const auto del_result =
+        sak::runProcess(sc, {QStringLiteral("delete"), serviceName}, kCleanupCommandTimeoutMs);
     return del_result.succeeded();
 }
 
 bool CleanupWorker::removeScheduledTask(const QString& taskName) {
+    // Launch schtasks.exe by its absolute System32 path (anti-hijack); fail closed when unknown.
+    const QString schtasks = systemToolPath(qEnvironmentVariable("SystemRoot"),
+                                            QStringLiteral("schtasks.exe"));
+    if (schtasks.isEmpty()) {
+        sak::logWarning("Refusing scheduled-task removal: cannot resolve System32 schtasks.exe");
+        return false;
+    }
     const auto result = sak::runProcess(
-        QStringLiteral("schtasks.exe"),
+        schtasks,
         {QStringLiteral("/delete"), QStringLiteral("/tn"), taskName, QStringLiteral("/f")},
         kCleanupCommandTimeoutMs);
     return result.succeeded();
@@ -842,14 +927,20 @@ bool CleanupWorker::removeFirewallRule(const LeftoverItem& item) {
     // that display name (inbound + outbound, all profiles, all programs). Narrow it
     // with the dir=/profile=/program= identity captured at scan time so only the one
     // matching rule is deleted.
+    // Launch netsh.exe by its absolute System32 path (anti-hijack); fail closed when unknown.
+    const QString netsh = systemToolPath(qEnvironmentVariable("SystemRoot"),
+                                         QStringLiteral("netsh.exe"));
+    if (netsh.isEmpty()) {
+        sak::logWarning("Refusing firewall-rule removal: cannot resolve System32 netsh.exe");
+        return false;
+    }
     QStringList args{QStringLiteral("advfirewall"),
                      QStringLiteral("firewall"),
                      QStringLiteral("delete"),
                      QStringLiteral("rule"),
                      QStringLiteral("name=%1").arg(item.path)};
     appendFirewallDeleteFilters(args, item);
-    const auto result =
-        sak::runProcess(QStringLiteral("netsh.exe"), args, kCleanupCommandTimeoutMs);
+    const auto result = sak::runProcess(netsh, args, kCleanupCommandTimeoutMs);
     return result.succeeded();
 }
 

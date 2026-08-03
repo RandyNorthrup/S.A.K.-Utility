@@ -61,6 +61,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 
@@ -87,8 +88,13 @@ constexpr qint64 kMaxPstExportBytes = 2LL * 1024 * 1024 * 1024;
 // Map the model-facing format string to the MBOX-capable ExportFormat set. MBOX
 // export only supports per-message file formats (eml/html/text/pdf); the CSV / VCF /
 // ICS formats are PST-only, so they are intentionally not offered here.
-ExportFormat exportFormatFromArg(const QString& value) {
+// Returns nullopt for an unrecognized format so the op fails CLOSED (never silently downgrades a
+// mistyped format to EML). An omitted/empty format is the documented default (EML).
+std::optional<ExportFormat> exportFormatFromArg(const QString& value) {
     const QString v = value.trimmed().toLower();
+    if (v.isEmpty() || v == QLatin1String("eml")) {
+        return ExportFormat::Eml;
+    }
     if (v == QLatin1String("html")) {
         return ExportFormat::Html;
     }
@@ -98,7 +104,7 @@ ExportFormat exportFormatFromArg(const QString& value) {
     if (v == QLatin1String("pdf")) {
         return ExportFormat::Pdf;
     }
-    return ExportFormat::Eml;  // default + fallback for any unrecognized value
+    return std::nullopt;
 }
 
 QString exportFormatLabel(ExportFormat format) {
@@ -114,28 +120,37 @@ QString exportFormatLabel(ExportFormat format) {
     }
 }
 
-// Read the optional item_ids array (MBOX message indices). Empty => whole mailbox.
-// Non-integer / negative entries are dropped. The count is capped so the export
-// cannot be steered into writing an unbounded number of files.
-QVector<uint64_t> exportItemIdsFromArgs(const QJsonObject& args, bool& capped) {
-    QVector<uint64_t> ids;
+// Read the optional item_ids array (MBOX message indices) into @p out. An OMITTED item_ids => whole
+// mailbox (documented). Fails CLOSED: a wrong-typed item_ids, or ANY entry that is not a
+// non-negative whole number, is REFUSED rather than silently dropped -- otherwise an all-invalid
+// array would collapse to an empty set and silently widen the export to the WHOLE mailbox. The
+// count is capped (reported via @p capped) so the export cannot write an unbounded number of files.
+std::optional<AppActionResult> exportItemIdsFromArgs(const QJsonObject& args,
+                                                     QVector<uint64_t>& out,
+                                                     bool& capped) {
     capped = false;
-    const QJsonArray raw = args.value(QStringLiteral("item_ids")).toArray();
-    for (const QJsonValue& value : raw) {
-        if (!value.isDouble()) {
-            continue;
-        }
-        const int index = value.toInt(-1);
-        if (index < 0) {
-            continue;
-        }
-        if (ids.size() >= kMaxExportItems) {
+    if (!args.contains(QStringLiteral("item_ids"))) {
+        return std::nullopt;
+    }
+    const QJsonValue raw_val = args.value(QStringLiteral("item_ids"));
+    if (!raw_val.isArray()) {
+        return AppActionResult{false,
+                               QStringLiteral("item_ids must be an array of message indices"),
+                               {}};
+    }
+    for (const QJsonValue& value : raw_val.toArray()) {
+        if (out.size() >= kMaxExportItems) {
             capped = true;
             break;
         }
-        ids.append(static_cast<uint64_t>(index));
+        const double index = value.isDouble() ? value.toDouble() : -1.0;
+        if (!(index >= 0.0) || std::isinf(index) || std::floor(index) != index) {
+            return AppActionResult{
+                false, QStringLiteral("item_ids entries must be non-negative whole numbers"), {}};
+        }
+        out.append(static_cast<uint64_t>(index));
     }
-    return ids;
+    return std::nullopt;
 }
 
 QJsonObject serializeExportResult(const EmailExportResult& result, bool item_ids_capped) {
@@ -290,10 +305,17 @@ AppActionResult exportMbox(const QJsonObject& args) {
         return *error;
     }
 
-    const ExportFormat format =
+    const std::optional<ExportFormat> format =
         exportFormatFromArg(args.value(QStringLiteral("format")).toString());
+    if (!format) {
+        return {false, QStringLiteral("format must be one of eml/html/text/pdf"), {}};
+    }
     bool item_ids_capped = false;
-    const QVector<uint64_t> item_ids = exportItemIdsFromArgs(args, item_ids_capped);
+    QVector<uint64_t> item_ids;
+    if (const std::optional<AppActionResult> error =
+            exportItemIdsFromArgs(args, item_ids, item_ids_capped)) {
+        return *error;
+    }
 
     // MboxParser opens the file READ-ONLY; the export writer creates NEW files under
     // output_path, which validateExportInputs has already required to be new/empty, so
@@ -306,7 +328,7 @@ AppActionResult exportMbox(const QJsonObject& args) {
     }
 
     EmailExportConfig config;
-    config.format = format;
+    config.format = *format;
     config.output_path = output_path;
     config.item_ids = item_ids;
 
@@ -337,7 +359,7 @@ AppActionResult exportMbox(const QJsonObject& args) {
                 {}};
     }
     return buildExportResult(
-        captured, format, output_path, item_ids_capped, QStringLiteral("MBOX"));
+        captured, *format, output_path, item_ids_capped, QStringLiteral("MBOX"));
 }
 
 QJsonObject stringProp(const QString& description) {
@@ -387,25 +409,37 @@ QJsonObject exportMboxParamsSchema() {
 // that can exceed INT_MAX, so parse them as doubles with an explicit unsigned-32-bit range check --
 // never toInt (which would silently drop a high NID) and never a raw double->uint cast of an
 // out-of-range value (UB). Empty => whole store. The count is capped like the MBOX path.
-QVector<uint64_t> pstExportItemIdsFromArgs(const QJsonObject& args, bool& capped) {
-    QVector<uint64_t> ids;
+std::optional<AppActionResult> pstExportItemIdsFromArgs(const QJsonObject& args,
+                                                        QVector<uint64_t>& out,
+                                                        bool& capped) {
     capped = false;
-    const QJsonArray raw = args.value(QStringLiteral("item_ids")).toArray();
-    for (const QJsonValue& value : raw) {
-        if (!value.isDouble()) {
-            continue;
-        }
-        const double raw_id = value.toDouble(-1.0);
-        if (!(raw_id >= 0.0) || raw_id > 4294967295.0) {  // NaN-safe; 0 .. 0xFFFFFFFF
-            continue;
-        }
-        if (ids.size() >= kMaxExportItems) {
+    if (!args.contains(QStringLiteral("item_ids"))) {
+        return std::nullopt;
+    }
+    const QJsonValue raw_val = args.value(QStringLiteral("item_ids"));
+    if (!raw_val.isArray()) {
+        return AppActionResult{
+            false, QStringLiteral("item_ids must be an array of message node IDs (NIDs)"), {}};
+    }
+    for (const QJsonValue& value : raw_val.toArray()) {
+        if (out.size() >= kMaxExportItems) {
             capped = true;
             break;
         }
-        ids.append(static_cast<uint64_t>(raw_id));
+        const double raw_id = value.isDouble() ? value.toDouble() : -1.0;
+        // Fail CLOSED on a wrong-typed, negative, fractional, NaN/inf, or out-of-range NID: a
+        // silently-dropped entry could collapse the set to empty and widen the export to the whole
+        // store. NIDs are 32-bit whole numbers (0 .. 0xFFFFFFFF).
+        if (!(raw_id >= 0.0) || raw_id > 4294967295.0 || std::isinf(raw_id) ||
+            std::floor(raw_id) != raw_id) {
+            return AppActionResult{false,
+                                   QStringLiteral(
+                                       "item_ids entries must be whole node IDs in 0..4294967295"),
+                                   {}};
+        }
+        out.append(static_cast<uint64_t>(raw_id));
     }
-    return ids;
+    return std::nullopt;
 }
 
 // Collect every folder's node id from a PST folder tree (depth-first). Used to seed a whole-store
@@ -447,10 +481,17 @@ AppActionResult exportPst(const QJsonObject& args) {
         return *error;
     }
 
-    const ExportFormat format =
+    const std::optional<ExportFormat> format =
         exportFormatFromArg(args.value(QStringLiteral("format")).toString());
+    if (!format) {
+        return {false, QStringLiteral("format must be one of eml/html/text/pdf"), {}};
+    }
     bool item_ids_capped = false;
-    const QVector<uint64_t> item_ids = pstExportItemIdsFromArgs(args, item_ids_capped);
+    QVector<uint64_t> item_ids;
+    if (const std::optional<AppActionResult> error =
+            pstExportItemIdsFromArgs(args, item_ids, item_ids_capped)) {
+        return *error;
+    }
 
     PstParser parser;
     parser.open(path);
@@ -459,7 +500,7 @@ AppActionResult exportPst(const QJsonObject& args) {
     }
 
     EmailExportConfig config;
-    config.format = format;
+    config.format = *format;
     config.output_path = output_path;
     config.item_ids = item_ids;
     // No explicit item_ids => export the WHOLE store. PST enumeration is folder-based, so seed
@@ -492,7 +533,8 @@ AppActionResult exportPst(const QJsonObject& args) {
                 error_text.isEmpty() ? QStringLiteral("PST export did not complete") : error_text,
                 {}};
     }
-    return buildExportResult(captured, format, output_path, item_ids_capped, QStringLiteral("PST"));
+    return buildExportResult(
+        captured, *format, output_path, item_ids_capped, QStringLiteral("PST"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,37 +1530,50 @@ QJsonObject serializeApplyResult(const PartitionExecutionResult& result) {
 // Validate the numeric args + require confirm_layout_hash. Returns an error result to
 // return verbatim, or nullopt when everything is well-formed. Split out to keep
 // applyPartitionOperation within the cyclomatic-complexity budget.
+// Validate ONE optional byte-count field. Present => it must be a JSON number that is finite,
+// non-negative, and integral. A wrong-typed (string/bool/object/null) or fractional/NaN/inf value
+// is REFUSED here rather than silently coerced to 0 or truncated by a later toDouble() -- a
+// mistyped size on a destructive partition op must fail closed, not become a zero-byte operation.
+std::optional<AppActionResult> partitionByteFieldError(const QJsonObject& args, const char* key) {
+    const QString name = QString::fromLatin1(key);
+    if (!args.contains(name)) {
+        return std::nullopt;
+    }
+    const QJsonValue value = args.value(name);
+    if (!value.isDouble()) {
+        return AppActionResult{false, QStringLiteral("%1 must be a number of bytes").arg(name), {}};
+    }
+    const double bytes = value.toDouble();
+    if (!(bytes >= 0.0) || std::isinf(bytes) || std::floor(bytes) != bytes) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 must be a finite, non-negative, whole number of bytes").arg(name),
+            {}};
+    }
+    return std::nullopt;
+}
+
 std::optional<AppActionResult> nonNegativeByteArgsError(const QJsonObject& args) {
     for (const char* key : {"offset_bytes", "size_bytes"}) {
-        const QString name = QString::fromLatin1(key);
-        if (args.contains(name) && args.value(name).toDouble(0.0) < 0.0) {
-            return AppActionResult{false,
-                                   QStringLiteral("%1 must be a non-negative number").arg(name),
-                                   {}};
+        if (std::optional<AppActionResult> error = partitionByteFieldError(args, key)) {
+            return error;
         }
     }
     return std::nullopt;
 }
 
-std::optional<AppActionResult> validateApplyArgs(const QJsonObject& args) {
-    if (!args.value(QStringLiteral("disk_number")).isDouble()) {
+// Validate the payload / confirm_layout_hash / dry_run gate arguments. payload (when present) must
+// be a JSON object -- a wrong type must NOT coerce to an empty {} that silently drops every
+// operation field. confirm_layout_hash is required (drift guard). dry_run (when present) must be a
+// real boolean: a present-but-non-bool value read as false via toBool would silently escalate a
+// plan-only request into a destructive apply. Split out to keep validatePartitionApplyArgs within
+// the cyclomatic-complexity budget.
+std::optional<AppActionResult> partitionApplyGateArgsError(const QJsonObject& args) {
+    if (args.contains(QStringLiteral("payload")) &&
+        !args.value(QStringLiteral("payload")).isObject()) {
         return AppActionResult{false,
-                               QStringLiteral("apply_operation requires a numeric 'disk_number'"),
+                               QStringLiteral("payload must be an object of operation fields"),
                                {}};
-    }
-    if (args.value(QStringLiteral("disk_number")).toInt(-1) < 0) {
-        return AppActionResult{false,
-                               QStringLiteral("disk_number must be a non-negative integer"),
-                               {}};
-    }
-    if (args.contains(QStringLiteral("partition_number")) &&
-        args.value(QStringLiteral("partition_number")).toInt(-1) < 0) {
-        return AppActionResult{false,
-                               QStringLiteral("partition_number must be a non-negative integer"),
-                               {}};
-    }
-    if (std::optional<AppActionResult> byte_error = nonNegativeByteArgsError(args)) {
-        return byte_error;
     }
     if (args.value(QStringLiteral("confirm_layout_hash")).toString().trimmed().isEmpty()) {
         return AppActionResult{
@@ -1527,9 +1582,6 @@ std::optional<AppActionResult> validateApplyArgs(const QJsonObject& args) {
                            "prior list_inventory/preview_operation, to detect layout drift)"),
             {}};
     }
-    // dry_run is the single most safety-relevant argument, so it must be a real
-    // boolean -- never coerced. A present-but-non-boolean value (e.g. the string
-    // "true") would otherwise silently read as false via toBool(false).
     if (args.contains(QStringLiteral("dry_run")) &&
         !args.value(QStringLiteral("dry_run")).isBool()) {
         return AppActionResult{false,
@@ -1625,7 +1677,7 @@ AppActionResult applyPartitionOperation(const QJsonObject& args) {
                     .arg(type_name, supportedPartitionOpTypes()),
                 {}};
     }
-    if (const std::optional<AppActionResult> error = validateApplyArgs(args)) {
+    if (const std::optional<AppActionResult> error = validatePartitionApplyArgs(args)) {
         return *error;
     }
     const bool dry_run = args.value(QStringLiteral("dry_run")).toBool(false);
@@ -2829,10 +2881,41 @@ AppActionResult flushDns(const QJsonObject&) {
 // Mutating + requires_admin; NOT destructive (installs a reversible profile + associates -- no data
 // loss) and NOT catastrophic. The durable outcome is the installed profile; the immediate
 // association may be pending / out of range and is reported separately.
+// Accept only the security types the schema advertises (case-insensitive), plus an omitted/empty
+// value (the documented default, WPA2-PSK). A present-but-UNKNOWN security, a non-string security,
+// or a non-bool hidden is REFUSED here rather than silently coerced -- a mistyped security must
+// fail closed, not install a wrong-auth profile that reports success. Shared shape with the
+// read-only generate_wifi_setup_script guard.
+std::optional<AppActionResult> wifiConnectArgsError(const QJsonObject& args) {
+    if (args.contains(QStringLiteral("hidden")) && !args.value(QStringLiteral("hidden")).isBool()) {
+        return AppActionResult{false,
+                               QStringLiteral("hidden must be a boolean (true or false)"),
+                               {}};
+    }
+    if (!args.contains(QStringLiteral("security"))) {
+        return std::nullopt;
+    }
+    const QJsonValue sec = args.value(QStringLiteral("security"));
+    if (!sec.isString()) {
+        return AppActionResult{false,
+                               QStringLiteral("security must be a string (wpa2, wep, or open)"),
+                               {}};
+    }
+    const QString v = sec.toString().trimmed().toLower();
+    if (v.isEmpty() || v == QLatin1String("wpa2") || v == QLatin1String("wep") ||
+        v == QLatin1String("open")) {
+        return std::nullopt;
+    }
+    return AppActionResult{false, QStringLiteral("security must be one of wpa2, wep, or open"), {}};
+}
+
 AppActionResult connectWifi(const QJsonObject& args) {
     const QString ssid = args.value(QStringLiteral("ssid")).toString();
     if (ssid.trimmed().isEmpty()) {
         return {false, QStringLiteral("connect_wifi requires a non-empty 'ssid'"), {}};
+    }
+    if (const std::optional<AppActionResult> error = wifiConnectArgsError(args)) {
+        return *error;
     }
     const QString password = args.value(QStringLiteral("password")).toString();
     const QString security = args.value(QStringLiteral("security")).toString();
@@ -2861,8 +2944,8 @@ QJsonObject connectWifiParamsSchema() {
         {QStringLiteral("enum"),
          QJsonArray{QStringLiteral("wpa2"), QStringLiteral("wep"), QStringLiteral("open")}},
         {QStringLiteral("description"),
-         QStringLiteral("Security type; anything other than wep/open is treated as WPA2-PSK "
-                        "(default wpa2)")}};
+         QStringLiteral("Security type: wpa2 (the default when omitted), wep, or open. Any other "
+                        "value is refused rather than assumed.")}};
     QJsonObject hidden_prop{{QStringLiteral("type"), QStringLiteral("boolean")},
                             {QStringLiteral("description"),
                              QStringLiteral("True if the network does not broadcast its SSID")}};
@@ -3639,6 +3722,29 @@ void registerFileMutatingOps(const AddMutatingActionFn& add) {
 }
 
 }  // namespace
+
+std::optional<AppActionResult> validatePartitionApplyArgs(const QJsonObject& args) {
+    if (!args.value(QStringLiteral("disk_number")).isDouble()) {
+        return AppActionResult{false,
+                               QStringLiteral("apply_operation requires a numeric 'disk_number'"),
+                               {}};
+    }
+    if (args.value(QStringLiteral("disk_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("disk_number must be a non-negative integer"),
+                               {}};
+    }
+    if (args.contains(QStringLiteral("partition_number")) &&
+        args.value(QStringLiteral("partition_number")).toInt(-1) < 0) {
+        return AppActionResult{false,
+                               QStringLiteral("partition_number must be a non-negative integer"),
+                               {}};
+    }
+    if (std::optional<AppActionResult> byte_error = nonNegativeByteArgsError(args)) {
+        return byte_error;
+    }
+    return partitionApplyGateArgsError(args);
+}
 
 FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, int disk_number) {
     const auto refuse = [](const QString& message) {

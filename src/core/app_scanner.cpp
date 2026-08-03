@@ -4,6 +4,7 @@
 #include "sak/app_scanner.h"
 
 #include "sak/bundled_tools_manager.h"
+#include "sak/chocolatey_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -25,6 +26,20 @@ namespace {
 constexpr int kRegistrySubKeyNameChars = 256;
 constexpr int kRegistryValueBufferChars = 1024;
 constexpr int kChocolateyListFieldCount = 2;
+
+#ifdef _WIN32
+// Short hive label so a registry_key identifier disambiguates HKLM vs HKCU
+// entries that share the same Uninstall subkey path.
+QString hiveDisplayPrefix(HKEY hive) {
+    if (hive == HKEY_LOCAL_MACHINE) {
+        return QStringLiteral("HKLM");
+    }
+    if (hive == HKEY_CURRENT_USER) {
+        return QStringLiteral("HKCU");
+    }
+    return QStringLiteral("HKEY");
+}
+#endif
 }  // namespace
 
 // Registry paths for installed applications
@@ -127,7 +142,8 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 
         AppInfo app;
         app.source = AppInfo::Source::Registry;
-        app.registry_key = subkey + "\\" + QString::fromWCharArray(subKeyName);
+        app.registry_key = hiveDisplayPrefix(static_cast<HKEY>(hive)) + "\\" + subkey + "\\" +
+                           QString::fromWCharArray(subKeyName);
 
         // Read application details
         app.name = readRegistryValue(appKey, "DisplayName");
@@ -223,6 +239,19 @@ bool AppScanner::isSystemComponent(const QString& name) {
     return name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio");
 }
 
+QString AppScanner::authoritativeWindowsRoot() {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH];
+    const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return {};  // fail closed: cannot trust an unresolved Windows root
+    }
+    return QString::fromWCharArray(buffer, static_cast<int>(len));
+#else
+    return {};
+#endif
+}
+
 QString AppScanner::composePowerShellPath(const QString& systemRoot) {
     // Fail closed: with no known Windows root we cannot resolve a trusted
     // PowerShell, and invoking a bare "powershell.exe" would let a PATH/CWD-planted
@@ -237,7 +266,10 @@ QString AppScanner::composePowerShellPath(const QString& systemRoot) {
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     std::vector<AppInfo> apps;
 
-    const QString powershell = composePowerShellPath(qEnvironmentVariable("SystemRoot"));
+    // Resolve PowerShell under the OS-authoritative Windows directory, never the
+    // attacker-influenceable %SystemRoot% env var, so a poisoned env cannot point
+    // us at a planted powershell.exe.
+    const QString powershell = composePowerShellPath(authoritativeWindowsRoot());
     if (powershell.isEmpty()) {
         sak::logWarning("AppScanner: cannot resolve System32 PowerShell; skipping AppX scan");
         return apps;
@@ -307,6 +339,16 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     }
     const QString choco_path = tools.toolPath(QStringLiteral("chocolatey"),
                                               QStringLiteral("choco.exe"));
+
+    // Fail closed: never launch the bundled choco.exe for inventory unless it is a
+    // genuine, Chocolatey-signed binary. Mirrors ChocolateyManager::executeChoco so
+    // a tampered bundled choco cannot run on the scan path either.
+    if (!ChocolateyManager::isAuthenticChocoBinary(choco_path)) {
+        sak::logWarning(
+            "Bundled choco.exe failed authenticity verification; skipping Chocolatey "
+            "package scan");
+        return apps;
+    }
 
     // Pin ChocolateyInstall to the bundled portable root so `choco list` reads OUR
     // store, not the system one (matches OfflineDeploymentWorker/ChocolateyManager).

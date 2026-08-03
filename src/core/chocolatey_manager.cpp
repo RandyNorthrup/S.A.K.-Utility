@@ -15,6 +15,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -65,7 +66,13 @@ bool winVerifyTrustFile(const std::wstring& path) {
     WINTRUST_DATA wd{};
     wd.cbStruct = sizeof(wd);
     wd.dwUIChoice = WTD_UI_NONE;
-    wd.fdwRevocationChecks = WTD_REVOKE_NONE;
+    // Check the whole chain for revocation so a revoked-but-otherwise-genuine
+    // Chocolatey cert is rejected. WTD_CACHE_ONLY_URL_RETRIEVAL keeps the check to
+    // locally cached CRL/OCSP data: it still catches a known-revoked cert without
+    // stalling on (or false-rejecting during) the offline servicing this portable
+    // tool is built for.
+    wd.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
+    wd.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_CHAIN;
     wd.dwUnionChoice = WTD_CHOICE_FILE;
     wd.pFile = &file_info;
     wd.dwStateAction = WTD_STATEACTION_VERIFY;
@@ -165,7 +172,6 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     // silently retaining the previously found executable and reporting initialized.
     m_choco_path.clear();
     m_initialized = false;
-    m_choco_authentic = 0;  // new binary path: re-verify authenticity before use
 
     // Look for choco.exe in common locations within portable directory
     QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),
@@ -223,15 +229,15 @@ bool ChocolateyManager::verifyIntegrity() {
     return result.success;
 }
 
-bool ChocolateyManager::verifyChocoAuthenticity() const {
+bool ChocolateyManager::isAuthenticChocoBinary(const QString& choco_path) {
 #ifdef _WIN32
-    if (m_choco_path.isEmpty()) {
+    if (choco_path.isEmpty()) {
         return false;
     }
-    const std::wstring path = m_choco_path.toStdWString();
+    const std::wstring path = choco_path.toStdWString();
     if (!winVerifyTrustFile(path)) {
         sak::logWarning("[ChocolateyManager] choco.exe Authenticode verification failed: {}",
-                        m_choco_path.toStdString());
+                        choco_path.toStdString());
         return false;
     }
     const QString signer = signerSubjectName(path);
@@ -243,15 +249,20 @@ bool ChocolateyManager::verifyChocoAuthenticity() const {
     return true;
 #else
     // No Authenticode facility off Windows: refuse rather than run unverified.
+    Q_UNUSED(choco_path);
     return false;
 #endif
 }
 
+bool ChocolateyManager::verifyChocoAuthenticity() const {
+    return isAuthenticChocoBinary(m_choco_path);
+}
+
 bool ChocolateyManager::ensureChocoAuthentic() {
-    if (m_choco_authentic == 0) {
-        m_choco_authentic = verifyChocoAuthenticity() ? 1 : -1;
-    }
-    return m_choco_authentic == 1;
+    // Re-verify on every call rather than caching a permanent verdict: a binary
+    // proven genuine once could be swapped on disk afterward (TOCTOU). A fresh
+    // local signature check per execution closes that window and fails closed.
+    return verifyChocoAuthenticity();
 }
 
 QString ChocolateyManager::getChocoPath() const {
@@ -307,6 +318,33 @@ QString ChocolateyManager::approvedInstallSource(bool allow_unofficial) {
     return QString::fromLatin1(kApprovedChocoSource);
 }
 
+bool ChocolateyManager::validateExtraArgs(const QStringList& extra_args) {
+    // Checksum/integrity overrides would let a tampered or corrupt package install
+    // silently. Refuse them outright rather than pass them through to choco.
+    static const QStringList kForbidden = {QStringLiteral("--ignore-checksum"),
+                                           QStringLiteral("--ignore-checksums"),
+                                           QStringLiteral("--allow-empty-checksums"),
+                                           QStringLiteral("--allow-empty-checksums-secure")};
+    return std::none_of(extra_args.cbegin(), extra_args.cend(), [](const QString& arg) {
+        const QString lower = arg.trimmed().toLower();
+        return std::any_of(kForbidden.cbegin(), kForbidden.cend(), [&lower](const QString& bad) {
+            return lower == bad || lower.startsWith(bad + QStringLiteral("="));
+        });
+    });
+}
+
+int ChocolateyManager::computeTimeoutMs(int timeout_seconds, int default_seconds) {
+    const long long seconds = timeout_seconds > 0 ? timeout_seconds : default_seconds;
+    const long long ms = seconds * static_cast<long long>(kMillisecondsPerSecond);
+    if (ms < 0) {
+        return 0;
+    }
+    if (ms > std::numeric_limits<int>::max()) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(ms);
+}
+
 ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig& config) {
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
@@ -316,16 +354,24 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
         return {false, "", "Invalid package name: " + config.package_name, -1};
     }
 
-    if (config.version_locked && !config.version.isEmpty() && !validateVersion(config.version)) {
+    // Fail closed: a locked install with no version would silently resolve to the
+    // latest, defeating the pin. Require the version when the lock is requested.
+    if (config.version_locked && config.version.isEmpty()) {
+        return {false, "", "version_locked requires a non-empty version", -1};
+    }
+
+    if (config.version_locked && !validateVersion(config.version)) {
         return {false, "", "Invalid version format: " + config.version, -1};
+    }
+
+    if (!validateExtraArgs(config.extra_args)) {
+        return {false, "", "extra_args contains a forbidden security override", -1};
     }
 
     Q_EMIT installStarted(config.package_name);
 
     QStringList args = buildInstallArgs(config);
-    int timeout_ms = config.timeout_seconds > 0
-                         ? config.timeout_seconds * kMillisecondsPerSecond
-                         : m_default_timeout_seconds * kMillisecondsPerSecond;
+    const int timeout_ms = computeTimeoutMs(config.timeout_seconds, m_default_timeout_seconds);
     Result result = executeChoco(args, timeout_ms);
 
     if (result.success) {
@@ -383,8 +429,10 @@ ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query,
     if (query.isEmpty()) {
         return {false, "", "Search query is empty", -1};
     }
+    // Fail closed: a negative limit previously coerced to 0, which drops the
+    // --page-size flag and silently returns an UNBOUNDED result set.
     if (max_results < 0) {
-        max_results = 0;
+        return {false, "", "max_results must not be negative", -1};
     }
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
@@ -441,11 +489,10 @@ bool ChocolateyManager::isPackageInstalled(const QString& package_name) {
     if (!m_initialized) {
         return false;
     }
-
-    QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, kPackageQueryTimeoutMs);
-
-    return result.success && result.output.contains(package_name);
+    // Reuse the STRUCTURED "name|version" record parse instead of a substring
+    // contains(): a bare contains() over the raw output could match the package
+    // name appearing incidentally elsewhere and report a false positive.
+    return !getInstalledVersion(package_name).isEmpty();
 }
 
 QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
@@ -551,6 +598,13 @@ ChocolateyManager::Result ChocolateyManager::installWithRetry(const InstallConfi
 }
 
 void ChocolateyManager::setDefaultTimeout(int seconds) {
+    // Reject a negative default rather than storing it: a negative would later be
+    // treated as "no explicit timeout" and mask the caller's invalid input.
+    if (seconds < 0) {
+        sak::logWarning("[ChocolateyManager] setDefaultTimeout: ignoring negative value {}",
+                        seconds);
+        return;
+    }
     m_default_timeout_seconds = seconds;
 }
 

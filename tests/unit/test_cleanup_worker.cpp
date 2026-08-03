@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -33,6 +34,13 @@ private Q_SLOTS:
 
     // Cancellation is not success (B10-30)
     void cancelledBeforeStart_emitsCancelledNotComplete();
+
+    // Anti-hijack: destructive CLI tools resolved by absolute System32 path (Codex-3)
+    void systemToolPath_absoluteUnderSystemRootOrFailClosed();
+
+    // Defense-in-depth: worker re-screens each item against the cleanup denylist (Codex-3)
+    void deniedTargets_refusedWithoutDeletion();
+    void itemCleanupRefusal_screensEachType();
 };
 
 void TestCleanupWorker::construction_emptyItems() {
@@ -84,7 +92,12 @@ void TestCleanupWorker::leftoverItem_riskLevel_values() {
 void TestCleanupWorker::permanentMode_deletesAndEmitsNoRecycleFallback() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString path = QDir(dir.path()).filePath("leftover.txt");
+    // Use the canonical (long-form) temp path: the worker's defense-in-depth denylist screen
+    // refuses 8.3 short-name components (e.g. a CI "RUNNER~1" temp dir), and real scanned leftovers
+    // are always long-form. Canonicalizing keeps the test representative of the production input.
+    const QString base = QFileInfo(dir.path()).canonicalFilePath();
+    QVERIFY(!base.isEmpty());
+    const QString path = QDir(base).filePath("leftover.txt");
     {
         QFile f(path);
         QVERIFY(f.open(QIODevice::WriteOnly));
@@ -117,7 +130,10 @@ void TestCleanupWorker::permanentMode_deletesNestedFolderTree() {
     // in subdirectories is fully removed (files deleted by handle, subdirs recursed, dirs removed).
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());
-    const QString root = QDir(tmp.path()).filePath("AcmeLeftover");
+    // Canonical (long-form) base -- the worker's denylist screen refuses 8.3 short-name components.
+    const QString tmpBase = QFileInfo(tmp.path()).canonicalFilePath();
+    QVERIFY(!tmpBase.isEmpty());
+    const QString root = QDir(tmpBase).filePath("AcmeLeftover");
     QDir().mkpath(QDir(root).filePath("sub/deeper"));
     const QStringList files = {QDir(root).filePath("a.txt"),
                                QDir(root).filePath("sub/b.txt"),
@@ -154,7 +170,11 @@ void TestCleanupWorker::requireRecoverable_neverPermanentlyDeletes() {
     // so the outcome is deterministic without depending on a real Recycle Bin in the test host.)
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString path = QDir(dir.path()).filePath("keep_me.txt");
+    // Canonical (long-form) base so the denylist screen allows it and the requireRecoverable path
+    // -- not a short-name refusal -- is what leaves the file in place.
+    const QString base = QFileInfo(dir.path()).canonicalFilePath();
+    QVERIFY(!base.isEmpty());
+    const QString path = QDir(base).filePath("keep_me.txt");
     {
         QFile f(path);
         QVERIFY(f.open(QIODevice::WriteOnly));
@@ -213,6 +233,80 @@ void TestCleanupWorker::cancelledBeforeStart_emitsCancelledNotComplete() {
     QCOMPARE(completeSpy.count(), 0);
     // ...and nothing was deleted.
     QVERIFY(QFile::exists(path));
+}
+
+void TestCleanupWorker::systemToolPath_absoluteUnderSystemRootOrFailClosed() {
+    // Empty SystemRoot -> fail closed (never launch a bare sc.exe/schtasks.exe/netsh.exe that a
+    // planted binary in the app dir/CWD/PATH could satisfy).
+    QVERIFY(CleanupWorker::systemToolPath(QString(), QStringLiteral("sc.exe")).isEmpty());
+
+    // A known root -> an absolute, rooted System32 path, not a bare executable name.
+    const QString sc = CleanupWorker::systemToolPath(QStringLiteral("C:\\Windows"),
+                                                     QStringLiteral("sc.exe"));
+    QVERIFY(!sc.isEmpty());
+    QVERIFY(sc.endsWith(QStringLiteral("System32/sc.exe")));
+    QVERIFY(QDir::isAbsolutePath(sc));
+    QVERIFY(sc.contains(QLatin1Char('/')));  // rooted, not a bare name
+
+    const QString netsh = CleanupWorker::systemToolPath(QStringLiteral("C:/Windows"),
+                                                        QStringLiteral("netsh.exe"));
+    QVERIFY(netsh.endsWith(QStringLiteral("System32/netsh.exe")));
+}
+
+void TestCleanupWorker::deniedTargets_refusedWithoutDeletion() {
+    // A caller that bypasses AdvancedUninstallController and hands the worker OS-critical targets
+    // must be refused by the worker's own denylist re-screen -- BEFORE any destructive syscall runs
+    // (no sc.exe launch, no filesystem touch). Both items are protected, so both fail with nothing
+    // deleted.
+    QVector<LeftoverItem> items;
+    LeftoverItem svc;
+    svc.type = LeftoverItem::Type::Service;
+    svc.path = QStringLiteral("RpcSs");  // critical Windows service
+    svc.selected = true;
+    items.append(svc);
+
+    LeftoverItem sys;
+    sys.type = LeftoverItem::Type::File;
+    sys.path = QStringLiteral("C:\\Windows");  // Windows system directory
+    sys.selected = true;
+    items.append(sys);
+
+    CleanupWorker worker(items, /*useRecycleBin=*/false);
+    QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
+    QSignalSpy itemSpy(&worker, &CleanupWorker::itemCleaned);
+    worker.start();
+    QVERIFY(completeSpy.wait(5000));
+
+    const auto args = completeSpy.takeFirst();
+    QCOMPARE(args.at(0).toInt(), 0);  // zero succeeded -- both refused by the guard
+    QCOMPARE(args.at(1).toInt(), 2);  // both failed
+    QCOMPARE(itemSpy.count(), 2);
+    for (const auto& sig : itemSpy) {
+        QVERIFY(!sig.at(1).toBool());  // each reported not-cleaned
+    }
+}
+
+void TestCleanupWorker::itemCleanupRefusal_screensEachType() {
+    // The per-type screen refuses a protected target for every leftover type and allows a benign
+    // vendor target -- so the defense-in-depth layer covers the whole dispatch surface.
+    const auto refusal = [](LeftoverItem::Type t, const QString& path, const QString& value = {}) {
+        LeftoverItem item;
+        item.type = t;
+        item.path = path;
+        item.registryValueName = value;
+        return CleanupWorker::itemCleanupRefusal(item);
+    };
+    QVERIFY(!refusal(LeftoverItem::Type::RegistryKey, QStringLiteral("HKLM\\SYSTEM")).isEmpty());
+    QVERIFY(!refusal(LeftoverItem::Type::Service, QStringLiteral("DcomLaunch")).isEmpty());
+    QVERIFY(!refusal(LeftoverItem::Type::ScheduledTask, QStringLiteral("\\Microsoft\\Windows\\Foo"))
+                 .isEmpty());
+    QVERIFY(!refusal(LeftoverItem::Type::FirewallRule, QStringLiteral("all")).isEmpty());
+    QVERIFY(!refusal(LeftoverItem::Type::ShellExtension, QStringLiteral("HKCR\\CLSID")).isEmpty());
+    // A specific vendor leftover of each kind is allowed (empty refusal).
+    QVERIFY(refusal(LeftoverItem::Type::RegistryKey, QStringLiteral("HKLM\\SOFTWARE\\Acme\\App"))
+                .isEmpty());
+    QVERIFY(refusal(LeftoverItem::Type::Service, QStringLiteral("AcmeUpdater")).isEmpty());
+    QVERIFY(refusal(LeftoverItem::Type::FirewallRule, QStringLiteral("Acme App Rule")).isEmpty());
 }
 
 QTEST_MAIN(TestCleanupWorker)

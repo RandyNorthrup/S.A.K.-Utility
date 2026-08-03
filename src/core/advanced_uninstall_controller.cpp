@@ -54,6 +54,25 @@ void retireWorker(std::unique_ptr<WorkerT>& worker) {
     worker.reset();
 }
 
+// A registry key path is well-formed only when it is rooted at a recognized hive. Anything else is
+// malformed and must never reach the destructive RegistryOnly worker (defense in depth at the
+// controller layer; the worker does its own denylist/symlink screening).
+bool isHiveRootedKeyPath(const QString& path) {
+    static const QStringList kHiveRoots = {
+        QStringLiteral("HKLM\\"),
+        QStringLiteral("HKCU\\"),
+        QStringLiteral("HKCR\\"),
+        QStringLiteral("HKU\\"),
+        QStringLiteral("HKCC\\"),
+    };
+    for (const QString& root : kHiveRoots) {
+        if (path.startsWith(root, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 UninstallWorker::Mode uninstallModeForProgram(const ProgramInfo& program) {
     if (program.source == ProgramInfo::Source::UWP ||
         program.source == ProgramInfo::Source::Provisioned) {
@@ -226,6 +245,14 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
 
     if (program.registryKeyPath.isEmpty()) {
         Q_EMIT statusMessage("Cannot remove: no registry key path.", kStatusTimeoutShortMs);
+        return;
+    }
+
+    // Fail closed on a malformed (non-hive-rooted) key path before spawning a destructive
+    // RegistryOnly worker, so an unscreened string can never drive a registry delete.
+    if (!isHiveRootedKeyPath(program.registryKeyPath)) {
+        Q_EMIT statusMessage("Cannot remove: registry key path is not hive-rooted.",
+                             kStatusTimeoutShortMs);
         return;
     }
 
@@ -493,6 +520,15 @@ void AdvancedUninstallController::cancelOperation() {
 void AdvancedUninstallController::addToQueue(const ProgramInfo& program,
                                              ScanLevel scanLevel,
                                              bool autoCleanSafe) {
+    // Refuse mid-batch mutation: processNextQueueItem / onUninstallComplete index m_queue by
+    // m_batchIndex, so appending while a batch runs (m_batchIndex >= 0) would shift indices and
+    // misattribute a completion to the wrong program.
+    if (m_batchIndex >= 0) {
+        Q_EMIT statusMessage("Cannot modify the queue while a batch uninstall is running.",
+                             kStatusTimeoutShortMs);
+        return;
+    }
+
     if (program.displayName.isEmpty()) {
         Q_EMIT statusMessage("Cannot add to queue: program name is empty.", kStatusTimeoutShortMs);
         return;
@@ -507,6 +543,13 @@ void AdvancedUninstallController::addToQueue(const ProgramInfo& program,
 }
 
 void AdvancedUninstallController::removeFromQueue(int index) {
+    // Mid-batch removal would shift m_batchIndex-based indexing so a completion is applied to (or
+    // an uninstall is run against) the wrong queued program -- refuse it while a batch is running.
+    if (m_batchIndex >= 0) {
+        Q_EMIT statusMessage("Cannot modify the queue while a batch uninstall is running.",
+                             kStatusTimeoutShortMs);
+        return;
+    }
     if (index >= 0 && index < m_queue.size()) {
         m_queue.removeAt(index);
     }
@@ -517,6 +560,13 @@ QVector<UninstallQueueItem> AdvancedUninstallController::queue() const {
 }
 
 void AdvancedUninstallController::clearQueue() {
+    // Clearing the queue mid-batch would leave m_batchIndex pointing past the emptied vector and
+    // strand the running item's completion -- refuse it while a batch is running.
+    if (m_batchIndex >= 0) {
+        Q_EMIT statusMessage("Cannot modify the queue while a batch uninstall is running.",
+                             kStatusTimeoutShortMs);
+        return;
+    }
     m_queue.clear();
 }
 
@@ -568,6 +618,10 @@ void AdvancedUninstallController::loadSettings() {
         raw_scan_level = kDefaultScanLevelValue;
     }
     m_defaultScanLevel = static_cast<ScanLevel>(raw_scan_level);
+    // The boolean prefs use toBool() coercion by design: they are written only by saveSettings()
+    // from typed bool members (app-controlled config), so there is no untrusted wrong-typed input
+    // to fail closed on here -- unlike the scan level above, which is range-validated because an
+    // out-of-range int would cast to an invalid ScanLevel enum.
     m_autoRestorePoint = cfg.getValue("advuninstall/auto_restore_point", true).toBool();
     m_autoCleanSafe = cfg.getValue("advuninstall/auto_clean_safe", true).toBool();
     m_showSystemComponents = cfg.getValue("advuninstall/show_system_components", false).toBool();
@@ -607,6 +661,13 @@ ScanLevel AdvancedUninstallController::defaultScanLevel() const {
 }
 
 void AdvancedUninstallController::setDefaultScanLevel(ScanLevel level) {
+    // Fail closed on an out-of-range enum (e.g. a bad numeric cast): keep the current level rather
+    // than store a value that would later drive an invalid scan.
+    const int raw = static_cast<int>(level);
+    if (raw < 0 || raw > kMaxScanLevelValue) {
+        Q_EMIT statusMessage("Ignored invalid default scan level.", kStatusTimeoutShortMs);
+        return;
+    }
     m_defaultScanLevel = level;
 }
 
@@ -916,25 +977,33 @@ void AdvancedUninstallController::finishBatchUninstall() {
         }
     }
 
-    setState(State::Idle);
+    // Screen the accumulated SAFE auto-clean items BEFORE announcing the batch finished. If a
+    // cleanup will run, the controller must NOT pass through Idle: a batchFinished slot that
+    // synchronously starts a refresh would flip to Enumerating and clobber the pending Cleaning
+    // transition (the single-uninstall path defers its signal for exactly this reason). So stay
+    // busy (Uninstalling) across batchFinished, then hand off to Cleaning via startCleanupWorker.
+    const QVector<LeftoverItem> auto_clean = m_batchAutoCleanItems;
+    m_batchAutoCleanItems.clear();
+    int refused = 0;
+    const QVector<LeftoverItem> screened =
+        auto_clean.isEmpty() ? QVector<LeftoverItem>{} : screenCleanupItems(auto_clean, &refused);
+
+    if (screened.isEmpty()) {
+        setState(State::Idle);
+    }
     Q_EMIT batchFinished(succeeded, failed);
     Q_EMIT statusMessage(
         QString("Batch uninstall complete: %1 succeeded, %2 failed.").arg(succeeded).arg(failed),
         kStatusTimeoutLongMs);
     m_batchIndex = -1;
-
-    // Now that no uninstall worker is running, auto-clean the SAFE leftovers accumulated from every
-    // opted-in batch item in one RECOVERABLE (Recycle Bin, forced), denylist-screened pass.
-    const QVector<LeftoverItem> auto_clean = m_batchAutoCleanItems;
-    m_batchAutoCleanItems.clear();
-    if (auto_clean.isEmpty()) {
-        return;
-    }
-    int refused = 0;
-    const QVector<LeftoverItem> screened = screenCleanupItems(auto_clean, &refused);
     if (screened.isEmpty()) {
         return;
     }
+
+    // Auto-clean the SAFE leftovers accumulated from every opted-in batch item in one RECOVERABLE
+    // (Recycle Bin, forced), denylist-screened pass. State is still Uninstalling here; the cleanup
+    // takes it Uninstalling -> Cleaning -> Idle (onCleanupComplete), never touching Idle in
+    // between.
     Q_EMIT autoCleanSafeStarted(static_cast<int>(screened.size()));
     Q_EMIT statusMessage(QString("Auto-cleaning %1 safe leftover item(s) from the batch to the "
                                  "Recycle Bin...")

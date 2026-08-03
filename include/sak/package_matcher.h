@@ -89,9 +89,10 @@ public:
     int getFuzzyMatchCount() const;
     int getSearchMatchCount() const;
 
-    // Export/import mappings
-    void exportMappings(const QString& file_path) const;
-    void importMappings(const QString& file_path);
+    // Export/import mappings. Return TRUE on success, FALSE on any I/O / parse / size-cap failure
+    // so callers can detect and surface the error instead of assuming it silently succeeded.
+    bool exportMappings(const QString& file_path) const;
+    bool importMappings(const QString& file_path);
 
 private:
     // Matching strategies

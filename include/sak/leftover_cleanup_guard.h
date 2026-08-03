@@ -75,6 +75,16 @@ namespace sak {
     return parts.join(QLatin1Char('\\')).toLower();
 }
 
+/// True if @p postHivePath (the remainder AFTER the HKLM\\/HKCU\\/HKCR\\ prefix) collapses to
+/// nothing once separators are canonicalized -- i.e. it targets the HIVE ROOT itself. The registry
+/// API resolves "", "\\", "\\\\", and "/" all to the hive root, so RegDeleteTreeW(hive, L"") would
+/// delete EVERY subkey/value of HKLM/HKCU/HKCR and RegOpenKeyExW(hive, L"") would open the root.
+/// CleanupWorker refuses such a path fail-closed (defense-in-depth under
+/// registryKeyDeletionRefusal). Pure; unit-testable without a live registry.
+[[nodiscard]] inline bool cleanupRegistrySubkeyIsHiveRoot(const QString& postHivePath) {
+    return cleanupNormalizedSubkey(postHivePath).isEmpty();
+}
+
 /// Registry subtrees where NOTHING may be deleted (prefix match at a key boundary). These are the
 /// keys whose loss unboots the machine or breaks the security substrate.
 ///

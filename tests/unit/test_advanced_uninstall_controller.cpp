@@ -34,6 +34,7 @@ private Q_SLOTS:
     void nonSafeLeftovers_keepsReviewAndRisky();
     void autoCleanableLeftovers_excludesIrreversibleSafeTypes();
     void defaultScanLevel_setAndGet();
+    void defaultScanLevel_rejectsInvalid();
     void showSystemComponents_setAndGet();
     void defaultScanLevel_allValues();
 
@@ -49,6 +50,7 @@ private Q_SLOTS:
     void removeFromQueue_invalidTooLarge();
     void clearQueue_emptiesQueue();
     void queueItem_defaultStatus();
+    void queueMutation_refusedDuringBatch();
 
     // ── State Guards ──
     void uninstallProgram_rejectsWhenBusy();
@@ -61,6 +63,7 @@ private Q_SLOTS:
     void uninstallProgram_rejectsEmptyName();
     void forceUninstall_rejectsEmptyName();
     void removeRegistryEntry_rejectsEmptyKeyPath();
+    void removeRegistryEntry_rejectsNonHiveRooted();
 
     // ── Settings Persistence ──
     void saveAndLoadSettings_roundTrip();
@@ -239,6 +242,19 @@ void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet() {
     QCOMPARE(ctrl.defaultScanLevel(), ScanLevel::Moderate);
 }
 
+void AdvancedUninstallControllerTests::defaultScanLevel_rejectsInvalid() {
+    AdvancedUninstallController ctrl;
+    ctrl.setDefaultScanLevel(ScanLevel::Moderate);
+
+    // An out-of-range enum (e.g. a bad numeric cast) must be refused and the prior valid level
+    // kept, rather than stored as a value that would drive an invalid scan.
+    ctrl.setDefaultScanLevel(static_cast<ScanLevel>(99));
+    QCOMPARE(ctrl.defaultScanLevel(), ScanLevel::Moderate);
+
+    ctrl.setDefaultScanLevel(static_cast<ScanLevel>(-1));
+    QCOMPARE(ctrl.defaultScanLevel(), ScanLevel::Moderate);
+}
+
 void AdvancedUninstallControllerTests::showSystemComponents_setAndGet() {
     AdvancedUninstallController ctrl;
 
@@ -396,6 +412,35 @@ void AdvancedUninstallControllerTests::queueItem_defaultStatus() {
     QCOMPARE(ctrl.queue()[0].status, UninstallQueueItem::Status::Queued);
 }
 
+void AdvancedUninstallControllerTests::queueMutation_refusedDuringBatch() {
+    // While a batch is running the queue is indexed by m_batchIndex; mutating it mid-flight would
+    // shift indices and misattribute a completion to the wrong program. add/remove/clear must all
+    // be refused until the batch ends. (createRestorePoint=false so the batch is not aborted on a
+    // platform without System Restore; the worker's completion signals are queued and not delivered
+    // during this synchronous body, so m_batchIndex stays >= 0 throughout.)
+    AdvancedUninstallController ctrl;
+
+    ProgramInfo prog;
+    prog.displayName = QStringLiteral("BatchApp");  // no uninstallString -> native step fails fast
+    ctrl.addToQueue(prog, ScanLevel::Safe, false);
+
+    ctrl.startBatchUninstall(false);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Uninstalling);
+
+    ProgramInfo sneaky;
+    sneaky.displayName = QStringLiteral("SneakyApp");
+    ctrl.addToQueue(sneaky, ScanLevel::Safe, false);
+    QCOMPARE(ctrl.queue().size(), 1);  // add refused mid-batch
+
+    ctrl.removeFromQueue(0);
+    QCOMPARE(ctrl.queue().size(), 1);  // remove refused mid-batch
+
+    ctrl.clearQueue();
+    QCOMPARE(ctrl.queue().size(), 1);  // clear refused mid-batch
+
+    ctrl.cancelOperation();            // request stop; destructor joins the worker
+}
+
 // ── State Guards ────────────────────────────────────────────────────────────
 
 void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy() {
@@ -526,6 +571,23 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath()
     ProgramInfo prog;
     prog.displayName = "TestApp";
     // registryKeyPath left empty
+    ctrl.removeRegistryEntry(prog);
+
+    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+}
+
+void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsNonHiveRooted() {
+    // Defense in depth: a registry key path that is not rooted at a recognized hive is malformed
+    // and must be refused before a destructive RegistryOnly worker is spawned. The controller stays
+    // Idle.
+    AdvancedUninstallController ctrl;
+
+    QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
+
+    ProgramInfo prog;
+    prog.displayName = QStringLiteral("TestApp");
+    prog.registryKeyPath = QStringLiteral("SOFTWARE\\Acme");  // no HKxx\\ root
     ctrl.removeRegistryEntry(prog);
 
     QVERIFY(statusSpy.count() >= 1);

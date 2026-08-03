@@ -32,6 +32,7 @@ private Q_SLOTS:
     void installDispositionFor_skipsNotPackedOnlyUnderAirGap();
     void collectInstallerDownloads_collectsEveryResourceWithChecksums();
     void uniqueFilename_disambiguatesCollidingBasenames();
+    void uniqueFilename_disambiguatesCaseInsensitively();
     void isChocolateyFrameworkId_matchesOnlyTheFrameworkPackage();
     void isSafeInstallToken_rejectsOptionLikeAndBlankTokens();
     void topologicalInstallOrder_installsDepsBeforeDependents();
@@ -259,6 +260,19 @@ void TestOfflineDeploymentWorker::uniqueFilename_disambiguatesCollidingBasenames
              QStringLiteral("installer"));
     QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("installer"), used),
              QStringLiteral("installer_1"));
+}
+
+void TestOfflineDeploymentWorker::uniqueFilename_disambiguatesCaseInsensitively() {
+    QSet<QString> used;
+    // On a case-insensitive filesystem (NTFS) 'Setup.exe' and 'setup.exe' are the
+    // same file, so the second must be disambiguated rather than silently overwrite
+    // the first. The original case of the returned name is preserved.
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("Setup.exe"), used),
+             QStringLiteral("Setup.exe"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("setup.exe"), used),
+             QStringLiteral("setup_1.exe"));
+    QCOMPARE(OfflineDeploymentWorker::uniqueFilename(QStringLiteral("SETUP.EXE"), used),
+             QStringLiteral("SETUP_2.EXE"));
 }
 
 void TestOfflineDeploymentWorker::isChocolateyFrameworkId_matchesOnlyTheFrameworkPackage() {

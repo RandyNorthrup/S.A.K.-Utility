@@ -8,6 +8,8 @@
 
 #include <QtTest/QtTest>
 
+#include <limits>
+
 using namespace sak;
 
 class TestChocolateyManager : public QObject {
@@ -31,6 +33,13 @@ private Q_SLOTS:
     // Supply-chain hardening (CODEX REVIEW 2)
     void isTrustedChocoSigner_wholeWordOnly();
     void approvedInstallSource_pinnedUnlessUnofficial();
+
+    // Supply-chain hardening (CODEX REVIEW 3)
+    void isAuthenticChocoBinary_failsClosedOnMissingOrUnsigned();
+    void validateExtraArgs_rejectsChecksumOverrides();
+    void computeTimeoutMs_noIntegerOverflow();
+    void setDefaultTimeout_rejectsNegative();
+    void searchPackage_negativeMaxResultsFailsClosed();
 };
 
 void TestChocolateyManager::construction_default() {
@@ -163,6 +172,60 @@ void TestChocolateyManager::approvedInstallSource_pinnedUnlessUnofficial() {
     QVERIFY(official.contains(QStringLiteral("chocolatey.org")));
     // Opting into unofficial sources means no pin (caller accepts configured feeds).
     QVERIFY(ChocolateyManager::approvedInstallSource(true).isEmpty());
+}
+
+void TestChocolateyManager::isAuthenticChocoBinary_failsClosedOnMissingOrUnsigned() {
+    // Empty path and a non-existent/unsigned file must never be treated as genuine
+    // -- the execution-time authenticity gate fails closed.
+    QVERIFY(!ChocolateyManager::isAuthenticChocoBinary(QString()));
+    QVERIFY(!ChocolateyManager::isAuthenticChocoBinary(
+        QStringLiteral("C:/nonexistent/definitely/not/here/choco.exe")));
+}
+
+void TestChocolateyManager::validateExtraArgs_rejectsChecksumOverrides() {
+    // Benign extra args are allowed.
+    QVERIFY(ChocolateyManager::validateExtraArgs(QStringList{}));
+    QVERIFY(ChocolateyManager::validateExtraArgs(
+        QStringList{QStringLiteral("--params"), QStringLiteral("/quiet")}));
+    // Checksum/integrity overrides are refused (case-insensitive, with or without =).
+    QVERIFY(
+        !ChocolateyManager::validateExtraArgs(QStringList{QStringLiteral("--ignore-checksums")}));
+    QVERIFY(!ChocolateyManager::validateExtraArgs(
+        QStringList{QStringLiteral("--allow-empty-checksums")}));
+    QVERIFY(!ChocolateyManager::validateExtraArgs(
+        QStringList{QStringLiteral("--Allow-Empty-Checksums-Secure")}));
+    QVERIFY(!ChocolateyManager::validateExtraArgs(
+        QStringList{QStringLiteral("--params"), QStringLiteral("--ignore-checksum=true")}));
+}
+
+void TestChocolateyManager::computeTimeoutMs_noIntegerOverflow() {
+    // Normal conversion.
+    QCOMPARE(ChocolateyManager::computeTimeoutMs(5, 300), 5000);
+    // 0 (or negative) uses the default.
+    QCOMPARE(ChocolateyManager::computeTimeoutMs(0, 300), 300'000);
+    // A huge seconds value would overflow int*1000; must clamp to INT_MAX, not wrap
+    // to a negative/garbage value (UB).
+    const int huge = ChocolateyManager::computeTimeoutMs(2'000'000'000, 300);
+    QVERIFY(huge > 0);
+    QCOMPARE(huge, std::numeric_limits<int>::max());
+}
+
+void TestChocolateyManager::setDefaultTimeout_rejectsNegative() {
+    ChocolateyManager manager;
+    manager.setDefaultTimeout(120);
+    QCOMPARE(manager.getDefaultTimeout(), 120);
+    // A negative default is ignored (fail closed), keeping the prior valid value.
+    manager.setDefaultTimeout(-5);
+    QCOMPARE(manager.getDefaultTimeout(), 120);
+}
+
+void TestChocolateyManager::searchPackage_negativeMaxResultsFailsClosed() {
+    ChocolateyManager manager;
+    // A negative limit must surface an error, not silently become an unbounded
+    // (page-size-less) search. Checked before the initialized gate.
+    const auto result = manager.searchPackage(QStringLiteral("git"), -1);
+    QVERIFY(!result.success);
+    QVERIFY(result.error_message.contains(QStringLiteral("negative")));
 }
 
 QTEST_MAIN(TestChocolateyManager)

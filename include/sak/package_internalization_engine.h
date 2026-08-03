@@ -288,8 +288,10 @@ private:
     [[nodiscard]] QHash<QString, QString> buildLocalFilenameMap(
         const ParsedInstallScript& parsed) const;
 
-    /// @brief Remove NuGet-specific metadata files from extracted package
-    void cleanNugetArtifacts(const QString& extract_dir) const;
+    /// @brief Remove NuGet-specific metadata files from the extracted package.
+    ///        Returns false if any removal failed, so the caller can fail closed
+    ///        rather than repack leftover NuGet metadata into the output nupkg.
+    [[nodiscard]] bool cleanNugetArtifacts(const QString& extract_dir) const;
 
     /// @brief Repack an extracted directory into a .nupkg
     [[nodiscard]] bool repackNupkg(const QString& source_dir, const QString& output_path);

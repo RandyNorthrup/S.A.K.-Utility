@@ -5399,9 +5399,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_scanner.cpp")
         unit/test_app_scanner.cpp
         ../src/core/app_scanner.cpp
         ../src/core/bundled_tools_manager.cpp
+        ../src/core/chocolatey_manager.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/app_scanner.h
+        ../include/sak/chocolatey_manager.h
     )
     set_target_properties(test_app_scanner PROPERTIES
         AUTOMOC ON

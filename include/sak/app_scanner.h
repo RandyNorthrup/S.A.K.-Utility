@@ -93,6 +93,13 @@ public:
     ///        Pure; unit-testable.
     [[nodiscard]] static QString composePowerShellPath(const QString& systemRoot);
 
+    /// @brief The Windows directory as reported by the OS (GetWindowsDirectoryW),
+    ///        NOT the attacker-influenceable %SystemRoot% environment variable, so
+    ///        a poisoned env cannot redirect PowerShell resolution to a writable
+    ///        directory. Returns empty (fail closed) if the API fails or off
+    ///        Windows.
+    [[nodiscard]] static QString authoritativeWindowsRoot();
+
 private:
     /**
      * @brief Scan specific registry hive

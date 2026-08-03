@@ -15,6 +15,10 @@
 
 #include <type_traits>
 
+// Global-namespace unit-test class, befriended below so it can reach the pure static
+// denylist seams. Forward-declared here so the qualified friend name resolves.
+class TestCleanupWorker;
+
 namespace sak {
 
 /// @brief Deletes selected leftover items
@@ -25,6 +29,11 @@ namespace sak {
 /// Supports recycle bin deletion and scheduling locked files for removal on reboot.
 class CleanupWorker : public WorkerBase {
     Q_OBJECT
+
+    // Unit-test seam: exercise the pure static denylist screens (itemCleanupRefusal /
+    // startupEntryCleanupRefusal) directly without driving a full worker run. The test class
+    // lives in the global namespace, so befriend ::TestCleanupWorker (not sak::TestCleanupWorker).
+    friend class ::TestCleanupWorker;
 
 public:
     /// @param selectedItems  Items to clean up
@@ -48,6 +57,13 @@ public:
     ///        scheduled for reboot removal. Used by AUTOMATIC (no human review) cleanup so an
     ///        auto-deleted item is always undoable. Must be paired with useRecycleBin=true.
     void setRequireRecoverable(bool require) { m_requireRecoverable = require; }
+
+    /// @brief Resolve a Windows system tool (e.g. "sc.exe") to its ABSOLUTE
+    ///        @p systemRoot \\System32 path so a same-named binary planted in the app dir / CWD /
+    ///        PATH can never run in our stead (CreateProcess resolves a bare program name through
+    ///        those first). Returns empty (fail closed) when @p systemRoot is empty; callers then
+    ///        refuse to launch the destructive op. Pure; unit-testable.
+    [[nodiscard]] static QString systemToolPath(const QString& systemRoot, const QString& exeName);
 
 Q_SIGNALS:
     void itemCleaned(const QString& path, bool success);
@@ -125,9 +141,24 @@ private:
     [[nodiscard]] HandleDeleteOutcome deleteFileByVerifiedHandle(const QString& path);
 #endif
 
-    /// @brief Dispatch cleanup for a single leftover item by type
+    /// @brief Dispatch cleanup for a single leftover item by type. Re-screens the item against the
+    ///        leftover_cleanup_guard denylist FIRST (defense-in-depth) and refuses fail-closed, so
+    ///        a caller that bypasses AdvancedUninstallController cannot drive a protected target
+    ///        into the destructive syscalls.
     [[nodiscard]] bool cleanSingleItem(const LeftoverItem& item);
     [[nodiscard]] bool cleanStartupEntry(const LeftoverItem& item);
+
+    /// @brief Run the defense-in-depth denylist screen (itemCleanupRefusal) for @p item, then
+    ///        dispatch to cleanSingleItem only when allowed; a refused item is logged and reported
+    ///        failed (fail-closed) without reaching any destructive syscall.
+    [[nodiscard]] bool cleanItemIfAllowed(const LeftoverItem& item);
+
+    /// @brief Per-type denylist refusal for @p item (empty => allowed). Runs the same
+    ///        leftover_cleanup_guard screen the controller applies, matched to the item's type, as
+    ///        an independent second layer inside the worker.
+    [[nodiscard]] static QString itemCleanupRefusal(const LeftoverItem& item);
+    /// @brief Denylist refusal for a StartupEntry (registry value if named, else its on-disk file).
+    [[nodiscard]] static QString startupEntryCleanupRefusal(const LeftoverItem& item);
 
     /// @brief Delete a folder, falling back to reboot scheduling for locked contents
     [[nodiscard]] bool deleteFolder(const QString& path);

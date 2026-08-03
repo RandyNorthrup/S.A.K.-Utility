@@ -288,6 +288,14 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
         return;
     }
 
+    // Reject an empty output dir: it would compose work_dir="/_work" and a later
+    // removeRecursively() at the drive root. Fail closed rather than derive a
+    // dangerous path from a missing value (folder-picker callers always pass one).
+    if (output_dir.trimmed().isEmpty()) {
+        Q_EMIT operationError("No output directory specified");
+        return;
+    }
+
     m_running = true;
     m_cancelled = false;
 
@@ -735,8 +743,25 @@ void OfflineDeploymentWorker::emitInternalizationResult(const QString& pkg_id,
         Qt::QueuedConnection);
 }
 
+void OfflineDeploymentWorker::finalizeCancelledBuild(const QString& work_dir) {
+    QDir(work_dir).removeRecursively();
+    m_running = false;
+    QMetaObject::invokeMethod(
+        this,
+        [this]() { Q_EMIT operationError("Bundle build cancelled before completion"); },
+        Qt::QueuedConnection);
+}
+
 void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
                                              const BuildBundleContext& ctx) {
+    // A cancelled build must never be finalized as a completed bundle: discard the
+    // work dir and surface the cancel. No manifest is written, so the partial
+    // packages left behind are un-installable (installFromBundle fails closed).
+    if (m_cancelled) {
+        finalizeCancelledBuild(ctx.work_dir);
+        return;
+    }
+
     // Write manifest. A failed/short manifest write must NOT be reported as a completed bundle:
     // installFromBundle would later fail with "Manifest is empty or unreadable".
     if (!manifest.packages.isEmpty()) {
@@ -763,16 +788,29 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
     // Clean up work directory
     QDir(ctx.work_dir).removeRecursively();
 
-    // Build final stats
+    const BatchStats stats = computeBuildStats(manifest, ctx);
+    m_running = false;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this, stats]() {
+            Q_EMIT logMessage(bundleCompletionMessage(stats));
+            Q_EMIT operationCompleted(stats);
+        },
+        Qt::QueuedConnection);
+}
+
+BatchStats OfflineDeploymentWorker::computeBuildStats(const DeploymentManifest& manifest,
+                                                      const BuildBundleContext& ctx) const {
     BatchStats stats;
     stats.total = ctx.total_jobs;
     stats.completed = ctx.completed_count;
     stats.failed = ctx.failed_count;
     stats.total_bytes = manifest.total_size_bytes;
 
-    // Distinguish truly-offline packages from ones that will still need the
-    // internet at install time, so the completion is honest about the bundle's
-    // real offline coverage instead of conflating the two into "N succeeded".
+    // Distinguish truly-offline packages from ones that will still need the internet
+    // at install time, so the completion is honest about real offline coverage
+    // instead of conflating the two into "N succeeded".
     for (const DeploymentManifestEntry& entry : manifest.packages) {
         if (entry.offline_ready) {
             stats.offline_capable++;
@@ -789,17 +827,7 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
             stats.pending++;
         }
     }
-    lock.unlock();
-
-    m_running = false;
-
-    QMetaObject::invokeMethod(
-        this,
-        [this, stats]() {
-            Q_EMIT logMessage(bundleCompletionMessage(stats));
-            Q_EMIT operationCompleted(stats);
-        },
-        Qt::QueuedConnection);
+    return stats;
 }
 
 // ============================================================================
@@ -1131,6 +1159,9 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
 
     // Verify the bundled artifact against the manifest before install (Bundle mode
     // only -- a List payload has no local .nupkg; choco downloads it from the feed).
+    // A verify-then-choco-reopen-by-path TOCTOU window is inherent to the unsigned
+    // operator-owned bundle trust model (it requires local write access to the
+    // packages dir mid-install); size + SHA-256 + safe-filename checks bound it.
     if (install_ctx.verify_local) {
         QString verify_error;
         if (!verifyBundledPackage(entry, install_ctx.source, verify_error)) {
@@ -1172,6 +1203,12 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
 
     if (packages.isEmpty()) {
         Q_EMIT operationError("No packages specified");
+        return;
+    }
+
+    // Reject an empty output dir before it becomes a mkpath/QTemporaryDir root.
+    if (output_dir.trimmed().isEmpty()) {
+        Q_EMIT operationError("No output directory specified");
         return;
     }
 
@@ -1229,6 +1266,8 @@ void OfflineDeploymentWorker::executeDirectDownload(
 
         int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir, used_names);
 
+        // Harvesting feature (installers for manual use, nothing installed): any file
+        // harvested is success and the exact count is surfaced (partial set = honest).
         bool ok = (files > 0);
         if (ok) {
             ++completed;
@@ -1425,8 +1464,11 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
 }
 
 QString OfflineDeploymentWorker::uniqueFilename(const QString& desired, QSet<QString>& used) {
-    if (!used.contains(desired)) {
-        used.insert(desired);
+    // used holds LOWERCASED keys: on a case-insensitive filesystem (NTFS) 'Setup.exe'
+    // and 'setup.exe' are the same file, so disambiguate case-insensitively while
+    // returning the original-cased name to write.
+    if (!used.contains(desired.toLower())) {
+        used.insert(desired.toLower());
         return desired;
     }
     const QFileInfo info(desired);
@@ -1438,8 +1480,8 @@ QString OfflineDeploymentWorker::uniqueFilename(const QString& desired, QSet<QSt
         candidate = suffix.isEmpty() ? QString("%1_%2").arg(stem).arg(counter)
                                      : QString("%1_%2.%3").arg(stem).arg(counter).arg(suffix);
         ++counter;
-    } while (used.contains(candidate));
-    used.insert(candidate);
+    } while (used.contains(candidate.toLower()));
+    used.insert(candidate.toLower());
     return candidate;
 }
 
@@ -1505,9 +1547,21 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
                                                   const QString& output_path,
                                                   const QString& expected_checksum,
                                                   const QString& checksum_type) {
+    // Restrict the source to a host-bearing https URL BEFORE any fetch (no file://,
+    // ftp://, http://, UNC), matching the internalization engine. A package script
+    // could otherwise point the direct-download harvester at an installer on the
+    // local disk or an insecure origin.
+    if (!PackageInternalizationEngine::isAllowedInstallerUrl(url)) {
+        sak::logError("[DirectDownload] Refusing non-https URL: {}", url.toStdString());
+        return false;
+    }
+
     NetworkTransferRequest request;
     request.url = QUrl(url);
     request.timeout_ms = offline::kDownloadTimeoutMs;
+    // Cap the buffered body so a hostile URL returning an unbounded response cannot
+    // exhaust memory before the bytes are checksummed and written.
+    request.max_response_bytes = offline::kMaxBinarySizeBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
 
@@ -1719,6 +1773,17 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
     file.close();
 }
 
+// Accept only a manifest whose declared format we understand: an empty version
+// (a pre-versioning bundle -- the same backward-compat contract payload_mode
+// relies on) or major version 1. A present-but-incompatible major fails closed so
+// a future/tampered format is never parsed with 1.x assumptions.
+static bool manifestVersionSupported(const QString& manifest_version) {
+    if (manifest_version.isEmpty()) {
+        return true;
+    }
+    return manifest_version.section(QLatin1Char('.'), 0, 0) == QLatin1String("1");
+}
+
 static DeploymentManifestEntry parseManifestEntry(const QJsonObject& pkg) {
     DeploymentManifestEntry entry;
     entry.package_id = pkg["package_id"].toString();
@@ -1771,6 +1836,13 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
 
     QJsonObject root = doc.object();
     manifest.manifest_version = root["manifest_version"].toString();
+    // Fail closed on an incompatible manifest format rather than parsing an unknown
+    // version with 1.x field assumptions.
+    if (!manifestVersionSupported(manifest.manifest_version)) {
+        sak::logError("[OfflineDeploymentWorker] Unsupported manifest_version: {}",
+                      manifest.manifest_version.toStdString());
+        return DeploymentManifest{};
+    }
     manifest.created_date = root["created"].toString();
     manifest.creator = root["creator"].toString();
     manifest.description = root["description"].toString();

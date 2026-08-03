@@ -76,8 +76,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -209,6 +211,43 @@ constexpr int kDefaultMboxLimit = 200;
 constexpr int kMboxLimitCeiling = 1000;
 constexpr int kMaxHeaderChars = 1000;
 
+// One (key, inclusive-range) spec for a bounded numeric arg. Paired with rangedIntArgsError so an
+// op can REJECT an out-of-range / wrong-typed numeric argument up front instead of silently
+// clamping it (which hides a caller error and runs a different operation than the one requested).
+struct RangedIntSpec {
+    const char* key;
+    int lo;
+    int hi;
+};
+
+// Fail CLOSED on any present numeric arg that is not a JSON integer within its [lo, hi] range: a
+// wrong-typed, fractional, NaN/inf, or out-of-range value is REFUSED rather than clamped to a
+// default. An OMITTED arg keeps its documented default (the clamp helpers still apply the ceiling
+// as belt-and-suspenders). Returns an error result to surface verbatim, or nullopt when all clean.
+std::optional<AppActionResult> rangedIntArgsError(const QJsonObject& args,
+                                                  std::initializer_list<RangedIntSpec> specs) {
+    for (const RangedIntSpec& spec : specs) {
+        const QString name = QString::fromLatin1(spec.key);
+        if (!args.contains(name)) {
+            continue;
+        }
+        const QJsonValue value = args.value(name);
+        const double number = value.isDouble() ? value.toDouble() : 0.0;
+        if (!value.isDouble() || std::isinf(number) || std::floor(number) != number) {
+            return AppActionResult{false,
+                                   QStringLiteral("%1 must be a whole number").arg(name),
+                                   {}};
+        }
+        if (number < spec.lo || number > spec.hi) {
+            return AppActionResult{
+                false,
+                QStringLiteral("%1 must be between %2 and %3").arg(name).arg(spec.lo).arg(spec.hi),
+                {}};
+        }
+    }
+    return std::nullopt;
+}
+
 QString imageFormatToString(ImageFormat format) {
     struct Entry {
         ImageFormat format;
@@ -314,10 +353,32 @@ QJsonArray cappedMessages(const QStringList& messages) {
     return out;
 }
 
-// Validate the numeric preview args up front. Returns an error result to return
-// verbatim, or nullopt when disk_number/partition_number/offset/size are all
-// well-formed (present-and-non-negative). Split out to keep previewPartitionOperation
-// within the cyclomatic-complexity budget.
+// Validate ONE optional byte-count field on the read-only preview path, mirroring the mutating
+// apply guard so the two can never drift: present => must be a JSON number that is finite,
+// non-negative, and integral. A wrong-typed or fractional/NaN/inf value is REFUSED rather than
+// silently coerced to 0 or truncated, so the preview reflects the SAME request an apply would run.
+std::optional<AppActionResult> previewByteFieldError(const QJsonObject& args, const char* key) {
+    const QString name = QString::fromLatin1(key);
+    if (!args.contains(name)) {
+        return std::nullopt;
+    }
+    const QJsonValue value = args.value(name);
+    if (!value.isDouble()) {
+        return AppActionResult{false, QStringLiteral("%1 must be a number of bytes").arg(name), {}};
+    }
+    const double bytes = value.toDouble();
+    if (!(bytes >= 0.0) || std::isinf(bytes) || std::floor(bytes) != bytes) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 must be a finite, non-negative, whole number of bytes").arg(name),
+            {}};
+    }
+    return std::nullopt;
+}
+
+// Validate the numeric + payload preview args up front. Returns an error result to return
+// verbatim, or nullopt when disk_number/partition_number/offset/size and payload are all
+// well-formed. Split out to keep previewPartitionOperation within the cyclomatic-complexity budget.
 std::optional<AppActionResult> validatePreviewNumericArgs(const QJsonObject& args) {
     if (!args.contains(QStringLiteral("disk_number"))) {
         return AppActionResult{
@@ -335,12 +396,15 @@ std::optional<AppActionResult> validatePreviewNumericArgs(const QJsonObject& arg
                                {}};
     }
     for (const char* key : {"offset_bytes", "size_bytes"}) {
-        const QString name = QString::fromLatin1(key);
-        if (args.contains(name) && args.value(name).toDouble(0.0) < 0.0) {
-            return AppActionResult{false,
-                                   QStringLiteral("%1 must be a non-negative number").arg(name),
-                                   {}};
+        if (std::optional<AppActionResult> error = previewByteFieldError(args, key)) {
+            return error;
         }
+    }
+    if (args.contains(QStringLiteral("payload")) &&
+        !args.value(QStringLiteral("payload")).isObject()) {
+        return AppActionResult{false,
+                               QStringLiteral("payload must be an object of operation fields"),
+                               {}};
     }
     return std::nullopt;
 }
@@ -962,22 +1026,34 @@ QJsonObject serializeRecoveryScan(const FileRecoveryScanResult& scan, const QFil
         {QStringLiteral("warnings"), warnings}};
 }
 
+// Validate the scan_recoverable args up front (path safety, file existence, and the shrink knobs).
+// refuseUnsafePath FIRST: image_path is opened by name, so a symlink/junction to a UNC target (or
+// a literal UNC path) would open a remote object and leak the NTLM hash; device paths are refused
+// too. A present-but-out-of-range/malformed max_scan_mb/max_candidates is REFUSED, not clamped.
+// Split out to keep scanRecoverable within the cyclomatic-complexity budget.
+std::optional<AppActionResult> validateRecoverableScanArgs(const QJsonObject& args,
+                                                           const QString& path) {
+    if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
+            path, QStringLiteral("scan_recoverable"), QStringLiteral("image_path"))) {
+        return *unsafe;
+    }
+    if (!QFileInfo(path).isFile()) {
+        return AppActionResult{false, QStringLiteral("No such image file: %1").arg(path), {}};
+    }
+    return rangedIntArgsError(args,
+                              {{"max_scan_mb", 1, kMaxRecoveryScanMb},
+                               {"max_candidates", 1, kMaxRecoveryCandidates}});
+}
+
 AppActionResult scanRecoverable(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("image_path")).toString().trimmed();
     if (path.isEmpty()) {
         return {false, QStringLiteral("scan_recoverable requires an 'image_path' argument"), {}};
     }
-    // refuseUnsafePath FIRST: image_path is opened by name, so a symlink/junction to a UNC target
-    // (or a literal UNC path) would open a remote object and leak the NTLM hash. Device paths
-    // (\\.\PhysicalDriveN) are also refused, keeping this to offline image FILES.
-    if (const std::optional<AppActionResult> unsafe = refuseUnsafePath(
-            path, QStringLiteral("scan_recoverable"), QStringLiteral("image_path"))) {
-        return *unsafe;
+    if (const std::optional<AppActionResult> error = validateRecoverableScanArgs(args, path)) {
+        return *error;
     }
     const QFileInfo info(path);
-    if (!info.isFile()) {
-        return {false, QStringLiteral("No such image file: %1").arg(path), {}};
-    }
 
     // Carve under a wall-time deadline: the engine polls `stop` in its inner loop, so a runaway
     // O(window * candidate_bytes) scan (a repeating start marker with no end) is interrupted.
@@ -1230,6 +1306,11 @@ AppActionResult searchFiles(const QJsonObject& args) {
     }
     if (!QFileInfo(root).exists()) {
         return {false, QStringLiteral("root_path does not exist: %1").arg(root), {}};
+    }
+    // Reject a malformed/out-of-range max_results rather than silently clamping it to the ceiling.
+    if (const std::optional<AppActionResult> error =
+            rangedIntArgsError(args, {{"max_results", 1, kSearchMaxResultsCeiling}})) {
+        return *error;
     }
     const SearchConfig config = searchConfigFromArgs(args, root, pattern);
     const int cap = config.max_results;
@@ -3480,12 +3561,42 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
 // SSID (double quote or control char, e.g. from a rogue AP) is refused fail-closed. The script
 // embeds the supplied WiFi password verbatim -- the caller already provided it -- so the payload is
 // sensitive; the note says so.
+// Accept only the security types the schema advertises (case-insensitive), plus an omitted/empty
+// value (the documented default, WPA2). A present-but-UNKNOWN security, a non-string security, or a
+// non-bool hidden is REFUSED rather than silently coerced -- so a mistyped security fails closed
+// instead of building the wrong-auth script. Mirrors the mutating connect_wifi guard.
+std::optional<AppActionResult> wifiScriptArgsError(const QJsonObject& args) {
+    if (args.contains(QStringLiteral("hidden")) && !args.value(QStringLiteral("hidden")).isBool()) {
+        return AppActionResult{false,
+                               QStringLiteral("hidden must be a boolean (true or false)"),
+                               {}};
+    }
+    if (!args.contains(QStringLiteral("security"))) {
+        return std::nullopt;
+    }
+    const QJsonValue sec = args.value(QStringLiteral("security"));
+    if (!sec.isString()) {
+        return AppActionResult{false,
+                               QStringLiteral("security must be a string (wpa2, wep, or open)"),
+                               {}};
+    }
+    const QString v = sec.toString().trimmed().toLower();
+    if (v.isEmpty() || v == QLatin1String("wpa2") || v == QLatin1String("wep") ||
+        v == QLatin1String("open")) {
+        return std::nullopt;
+    }
+    return AppActionResult{false, QStringLiteral("security must be one of wpa2, wep, or open"), {}};
+}
+
 AppActionResult generateWifiSetupScript(const QJsonObject& args) {
     const QString ssid = args.value(QStringLiteral("ssid")).toString();
     if (ssid.trimmed().isEmpty()) {
         return {false,
                 QStringLiteral("generate_wifi_setup_script requires a non-empty 'ssid'"),
                 {}};
+    }
+    if (const std::optional<AppActionResult> error = wifiScriptArgsError(args)) {
+        return *error;
     }
     const QString password = args.value(QStringLiteral("password")).toString();
     const QString security = args.value(QStringLiteral("security")).toString();
@@ -3532,8 +3643,8 @@ QJsonObject generateWifiSetupScriptParamsSchema() {
         {QStringLiteral("enum"),
          QJsonArray{QStringLiteral("wpa2"), QStringLiteral("wep"), QStringLiteral("open")}},
         {QStringLiteral("description"),
-         QStringLiteral("Security type; anything other than wep/open is treated as WPA2-PSK "
-                        "(default wpa2)")}};
+         QStringLiteral("Security type: wpa2 (the default when omitted), wep, or open. Any other "
+                        "value is refused rather than assumed.")}};
     QJsonObject hidden_prop{{QStringLiteral("type"), QStringLiteral("boolean")},
                             {QStringLiteral("description"),
                              QStringLiteral("True if the network does not broadcast its SSID")}};
@@ -3977,8 +4088,19 @@ bool isLocalScanTarget(const QString& target) {
 // range loop's upper bound is clamped to the valid port space so a start > 65535 (which
 // appends nothing, leaving the size-guard untripped) can never spin -- or overflow -- an
 // int counter toward INT_MAX.
-std::optional<AppActionResult> collectScanPorts(const QJsonObject& args, QVector<uint16_t>& out) {
-    const QJsonArray explicit_ports = args.value(QStringLiteral("ports")).toArray();
+// Validate + collect the explicit 'ports' array. Fails CLOSED: a present-but-non-array 'ports', or
+// any entry that is not a whole number in 1..65535, is REFUSED rather than silently dropped (a
+// dropped entry scans a different port set than the caller asked for).
+std::optional<AppActionResult> collectExplicitScanPorts(const QJsonObject& args,
+                                                        QVector<uint16_t>& out) {
+    if (!args.contains(QStringLiteral("ports"))) {
+        return std::nullopt;
+    }
+    const QJsonValue ports_val = args.value(QStringLiteral("ports"));
+    if (!ports_val.isArray()) {
+        return AppActionResult{false, QStringLiteral("ports must be an array of port numbers"), {}};
+    }
+    const QJsonArray explicit_ports = ports_val.toArray();
     if (explicit_ports.size() > kMaxScanPorts) {
         return AppActionResult{false,
                                QStringLiteral("port_scan is limited to %1 ports per call "
@@ -3988,7 +4110,19 @@ std::optional<AppActionResult> collectScanPorts(const QJsonObject& args, QVector
                                {}};
     }
     for (const QJsonValue& value : explicit_ports) {
-        appendPortIfValid(out, value.toInt(-1));
+        const double port = value.isDouble() ? value.toDouble() : -1.0;
+        if (!(port >= 1.0) || port > 65'535.0 || std::floor(port) != port) {
+            return AppActionResult{
+                false, QStringLiteral("each 'ports' entry must be a whole number in 1..65535"), {}};
+        }
+        appendPortIfValid(out, static_cast<int>(port));
+    }
+    return std::nullopt;
+}
+
+std::optional<AppActionResult> collectScanPorts(const QJsonObject& args, QVector<uint16_t>& out) {
+    if (const std::optional<AppActionResult> error = collectExplicitScanPorts(args, out)) {
+        return *error;
     }
     const int range_start = args.value(QStringLiteral("port_range_start")).toInt(0);
     const int range_end = args.value(QStringLiteral("port_range_end")).toInt(0);
@@ -4188,6 +4322,10 @@ AppActionResult pingHost(const QJsonObject& args) {
     if (target.isEmpty()) {
         return {false, QStringLiteral("ping requires a 'target' argument"), {}};
     }
+    if (const std::optional<AppActionResult> error = rangedIntArgsError(
+            args, {{"count", 1, 10}, {"timeout_ms", 200, 4000}, {"interval_ms", 0, 2000}})) {
+        return *error;
+    }
     NetworkProbeWorker worker(pingConfigFromArgs(target, args));
     return driveNetworkProbe(worker, [&worker, target]() {
         const PingResult& r = worker.pingResult();
@@ -4208,6 +4346,10 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
     if (target.isEmpty()) {
         return {false, QStringLiteral("traceroute requires a 'target' argument"), {}};
     }
+    if (const std::optional<AppActionResult> error = rangedIntArgsError(
+            args, {{"max_hops", 1, 30}, {"timeout_ms", 500, 3000}, {"probes_per_hop", 1, 3}})) {
+        return *error;
+    }
     NetworkProbeWorker worker(tracerouteConfigFromArgs(target, args));
     return driveNetworkProbe(worker, [&worker, target]() {
         const TracerouteResult& r = worker.tracerouteResult();
@@ -4223,6 +4365,14 @@ AppActionResult mtrHost(const QJsonObject& args) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed();
     if (target.isEmpty()) {
         return {false, QStringLiteral("mtr requires a 'target' argument"), {}};
+    }
+    if (const std::optional<AppActionResult> error =
+            rangedIntArgsError(args,
+                               {{"cycles", 1, kMaxMtrCycles},
+                                {"max_hops", 1, 30},
+                                {"timeout_ms", 500, 1500},
+                                {"interval_ms", 0, 2000}})) {
+        return *error;
     }
     NetworkProbeWorker worker(mtrConfigFromArgs(target, args));
     return driveNetworkProbe(worker, [&worker, target]() {
@@ -4266,6 +4416,10 @@ AppActionResult portScan(const QJsonObject& args) {
                                "public or remote hosts is disabled for the assistant -- pass a "
                                "private IP literal"),
                 {}};
+    }
+    if (const std::optional<AppActionResult> error =
+            rangedIntArgsError(args, {{"timeout_ms", 200, 3000}})) {
+        return *error;
     }
     QVector<uint16_t> ports;
     if (const std::optional<AppActionResult> error = collectScanPorts(args, ports)) {

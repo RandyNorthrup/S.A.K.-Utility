@@ -1,10 +1,13 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#pragma once
+
 #include "sak/advanced_uninstall_types.h"
 #include "sak/app_action_registry.h"
 #include "sak/partition_manager_types.h"
 
+#include <QJsonObject>
 #include <QString>
 #include <QVector>
 
@@ -42,11 +45,23 @@ class AppActionRegistry;
 
 /// True if @p name is a UWP PackageFullName safe to interpolate into the single-quoted
 /// Remove-AppxPackage -Package '<...>' PowerShell argument: ASCII alphanumerics plus '.'
-/// '_' '-' only (the real Appx format), non-empty, length-bounded. The value passed to the
-/// uninstall always comes from the SYSTEM enumeration, not model input, but this is a
-/// defense-in-depth guard against a malformed/hostile name breaking out of the quotes.
+/// '_' '-' and, for a provisioned (DISM PackageName) neutral ResourceId, '~' (all inert
+/// inside a single-quoted PowerShell string), non-empty, length-bounded. The value passed
+/// to the uninstall always comes from the SYSTEM enumeration, not model input, but this is
+/// a defense-in-depth guard against a malformed/hostile name breaking out of the quotes.
 /// Exposed (not anonymous) for unit testing.
 [[nodiscard]] bool isSafePackageFullName(const QString& name);
+
+/// Validate the (untrusted) argument object of partition.apply_operation BEFORE any disk
+/// work: disk_number/partition_number must be non-negative integers; offset_bytes/size_bytes,
+/// when present, must be finite, non-negative WHOLE numbers of the JSON number type (a
+/// wrong-typed or fractional value is REFUSED, never coerced to 0 or truncated); payload, when
+/// present, must be a JSON object; confirm_layout_hash is required; and dry_run, when present,
+/// must be a real boolean (never coerced -- a present-but-non-bool value that read as false via
+/// toBool would silently escalate a plan into a destructive apply). Returns an error result to
+/// surface verbatim, or nullopt when every argument is well-formed. Pure; exposed for unit
+/// testing this catastrophic op's fail-closed input gate without a real disk.
+[[nodiscard]] std::optional<AppActionResult> validatePartitionApplyArgs(const QJsonObject& args);
 
 /// Pure resolution core for software.uninstall_program (exposed for unit testing): from a RAW
 /// (non-deduped) registry program list, find the single silently-uninstallable match for

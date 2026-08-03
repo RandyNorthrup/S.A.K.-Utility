@@ -58,6 +58,14 @@ AppInstallationWorker::AppInstallationWorker(std::shared_ptr<ChocolateyManager> 
     qRegisterMetaType<sak::MigrationStatus>("sak::MigrationStatus");
     qRegisterMetaType<sak::AppInstallationWorker::Stats>("sak::AppInstallationWorker::Stats");
 
+    // Fail closed on a null manager: skip the signal wiring here and refuse to
+    // start migrations later (startMigration guards), so a null shared_ptr can
+    // never be dereferenced at install time.
+    if (!m_chocoManager) {
+        sak::logError("[AppInstallationWorker] constructed with a null ChocolateyManager");
+        return;
+    }
+
     // Connect to Chocolatey manager signals
     connect(m_chocoManager.get(),
             &ChocolateyManager::installStarted,
@@ -95,8 +103,13 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         sak::logError("[AppInstallationWorker] startMigration: report must not be null");
         return 0;
     }
+    if (!m_chocoManager) {
+        sak::logError("[AppInstallationWorker] startMigration: ChocolateyManager is null");
+        return 0;
+    }
 
     int totalJobs;
+    QVector<QPair<int, QString>> skipped;
     {
         QMutexLocker locker(&m_mutex);
 
@@ -112,41 +125,75 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         m_cancelled = false;
         m_activeJobs = 0;
 
-        // Build job list from selected entries
-        m_jobs.clear();
-        m_jobQueue.clear();
-
-        const auto& entries = m_report->getEntries();
-        const size_t entry_count = entries.size();
-        m_jobs.reserve(entry_count / kSelectedJobReserveDivisor);
-
-        for (size_t i = 0; i < entry_count; ++i) {
-            const auto& entry = entries[i];
-
-            if (entry.selected && !entry.choco_package.isEmpty() && entry.available) {
-                MigrationJob job;
-                job.entryIndex = static_cast<int>(i);
-                job.appName = entry.app_name;
-                job.packageId = entry.choco_package;
-                job.version = (entry.version_lock && !entry.locked_version.isEmpty())
-                                  ? entry.locked_version
-                                  : QString();
-                job.status = MigrationStatus::Queued;
-
-                m_jobs.append(job);
-                m_jobQueue.enqueue(m_jobs.size() - 1);
-            }
-        }
-
+        skipped = buildJobQueue();
         totalJobs = m_jobs.size();
 
         // Launch background processing (will wait for mutex release)
         m_processFuture = QtConcurrent::run([this]() { processQueue(); });
     }
     // Mutex released — safe to emit (handlers may call getStats())
+    for (const auto& item : skipped) {
+        Q_EMIT jobProgress(item.first, QStringLiteral("Skipped: ") + item.second);
+    }
     Q_EMIT migrationStarted(totalJobs);
 
     return totalJobs;
+}
+
+QVector<QPair<int, QString>> AppInstallationWorker::buildJobQueue() {
+    QVector<QPair<int, QString>> skipped;
+    m_jobs.clear();
+    m_jobQueue.clear();
+
+    const auto& entries = m_report->getEntries();
+    const size_t entry_count = entries.size();
+    m_jobs.reserve(entry_count / kSelectedJobReserveDivisor);
+
+    for (size_t i = 0; i < entry_count; ++i) {
+        const auto& entry = entries[i];
+        if (!entry.selected) {
+            continue;
+        }
+        const QString reason = migrationSkipReason(entry);
+        if (!reason.isEmpty()) {
+            // Record the skip explicitly instead of silently dropping a selected
+            // entry, so the user can see it was not migrated and why.
+            m_report->getEntry(static_cast<int>(i)).status = "skipped";
+            m_report->getEntry(static_cast<int>(i)).error_message = reason;
+            skipped.append({static_cast<int>(i), reason});
+            continue;
+        }
+        m_jobs.append(makeJob(static_cast<int>(i), entry));
+        m_jobQueue.enqueue(m_jobs.size() - 1);
+    }
+    return skipped;
+}
+
+QString AppInstallationWorker::migrationSkipReason(const MigrationReport::MigrationEntry& entry) {
+    if (entry.choco_package.isEmpty()) {
+        return QStringLiteral("No matched Chocolatey package");
+    }
+    if (!entry.available) {
+        return QStringLiteral("Package not available in the configured feed");
+    }
+    if (entry.version_lock && entry.locked_version.isEmpty()) {
+        // Fail closed: a lock with no version would silently install latest.
+        return QStringLiteral("Version lock requested but no locked version specified");
+    }
+    return {};
+}
+
+MigrationJob AppInstallationWorker::makeJob(int entryIndex,
+                                            const MigrationReport::MigrationEntry& entry) {
+    MigrationJob job;
+    job.entryIndex = entryIndex;
+    job.appName = entry.app_name;
+    job.packageId = entry.choco_package;
+    // Skip-reason has already rejected a lock with an empty version, so a locked
+    // job here always carries a concrete version; unlocked installs use latest.
+    job.version = entry.version_lock ? entry.locked_version : QString();
+    job.status = MigrationStatus::Queued;
+    return job;
 }
 
 void AppInstallationWorker::pause() {
@@ -283,22 +330,31 @@ void AppInstallationWorker::processQueue() {
         }
 
         bool success = installPackage(jobIndex, job);
-
-        QMutexLocker locker(&m_mutex);
-        m_activeJobs--;
-        if (!success && shouldRetry(job)) {
-            int delay_ms = getRetryDelay(job.retryCount);
-            locker.unlock();
-            QThread::msleep(delay_ms);
-
-            QMutexLocker retryLocker(&m_mutex);
-            job.retryCount++;
-            if (jobIndex >= 0 && jobIndex < m_jobs.size()) {
-                m_jobs[jobIndex] = job;
-            }
-            m_jobQueue.enqueue(jobIndex);
-        }
+        handleJobResult(jobIndex, job, success);
     }
+}
+
+void AppInstallationWorker::handleJobResult(int jobIndex, MigrationJob& job, bool success) {
+    QMutexLocker locker(&m_mutex);
+    m_activeJobs--;
+    if (success || !shouldRetry(job)) {
+        return;
+    }
+    const int delay_ms = getRetryDelay(job.retryCount);
+    locker.unlock();
+    QThread::msleep(delay_ms);
+
+    QMutexLocker retryLocker(&m_mutex);
+    // A cancel() may have landed during the backoff sleep and already drained the
+    // queue; do not resurrect a job onto a cancelled run.
+    if (m_cancelled) {
+        return;
+    }
+    job.retryCount++;
+    if (jobIndex >= 0 && jobIndex < m_jobs.size()) {
+        m_jobs[jobIndex] = job;
+    }
+    m_jobQueue.enqueue(jobIndex);
 }
 
 AppInstallationWorker::QueueAction AppInstallationWorker::checkQueueState() {
@@ -412,12 +468,19 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
     auto count_match = kPackageCountPattern.match(choco_result.output);
     if (count_match.hasMatch()) {
         int installed = count_match.captured(1).toInt();
-        if (installed > 0) {
+        if (installed <= 0) {
+            sak::logWarning("[AppInstallationWorker] Choco reports 0 packages for {}",
+                            job.packageId.toStdString());
+            return false;
+        }
+        // installed>0 alone could reflect a DEPENDENCY succeeding while the target
+        // failed. Only certify when the target package id also appears in the
+        // transcript; otherwise fall through to independent system verification.
+        if (choco_result.output.contains(job.packageId, Qt::CaseInsensitive)) {
             return true;
         }
-        sak::logWarning("[AppInstallationWorker] Choco reports 0 packages for {}",
+        sak::logWarning("[AppInstallationWorker] Count line lacks target {}; verifying via system",
                         job.packageId.toStdString());
-        return false;
     }
 
     // Fallback: choco output didn't contain package count line
@@ -426,10 +489,11 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
                  job.appName.toStdString(),
                  job.packageId.toStdString());
 
-    // Check Windows Registry (covers MSI/EXE installers)
+    // Check Windows Registry (covers MSI/EXE installers). Whole-word match so an
+    // unrelated program whose name merely embeds the target token cannot certify.
     AppScanner scanner;
     for (const auto& app : scanner.scanRegistry()) {
-        if (app.name.contains(job.appName, Qt::CaseInsensitive)) {
+        if (nameIndicatesApp(app.name, job.appName)) {
             sak::logInfo("[AppInstallationWorker] Verified via registry: {}",
                          app.name.toStdString());
             return true;
@@ -438,8 +502,7 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
 
     // Check AppX/MSIX packages (covers Store/UWP apps like Teams)
     for (const auto& app : AppScanner::scanAppX()) {
-        if (app.name.contains(job.appName, Qt::CaseInsensitive) ||
-            app.name.contains(job.packageId, Qt::CaseInsensitive)) {
+        if (nameIndicatesApp(app.name, job.appName) || nameIndicatesApp(app.name, job.packageId)) {
             sak::logInfo("[AppInstallationWorker] Verified via AppX: {}", app.name.toStdString());
             return true;
         }
@@ -470,16 +533,15 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
 
     AppScanner scanner;
     for (const auto& app : scanner.scanRegistry()) {
-        if (app.name.contains(job.appName, Qt::CaseInsensitive) &&
-            isVersionNewer(app.version, *requested)) {
+        if (nameIndicatesApp(app.name, job.appName) && isVersionNewer(app.version, *requested)) {
             installed_version = app.version;
             return true;
         }
     }
 
     for (const auto& app : AppScanner::scanAppX()) {
-        bool name_match = app.name.contains(job.appName, Qt::CaseInsensitive) ||
-                          app.name.contains(job.packageId, Qt::CaseInsensitive);
+        bool name_match = nameIndicatesApp(app.name, job.appName) ||
+                          nameIndicatesApp(app.name, job.packageId);
         if (name_match && isVersionNewer(app.version, *requested)) {
             installed_version = app.version;
             return true;
@@ -487,6 +549,21 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
     }
 
     return false;
+}
+
+bool AppInstallationWorker::nameIndicatesApp(const QString& candidate, const QString& target) {
+    if (candidate.isEmpty() || target.isEmpty()) {
+        return false;
+    }
+    // Whole-word, case-insensitive: forbid an adjacent alphanumeric on either side
+    // so "Notepad" does not match "Notepadster", yet "Google Chrome" still matches
+    // "Google Chrome (64-bit)" and a punctuation-tailed id like "Notepad++" still
+    // matches. Using alnum lookarounds (not \b) keeps targets that END in a
+    // non-word char (++) working, where \b would spuriously fail.
+    const QString pattern = QStringLiteral("(?<![A-Za-z0-9])") +
+                            QRegularExpression::escape(target) + QStringLiteral("(?![A-Za-z0-9])");
+    const QRegularExpression re(pattern, QRegularExpression::CaseInsensitiveOption);
+    return re.match(candidate).hasMatch();
 }
 
 void AppInstallationWorker::updateJobStatus(int index,

@@ -27,6 +27,7 @@ using sak::ScanLevel;
 namespace sak {
 bool firewallDumpHeaderMissing(const QStringList& lines);
 void applyFirewallField(const QString& trimmed, LeftoverItem& item);
+QString parseFirstCsvField(const QString& line);
 #ifdef Q_OS_WIN
 bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
                          std::vector<BYTE>& data_buf,
@@ -86,6 +87,11 @@ private Q_SLOTS:
     void firewallField_programPathCaptured();
     void firewallField_programAnyIgnored();
     void firewallField_unrelatedLineNoOp();
+
+    // -- Scheduled-task CSV first-field parse (embedded commas must not truncate task identity) --
+    void csvFirstField_plainUnquoted();
+    void csvFirstField_quotedWithEmbeddedComma();
+    void csvFirstField_escapedQuotes();
 
     // -- Run-key ERROR_MORE_DATA buffer growth (long values must not be skipped) --
 #ifdef Q_OS_WIN
@@ -583,6 +589,27 @@ void LeftoverScannerTests::firewallField_unrelatedLineNoOp() {
     QVERIFY(item.firewallDirection.isEmpty());
     QVERIFY(item.firewallProfile.isEmpty());
     QVERIFY(item.firewallProgram.isEmpty());
+}
+
+// -- Scheduled-task CSV first-field parse -------------------------------------
+// schtasks /fo CSV quotes each field; a naive split(',')[0] truncates a task name that contains a
+// comma, so a later removeScheduledTask would target the wrong/nonexistent task. parseFirstCsvField
+// honors the quoting so the task identity is preserved.
+
+void LeftoverScannerTests::csvFirstField_plainUnquoted() {
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("TaskName,Next Run Time,Status")),
+             QStringLiteral("TaskName"));
+}
+
+void LeftoverScannerTests::csvFirstField_quotedWithEmbeddedComma() {
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("\"Acme, Inc. Updater\",\"N/A\",\"Ready\"")),
+             QStringLiteral("Acme, Inc. Updater"));
+}
+
+void LeftoverScannerTests::csvFirstField_escapedQuotes() {
+    // A doubled quote inside a quoted field is a single literal quote.
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("\"He said \"\"hi\"\"\",\"x\"")),
+             QStringLiteral("He said \"hi\""));
 }
 
 #ifdef Q_OS_WIN

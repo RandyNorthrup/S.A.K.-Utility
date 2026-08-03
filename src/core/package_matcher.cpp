@@ -29,6 +29,8 @@ constexpr int kBaseNameMaxWordCount = 3;
 constexpr double kContainedNameSimilarity = 0.85;
 constexpr double kSimilarityAverageDivisor = 2.0;
 constexpr int kJaroMatchWindowDivisor = 2;
+// Upper bound on either string length fed to the Levenshtein matrix (~4 MiB of ints at the cap).
+constexpr int kMaxLevenshteinLen = 1024;
 
 /// @brief Find a matching character in s2 within match_distance of position i in s1.
 /// @return Index in s2 if found, -1 otherwise.
@@ -219,9 +221,14 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
     std::vector<std::pair<int, AppScanner::AppInfo>> fuzzy_candidates;
     collectExactMatches(apps, choco_mgr, config, exact_results, fuzzy_candidates);
 
-    // Phase 2: Parallel fuzzy/search matching for remaining apps
+    // Phase 2: Parallel fuzzy/search matching for remaining apps.
+    // NOTE: the shared ChocolateyManager is touched from every worker; its own internal state
+    // (m_choco_authentic, emitted signals) is not this class's to make thread-safe -- that
+    // hardening belongs in ChocolateyManager and is tracked separately. Here we at least fail
+    // closed on a pathological thread count: setMaxThreadCount(0) stalls blockingMapped and a
+    // negative value is implementation-defined, so clamp to a minimum of one worker.
     QThreadPool pool;
-    pool.setMaxThreadCount(config.thread_count);
+    pool.setMaxThreadCount(std::max(1, config.thread_count));
 
     auto fuzzy_results =
         QtConcurrent::blockingMapped<std::vector<std::pair<int, std::optional<MatchResult>>>>(
@@ -538,7 +545,10 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
         return 1.0;
     }
 
-    // Contains match
+    // Contains match. By design this substring score (and the 0.5/0.6 thresholds) can admit a
+    // loose match: the results are MIGRATION SUGGESTIONS surfaced to the user for review (selected
+    // / available lists), never auto-installed, and install-time validatePackageName is the hard
+    // gate. A low-confidence suggestion is therefore acceptable, not a fail-open.
     if (s1.contains(s2) || s2.contains(s1)) {
         return kContainedNameSimilarity;
     }
@@ -560,6 +570,14 @@ int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) co
     Q_ASSERT(!s2.isEmpty());
     const int len1 = s1.length();
     const int len2 = s2.length();
+
+    // Bound the O(len1*len2) matrix. Registry DisplayNames / package ids are practically short, but
+    // a pathological input must not allocate an enormous matrix. Past a sane cap, fail closed by
+    // treating the pair as maximally distant (max_len distance -> similarity 0, never a false
+    // match).
+    if (len1 > kMaxLevenshteinLen || len2 > kMaxLevenshteinLen) {
+        return std::max(len1, len2);
+    }
 
     std::vector<std::vector<int>> d(len1 + 1, std::vector<int>(len2 + 1));
 
@@ -706,7 +724,7 @@ int PackageMatcher::getSearchMatchCount() const {
     return m_search_match_count;
 }
 
-void PackageMatcher::exportMappings(const QString& file_path) const {
+bool PackageMatcher::exportMappings(const QString& file_path) const {
     Q_ASSERT(!m_exact_mappings.empty());
     Q_ASSERT(!file_path.isEmpty());
     QJsonObject root;
@@ -728,22 +746,33 @@ void PackageMatcher::exportMappings(const QString& file_path) const {
     if (!file.open(QIODevice::WriteOnly)) {
         sak::logWarning("[PackageMatcher] Failed to open mappings file for write: {}",
                         file_path.toStdString());
-        return;
+        return false;
     }
     const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size() || !file.commit()) {
         sak::logWarning("[PackageMatcher] Failed to write mappings file (original left intact): {}",
                         file_path.toStdString());
+        return false;
     }
+    return true;
 }
 
-void PackageMatcher::importMappings(const QString& file_path) {
+bool PackageMatcher::importMappings(const QString& file_path) {
     Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         sak::logWarning("[PackageMatcher] Failed to open mappings file: {}",
                         file_path.toStdString());
-        return;
+        return false;
+    }
+
+    // Bound the read: a mappings file is a small hand-editable list. Refuse an implausibly large
+    // file rather than readAll() it into memory unbounded (fail closed on a DoS-sized input).
+    constexpr qint64 kMaxMappingsFileBytes = 8LL * 1024 * 1024;
+    if (file.size() > kMaxMappingsFileBytes) {
+        sak::logWarning("[PackageMatcher] Mappings file exceeds size cap, refusing to import: {}",
+                        file_path.toStdString());
+        return false;
     }
 
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
@@ -752,7 +781,7 @@ void PackageMatcher::importMappings(const QString& file_path) {
     if (!doc.isObject()) {
         sak::logWarning("Package mappings file is not a valid JSON object: {}",
                         file_path.toStdString());
-        return;
+        return false;
     }
 
     QJsonObject root = doc.object();
@@ -767,6 +796,7 @@ void PackageMatcher::importMappings(const QString& file_path) {
             m_exact_mappings[app_name] = choco_package;
         }
     }
+    return true;
 }
 
 void PackageMatcher::clearCache() {
@@ -787,22 +817,18 @@ void PackageMatcher::cacheSearch(const QString& keyword, const QString& result) 
 
 std::vector<QString> PackageMatcher::batchSearchChocolatey(const QStringList& keywords,
                                                            ChocolateyManager* choco_mgr) {
+    // Preserve positional correspondence: results[i] MUST track keywords[i]. The old two-pass form
+    // (cached hits first, then uncached) reordered the output, silently breaking any caller that
+    // relies on result[i] matching keyword[i].
     std::vector<QString> results;
     results.reserve(keywords.size());
 
-    // Filter out cached keywords
-    QStringList uncached_keywords;
     for (const QString& keyword : keywords) {
-        QString cached = getCachedSearch(keyword);
+        const QString cached = getCachedSearch(keyword);
         if (!cached.isEmpty()) {
             results.push_back(cached);
-        } else {
-            uncached_keywords.append(keyword);
+            continue;
         }
-    }
-
-    // Batch search uncached keywords (could be optimized further with single choco call)
-    for (const QString& keyword : uncached_keywords) {
         auto result = choco_mgr->searchPackage(keyword, kChocoSearchResultLimit);
         if (result.success) {
             cacheSearch(keyword, result.output);

@@ -124,12 +124,16 @@ private:
                                   const QString& hive_name,
                                   const std::atomic<bool>& stopRequested,
                                   QVector<LeftoverItem>& items);
-    /// Match + append a single Run-key value (nesting/complexity split out of scanRunKey).
-    void appendRunKeyValue(HKEY key,
-                           DWORD index,
-                           const QString& hive_name,
-                           const wchar_t* subkey,
-                           QVector<LeftoverItem>& items);
+    /// Match + append a single Run-key value (nesting/complexity split out of scanRunKey). Returns
+    /// TRUE when the value was READ reliably (whether or not it matched this program), FALSE when
+    /// the read itself failed (a genuine error or the grow ceiling) so the caller can flag the
+    /// whole startup phase incomplete instead of silently dropping the entry and reporting "none
+    /// here".
+    [[nodiscard]] bool appendRunKeyValue(HKEY key,
+                                         DWORD index,
+                                         const QString& hive_name,
+                                         const wchar_t* subkey,
+                                         QVector<LeftoverItem>& items);
 #endif
     void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
 

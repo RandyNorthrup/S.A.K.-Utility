@@ -532,6 +532,141 @@ private Q_SLOTS:
         QVERIFY(restored.open(QIODevice::ReadOnly));
         QCOMPARE(restored.readAll(), QByteArray("TOP SECRET DATA"));
     }
+
+    // --- CR3-1: a COMPRESSED backup must honor exclude_patterns ---
+    // Previously Compress-Archive ran over the raw sources and ignored exclusions, so a
+    // "secret" file the user asked to drop was archived anyway. It must now be filtered.
+    void compressedBackupHonorsExcludePatterns() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "keep.txt", "KEEP");
+        QVERIFY(!src.isEmpty());
+        QFile secret(QDir(src).filePath("password.key"));
+        QVERIFY(secret.open(QIODevice::WriteOnly));
+        secret.write("SECRET");
+        secret.close();
+
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = true;
+        cfg.verify_checksum = false;
+        cfg.exclude_patterns = QStringList{QStringLiteral("*.key")};
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+
+        QTemporaryDir restoreDir;
+        QVERIFY(restoreDir.isValid());
+        UserDataManager::RestoreConfig rcfg;
+        rcfg.verify_checksum = false;
+        rcfg.create_backup = false;
+        rcfg.overwrite_existing = true;
+        QVERIFY(mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
+
+        QDirIterator kept(restoreDir.path(),
+                          {QStringLiteral("keep.txt")},
+                          QDir::Files,
+                          QDirIterator::Subdirectories);
+        QVERIFY(kept.hasNext());  // non-excluded file present
+        QDirIterator leaked(restoreDir.path(),
+                            {QStringLiteral("password.key")},
+                            QDir::Files,
+                            QDirIterator::Subdirectories);
+        QVERIFY(!leaked.hasNext());  // excluded secret was NOT archived
+    }
+
+    // --- CR3-3: an emptied sidecar checksum must not disable verification for a .zip ---
+    void restoreRejectsCompressedBackupWithEmptiedChecksum() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "data.txt", "payload");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        cfg.compress = true;
+        cfg.verify_checksum = true;
+        auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
+        QVERIFY(e.has_value());
+        QVERIFY(!e->checksum.isEmpty());
+
+        // Tamper: empty the sidecar checksum to try to skip integrity checking.
+        const QString metaPath = e->backup_path + ".json";
+        QFile in(metaPath);
+        QVERIFY(in.open(QIODevice::ReadOnly));
+        QJsonObject obj = QJsonDocument::fromJson(in.readAll()).object();
+        in.close();
+        obj["checksum"] = QString();
+        QFile out(metaPath);
+        QVERIFY(out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        out.write(QJsonDocument(obj).toJson());
+        out.close();
+
+        QTemporaryDir restoreDir;
+        QVERIFY(restoreDir.isValid());
+        UserDataManager::RestoreConfig rcfg;
+        rcfg.verify_checksum = true;  // integrity is REQUIRED
+        rcfg.create_backup = false;
+        // A compressed archive with no checksum cannot be verified -> fail closed.
+        QVERIFY(!mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
+    }
+
+    // --- CR3-7: strict metadata parse rejects a wrong-typed / oversized sidecar ---
+    void listBackupsRejectsWrongTypedChecksumSidecar() {
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        const QString payload = QDir(backupDir.path()).filePath("App_20250101_000000.zip");
+        QFile pf(payload);
+        QVERIFY(pf.open(QIODevice::WriteOnly));
+        pf.write("PK\x03\x04");
+        pf.close();
+        QJsonObject obj;
+        obj["app_name"] = QStringLiteral("App");
+        obj["backup_path"] = payload;
+        obj["checksum"] = 12'345;  // wrong type: must not coerce to "" (which disables verify)
+        QFile meta(payload + ".json");
+        QVERIFY(meta.open(QIODevice::WriteOnly));
+        meta.write(QJsonDocument(obj).toJson());
+        meta.close();
+
+        UserDataManager mgr;
+        QVERIFY(mgr.listBackups(backupDir.path()).empty());  // rejected, not silently coerced
+    }
+
+    void listBackupsRejectsOversizedSidecar() {
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        const QString payload = QDir(backupDir.path()).filePath("App_big.zip");
+        QFile pf(payload);
+        QVERIFY(pf.open(QIODevice::WriteOnly));
+        pf.write("PK");
+        pf.close();
+        QByteArray big = "{\"app_name\":\"App\",\"backup_path\":\"" + payload.toUtf8() +
+                         "\",\"checksum\":\"\",\"pad\":\"";
+        big += QByteArray(1024 * 1024 + 16, 'a');  // push the sidecar past the 1 MiB cap
+        big += "\"}";
+        QFile meta(payload + ".json");
+        QVERIFY(meta.open(QIODevice::WriteOnly));
+        meta.write(big);
+        meta.close();
+
+        UserDataManager mgr;
+        QVERIFY(mgr.listBackups(backupDir.path()).empty());  // oversized sidecar refused
+    }
+
+    // --- CR3-8: empty app_name / backup_dir fail closed at RUNTIME (not debug-only) ---
+    void backupFailsClosedOnEmptyInputs() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString src = makeSourceDir(work, "src", "data.txt", "x");
+        QTemporaryDir backupDir;
+        QVERIFY(backupDir.isValid());
+        UserDataManager mgr;
+        UserDataManager::BackupConfig cfg;
+        QVERIFY(!mgr.backupAppData(QString(), {src}, backupDir.path(), cfg).has_value());
+        QVERIFY(!mgr.backupAppData(QStringLiteral("App"), {src}, QString(), cfg).has_value());
+    }
 };
 
 QTEST_MAIN(UserDataManagerTests)

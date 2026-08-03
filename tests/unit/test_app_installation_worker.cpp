@@ -249,6 +249,85 @@ private Q_SLOTS:
         // No cancel() here: the loop must reach migrationCompleted on its own.
         QVERIFY(doneSpy.wait(3000));
     }
+
+    /// migrationSkipReason (CODEX REVIEW 3 #6): a SELECTED entry that cannot be
+    /// migrated must yield an explicit reason instead of being silently dropped;
+    /// an installable entry yields empty.
+    void migrationSkipReasonClassifies() {
+        using W = sak::AppInstallationWorker;
+        sak::MigrationReport::MigrationEntry ok;
+        ok.choco_package = "googlechrome";
+        ok.available = true;
+        QVERIFY(W::migrationSkipReason(ok).isEmpty());
+
+        sak::MigrationReport::MigrationEntry noPkg = ok;
+        noPkg.choco_package = "";
+        QVERIFY(!W::migrationSkipReason(noPkg).isEmpty());
+
+        sak::MigrationReport::MigrationEntry unavail = ok;
+        unavail.available = false;
+        QVERIFY(!W::migrationSkipReason(unavail).isEmpty());
+
+        // Version lock with no locked version would silently install latest.
+        sak::MigrationReport::MigrationEntry lockNoVer = ok;
+        lockNoVer.version_lock = true;
+        lockNoVer.locked_version = "";
+        QVERIFY(!W::migrationSkipReason(lockNoVer).isEmpty());
+
+        sak::MigrationReport::MigrationEntry lockVer = lockNoVer;
+        lockVer.locked_version = "1.2.3";
+        QVERIFY(W::migrationSkipReason(lockVer).isEmpty());
+    }
+
+    /// Skipped SELECTED entries must be recorded on the report (CODEX REVIEW 3 #6),
+    /// not silently dropped.
+    void skippedSelectedEntriesRecordedOnReport() {
+        auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
+        sak::AppInstallationWorker worker(chocoMgr);
+
+        auto report = createTestReport(1, 1, 0, 1);  // 1 valid, 1 unavailable, 1 no-package
+        worker.startMigration(report, 0);
+
+        int skipped = 0;
+        const auto& entries = report->getEntries();
+        for (const auto& e : entries) {
+            if (e.status == "skipped") {
+                ++skipped;
+                QVERIFY(!e.error_message.isEmpty());
+            }
+        }
+        QCOMPARE(skipped, 2);  // the unavailable + the no-package selected entries
+
+        worker.cancel();
+    }
+
+    /// nameIndicatesApp (CODEX REVIEW 3 #7): whole-word match so an unrelated app
+    /// whose name merely embeds the target token cannot certify an install.
+    void nameIndicatesAppWholeWord() {
+        using W = sak::AppInstallationWorker;
+        QVERIFY(W::nameIndicatesApp("Google Chrome (64-bit)", "Google Chrome"));
+        QVERIFY(W::nameIndicatesApp("notepad", "Notepad"));
+        // Punctuation-tailed ids must still match (alnum lookarounds, not \\b).
+        QVERIFY(W::nameIndicatesApp("Notepad++ (64-bit)", "Notepad++"));
+        // Embedded-token lookalikes must NOT match.
+        QVERIFY(!W::nameIndicatesApp("Notepadster Deluxe", "Notepad"));
+        QVERIFY(!W::nameIndicatesApp("SuperGitHubTool", "Git"));
+        // Empty operands fail closed.
+        QVERIFY(!W::nameIndicatesApp("", "Notepad"));
+        QVERIFY(!W::nameIndicatesApp("Notepad", ""));
+    }
+
+    /// A null ChocolateyManager must never be dereferenced (CODEX REVIEW 3 #11):
+    /// construction and startMigration fail closed instead of crashing.
+    void nullChocoManagerFailsClosed() {
+        std::shared_ptr<sak::ChocolateyManager> nullMgr;
+        sak::AppInstallationWorker worker(nullMgr);  // must not crash on connect()
+
+        auto report = createTestReport(2, 0, 0, 0);
+        const int jobCount = worker.startMigration(report, 0);
+        QCOMPARE(jobCount, 0);  // refuses to start with a null manager
+        QVERIFY(!worker.isRunning());
+    }
 };
 
 QTEST_GUILESS_MAIN(AppInstallationWorkerTests)

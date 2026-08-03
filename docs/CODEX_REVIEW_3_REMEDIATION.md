@@ -91,83 +91,83 @@ Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial
 ## Pass: appdeploy (App scan / choco / deploy / cleanup / leftover / uninstall)
 77 items (9 confirmed / 68 partial)
 
-- [ ] [HIGH/CONF] src/core/offline_deployment_worker.cpp:1504,1446 / src/core/package_internalization_engine.cpp:769 -- Direct-download accepts arbitrary URL scheme/host and treats missing checksum as valid
-- [ ] [HIGH/CONF] src/core/cleanup_worker.cpp:726 -- Empty post-hive registry subkey reaches RegDeleteTreeW root-scoped
-- [ ] [MEDI/CONF] src/core/app_scanner.cpp:303 / src/core/offline_deployment_worker.cpp:1010,1114 -- choco.exe executed without execution-time Authenticode check in inventory + offline-deploy paths
-- [ ] [MEDI/CONF] src/core/cleanup_worker.cpp:812,832,840 / src/core/user_data_manager.cpp:641,750 -- Destructive/elevated ops launch bare sc.exe/schtasks.exe/netsh.exe/powershell.exe
-- [ ] [MEDI/CONF] src/core/app_scanner.cpp:226,240 -- AppX PowerShell path derived from attacker-influenceable %SystemRoot%
-- [ ] [MEDI/CONF] src/core/offline_deployment_worker.cpp:1504 / src/core/package_internalization_engine.cpp:520,886 -- Installer/nupkg binary responses buffered with no response-size cap
-- [ ] [MEDI/CONF] src/core/leftover_scanner.cpp:901,924,878 -- Per-value Run-key read failure silently skipped while scanRunKey still reports reliable
-- [ ] [MEDI/CONF] src/core/user_data_manager.cpp:168,615 -- Compressed backups silently ignore exclude_patterns
-- [ ] [MEDI/PART] src/core/chocolatey_manager.cpp:250,576 -- Chocolatey authenticity cached permanently after first verify
-- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:1024,1132,1744 -- Unsigned manifest self-asserts integrity; package hashed then reopened by pathname (swap TOCTOU)
-- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:228,323,738 -- output_dir unvalidated (empty->/_work) and ownership marker write result ignored
-- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:279,587,599 -- File deletion falls back to lexical checks + pathname delete when handle can't be opened
-- [ ] [MEDI/PART] src/core/user_data_manager.cpp:446,468 -- Backup deletion validates identity then recursively deletes by pathname
-- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:1051,1147,1636 -- Flash/apply relies on mutable %SystemDrive% (silent C: fallback); disk identity not pinned validate->write
-- [ ] [MEDI/PART] include/sak/app_scanner.h:66 / src/core/app_scanner.cpp:41,89,253 -- Scanner APIs have no failure channel; failed hives/AppX/choco become empty inventories
-- [ ] [MEDI/PART] src/core/chocolatey_manager.cpp:279,310 -- Unvalidated extra_args can weaken checksum/security policy; version_locked+empty version installs latest
-- [ ] [MEDI/PART] src/core/app_installation_worker.cpp:115 -- Selected unavailable/package-less migration entries silently dropped; empty locked version -> latest
-- [ ] [MEDI/PART] src/core/app_installation_worker.cpp:405,429 -- Install verification accepts 'installed X/Y' with X>0 and certifies via substring registry/AppX match
-- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:562,866,956 -- Dep-resolution failures retried as depless packages; cycles installed in manifest order under --ignore-dependencies
-- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:379,738 -- Cancelling bundle creation still finalizes, writes and reports completed
-- [ ] [MEDI/PART] src/core/offline_deployment_worker.cpp:1230,1395,1468 -- Direct-download package success requires only one installer; partial/missing variants still succeed
-- [ ] [MEDI/PART] src/core/package_internalization_engine.cpp:121,294,314 -- Unreadable install script -> empty string -> classified self-contained; token scan can't prove no-network
-- [ ] [MEDI/PART] src/core/package_matcher.cpp:213 -- Parallel matching shares one ChocolateyManager/QObject across worker threads; unchecked thread count
-- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:365 -- Manual recycle failure escalates to permanent deletion
-- [ ] [MEDI/PART] src/core/cleanup_worker.cpp:189,194 -- CleanupWorker accepts arbitrary items without its own denylist; returns success after per-item failures
-- [ ] [MEDI/PART] src/core/leftover_scanner.cpp:1024,1127 -- Prefix/substring risk + object matching can classify unrelated items as safe leftovers
-- [ ] [MEDI/PART] src/core/user_data_manager.cpp:255,507 -- Backup verification bypassed when metadata checksum is empty, even when requested; metadata unauthenticated
-- [ ] [MEDI/PART] src/core/user_data_manager.cpp:713 -- Archive extraction has no expanded-size/entry/link preflight and writes into the live destination
-- [ ] [MEDI/PART] src/core/user_data_manager.cpp:810 -- Overwrite restore deletes destination before copying replacement; Skip mode can restore nothing yet succeed
-- [ ] [MEDI/PART] src/core/advanced_uninstall_controller.cpp:493,509 -- Queue mutation allowed mid-batch shifts m_batchIndex and misattributes/misfires completions
-- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:90,117,388,465 -- Malformed export format -> EML; invalid item_ids dropped to empty -> whole-mailbox scope; PST fractional IDs truncated
-- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:251,1323,2990 -- Export/conversion/recovery return success when only part of the output was written
-- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:1488,1567,1619 -- Partition byte fields coerce wrong types to 0/fractional; omitted dry_run defaults to destructive apply
-- [ ] [MEDI/PART] src/core/app_mutating_actions.cpp:179,3288 -- Export/archive destination safety checked before the writer opens files (reparse/existing TOCTOU)
-- [ ] [LOW/CONF] include/sak/app_mutating_actions.h:1 -- Header lacks include guard/#pragma once; AppX charset doc disagrees with impl
-- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:60,715 -- Choco signer accepts any trusted subject containing 'Chocolatey'; revocation disabled
-- [ ] [LOW/PART] src/core/offline_deployment_worker.cpp:1722,1744 -- Manifest parsing coerces wrong types, defaults unknown mode to Bundle, ignores manifest_version, empties non-object entries
-- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:412 -- Predictable extract dir reused without clearing; mkpath result unchecked
-- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:726,1141 -- Repack sets success before requiring nonempty checksum/size; checksum read ignores mid-stream errors
-- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:670 -- No valid SemVer -> resolution falls back to feed's raw last version
-- [ ] [LOW/PART] src/core/package_matcher.cpp:25,400,541 -- Fuzzy matching accepts low-confidence and substring-derived matches as package IDs
-- [ ] [LOW/PART] src/core/package_matcher.cpp:740 -- Mapping import unbounded, non-transactional, coerces types, no package-id validation
-- [ ] [LOW/PART] src/core/cleanup_worker.cpp:840,35 -- Firewall deletion omits unknown qualifiers and can delete every same-named rule
-- [ ] [LOW/PART] src/core/leftover_scanner.cpp:68,113,288 -- Scan roots from mutable env vars while protected roots hard-coded to C:
-- [ ] [LOW/PART] include/sak/leftover_scanner.h:63 -- Reliability out-param optional and null by default, preserving partial-empty success
-- [ ] [LOW/PART] src/core/user_data_manager.cpp:573,666 -- Encryption truncates the only archive in place (non-atomic); encrypt/decrypt buffer whole archive
-- [ ] [LOW/PART] src/core/user_data_manager.cpp:947 -- Metadata parsing reads unbounded JSON and coerces missing/wrong fields to defaults
-- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:908 -- Batch completion sets Idle and emits batchFinished before deferred cleanup starts
-- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:805 -- Enumeration teardown uses QThread::terminate; second wait failure leaves a live thread/enumerator at destruction
-- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:2117 -- Cleanup proof-of-scan can be disabled by an environment variable
-- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:1713,2004 -- AI cleanup/uninstall bridges force-terminate workers and ignore the final wait result
-- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:277,417,612,689,965,1221,1387,3305 -- Read-only ops return success for cancelled/incomplete/warning/unreadable results
-- [ ] [LOW/PART] src/core/app_mutating_actions.cpp:2832 / src/core/app_readonly_actions.cpp:3476 -- WiFi generation/connection treats missing/unknown security as WPA2; wrong-typed bool -> false
-- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:325,382,553 -- Timeout multiplication can overflow int; negative timeouts/limits coerced to fallback/unlimited
-- [ ] [LOW/PART] src/core/chocolatey_manager.cpp:440 -- isPackageInstalled uses substring contains over unvalidated output
-- [ ] [LOW/PART] src/core/app_installation_worker.cpp:53 -- Constructor dereferences a nullable shared ChocolateyManager
-- [ ] [LOW/PART] src/core/app_installation_worker.cpp:287 -- Cancellation during retry sleep can requeue a job after the queue was cleared
-- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:367 -- m_busy check-and-set is non-atomic, allowing two concurrent internalizations to enter
-- [ ] [LOW/PART] src/core/package_internalization_engine.cpp:1067 -- NuGet artifact-cleanup return values ignored, so failed removals don't block repack
-- [ ] [LOW/PART] src/core/package_matcher.cpp:558 -- Levenshtein allocates an unbounded 2D matrix from registry/feed strings
-- [ ] [LOW/PART] src/core/package_matcher.cpp:788 -- Batch search returns cached results before uncached, breaking positional correspondence
-- [ ] [LOW/PART] src/core/cleanup_worker.cpp:130,155 -- Recycle guarantee uses fixed-drive + hard-coded 4GiB cap; size accumulation can overflow
-- [ ] [LOW/PART] src/core/cleanup_worker.cpp:462 -- setPermissions failure ignored; permission change via pathname after identity checks
-- [ ] [LOW/PART] src/core/leftover_scanner.cpp:639 -- Scheduled-task CSV parsed with a naive comma split; quoted commas break task identity
-- [ ] [LOW/PART] src/core/leftover_scanner.cpp:842 -- Run-value decode discards the final wide char even when the payload lacks a terminator
-- [ ] [LOW/PART] src/core/leftover_scanner.cpp:1155 -- Leftover size returns capped/cancelled partial totals with no incomplete flag; unchecked addition
-- [ ] [LOW/PART] src/core/user_data_manager.cpp:85,141,186 -- Backup validation relies on debug-only assertions for empty paths; collision-free naming has a check-then-create race
-- [ ] [LOW/PART] src/core/user_data_manager.cpp:843 -- Directory copy silently skips reparse subdirs and can't distinguish enumeration failure from empty, yet returns success
-- [ ] [LOW/PART] src/core/user_data_manager.cpp:889 -- SHA-256 generation ignores read errors and can hash a partial file
-- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:562,609 -- Settings load coerces types; setDefaultScanLevel accepts invalid enum values
-- [ ] [LOW/PART] src/core/advanced_uninstall_controller.cpp:221 -- removeRegistryEntry only checks a nonempty registry path before destructive removal
-- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:317,362 -- Read-only partition preview repeats wrong-type/NaN/fractional numeric coercions; wrong-typed payload -> empty object
-- [ ] [LOW/PART] src/core/app_readonly_actions.cpp:917,1176,3893,3980 -- Generic read-only numeric config silently clamps malformed/out-of-range values to defaults
-- [ ] [LOW/PART] src/core/app_scanner.cpp:128 -- Registry application identifiers omit the hive, making HKLM/HKCU entries ambiguous
-- [ ] [LOW/PART] src/core/app_installation_worker.cpp:258 -- Configured install concurrency is effectively dead (one synchronous queue loop)
-- [ ] [LOW/PART] src/core/offline_deployment_worker.cpp:1427 / src/core/package_internalization_engine.cpp:49 -- Filename collision sets are case-sensitive on a case-insensitive filesystem
-- [ ] [LOW/PART] include/sak/package_matcher.h:93 / src/core/offline_deployment_worker.cpp:1670 -- exportMappings/importMappings and README writing expose no error result to callers
+- [x] [HIGH/CONF] src/core/offline_deployment_worker.cpp:1504,1446 / src/core/package_internalization_engine.cpp:769 -- Direct-download accepts arbitrary URL scheme/host and treats missing checksum as valid  (wave B)
+- [x] [HIGH/CONF] src/core/cleanup_worker.cpp:726 -- Empty post-hive registry subkey reaches RegDeleteTreeW root-scoped  (wave B)
+- [x] [MEDI/CONF] src/core/app_scanner.cpp:303 / src/core/offline_deployment_worker.cpp:1010,1114 -- choco.exe executed without execution-time Authenticode check in inventory + offline-deploy paths  (wave B)
+- [x] [MEDI/CONF] src/core/cleanup_worker.cpp:812,832,840 / src/core/user_data_manager.cpp:641,750 -- Destructive/elevated ops launch bare sc.exe/schtasks.exe/netsh.exe/powershell.exe  (wave B)
+- [x] [MEDI/CONF] src/core/app_scanner.cpp:226,240 -- AppX PowerShell path derived from attacker-influenceable %SystemRoot%  (wave B)
+- [x] [MEDI/CONF] src/core/offline_deployment_worker.cpp:1504 / src/core/package_internalization_engine.cpp:520,886 -- Installer/nupkg binary responses buffered with no response-size cap  (wave B)
+- [x] [MEDI/CONF] src/core/leftover_scanner.cpp:901,924,878 -- Per-value Run-key read failure silently skipped while scanRunKey still reports reliable  (wave B)
+- [x] [MEDI/CONF] src/core/user_data_manager.cpp:168,615 -- Compressed backups silently ignore exclude_patterns  (wave B)
+- [x] [MEDI/PART] src/core/chocolatey_manager.cpp:250,576 -- Chocolatey authenticity cached permanently after first verify  (wave B)
+- [x] [MEDI/PART] src/core/offline_deployment_worker.cpp:1024,1132,1744 -- Unsigned manifest self-asserts integrity; package hashed then reopened by pathname (swap TOCTOU)  (wave B)
+- [x] [MEDI/PART] src/core/offline_deployment_worker.cpp:228,323,738 -- output_dir unvalidated (empty->/_work) and ownership marker write result ignored  (wave B)
+- [x] [MEDI/PART] src/core/cleanup_worker.cpp:279,587,599 -- File deletion falls back to lexical checks + pathname delete when handle can't be opened  (wave B)
+- [x] [MEDI/PART] src/core/user_data_manager.cpp:446,468 -- Backup deletion validates identity then recursively deletes by pathname  (wave B)
+- [x] [MEDI/PART] src/core/app_mutating_actions.cpp:1051,1147,1636 -- Flash/apply relies on mutable %SystemDrive% (silent C: fallback); disk identity not pinned validate->write  (wave B)
+- [x] [MEDI/PART] include/sak/app_scanner.h:66 / src/core/app_scanner.cpp:41,89,253 -- Scanner APIs have no failure channel; failed hives/AppX/choco become empty inventories  (wave B)
+- [x] [MEDI/PART] src/core/chocolatey_manager.cpp:279,310 -- Unvalidated extra_args can weaken checksum/security policy; version_locked+empty version installs latest  (wave B)
+- [x] [MEDI/PART] src/core/app_installation_worker.cpp:115 -- Selected unavailable/package-less migration entries silently dropped; empty locked version -> latest  (wave B)
+- [x] [MEDI/PART] src/core/app_installation_worker.cpp:405,429 -- Install verification accepts 'installed X/Y' with X>0 and certifies via substring registry/AppX match  (wave B)
+- [x] [MEDI/PART] src/core/offline_deployment_worker.cpp:562,866,956 -- Dep-resolution failures retried as depless packages; cycles installed in manifest order under --ignore-dependencies  (wave B)
+- [x] [MEDI/PART] src/core/offline_deployment_worker.cpp:379,738 -- Cancelling bundle creation still finalizes, writes and reports completed  (wave B)
+- [x] [MEDI/PART] src/core/offline_deployment_worker.cpp:1230,1395,1468 -- Direct-download package success requires only one installer; partial/missing variants still succeed  (wave B)
+- [x] [MEDI/PART] src/core/package_internalization_engine.cpp:121,294,314 -- Unreadable install script -> empty string -> classified self-contained; token scan can't prove no-network  (wave B)
+- [x] [MEDI/PART] src/core/package_matcher.cpp:213 -- Parallel matching shares one ChocolateyManager/QObject across worker threads; unchecked thread count  (wave B)
+- [x] [MEDI/PART] src/core/cleanup_worker.cpp:365 -- Manual recycle failure escalates to permanent deletion  (wave B)
+- [x] [MEDI/PART] src/core/cleanup_worker.cpp:189,194 -- CleanupWorker accepts arbitrary items without its own denylist; returns success after per-item failures  (wave B)
+- [x] [MEDI/PART] src/core/leftover_scanner.cpp:1024,1127 -- Prefix/substring risk + object matching can classify unrelated items as safe leftovers  (wave B)
+- [x] [MEDI/PART] src/core/user_data_manager.cpp:255,507 -- Backup verification bypassed when metadata checksum is empty, even when requested; metadata unauthenticated  (wave B)
+- [x] [MEDI/PART] src/core/user_data_manager.cpp:713 -- Archive extraction has no expanded-size/entry/link preflight and writes into the live destination  (wave B)
+- [x] [MEDI/PART] src/core/user_data_manager.cpp:810 -- Overwrite restore deletes destination before copying replacement; Skip mode can restore nothing yet succeed  (wave B)
+- [x] [MEDI/PART] src/core/advanced_uninstall_controller.cpp:493,509 -- Queue mutation allowed mid-batch shifts m_batchIndex and misattributes/misfires completions  (wave B)
+- [x] [MEDI/PART] src/core/app_mutating_actions.cpp:90,117,388,465 -- Malformed export format -> EML; invalid item_ids dropped to empty -> whole-mailbox scope; PST fractional IDs truncated  (wave B)
+- [x] [MEDI/PART] src/core/app_mutating_actions.cpp:251,1323,2990 -- Export/conversion/recovery return success when only part of the output was written  (wave B)
+- [x] [MEDI/PART] src/core/app_mutating_actions.cpp:1488,1567,1619 -- Partition byte fields coerce wrong types to 0/fractional; omitted dry_run defaults to destructive apply  (wave B)
+- [x] [MEDI/PART] src/core/app_mutating_actions.cpp:179,3288 -- Export/archive destination safety checked before the writer opens files (reparse/existing TOCTOU)  (wave B)
+- [x] [LOW/CONF] include/sak/app_mutating_actions.h:1 -- Header lacks include guard/#pragma once; AppX charset doc disagrees with impl  (wave B)
+- [x] [LOW/PART] src/core/chocolatey_manager.cpp:60,715 -- Choco signer accepts any trusted subject containing 'Chocolatey'; revocation disabled  (wave B)
+- [x] [LOW/PART] src/core/offline_deployment_worker.cpp:1722,1744 -- Manifest parsing coerces wrong types, defaults unknown mode to Bundle, ignores manifest_version, empties non-object entries  (wave B)
+- [x] [LOW/PART] src/core/package_internalization_engine.cpp:412 -- Predictable extract dir reused without clearing; mkpath result unchecked  (wave B)
+- [x] [LOW/PART] src/core/package_internalization_engine.cpp:726,1141 -- Repack sets success before requiring nonempty checksum/size; checksum read ignores mid-stream errors  (wave B)
+- [x] [LOW/PART] src/core/package_internalization_engine.cpp:670 -- No valid SemVer -> resolution falls back to feed's raw last version  (wave B)
+- [x] [LOW/PART] src/core/package_matcher.cpp:25,400,541 -- Fuzzy matching accepts low-confidence and substring-derived matches as package IDs  (wave B)
+- [x] [LOW/PART] src/core/package_matcher.cpp:740 -- Mapping import unbounded, non-transactional, coerces types, no package-id validation  (wave B)
+- [x] [LOW/PART] src/core/cleanup_worker.cpp:840,35 -- Firewall deletion omits unknown qualifiers and can delete every same-named rule  (wave B)
+- [x] [LOW/PART] src/core/leftover_scanner.cpp:68,113,288 -- Scan roots from mutable env vars while protected roots hard-coded to C:  (wave B)
+- [x] [LOW/PART] include/sak/leftover_scanner.h:63 -- Reliability out-param optional and null by default, preserving partial-empty success  (wave B)
+- [x] [LOW/PART] src/core/user_data_manager.cpp:573,666 -- Encryption truncates the only archive in place (non-atomic); encrypt/decrypt buffer whole archive  (wave B)
+- [x] [LOW/PART] src/core/user_data_manager.cpp:947 -- Metadata parsing reads unbounded JSON and coerces missing/wrong fields to defaults  (wave B)
+- [x] [LOW/PART] src/core/advanced_uninstall_controller.cpp:908 -- Batch completion sets Idle and emits batchFinished before deferred cleanup starts  (wave B)
+- [x] [LOW/PART] src/core/advanced_uninstall_controller.cpp:805 -- Enumeration teardown uses QThread::terminate; second wait failure leaves a live thread/enumerator at destruction  (wave B)
+- [x] [LOW/PART] src/core/app_mutating_actions.cpp:2117 -- Cleanup proof-of-scan can be disabled by an environment variable  (wave B)
+- [x] [LOW/PART] src/core/app_mutating_actions.cpp:1713,2004 -- AI cleanup/uninstall bridges force-terminate workers and ignore the final wait result  (wave B)
+- [x] [LOW/PART] src/core/app_readonly_actions.cpp:277,417,612,689,965,1221,1387,3305 -- Read-only ops return success for cancelled/incomplete/warning/unreadable results  (wave B)
+- [x] [LOW/PART] src/core/app_mutating_actions.cpp:2832 / src/core/app_readonly_actions.cpp:3476 -- WiFi generation/connection treats missing/unknown security as WPA2; wrong-typed bool -> false  (wave B)
+- [x] [LOW/PART] src/core/chocolatey_manager.cpp:325,382,553 -- Timeout multiplication can overflow int; negative timeouts/limits coerced to fallback/unlimited  (wave B)
+- [x] [LOW/PART] src/core/chocolatey_manager.cpp:440 -- isPackageInstalled uses substring contains over unvalidated output  (wave B)
+- [x] [LOW/PART] src/core/app_installation_worker.cpp:53 -- Constructor dereferences a nullable shared ChocolateyManager  (wave B)
+- [x] [LOW/PART] src/core/app_installation_worker.cpp:287 -- Cancellation during retry sleep can requeue a job after the queue was cleared  (wave B)
+- [x] [LOW/PART] src/core/package_internalization_engine.cpp:367 -- m_busy check-and-set is non-atomic, allowing two concurrent internalizations to enter  (wave B)
+- [x] [LOW/PART] src/core/package_internalization_engine.cpp:1067 -- NuGet artifact-cleanup return values ignored, so failed removals don't block repack  (wave B)
+- [x] [LOW/PART] src/core/package_matcher.cpp:558 -- Levenshtein allocates an unbounded 2D matrix from registry/feed strings  (wave B)
+- [x] [LOW/PART] src/core/package_matcher.cpp:788 -- Batch search returns cached results before uncached, breaking positional correspondence  (wave B)
+- [x] [LOW/PART] src/core/cleanup_worker.cpp:130,155 -- Recycle guarantee uses fixed-drive + hard-coded 4GiB cap; size accumulation can overflow  (wave B)
+- [x] [LOW/PART] src/core/cleanup_worker.cpp:462 -- setPermissions failure ignored; permission change via pathname after identity checks  (wave B)
+- [x] [LOW/PART] src/core/leftover_scanner.cpp:639 -- Scheduled-task CSV parsed with a naive comma split; quoted commas break task identity  (wave B)
+- [x] [LOW/PART] src/core/leftover_scanner.cpp:842 -- Run-value decode discards the final wide char even when the payload lacks a terminator  (wave B)
+- [x] [LOW/PART] src/core/leftover_scanner.cpp:1155 -- Leftover size returns capped/cancelled partial totals with no incomplete flag; unchecked addition  (wave B)
+- [x] [LOW/PART] src/core/user_data_manager.cpp:85,141,186 -- Backup validation relies on debug-only assertions for empty paths; collision-free naming has a check-then-create race  (wave B)
+- [x] [LOW/PART] src/core/user_data_manager.cpp:843 -- Directory copy silently skips reparse subdirs and can't distinguish enumeration failure from empty, yet returns success  (wave B)
+- [x] [LOW/PART] src/core/user_data_manager.cpp:889 -- SHA-256 generation ignores read errors and can hash a partial file  (wave B)
+- [x] [LOW/PART] src/core/advanced_uninstall_controller.cpp:562,609 -- Settings load coerces types; setDefaultScanLevel accepts invalid enum values  (wave B)
+- [x] [LOW/PART] src/core/advanced_uninstall_controller.cpp:221 -- removeRegistryEntry only checks a nonempty registry path before destructive removal  (wave B)
+- [x] [LOW/PART] src/core/app_readonly_actions.cpp:317,362 -- Read-only partition preview repeats wrong-type/NaN/fractional numeric coercions; wrong-typed payload -> empty object  (wave B)
+- [x] [LOW/PART] src/core/app_readonly_actions.cpp:917,1176,3893,3980 -- Generic read-only numeric config silently clamps malformed/out-of-range values to defaults  (wave B)
+- [x] [LOW/PART] src/core/app_scanner.cpp:128 -- Registry application identifiers omit the hive, making HKLM/HKCU entries ambiguous  (wave B)
+- [x] [LOW/PART] src/core/app_installation_worker.cpp:258 -- Configured install concurrency is effectively dead (one synchronous queue loop)  (wave B)
+- [x] [LOW/PART] src/core/offline_deployment_worker.cpp:1427 / src/core/package_internalization_engine.cpp:49 -- Filename collision sets are case-sensitive on a case-insensitive filesystem  (wave B)
+- [x] [LOW/PART] include/sak/package_matcher.h:93 / src/core/offline_deployment_worker.cpp:1670 -- exportMappings/importMappings and README writing expose no error result to callers  (wave B)
 
 ## Pass: ai (AI orchestration / policy / providers / MCP)
 28 items (2 confirmed / 26 partial)

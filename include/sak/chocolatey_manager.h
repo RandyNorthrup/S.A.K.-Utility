@@ -126,6 +126,25 @@ public:
     ///        unit-testable.
     [[nodiscard]] static QString approvedInstallSource(bool allow_unofficial);
 
+    /// @brief True iff the file at @p choco_path is a genuine, Chocolatey-signed
+    ///        binary: valid Authenticode signature chaining to a trusted root AND
+    ///        a trusted Chocolatey signer subject. Fails closed on an empty path,
+    ///        a missing/unsigned file, or off Windows. Exposed so every path that
+    ///        launches the bundled choco.exe (manager execution AND the scanner)
+    ///        shares one execution-time authenticity gate.
+    [[nodiscard]] static bool isAuthenticChocoBinary(const QString& choco_path);
+
+    /// @brief True iff @p extra_args carries no security-weakening override (e.g.
+    ///        --ignore-checksums / --allow-empty-checksums) that would relax
+    ///        Chocolatey's integrity policy. Fails closed on any such flag. Pure;
+    ///        unit-testable.
+    [[nodiscard]] static bool validateExtraArgs(const QStringList& extra_args);
+
+    /// @brief Convert a timeout in seconds to milliseconds without integer
+    ///        overflow: @p timeout_seconds when > 0 else @p default_seconds, in a
+    ///        64-bit intermediate, clamped to [0, INT_MAX]. Pure; unit-testable.
+    [[nodiscard]] static int computeTimeoutMs(int timeout_seconds, int default_seconds);
+
 Q_SIGNALS:
     void installStarted(const QString& package_name);
     void installProgress(const QString& package_name, const QString& status);
@@ -144,7 +163,8 @@ private:
 
     // Authenticity: prove the bundled choco.exe is a genuine, Chocolatey-signed
     // binary (valid Authenticode signature AND trusted signer) before executing
-    // it. Result is cached per resolved path; initialize() resets it.
+    // it. Re-verified immediately before every execution (no cached verdict) so a
+    // file swapped on disk after an earlier check cannot ride a stale "authentic".
     bool verifyChocoAuthenticity() const;
     bool ensureChocoAuthentic();
 
@@ -162,7 +182,6 @@ private:
     bool m_initialized;
     int m_default_timeout_seconds;
     bool m_auto_confirm;
-    int m_choco_authentic{0};  // 0 = unknown, 1 = verified genuine, -1 = rejected
 };
 
 }  // namespace sak

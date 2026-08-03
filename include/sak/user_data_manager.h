@@ -174,6 +174,21 @@ private:
                        const QString& archive_path,
                        const BackupConfig& config);
 
+    /// @brief Build the (unencrypted) archive payload, staging a filtered copy first
+    ///        when exclude_patterns are set so excluded files never enter the zip.
+    bool buildArchivePayload(const QStringList& source_paths,
+                             const QString& archive_path,
+                             const BackupConfig& config);
+
+    /// @brief Run Compress-Archive over the given source paths (no filtering, no encryption)
+    static bool compressSourcePaths(const QStringList& source_paths,
+                                    const QString& archive_path,
+                                    int compression_level);
+
+    /// @brief Refuse an archive whose entry count or decompressed size exceeds the
+    ///        zip-bomb caps, enumerated before any extraction writes to disk.
+    static bool archiveWithinLimits(const QString& archive_path);
+
     /// @brief Map BackupConfig compression_level to PowerShell CompressionLevel name
     static QString mapCompressionLevel(int level);
     /// @brief Encrypt an existing archive file in-place using AES-256
@@ -227,6 +242,14 @@ private:
                         const QStringList& exclude_patterns,
                         ExistingFilePolicy policy);
 
+    /// @brief Overwrite an existing destination file without a data-loss window:
+    ///        copy to a sibling temp first, then atomically replace, so a copy
+    ///        failure never destroys the original.
+    static bool overwriteFile(const QString& source_file, const QString& dest_file);
+
+    /// @brief Remove @p target then rename @p tmp onto it; cleans up @p tmp on failure.
+    static bool atomicReplaceFile(const QString& tmp, const QString& target);
+
     /// @brief Copy all source paths into a single destination directory
     bool copySourcesToDest(const QStringList& source_paths,
                            const QString& dest_dir,
@@ -279,6 +302,13 @@ private:
                         const QString& restore_dir,
                         const BackupEntry& entry,
                         const RestoreConfig& config);
+
+    /// @brief Integrity-gate a restore. When verification is requested a compressed
+    ///        archive MUST carry a checksum (a tampered/emptied sidecar cannot silently
+    ///        disable it); returns false and emits operationError when it cannot verify.
+    bool verifyRestoreIntegrity(const QString& backup_path,
+                                const BackupEntry& entry,
+                                const RestoreConfig& config);
 };
 
 }  // namespace sak

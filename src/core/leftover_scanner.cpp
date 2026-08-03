@@ -288,6 +288,11 @@ QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<boo
 QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
+    // Scan roots come from environment variables (there is no OS-agnostic other source), while
+    // kProtectedPaths hard-codes C:. This is safe by design: classifyRisk -> isSharedContainerPath
+    // matches the shared-container LEAF name (windows/system32/programdata/...) case-insensitively
+    // on ANY drive, so a non-C: OS directory is still Risky. A poisoned APPDATA/ProgramFiles only
+    // redirects WHERE we look; anything found is still classified before it can be auto-selected.
     QStringList base_dirs;
     appendEnvDir(base_dirs, "APPDATA");
     appendEnvDir(base_dirs, "LOCALAPPDATA");
@@ -636,6 +641,31 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
 #endif
 }
 
+// Extract the FIRST field of a CSV line, honoring RFC-4180 double-quoting so a task name that
+// itself contains a comma (e.g. "Acme, Inc. Updater") is not truncated -- a naive split(',')[0]
+// would take only "Acme and removeScheduledTask would then target the wrong/nonexistent task.
+// Doubled quotes ("") inside a quoted field are a single literal quote. External linkage so the
+// parse is unit-testable without schtasks.
+QString parseFirstCsvField(const QString& line) {
+    if (line.isEmpty() || line.at(0) != QLatin1Char('"')) {
+        const int comma = line.indexOf(QLatin1Char(','));
+        return comma < 0 ? line : line.left(comma);
+    }
+    QString out;
+    for (int i = 1; i < line.length(); ++i) {
+        const QChar ch = line.at(i);
+        if (ch != QLatin1Char('"')) {
+            out.append(ch);
+        } else if (i + 1 < line.length() && line.at(i + 1) == QLatin1Char('"')) {
+            out.append(QLatin1Char('"'));  // escaped quote inside the quoted field
+            ++i;
+        } else {
+            break;  // closing quote of the field
+        }
+    }
+    return out;
+}
+
 QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested,
                                                           bool& ok) {
     QVector<LeftoverItem> items;
@@ -666,14 +696,12 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
             continue;
         }
 
-        // CSV format: "TaskName","Next Run Time","Status"
-        QStringList fields = trimmed.split(',');
-        if (fields.isEmpty()) {
+        // CSV format: "TaskName","Next Run Time","Status" -- parse the quoted first field so an
+        // embedded comma in the task name does not truncate the task identity.
+        const QString task_name = parseFirstCsvField(trimmed);
+        if (task_name.isEmpty()) {
             continue;
         }
-
-        QString task_name = fields[0];
-        task_name.remove('"');
 
         if (matchesProgramStrict(task_name)) {
             LeftoverItem item;
@@ -838,13 +866,20 @@ constexpr DWORD kMaxRunValueNameChars = 32u * 1024u;
 constexpr std::size_t kMaxRunValueDataBytes = 1024u * 1024u;
 
 // Decode a REG_SZ / REG_EXPAND_SZ payload to a QString; empty for any other type or a buffer too
-// short to hold even the terminator.
+// short to hold even one wide char.
 QString decodeRunValueBytes(DWORD type, const BYTE* data, DWORD data_bytes) {
     if ((type != REG_SZ && type != REG_EXPAND_SZ) || data_bytes < sizeof(wchar_t)) {
         return {};
     }
-    return QString::fromWCharArray(reinterpret_cast<const wchar_t*>(data),
-                                   static_cast<int>(data_bytes / sizeof(wchar_t) - 1));
+    const auto* wdata = reinterpret_cast<const wchar_t*>(data);
+    int chars = static_cast<int>(data_bytes / sizeof(wchar_t));
+    // REG_SZ SHOULD carry a NUL terminator, but the registry does not guarantee it. Only drop the
+    // final wide char when it actually IS the terminator; a non-terminated value keeps every char
+    // (the old unconditional "-1" silently lost the last character of such values).
+    if (chars > 0 && wdata[chars - 1] == L'\0') {
+        --chars;
+    }
+    return QString::fromWCharArray(wdata, chars);
 }
 
 struct RunValueRead {
@@ -898,17 +933,20 @@ RunValueRead readRunKeyValue(HKEY key, DWORD index) {
 }
 }  // namespace
 
-void LeftoverScanner::appendRunKeyValue(HKEY key,
+bool LeftoverScanner::appendRunKeyValue(HKEY key,
                                         DWORD index,
                                         const QString& hive_name,
                                         const wchar_t* subkey,
                                         QVector<LeftoverItem>& items) {
     const RunValueRead read = readRunKeyValue(key, index);
     if (!read.ok) {
-        return;
+        // The value could not be read (genuine error or grow ceiling) and was dropped. Signal the
+        // failure so scanRunKey marks the startup phase incomplete rather than reporting a
+        // deceptively honest "no entries" for a Run key we actually failed to enumerate.
+        return false;
     }
     if (!matchesProgramStrict(read.name) && !matchesProgramStrict(read.data)) {
-        return;
+        return true;  // read succeeded; this value simply does not belong to the program
     }
 
     LeftoverItem item;
@@ -919,6 +957,7 @@ void LeftoverScanner::appendRunKeyValue(HKEY key,
     item.description = QString("Startup entry: %1").arg(read.name);
     item.risk = LeftoverItem::RiskLevel::Review;
     items.append(item);
+    return true;
 }
 
 bool LeftoverScanner::scanRunKey(HKEY hive,
@@ -952,12 +991,18 @@ bool LeftoverScanner::scanRunKey(HKEY hive,
         return false;  // could not read the value count -> the (empty) enumeration is unreliable
     }
 
+    // A single per-value read failure makes the whole key's enumeration unreliable: some startup
+    // entry may have been dropped, so fail closed for the phase rather than report a partial list
+    // as complete.
+    bool all_reads_ok = true;
     for (DWORD idx = 0; idx < value_count && !stopRequested.load(); ++idx) {
-        appendRunKeyValue(key, idx, hive_name, subkey, items);
+        if (!appendRunKeyValue(key, idx, hive_name, subkey, items)) {
+            all_reads_ok = false;
+        }
     }
 
     RegCloseKey(key);
-    return true;
+    return all_reads_ok;
 }
 #endif
 
@@ -1021,6 +1066,11 @@ void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
 // Classification and Matching
 // ======================================================================
 
+// By design: only File/Folder items reach here, and every File/Folder is produced by an EXACT
+// name match (matchesProgramExact), never the loose matchesProgramStrict substring test (which
+// only ever yields Risky services or Review tasks/firewall/startup that are NOT auto-selected). So
+// a Safe classification here still requires an exact program-name match -- the substring container
+// checks below only pick the risk tier for an already exact-matched path.
 LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lower) const {
     if (!m_program.installLocation.isEmpty() &&
         path_lower.startsWith(m_program.installLocation.toLower())) {
@@ -1152,6 +1202,10 @@ bool LeftoverScanner::isPublisherDir(const QString& dirNameLower) const {
     return false;
 }
 
+// Returns a best-effort byte total. On cancel or the kMaxSizeWalkEntries cap it returns the partial
+// sum WITHOUT an "incomplete" flag by design: sizeBytes is purely informational UI data (it drives
+// no deletion decision), and a qint64 total cannot realistically overflow from file sizes, so a
+// capped/cancelled partial is an acceptable display value rather than a correctness hazard.
 qint64 LeftoverScanner::calculateSize(const QString& path, const std::atomic<bool>& stopRequested) {
     QFileInfo info(path);
     if (info.isFile()) {
