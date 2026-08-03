@@ -25,6 +25,13 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+
+#include <winioctl.h>
+#endif
 
 namespace {
 
@@ -2108,6 +2115,83 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
 
 }  // namespace
 
+#ifdef _WIN32
+// Physical drive number backing the OS system volume, or -1 if it cannot be
+// determined. Native (no elevation needed).
+int osSystemPhysicalDrive() {
+    wchar_t winDir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+        return -1;
+    }
+    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
+    HANDLE hVol = CreateFileW(
+        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVol == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+    constexpr DWORD kMaxExtents = 16;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(hVol,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(hVol);
+    if (!ok || extents->NumberOfDiskExtents == 0) {
+        return -1;
+    }
+    return static_cast<int>(extents->Extents[0].DiskNumber);
+}
+#endif
+
+// Defense-in-depth OS-disk guard for confirmed raw-device APFS commands. The GUI
+// path is guarded by PartitionSafetyValidator::isUnsafeRawWriteTargetDisk, but
+// this CLI bypasses it, so a confirmed --allow-raw path typo could otherwise
+// format PhysicalDrive0 or the OS disk. Returns a refusal reason, or an empty
+// string when the target is provably a different disk (or is not a whole-disk
+// \\.\PhysicalDriveN target this guard covers). Fails closed for a PhysicalDrive
+// target whose number cannot be parsed or whose OS identity cannot be established.
+QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
+    if (!invocation.allow_raw_target) {
+        return QString();
+    }
+    QString path = invocation.target_path.trimmed();
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return QString();
+    }
+    bool ok = false;
+    const int drive = path.mid(prefix.size()).toInt(&ok);
+    if (!ok || drive < 0) {
+        return QStringLiteral(
+            "Refusing raw APFS write: could not parse the PhysicalDrive number of the target");
+    }
+    if (drive == 0) {
+        return QStringLiteral(
+            "Refusing raw APFS write to PhysicalDrive0 (the first physical disk)");
+    }
+#ifdef _WIN32
+    const int osDrive = osSystemPhysicalDrive();
+    if (osDrive < 0) {
+        return QStringLiteral(
+            "Refusing raw APFS write: could not establish the OS system-disk identity");
+    }
+    if (osDrive == drive) {
+        return QStringLiteral(
+            "Refusing raw APFS write: target PhysicalDrive backs the OS system volume");
+    }
+#endif
+    return QString();
+}
+
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sak_apfs_writer_cli"));
@@ -2137,6 +2221,14 @@ int main(int argc, char* argv[]) {
             outputJsonPath, invocation->target_path, invocation->output_image_path)) {
         QTextStream(stderr) << "--output-json path must not alias the target or output image"
                             << Qt::endl;
+        return kExitInvalidArguments;
+    }
+
+    // Defense-in-depth: never let a confirmed --allow-raw command hit the OS disk
+    // or PhysicalDrive0 (the GUI validator does not run for this CLI).
+    const QString rawRefusal = rawTargetProtectedDiskRefusal(*invocation);
+    if (!rawRefusal.isEmpty()) {
+        QTextStream(stderr) << rawRefusal << Qt::endl;
         return kExitInvalidArguments;
     }
 
