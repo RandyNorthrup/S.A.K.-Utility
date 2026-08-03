@@ -1,0 +1,44 @@
+SAK FlashWorker Batch-4 LIVE raw-disk certification
+====================================================
+
+Date:        2026-08-02
+Certifier:   tests/certification/flash_live_certifier.cpp (guarded, elevated)
+Invocation:  flash_live_certifier.exe --drive 3 --yes-destroy --size-mb 64
+Elevation:   Administrator (required; verified by TOKEN_ELEVATION)
+Result:      3/3 cases PASS   (process exit code 0)
+
+Target (runtime-verified before any write)
+-------------------------------------------
+  PhysicalDrive3   28.91 GiB   removable USB   NOT system/boot
+  Logical sector size: 512 bytes
+
+Runtime safety guards enforced (all must pass or the tool aborts pre-open):
+  - drive 0 refused outright
+  - system/boot disk refused (IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS on OS volume)
+  - USB bus + removable/hot-plug required (IOCTL_STORAGE_QUERY_PROPERTY + HOTPLUG_INFO)
+  - size < 512 GiB cap (IOCTL_DISK_GET_LENGTH_INFO)
+  - --drive N explicit + --yes-destroy required
+
+Cases (exercised through the real FlashWorker write + verify paths)
+------------------------------------------------------------------
+  [PASS] full-verify (large, 64 MiB / 67108864 bytes)
+         source SHA-512 == device SHA-512, byte-for-byte:
+         4a797cbe035953e04d35c9e6994f6bec39207d521683bb34f5042ec02011b307
+         a85281a2b38a75151ce17f203dc0e7232893cfa9d55a523ad88b7dfb0a490688 3
+         verify OK
+
+  [PASS] sample-verify (large, 64 MiB) -- B4-01 / B4-07
+         (heap-OOB-write fix on short read + fail-closed device short-read check)
+         6/6 sample blocks verified, 0 mismatches
+
+  [PASS] sample-verify (small, 256 KiB / 262144 bytes) -- B4-06
+         (whole-image sub-block path; sector-aligned NO_BUFFERING-safe read-back)
+         verify OK
+
+Notes
+-----
+  - The disk's prior contents were destroyed (expected; disposable test stick).
+  - PowerShell wrapped the exe's stderr startup banner as a NativeCommandError
+    record; cosmetic only -- the run proceeded and every case passed (exit 0).
+  - Certifies the Batch-4 FlashWorker memory-safety fixes (B4-01/04/05/06/07)
+    on real hardware, the only path that exercises the fixed code on a device.

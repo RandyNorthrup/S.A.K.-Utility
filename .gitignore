@@ -464,6 +464,11 @@ artifacts/partition-manager-certification/vm-lab/external-evidence/*
 !artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/
 artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/*
 !artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/report.json
+!artifacts/flash-live-certification/
+artifacts/flash-live-certification/*
+!artifacts/flash-live-certification/disk3-flashworker-b4/
+artifacts/flash-live-certification/disk3-flashworker-b4/*
+!artifacts/flash-live-certification/disk3-flashworker-b4/report.txt
 
 # ============================================================================
 # Miscellaneous
