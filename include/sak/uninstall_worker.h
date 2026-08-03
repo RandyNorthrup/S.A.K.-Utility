@@ -28,7 +28,7 @@ public:
     /// @brief Uninstall mode
     enum class Mode {
         Standard,         ///< Run native uninstaller + leftover scan
-        ForcedUninstall,  ///< Skip native uninstaller, scan + remove all traces
+        ForcedUninstall,  ///< Skip native uninstaller; scan and REPORT leftovers only (no removal)
         UwpRemove,        ///< Remove UWP package via PowerShell
         RegistryOnly      ///< Only remove the registry uninstall entry (orphaned)
     };
@@ -61,6 +61,13 @@ public:
     /// the caller can pre-check without constructing a worker. Exposed for unit testing.
     [[nodiscard]] static bool buildSilentUninstallCommand(const ProgramInfo& program,
                                                           QString& cmdOut);
+
+    /// @brief Classify a native-uninstaller process result as success. The process exit status
+    /// must be 0 and its exit code either 0 or 3010 (MSI reboot-required, a SUCCESS that asks for a
+    /// restart). A cancelled run is never a success. Static + pure for unit testing.
+    [[nodiscard]] static bool nativeUninstallSucceeded(int exitStatus,
+                                                       int exitCode,
+                                                       bool cancelled);
 
 Q_SIGNALS:
     /// @brief Native uninstaller has been launched
@@ -100,10 +107,23 @@ private:
     // Pipeline stages
     [[nodiscard]] bool createRestorePoint();
     [[nodiscard]] bool captureRegistrySnapshot();
-    [[nodiscard]] bool runNativeUninstaller();
+    [[nodiscard]] bool runNativeUninstaller(int& exitCode);
     [[nodiscard]] QVector<LeftoverItem> scanLeftovers();
     [[nodiscard]] bool removeUwpPackage();
     [[nodiscard]] bool removeRegistryEntry();
+
+    /// @brief Create the requested restore point. FAIL CLOSED: returns an error (aborting the
+    /// uninstall) if the user asked for a restore point and it could not be created.
+    [[nodiscard]] std::expected<void, sak::error_code> runRestorePointPhase(
+        UninstallReport& report);
+
+    /// @brief Scan for leftovers and emit the terminal completion. Returns operation_cancelled
+    /// (before emitting any terminal success) if a stop was requested during the scan.
+    [[nodiscard]] std::expected<void, sak::error_code> runLeftoverPhase(UninstallReport& report);
+
+    /// @brief Capture the before-snapshot; on empty/failed capture record a degraded-detection
+    /// warning in the report instead of signalling a snapshot that was never captured.
+    void captureSnapshotOrWarn(UninstallReport& report);
 
     /// @brief Execute the standard uninstall flow (registry snapshot + native uninstaller)
     [[nodiscard]] std::expected<void, sak::error_code> executeStandardMode(UninstallReport& report);

@@ -17,6 +17,8 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 
+#include <vector>
+
 namespace sak {
 
 namespace {
@@ -679,6 +681,44 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
     return items;
 }
 
+namespace {
+// A netsh "advfirewall firewall show rule" block is delimited by a locale-neutral run of dashes
+// (exactly one separator per rule). Its presence proves rules exist even when the localized
+// "Rule Name:" label cannot be matched by this English-keyed parser.
+constexpr int kMinFirewallSeparatorDashes = 10;
+
+bool isNetshRuleSeparator(const QString& trimmed) {
+    if (trimmed.length() < kMinFirewallSeparatorDashes) {
+        return false;
+    }
+    for (const QChar ch : trimmed) {
+        if (ch != QLatin1Char('-')) {
+            return false;
+        }
+    }
+    return true;
+}
+}  // namespace
+
+// A netsh dump whose per-rule dashed separators are present but whose "Rule Name:" headers are all
+// absent is a LOCALIZED dump this parser cannot read: the rules exist yet none can be extracted.
+// Returns true in exactly that case so the firewall phase is marked UNRELIABLE (fail closed) rather
+// than reporting a deceptively empty "no rules". A genuinely empty dump (no separators) returns
+// false -- that is an honest "nothing here". External linkage so it is unit-testable without netsh.
+bool firewallDumpHeaderMissing(const QStringList& lines) {
+    bool saw_block = false;
+    bool saw_header = false;
+    for (const QString& line : lines) {
+        const QString trimmed = line.trimmed();
+        if (isNetshRuleSeparator(trimmed)) {
+            saw_block = true;
+        } else if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
+            saw_header = true;
+        }
+    }
+    return saw_block && !saw_header;
+}
+
 void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
@@ -715,6 +755,13 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
         item.risk = LeftoverItem::RiskLevel::Review;
         items.append(item);
     }
+
+    // Rules clearly present (dashed separators) but zero parseable "Rule Name:" headers means the
+    // labels are localized and this parse is blind: fail closed so the empty item list is not read
+    // as an honest "no firewall rules".
+    if (firewallDumpHeaderMissing(lines)) {
+        ok = false;
+    }
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested,
@@ -739,39 +786,93 @@ QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>
 }
 
 #ifdef Q_OS_WIN
+namespace {
+// Sane upper bounds for the ERROR_MORE_DATA retry loop. Genuine Run-key entries are tiny; these
+// caps exist only so a misbehaving provider cannot spin the grow loop forever. Past them we fail
+// closed (skip the value) rather than loop.
+constexpr DWORD kMaxRunValueNameChars = 32u * 1024u;
+constexpr std::size_t kMaxRunValueDataBytes = 1024u * 1024u;
+
+// Decode a REG_SZ / REG_EXPAND_SZ payload to a QString; empty for any other type or a buffer too
+// short to hold even the terminator.
+QString decodeRunValueBytes(DWORD type, const BYTE* data, DWORD data_bytes) {
+    if ((type != REG_SZ && type != REG_EXPAND_SZ) || data_bytes < sizeof(wchar_t)) {
+        return {};
+    }
+    return QString::fromWCharArray(reinterpret_cast<const wchar_t*>(data),
+                                   static_cast<int>(data_bytes / sizeof(wchar_t) - 1));
+}
+
+struct RunValueRead {
+    QString name;
+    QString data;
+    bool ok = false;
+};
+}  // namespace
+
+// ERROR_MORE_DATA buffer-growth policy for Run-key value reads, factored out for unit testing.
+// @p data_len is RegEnumValueW's authoritative required data size; the required NAME size is never
+// reported by the API, so the name buffer is instead doubled. Resizes the buffers in place and
+// returns TRUE while still within sane ceilings; returns FALSE past them so the caller FAILS CLOSED
+// (skips the value) instead of looping forever on a pathological entry. External linkage for tests.
+bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
+                         std::vector<BYTE>& data_buf,
+                         DWORD data_len) {
+    if (static_cast<std::size_t>(data_len) > data_buf.size()) {
+        data_buf.resize(data_len);
+    } else {
+        name_buf.resize(name_buf.size() * 2);
+    }
+    return name_buf.size() <= kMaxRunValueNameChars && data_buf.size() <= kMaxRunValueDataBytes;
+}
+
+namespace {
+// Read one Run-key value, GROWING both buffers on ERROR_MORE_DATA so a long value name or command
+// line is never silently dropped (the old fixed 256/1024 buffers skipped such entries while the
+// phase still reported reliable). ok stays false on a genuine error or once the grow ceiling is
+// hit -- fail closed rather than emit a truncated value.
+RunValueRead readRunKeyValue(HKEY key, DWORD index) {
+    std::vector<wchar_t> name_buf(kMaxRegistryValueNameLen);
+    std::vector<BYTE> data_buf(kMaxRegistryValueDataLen);
+    RunValueRead out;
+    for (;;) {
+        DWORD name_len = static_cast<DWORD>(name_buf.size());
+        DWORD data_len = static_cast<DWORD>(data_buf.size());
+        DWORD type = 0;
+        const LONG rc = RegEnumValueW(
+            key, index, name_buf.data(), &name_len, nullptr, &type, data_buf.data(), &data_len);
+        if (rc == ERROR_SUCCESS) {
+            out.name = QString::fromWCharArray(name_buf.data(), static_cast<int>(name_len));
+            out.data = decodeRunValueBytes(type, data_buf.data(), data_len);
+            out.ok = true;
+            return out;
+        }
+        if (rc != ERROR_MORE_DATA || !growRunValueBuffers(name_buf, data_buf, data_len)) {
+            return out;  // genuine error or grow ceiling reached -> ok=false (fail closed)
+        }
+    }
+}
+}  // namespace
+
 void LeftoverScanner::appendRunKeyValue(HKEY key,
                                         DWORD index,
                                         const QString& hive_name,
                                         const wchar_t* subkey,
                                         QVector<LeftoverItem>& items) {
-    wchar_t value_name[kMaxRegistryValueNameLen];
-    BYTE value_data[kMaxRegistryValueDataLen];
-    DWORD name_len = kMaxRegistryValueNameLen;
-    DWORD data_len = kMaxRegistryValueDataLen;
-    DWORD type = 0;
-
-    if (RegEnumValueW(key, index, value_name, &name_len, nullptr, &type, value_data, &data_len) !=
-        ERROR_SUCCESS) {
+    const RunValueRead read = readRunKeyValue(key, index);
+    if (!read.ok) {
         return;
     }
-
-    const QString name = QString::fromWCharArray(value_name, name_len);
-    QString data;
-    if ((type == REG_SZ || type == REG_EXPAND_SZ) && data_len >= sizeof(wchar_t)) {
-        data = QString::fromWCharArray(reinterpret_cast<wchar_t*>(value_data),
-                                       data_len / sizeof(wchar_t) - 1);
-    }
-
-    if (!matchesProgramStrict(name) && !matchesProgramStrict(data)) {
+    if (!matchesProgramStrict(read.name) && !matchesProgramStrict(read.data)) {
         return;
     }
 
     LeftoverItem item;
     item.type = LeftoverItem::Type::StartupEntry;
     item.path = QString("%1\\%2").arg(hive_name, QString::fromWCharArray(subkey));
-    item.registryValueName = name;
-    item.registryValueData = data;
-    item.description = QString("Startup entry: %1").arg(name);
+    item.registryValueName = read.name;
+    item.registryValueData = read.data;
+    item.description = QString("Startup entry: %1").arg(read.name);
     item.risk = LeftoverItem::RiskLevel::Review;
     items.append(item);
 }

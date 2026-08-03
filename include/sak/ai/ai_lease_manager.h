@@ -22,11 +22,12 @@ class AiLeaseManager {
 public:
     // The TTL must sit ABOVE the longest legitimate hold, or a still-running mutating op has
     // its lease reclaimed as "abandoned" and a second mutating op starts concurrently -- the
-    // exact concurrent-mutation the lease exists to prevent. The longest single mutating call
-    // is a package tool (install/uninstall/upgrade), capped at kPackageToolMaxTimeoutSeconds
-    // = 7200s (2 hours); this TTL covers that plus release/overhead margin. It only fires when
-    // a release was genuinely lost (a crashed/hung handler), capping the wedge.
-    static constexpr qint64 kDefaultLeaseTtlSeconds = 9000;  // 2.5 hours (> 7200s max op)
+    // exact concurrent-mutation the lease exists to prevent. The longest single lease-holding
+    // call is an app action (sak_app_action run), whose timeout is clamped at
+    // kAppActionMaxTimeoutSeconds = 14400s (4 hours) -- longer than the 7200s package-tool cap
+    // -- so the TTL is derived from that true maximum plus release/overhead margin. It only
+    // fires when a release was genuinely lost (a crashed/hung handler), capping the wedge.
+    static constexpr qint64 kDefaultLeaseTtlSeconds = 16'200;  // 4.5 hours (> 14400s max op)
 
     struct Lease {
         QString lease_id;

@@ -23,6 +23,9 @@ private Q_SLOTS:
     void rewrite_emptyFilenameMap_returnsOriginal();
     void rewrite_emptyScript_succeeds();
 
+    // Fail-closed: an incomplete rewrite must NOT report success
+    void rewrite_resourcesButNoUrlReplaced_fails();
+
     // Replacement tracking
     void rewrite_tracksReplacements();
 
@@ -144,6 +147,34 @@ void TestScriptRewriter::rewrite_emptyScript_succeeds() {
     // Empty script is treated as an error
     QVERIFY(!result.success);
     QVERIFY(result.replacements.isEmpty());
+}
+
+void TestScriptRewriter::rewrite_resourcesButNoUrlReplaced_fails() {
+    // The script declares a download URL, but the filename map keys a DIFFERENT
+    // URL, so nothing is internalized. Formerly this returned success with zero
+    // replacements -- a script that still hits the network at install time. It
+    // must now FAIL closed so the caller never ships an un-internalized script.
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/real.exe'
+)";
+    auto parsed = parser.parse(script);
+    QVERIFY(!parsed.resources.isEmpty());  // a resource WAS declared
+
+    QHash<QString, QString> filenames;     // non-empty, but keyed to a URL not present
+    filenames["https://example.com/other.exe"] = "other.exe";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(!result.success);
+    QVERIFY(!result.error_message.isEmpty());
+    QVERIFY(result.replacements.isEmpty());
+    // The live download URL must remain in the (rejected) content, never silently
+    // reported as internalized.
+    QVERIFY(!result.script_content.contains(QStringLiteral("$toolsDir")));
 }
 
 // ============================================================================

@@ -29,6 +29,12 @@ constexpr int kApiRetryDelayBaseMs = 2000;
 constexpr int kSearchMaxResults = 50;
 constexpr int kSearchResultsDefault = 30;
 
+// Hard cap on a dependency-feed (FindPackagesById) response before it is handed
+// to the DOM parser. The feed for one id is a small metadata document; 32 MiB is
+// generous while bounding a hostile/oversized endpoint (parity with the
+// package-internalization version fetch).
+constexpr int64_t kMaxFeedResponseBytes = 32LL * 1024 * 1024;
+
 // ============================================================================
 // Binary downloads
 // ============================================================================
@@ -62,6 +68,17 @@ constexpr long long kMaxManifestBytes = 8LL * 1024 * 1024;
 
 constexpr auto kDefaultChecksumAlgorithm = "sha256";
 constexpr int kChecksumBlockSize = 65'536;
+
+// ============================================================================
+// Install exit codes
+// ============================================================================
+
+// Chocolatey / MSI exit codes that all mean the install SUCCEEDED: 0 = success;
+// 1641 = reboot has been initiated; 3010 = a reboot is required to finish. A
+// bundle install must treat 1641/3010 as success (reboot pending), not failure.
+constexpr int kExitSuccess = 0;
+constexpr int kExitRebootInitiated = 1641;
+constexpr int kExitRebootRequired = 3010;
 
 // ============================================================================
 // Deployment manifest

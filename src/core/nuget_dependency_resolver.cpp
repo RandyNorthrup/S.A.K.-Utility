@@ -107,6 +107,8 @@ void NuGetDependencyResolver::start(const QString& root_id, const QString& root_
     m_constraints.clear();
     m_resolved.clear();
     m_errors.clear();
+    m_feeds.clear();
+    m_items.clear();
     m_validated = false;
     addRoot(root_id, root_version);
 }
@@ -224,13 +226,31 @@ std::optional<FeedPackageVersion> NuGetDependencyResolver::selectVersion(
     return chosen;
 }
 
+int NuGetDependencyResolver::pendingIndexForId(const QString& id) const {
+    for (int i = 0; i < m_queue.size(); ++i) {
+        if (m_queue.at(i).id.compare(id, Qt::CaseInsensitive) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void NuGetDependencyResolver::provideFeed(const QString& id,
                                           const QVector<FeedPackageVersion>& versions) {
     if (m_queue.isEmpty()) {
         return;
     }
-    const QueueItem item = m_queue.takeFirst();
-    Q_UNUSED(id);  // the front of the queue is authoritative; id is a caller convenience
+    // Bind the feed to the item it NAMES, not to the queue head: applying a
+    // response for one id onto a different pending id would resolve a package to
+    // another package's versions (a wrong/hostile substitution). A response that
+    // matches nothing pending is dropped, not misapplied.
+    const int idx = pendingIndexForId(id);
+    if (idx < 0) {
+        m_errors.append(
+            QStringLiteral("Ignored feed response for '%1': no pending fetch has that id").arg(id));
+        return;
+    }
+    const QueueItem item = m_queue.takeAt(idx);
     resolveDequeued(item, versions);
     maybeValidateOnDrain();
 }
@@ -264,7 +284,54 @@ void NuGetDependencyResolver::resolveDequeued(const QueueItem& item,
     }
     m_resolved.append(resolved);
 
+    // Cache this package's feed + item so a constraint discovered later (a diamond
+    // edge) can re-run selection against it without a network refetch.
+    const QString lower = item.id.toLower();
+    m_feeds.insert(lower, versions);
+    m_items.insert(lower, item);
+
     enqueueDependencies(*chosen, item.depth);
+}
+
+int NuGetDependencyResolver::resolvedIndex(const QString& lower_id) const {
+    for (int i = 0; i < m_resolved.size(); ++i) {
+        if (m_resolved.at(i).package_id.toLower() == lower_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void NuGetDependencyResolver::reselectIfResolved(const QString& id) {
+    const QString lower = id.toLower();
+    if (!m_feeds.contains(lower)) {
+        return;  // not resolved yet: its own selection will honor the constraint
+    }
+    const int idx = resolvedIndex(lower);
+    if (idx < 0) {
+        return;
+    }
+    const QString range = m_resolved.at(idx).version_range;
+    const auto current = NuGetVersion::parse(m_resolved.at(idx).version);
+    if (current.has_value() && satisfiesAllConstraints(id, range, *current)) {
+        return;  // the current pick still satisfies every recorded constraint
+    }
+    const auto chosen = selectVersion(m_items.value(lower), m_feeds.value(lower));
+    if (chosen.has_value() && chosen->version != m_resolved.at(idx).version) {
+        applyReselection(idx, *chosen);
+    }
+    // If nothing new satisfies, the hard conflict is left for validateConstraints().
+}
+
+void NuGetDependencyResolver::applyReselection(int idx, const FeedPackageVersion& chosen) {
+    m_resolved[idx].version = chosen.version;
+    m_resolved[idx].dependencies.clear();
+    for (const NuGetDependency& dep : chosen.dependencies) {
+        if (!dep.id.isEmpty()) {
+            m_resolved[idx].dependencies.append(dep.id);
+        }
+    }
+    enqueueDependencies(chosen, m_resolved[idx].depth);
 }
 
 void NuGetDependencyResolver::maybeValidateOnDrain() {
@@ -291,6 +358,10 @@ void NuGetDependencyResolver::enqueueDependencies(const FeedPackageVersion& sele
         // Record the constraint for EVERY edge, even one whose id is already
         // scheduled (a diamond's second edge) so it is not silently discarded.
         recordConstraint(dep.id, dep.version_range);
+        // If that id is ALREADY resolved, its earlier selection did not see this
+        // edge's range; re-select over its cached feed so a resolvable diamond is
+        // corrected now instead of only erroring at the final validation pass.
+        reselectIfResolved(dep.id);
         const QString lower = dep.id.toLower();
         if (m_visited.contains(lower)) {
             continue;  // already scheduled -- keeps a cyclic graph from looping
@@ -308,8 +379,13 @@ void NuGetDependencyResolver::provideFeedFailure(const QString& id) {
     if (m_queue.isEmpty()) {
         return;
     }
-    const QueueItem item = m_queue.takeFirst();
-    Q_UNUSED(id);
+    const int idx = pendingIndexForId(id);
+    if (idx < 0) {
+        m_errors.append(
+            QStringLiteral("Ignored feed failure for '%1': no pending fetch has that id").arg(id));
+        return;
+    }
+    const QueueItem item = m_queue.takeAt(idx);
     m_errors.append(QStringLiteral("Failed to fetch dependency feed for %1").arg(item.id));
     maybeValidateOnDrain();
 }
@@ -331,14 +407,19 @@ QVector<NuGetDependency> NuGetDependencyResolver::parseDependencies(const QStrin
         if (id.isEmpty()) {
             continue;
         }
-        const QString lower = id.toLower();
-        if (seen.contains(lower)) {
+        const QString range = part.section(QLatin1Char(':'), 1, 1).trimmed();
+        // Dedup on the (id, range) PAIR, not id alone: the same id can recur with
+        // a DIFFERENT range per target framework. Dropping the later entry by id
+        // would silently discard a distinct constraint (a needed floor/ceiling),
+        // so every distinct range is kept and later intersected during selection.
+        const QString key = id.toLower() + QLatin1Char('\x1f') + range;
+        if (seen.contains(key)) {
             continue;
         }
-        seen.insert(lower);
+        seen.insert(key);
         NuGetDependency dep;
         dep.id = id;
-        dep.version_range = part.section(QLatin1Char(':'), 1, 1).trimmed();
+        dep.version_range = range;
         result.append(dep);
     }
     return result;

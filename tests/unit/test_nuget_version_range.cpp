@@ -40,8 +40,10 @@ private slots:
     void range_exactBracket();
     void range_halfOpenLowerUpper();
     void range_closedAndExclusiveIntervals();
-    void range_emptyAndMalformedArePermissive();
+    void range_emptyIsPermissive();
+    void range_malformedRejectsAll();
     void range_invalidVersionNeverSatisfies();
+    void parse_rejectsEmptyPrereleaseIdentifiers();
 
     // ---- selectHighestSatisfying --------------------------------------------
     void select_picksHighestInRange();
@@ -168,16 +170,41 @@ void TestNuGetVersionRange::range_closedAndExclusiveIntervals() {
     QVERIFY(open.satisfies(v("1.5")));
 }
 
-void TestNuGetVersionRange::range_emptyAndMalformedArePermissive() {
-    // Empty, unparseable, or malformed-bracket ranges accept everything so a
-    // needed dependency is never dropped (over-include is safe).
-    for (const char* s : {"", "   ", "not-a-range", "[bad", "(1.0", "[]", "(1.0)"}) {
+void TestNuGetVersionRange::range_emptyIsPermissive() {
+    // An empty/whitespace range means "the feed omitted a range" -> any version.
+    for (const char* s : {"", "   "}) {
         const auto r = NuGetVersionRange::parse(QString::fromLatin1(s));
-        QVERIFY2(r.isAny() || r.satisfies(v("1.0")),
-                 QByteArray("expected permissive for: ").append(s).constData());
+        QVERIFY2(r.isValid(), QByteArray("expected valid for: ").append(s).constData());
+        QVERIFY(r.isAny());
         QVERIFY(r.satisfies(v("1.0")));
         QVERIFY(r.satisfies(v("99.0")));
     }
+}
+
+void TestNuGetVersionRange::range_malformedRejectsAll() {
+    // A NON-EMPTY string that does not parse is fail-closed: it is NOT permissive
+    // and satisfies NOTHING (a garbled constraint must never match everything and
+    // silently pull in an arbitrary version).
+    for (const char* s : {"not-a-range", "[bad", "(1.0", "[]", "(1.0)", "[1.0,x)", "1.0.x"}) {
+        const auto r = NuGetVersionRange::parse(QString::fromLatin1(s));
+        QVERIFY2(!r.isValid(), QByteArray("expected invalid for: ").append(s).constData());
+        QVERIFY(!r.isAny());
+        QVERIFY2(!r.satisfies(v("1.0")), QByteArray("must reject 1.0 for: ").append(s).constData());
+        QVERIFY(!r.satisfies(v("99.0")));
+        QVERIFY(!r.selectHighestSatisfying({v("1.0"), v("99.0")}).has_value());
+    }
+}
+
+void TestNuGetVersionRange::parse_rejectsEmptyPrereleaseIdentifiers() {
+    // SemVer forbids an empty prerelease identifier; a malformed separator must
+    // fail the parse rather than be silently swallowed (SkipEmptyParts would hide
+    // "alpha..1", ".beta", "rc." and misorder the version).
+    for (const char* s : {"1.0.0-", "1.0.0-.beta", "1.0.0-alpha..1", "1.0.0-rc."}) {
+        QVERIFY2(!NuGetVersion::parse(QString::fromLatin1(s)).has_value(),
+                 QByteArray("expected parse failure for: ").append(s).constData());
+    }
+    // A well-formed multi-identifier prerelease still parses.
+    QVERIFY(NuGetVersion::parse(QStringLiteral("1.0.0-alpha.1")).has_value());
 }
 
 void TestNuGetVersionRange::range_invalidVersionNeverSatisfies() {

@@ -8,6 +8,7 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -222,11 +223,28 @@ bool AppScanner::isSystemComponent(const QString& name) {
     return name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio");
 }
 
+QString AppScanner::composePowerShellPath(const QString& systemRoot) {
+    // Fail closed: with no known Windows root we cannot resolve a trusted
+    // PowerShell, and invoking a bare "powershell.exe" would let a PATH/CWD-planted
+    // binary run in our stead. Callers treat empty as "do not run".
+    if (systemRoot.isEmpty()) {
+        return {};
+    }
+    return QDir::cleanPath(systemRoot +
+                           QStringLiteral("/System32/WindowsPowerShell/v1.0/powershell.exe"));
+}
+
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     std::vector<AppInfo> apps;
 
+    const QString powershell = composePowerShellPath(qEnvironmentVariable("SystemRoot"));
+    if (powershell.isEmpty()) {
+        sak::logWarning("AppScanner: cannot resolve System32 PowerShell; skipping AppX scan");
+        return apps;
+    }
+
     const auto result = sak::runProcess(
-        QStringLiteral("powershell.exe"),
+        powershell,
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-Command"),
          QStringLiteral("Get-AppxPackage | Select-Object Name,Version,Publisher,InstallLocation "

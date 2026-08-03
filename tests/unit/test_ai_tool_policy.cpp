@@ -12,11 +12,14 @@ private Q_SLOTS:
     void readOnlyPolicyBlocksRiskyCommands();
     void readOnlyPolicyBlocksMutatingFileCmdlets();
     void readOnlyPolicyBlocksNativeMutators();
+    void readOnlyShellRequiresDiagnosticAllowlist_data();
+    void readOnlyShellRequiresDiagnosticAllowlist();
     void readOnlyPolicyAllowsProviderGatewayStatus();
     void readOnlyPolicyAllowsSessionSearch();
     void skillToolAllowedUnderEveryPolicy();
     void delegateSubagentAllowedUnderEveryPolicy();
     void appActionToolAllowedAtPolicyLayer();
+    void appActionRunGatedByEffectivePolicyAndTakesLease();
     void clampToolPolicyBoundsToCeiling();
     void packagePolicyRequiresLeaseForInstall();
     void packageMutationBlockedWhenUserAskedForScan();
@@ -108,6 +111,48 @@ void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
     }
 }
 
+void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist_data() {
+    QTest::addColumn<QString>("command");
+    QTest::addColumn<bool>("allowed");
+
+    // Genuine read-only diagnostics stay allowed under the read-only lease.
+    QTest::newRow("ipconfig") << QStringLiteral("ipconfig /all") << true;
+    QTest::newRow("systeminfo") << QStringLiteral("systeminfo") << true;
+    QTest::newRow("tasklist") << QStringLiteral("tasklist") << true;
+    QTest::newRow("get-process") << QStringLiteral("Get-Process") << true;
+    QTest::newRow("get-pipe-sort") << QStringLiteral("Get-Process | Sort-Object CPU") << true;
+    QTest::newRow("test-netconnection") << QStringLiteral("Test-NetConnection 8.8.8.8") << true;
+    QTest::newRow("ipconfig-stream-merge") << QStringLiteral("ipconfig /all 2>&1") << true;
+
+    // Fail-open bypasses the old mutation blacklist let through: a .NET file write,
+    // a WMI method call, foreign interpreters, code compilation, and the call
+    // operator invoking an arbitrary binary. The allowlist must refuse all of them.
+    QTest::newRow("dotnet-writealltext")
+        << QStringLiteral("[IO.File]::WriteAllText('C:\\x.txt','y')") << false;
+    QTest::newRow("wmi-invoke-method")
+        << QStringLiteral("Get-WmiObject Win32_Process | Invoke-WmiMethod -Name Create") << false;
+    QTest::newRow("python-c") << QStringLiteral("python -c \"import os\"") << false;
+    QTest::newRow("node-e") << QStringLiteral("node -e \"1\"") << false;
+    QTest::newRow("add-type") << QStringLiteral("Add-Type -TypeDefinition 'class X{}'") << false;
+    QTest::newRow("call-operator-exe") << QStringLiteral("& 'C:\\tool.exe'") << false;
+    QTest::newRow("chained-native-mutator") << QStringLiteral("ipconfig & del C:\\x") << false;
+    QTest::newRow("method-invocation")
+        << QStringLiteral("(Get-WmiObject Win32_Service -Filter \"name='w'\").Delete()") << false;
+    QTest::newRow("whoami") << QStringLiteral("whoami /all") << true;
+    QTest::newRow("netstat") << QStringLiteral("netstat -ano") << true;
+}
+
+void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist() {
+    QFETCH(QString, command);
+    QFETCH(bool, allowed);
+
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("run_powershell");
+    request.command_preview = command;
+    const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
+    QCOMPARE(decision.allowed, allowed);
+}
+
 void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("sak_provider_gateway");
@@ -197,10 +242,9 @@ void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
 }
 
 void AiToolPolicyTests::appActionToolAllowedAtPolicyLayer() {
-    // sak_app_action is a known local tool, allowed at the policy layer under every
-    // mode; the per-action human gate + restore point live in the run handler (which
-    // reads the resolved action descriptor), mirroring app_run_action. This test only
-    // asserts the tool is recognized and not blocked as an unknown tool.
+    // sak_app_action operation=list is a read-only catalog lookup, allowed under every
+    // mode and never risky or lease-taking. Running an action is gated separately (see
+    // appActionRunGatedByEffectivePolicyAndTakesLease).
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("sak_app_action");
     request.operation = QStringLiteral("list");
@@ -210,7 +254,40 @@ void AiToolPolicyTests::appActionToolAllowedAtPolicyLayer() {
                               sak::ai::AiToolPolicy::MutatingRequiresLease}) {
         const auto decision = sak::ai::evaluateToolPolicy(policy, request);
         QVERIFY(decision.allowed);
+        QVERIFY(!decision.risky_change);
+        QVERIFY(!decision.requires_lease);
     }
+}
+
+void AiToolPolicyTests::appActionRunGatedByEffectivePolicyAndTakesLease() {
+    // operation=run executes a technician action that may be destructive/catastrophic.
+    // The policy layer cannot see the resolved descriptor, so it fails closed: only the
+    // mutating policies may run one, and always with a lease. Read-only ceilings block it
+    // -- the per-action handler confirm alone must not bypass the clamped policy.
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("sak_app_action");
+    request.operation = QStringLiteral("run");
+
+    for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
+                              sak::ai::AiToolPolicy::ReadOnlyPc,
+                              sak::ai::AiToolPolicy::DownloadOnly,
+                              sak::ai::AiToolPolicy::PackageToolsOnly}) {
+        const auto decision = sak::ai::evaluateToolPolicy(policy, request);
+        QVERIFY2(!decision.allowed, qPrintable(sak::ai::toolPolicyToString(policy)));
+    }
+
+    auto lease = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
+    QVERIFY(lease.allowed);
+    QVERIFY(lease.risky_change);
+    QVERIFY(lease.requires_lease);
+    QVERIFY(!lease.requires_exclusive_lease);
+    QVERIFY(lease.restore_point_recommended);
+
+    auto exclusive = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+                                                 request);
+    QVERIFY(exclusive.allowed);
+    QVERIFY(exclusive.requires_lease);
+    QVERIFY(exclusive.requires_exclusive_lease);
 }
 
 void AiToolPolicyTests::clampToolPolicyBoundsToCeiling() {
@@ -281,6 +358,21 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent_data() {
         << QStringLiteral("upgrade") << QStringLiteral("upgrade firefox") << true;
     QTest::newRow("uninstall-explicit")
         << QStringLiteral("uninstall") << QStringLiteral("uninstall firefox") << true;
+    // A bare substring is NOT consent: a question about the topic must not authorize a
+    // mutation, but a directed/imperative request (or an affirmative) must.
+    QTest::newRow("install-question")
+        << QStringLiteral("install") << QStringLiteral("how do I install firefox?") << false;
+    QTest::newRow("install-question-bestway")
+        << QStringLiteral("install") << QStringLiteral("what is the best way to install git")
+        << false;
+    QTest::newRow("install-directed")
+        << QStringLiteral("install") << QStringLiteral("can you install firefox for me") << true;
+    QTest::newRow("install-affirmative")
+        << QStringLiteral("install") << QStringLiteral("yes, install it") << true;
+    QTest::newRow("uninstall-question")
+        << QStringLiteral("uninstall") << QStringLiteral("how do I uninstall this app?") << false;
+    QTest::newRow("uninstall-please")
+        << QStringLiteral("uninstall") << QStringLiteral("please remove chrome") << true;
     // Negated intent must not be read as authorization (P08-05).
     QTest::newRow("install-negated-do-not")
         << QStringLiteral("install") << QStringLiteral("do not install Foo; only search for it")

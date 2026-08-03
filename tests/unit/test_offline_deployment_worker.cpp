@@ -30,12 +30,15 @@ private Q_SLOTS:
     void verifyBundledPackage_acceptsMatchingChecksumAndSize();
     void verifyBundledPackage_rejectsMismatchMissingAndBadName();
     void installDispositionFor_skipsNotPackedOnlyUnderAirGap();
-    void collectInstallerUrls_collectsEveryResourceDeduped();
+    void collectInstallerDownloads_collectsEveryResourceWithChecksums();
     void uniqueFilename_disambiguatesCollidingBasenames();
     void isChocolateyFrameworkId_matchesOnlyTheFrameworkPackage();
     void isSafeInstallToken_rejectsOptionLikeAndBlankTokens();
     void topologicalInstallOrder_installsDepsBeforeDependents();
+    void topologicalInstallOrder_reportsCyclicMembers();
     void installContextForMode_bundleLocalListFeed();
+    void unmetClosureDependencies_flagsMissingIntraClosureDeps();
+    void isSuccessInstallExitCode_acceptsZeroAndRebootCodes();
 };
 
 void TestOfflineDeploymentWorker::classifyWorkDir_freshWhenMissingOrEmpty() {
@@ -124,11 +127,17 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_acceptsMatchingChecksumAn
     QVERIFY2(OfflineDeploymentWorker::verifyBundledPackage(entry, dir.path(), err),
              qPrintable(err));
 
-    // A checksum-less entry with a matching size still passes.
+    // Fail closed: a Bundle entry MUST carry both a size AND a checksum. An entry
+    // missing either can no longer be verified and is rejected before install.
     DeploymentManifestEntry no_sum = entry;
     no_sum.checksum.clear();
     QString err2;
-    QVERIFY(OfflineDeploymentWorker::verifyBundledPackage(no_sum, dir.path(), err2));
+    QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(no_sum, dir.path(), err2));
+
+    DeploymentManifestEntry no_size = entry;
+    no_size.size_bytes = 0;
+    QString err3;
+    QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(no_size, dir.path(), err3));
 }
 
 void TestOfflineDeploymentWorker::verifyBundledPackage_rejectsMismatchMissingAndBadName() {
@@ -199,25 +208,39 @@ void TestOfflineDeploymentWorker::installDispositionFor_skipsNotPackedOnlyUnderA
              Disposition::Install);
 }
 
-void TestOfflineDeploymentWorker::collectInstallerUrls_collectsEveryResourceDeduped() {
+void TestOfflineDeploymentWorker::collectInstallerDownloads_collectsEveryResourceWithChecksums() {
     ParsedInstallScript parsed;
     DownloadResource a;
     a.url = QStringLiteral("https://host/a32.exe");
+    a.checksum = QStringLiteral("aa32");
+    a.checksum_type = QStringLiteral("sha256");
     a.url_64bit = QStringLiteral("https://host/a64.exe");
+    a.checksum_64bit = QStringLiteral("aa64");
+    a.checksum_type_64bit = QStringLiteral("sha256");
     DownloadResource b;
     b.url = QStringLiteral("https://host/b.msi");
     b.url_64bit = QStringLiteral("https://host/a64.exe");  // duplicate of a's 64-bit URL
     parsed.resources = {a, b};
 
-    const QStringList urls = OfflineDeploymentWorker::collectInstallerUrls(parsed);
+    const QVector<InstallerDownload> got =
+        OfflineDeploymentWorker::collectInstallerDownloads(parsed);
     // Every DISTINCT installer URL across ALL resources -- not just the first.
-    QCOMPARE(urls.size(), 3);
-    QVERIFY(urls.contains(QStringLiteral("https://host/a32.exe")));
-    QVERIFY(urls.contains(QStringLiteral("https://host/a64.exe")));
-    QVERIFY(urls.contains(QStringLiteral("https://host/b.msi")));
+    QCOMPARE(got.size(), 3);
+    auto findSum = [&](const QString& url) {
+        for (const auto& d : got) {
+            if (d.url == url) {
+                return d.checksum;
+            }
+        }
+        return QString(QStringLiteral("<absent>"));
+    };
+    // Each installer carries the checksum its resource declared.
+    QCOMPARE(findSum(QStringLiteral("https://host/a32.exe")), QStringLiteral("aa32"));
+    QCOMPARE(findSum(QStringLiteral("https://host/a64.exe")), QStringLiteral("aa64"));
+    QCOMPARE(findSum(QStringLiteral("https://host/b.msi")), QString());
 
-    // Empty parse -> no urls.
-    QVERIFY(OfflineDeploymentWorker::collectInstallerUrls(ParsedInstallScript{}).isEmpty());
+    // Empty parse -> nothing to download.
+    QVERIFY(OfflineDeploymentWorker::collectInstallerDownloads(ParsedInstallScript{}).isEmpty());
 }
 
 void TestOfflineDeploymentWorker::uniqueFilename_disambiguatesCollidingBasenames() {
@@ -303,6 +326,66 @@ void TestOfflineDeploymentWorker::installContextForMode_bundleLocalListFeed() {
     QVERIFY(list.source.startsWith(QStringLiteral("http")));  // the Chocolatey feed
     QVERIFY(!list.ignore_dependencies);                       // choco resolves from the feed
     QVERIFY(!list.verify_local);                              // nothing local to verify
+}
+
+void TestOfflineDeploymentWorker::topologicalInstallOrder_reportsCyclicMembers() {
+    auto mk = [](const char* id, const QStringList& deps) {
+        DeploymentManifestEntry e;
+        e.package_id = QString::fromLatin1(id);
+        e.dependencies = deps;
+        return e;
+    };
+    // A clean chain reports NO cycle.
+    QStringList clean_cyclic;
+    const auto clean = OfflineDeploymentWorker::topologicalInstallOrder(
+        {mk("a", {"b"}), mk("b", {})}, &clean_cyclic);
+    QCOMPARE(clean.size(), 2);
+    QVERIFY(clean_cyclic.isEmpty());
+
+    // A cycle is surfaced (both members) so the caller can warn -- but nothing is
+    // dropped from the returned order.
+    QStringList cyclic;
+    const auto ordered =
+        OfflineDeploymentWorker::topologicalInstallOrder({mk("x", {"y"}), mk("y", {"x"})}, &cyclic);
+    QCOMPARE(ordered.size(), 2);
+    QCOMPARE(cyclic.size(), 2);
+    QVERIFY(cyclic.contains(QStringLiteral("x")));
+    QVERIFY(cyclic.contains(QStringLiteral("y")));
+}
+
+void TestOfflineDeploymentWorker::unmetClosureDependencies_flagsMissingIntraClosureDeps() {
+    auto job = [](const char* id, const QStringList& deps) {
+        BatchInternalizationJob j;
+        j.package_id = QString::fromLatin1(id);
+        j.dependencies = deps;
+        return j;
+    };
+
+    // A complete closure: every declared dependency is present in the job set.
+    QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("a", {"b"}), job("b", {})})
+                .isEmpty());
+
+    // The excluded Chocolatey framework is never counted as missing.
+    QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("git.install", {"chocolatey"})})
+                .isEmpty());
+
+    // A dependency absent from the payload is flagged (self-contained guarantee broken).
+    const QStringList missing =
+        OfflineDeploymentWorker::unmetClosureDependencies({job("a", {"b", "c"}), job("b", {})});
+    QCOMPARE(missing.size(), 1);
+    QCOMPARE(missing.first(), QStringLiteral("c"));
+
+    // A requested package re-appended to be attempted directly carries no dep edges,
+    // so its own (unknown) deps never falsely trip the check.
+    QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("direct", {})}).isEmpty());
+}
+
+void TestOfflineDeploymentWorker::isSuccessInstallExitCode_acceptsZeroAndRebootCodes() {
+    QVERIFY(OfflineDeploymentWorker::isSuccessInstallExitCode(0));
+    QVERIFY(OfflineDeploymentWorker::isSuccessInstallExitCode(1641));  // reboot initiated
+    QVERIFY(OfflineDeploymentWorker::isSuccessInstallExitCode(3010));  // reboot required
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1));    // generic failure
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(-1));
 }
 
 QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)

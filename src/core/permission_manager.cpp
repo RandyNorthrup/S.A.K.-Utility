@@ -52,10 +52,85 @@ DWORD buildStandardUserDacl(PSID userSid, PACL* outAcl) {
     return SetEntriesInAclW(3, ea, nullptr, outAcl);
 }
 
+// Local sentinel (NOT a Win32 error; carries the customer bit 0x20000000) meaning
+// the target was refused because it is a reparse point.
+constexpr DWORD kReparseRefused = 0x20'00'00'01u;
+
+// Applies SI/owner/dacl to PATH through a no-follow handle and refuses reparse
+// points. Returns ERROR_SUCCESS, a Win32 error, or kReparseRefused. Opening with
+// FILE_FLAG_OPEN_REPARSE_POINT and operating on THIS handle (SE_KERNEL_OBJECT)
+// closes the junction/symlink swap TOCTOU that the by-name SetNamedSecurityInfoW
+// would expose: an attacker cannot redirect an elevated ACL change onto another
+// object. Refusing a reparse point entirely keeps the behaviour FAIL CLOSED.
+DWORD applySecurityNoFollow(
+    const QString& path, DWORD access, SECURITY_INFORMATION si, PSID owner, PACL dacl) {
+    HANDLE h = CreateFileW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                           access,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                           nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return GetLastError();
+    }
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h, &info)) {
+        const DWORD e = GetLastError();
+        CloseHandle(h);
+        return e;
+    }
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+        CloseHandle(h);
+        return kReparseRefused;
+    }
+    // SE_FILE_OBJECT (not SE_KERNEL_OBJECT): a file/directory handle needs the file
+    // object type so UNPROTECTED_DACL_SECURITY_INFORMATION re-inherits from the parent
+    // directory (SE_KERNEL_OBJECT has no parent-inheritance concept and would leave the
+    // stripped DACL protected).
+    const DWORD result = SetSecurityInfo(h, SE_FILE_OBJECT, si, owner, nullptr, dacl, nullptr);
+    CloseHandle(h);
+    return result;
+}
+
+// Maps an applySecurityNoFollow result to the elevation-aware error contract,
+// setting lastError. FAIL CLOSED: a refused reparse point and access-denied both
+// surface as errors; only ERROR_SUCCESS returns a value.
+std::expected<void, sak::error_code> interpretSecurityResult(DWORD result,
+                                                             const char* opLabel,
+                                                             QString& lastError) {
+    if (result == ERROR_SUCCESS) {
+        return {};
+    }
+    if (result == kReparseRefused) {
+        lastError = "Refused: target is a reparse point (junction/symlink)";
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+    if (result == ERROR_ACCESS_DENIED) {
+        lastError = "Access denied - administrator privileges required";
+        return std::unexpected(sak::error_code::elevation_required);
+    }
+    lastError = QString("%1: %2").arg(opLabel).arg(result);
+    return std::unexpected(sak::error_code::permission_update_failed);
+}
+
+// Access-rights mask a SetSecurityInfo call needs for the given SECURITY_INFORMATION.
+DWORD accessForSecurityInfo(SECURITY_INFORMATION si) {
+    DWORD access = READ_CONTROL;
+    if (si & OWNER_SECURITY_INFORMATION) {
+        access |= WRITE_OWNER;
+    }
+    if (si & DACL_SECURITY_INFORMATION) {
+        access |= WRITE_DAC;
+    }
+    return access;
+}
+
 // Applies ONLY the fields the parsed security descriptor actually specifies
 // (owner if present, DACL if present, protected vs unprotected from the control
-// flag). Returns the SetNamedSecurityInfoW result, or ERROR_INVALID_SECURITY_DESCR
-// when the descriptor specifies neither an owner nor a DACL.
+// flag). Returns the applySecurityNoFollow result, kReparseRefused for a reparse
+// target, or ERROR_INVALID_SECURITY_DESCR when the descriptor specifies neither
+// an owner nor a DACL.
 DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pSD) {
     SECURITY_INFORMATION si = 0;
 
@@ -85,20 +160,18 @@ DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pS
         return ERROR_INVALID_SECURITY_DESCR;
     }
 
-    return SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                 SE_FILE_OBJECT,
+    return applySecurityNoFollow(path,
+                                 accessForSecurityInfo(si),
                                  si,
                                  (si & OWNER_SECURITY_INFORMATION) ? pOwner : nullptr,
-                                 nullptr,
-                                 (si & DACL_SECURITY_INFORMATION) ? pDacl : nullptr,
-                                 nullptr);
+                                 (si & DACL_SECURITY_INFORMATION) ? pDacl : nullptr);
 }
 }  // namespace
 #endif
 
 PermissionManager::PermissionManager() {
 #ifdef Q_OS_WIN
-    // Enable privileges lazily — only succeeds when running elevated.
+    // Enable privileges lazily -- only succeeds when running elevated.
     // Non-elevated callers will get clear errors from methods that need them.
     if (ElevationManager::isElevated()) {
         enablePrivilege(SE_BACKUP_NAME);
@@ -110,131 +183,19 @@ PermissionManager::PermissionManager() {
 
 PermissionManager::~PermissionManager() {}
 
+// The bool overloads are thin wrappers over the std::expected try* variants so
+// each security-sensitive operation has a SINGLE implementation (no duplicated
+// ACL/ownership logic). The try* variants own the reparse/no-follow hardening.
 bool PermissionManager::stripPermissions(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
-#ifdef Q_OS_WIN
-    QFileInfo fileInfo(path);
-    if (!fileInfo.exists()) {
-        m_lastError = "File does not exist";
-        return false;
-    }
-
-    // Remove all EXPLICIT ACEs and let the object re-inherit its parent's ACL.
-    // CRITICAL: pass an initialized EMPTY (non-NULL) DACL, NOT nullptr. A nullptr
-    // pDacl with DACL_SECURITY_INFORMATION sets a NULL DACL, which grants
-    // *everyone* full access -- the opposite of stripping. An empty DACL grants
-    // no explicit access; UNPROTECTED_DACL_SECURITY_INFORMATION then re-applies
-    // the parent's inheritable ACEs.
-    ACL emptyDacl;
-    if (!InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION)) {
-        m_lastError = QString("Failed to initialize empty DACL: %1").arg(GetLastError());
-        return false;
-    }
-
-    DWORD result =
-        SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                              SE_FILE_OBJECT,
-                              DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                              nullptr,
-                              nullptr,
-                              &emptyDacl,
-                              nullptr);
-
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to strip permissions: %1").arg(result);
-        return false;
-    }
-
-    return true;
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return false;
-#endif
+    return tryStripPermissions(path).has_value();
 }
 
 bool PermissionManager::takeOwnership(const QString& path, const QString& userSID) {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!userSID.isEmpty());
-#ifdef Q_OS_WIN
-    if (!isRunningAsAdmin()) {
-        m_lastError = "Administrator privileges required to take ownership";
-        return false;
-    }
-
-    // Convert SID string to PSID
-    PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
-        m_lastError = QString("Invalid SID: %1").arg(GetLastError());
-        return false;
-    }
-
-    // Set owner
-    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                         SE_FILE_OBJECT,
-                                         OWNER_SECURITY_INFORMATION,
-                                         pSid,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr);
-
-    LocalFree(pSid);
-
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to take ownership: %1").arg(result);
-        return false;
-    }
-
-    return true;
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return false;
-#endif
+    return tryTakeOwnership(path, userSID).has_value();
 }
 
 bool PermissionManager::setStandardUserPermissions(const QString& path, const QString& userSID) {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!userSID.isEmpty());
-#ifdef Q_OS_WIN
-    // Convert SID
-    PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
-        m_lastError = QString("Invalid SID: %1").arg(GetLastError());
-        return false;
-    }
-
-    // Grant the user full control, but KEEP SYSTEM + Administrators so the file
-    // stays manageable by the OS and admins.
-    PACL pNewAcl = nullptr;
-    DWORD result = buildStandardUserDacl(pSid, &pNewAcl);
-
-    if (result != ERROR_SUCCESS) {
-        LocalFree(pSid);
-        m_lastError = QString("Failed to create ACL: %1").arg(result);
-        return false;
-    }
-
-    // Apply ACL
-    result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                   SE_FILE_OBJECT,
-                                   DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                                   nullptr,
-                                   nullptr,
-                                   pNewAcl,
-                                   nullptr);
-
-    LocalFree(pNewAcl);
-    LocalFree(pSid);
-
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to set permissions: %1").arg(result);
-        return false;
-    }
-
-    return true;
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return false;
-#endif
+    return trySetStandardUserPermissions(path, userSID).has_value();
 }
 
 bool PermissionManager::canModifyPermissions(const QString& path) {
@@ -374,6 +335,10 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
         m_lastError = "SDDL specifies neither an owner nor a valid DACL";
         return false;
     }
+    if (result == kReparseRefused) {
+        m_lastError = "Refused: target is a reparse point (junction/symlink)";
+        return false;
+    }
     if (result != ERROR_SUCCESS) {
         m_lastError = QString("Failed to apply SDDL: %1").arg(result);
         return false;
@@ -400,33 +365,21 @@ auto PermissionManager::tryStripPermissions(const QString& path)
         return std::unexpected(sak::error_code::file_not_found);
     }
 
-    // See stripPermissions(): an EMPTY (non-NULL) DACL strips explicit access and
-    // re-inherits from the parent; a nullptr pDacl would set a NULL DACL that
-    // grants everyone full access.
+    // An EMPTY (non-NULL) DACL strips explicit access and re-inherits from the
+    // parent; a nullptr pDacl would set a NULL DACL that grants everyone full
+    // access. The change is applied to a verified no-follow handle so a reparse
+    // swap cannot redirect it (see applySecurityNoFollow).
     ACL emptyDacl;
     if (!InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION)) {
         m_lastError = QString("Failed to initialize empty DACL: %1").arg(GetLastError());
         return std::unexpected(sak::error_code::permission_update_failed);
     }
 
-    DWORD result =
-        SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                              SE_FILE_OBJECT,
-                              DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                              nullptr,
-                              nullptr,
-                              &emptyDacl,
-                              nullptr);
-
-    if (result == ERROR_ACCESS_DENIED) {
-        m_lastError = "Access denied — administrator privileges required";
-        return std::unexpected(sak::error_code::elevation_required);
-    }
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to strip permissions: %1").arg(result);
-        return std::unexpected(sak::error_code::permission_update_failed);
-    }
-    return {};
+    const SECURITY_INFORMATION si = DACL_SECURITY_INFORMATION |
+                                    UNPROTECTED_DACL_SECURITY_INFORMATION;
+    const DWORD result =
+        applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, si, nullptr, &emptyDacl);
+    return interpretSecurityResult(result, "Failed to strip permissions", m_lastError);
 #else
     m_lastError = "Permission management only supported on Windows";
     return std::unexpected(sak::error_code::platform_not_supported);
@@ -449,25 +402,10 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
-    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                         SE_FILE_OBJECT,
-                                         OWNER_SECURITY_INFORMATION,
-                                         pSid,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr);
-
+    const DWORD result =
+        applySecurityNoFollow(path, WRITE_OWNER, OWNER_SECURITY_INFORMATION, pSid, nullptr);
     LocalFree(pSid);
-
-    if (result == ERROR_ACCESS_DENIED) {
-        m_lastError = "Access denied — administrator privileges required";
-        return std::unexpected(sak::error_code::elevation_required);
-    }
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to take ownership: %1").arg(result);
-        return std::unexpected(sak::error_code::permission_update_failed);
-    }
-    return {};
+    return interpretSecurityResult(result, "Failed to take ownership", m_lastError);
 #else
     m_lastError = "Permission management only supported on Windows";
     return std::unexpected(sak::error_code::platform_not_supported);
@@ -495,26 +433,11 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
         return std::unexpected(sak::error_code::permission_update_failed);
     }
 
-    result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                   SE_FILE_OBJECT,
-                                   DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                                   nullptr,
-                                   nullptr,
-                                   pNewAcl,
-                                   nullptr);
-
+    const SECURITY_INFORMATION si = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+    result = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, si, nullptr, pNewAcl);
     LocalFree(pNewAcl);
     LocalFree(pSid);
-
-    if (result == ERROR_ACCESS_DENIED) {
-        m_lastError = "Access denied — administrator privileges required";
-        return std::unexpected(sak::error_code::elevation_required);
-    }
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to set permissions: %1").arg(result);
-        return std::unexpected(sak::error_code::permission_update_failed);
-    }
-    return {};
+    return interpretSecurityResult(result, "Failed to set permissions", m_lastError);
 #else
     m_lastError = "Permission management only supported on Windows";
     return std::unexpected(sak::error_code::platform_not_supported);

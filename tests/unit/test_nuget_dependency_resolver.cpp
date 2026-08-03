@@ -85,6 +85,9 @@ private slots:
     void conflictingDiamondSurfacesError();
     void compatibleDiamondPicksVersionSatisfyingBoth();
     void lateConstraintFlaggedByValidation();
+    void lateConstraintReselectsResolvableDiamond();
+    void feedResponseForWrongIdIsIgnored();
+    void parseDependencies_keepsPerFrameworkRangesForSameId();
     void resolvedPackageCarriesDirectDependencyIds();
     void parseDependencies_preservesRangesAndSkipsFrameworkMarkers();
     void parseODataFeedVersions_extractsVersionsAndDeps();
@@ -313,6 +316,60 @@ void TestNuGetDependencyResolver::lateConstraintFlaggedByValidation() {
 
     QCOMPARE(versionOf(resolved, "d"), QStringLiteral("1.0.0"));  // kept (over-include-safe)
     QVERIFY(!r.errors().isEmpty());                               // but the conflict is surfaced
+}
+
+void TestNuGetDependencyResolver::lateConstraintReselectsResolvableDiamond() {
+    // d is resolved EARLY via a plain edge -> picks the highest, 2.0.0. A deeper
+    // edge e -> d[1.0.0] is discovered LATER. Because d@2.0.0 violates it but a
+    // satisfying version (1.0.0) IS available, the resolver must RE-SELECT d down
+    // to 1.0.0 (honoring both edges) instead of merely erroring after the fact.
+    Feed feed;
+    feed["a"] = {fv("1.0.0", {dep("d"), dep("b")})};   // d first -> resolved first (plain)
+    feed["d"] = {fv("1.0.0"), fv("2.0.0")};            // plain edge would pick 2.0.0
+    feed["b"] = {fv("1.0.0", {dep("e")})};
+    feed["e"] = {fv("1.0.0", {dep("d", "[1.0.0]")})};  // late exact pin to 1.0.0
+
+    NuGetDependencyResolver r;
+    r.start(QStringLiteral("a"), QString());
+    const auto resolved = drive(r, feed);
+
+    QCOMPARE(versionOf(resolved, "d"), QStringLiteral("1.0.0"));  // re-selected down
+    QCOMPARE(countOf(resolved, "d"), 1);
+    QVERIFY(r.errors().isEmpty());  // resolvable -> corrected, not an error
+}
+
+void TestNuGetDependencyResolver::feedResponseForWrongIdIsIgnored() {
+    // A feed response whose id does not match ANY pending fetch must be dropped,
+    // never applied to the queue head -- otherwise one package would be resolved
+    // to another package's versions (a wrong/hostile substitution).
+    NuGetDependencyResolver r;
+    r.start(QStringLiteral("a"), QString());
+    QCOMPARE(r.nextFetchId(), QStringLiteral("a"));
+
+    // Answer for "b" while "a" is pending: must NOT resolve "a" to b's versions.
+    r.provideFeed(QStringLiteral("b"), {fv("9.9.9")});
+    QVERIFY(r.resolved().isEmpty());
+    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.nextFetchId(), QStringLiteral("a"));  // "a" is still pending
+
+    // The correct response now resolves "a" to its own version.
+    r.provideFeed(QStringLiteral("a"), {fv("1.0.0")});
+    QCOMPARE(versionOf(r.resolved(), "a"), QStringLiteral("1.0.0"));
+}
+
+void TestNuGetDependencyResolver::parseDependencies_keepsPerFrameworkRangesForSameId() {
+    // The same id can recur with a DIFFERENT range per target framework. Both
+    // distinct ranges must be preserved (deduping by id alone would silently drop
+    // the second constraint); an exact duplicate (id+range) is still collapsed.
+    const auto deps = NuGetDependencyResolver::parseDependencies(
+        QStringLiteral("newtonsoft.json:[9.0,):net45|newtonsoft.json:[10.0,):netstandard1.3|"
+                       "newtonsoft.json:[9.0,):net46"));
+    QCOMPARE(deps.size(), 2);  // [9.0,) and [10.0,) kept; the repeated [9.0,) dropped
+    QCOMPARE(deps.at(0).version_range, QStringLiteral("[9.0,)"));
+    QCOMPARE(deps.at(1).version_range, QStringLiteral("[10.0,)"));
+    for (const NuGetDependency& d : deps) {
+        QCOMPARE(d.id, QStringLiteral("newtonsoft.json"));
+    }
 }
 
 void TestNuGetDependencyResolver::resolvedPackageCarriesDirectDependencyIds() {

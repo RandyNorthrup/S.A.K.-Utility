@@ -10,6 +10,7 @@ class AiPackageToolPlannerTests : public QObject {
 
 private Q_SLOTS:
     void normalizesInstallPlan();
+    void rejectsInjectionPackageId();
     void rejectsUnknownOperation();
     void clampsTimeout();
 };
@@ -17,7 +18,7 @@ private Q_SLOTS:
 void AiPackageToolPlannerTests::normalizesInstallPlan() {
     const QJsonObject args{
         {QStringLiteral("operation"), QStringLiteral(" INSTALL ")},
-        {QStringLiteral("package_id"), QStringLiteral(" superantispyware; rm -rf ")},
+        {QStringLiteral("package_id"), QStringLiteral(" superantispyware ")},
         {QStringLiteral("version"), QStringLiteral("10.0.1288")},
         {QStringLiteral("timeout_seconds"), 90},
     };
@@ -26,11 +27,28 @@ void AiPackageToolPlannerTests::normalizesInstallPlan() {
 
     QVERIFY(plan.ok());
     QCOMPARE(plan.operation, QStringLiteral("install"));
-    QCOMPARE(plan.package_id, QStringLiteral("superantispywarerm-rf"));
+    // Trimmed but otherwise preserved -- a valid id is never mangled.
+    QCOMPARE(plan.package_id, QStringLiteral("superantispyware"));
     QCOMPARE(plan.version, QStringLiteral("10.0.1288"));
     QCOMPARE(plan.timeout_seconds, 90);
     QVERIFY(plan.change_operation);
     QVERIFY(!plan.read_operation);
+}
+
+void AiPackageToolPlannerTests::rejectsInjectionPackageId() {
+    // An id with disallowed characters must FAIL CLOSED, not be silently rewritten
+    // into a different valid token (which could install/uninstall the wrong pkg).
+    const QJsonObject args{
+        {QStringLiteral("operation"), QStringLiteral("install")},
+        {QStringLiteral("package_id"), QStringLiteral("superantispyware; rm -rf")},
+    };
+
+    const sak::ai::AiPackageToolPlan plan = sak::ai::AiPackageToolPlanner::buildPlan(args);
+
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("Invalid package identifier")));
+    // The dangerous input is NOT rewritten into a usable substitute token.
+    QVERIFY(plan.package_id.isEmpty());
 }
 
 void AiPackageToolPlannerTests::rejectsUnknownOperation() {

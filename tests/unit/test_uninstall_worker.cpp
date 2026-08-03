@@ -23,6 +23,7 @@ private Q_SLOTS:
     void uninstallReport_defaults();
     void scanLevel_values();
     void mode_values();
+    void nativeUninstallSucceeded_classifiesExitCodes();
 };
 
 void TestUninstallWorker::construction_default() {
@@ -88,6 +89,20 @@ void TestUninstallWorker::mode_values() {
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::ForcedUninstall), 1);
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::UwpRemove), 2);
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::RegistryOnly), 3);
+}
+
+void TestUninstallWorker::nativeUninstallSucceeded_classifiesExitCodes() {
+    // Exit status 0 with exit code 0 is success.
+    QVERIFY(UninstallWorker::nativeUninstallSucceeded(0, 0, false));
+    // 3010 = MSI reboot-required: a SUCCESS that asks for a restart. It must be accepted (and its
+    // code carried into the report), not treated as a failure.
+    QVERIFY(UninstallWorker::nativeUninstallSucceeded(0, 3010, false));
+    // A real failure code (e.g. 1603 fatal MSI error) is not success.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(0, 1603, false));
+    // A cancelled run is never success, even with a zero exit code.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(0, 0, true));
+    // A non-zero process exit status is never success.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(1, 0, false));
 }
 
 QTEST_MAIN(TestUninstallWorker)

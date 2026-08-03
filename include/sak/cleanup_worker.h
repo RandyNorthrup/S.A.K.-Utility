@@ -78,6 +78,8 @@ private:
     enum class RecycleOutcome {
         Recycled,            ///< Sent to the Recycle Bin (done)
         RefusedRecoverable,  ///< Recoverable-only + could not recycle -> leave in place (failed)
+        RefusedRedirected,   ///< Delete-time by-handle re-verify caught a redirect -> refuse
+                             ///< (failed)
         FallThrough          ///< Proceed to permanent deletion
     };
     /// @brief Try the Recycle Bin (when enabled), honoring recoverable-only mode. Sets
@@ -86,6 +88,12 @@ private:
 
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);
+
+    /// @brief Recycle-or-permanent tail of deleteFile (after the reparse/redirect screens): try the
+    ///        Recycle Bin honoring recoverable-only mode, else permanently remove with the
+    ///        writable-retry/reboot tail. Split out to keep deleteFile within the complexity
+    ///        budget.
+    [[nodiscard]] bool recycleOrPermanentFile(const QString& path);
 
     /// @brief Delete-time re-verification that @p path still resolves to exactly the validated
     ///        target. Between validate and delete, a local attacker can swap an ANCESTOR directory
@@ -159,10 +167,15 @@ private:
     /// @brief Remove one directory entry during a forced folder cleanup (never follows reparse pts)
     [[nodiscard]] bool removeForcedEntry(const QFileInfo& entry);
 
-    /// @brief Schedule reboot removal and record the path
+    /// @brief Record a reboot-removal schedule for @p path, then return NOT-handled (false). A
+    ///        reboot-scheduled delete has not happened yet and cannot be pinned to the verified
+    ///        target, so it is surfaced via rebootPendingItems but never counted as an immediate
+    ///        success (fail closed).
     [[nodiscard]] bool tryScheduleReboot(const QString& path);
 
-    /// @brief Schedule a locked file for removal on next Windows reboot
+    /// @brief Schedule a locked file for removal on next Windows reboot. Re-verifies the target by
+    ///        handle first and REFUSES to schedule a redirected / reparse-ancestor path; the
+    ///        reboot-time re-resolution itself is an inherent, unpinnable residual (documented).
     [[nodiscard]] bool scheduleRebootRemoval(const QString& path);
 
     [[nodiscard]] bool deleteRegistryKey(const QString& fullKeyPath);

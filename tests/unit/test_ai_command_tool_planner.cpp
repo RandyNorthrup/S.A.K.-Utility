@@ -12,6 +12,7 @@ class AiCommandToolPlannerTests : public QObject {
 private Q_SLOTS:
     void buildsPowerShellPlanWithPolicy();
     void buildsProcessPlanWithProgramPreview();
+    void processPreviewQuotesAmbiguousArgs();
     void marksRiskyCommandAndPolicyDenial();
     void carriesPidMutationGuardBlock();
     void carriesChecksumBypassBlock();
@@ -50,7 +51,33 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
     QCOMPARE(plan.request.arguments, QStringList{QStringLiteral("a.txt")});
     QVERIFY(plan.preview.contains(QStringLiteral("notepad.exe")));
     QVERIFY(plan.preview.contains(QStringLiteral("a.txt")));
-    QVERIFY(plan.policy_decision.allowed);
+    // ReadOnlyPc now uses a read-only-diagnostic ALLOWLIST (not a mutation blacklist):
+    // notepad.exe is not a read-only command, so the plan is correctly refused. The
+    // plan itself is still built (request + preview populated) for display.
+    QVERIFY(!plan.policy_decision.allowed);
+}
+
+void AiCommandToolPlannerTests::processPreviewQuotesAmbiguousArgs() {
+    QJsonObject args;
+    args[QStringLiteral("program")] = QStringLiteral("C:\\Program Files\\app.exe");
+    args[QStringLiteral("arguments")] = QJsonArray{QStringLiteral("hello world"),
+                                                   QStringLiteral("plain"),
+                                                   QStringLiteral("tab\there")};
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    // A program path containing a space is quoted as a single token (its backslash
+    // path separators are preserved verbatim, not doubled).
+    QVERIFY(plan.preview.contains(QStringLiteral("\"C:\\Program Files\\app.exe\"")));
+    // An argument with a space is quoted so it cannot split into two arguments.
+    QVERIFY(plan.preview.contains(QStringLiteral("\"hello world\"")));
+    // A plain argument is left unquoted.
+    QVERIFY(plan.preview.contains(QStringLiteral(" plain ")));
+    // A control character (tab) is rendered visibly, never emitted raw.
+    QVERIFY(!plan.preview.contains(QLatin1Char('\t')));
+    QVERIFY(plan.preview.contains(QStringLiteral("\"tab\\there\"")));
 }
 
 void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {

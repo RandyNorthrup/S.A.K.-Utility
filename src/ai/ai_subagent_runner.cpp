@@ -403,6 +403,15 @@ AiSubagentResult timeoutResult(const AiSubagentTask& task, qint64 wall_clock_tim
         QStringLiteral("Subagent wall-clock timeout exceeded (%1 ms)").arg(wall_clock_timeout_ms));
 }
 
+// Once the wall clock has expired, the only honest non-timeout terminal state is
+// Cancelled. Any other outcome produced past the deadline -- including a
+// Complete/Degraded "late success" whose model call returned after the bound
+// elapsed -- must be demoted to TimedOut so a result generated past budget is
+// never laundered into a clean success. Already-TimedOut results stay as-is.
+bool deadlineOverridesResult(AiSubagentStatus status) {
+    return status != AiSubagentStatus::Cancelled && status != AiSubagentStatus::TimedOut;
+}
+
 // The effective wall-clock bound is the TIGHTEST of the runner-wide option and the per-task
 // timeout_seconds. The per-task value was previously parsed but never enforced, so a task could
 // run to the runner-wide limit (or forever) regardless of its own declared budget. A source that
@@ -443,7 +452,7 @@ AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
         }
         sleepBeforeRetry(options.retry_delay_ms);
     }
-    if (deadline.hasExpired() && last_attempt.status == AiSubagentStatus::Failed) {
+    if (deadline.hasExpired() && deadlineOverridesResult(last_attempt.status)) {
         return timeoutResult(task, effective_timeout_ms);
     }
     return last_attempt;

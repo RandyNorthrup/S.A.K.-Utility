@@ -23,6 +23,7 @@
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_mutating_actions.h"
 #include "sak/flash_coordinator.h"
+#include "sak/leftover_scan_provenance.h"
 #include "sak/partition_apply_worker.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/storage_inventory_worker.h"
@@ -4468,6 +4469,60 @@ private Q_SLOTS:
         }
     }
 
+    // A protected SHARED ROOT (Program Files / Users / the Windows tree) is refused even though it
+    // is not a bare volume root: the generic recycle op routes the CANONICAL path through the same
+    // file-deletion denylist the leftover-cleanup path uses, so it cannot target a shared system
+    // location. Runs Unattended so the thunk's own guard (not the gate) rejects; the directory is
+    // left untouched.
+    void recycleRejectsProtectedSharedRoot() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString programFiles = qEnvironmentVariable("ProgramFiles",
+                                                          QStringLiteral("C:\\Program Files"));
+        const QJsonObject result =
+            runArchiveOp(panel,
+                         QStringLiteral("files.delete_to_recycle_bin"),
+                         QJsonObject{{QStringLiteral("path"), programFiles}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("protected")));
+        QVERIFY(QFile::exists(programFiles));  // untouched
+    }
+
+    // The model-supplied technician_override JSON flag ALONE must never bypass proof-of-scan. With
+    // the out-of-band control (SAK_LEFTOVER_TECHNICIAN_OVERRIDE) unset, override=true is ignored
+    // and an item no scan surfaced is still refused -- an injected flag cannot rubber-stamp a
+    // fabricated deletion list. Runs Unattended (approval auto-hooked) so the thunk itself returns
+    // the refusal.
+    void cleanLeftoversOverrideFlagAloneCannotBypassProofOfScan() {
+        qunsetenv("SAK_LEFTOVER_TECHNICIAN_OVERRIDE");
+        sak::LeftoverScanProvenance::instance().clear();
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QJsonArray items{
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("file")},
+                        {QStringLiteral("path"),
+                         QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\never-scanned.tmp")}}};
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("items"), items},
+                                      {QStringLiteral("technician_override"), true}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        const QJsonObject data = result.value(QStringLiteral("data")).toObject();
+        QVERIFY(!data.value(QStringLiteral("unscanned")).toArray().isEmpty());
+    }
+
     // ------------------------------------------------------------------
     // W2c: the CATASTROPHIC gate tier for app actions. A catastrophic action
     // (disk wipe / partition apply / image flash) must ALWAYS force an explicit
@@ -6913,6 +6968,60 @@ private Q_SLOTS:
         QVERIFY(panel.m_toolLoopDetector.isLooping());
         QCOMPARE(panel.m_toolLoopDetector.maxRepeatCount(),
                  ai::AiToolLoopDetector::kDefaultRepeatThreshold);
+    }
+
+    // CODEX_REVIEW_2 line 100: a non-batch app action's confirm preview must render
+    // its destructive target FULLY, never truncated behind a global char cap that
+    // could hide the target off the end. Drive a real registered mutating action in
+    // Assisted mode with an over-long path argument and assert the full path reaches
+    // the human confirm text (which the old 200-char JSON truncation would have cut).
+    void nonBatchAppActionConfirmShowsFullTarget() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(1);  // Assisted Full Access -> confirms
+        // A path far longer than the retired 200-char cap; a marker at the very end
+        // proves nothing was truncated.
+        const QString long_path = QStringLiteral("C:\\Temp\\") + QString(400, QLatin1Char('a')) +
+                                  QStringLiteral("\\END");
+        QString captured_detail;
+        aiApprovalPromptTestHook() = [&captured_detail](const QString& title,
+                                                        const QString& detail) -> int {
+            if (title.contains(QStringLiteral("Approve AI Command"))) {
+                captured_detail = detail;
+            }
+            return 3;  // Cancel -- capture the preview, never invoke the action
+        };
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("sources"), QJsonArray{QStringLiteral("x")}},
+                                      {QStringLiteral("output_path"), long_path}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("files.compress_zip")},
+                        {QStringLiteral("arguments"), args}});
+        QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("user_declined"));     // declined at the confirm, never invoked
+        aiApprovalPromptTestHook() = nullptr;
+        QVERIFY(!captured_detail.isEmpty());           // the confirm fired
+        QVERIFY(captured_detail.contains(long_path));  // full target, not truncated
+    }
+
+    // CODEX_REVIEW_2 line 182: the workflow tool-dispatch plan must carry the
+    // originating user_message into its policy request, or package/MCP phases
+    // over-block. Assert initializeWorkflowToolPlan propagates context.user_message.
+    void workflowToolPlanCarriesUserMessage() {
+        AiAssistantPanel panel;
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p1");
+        phase.tool = QStringLiteral("sak_package_manager");
+        phase.operation = QStringLiteral("search");
+        phase.agent = QStringLiteral("pkg-agent");  // avoid the policy-reclamp branch
+        ai::AiWorkflowPhaseContext context;
+        context.user_message = QStringLiteral("install 7zip for the customer");
+        AiAssistantPanel::WorkflowToolDispatchPlan plan;
+        panel.initializeWorkflowToolPlan(phase, ai::AiToolPolicy::PackageToolsOnly, context, &plan);
+        QCOMPARE(plan.request.user_message, context.user_message);
     }
 
 private:

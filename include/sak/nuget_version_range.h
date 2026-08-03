@@ -11,6 +11,9 @@
 /// no shared state -- so the dependency resolver built on top is fully
 /// unit-testable with an in-memory feed.
 ///
+/// A non-empty string that does not match the grammar below is MALFORMED and
+/// rejected (never permissive) -- see NuGetVersionRange's class doc.
+///
 /// Supported range grammar (NuGet "Package versioning" spec):
 ///   ""            -> any version (permissive; used when a feed omits a range)
 ///   1.0           -> minimum inclusive   ( >= 1.0 )
@@ -74,24 +77,36 @@ private:
 
 /// @brief A parsed NuGet version range with optional lower/upper bounds.
 ///
-/// An unparseable or empty range is PERMISSIVE (satisfied by every valid
-/// version). This is deliberate: for offline-bundle completeness, over-including
-/// a dependency is safe, whereas dropping one because its range was unusual
-/// would produce a bundle that cannot install offline.
+/// An EMPTY range (or "[,]"/"(,)") is PERMISSIVE -- satisfied by every valid
+/// version -- because a feed that omits a range means "any". A MALFORMED range
+/// (a non-empty string we cannot parse into bounds) is INVALID and satisfies
+/// NOTHING: it is fail-closed, never fail-open. Treating an unparseable range as
+/// permissive would let a bogus constraint silently pull in an arbitrary version
+/// (including a wrong or downgraded one), so an unusual/garbled range is rejected
+/// rather than matched. The caller surfaces the resulting "unsatisfiable" error.
 class NuGetVersionRange {
 public:
     NuGetVersionRange() = default;
 
-    /// @brief Parse NuGet interval notation (see file header). Never fails: an
-    ///        unrecognized string yields an any-version (permissive) range.
+    /// @brief Parse NuGet interval notation (see file header). An empty string is
+    ///        the permissive any-version range; a non-empty string that does not
+    ///        parse yields an INVALID range that satisfies no version.
     [[nodiscard]] static NuGetVersionRange parse(const QString& text);
 
     /// @brief True if @p version falls within this range. An invalid version is
     ///        never satisfied. A permissive (any) range accepts every valid one.
+    ///        A malformed (invalid) range accepts nothing.
     [[nodiscard]] bool satisfies(const NuGetVersion& version) const;
 
-    /// @brief True if this range accepts every valid version (empty/unparseable).
-    [[nodiscard]] bool isAny() const { return !m_lower.has_value() && !m_upper.has_value(); }
+    /// @brief True if the range parsed successfully (empty or a real interval).
+    ///        A malformed non-empty string is not valid.
+    [[nodiscard]] bool isValid() const { return m_valid; }
+
+    /// @brief True if this range accepts every valid version (empty/unbounded and
+    ///        successfully parsed). A malformed range is never "any".
+    [[nodiscard]] bool isAny() const {
+        return m_valid && !m_lower.has_value() && !m_upper.has_value();
+    }
 
     /// @brief From @p available, the highest version that satisfies this range,
     ///        preferring a stable release over a prerelease at equal precedence.
@@ -112,6 +127,7 @@ private:
     std::optional<NuGetVersion> m_upper;
     bool m_lower_inclusive{false};
     bool m_upper_inclusive{false};
+    bool m_valid{true};  ///< false when a non-empty string failed to parse
 };
 
 }  // namespace sak

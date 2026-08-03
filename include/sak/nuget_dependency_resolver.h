@@ -141,6 +141,13 @@ private:
     [[nodiscard]] std::optional<FeedPackageVersion> selectVersion(
         const QueueItem& item, const QVector<FeedPackageVersion>& versions) const;
 
+    /// @brief Index in m_queue of the pending item whose id matches @p id
+    ///        (case-insensitive), or -1 if none. A feed/failure response is
+    ///        applied to the item it actually names -- NEVER blindly to the queue
+    ///        head -- so an out-of-order or mismatched response can never bind the
+    ///        wrong package's version to a different id.
+    [[nodiscard]] int pendingIndexForId(const QString& id) const;
+
     /// @brief Select + record the version for a dequeued item and enqueue its deps.
     void resolveDequeued(const QueueItem& item, const QVector<FeedPackageVersion>& versions);
 
@@ -162,8 +169,25 @@ private:
 
     /// @brief After the queue drains, flag any resolved package whose chosen
     ///        version violates a constraint that was only recorded AFTER it was
-    ///        selected (BFS order can discover a stricter edge late). Runs once.
+    ///        selected AND that no reselection could satisfy (a genuine conflict).
+    ///        Runs once.
     void validateConstraints();
+
+    /// @brief Index of the resolved package with @p lower_id, or -1 if none.
+    [[nodiscard]] int resolvedIndex(const QString& lower_id) const;
+
+    /// @brief When a constraint recorded AFTER a package was resolved invalidates
+    ///        its chosen version, re-run selection over that package's CACHED feed
+    ///        honoring the full constraint set (bounded backtracking -- constraints
+    ///        only tighten, so the chosen version is monotonically non-increasing
+    ///        and the pass terminates). A resolvable diamond is thus corrected in
+    ///        place instead of merely erroring after the fact; a truly
+    ///        unsatisfiable diamond still leaves the conflict for validateConstraints.
+    void reselectIfResolved(const QString& id);
+
+    /// @brief Overwrite a resolved package with a re-selected feed version (new
+    ///        version + dependency ids) and enqueue that version's dependencies.
+    void applyReselection(int idx, const FeedPackageVersion& chosen);
 
     int m_max_depth;
     int m_max_packages;
@@ -173,6 +197,11 @@ private:
     QVector<ResolvedPackage> m_resolved;
     QStringList m_errors;
     bool m_validated{false};  ///< the final constraint pass has run for this resolution
+
+    /// Cached feed + originating queue item per resolved id, so a late-arriving
+    /// constraint can re-run selection without a network refetch.
+    QHash<QString, QVector<FeedPackageVersion>> m_feeds;  ///< lowercased id -> feed
+    QHash<QString, QueueItem> m_items;                    ///< lowercased id -> resolved item
 };
 
 }  // namespace sak

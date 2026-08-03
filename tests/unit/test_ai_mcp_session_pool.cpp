@@ -15,6 +15,7 @@ class AiMcpSessionPoolTests : public QObject {
 
 private Q_SLOTS:
     void keyIsolatesCommandAndEnvironment();
+    void keyIsolatesTimeout();
     void emptyCommandRejected();
     void missingCommandFailsCleanlyAndCloses();
     void liveWin32McpReuseAndIsolation_optIn();
@@ -46,6 +47,20 @@ void AiMcpSessionPoolTests::keyIsolatesCommandAndEnvironment() {
     QVERIFY(Pool::sessionKeyForTesting(read_only) != Pool::sessionKeyForTesting(full));
     // A different command -> different session.
     QVERIFY(Pool::sessionKeyForTesting(read_only) != Pool::sessionKeyForTesting(other_cmd));
+}
+
+void AiMcpSessionPoolTests::keyIsolatesTimeout() {
+    using Pool = sak::ai::AiMcpSessionPool;
+    const auto base = requestWith(QStringLiteral("srv.exe"), QStringLiteral("read_only"));
+    auto longer = base;
+    longer.timeout_ms = base.timeout_ms + 1000;
+
+    // Same command + env but a different per-call timeout MUST key to a distinct
+    // session, so a later call never inherits the first call's stale timeout.
+    QVERIFY(Pool::sessionKeyForTesting(base) != Pool::sessionKeyForTesting(longer));
+    // Identical timeout -> same session (reuse still works).
+    const auto same = requestWith(QStringLiteral("srv.exe"), QStringLiteral("read_only"));
+    QCOMPARE(Pool::sessionKeyForTesting(base), Pool::sessionKeyForTesting(same));
 }
 
 void AiMcpSessionPoolTests::emptyCommandRejected() {

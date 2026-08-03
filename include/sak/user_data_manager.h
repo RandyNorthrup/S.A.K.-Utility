@@ -123,6 +123,20 @@ public:
     bool deleteBackup(const QString& backup_path);
     bool verifyBackup(const QString& backup_path);
 
+    /// @brief Decide whether the backup at @p backup_path may be recursively deleted.
+    ///
+    /// deleteBackup recursively erases whatever directory it is handed, so a confused or
+    /// prompt-injected caller could weaponize it to wipe an arbitrary tree (C:\\Windows, a
+    /// user's Documents, a junction redirected elsewhere). This pure seam is the fail-closed
+    /// gate: deletion is REFUSED unless (a) @p backup_path clears the shared root/UNC/device/
+    /// reparse/system screens (filePathDeletionRefusal) AND (b) a sidecar metadata file exists
+    /// whose recorded backup_path identifies this exact object (@p recorded_backup_path).
+    /// std::nullopt means no valid sidecar was found -- an unmanaged directory the manager never
+    /// created, which is never deleted. Returns an empty string when deletion is allowed, else a
+    /// human-readable refusal reason. Pure (no I/O) so it is unit-testable in isolation.
+    static QString backupDeletionRefusal(const QString& backup_path,
+                                         const std::optional<QString>& recorded_backup_path);
+
     // Utilities
     qint64 calculateSize(const QStringList& paths) const;
     QString generateChecksum(const QString& file_path) const;

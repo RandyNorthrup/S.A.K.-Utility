@@ -7,7 +7,9 @@
 #include "sak/permission_manager.h"
 #include "sak/user_profile_types.h"
 
+#include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -39,6 +41,9 @@ private Q_SLOTS:
     void stripPermissions_doesNotProduceNullDacl();
     void setStandardUser_keepsSystemAndAdmins();
     void setSddl_ownerlessDoesNotNullOwner();
+
+    // Reparse-point (junction/symlink) redirect hardening
+    void stripPermissions_refusesReparsePoint();
 
     // applyPermissionStrategy
     void applyStrategy_stripAll();
@@ -222,6 +227,34 @@ void PermissionManagerTests::setSddl_ownerlessDoesNotNullOwner() {
 
     const QString ownerAfter = mgr.getOwner(f);
     QCOMPARE(ownerAfter, ownerBefore);
+#else
+    QVERIFY(true);
+#endif
+}
+
+// A junction/symlink target must be REFUSED, never followed, so an attacker who
+// swaps a benign path for a reparse point cannot redirect an elevated ACL change
+// onto another object. The no-follow handle detects the reparse and fails closed.
+void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString target = m_tempDir.filePath("reparse_target");
+    QVERIFY(QDir().mkpath(target));
+    const QString link = m_tempDir.filePath("reparse_link");
+
+    QProcess proc;
+    proc.start(
+        "cmd",
+        {"/c", "mklink", "/J", QDir::toNativeSeparators(link), QDir::toNativeSeparators(target)});
+    QVERIFY(proc.waitForFinished(10'000));
+    if (proc.exitCode() != 0) {
+        QSKIP("Could not create a directory junction (non-NTFS or policy)");
+    }
+
+    const auto result = mgr.tryStripPermissions(link);
+    QVERIFY2(!result.has_value(), "strip must refuse a reparse point, not follow it");
+    QVERIFY2(mgr.getLastError().contains("reparse", Qt::CaseInsensitive),
+             qPrintable(mgr.getLastError()));
 #else
     QVERIFY(true);
 #endif

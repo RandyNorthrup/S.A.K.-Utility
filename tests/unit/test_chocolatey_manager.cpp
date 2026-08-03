@@ -27,6 +27,10 @@ private Q_SLOTS:
     // Input validation (B10-31)
     void validatePackageName_rejectsLeadingDashAndSeparators();
     void validateVersion_acceptsSemVerRejectsInjection();
+
+    // Supply-chain hardening (CODEX REVIEW 2)
+    void isTrustedChocoSigner_wholeWordOnly();
+    void approvedInstallSource_pinnedUnlessUnofficial();
 };
 
 void TestChocolateyManager::construction_default() {
@@ -136,6 +140,29 @@ void TestChocolateyManager::validateVersion_acceptsSemVerRejectsInjection() {
     QVERIFY(!ChocolateyManager::validateVersion("1.0 --force"));
     QVERIFY(!ChocolateyManager::validateVersion("latest"));
     QVERIFY(!ChocolateyManager::validateVersion(QString()));
+}
+
+void TestChocolateyManager::isTrustedChocoSigner_wholeWordOnly() {
+    // The genuine Authenticode subject.
+    QVERIFY(ChocolateyManager::isTrustedChocoSigner("Chocolatey Software, Inc."));
+    QVERIFY(ChocolateyManager::isTrustedChocoSigner("chocolatey software, inc."));
+    QVERIFY(ChocolateyManager::isTrustedChocoSigner("Chocolatey"));
+    // A lookalike that merely embeds the token must be rejected (no word boundary).
+    QVERIFY(!ChocolateyManager::isTrustedChocoSigner("NotChocolateyEvil Ltd"));
+    QVERIFY(!ChocolateyManager::isTrustedChocoSigner("Chocolateyy Inc"));
+    // Unsigned / unknown signer -> fail closed.
+    QVERIFY(!ChocolateyManager::isTrustedChocoSigner(QString()));
+    QVERIFY(!ChocolateyManager::isTrustedChocoSigner("Contoso Corp"));
+}
+
+void TestChocolateyManager::approvedInstallSource_pinnedUnlessUnofficial() {
+    // Official install pins the approved community feed.
+    const QString official = ChocolateyManager::approvedInstallSource(false);
+    QVERIFY(!official.isEmpty());
+    QVERIFY(official.startsWith(QStringLiteral("https://")));
+    QVERIFY(official.contains(QStringLiteral("chocolatey.org")));
+    // Opting into unofficial sources means no pin (caller accepts configured feeds).
+    QVERIFY(ChocolateyManager::approvedInstallSource(true).isEmpty());
 }
 
 QTEST_MAIN(TestChocolateyManager)

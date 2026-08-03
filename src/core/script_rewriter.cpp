@@ -17,6 +17,29 @@
 
 namespace sak {
 
+namespace {
+
+/// @brief Build the fail-closed error for an incomplete rewrite, or "" if the
+///        rewrite internalized every expected URL. A rewrite that leaves a
+///        download URL live would silently fall back to the network (defeating
+///        offline internalization) yet formerly reported success, so a mapped
+///        URL that was NOT found in the script -- or a script with declared
+///        resources but ZERO replacements -- is a hard failure, not a success.
+QString rewriteFailure(const QStringList& unreplaced, bool has_resources, bool replaced_any) {
+    if (!unreplaced.isEmpty()) {
+        return QStringLiteral("Expected download URL(s) not found in script: %1")
+            .arg(unreplaced.join(QStringLiteral(", ")));
+    }
+    if (has_resources && !replaced_any) {
+        return QStringLiteral(
+            "No declared download URL matched the script; "
+            "nothing was internalized");
+    }
+    return QString();
+}
+
+}  // namespace
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -36,21 +59,27 @@ RewrittenScript ScriptRewriter::rewrite(const ParsedInstallScript& parsed,
     }
 
     QString rewritten = parsed.original_script;
+    QStringList unreplaced;
 
     for (const auto& resource : parsed.resources) {
-        // Replace primary URL
-        if (!resource.url.isEmpty() && local_filenames.contains(resource.url)) {
-            rewritten = replaceUrl(
-                rewritten, resource.url, local_filenames.value(resource.url), result.replacements);
+        for (const QString& url : {resource.url, resource.url_64bit}) {
+            if (url.isEmpty() || !local_filenames.contains(url)) {
+                continue;
+            }
+            const qsizetype before = result.replacements.size();
+            rewritten = replaceUrl(rewritten, url, local_filenames.value(url), result.replacements);
+            if (result.replacements.size() == before) {
+                unreplaced.append(url);  // mapped but absent from the script
+            }
         }
+    }
 
-        // Replace 64-bit URL
-        if (!resource.url_64bit.isEmpty() && local_filenames.contains(resource.url_64bit)) {
-            rewritten = replaceUrl(rewritten,
-                                   resource.url_64bit,
-                                   local_filenames.value(resource.url_64bit),
-                                   result.replacements);
-        }
+    const QString failure =
+        rewriteFailure(unreplaced, !parsed.resources.isEmpty(), !result.replacements.isEmpty());
+    if (!failure.isEmpty()) {
+        result.error_message = failure;
+        sak::logError("[ScriptRewriter] {}", failure.toStdString());
+        return result;  // fail closed: do NOT report a half-rewritten script as done
     }
 
     result.script_content = rewritten;

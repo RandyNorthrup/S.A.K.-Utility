@@ -361,6 +361,75 @@ private Q_SLOTS:
         QVERIFY(!QFileInfo::exists(e->backup_path + ".json"));
     }
 
+    // --- CR2: deleteBackup must not recursively erase an arbitrary tree ---
+    // Pure decision-seam coverage for the confinement / identity / screen gate.
+    void deletionRefusalScreensDriveRoot() {
+        const QString r = UserDataManager::backupDeletionRefusal(
+            QStringLiteral("C:/"), std::optional<QString>(QStringLiteral("C:/")));
+        QVERIFY(!r.isEmpty());  // a drive root is refused even with matching metadata
+    }
+
+    void deletionRefusalNeedsMetadataSidecar() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString p = QDir(work.path()).filePath("App_backup");
+        const QString r = UserDataManager::backupDeletionRefusal(p, std::nullopt);
+        QVERIFY(!r.isEmpty());  // no sidecar -> unmanaged directory -> refused
+    }
+
+    void deletionRefusalNeedsIdentityMatch() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString p = QDir(work.path()).filePath("App_backup");
+        const QString other = QDir(work.path()).filePath("Somewhere_else");
+        const QString r = UserDataManager::backupDeletionRefusal(p, std::optional<QString>(other));
+        QVERIFY(!r.isEmpty());  // sidecar records a DIFFERENT object -> refused
+    }
+
+    void deletionRefusalAllowsManagedBackup() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString p = QDir(work.path()).filePath("App_backup");
+        const QString r = UserDataManager::backupDeletionRefusal(p, std::optional<QString>(p));
+        QVERIFY2(r.isEmpty(), qPrintable(r));  // safe local path + matching sidecar -> allowed
+    }
+
+    // End-to-end: an arbitrary directory with no sidecar is left intact.
+    void deleteBackupRefusesUnmanagedDirectory() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString victim = QDir(work.path()).filePath("not_a_backup");
+        QVERIFY(QDir().mkpath(victim));
+        QFile f(QDir(victim).filePath("important.txt"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("keep me");
+        f.close();
+
+        UserDataManager mgr;
+        QVERIFY(!mgr.deleteBackup(victim));  // no metadata sidecar -> refused
+        QVERIFY(QFileInfo::exists(victim));  // tree left fully intact
+        QVERIFY(QFileInfo::exists(QDir(victim).filePath("important.txt")));
+    }
+
+    // End-to-end: a forged sidecar that points elsewhere must not authorize deletion.
+    void deleteBackupRefusesForgedSidecarMismatch() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        const QString victim = QDir(work.path()).filePath("victim");
+        QVERIFY(QDir().mkpath(victim));
+        QJsonObject obj;
+        obj["app_name"] = QStringLiteral("X");
+        obj["backup_path"] = QDir(work.path()).filePath("elsewhere");
+        QFile meta(victim + ".json");
+        QVERIFY(meta.open(QIODevice::WriteOnly));
+        meta.write(QJsonDocument(obj).toJson());
+        meta.close();
+
+        UserDataManager mgr;
+        QVERIFY(!mgr.deleteBackup(victim));  // sidecar identity mismatch -> refused
+        QVERIFY(QFileInfo::exists(victim));
+    }
+
     // --- B7-30: a stray metadata .json without its payload must NOT verify ---
     void verifyBackupFailsWhenPayloadMissing() {
         QTemporaryDir work;

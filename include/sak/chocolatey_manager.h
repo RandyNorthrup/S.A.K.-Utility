@@ -112,6 +112,20 @@ public:
     ///        with a digit (never an option). Pure; unit-testable.
     [[nodiscard]] static bool validateVersion(const QString& version);
 
+    /// @brief True iff @p signer_subject identifies the official Chocolatey code
+    ///        signer. Matching is case-insensitive and requires the whole word
+    ///        "Chocolatey" so a lookalike subject that merely embeds the token
+    ///        (e.g. "NotChocolateyEvil Ltd") is rejected. Pure; unit-testable.
+    [[nodiscard]] static bool isTrustedChocoSigner(const QString& signer_subject);
+
+    /// @brief The install --source that must be pinned for a given trust posture.
+    ///        Returns the official Chocolatey community feed when unofficial
+    ///        sources are NOT allowed (so a hijacked source entry in the bundled
+    ///        choco config cannot redirect the download), or empty when the caller
+    ///        has explicitly opted into unofficial/configured sources. Pure;
+    ///        unit-testable.
+    [[nodiscard]] static QString approvedInstallSource(bool allow_unofficial);
+
 Q_SIGNALS:
     void installStarted(const QString& package_name);
     void installProgress(const QString& package_name, const QString& status);
@@ -125,9 +139,14 @@ Q_SIGNALS:
 private:
     // Execution helpers
     Result executeChoco(const QStringList& args, int timeout_ms = 0);
-    QString buildChocoCommand(const QStringList& args) const;
     QStringList buildInstallArgs(const InstallConfig& config) const;
     bool parseExitCode(int exit_code) const;
+
+    // Authenticity: prove the bundled choco.exe is a genuine, Chocolatey-signed
+    // binary (valid Authenticode signature AND trusted signer) before executing
+    // it. Result is cached per resolved path; initialize() resets it.
+    bool verifyChocoAuthenticity() const;
+    bool ensureChocoAuthentic();
 
     // Output parsing
     QString extractErrorMessage(const QString& output) const;
@@ -143,6 +162,7 @@ private:
     bool m_initialized;
     int m_default_timeout_seconds;
     bool m_auto_confirm;
+    int m_choco_authentic{0};  // 0 = unknown, 1 = verified genuine, -1 = rejected
 };
 
 }  // namespace sak

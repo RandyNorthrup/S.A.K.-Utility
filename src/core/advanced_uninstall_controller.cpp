@@ -531,14 +531,27 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
         return;
     }
 
+    // Own the busy state for the WHOLE batch: without this the controller stays Idle between queue
+    // items, letting a concurrent refresh / manual clean / second uninstall run mid-batch.
+    // processNextQueueItem keeps it Uninstalling; finishBatchUninstall (or a cancel) sets Idle.
+    setState(State::Uninstalling);
+
     m_batchIndex = -1;
     m_batchRestorePointCreated = false;
     m_batchAutoCleanItems.clear();
 
-    // Create a single restore point for the entire batch
+    // Create a single restore point for the entire batch. FAIL CLOSED: if the user asked for a
+    // rollback point and it cannot be created, abort the (potentially destructive) batch rather
+    // than proceed with no way back.
     if (createRestorePoint) {
         QString desc = QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
         m_batchRestorePointCreated = m_restore_manager->createRestorePoint(desc);
+        if (!m_batchRestorePointCreated) {
+            setState(State::Idle);
+            Q_EMIT statusMessage("Cannot create system restore point; batch uninstall aborted.",
+                                 kStatusTimeoutLongMs);
+            return;
+        }
     }
 
     processNextQueueItem();

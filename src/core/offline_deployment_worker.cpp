@@ -27,6 +27,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QtConcurrent>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
 #include <QUrlQuery>
@@ -91,6 +92,20 @@ bool entryInstallTokensValid(const DeploymentManifestEntry& entry) {
            OfflineDeploymentWorker::isSafeInstallToken(entry.version);
 }
 
+/// @brief Build the header fields (no packages) of a deployment manifest.
+DeploymentManifest makeManifestHeader(const QString& output_dir,
+                                      const QString& description,
+                                      PayloadMode mode) {
+    DeploymentManifest manifest;
+    manifest.manifest_version = offline::kManifestVersion;
+    manifest.created_date = QDateTime::currentDateTime().toString(Qt::ISODate);
+    manifest.creator = "S.A.K. Utility";
+    manifest.description = description;
+    manifest.output_dir = output_dir;
+    manifest.payload_mode = mode;
+    return manifest;
+}
+
 /// @brief Honest one-line outcome for a finished choco install attempt.
 QString installOutcomeText(const ProcessResult& process, bool success) {
     if (process.cancelled) {
@@ -137,7 +152,7 @@ bool OfflineDeploymentWorker::isSafeInstallToken(const QString& token) {
 }
 
 /// @brief Parse .nuspec in extract_dir for the first dependency package ID.
-/// Prefers dependencies ending in ".install" (e.g. 7zip → 7zip.install).
+/// Prefers dependencies ending in ".install" (e.g. 7zip -> 7zip.install).
 static QString findNuspecDependencyId(const QString& extract_dir) {
     QDirIterator iter(extract_dir, {"*.nuspec"}, QDir::Files);
     if (!iter.hasNext()) {
@@ -329,21 +344,28 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     // with the resolved closure; surfaces any resolution warning to the UI log.
     QStringList resolve_warnings;
     const QVector<BatchInternalizationJob> closure = resolveDependencyClosure(resolve_warnings);
-    {
-        QMutexLocker jobs_lock(&m_mutex);
-        m_jobs = closure;
-    }
     for (const QString& warning : resolve_warnings) {
         emitLog(QStringLiteral("[Dependencies] %1").arg(warning));
     }
 
-    DeploymentManifest manifest;
-    manifest.manifest_version = offline::kManifestVersion;
-    manifest.created_date = QDateTime::currentDateTime().toString(Qt::ISODate);
-    manifest.creator = "S.A.K. Utility";
-    manifest.description = description;
-    manifest.output_dir = output_dir;
-    manifest.payload_mode = PayloadMode::Bundle;
+    // Surface (never silently ship) any dependency the resolved closure declares
+    // but could not pack. Previously these were ignored, so a bundle looked
+    // self-contained when it was not. Such a package is NOT a build error for a
+    // normal Bundle: it is fetched from the feed at install time (will-fetch). Only
+    // an air-gap (packed_only) install cannot fetch it, and that is enforced
+    // per-entry at install time -- so warn + record here rather than abort.
+    const QStringList unmet = unmetClosureDependencies(closure);
+    if (!unmet.isEmpty()) {
+        emitLog(QStringLiteral("[Dependencies] Not packed -- will be fetched from the feed at "
+                               "install (unavailable for air-gap/packed-only install): %1")
+                    .arg(unmet.join(QStringLiteral(", "))));
+    }
+    {
+        QMutexLocker jobs_lock(&m_mutex);
+        m_jobs = closure;
+    }
+
+    DeploymentManifest manifest = makeManifestHeader(output_dir, description, PayloadMode::Bundle);
 
     QMutexLocker lock(&m_mutex);
     ctx.total_jobs = m_jobs.size();
@@ -380,13 +402,7 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
         requested = m_jobs;
     }
 
-    DeploymentManifest manifest;
-    manifest.manifest_version = offline::kManifestVersion;
-    manifest.created_date = QDateTime::currentDateTime().toString(Qt::ISODate);
-    manifest.creator = "S.A.K. Utility";
-    manifest.description = description;
-    manifest.output_dir = output_dir;
-    manifest.payload_mode = PayloadMode::List;
+    DeploymentManifest manifest = makeManifestHeader(output_dir, description, PayloadMode::List);
 
     for (const BatchInternalizationJob& job : requested) {
         if (isChocolateyFrameworkId(job.package_id)) {
@@ -451,6 +467,9 @@ QVector<FeedPackageVersion> OfflineDeploymentWorker::fetchFeedVersions(const QSt
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kApiRequestTimeoutMs;
+    // Bound the feed document BEFORE it is buffered and DOM-parsed, so a hostile or
+    // oversized endpoint cannot exhaust memory here.
+    request.max_response_bytes = offline::kMaxFeedResponseBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("Accept"),
@@ -567,6 +586,30 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::assembleClosureJobs(
     }
 
     return jobs;
+}
+
+QStringList OfflineDeploymentWorker::unmetClosureDependencies(
+    const QVector<BatchInternalizationJob>& jobs) {
+    QSet<QString> present;
+    for (const BatchInternalizationJob& job : jobs) {
+        present.insert(job.package_id.toLower());
+    }
+    QStringList missing;
+    QSet<QString> reported;
+    for (const BatchInternalizationJob& job : jobs) {
+        for (const QString& dep : job.dependencies) {
+            const QString lower = dep.toLower();
+            // The 'chocolatey' framework is deliberately excluded (supplied at
+            // deploy by the bundled portable choco), so it is never "missing".
+            if (isChocolateyFrameworkId(dep) || present.contains(lower) ||
+                reported.contains(lower)) {
+                continue;
+            }
+            reported.insert(lower);
+            missing.append(dep);
+        }
+    }
+    return missing;
 }
 
 bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
@@ -793,7 +836,7 @@ static void buildInstallEdges(const QVector<DeploymentManifestEntry>& packages,
 }
 
 QVector<DeploymentManifestEntry> OfflineDeploymentWorker::topologicalInstallOrder(
-    const QVector<DeploymentManifestEntry>& packages) {
+    const QVector<DeploymentManifestEntry>& packages, QStringList* cyclic_ids) {
     QHash<QString, int> index_by_id;
     for (int i = 0; i < packages.size(); ++i) {
         index_by_id.insert(packages[i].package_id.toLower(), i);
@@ -821,10 +864,14 @@ QVector<DeploymentManifestEntry> OfflineDeploymentWorker::topologicalInstallOrde
         }
     }
     // A dependency cycle leaves some packages unemitted: append them in original
-    // order so nothing is ever dropped from the install set.
+    // order so nothing is ever dropped from the install set, and surface their ids
+    // so the caller can warn (the cycle is NOT dependency-ordered).
     for (int i = 0; i < packages.size(); ++i) {
         if (!emitted[i]) {
             ordered.append(packages[i]);
+            if (cyclic_ids != nullptr) {
+                cyclic_ids->append(packages[i].package_id);
+            }
         }
     }
     return ordered;
@@ -916,8 +963,15 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
     // its packages dependencies-first.
     const bool is_bundle = manifest.payload_mode == PayloadMode::Bundle;
     const bool effective_packed_only = packed_only && is_bundle;
+    QStringList cyclic_ids;
     const QVector<DeploymentManifestEntry> ordered =
-        is_bundle ? topologicalInstallOrder(manifest.packages) : manifest.packages;
+        is_bundle ? topologicalInstallOrder(manifest.packages, &cyclic_ids) : manifest.packages;
+    if (!cyclic_ids.isEmpty()) {
+        emitLog(QStringLiteral("[Dependencies] Cycle detected among %1 package(s); installed in "
+                               "manifest order (dependency ordering not guaranteed): %2")
+                    .arg(cyclic_ids.size())
+                    .arg(cyclic_ids.join(QStringLiteral(", "))));
+    }
 
     BatchStats stats;
     stats.total = ordered.size();
@@ -946,6 +1000,13 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
         Qt::QueuedConnection);
 }
 
+bool OfflineDeploymentWorker::isSuccessInstallExitCode(int exit_code) {
+    // choco/MSI treat 1641 (reboot initiated) and 3010 (reboot required) as
+    // successful installs, not failures -- accept them alongside 0.
+    return exit_code == offline::kExitSuccess || exit_code == offline::kExitRebootInitiated ||
+           exit_code == offline::kExitRebootRequired;
+}
+
 QString OfflineDeploymentWorker::resolveChocoExecutable() {
     // Portable technician tool: ONLY the choco.exe bundled with the app is ever
     // run. Never a system-installed choco -- a target machine must not need one,
@@ -966,6 +1027,14 @@ bool OfflineDeploymentWorker::verifyBundledPackage(const DeploymentManifestEntry
     const QString safe_name = sanitizeManifestFilename(entry.nupkg_filename);
     if (safe_name.isEmpty()) {
         error_out = "Manifest entry has no valid package filename";
+        return false;
+    }
+
+    // Fail closed: a Bundle entry MUST declare both a size and a checksum. An entry
+    // lacking either cannot be integrity-verified, so it is rejected before install
+    // rather than accepted on the mere existence of a file at the path.
+    if (entry.size_bytes <= 0 || entry.checksum.isEmpty()) {
+        error_out = "Bundle entry lacks a size/checksum to verify: " + safe_name;
         return false;
     }
 
@@ -1084,7 +1153,8 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
                                                    env,
                                                    [this]() { return m_cancelled.load(); });
 
-    const bool success = !process.timed_out && !process.cancelled && process.exit_code == 0;
+    const bool success = !process.timed_out && !process.cancelled &&
+                         isSuccessInstallExitCode(process.exit_code);
     emitPackageOutcome(entry, success, installOutcomeText(process, success));
     return success;
 }
@@ -1123,6 +1193,9 @@ void OfflineDeploymentWorker::executeDirectDownload(
     int completed = 0;
     int failed = 0;
     int total = packages.size();
+    // Shared across EVERY package in the run: two packages emitting the same
+    // installer basename must not overwrite each other in the one output dir.
+    QSet<QString> used_names;
 
     for (const auto& [pkg_id, version] : packages) {
         if (m_cancelled) {
@@ -1154,7 +1227,7 @@ void OfflineDeploymentWorker::executeDirectDownload(
             },
             Qt::QueuedConnection);
 
-        int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir);
+        int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir, used_names);
 
         bool ok = (files > 0);
         if (ok) {
@@ -1192,58 +1265,58 @@ void OfflineDeploymentWorker::emitLog(const QString& message) {
 
 int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
                                                           const QString& resolved_version,
-                                                          const QString& output_dir) {
-    // A crafted package id must not escape the per-package temp dir (below) that
-    // is later removeRecursively()'d -- reject traversal/separators up front.
+                                                          const QString& output_dir,
+                                                          QSet<QString>& used_names) {
+    // A crafted package id must not escape the per-package temp dir -- reject
+    // traversal/separators up front.
     if (!PackageInternalizationEngine::isSafePackageComponent(pkg_id)) {
         emitLog(QString("[%1] Rejected: unsafe package id").arg(pkg_id));
         return 0;
     }
 
-    QString temp_dir = output_dir + "/_sak_temp_" + pkg_id;
-    QDir(temp_dir).mkpath(".");
+    // Unique, owned scratch dir (random suffix) auto-removed on scope exit. This
+    // replaces a PREDICTABLE path that was recursively deleted -- a foreign dir or
+    // symlink can no longer pre-occupy it, and there is no manual recursive delete
+    // of a guessable path to be tricked into wiping unrelated data.
+    QTemporaryDir temp(output_dir + "/_sak_temp_XXXXXX");
+    if (!temp.isValid()) {
+        emitLog(QString("[%1] Could not create a temp working directory").arg(pkg_id));
+        return 0;
+    }
+    temp.setAutoRemove(true);
+    const QString temp_dir = temp.path();
 
     // Steps 1-2: Download and extract the nupkg
-    QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir);
+    const QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir);
     if (extract_dir.isEmpty()) {
-        QDir(temp_dir).removeRecursively();
         return 0;
     }
 
     // Step 3: Find install script (or resolve meta-package dependency)
-    InstallScriptParser parser;
     PackageInternalizationEngine engine;
     QString script_path = engine.findInstallScript(extract_dir);
     QString pkg_extract_dir = extract_dir;
-
     if (script_path.isEmpty()) {
         auto [dep_script,
               dep_extract] = resolveMetaPackageDependency(pkg_id, extract_dir, temp_dir);
         if (dep_script.isEmpty()) {
-            QDir(temp_dir).removeRecursively();
             return 0;
         }
         script_path = dep_script;
         pkg_extract_dir = dep_extract;
     }
 
-    // Parse for download URLs (all installer resources, 32- and 64-bit).
-    auto parsed = parser.parseFile(script_path);
-    QStringList urls = collectInstallerUrls(parsed);
-
-    // Embedded installer fallback, then URL download
-    int result = 0;
-    if (urls.isEmpty()) {
-        result = copyEmbeddedInstallers(pkg_id, pkg_extract_dir, output_dir);
-        if (result == 0) {
+    // Parse for installer downloads (all resources, 32- and 64-bit, with checksums).
+    const QVector<InstallerDownload> downloads =
+        collectInstallerDownloads(InstallScriptParser().parseFile(script_path));
+    if (downloads.isEmpty()) {
+        const int copied = copyEmbeddedInstallers(pkg_id, pkg_extract_dir, output_dir, used_names);
+        if (copied == 0) {
             emitLog(QString("[%1] No download URLs or embedded files").arg(pkg_id));
         }
-    } else {
-        result = downloadUrlsToDir(pkg_id, urls, output_dir);
+        return copied;
     }
-
-    QDir(temp_dir).removeRecursively();
-    return result;
+    return downloadInstallersToDir(pkg_id, downloads, output_dir, used_names);
 }
 
 QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
@@ -1284,7 +1357,7 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
         return {};
     }
 
-    emitLog(QString("[%1] Meta-package → resolving %2").arg(pkg_id, dep_id));
+    emitLog(QString("[%1] Meta-package -> resolving %2").arg(pkg_id, dep_id));
 
     PackageInternalizationEngine dep_engine;
     QString dep_version = dep_engine.resolveLatestVersion(dep_id);
@@ -1321,7 +1394,8 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
 
 int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
                                                     const QString& pkg_extract_dir,
-                                                    const QString& output_dir) {
+                                                    const QString& output_dir,
+                                                    QSet<QString>& used_names) {
     QDir tools_dir(pkg_extract_dir + "/tools");
     if (!tools_dir.exists()) {
         return 0;
@@ -1335,11 +1409,14 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
     emitLog(QString("[%1] Found %2 embedded installer(s)").arg(pkg_id).arg(embedded.size()));
     int copied = 0;
     for (const auto& name : embedded) {
-        QString src = tools_dir.filePath(name);
-        QString dest = output_dir + "/" + name;
+        // Disambiguate against every name already written this run so a second
+        // package's identically-named installer never overwrites the first.
+        const QString dest_name = uniqueFilename(safeInstallerFilename(name, name), used_names);
+        const QString src = tools_dir.filePath(name);
+        const QString dest = output_dir + "/" + dest_name;
         if (QFile::copy(src, dest)) {
             ++copied;
-            sak::logInfo("[DirectDownload] Embedded: {}", name.toStdString());
+            sak::logInfo("[DirectDownload] Embedded: {}", dest_name.toStdString());
         } else {
             emitLog(QString("[%1] Copy failed: %2").arg(pkg_id, name));
         }
@@ -1366,57 +1443,68 @@ QString OfflineDeploymentWorker::uniqueFilename(const QString& desired, QSet<QSt
     return candidate;
 }
 
-QStringList OfflineDeploymentWorker::collectInstallerUrls(const ParsedInstallScript& parsed) {
-    // Collect the 32- and 64-bit installer URLs from EVERY resource, de-duplicated.
-    // A package can declare several installers (e.g. an app + a prerequisite); a
-    // direct download that kept only the first resource would ship an incomplete
-    // set that then fails at install time.
-    QStringList urls;
+QVector<InstallerDownload> OfflineDeploymentWorker::collectInstallerDownloads(
+    const ParsedInstallScript& parsed) {
+    // Collect the 32- and 64-bit installers from EVERY resource, each carrying its
+    // declared checksum, de-duplicated by URL. A package can declare several
+    // installers (e.g. an app + a prerequisite); keeping only the first resource
+    // would ship an incomplete set that then fails at install time.
+    QVector<InstallerDownload> downloads;
+    QSet<QString> seen;
+    auto add = [&](const QString& url, const QString& sum, const QString& type) {
+        if (url.isEmpty() || seen.contains(url)) {
+            return;
+        }
+        seen.insert(url);
+        downloads.append(InstallerDownload{url, sum, type});
+    };
     for (const auto& resource : parsed.resources) {
-        if (!resource.url.isEmpty() && !urls.contains(resource.url)) {
-            urls.append(resource.url);
-        }
-        if (!resource.url_64bit.isEmpty() && !urls.contains(resource.url_64bit)) {
-            urls.append(resource.url_64bit);
-        }
+        add(resource.url, resource.checksum, resource.checksum_type);
+        add(resource.url_64bit, resource.checksum_64bit, resource.checksum_type_64bit);
     }
-    return urls;
+    return downloads;
 }
 
-int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
-                                               const QStringList& urls,
-                                               const QString& output_dir) {
+int OfflineDeploymentWorker::downloadInstallersToDir(const QString& pkg_id,
+                                                     const QVector<InstallerDownload>& downloads,
+                                                     const QString& output_dir,
+                                                     QSet<QString>& used_names) {
     int downloaded = 0;
     int index = 0;
-    QSet<QString> used_names;
-    for (const auto& url : urls) {
+    for (const auto& item : downloads) {
         if (m_cancelled) {
             break;
         }
         ++index;
         // Two distinct installer URLs can share a basename (x86 vs x64 setup.exe).
         // Disambiguate so the second never overwrites the first on disk (which
-        // would ship one architecture while counting two downloads).
-        QString filename = safeInstallerFilename(QUrl(url).fileName(),
+        // would ship one architecture while counting two downloads). used_names is
+        // shared across packages, so a cross-package collision is caught too.
+        QString filename = safeInstallerFilename(QUrl(item.url).fileName(),
                                                  QString("%1_installer_%2").arg(pkg_id).arg(index));
         filename = uniqueFilename(filename, used_names);
-        QString dest = output_dir + "/" + filename;
-        if (downloadFileFromUrl(url, dest)) {
+        const QString dest = output_dir + "/" + filename;
+        // Verify each installer against its declared checksum before counting it.
+        if (downloadFileFromUrl(item.url, dest, item.checksum, item.checksum_type)) {
             ++downloaded;
             sak::logInfo("[DirectDownload] Saved: {}", filename.toStdString());
         } else {
-            emitLog(QString("[%1] Download failed: %2").arg(pkg_id, url));
+            emitLog(QString("[%1] Download failed: %2").arg(pkg_id, item.url));
         }
     }
 
-    if (downloaded == 0 && !urls.isEmpty()) {
-        emitLog(
-            QString("[%1] Found %2 URL(s) but all downloads failed").arg(pkg_id).arg(urls.size()));
+    if (downloaded == 0 && !downloads.isEmpty()) {
+        emitLog(QString("[%1] Found %2 URL(s) but all downloads failed")
+                    .arg(pkg_id)
+                    .arg(downloads.size()));
     }
     return downloaded;
 }
 
-bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url, const QString& output_path) {
+bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
+                                                  const QString& output_path,
+                                                  const QString& expected_checksum,
+                                                  const QString& checksum_type) {
     NetworkTransferRequest request;
     request.url = QUrl(url);
     request.timeout_ms = offline::kDownloadTimeoutMs;
@@ -1429,6 +1517,16 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url, const QStr
                       transfer.http_status,
                       url.toStdString(),
                       transfer.error_message.toStdString());
+        return false;
+    }
+
+    // Integrity-gate BEFORE anything is committed to disk: a declared checksum that
+    // does not match (or is declared but unresolvable) fails closed, so a tampered
+    // or corrupt installer is never written or counted. An empty declared checksum
+    // (nothing to verify against) passes through unchanged.
+    if (!PackageInternalizationEngine::binaryChecksumMatches(
+            transfer.body, expected_checksum, checksum_type)) {
+        sak::logError("[DirectDownload] Checksum mismatch for {}", url.toStdString());
         return false;
     }
 
@@ -1629,11 +1727,11 @@ static DeploymentManifestEntry parseManifestEntry(const QJsonObject& pkg) {
     entry.checksum = pkg["checksum"].toString();
     entry.size_bytes = pkg["size_bytes"].toInteger();
     entry.internalized = pkg["internalized"].toBool();
-    // Older manifests predate offline_ready. Do NOT derive it from internalized
-    // (a self-contained package has internalized=false yet installs offline);
-    // default to true so such a manifest keeps its pre-gate behavior of attempting
-    // every package rather than newly skipping the offline ones.
-    entry.offline_ready = pkg.contains("offline_ready") ? pkg["offline_ready"].toBool() : true;
+    // Fail closed: an entry that does not positively declare offline_ready is
+    // treated as NOT offline-ready. Under the air-gap (packed_only) switch it is
+    // then skipped rather than attempted against a disconnected target where it
+    // could only fail. (Default installs are unaffected -- they install regardless.)
+    entry.offline_ready = pkg.contains("offline_ready") && pkg["offline_ready"].toBool();
     entry.offline_note = pkg["offline_note"].toString();
 
     const QJsonArray deps = pkg["dependencies"].toArray();

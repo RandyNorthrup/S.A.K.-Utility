@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QThread>
 #include <QtTest/QtTest>
 
 #include <memory>
@@ -16,6 +17,9 @@ public:
     Response invoke(const Request& request, const sak::ai::CancellationToken& token) override {
         last_request = request;
         ++invocation_count;
+        if (invoke_sleep_ms > 0) {
+            QThread::msleep(static_cast<unsigned long>(invoke_sleep_ms));
+        }
         if (cancel_before_response && token.isValid()) {
             token.cancel(QStringLiteral("fake_cancelled"));
         }
@@ -44,6 +48,7 @@ public:
     Response next_response;
     QList<Response> scripted_responses;
     bool cancel_before_response{false};
+    int invoke_sleep_ms{0};
     int invocation_count{0};
     int continuation_count{0};
     QString last_continuation_response_id;
@@ -134,6 +139,7 @@ private Q_SLOTS:
     void retriesUntilSuccess();
     void retriesExhaustedReturnsLastFailure();
     void wallClockTimeoutMarksTimedOut();
+    void lateSuccessAfterDeadlineDemotedToTimedOut();
     void perTaskTimeoutBoundsRun();
     void factoryCreatesFreshClientPerRun();
     void cancelledParentDoesNotCreateFactoryClient();
@@ -425,6 +431,30 @@ void AiSubagentRunnerTests::wallClockTimeoutMarksTimedOut() {
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
     QVERIFY(result.error_message.contains(QStringLiteral("timeout")));
     QVERIFY(client.invocation_count < 6);
+}
+
+void AiSubagentRunnerTests::lateSuccessAfterDeadlineDemotedToTimedOut() {
+    // The model returns a valid "complete" result, but only AFTER the wall clock
+    // has elapsed (the invoke() call ran past the deadline). A result produced past
+    // budget must never be laundered into a clean success: it is demoted to
+    // TimedOut. This is the within-file half of the deadline-enforcement fix (the
+    // HTTP-wait bound itself needs an interface change and is deferred).
+    FakeModelClient client;
+    client.invoke_sleep_ms = 80;  // response arrives after the 20ms budget
+    client.next_response = makeCompleteResponse(QStringLiteral("late but done"));
+
+    sak::ai::AiSubagentRunner runner(&client);
+    sak::ai::AiSubagentRunnerOptions opts;
+    opts.wall_clock_timeout_ms = 20;  // shorter than the model's response latency
+    runner.setOptions(opts);
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("late");
+    task.agent_id = QStringLiteral("a");
+
+    const auto result = runner.run(task, {});
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
+    QCOMPARE(client.invocation_count, 1);  // the model WAS invoked, then demoted
 }
 
 void AiSubagentRunnerTests::perTaskTimeoutBoundsRun() {

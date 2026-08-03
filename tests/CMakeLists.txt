@@ -4468,6 +4468,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
         unit/test_app_installation_worker.cpp
         ../src/core/app_installation_worker.cpp
         ../include/sak/app_installation_worker.h
+        ../src/core/nuget_version_range.cpp
+        ../include/sak/nuget_version_range.h
         ../src/core/chocolatey_manager.cpp
         ../include/sak/chocolatey_manager.h
         ../src/core/migration_report.cpp

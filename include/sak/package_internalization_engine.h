@@ -4,8 +4,8 @@
 /// @file package_internalization_engine.h
 /// @brief Engine for internalizing Chocolatey packages for offline deployment
 ///
-/// Orchestrates the full internalization pipeline: download nupkg → extract →
-/// parse install script → download embedded binaries → rewrite script →
+/// Orchestrates the full internalization pipeline: download nupkg -> extract ->
+/// parse install script -> download embedded binaries -> rewrite script ->
 /// repack into self-contained nupkg. The output package installs without
 /// internet access.
 
@@ -14,13 +14,16 @@
 #include "sak/install_script_parser.h"
 #include "sak/script_rewriter.h"
 
+#include <QByteArray>
 #include <QHash>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
 #include <atomic>
+#include <optional>
 namespace sak {
 
 /// @brief Status of a single package internalization job
@@ -160,6 +163,48 @@ public:
                                                     const QString& expected_checksum,
                                                     const QString& checksum_type);
 
+    /// @brief Supply-chain verification decision for a downloaded installer.
+    ///        Unlike binaryChecksumMatches (a pure matcher where an EMPTY expected
+    ///        means "no constraint"), this FAILS CLOSED on a missing checksum: an
+    ///        installer whose script declared no checksum cannot be verified and
+    ///        must never ship in an offline bundle. Returns true only when a
+    ///        resolvable, declared checksum matches @p data. Pure; unit-testable.
+    [[nodiscard]] static bool installerVerified(const QByteArray& data,
+                                                const QString& expected_checksum,
+                                                const QString& checksum_type);
+
+    /// @brief Reduce a URL-derived filename to a safe single-segment basename.
+    ///        An empty name or one bearing traversal / path-separators / control
+    ///        characters (per isSafePackageComponent) collapses to a deterministic
+    ///        in-tree fallback ("binary_<index+1>") so a crafted download URL can
+    ///        never write outside the tools dir. Pure; unit-testable.
+    [[nodiscard]] static QString sanitizedBinaryBasename(const QString& url_filename, int index);
+
+    /// @brief True iff @p url is an acceptable installer/package source: a valid,
+    ///        host-bearing https URL. Rejects http/ftp/file/UNC and any hostless
+    ///        or malformed URL so a hostile script cannot pull an installer off
+    ///        the local disk or an insecure origin. Pure; unit-testable.
+    [[nodiscard]] static bool isAllowedInstallerUrl(const QString& url);
+
+    /// @brief True iff the SHA of @p data (under @p algorithm, e.g. "SHA512"),
+    ///        BASE64-encoded, equals @p expected_base64 (the NuGet feed's
+    ///        PackageHash form). An empty expected hash or an unknown algorithm
+    ///        returns false (fail closed). Pure; unit-testable.
+    [[nodiscard]] static bool nupkgHashMatches(const QByteArray& data,
+                                               const QString& expected_base64,
+                                               const QString& algorithm);
+
+    /// @brief Extract the (PackageHash, PackageHashAlgorithm) pair for @p version
+    ///        from a NuGet OData feed document. Returns an empty-first pair when
+    ///        the version/hash is absent. Pure; unit-testable.
+    [[nodiscard]] static QPair<QString, QString> parsePackageHashFromOData(const QByteArray& data,
+                                                                           const QString& version);
+
+    /// @brief Parse OData XML to the latest version string: an entry flagged
+    ///        IsLatestVersion wins; otherwise the SemVer-max is chosen (never the
+    ///        feed's raw last entry). Pure; unit-testable.
+    [[nodiscard]] static QString parseLatestVersionFromOData(const QByteArray& data);
+
     /// @brief True if @p script_text references a NETWORK download -- a literal
     ///        http/https/ftp URL, or a raw download method (Invoke-WebRequest,
     ///        Start-BitsTransfer, WebClient/DownloadFile, wget, curl, ...). This is
@@ -213,6 +258,20 @@ private:
                                            const QString& tools_dir,
                                            InternalizationResult& result);
 
+    /// @brief Fetch one binary to @p output_path (with progress + fail-closed
+    ///        write). Returns the bytes on success; std::nullopt on cancellation
+    ///        (silent) or a real failure (which emits the error via the result).
+    [[nodiscard]] std::optional<QByteArray> fetchBinary(const QString& url,
+                                                        const QString& output_path,
+                                                        InternalizationResult& result);
+
+    /// @brief True iff @p body passes its declared checksum (fail-closed on a
+    ///        missing checksum). Emits the error via @p result on failure.
+    [[nodiscard]] bool binaryChecksumOk(const QByteArray& body,
+                                        const QString& url,
+                                        const QHash<QString, QPair<QString, QString>>& checksums,
+                                        InternalizationResult& result);
+
     /// @brief Map each primary URL that declares a checksum to its (checksum,
     ///        type) so a downloaded binary can be verified before repack.
     [[nodiscard]] static QHash<QString, QPair<QString, QString>> binaryChecksumMap(
@@ -238,8 +297,19 @@ private:
     /// @brief Compute SHA-256 checksum of a file
     [[nodiscard]] QString computeChecksum(const QString& file_path) const;
 
-    /// @brief Parse OData XML to extract the latest version string
-    [[nodiscard]] static QString parseLatestVersionFromOData(const QByteArray& data);
+    /// @brief Verify the downloaded .nupkg bytes against the feed's published
+    ///        PackageHash BEFORE extraction/repack. Fetches the feed hash for the
+    ///        version and fails closed (emitting the error) when no trusted hash
+    ///        is available or the bytes do not match.
+    [[nodiscard]] bool verifyNupkgIntegrity(const QString& package_id,
+                                            const QString& version,
+                                            const QByteArray& body,
+                                            InternalizationResult& result);
+
+    /// @brief Fetch (PackageHash, PackageHashAlgorithm) for @p version from the
+    ///        NuGet FindPackagesById feed. Empty-first pair on any failure.
+    [[nodiscard]] QPair<QString, QString> fetchPackageHashMeta(const QString& package_id,
+                                                               const QString& version);
 
     /// @brief Update and emit progress
     void emitProgress(InternalizationStatus status, const QString& message);

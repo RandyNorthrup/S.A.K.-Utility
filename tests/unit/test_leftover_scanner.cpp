@@ -9,16 +9,29 @@
 
 #include <QDir>
 #include <QFile>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <atomic>
 #include <type_traits>
+#include <vector>
 
 using sak::LeftoverItem;
 using sak::LeftoverScanner;
 using sak::ProgramInfo;
 using sak::ScanLevel;
+
+// Free decision seams defined (external linkage) in leftover_scanner.cpp. Forward-declared here so
+// the security-critical parse/fail-closed logic can be exercised without netsh or a live registry.
+namespace sak {
+bool firewallDumpHeaderMissing(const QStringList& lines);
+#ifdef Q_OS_WIN
+bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
+                         std::vector<BYTE>& data_buf,
+                         DWORD data_len);
+#endif
+}  // namespace sak
 
 class LeftoverScannerTests : public QObject {
     Q_OBJECT
@@ -60,6 +73,18 @@ private Q_SLOTS:
     void buildServiceItems_matchesNameOrDisplay();
     void buildServiceItems_stopRequestedInterrupts();
     void buildServiceItems_localeIndependentFields();
+
+    // -- Firewall parse reliability (localized dumps must fail closed) --
+    void firewallDump_englishParsesReliable();
+    void firewallDump_localizedMarksUnreliable();
+    void firewallDump_emptyIsHonestNotUnreliable();
+
+    // -- Run-key ERROR_MORE_DATA buffer growth (long values must not be skipped) --
+#ifdef Q_OS_WIN
+    void runValueBuffers_growsDataToRequiredSize();
+    void runValueBuffers_doublesNameWhenDataFits();
+    void runValueBuffers_failsClosedPastCeiling();
+#endif
 };
 
 // ── Helper ──────────────────────────────────────────────────────────────────
@@ -481,6 +506,74 @@ void LeftoverScannerTests::buildServiceItems_localeIndependentFields() {
     QVERIFY(items.at(0).description.contains(
         QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9")));
 }
+
+// -- Firewall parse reliability ----------------------------------------------
+// netsh delimits each rule with a locale-neutral dashed separator, but the "Rule Name:" label is
+// localized. A dump with separators yet no parseable header is a blind (localized) parse: it MUST
+// mark the phase unreliable, never present its empty item list as an honest "no firewall rules".
+
+namespace {
+QStringList dumpLines(const QString& body) {
+    return body.split(QLatin1Char('\n'));
+}
+const QString kSep =
+    QStringLiteral("----------------------------------------------------------------------");
+}  // namespace
+
+void LeftoverScannerTests::firewallDump_englishParsesReliable() {
+    const QString body = QStringLiteral("Rule Name:  Acme Updater\n") + kSep +
+                         QStringLiteral("\nEnabled:  Yes\nRule Name:  Media Player\n") + kSep +
+                         QStringLiteral("\nEnabled:  Yes\n");
+    QVERIFY(!sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+void LeftoverScannerTests::firewallDump_localizedMarksUnreliable() {
+    // German labels: rules clearly present (separators) but the English "Rule Name:" is absent.
+    const QString body = QStringLiteral("Regelname:  Acme Updater\n") + kSep +
+                         QStringLiteral("\nAktiviert:  Ja\nRegelname:  Media Player\n") + kSep +
+                         QStringLiteral("\nAktiviert:  Ja\n");
+    QVERIFY(sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+void LeftoverScannerTests::firewallDump_emptyIsHonestNotUnreliable() {
+    // No rule blocks at all -> honest empty, not a failed parse.
+    const QString body = QStringLiteral("No rules match the specified criteria.\n");
+    QVERIFY(!sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+#ifdef Q_OS_WIN
+// -- Run-key ERROR_MORE_DATA buffer growth -----------------------------------
+// RegEnumValueW reports only the required DATA size on ERROR_MORE_DATA; the name size is unknown.
+// growRunValueBuffers must therefore grow data to the reported size and double the name buffer, and
+// must fail closed (return false) past a sane ceiling rather than skip a value silently or spin.
+
+void LeftoverScannerTests::runValueBuffers_growsDataToRequiredSize() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 4096);
+    QVERIFY(ok);
+    QCOMPARE(static_cast<int>(data_buf.size()), 4096);
+    QCOMPARE(static_cast<int>(name_buf.size()), 256);  // data-only shortfall leaves name untouched
+}
+
+void LeftoverScannerTests::runValueBuffers_doublesNameWhenDataFits() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    // data_len fits the current data buffer -> the shortfall is the name buffer, which doubles.
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 512);
+    QVERIFY(ok);
+    QCOMPARE(static_cast<int>(name_buf.size()), 512);
+    QCOMPARE(static_cast<int>(data_buf.size()), 1024);
+}
+
+void LeftoverScannerTests::runValueBuffers_failsClosedPastCeiling() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    // A pathological 2 MiB data requirement exceeds the 1 MiB ceiling -> fail closed.
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 2u * 1024u * 1024u);
+    QVERIFY(!ok);
+}
+#endif
 
 QTEST_GUILESS_MAIN(LeftoverScannerTests)
 

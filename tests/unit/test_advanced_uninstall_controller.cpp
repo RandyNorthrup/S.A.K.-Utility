@@ -55,6 +55,7 @@ private Q_SLOTS:
     void forceUninstall_rejectsWhenBusy();
     void removeRegistryEntry_rejectsWhenBusy();
     void startBatch_rejectsEmptyQueue();
+    void startBatch_setsUninstallingState();
 
     // ── Input Validation ──
     void uninstallProgram_rejectsEmptyName();
@@ -467,6 +468,26 @@ void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue() {
     // Should have emitted "Batch queue is empty" status
     QVERIFY(statusSpy.count() >= 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+}
+
+void AdvancedUninstallControllerTests::startBatch_setsUninstallingState() {
+    // A batch must OWN the busy state for the whole run: the instant it starts the controller must
+    // be Uninstalling (not Idle), so a concurrent refresh / manual clean / second uninstall cannot
+    // slip in between queue items. (createRestorePoint=false so the batch is not aborted on a
+    // platform without System Restore.)
+    AdvancedUninstallController ctrl;
+
+    ProgramInfo prog;
+    prog.displayName = QStringLiteral("BatchApp");  // no uninstallString -> native step fails fast
+    ctrl.addToQueue(prog, ScanLevel::Safe, false);
+
+    ctrl.startBatchUninstall(false);
+
+    // The worker runs on its own thread and signals back via queued connections that are not
+    // delivered during this synchronous body, so the state observed here is the batch start state.
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Uninstalling);
+
+    ctrl.cancelOperation();  // request stop; destructor joins the worker
 }
 
 // ── Input Validation ────────────────────────────────────────────────────────

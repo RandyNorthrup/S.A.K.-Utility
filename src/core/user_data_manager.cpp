@@ -5,6 +5,7 @@
 
 #include "sak/encryption.h"
 #include "sak/layout_constants.h"
+#include "sak/leftover_cleanup_guard.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
@@ -43,6 +44,20 @@ bool isReparsePoint(const QString& path) {
 #else
     return QFileInfo(path).isSymLink();
 #endif
+}
+
+/// @brief Case-insensitive, trailing-dot/space-normalized identity of a path.
+///
+/// Mirrors how Win32 resolves a path so two spellings of the SAME object compare
+/// equal (and a crafted "C:\\Windows." cannot masquerade as a different target).
+QString backupPathIdentity(const QString& path) {
+    return sak::cleanupCanonicalLower(QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+}
+
+/// @brief True when @p a and @p b name the same on-disk object.
+bool sameBackupObject(const QString& a, const QString& b) {
+    const QString ia = backupPathIdentity(a);
+    return !ia.isEmpty() && ia == backupPathIdentity(b);
 }
 
 /// @brief Append paths that exist for the given name variants in a base directory.
@@ -428,10 +443,51 @@ UserDataManager::BackupEntry UserDataManager::getBackupInfo(const QString& backu
     return entry.value_or(BackupEntry{});
 }
 
+QString UserDataManager::backupDeletionRefusal(const QString& backup_path,
+                                               const std::optional<QString>& recorded_backup_path) {
+    // Layer 1: shared root/UNC/device/reparse/system-tree screens (the same fail-closed guard
+    // the leftover-cleanup deleter uses). Refuses drive roots, the Windows tree, shared user/
+    // system roots, UNC/device paths, and symlink/junction paths (leaf OR ancestor) so an
+    // ancestor-junction swap cannot redirect the recursive delete outside the intended target.
+    const QString screen = sak::filePathDeletionRefusal(backup_path);
+    if (!screen.isEmpty()) {
+        return screen;
+    }
+    // Layer 2: metadata identity. Only a directory the manager itself created as a backup carries
+    // a sidecar whose recorded backup_path names this exact object. No sidecar (or one that points
+    // elsewhere) => an unmanaged tree, never deleted.
+    if (!recorded_backup_path.has_value()) {
+        return QStringLiteral("no backup metadata sidecar identifies this path");
+    }
+    if (!sameBackupObject(backup_path, recorded_backup_path.value())) {
+        return QStringLiteral("backup metadata does not identify this target");
+    }
+    return {};
+}
+
 bool UserDataManager::deleteBackup(const QString& backup_path) {
     Q_ASSERT_X(!backup_path.isEmpty(), "deleteBackup", "backup_path must not be empty");
-    bool success = true;
 
+    const QString metadata = backup_path + ".json";
+    std::optional<QString> recorded;
+    // Only read the sidecar once the raw string clears the screens: reading it is a stat/open on
+    // the target, and a UNC/device path must be rejected LEXICALLY first (a bare open on
+    // \\host\share leaks an NTLM hash). filePathDeletionRefusal is pure/deterministic, so the seam
+    // re-checks it below without a second stat mattering.
+    if (sak::filePathDeletionRefusal(backup_path).isEmpty()) {
+        if (auto entry = readMetadata(metadata); entry.has_value()) {
+            recorded = entry->backup_path;
+        }
+    }
+
+    const QString refusal = backupDeletionRefusal(backup_path, recorded);
+    if (!refusal.isEmpty()) {
+        Q_EMIT operationError(QFileInfo(backup_path).fileName(),
+                              QStringLiteral("Refusing to delete backup: ") + refusal);
+        return false;
+    }
+
+    bool success = true;
     // Delete the payload. An uncompressed backup is a DIRECTORY, which QFile::remove cannot
     // delete -- it would leave the backup on disk forever; remove such payloads recursively.
     QFileInfo payload(backup_path);
@@ -441,8 +497,6 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
         success &= QFile::remove(backup_path);
     }
 
-    // Delete metadata
-    QString metadata = backup_path + ".json";
     if (QFile::exists(metadata)) {
         success &= QFile::remove(metadata);
     }

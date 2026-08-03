@@ -77,6 +77,15 @@ namespace sak {
 
 /// Registry subtrees where NOTHING may be deleted (prefix match at a key boundary). These are the
 /// keys whose loss unboots the machine or breaks the security substrate.
+///
+/// The launch/logon-critical DESCENDANT subtrees below (exefile\\shell..., ProfileList, svchost,
+/// the file-type command trees) are brick-critical yet live UNDER keys that are only exact-blocked
+/// (exefile, ...\\CurrentVersion, ...) -- so without an explicit prefix entry a poisoned batch
+/// could delete e.g. HKCR\\exefile\\shell\\open\\command (unlaunchable .exe files) or the
+/// ProfileList SID mapping (login broken) even though the parent key itself is refused. They are
+/// prefix-blocked so the whole brick-critical tree is refused; a rare app-added context-menu verb
+/// under one of these is intentionally sacrificed to the do-not-brick judgment (the technician can
+/// remove it by hand).
 [[nodiscard]] inline const QStringList& cleanupDeniedRegistryPrefixes() {
     static const QStringList kPrefixes = {
         QStringLiteral("system"),
@@ -90,7 +99,24 @@ namespace sak {
         QStringLiteral("software\\policies"),
         QStringLiteral("software\\microsoft\\windows\\currentversion\\policies"),
         QStringLiteral("software\\microsoft\\windows nt\\currentversion\\winlogon"),
+        QStringLiteral("software\\microsoft\\windows nt\\currentversion\\profilelist"),
+        QStringLiteral("software\\microsoft\\windows nt\\currentversion\\svchost"),
         QStringLiteral("software\\wow6432node\\microsoft\\cryptography"),
+        QStringLiteral("software\\wow6432node\\microsoft\\windows nt\\currentversion\\profilelist"),
+        // File-type launch verbs (HKCR view and the HKLM/HKCU SOFTWARE\\Classes mirror): deleting
+        // any of these shell\\...\\command keys breaks launching that whole file class.
+        QStringLiteral("exefile\\shell"),
+        QStringLiteral("comfile\\shell"),
+        QStringLiteral("batfile\\shell"),
+        QStringLiteral("cmdfile\\shell"),
+        QStringLiteral("piffile\\shell"),
+        QStringLiteral("lnkfile\\shell"),
+        QStringLiteral("software\\classes\\exefile\\shell"),
+        QStringLiteral("software\\classes\\comfile\\shell"),
+        QStringLiteral("software\\classes\\batfile\\shell"),
+        QStringLiteral("software\\classes\\cmdfile\\shell"),
+        QStringLiteral("software\\classes\\piffile\\shell"),
+        QStringLiteral("software\\classes\\lnkfile\\shell"),
     };
     return kPrefixes;
 }
@@ -121,8 +147,32 @@ namespace sak {
         QStringLiteral("interface"),
         QStringLiteral("*"),
         QStringLiteral("exefile"),
+        QStringLiteral("comfile"),
+        QStringLiteral("batfile"),
+        QStringLiteral("cmdfile"),
+        QStringLiteral("piffile"),
+        QStringLiteral("lnkfile"),
         QStringLiteral("directory"),
         QStringLiteral("folder"),
+        // Executable/launch file-extension class registrations: deleting the key unregisters that
+        // extension entirely (double-clicking a .exe/.lnk stops working). Blocked as the exact key;
+        // a descendant such as .exe\\OpenWithProgids is a legitimate per-app leftover.
+        QStringLiteral(".exe"),
+        QStringLiteral(".com"),
+        QStringLiteral(".bat"),
+        QStringLiteral(".cmd"),
+        QStringLiteral(".lnk"),
+        QStringLiteral(".msc"),
+        QStringLiteral(".sys"),
+        QStringLiteral(".dll"),
+        QStringLiteral("software\\classes\\.exe"),
+        QStringLiteral("software\\classes\\.com"),
+        QStringLiteral("software\\classes\\.bat"),
+        QStringLiteral("software\\classes\\.cmd"),
+        QStringLiteral("software\\classes\\.lnk"),
+        QStringLiteral("software\\classes\\.msc"),
+        QStringLiteral("software\\classes\\.sys"),
+        QStringLiteral("software\\classes\\.dll"),
     };
     return kExact;
 }

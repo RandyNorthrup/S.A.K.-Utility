@@ -15,6 +15,24 @@
 #include <QThread>
 
 #include <algorithm>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+// clang-format off
+// Include order is load-bearing: windows.h first, then the crypto/trust headers
+// that depend on its types (wintrust.h before softpub.h, which consumes it).
+#include <windows.h>
+#include <wincrypt.h>
+#include <wintrust.h>
+#include <softpub.h>
+// clang-format on
+#pragma comment(lib, "wintrust.lib")
+#pragma comment(lib, "crypt32.lib")
+#endif
 
 namespace sak {
 
@@ -28,6 +46,104 @@ constexpr int kOutdatedRecordMinimumParts = 3;
 constexpr int kExitRebootInitiated = 1641;
 constexpr int kMaxPackageNameLength = 100;
 constexpr int kMaxVersionLength = 50;
+
+// Official Chocolatey community feed. Pinned as the install --source for an
+// official (allow_unofficial=false) install so a rogue source entry in the
+// bundled choco config cannot silently redirect the download to an attacker feed.
+constexpr char kApprovedChocoSource[] = "https://community.chocolatey.org/api/v2/";
+
+#ifdef _WIN32
+
+// True iff @p path carries a valid Authenticode signature chaining to a trusted
+// root. WinVerifyTrust is the OS's own signature/chain validation; a swapped or
+// unsigned choco.exe fails here.
+bool winVerifyTrustFile(const std::wstring& path) {
+    WINTRUST_FILE_INFO file_info{};
+    file_info.cbStruct = sizeof(file_info);
+    file_info.pcwszFilePath = path.c_str();
+
+    WINTRUST_DATA wd{};
+    wd.cbStruct = sizeof(wd);
+    wd.dwUIChoice = WTD_UI_NONE;
+    wd.fdwRevocationChecks = WTD_REVOKE_NONE;
+    wd.dwUnionChoice = WTD_CHOICE_FILE;
+    wd.pFile = &file_info;
+    wd.dwStateAction = WTD_STATEACTION_VERIFY;
+
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(nullptr, &action, &wd);
+
+    wd.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(nullptr, &action, &wd);
+    return status == ERROR_SUCCESS;
+}
+
+// Human-readable subject (organization) name of a signing certificate.
+QString certSubjectDisplayName(PCCERT_CONTEXT cert) {
+    const DWORD len =
+        CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, nullptr, 0);
+    if (len <= 1) {
+        return {};
+    }
+    std::vector<wchar_t> buf(len);
+    CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, buf.data(), len);
+    return QString::fromWCharArray(buf.data());
+}
+
+// Subject name of the certificate that actually signed the PKCS7 message.
+QString subjectFromSignedMsg(HCERTSTORE store, HCRYPTMSG msg) {
+    DWORD info_size = 0;
+    if (!CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, nullptr, &info_size) ||
+        info_size == 0) {
+        return {};
+    }
+    std::vector<BYTE> info_buf(info_size);
+    if (!CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, info_buf.data(), &info_size)) {
+        return {};
+    }
+    auto* info = reinterpret_cast<CERT_INFO*>(info_buf.data());
+    PCCERT_CONTEXT cert = CertFindCertificateInStore(
+        store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_SUBJECT_CERT, info, nullptr);
+    if (cert == nullptr) {
+        return {};
+    }
+    const QString subject = certSubjectDisplayName(cert);
+    CertFreeCertificateContext(cert);
+    return subject;
+}
+
+// Signer subject of the embedded Authenticode signature on @p path (empty if the
+// file carries no embedded signed message).
+QString signerSubjectName(const std::wstring& path) {
+    HCERTSTORE store = nullptr;
+    HCRYPTMSG msg = nullptr;
+    if (!CryptQueryObject(CERT_QUERY_OBJECT_FILE,
+                          path.c_str(),
+                          CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+                          CERT_QUERY_FORMAT_FLAG_BINARY,
+                          0,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          &store,
+                          &msg,
+                          nullptr)) {
+        return {};
+    }
+    QString subject;
+    if (msg != nullptr && store != nullptr) {
+        subject = subjectFromSignedMsg(store, msg);
+    }
+    if (msg != nullptr) {
+        CryptMsgClose(msg);
+    }
+    if (store != nullptr) {
+        CertCloseStore(store, 0);
+    }
+    return subject;
+}
+
+#endif  // _WIN32
 
 }  // namespace
 
@@ -49,6 +165,7 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     // silently retaining the previously found executable and reporting initialized.
     m_choco_path.clear();
     m_initialized = false;
+    m_choco_authentic = 0;  // new binary path: re-verify authenticity before use
 
     // Look for choco.exe in common locations within portable directory
     QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),
@@ -92,9 +209,49 @@ bool ChocolateyManager::verifyIntegrity() {
         return false;
     }
 
+    // Existence plus a --version handshake is NOT integrity: a swapped or planted
+    // choco.exe would also exist and print a version. Prove the binary is genuine
+    // (valid Authenticode signature AND a trusted Chocolatey signer) before we
+    // run it. Fail closed on any doubt.
+    if (!ensureChocoAuthentic()) {
+        m_initialized = false;
+        return false;
+    }
+
     // Try to execute a simple command
     Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
     return result.success;
+}
+
+bool ChocolateyManager::verifyChocoAuthenticity() const {
+#ifdef _WIN32
+    if (m_choco_path.isEmpty()) {
+        return false;
+    }
+    const std::wstring path = m_choco_path.toStdWString();
+    if (!winVerifyTrustFile(path)) {
+        sak::logWarning("[ChocolateyManager] choco.exe Authenticode verification failed: {}",
+                        m_choco_path.toStdString());
+        return false;
+    }
+    const QString signer = signerSubjectName(path);
+    if (!isTrustedChocoSigner(signer)) {
+        sak::logWarning("[ChocolateyManager] choco.exe signer not trusted: '{}'",
+                        signer.toStdString());
+        return false;
+    }
+    return true;
+#else
+    // No Authenticode facility off Windows: refuse rather than run unverified.
+    return false;
+#endif
+}
+
+bool ChocolateyManager::ensureChocoAuthentic() {
+    if (m_choco_authentic == 0) {
+        m_choco_authentic = verifyChocoAuthenticity() ? 1 : -1;
+    }
+    return m_choco_authentic == 1;
 }
 
 QString ChocolateyManager::getChocoPath() const {
@@ -133,7 +290,21 @@ QStringList ChocolateyManager::buildInstallArgs(const InstallConfig& config) con
     if (!config.extra_args.isEmpty()) {
         args << config.extra_args;
     }
+    // Pin the install to the approved feed unless the caller explicitly opts into
+    // unofficial/configured sources. Appended last so it takes precedence over any
+    // --source an extra_args entry may have supplied on an official install.
+    const QString source = approvedInstallSource(config.allow_unofficial);
+    if (!source.isEmpty()) {
+        args << "--source" << source;
+    }
     return args;
+}
+
+QString ChocolateyManager::approvedInstallSource(bool allow_unofficial) {
+    if (allow_unofficial) {
+        return {};  // caller explicitly accepts configured/unofficial sources
+    }
+    return QString::fromLatin1(kApprovedChocoSource);
 }
 
 ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig& config) {
@@ -402,6 +573,12 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     if (timeout_ms < 0) {
         timeout_ms = 0;
     }
+    // Fail closed: never launch the bundled choco.exe unless it has been proven a
+    // genuine, Chocolatey-signed binary. This is the single execution choke point,
+    // so the authenticity gate covers every choco invocation, not just install.
+    if (!ensureChocoAuthentic()) {
+        return {false, "", "Bundled choco.exe failed authenticity verification", -1};
+    }
     // Set up environment
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("ChocolateyInstall", m_choco_dir);
@@ -434,10 +611,6 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     }
 
     return {success, combined_output, error_msg, exit_code};
-}
-
-QString ChocolateyManager::buildChocoCommand(const QStringList& args) const {
-    return m_choco_path + " " + args.join(" ");
 }
 
 bool ChocolateyManager::parseExitCode(int exit_code) const {
@@ -537,6 +710,19 @@ bool ChocolateyManager::validateVersion(const QString& version) {
     static const QRegularExpression valid_version(
         R"(^\d+(\.\d+)*(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$)");
     return valid_version.match(version).hasMatch();
+}
+
+bool ChocolateyManager::isTrustedChocoSigner(const QString& signer_subject) {
+    if (signer_subject.isEmpty()) {
+        return false;
+    }
+    // Chocolatey's Authenticode leaf certificate is issued to the organization
+    // "Chocolatey Software, Inc." Require the WHOLE word "Chocolatey" (case
+    // insensitive) so a subject that merely embeds the token (e.g.
+    // "NotChocolateyEvil Ltd") cannot masquerade as the genuine signer.
+    static const QRegularExpression choco_signer(R"(\bChocolatey\b)",
+                                                 QRegularExpression::CaseInsensitiveOption);
+    return choco_signer.match(signer_subject).hasMatch();
 }
 
 }  // namespace sak

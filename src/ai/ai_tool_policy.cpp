@@ -125,44 +125,98 @@ bool hasNegatedActionIntent(const QString& text) {
                            QStringLiteral("avoid ")});
 }
 
+bool startsWithAny(const QString& text, const QStringList& prefixes) {
+    for (const auto& prefix : prefixes) {
+        if (text.startsWith(prefix, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hasDirectedRequestMarker(const QString& text) {
+    // Second-person directive addressed to the assistant. This is what separates a
+    // command ("please install X", "can you install X", "go ahead and install") or an
+    // explicit affirmative ("yes, install it") from a bare topical mention or a question
+    // ("how do I install X"), which substring matching cannot tell apart on its own.
+    return textMatchesAny(text,
+                          {QStringLiteral("please "),
+                           QStringLiteral("can you "),
+                           QStringLiteral("could you "),
+                           QStringLiteral("would you "),
+                           QStringLiteral("will you "),
+                           QStringLiteral("go ahead"),
+                           QStringLiteral("i want you"),
+                           QStringLiteral("i need you"),
+                           QStringLiteral("i would like you"),
+                           QStringLiteral("i'd like you"),
+                           QStringLiteral("id like you"),
+                           QStringLiteral("you should "),
+                           QStringLiteral("you can "),
+                           QStringLiteral("let's "),
+                           QStringLiteral("lets "),
+                           QStringLiteral("yes, "),
+                           QStringLiteral("yes ")});
+}
+
+bool hasDirectedIntentFor(const QString& text,
+                          const QStringList& verb_keywords,
+                          const QStringList& imperative_prefixes) {
+    // Consent requires (a) not disclaiming the action, (b) the action verb is actually
+    // present, and (c) the message is phrased as a directive to the assistant -- an
+    // imperative opening ("install X") or a request marker ("please/can you ... install
+    // X"). A bare substring mention or a question fails (c) and is not treated as consent.
+    if (hasNegatedActionIntent(text) || !textMatchesAny(text, verb_keywords)) {
+        return false;
+    }
+    return startsWithAny(text, imperative_prefixes) || hasDirectedRequestMarker(text);
+}
+
 bool hasExplicitPackageMutationIntent(const AiToolCallRequest& request) {
     const QString text = norm(request.user_message);
     if (text.isEmpty()) {
         return false;
     }
-    if (hasNegatedActionIntent(text)) {
-        return false;
-    }
     const QString op = norm(request.operation);
     if (op == QLatin1String("install") || op == QLatin1String("install_bundle")) {
-        return textMatchesAny(text,
-                              {QStringLiteral("install "),
-                               QStringLiteral(" install"),
-                               QStringLiteral("reinstall"),
-                               QStringLiteral("set up"),
-                               QStringLiteral("setup "),
-                               QStringLiteral("repair install")});
+        return hasDirectedIntentFor(text,
+                                    {QStringLiteral("install"),
+                                     QStringLiteral("reinstall"),
+                                     QStringLiteral("set up"),
+                                     QStringLiteral("setup"),
+                                     QStringLiteral("repair install")},
+                                    {QStringLiteral("install"),
+                                     QStringLiteral("reinstall"),
+                                     QStringLiteral("set up"),
+                                     QStringLiteral("setup")});
     }
     if (op == QLatin1String("upgrade")) {
-        return textMatchesAny(text,
-                              {QStringLiteral("upgrade"),
-                               QStringLiteral(" update "),
-                               QStringLiteral("update "),
-                               QStringLiteral("bring up to date")});
+        return hasDirectedIntentFor(
+            text,
+            {QStringLiteral("upgrade"),
+             QStringLiteral("update "),
+             QStringLiteral("bring up to date")},
+            {QStringLiteral("upgrade"), QStringLiteral("update"), QStringLiteral("bring")});
     }
     if (op == QLatin1String("uninstall")) {
-        return textMatchesAny(text,
-                              {QStringLiteral("uninstall"),
-                               QStringLiteral("remove "),
-                               QStringLiteral(" remove"),
-                               QStringLiteral("delete app"),
-                               QStringLiteral("get rid of")});
+        return hasDirectedIntentFor(text,
+                                    {QStringLiteral("uninstall"),
+                                     QStringLiteral("remove "),
+                                     QStringLiteral(" remove"),
+                                     QStringLiteral("delete app"),
+                                     QStringLiteral("get rid of")},
+                                    {QStringLiteral("uninstall"),
+                                     QStringLiteral("remove"),
+                                     QStringLiteral("delete"),
+                                     QStringLiteral("get rid")});
     }
     if (op == QLatin1String("build_bundle")) {
-        return textMatchesAny(text,
-                              {QStringLiteral("build bundle"),
-                               QStringLiteral("create bundle"),
-                               QStringLiteral("offline bundle")});
+        return hasDirectedIntentFor(
+            text,
+            {QStringLiteral("build bundle"),
+             QStringLiteral("create bundle"),
+             QStringLiteral("offline bundle")},
+            {QStringLiteral("build"), QStringLiteral("create"), QStringLiteral("make")});
     }
     return false;
 }
@@ -213,6 +267,75 @@ AiToolPolicyDecision allow(const QString& reason) {
     return decision;
 }
 
+bool commandHasUnsafeConstruct(const QString& preview) {
+    // Indirection/injection shapes that let a mutation hide inside a command whose
+    // leading token looks read-only: static/type member access ([IO.File]::Delete),
+    // method invocation (.Terminate()), subexpressions ($( ... )), backtick
+    // obfuscation, script blocks ({ ... } can contain any hidden cmdlet), expression
+    // evaluation (iex), and file-writing redirection. Stream merges (2>&1) and null
+    // discards (>nul / >$null) are NOT writes and stay allowed. Any hit forfeits the
+    // read-only allowlist -- this is why a mutation blacklist is fail-open and an
+    // allowlist is required here.
+    static const QRegularExpression unsafe(
+        QStringLiteral(
+            R"((::|\.\s*\w+\s*\(|`|\$\(|\{|\biex\b|\binvoke-expression\b|>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
+        QRegularExpression::CaseInsensitiveOption);
+    return unsafe.match(preview).hasMatch();
+}
+
+bool segmentLeadIsReadOnly(const QString& segment) {
+    // The leading command token of a single segment must be a known read-only
+    // diagnostic: native tools and PowerShell read cmdlets whose EVERY documented
+    // form is non-mutating. Mutating-capable programs (wmic, reg, sc, netsh, route,
+    // arp, set, diskpart, del, format, python, node, ...) are deliberately absent, so
+    // anything not clearly read-only is refused. Get-*/Test-* wildcards are safe (no
+    // mutating cmdlet uses those verbs); Format-* is spelled out to exclude the
+    // disk-destroying Format-Volume/Format-Table sharing the "format" stem.
+    static const QRegularExpression lead(
+        QStringLiteral(
+            R"(^\s*\(*\s*(get-\w+|test-\w+|resolve-dnsname|select-object|select-string|sort-object|measure-object|compare-object|group-object|where-object|format-table|format-list|format-wide|out-string|write-output|write-host|convertto-\w+|convertfrom-\w+|ping|tracert|pathping|ipconfig|netstat|nslookup|systeminfo|tasklist|whoami|hostname|ver|getmac|driverquery|type|dir|findstr|find|fc|tree|vol|where|echo)\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return lead.match(segment).hasMatch();
+}
+
+bool commandIsReadOnlyDiagnostic(const QString& preview) {
+    QString normalized = preview.trimmed();
+    if (normalized.isEmpty() || commandHasUnsafeConstruct(normalized)) {
+        return false;
+    }
+    // Neutralize stream-merge redirections (2>&1, 1>&2) so their '&' is not mistaken
+    // for a command separator, then require EVERY &/|/;/newline-separated segment to
+    // lead with an allowlisted read-only command. One non-diagnostic segment (chained
+    // mutator, call-operator to a binary) refuses the whole command.
+    static const QRegularExpression merge(QStringLiteral(R"([0-9]?>&[0-9]?)"));
+    normalized.replace(merge, QStringLiteral(" "));
+    static const QRegularExpression sep(QStringLiteral(R"([|;&\r\n])"));
+    const QStringList segments = normalized.split(sep, Qt::SkipEmptyParts);
+    if (segments.isEmpty()) {
+        return false;
+    }
+    for (const QString& segment : segments) {
+        if (!segment.trimmed().isEmpty() && !segmentLeadIsReadOnly(segment)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+AiToolPolicyDecision evaluateReadOnlyShell(const QString& preview) {
+    // Read-only shell is an ALLOWLIST, not a mutation blacklist. A blacklist is
+    // fail-open: novel binaries (python -c, node -e), .NET/WMI method calls
+    // ([IO.File]::WriteAllText, Invoke-WmiMethod), and unknown mutators slip through.
+    // Only commands proven read-only by the allowlist run under the read-only lease.
+    if (!commandIsReadOnlyDiagnostic(preview)) {
+        return block(QStringLiteral(
+            "Read-only PC policy allows only known read-only diagnostic shell commands "
+            "(ping, ipconfig, systeminfo, tasklist, netstat, whoami, Get-*/Test-* reads, ...); "
+            "this command is not on the read-only allowlist"));
+    }
+    return allow(QStringLiteral("Read-only diagnostic shell command allowed"));
+}
+
 AiToolPolicyDecision evaluateReadOnlyPolicy(const AiToolCallRequest& request,
                                             bool shell,
                                             bool provider_gateway,
@@ -222,7 +345,10 @@ AiToolPolicyDecision evaluateReadOnlyPolicy(const AiToolCallRequest& request,
         decision.risky_change = true;
         return decision;
     }
-    if (!shell && !provider_gateway && !isSessionSearchTool(request.tool_name) &&
+    if (shell) {
+        return evaluateReadOnlyShell(request.command_preview);
+    }
+    if (!provider_gateway && !isSessionSearchTool(request.tool_name) &&
         norm(request.tool_name) != QLatin1String("take_screenshot")) {
         return block(
             QStringLiteral("Read-only PC policy only allows shell diagnostics, screenshots, and "
@@ -279,6 +405,42 @@ AiToolPolicyDecision evaluateKnownPolicy(AiToolPolicy policy,
         return evaluateMutatingPolicy(context.risky, true);
     }
     return block(QStringLiteral("Unsupported tool policy"));
+}
+
+bool isReadOnlyAppActionOperation(const QString& operation) {
+    // sak_app_action exposes exactly "list" (a pure in-memory catalog read) and "run"
+    // (executes a technician action whose descriptor may be mutating, destructive,
+    // catastrophic, or admin). An empty/omitted operation defaults to "list" in the
+    // handler; anything else is treated as a run, fail-closed.
+    const QString op = norm(operation);
+    return op.isEmpty() || op == QLatin1String("list");
+}
+
+AiToolPolicyDecision evaluateAppActionPolicy(AiToolPolicy policy,
+                                             const AiToolCallRequest& request) {
+    if (isReadOnlyAppActionOperation(request.operation)) {
+        return allow(QStringLiteral("App action catalog listing allowed (read-only)"));
+    }
+    // Running a technician action is a mutating capability. The policy layer cannot see
+    // the resolved descriptor's risk flags (they resolve later in the run handler), so it
+    // fails closed: only the mutating policies may run one, and it ALWAYS takes a lease so
+    // it cannot execute concurrently with another mutation. The per-action human gate in
+    // the handler still applies on top -- it is not sufficient on its own to bound a
+    // delegated sub-agent to its clamped policy ceiling.
+    const bool exclusive = policy == AiToolPolicy::ExclusiveMutatingExecutor;
+    if (policy != AiToolPolicy::MutatingRequiresLease && !exclusive) {
+        auto decision = block(QStringLiteral(
+            "App action run blocked: the effective tool policy does not permit system mutation"));
+        decision.risky_change = true;
+        decision.requires_lease = true;
+        return decision;
+    }
+    auto decision = allow(QStringLiteral("App action run allowed (mutation lease required)"));
+    decision.risky_change = true;
+    decision.requires_lease = true;
+    decision.requires_exclusive_lease = exclusive;
+    decision.restore_point_recommended = true;
+    return decision;
 }
 
 }  // namespace
@@ -398,12 +560,13 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     if (isRunWorkflowTool(request.tool_name)) {
         return allow(QStringLiteral("Workflow launch allowed (per-phase gates apply)"));
     }
-    // Enumerating and running the app's own technician actions is allowed under every
-    // mode at the policy layer: listing is read-only, and the run handler enforces a
-    // per-action human gate + restore point for mutating/destructive/admin actions
-    // (using the resolved action descriptor), mirroring app_run_action.
+    // Enumerating the app's own technician actions (operation=list) is a read-only
+    // catalog lookup allowed under every mode. RUNNING an action is gated against the
+    // EFFECTIVE (already clamped by the caller) policy and takes a mutation lease -- the
+    // per-action human gate in the run handler is not sufficient on its own to bound a
+    // delegated sub-agent to its policy ceiling or to serialize concurrent mutations.
     if (isAppActionTool(request.tool_name)) {
-        return allow(QStringLiteral("App action tool allowed (per-action gate in handler)"));
+        return evaluateAppActionPolicy(policy, request);
     }
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =

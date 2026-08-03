@@ -88,6 +88,28 @@ bool unlinkByHandle(HANDLE handle) {
     info.DeleteFile = TRUE;
     return SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)) != 0;
 }
+
+// A registry key can be a REG_LINK symbolic-link key whose deletion BY PATH would traverse to the
+// link TARGET and delete ITS subtree -- escaping the denylist that screened only the literal path.
+// Detect it by opening the EXACT key WITHOUT following the link (REG_OPTION_OPEN_LINK) and probing
+// for the reserved "SymbolicLinkValue" value that marks a link key. True => the key is a symbolic
+// link and must NOT be tree-deleted by path. A key that cannot be opened as a link returns false;
+// the subsequent RegDeleteTreeW then resolves/errors on it normally (a nonexistent key no-ops).
+bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
+    HKEY key = nullptr;
+    const LONG rc = RegOpenKeyExW(hive,
+                                  reinterpret_cast<LPCWSTR>(subkey.utf16()),
+                                  REG_OPTION_OPEN_LINK,
+                                  KEY_QUERY_VALUE,
+                                  &key);
+    if (rc != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0;
+    const LONG q = RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &type, nullptr, nullptr);
+    RegCloseKey(key);
+    return q == ERROR_SUCCESS && type == REG_LINK;
+}
 #endif  // Q_OS_WIN
 
 // True if @p path is on a volume that actually HAS a Recycle Bin. On a removable / network /
@@ -310,8 +332,15 @@ bool CleanupWorker::removeFilePermanent(const QString& path) {
     if (outcome == HandleDeleteOutcome::Redirected) {
         return false;  // NEVER fall back to a string delete on a redirected/protected target
     }
-    // NotOpenable (locked/denied but not redirected): the caller's top-level deleteTimeRedirectSafe
-    // gate already re-screened ancestors, so the string unlink cannot hit a swapped-in junction.
+    // NotOpenable (locked/denied, or the object was opened+verified but the unlink itself failed).
+    // Do NOT bare-unlink: re-run the handle-verified redirect screen IMMEDIATELY before the string
+    // delete so an ancestor swapped into a junction since the earlier check is refused fail-closed
+    // (deleteTimeRedirectSafe re-opens+verifies, or lexically re-screens ancestors when the object
+    // still cannot be opened). Only a target that re-verifies clean falls to the last-resort
+    // unlink.
+    if (!deleteTimeRedirectSafe(path)) {
+        return false;
+    }
     return QFile::remove(path);
 #else
     return QFile::remove(path);
@@ -329,6 +358,14 @@ CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
                             " in place: no Recycle Bin on volume, or too large to guarantee "
                             "recoverable");
             return RecycleOutcome::RefusedRecoverable;
+        }
+        // TOCTOU close for the shell recycle: SHFileOperationW takes a PATH STRING and cannot be
+        // handle-pinned, and recoverableRecycleAllowed above may have walked the tree (re-resolving
+        // paths). Re-verify by handle IMMEDIATELY before the shell call so an ancestor swapped into
+        // a junction since deleteFile's gate is caught. A redirect here refuses OUTRIGHT -- it must
+        // never fall through to a permanent delete of the swapped-in target.
+        if (!deleteTimeRedirectSafe(path)) {
+            return RecycleOutcome::RefusedRedirected;
         }
         if (sendPathToRecycleBin(path)) {
             return RecycleOutcome::Recycled;
@@ -389,12 +426,17 @@ bool CleanupWorker::deleteFile(const QString& path) {
         return false;
     }
 
-    // Recycle first (when enabled), honoring recoverable-only mode.
+    // Recycle first (when enabled), honoring recoverable-only mode; else permanently remove.
+    return recycleOrPermanentFile(path);
+}
+
+bool CleanupWorker::recycleOrPermanentFile(const QString& path) {
     bool recycleFallback = false;
     switch (attemptRecycle(path, recycleFallback)) {
     case RecycleOutcome::Recycled:
         return true;
     case RecycleOutcome::RefusedRecoverable:
+    case RecycleOutcome::RefusedRedirected:
         return false;
     case RecycleOutcome::FallThrough:
         break;
@@ -416,13 +458,16 @@ bool CleanupWorker::removeFilePermanentWithRetry(const QString& path, bool recyc
         return true;
     }
 
-    // File is locked -- schedule removal on next reboot.
+    // File is locked -- schedule removal on next reboot. A reboot-scheduled delete is NOT counted
+    // as success: the object is still present now and its reboot-time removal cannot be pinned to
+    // the verified target (MoveFileExW re-resolves the pathname at reboot -- see
+    // scheduleRebootRemoval). Record it so rebootPendingItems surfaces it to the operator, but
+    // report the item as not-yet- deleted (fail closed) rather than an unconditional success.
+    // recycleFallback is not noted here: nothing has been permanently deleted, so the
+    // recycle-escalation list would over-state it.
     if (scheduleRebootRemoval(path)) {
         m_rebootPendingPaths.append(path);
-        noteRecycleFallback(recycleFallback, path);
-        return true;  // Counted as success; actual removal happens on reboot
     }
-
     return false;
 }
 
@@ -473,6 +518,7 @@ bool CleanupWorker::finishFolderDelete(QDir& dir, const QString& path) {
     case RecycleOutcome::Recycled:
         return true;
     case RecycleOutcome::RefusedRecoverable:
+    case RecycleOutcome::RefusedRedirected:
         return false;
     case RecycleOutcome::FallThrough:
         break;
@@ -631,17 +677,28 @@ bool CleanupWorker::removeFolderContentsForced(const QDir& dir) {
 }
 
 bool CleanupWorker::tryScheduleReboot(const QString& path) {
+    // Record the reboot schedule so rebootPendingItems surfaces it, but return NOT-handled: a
+    // reboot-scheduled delete has not happened yet and its reboot-time resolution cannot be pinned
+    // to the verified object, so it must not read as an immediate success in the folder-tree
+    // accounting (fail closed). A partly-deleted tree with a locked child is thus honestly reported
+    // incomplete.
     if (scheduleRebootRemoval(path)) {
         m_rebootPendingPaths.append(path);
-        return true;
     }
     return false;
 }
 
 bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
 #ifdef Q_OS_WIN
-    // MoveFileExW with MOVEFILE_DELAY_UNTIL_REBOOT schedules the file
-    // for deletion when Windows restarts (independent of this application)
+    // A reboot-delete is INHERENTLY unpinnable: MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT) stores the
+    // pathname and the OS re-resolves it at reboot, so no Win32 API can bind it to today's verified
+    // object -- a documented residual. The actionable mitigation is to require the target to be the
+    // validated, non-redirected object at SCHEDULE time: re-verify by handle here and REFUSE to
+    // schedule a redirected / reparse-ancestor path (deleteTimeRedirectSafe opens+verifies, or
+    // lexically re-screens ancestors when the object cannot be opened).
+    if (!deleteTimeRedirectSafe(path)) {
+        return false;
+    }
     return MoveFileExW(reinterpret_cast<LPCWSTR>(path.utf16()),
                        nullptr,
                        MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
@@ -673,6 +730,14 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
         return false;
     }
 
+    // Refuse a REG_LINK symbolic-link key: RegDeleteTreeW would follow it and delete the LINK
+    // TARGET's subtree, escaping the path denylist that was screened at validate time.
+    if (registryKeyIsSymbolicLink(hive, path)) {
+        sak::logWarning("Refusing registry tree delete of " + fullKeyPath.toStdString() +
+                        ": target is a symbolic-link (REG_LINK) key");
+        return false;
+    }
+
     // RegDeleteTree deletes the key and ALL subkeys
     LONG rc = RegDeleteTreeW(hive, reinterpret_cast<LPCWSTR>(path.utf16()));
 
@@ -701,6 +766,14 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
         hive = HKEY_CLASSES_ROOT;
         path = path.mid(kRegistryHivePrefixLength);
     } else {
+        return false;
+    }
+
+    // Refuse a REG_LINK symbolic-link key: opening it KEY_SET_VALUE follows the link, so the value
+    // would be deleted on the link TARGET rather than the screened key.
+    if (registryKeyIsSymbolicLink(hive, path)) {
+        sak::logWarning("Refusing registry value delete under " + keyPath.toStdString() +
+                        ": key is a symbolic-link (REG_LINK) key");
         return false;
     }
 

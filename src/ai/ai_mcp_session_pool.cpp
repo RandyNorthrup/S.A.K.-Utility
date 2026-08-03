@@ -18,6 +18,9 @@ namespace {
 // flag, anything) yields a distinct pooled session. Each env entry is length-
 // prefixed into the hash so an embedded newline in one value cannot make two
 // distinct environments (e.g. {"A=x\nB=y"} vs {"A=x","B=y"}) collide.
+// timeout_ms is part of the key too: a pooled session bakes its request timeout in
+// at open() time, so a later call with a different timeout must NOT inherit the
+// first call's (now stale) timeout -- it keys to its own session instead.
 QString sessionKey(const AiMcpStdioCallRequest& request) {
     QStringList entries = request.environment.toStringList();
     std::sort(entries.begin(), entries.end());
@@ -28,7 +31,8 @@ QString sessionKey(const AiMcpStdioCallRequest& request) {
         hash.addData(bytes);
     }
     return request.command.trimmed() + QLatin1Char('\x1f') +
-           QString::fromLatin1(hash.result().toHex());
+           QString::fromLatin1(hash.result().toHex()) + QLatin1Char('\x1f') +
+           QString::number(request.timeout_ms);
 }
 
 AiMcpSessionConfig configFor(const AiMcpStdioCallRequest& request) {

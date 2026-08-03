@@ -66,6 +66,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -289,6 +290,16 @@ constexpr int kTraceTokenIdChars = 12;
 constexpr int kShortTraceTokenIdChars = 8;
 constexpr int kMetadataPreviewMaxChars = 1000;
 constexpr int kAsyncToolDrainSliceMs = 20;
+// Upper bound on how long a destructor drain (async tool runner / workflow watcher)
+// will pump the event loop waiting for a CANCELLED worker to unwind. The inner op is
+// hard-cancelled first (token), so a well-behaved worker returns in well under this;
+// the bound only stops a pathological non-terminating worker from hanging teardown
+// forever. Generous enough that a cancelled network op always finishes in time.
+constexpr int kAsyncDrainDeadlineMs = 30'000;
+// Slice for the cancellation-aware wait on a blocking offline operation: poll the
+// shared run token this often so a Stop (or panel teardown) aborts the in-flight
+// offline worker instead of blocking on an unbounded semaphore acquire.
+constexpr int kOfflineWaitSliceMs = 50;
 constexpr int kPackageResultOutputMaxChars = 8000;
 constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
@@ -3185,6 +3196,22 @@ void AiAssistantPanel::cancelRunningWorkOnDestroy() {
     }
 }
 
+// Pump the GUI event loop while @p running is true, bounded by kAsyncDrainDeadlineMs
+// so a pathological non-terminating worker can never hang teardown forever. The
+// caller MUST hard-cancel the inner op first (so the worker unwinds well within the
+// deadline); this only pumps its marshaled UI calls to completion. Returns true if
+// the worker stopped, false if the deadline forced abandonment.
+static bool pumpEventsUntilStopped(const std::function<bool()>& running) {
+    QDeadlineTimer deadline(kAsyncDrainDeadlineMs);
+    while (running()) {
+        if (deadline.hasExpired()) {
+            return false;
+        }
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
+    }
+    return true;
+}
+
 void AiAssistantPanel::drainAndStopAsyncTool() {
     // Drop the in-flight async built-in tool result so it cannot resume a
     // half-destroyed panel, and abort its download via the shared token.
@@ -3198,8 +3225,9 @@ void AiAssistantPanel::drainAndStopAsyncTool() {
     // The worker captured `this` and returns promptly now its inner op is
     // cancelled; pump the event loop while it drains so its marshaled UI calls
     // complete instead of dead-locking the runner's join in member destruction.
-    while (m_asyncToolRunner->isRunning()) {
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
+    // Bounded so a wedged worker cannot hang the destructor indefinitely.
+    if (!pumpEventsUntilStopped([this]() { return m_asyncToolRunner->isRunning(); })) {
+        qWarning("AiAssistantPanel: async tool runner did not drain within deadline; abandoning");
     }
 }
 
@@ -3214,8 +3242,11 @@ void AiAssistantPanel::drainWorkflowRun() {
     // destroyed. Pump the event loop while it drains so any self-marshaled GUI
     // call from the worker completes instead of dead-locking the join.
     m_workflowRunWatcher->disconnect(this);
-    while (m_workflowRunWatcher->isRunning()) {
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
+    // Bounded (kAsyncDrainDeadlineMs): the run token was already cancelled, so the
+    // worker unwinds well within it; the deadline only prevents a wedged workflow
+    // worker from hanging teardown forever.
+    if (!pumpEventsUntilStopped([this]() { return m_workflowRunWatcher->isRunning(); })) {
+        qWarning("AiAssistantPanel: workflow run did not drain within deadline; abandoning");
     }
     m_workflowRunWatcher->deleteLater();
     m_workflowRunWatcher = nullptr;
@@ -6582,6 +6613,42 @@ static QString confirmFieldText(const QString& raw) {
     return out;
 }
 
+// Render a single JSON argument value for the human confirm dialog: strings pass
+// through confirmFieldText (visible whitespace + per-field clamp); scalars render
+// literally; arrays/objects render as compact JSON, likewise clamped. Never a global
+// truncation that could hide a destructive target inside a larger blob.
+static QString confirmValueText(const QJsonValue& value) {
+    if (value.isString()) {
+        return confirmFieldText(value.toString());
+    }
+    if (value.isBool()) {
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    }
+    if (value.isDouble()) {
+        return QString::number(value.toDouble());
+    }
+    if (value.isNull() || value.isUndefined()) {
+        return QStringLiteral("null");
+    }
+    const QJsonDocument doc = value.isArray() ? QJsonDocument(value.toArray())
+                                              : QJsonDocument(value.toObject());
+    return confirmFieldText(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+}
+
+// Render a non-batch app action's arguments one field per line, each field FULLY (up
+// to the per-field clamp) with visible whitespace -- so a destructive target (path,
+// disk, key) is never hidden behind a global truncation of a compact JSON blob.
+static QString renderArgsConfirmPreview(const QJsonObject& args) {
+    const QStringList keys = args.keys();  // sorted; deterministic ordering
+    QStringList lines;
+    lines.reserve(keys.size());
+    for (const QString& key : keys) {
+        lines << QStringLiteral("%1 = \"%2\"")
+                     .arg(confirmFieldText(key), confirmValueText(args.value(key)));
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 static QString renderItemsConfirmPreview(const QJsonArray& items) {
     QStringList lines;
     lines.reserve(items.size() + 1);
@@ -6676,12 +6743,10 @@ static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
         blocks << renderItemsConfirmPreview(items);
         return blocks.join(QLatin1Char('\n'));
     }
-    QString detail = QString::fromUtf8(QJsonDocument(action_args).toJson(QJsonDocument::Compact));
-    constexpr int kMaxDetailChars = 200;
-    if (detail.size() > kMaxDetailChars) {
-        detail = detail.left(kMaxDetailChars) + QStringLiteral("...");
-    }
-    return detail;
+    // A non-batch action: render EVERY field fully (per-field clamp only), never a
+    // global 200-char cut of the compact JSON that could hide the destructive target
+    // (path/disk/key) off the end. Mirrors the batch path's per-field rendering.
+    return renderArgsConfirmPreview(action_args);
 }
 
 QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
@@ -7099,6 +7164,23 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
     return true;
 }
 
+// Wait for a blocking offline worker to finish. The worker releases @p done on its
+// terminal signal (completed/error, wired in connectOfflineWorkerSignals), so the
+// wait is bounded by that guaranteed release; polling @p cancelled in short slices
+// lets a Stop / panel teardown abort the in-flight worker (worker->cancel() sets an
+// atomic the worker's loops honor) instead of blocking on an unbounded acquire.
+static void waitForOfflineWorker(QSemaphore* done,
+                                 OfflineDeploymentWorker* worker,
+                                 const std::function<bool()>& cancelled) {
+    bool cancel_sent = false;
+    while (!done->tryAcquire(1, kOfflineWaitSliceMs)) {
+        if (!cancel_sent && cancelled()) {
+            cancel_sent = true;
+            worker->cancel();
+        }
+    }
+}
+
 AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation(
     const QString& operation,
     const QVector<QPair<QString, QString>>& packages,
@@ -7126,7 +7208,12 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
                          startOfflineWorkerOperation(worker, operation, packages, output_dir, args);
                      });
     offline_thread.start();
-    done.acquire();
+    // Bounded, cancellation-aware wait: a Stop cancels the shared run token, which
+    // this poll observes and turns into worker->cancel() so the offline op aborts
+    // rather than blocking teardown on an unbounded semaphore acquire.
+    waitForOfflineWorker(&done, worker, [this]() {
+        return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
+    });
     offline_thread.quit();
     offline_thread.wait();
     return run;
@@ -9067,6 +9154,10 @@ void AiAssistantPanel::initializeWorkflowToolPlan(const ai::WorkflowPhase& phase
     plan->request.tool_name = phase.tool;
     plan->request.operation = phase.operation;
     plan->request.command_preview = phase.prompt;
+    // Carry the originating user request into the policy decision -- the package/MCP
+    // phase policy weighs user_message; omitting it over-blocks legitimate package
+    // phases (mirrors the non-workflow path in dispatchBuiltInToolCall).
+    plan->request.user_message = context.user_message;
     plan->args = substituteWorkflowPlaceholdersInObject(phase.arguments, context);
     if (phase.tool == QLatin1String("run_powershell") &&
         phase.arguments.value(QStringLiteral("command")).isString()) {
@@ -10948,6 +11039,14 @@ void AiAssistantPanel::cancelActiveRunToken() {
 }
 
 void AiAssistantPanel::cancelLocalAiWork() {
+    // Cancel the active tool run token so every token-polling in-flight built-in
+    // (package/MCP/app-action/win32/offline dispatch on the async runner, and the
+    // executeOfflineOperation wait) observes the Stop and aborts. This is the copy
+    // the async tool worker holds; cancelling it does not need m_runToken to be
+    // valid (a late tool turn may have only this token live).
+    if (m_activeToolRunToken.isValid()) {
+        m_activeToolRunToken.cancel(QStringLiteral("user_cancelled"));
+    }
     if (m_executionBroker && m_executionBroker->isRunning()) {
         m_executionBroker->cancel();
     }

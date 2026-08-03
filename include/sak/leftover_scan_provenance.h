@@ -6,9 +6,11 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/leftover_cleanup_guard.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
+#include <QHash>
 #include <QMutex>
-#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -124,6 +126,34 @@ namespace detail {
     }
 }
 
+/// Real on-disk identity fingerprint for a filesystem leftover (File / Folder / file-backed
+/// StartupEntry): the object's size + creation + last-write timestamps as seen RIGHT NOW. Empty for
+/// non-filesystem items (registry / service / task / registry-backed startup) and for a path that
+/// does not currently resolve to an on-disk object. The proof-of-scan match folds this in: a path a
+/// scan surfaced but whose object was SINCE swapped or replaced (an ancestor junction now
+/// redirecting the leaf, or a delete-and-recreate) no longer satisfies the proof, because the
+/// fingerprint captured at scan time does not equal the one re-read at clean time. This binds real
+/// object identity on top of the normalized-text key. Cross-platform (QFileInfo) so it needs no
+/// <windows.h> in this widely-included header; the delete-time by-handle GetFinalPathNameByHandle
+/// re-verification (cleanup_worker and the recycle op) supplies the volume+FILE_ID-level swap
+/// proof.
+[[nodiscard]] inline QString fsIdentityFingerprint(const LeftoverItem& item) {
+    const bool file_backed =
+        item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder ||
+        (item.type == LeftoverItem::Type::StartupEntry && item.registryValueName.isEmpty());
+    if (!file_backed) {
+        return {};
+    }
+    const QFileInfo info(item.path.trimmed());
+    if (!info.exists()) {
+        return {};
+    }
+    return QStringLiteral("sz:%1|bt:%2|mt:%3")
+        .arg(info.size())
+        .arg(info.birthTime().toMSecsSinceEpoch())
+        .arg(info.lastModified().toMSecsSinceEpoch());
+}
+
 /// Process-wide, thread-safe session record of every leftover item a scan surfaced. clean_leftovers
 /// checks each requested item against it before deletion.
 class LeftoverScanProvenance {
@@ -134,45 +164,69 @@ public:
     }
 
     /// Record every item a scan found (the FULL scanned vector, not the truncated sample the model
-    /// sees), so any item the model legitimately copied is present. Bounded: when the cap would be
-    /// exceeded the set is reset to just this scan's items (the most recent scan is the relevant
-    /// one).
+    /// sees), so any item the model legitimately copied is present. Each item is stored with the
+    /// filesystem-identity fingerprint captured NOW (at scan time) so clean_leftovers can prove the
+    /// object has not been swapped since. Bounded: when the cap would be exceeded the set is reset
+    /// to just this scan's items (the most recent scan is the relevant one). Each call bumps the
+    /// scan generation.
     void record(const QVector<LeftoverItem>& items) {
         QMutexLocker lock(&m_mutex);
-        if (m_keys.size() + items.size() > kMaxKeys) {
-            m_keys.clear();
+        ++m_generation;
+        if (m_entries.size() + items.size() > kMaxKeys) {
+            m_entries.clear();
         }
         for (const LeftoverItem& item : items) {
-            if (m_keys.size() >= kMaxKeys) {
+            if (m_entries.size() >= kMaxKeys) {
                 break;
             }
-            m_keys.insert(leftoverProvenanceKey(item));
+            m_entries.insert(leftoverProvenanceKey(item),
+                             Entry{fsIdentityFingerprint(item), m_generation});
         }
     }
 
-    /// True if @p item matches an item a prior scan surfaced this session.
+    /// True if @p item matches an item a prior scan surfaced this session AND its on-disk object is
+    /// still the SAME one the scan fingerprinted. A filesystem item whose object was swapped or
+    /// replaced since the scan (fingerprint changed) is rejected even though its path text still
+    /// matches -- fail closed. Non-filesystem items (registry/service/task) carry an empty
+    /// fingerprint at both record and check time, so their behavior is unchanged (text identity).
     [[nodiscard]] bool contains(const LeftoverItem& item) const {
         QMutexLocker lock(&m_mutex);
-        return m_keys.contains(leftoverProvenanceKey(item));
+        const auto it = m_entries.constFind(leftoverProvenanceKey(item));
+        if (it == m_entries.constEnd()) {
+            return false;
+        }
+        return fsIdentityFingerprint(item) == it->fingerprint;
     }
 
     /// True if no scan has been recorded yet this session.
     [[nodiscard]] bool isEmpty() const {
         QMutexLocker lock(&m_mutex);
-        return m_keys.isEmpty();
+        return m_entries.isEmpty();
+    }
+
+    /// Monotonic count of record() calls this session (each scan bumps it). Exposed for tests and
+    /// observability; the freshness binding itself is carried by the per-item fingerprint.
+    [[nodiscard]] quint64 generation() const {
+        QMutexLocker lock(&m_mutex);
+        return m_generation;
     }
 
     /// Clear the session set (used by tests; also allows an explicit reset).
     void clear() {
         QMutexLocker lock(&m_mutex);
-        m_keys.clear();
+        m_entries.clear();
     }
 
 private:
     LeftoverScanProvenance() = default;
+    struct Entry {
+        QString fingerprint;  ///< fs identity at scan time; empty for non-fs / unresolved items
+        quint64 generation;   ///< scan generation that recorded this key
+    };
     static constexpr int kMaxKeys = 200'000;
     mutable QMutex m_mutex;
-    QSet<QString> m_keys;
+    QHash<QString, Entry> m_entries;
+    quint64 m_generation = 0;
 };
 
 }  // namespace sak

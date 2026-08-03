@@ -87,6 +87,12 @@ public:
      */
     static std::vector<AppInfo> scanChocolatey();
 
+    /// @brief Resolve the absolute Windows PowerShell path under @p systemRoot's
+    ///        System32 so a PATH/CWD-planted powershell.exe can never run in our
+    ///        stead. Returns empty (fail closed) when @p systemRoot is empty.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static QString composePowerShellPath(const QString& systemRoot);
+
 private:
     /**
      * @brief Scan specific registry hive

@@ -28,6 +28,11 @@ bool splitVersionText(const QString& text, QString& release_out, QString& prerel
     if (dash >= 0) {
         prerelease_out = core.mid(dash + 1);
         release_out = core.left(dash);
+        // A dash with nothing after it ("1.0.0-") is a malformed prerelease, not a
+        // plain release -- reject it rather than silently dropping the tag.
+        if (prerelease_out.isEmpty()) {
+            return false;
+        }
     } else {
         prerelease_out.clear();
         release_out = core;
@@ -90,6 +95,20 @@ bool parseReleaseComponents(const QString& release, QVector<long long>& out) {
     return !out.isEmpty();
 }
 
+/// @brief Split a prerelease tag into dot-separated identifiers, keeping empty
+///        parts so a malformed separator ("alpha..1", ".beta", "rc.") is caught.
+///        Returns nullopt if ANY identifier is empty (SemVer forbids that);
+///        splitting with SkipEmptyParts would silently accept the garbled tag.
+std::optional<QStringList> splitPrerelease(const QString& prerelease) {
+    const QStringList ids = prerelease.split(QLatin1Char('.'), Qt::KeepEmptyParts);
+    for (const QString& id : ids) {
+        if (id.isEmpty()) {
+            return std::nullopt;
+        }
+    }
+    return ids;
+}
+
 }  // namespace
 
 std::optional<NuGetVersion> NuGetVersion::parse(const QString& text) {
@@ -104,10 +123,14 @@ std::optional<NuGetVersion> NuGetVersion::parse(const QString& text) {
         return std::nullopt;
     }
 
-    version.m_original = text.trimmed();
     if (!prerelease.isEmpty()) {
-        version.m_prerelease = prerelease.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+        const auto ids = splitPrerelease(prerelease);
+        if (!ids.has_value()) {
+            return std::nullopt;  // empty prerelease identifier -> malformed
+        }
+        version.m_prerelease = *ids;
     }
+    version.m_original = text.trimmed();
     version.m_valid = true;
     return version;
 }
@@ -191,6 +214,30 @@ std::optional<NuGetVersion> parseBoundToken(const QString& token, bool& ok_out) 
     return parsed;
 }
 
+/// @brief True if @p version clears the lower bound (>= or > per inclusivity).
+///        A missing bound is unbounded below (always cleared).
+bool passesLower(const NuGetVersion& version,
+                 const std::optional<NuGetVersion>& lower,
+                 bool inclusive) {
+    if (!lower.has_value()) {
+        return true;
+    }
+    const int cmp = version.compare(*lower);
+    return cmp > 0 || (cmp == 0 && inclusive);
+}
+
+/// @brief True if @p version clears the upper bound (<= or < per inclusivity).
+///        A missing bound is unbounded above (always cleared).
+bool passesUpper(const NuGetVersion& version,
+                 const std::optional<NuGetVersion>& upper,
+                 bool inclusive) {
+    if (!upper.has_value()) {
+        return true;
+    }
+    const int cmp = version.compare(*upper);
+    return cmp < 0 || (cmp == 0 && inclusive);
+}
+
 }  // namespace
 
 NuGetVersionRange NuGetVersionRange::parse(const QString& text) {
@@ -213,18 +260,20 @@ NuGetVersionRange NuGetVersionRange::parse(const QString& text) {
 
 void NuGetVersionRange::applyBareMinimum(const QString& token) {
     const auto minimum = NuGetVersion::parse(token);
-    if (minimum.has_value()) {
-        m_lower = minimum;
-        m_lower_inclusive = true;
+    if (!minimum.has_value()) {
+        m_valid = false;  // an unparseable bare token is malformed -> reject all
+        return;
     }
-    // An unparseable bare token leaves the range permissive.
+    m_lower = minimum;
+    m_lower_inclusive = true;
 }
 
 void NuGetVersionRange::applyBracketed(const QString& trimmed) {
     const QChar open = trimmed.front();
     const QChar close = trimmed.back();
     if (close != QLatin1Char(']') && close != QLatin1Char(')')) {
-        return;  // malformed brackets -> permissive
+        m_valid = false;  // unbalanced brackets -> malformed
+        return;
     }
     const QString inner = trimmed.mid(1, trimmed.size() - 2);
     if (inner.contains(QLatin1Char(','))) {
@@ -235,18 +284,21 @@ void NuGetVersionRange::applyBracketed(const QString& trimmed) {
 }
 
 void NuGetVersionRange::applyExact(const QString& inner, QChar open, QChar close) {
-    // [x] is an exact match; (x) is invalid -> permissive.
+    // [x] is an exact match; (x) or an empty "[]" is malformed -> reject all.
     if (open != QLatin1Char('[') || close != QLatin1Char(']')) {
+        m_valid = false;
         return;
     }
     bool ok = false;
     const auto exact = parseBoundToken(inner, ok);
-    if (ok && exact.has_value()) {
-        m_lower = exact;
-        m_upper = exact;
-        m_lower_inclusive = true;
-        m_upper_inclusive = true;
+    if (!ok || !exact.has_value()) {
+        m_valid = false;  // missing or unparseable exact version
+        return;
     }
+    m_lower = exact;
+    m_upper = exact;
+    m_lower_inclusive = true;
+    m_upper_inclusive = true;
 }
 
 void NuGetVersionRange::applyInterval(const QString& inner, QChar open, QChar close) {
@@ -256,7 +308,8 @@ void NuGetVersionRange::applyInterval(const QString& inner, QChar open, QChar cl
     const auto lower = parseBoundToken(inner.left(comma), lower_ok);
     const auto upper = parseBoundToken(inner.mid(comma + 1), upper_ok);
     if (!lower_ok || !upper_ok) {
-        return;  // a bound present but unparseable -> permissive (over-include)
+        m_valid = false;  // a bound present but unparseable -> malformed, reject all
+        return;
     }
     if (lower.has_value()) {
         m_lower = lower;
@@ -269,22 +322,13 @@ void NuGetVersionRange::applyInterval(const QString& inner, QChar open, QChar cl
 }
 
 bool NuGetVersionRange::satisfies(const NuGetVersion& version) const {
-    if (!version.isValid()) {
+    // A malformed range is fail-closed (accepts nothing); an invalid version is
+    // never in range.
+    if (!m_valid || !version.isValid()) {
         return false;
     }
-    if (m_lower.has_value()) {
-        const int cmp = version.compare(*m_lower);
-        if (cmp < 0 || (cmp == 0 && !m_lower_inclusive)) {
-            return false;
-        }
-    }
-    if (m_upper.has_value()) {
-        const int cmp = version.compare(*m_upper);
-        if (cmp > 0 || (cmp == 0 && !m_upper_inclusive)) {
-            return false;
-        }
-    }
-    return true;
+    return passesLower(version, m_lower, m_lower_inclusive) &&
+           passesUpper(version, m_upper, m_upper_inclusive);
 }
 
 namespace {

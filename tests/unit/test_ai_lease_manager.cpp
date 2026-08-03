@@ -134,13 +134,17 @@ private Q_SLOTS:
         QCOMPARE(AiLeaseManager(-5).leaseTtlSeconds(), AiLeaseManager::kDefaultLeaseTtlSeconds);
     }
 
-    // B12-04: the default TTL must exceed the longest legitimate mutating hold (a package tool
-    // capped at 7200s), or a still-running op would have its lease reclaimed and a second
-    // mutating op could start concurrently. Pin the invariant so the TTL can never regress
-    // below the max op window.
+    // The default TTL must exceed the longest legitimate lease-holding op plus margin, or a
+    // still-running op would have its lease reclaimed and a second mutating op could start
+    // concurrently. The true maximum is an app action (sak_app_action run), whose timeout is
+    // clamped at kAppActionMaxTimeoutSeconds = 14400s (longer than the 7200s package cap the
+    // stale rationale cited). Pin the invariant so the TTL can never regress below max op +
+    // margin.
     void defaultTtlExceedsLongestMutatingOp() {
-        constexpr qint64 kLongestMutatingOpSeconds = 7200;  // kPackageToolMaxTimeoutSeconds
-        QVERIFY(AiLeaseManager::kDefaultLeaseTtlSeconds >= kLongestMutatingOpSeconds);
+        constexpr qint64 kLongestLeaseHoldSeconds = 14'400;  // kAppActionMaxTimeoutSeconds
+        constexpr qint64 kReleaseMarginSeconds = 600;
+        QVERIFY(AiLeaseManager::kDefaultLeaseTtlSeconds >=
+                kLongestLeaseHoldSeconds + kReleaseMarginSeconds);
     }
 };
 

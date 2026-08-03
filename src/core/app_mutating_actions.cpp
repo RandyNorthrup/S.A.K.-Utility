@@ -64,6 +64,12 @@
 #include <functional>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#include <string>
+
+#include <windows.h>
+#endif
+
 namespace sak {
 
 namespace {
@@ -2108,6 +2114,19 @@ AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total)
                      QStringLiteral("call software.scan_leftovers for this program first")}}};
 }
 
+// Out-of-band control gating the technician_override JSON flag. A prompt-injected model can set the
+// flag itself, so the flag ALONE must never bypass proof-of-scan. The override is honored only when
+// the human technician has separately set this environment variable (out of the model's reach) to a
+// truthy value; otherwise the flag is advisory and proof-of-scan stays mandatory. Kept an env
+// control (not a session/config object) because these thunks are stateless free functions with no
+// session handle to read.
+[[nodiscard]] bool technicianOverrideAuthorizedOutOfBand() {
+    const QString value =
+        qEnvironmentVariable("SAK_LEFTOVER_TECHNICIAN_OVERRIDE").trimmed().toLower();
+    return value == QLatin1String("1") || value == QLatin1String("true") ||
+           value == QLatin1String("yes") || value == QLatin1String("on");
+}
+
 AppActionResult cleanLeftovers(const QJsonObject& args) {
     const QJsonValue items_val = args.value(QStringLiteral("items"));
     if (!items_val.isArray()) {
@@ -2124,8 +2143,17 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
                 {}};
     }
 
-    const bool technician_override =
-        args.value(QStringLiteral("technician_override")).toBool(false);
+    // The model-supplied flag only REQUESTS a bypass; it is honored solely when the human
+    // technician has set the out-of-band control. Absent that control, proof-of-scan remains
+    // enforced -- an injected flag cannot rubber-stamp a fabricated deletion list.
+    const bool override_requested = args.value(QStringLiteral("technician_override")).toBool(false);
+    const bool technician_override = override_requested && technicianOverrideAuthorizedOutOfBand();
+    if (override_requested && !technician_override) {
+        sak::logWarning(
+            "clean_leftovers: technician_override requested but the out-of-band control "
+            "(SAK_LEFTOVER_TECHNICIAN_OVERRIDE) is not set -- flag ignored, proof-of-scan "
+            "enforced");
+    }
 
     QVector<LeftoverItem> items;
     items.reserve(items_arr.size());
@@ -2210,11 +2238,15 @@ QJsonObject cleanLeftoversParamsSchema() {
     QJsonObject override_prop{
         {QStringLiteral("type"), QStringLiteral("boolean")},
         {QStringLiteral("description"),
-         QStringLiteral("Leave false. Every item must come from a prior software.scan_leftovers in "
-                        "this session; items that did not are refused. Set true ONLY when a "
-                        "technician deliberately supplies a hand-authored list not produced by a "
-                        "scan -- this bypasses the proof-of-scan check (the OS-critical denylist "
-                        "still applies) and is surfaced in the run log.")}};
+         QStringLiteral(
+             "Leave false. Every item must come from a prior software.scan_leftovers in "
+             "this session; items that did not are refused. Setting true only REQUESTS a "
+             "bypass of the proof-of-scan check for a hand-authored list -- it is honored "
+             "solely when a human technician has separately enabled the out-of-band "
+             "control (the SAK_LEFTOVER_TECHNICIAN_OVERRIDE environment variable); "
+             "otherwise the flag is ignored and proof-of-scan stays enforced. The "
+             "OS-critical denylist always applies and the request is surfaced in the run "
+             "log.")}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"),
                         QJsonObject{{QStringLiteral("items"), items_prop},
@@ -3391,6 +3423,92 @@ QJsonObject deleteToRecycleBinParamsSchema() {
 //     canonicalizes it to the volume root.
 // @param canonical_out On success, the OS-canonical path to hand to sendPathToRecycleBin, so the op
 //        validates and deletes the SAME string.
+#ifdef Q_OS_WIN
+// Real on-disk path of @p path with every ancestor junction/symlink resolved, WITHOUT following a
+// leaf reparse point, read through an open handle -- mirrors cleanup_worker's delete-time check.
+// Empty when the object cannot be opened (locked/raced/denied) or the name cannot be read, which
+// the caller treats as fail-closed.
+QString recycleFinalPathByHandle(const QString& path) {
+    const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
+                                      FILE_READ_ATTRIBUTES,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr,
+                                      OPEN_EXISTING,
+                                      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                                      nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    std::wstring buffer(1024, L'\0');
+    const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+    DWORD length =
+        GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+    if (length > buffer.size()) {
+        buffer.resize(length);
+        length = GetFinalPathNameByHandleW(
+            handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+    }
+    CloseHandle(handle);
+    if (length == 0 || length > buffer.size()) {
+        return {};
+    }
+    QString resolved = QString::fromWCharArray(buffer.data(), static_cast<int>(length));
+    if (resolved.startsWith(QStringLiteral("\\\\?\\UNC\\"))) {
+        return QStringLiteral("\\\\") + resolved.mid(8);
+    }
+    if (resolved.startsWith(QStringLiteral("\\\\?\\"))) {
+        return resolved.mid(4);
+    }
+    return resolved;
+}
+#endif  // Q_OS_WIN
+
+// Delete-TIME by-handle re-verification for the recycle op. filePathDeletionRefusal screened the
+// path STRING at validate time, but SHFileOperationW acts on the path by NAME later, re-resolving
+// it -- a local attacker who swaps an ANCESTOR directory into a junction between validate and the
+// shell call makes the same string resolve to a DIFFERENT real target. Immediately before the shell
+// op, open a handle to the canonical path and read its REAL resolved name, then refuse when it
+// cannot be resolved, lands in a protected/critical/root/UNC location, or no longer matches the
+// validated path. Mirrors cleanupHandleRedirectRefusal used by the permanent-delete worker. No-op
+// on non-Windows.
+std::optional<AppActionResult> recycleHandleRedirectRefusal(const QString& canonical) {
+#ifdef Q_OS_WIN
+    const QString final_path = recycleFinalPathByHandle(canonical);
+    const QString refusal = cleanupHandleRedirectRefusal(canonical, final_path);
+    if (!refusal.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("Refusing to recycle %1: %2").arg(canonical, refusal),
+                               {}};
+    }
+#else
+    Q_UNUSED(canonical)
+#endif
+    return std::nullopt;
+}
+
+// Screen the RESOLVED (canonical) recycle target: refuse a drive/volume root, and route it through
+// the shared file-deletion denylist so this generic recycle op refuses the same protected locations
+// the leftover-cleanup path does (the Windows system tree, boot/system-critical paths, and shared
+// system/user ROOT directories -- Program Files, Users, ProgramData, ...). Screening the canonical
+// (not lexical) path closes trailing-dot/alias evasion. Split out so validateRecycleTarget stays
+// within the complexity budget.
+std::optional<AppActionResult> canonicalRecycleRefusal(const QString& canonical) {
+    if (QDir(canonical).isRoot()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("Refusing to recycle a drive/volume root: %1").arg(canonical),
+            {}};
+    }
+    const QString protectedRefusal = filePathDeletionRefusal(canonical);
+    if (!protectedRefusal.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("Refusing to recycle a protected location (%1): %2")
+                                   .arg(protectedRefusal, canonical),
+                               {}};
+    }
+    return std::nullopt;
+}
+
 std::optional<AppActionResult> validateRecycleTarget(const QString& path, QString& canonical_out) {
     if (path.isEmpty()) {
         return AppActionResult{false,
@@ -3440,11 +3558,8 @@ std::optional<AppActionResult> validateRecycleTarget(const QString& path, QStrin
                                QStringLiteral("No such file or directory: %1").arg(path),
                                {}};
     }
-    if (QDir(canonical).isRoot()) {
-        return AppActionResult{
-            false,
-            QStringLiteral("Refusing to recycle a drive/volume root: %1").arg(canonical),
-            {}};
+    if (const std::optional<AppActionResult> refused = canonicalRecycleRefusal(canonical)) {
+        return refused;
     }
     canonical_out = canonical;
     return std::nullopt;
@@ -3464,6 +3579,12 @@ AppActionResult deleteToRecycleBin(const QJsonObject& args) {
     // Capture the type BEFORE the delete -- after it, the item is gone.
     const bool was_directory = info.isDir();
     const QString name = info.fileName();
+    // Re-verify by-handle IMMEDIATELY before the shell op: the string checks above ran at validate
+    // time, but SHFileOperationW re-resolves the name, so an ancestor junction/symlink swapped in
+    // since would redirect the delete. Refuse if the real target no longer matches or is protected.
+    if (const std::optional<AppActionResult> redirected = recycleHandleRedirectRefusal(canonical)) {
+        return *redirected;
+    }
     if (!sendPathToRecycleBin(canonical)) {
         return {false,
                 QStringLiteral("Could not move %1 to the Recycle Bin (it may be in use, protected, "

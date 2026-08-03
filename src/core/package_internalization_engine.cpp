@@ -8,6 +8,7 @@
 
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
+#include "sak/nuget_version_range.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/process_runner.h"
 
@@ -46,10 +47,9 @@ NetworkTransferRequest makeVersionRequest(const QUrl& url) {
 }
 
 QString uniqueBinaryFilename(const QUrl& url, int index, QSet<QString>& used_names) {
-    QString base = url.fileName();
-    if (base.isEmpty()) {
-        base = QString("binary_%1").arg(index + 1);
-    }
+    // Reduce the URL-derived name to a safe in-tree basename first: a crafted URL
+    // segment can decode to traversal / separators and must never escape the dir.
+    QString base = PackageInternalizationEngine::sanitizedBinaryBasename(url.fileName(), index);
     // Two distinct URLs can share a basename (x86 vs x64 setup.exe); disambiguate so the second
     // never overwrites the first on disk and the rewritten script maps each URL to its own file.
     QString candidate = base;
@@ -140,6 +140,112 @@ bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString
     }
     return true;
 }
+
+// --- scriptHasNetworkDownload line predicates (kept small for CCN) -----------
+
+bool lineHasDownloadUrl(const QString& lower) {
+    return lower.contains(QLatin1String("http://")) || lower.contains(QLatin1String("https://")) ||
+           lower.contains(QLatin1String("ftp://"));
+}
+
+bool lineHasRawDownloadToken(const QString& lower) {
+    // Raw download primitives (NOT the recognized Chocolatey helpers, which are
+    // rewritten to LOCAL paths before this runs). curl/wget/iwr/irm are handled
+    // by the command regex instead, so a rewritten local literal ('curl-8.zip')
+    // or the word "confirm" (contains "irm") never substring-trips this.
+    static const QStringList kDownloadTokens = {QStringLiteral("invoke-webrequest"),
+                                                QStringLiteral("invoke-restmethod"),
+                                                QStringLiteral("start-bitstransfer"),
+                                                QStringLiteral("bitsadmin"),
+                                                QStringLiteral("downloadfile"),
+                                                QStringLiteral("downloadstring"),
+                                                QStringLiteral("downloaddata"),
+                                                QStringLiteral("webclient"),
+                                                QStringLiteral("net.http")};
+    for (const QString& token : kDownloadTokens) {
+        if (lower.contains(token)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool lineHasDownloadCommand(const QString& lower) {
+    // A nested Chocolatey invocation pulls another package from the feed at
+    // install time and cannot be constrained to the bundle -> honestly will-fetch.
+    static const QRegularExpression kNestedChoco(
+        QStringLiteral("\\b(?:cinst|(?:choco(?:\\.exe)?|chocolatey)\\s+(?:install|upgrade))\\b"));
+    // curl/wget/iwr/irm as a COMMAND (line start or after |;&`({, optionally via
+    // Start-Process) followed by an argument -- catches `curl $dynamicUrl` where
+    // the URL is variable-built, without matching a local filename like
+    // 'curl-8.0.0.zip' (no whitespace after the token there).
+    static const QRegularExpression kCurlWget(QStringLiteral(
+        "(?:^|[|;&`({])\\s*(?:start-process\\s+)?(?:curl|wget|iwr|irm)(?:\\.exe)?\\s"));
+    // Scheme concatenation: `'http' + '://'` or `+ '://'`, i.e. a URL assembled
+    // from string fragments to dodge a literal-URL scan.
+    static const QRegularExpression kSchemeConcat(
+        QStringLiteral("[\"'](?:https?|ftp)[\"']\\s*\\+|\\+\\s*[\"']:?//"));
+    return kNestedChoco.match(lower).hasMatch() || kCurlWget.match(lower).hasMatch() ||
+           kSchemeConcat.match(lower).hasMatch();
+}
+
+// --- OData property helpers --------------------------------------------------
+
+QDomElement odataProperties(const QDomElement& entry) {
+    QDomNodeList props = entry.elementsByTagName(QStringLiteral("m:properties"));
+    if (props.isEmpty()) {
+        props = entry.elementsByTagName(QStringLiteral("properties"));
+    }
+    return props.isEmpty() ? QDomElement() : props.at(0).toElement();
+}
+
+QString odataChildText(const QDomElement& props, const char* ns_name, const char* plain) {
+    QDomElement elem = props.firstChildElement(QLatin1String(ns_name));
+    if (elem.isNull()) {
+        elem = props.firstChildElement(QLatin1String(plain));
+    }
+    return elem.isNull() ? QString() : elem.text().trimmed();
+}
+
+bool nupkgHasZipMagic(const QString& nupkg_path, QString& error_out) {
+    // Validate the file starts with the ZIP magic bytes (PK\x03\x04).
+    constexpr int kZipMagicSize = 4;
+    constexpr char kZipMagic[] = {'\x50', '\x4B', '\x03', '\x04'};
+    QFile nupkg_file(nupkg_path);
+    if (!nupkg_file.open(QIODevice::ReadOnly)) {
+        error_out = "Cannot open nupkg file: " + nupkg_path;
+        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
+        return false;
+    }
+    const QByteArray header = nupkg_file.read(kZipMagicSize);
+    const qint64 file_size = nupkg_file.size();
+    nupkg_file.close();
+    if (header.size() < kZipMagicSize ||
+        std::memcmp(header.constData(), kZipMagic, kZipMagicSize) != 0) {
+        error_out = QString("Not a valid ZIP archive (%1 bytes)").arg(file_size);
+        sak::logError("[InternalizationEngine] {}: {}",
+                      error_out.toStdString(),
+                      nupkg_path.toStdString());
+        return false;
+    }
+    return true;
+}
+
+QString semverMaxVersion(const QStringList& versions) {
+    QString best;
+    std::optional<NuGetVersion> best_ver;
+    for (const QString& raw : versions) {
+        const auto ver = NuGetVersion::parse(raw);
+        if (!ver || !ver->isValid()) {
+            continue;
+        }
+        if (!best_ver || ver->compare(*best_ver) > 0) {
+            best_ver = ver;
+            best = raw;
+        }
+    }
+    return best;
+}
 }  // namespace
 
 // ============================================================================
@@ -224,33 +330,11 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
 }
 
 bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& script_text) {
-    // A nested Chocolatey invocation (`choco install dep`, `cinst dep`,
-    // `chocolatey upgrade x`) pulls another package from the feed at install time
-    // and CANNOT be constrained to the bundle, so a script whose action is a
-    // nested choco call is honestly a will-fetch even though the parser extracts
-    // no URL from it. Matched as whole words so a filename never trips it.
-    static const QRegularExpression kNestedChoco(
-        QStringLiteral("\\b(?:cinst|(?:choco(?:\\.exe)?|chocolatey)\\s+(?:install|upgrade))\\b"));
-
-    // Raw download primitives. The recognized Chocolatey helpers are rewritten to
-    // LOCAL paths before this runs, so their cmdlet names are NOT listed here.
-    // curl/wget are intentionally ABSENT: a genuine curl/wget download carries a
-    // URL (caught by the scheme check below), whereas the rewriter's local
-    // filename literal (e.g. 'curl-8.0.0.zip', 'wget.exe') would otherwise
-    // substring-match and falsely flag a fully-packed package as will-fetch.
-    static const QStringList kDownloadTokens = {QStringLiteral("invoke-webrequest"),
-                                                QStringLiteral("invoke-restmethod"),
-                                                QStringLiteral("start-bitstransfer"),
-                                                QStringLiteral("bitsadmin"),
-                                                QStringLiteral("downloadfile"),
-                                                QStringLiteral("downloadstring"),
-                                                QStringLiteral("downloaddata"),
-                                                QStringLiteral("webclient"),
-                                                QStringLiteral("net.http")};
-
-    // Scan line by line so a full-line comment (an internalized package's
-    // homepage banner, `# https://project.example`) is not read as a live
-    // download; only executable lines count.
+    // Scan line by line so a full-line comment (an internalized package's homepage
+    // banner, `# https://project.example`) is not read as a live download; only
+    // executable lines count. A line is a network fetch if it carries a literal
+    // remote URL, a raw download primitive, or a download COMMAND (nested choco,
+    // curl/wget/iwr/irm with an argument, or a scheme assembled by concatenation).
     const QStringList lines = script_text.split(QLatin1Char('\n'));
     for (const QString& raw_line : lines) {
         const QString trimmed = raw_line.trimmed();
@@ -258,17 +342,9 @@ bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& scrip
             continue;
         }
         const QString lower = trimmed.toLower();
-        if (lower.contains(QLatin1String("http://")) || lower.contains(QLatin1String("https://")) ||
-            lower.contains(QLatin1String("ftp://"))) {
+        if (lineHasDownloadUrl(lower) || lineHasRawDownloadToken(lower) ||
+            lineHasDownloadCommand(lower)) {
             return true;
-        }
-        if (kNestedChoco.match(lower).hasMatch()) {
-            return true;
-        }
-        for (const QString& token : kDownloadTokens) {
-            if (lower.contains(token)) {
-                return true;
-            }
         }
     }
     return false;
@@ -430,6 +506,13 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
 
     sak::logInfo("[InternalizationEngine] Download URL: {}", nupkg_url.toStdString());
 
+    // Restrict the package source to https (no file://, ftp://, http://, UNC) so a
+    // tampered config/base URL cannot pull the .nupkg off disk or an insecure origin.
+    if (!isAllowedInstallerUrl(nupkg_url)) {
+        finishWithError(result, "Refusing non-https package URL: " + nupkg_url);
+        return false;
+    }
+
     if (m_cancelled) {
         return false;
     }
@@ -455,6 +538,13 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
         return false;
     }
 
+    // Verify the downloaded bytes against the feed's published PackageHash BEFORE
+    // they are ever written / extracted / repacked. Fails closed (no hash from the
+    // feed, or a mismatch) so a tampered or corrupt .nupkg cannot enter the bundle.
+    if (!verifyNupkgIntegrity(package_id, version, transfer.body, result)) {
+        return false;
+    }
+
     // Fail-closed write (QSaveFile + full-size + commit), so a disk-full partial
     // write never leaves a truncated .nupkg that would then be extracted/repacked
     // and shipped as a "successfully internalized" package.
@@ -464,6 +554,43 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
         return false;
     }
 
+    return true;
+}
+
+QPair<QString, QString> PackageInternalizationEngine::fetchPackageHashMeta(
+    const QString& package_id, const QString& version) {
+    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
+    url.setQuery(query);
+
+    const NetworkTransferRequest request = makeVersionRequest(url);
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (!transfer.success) {
+        return {};
+    }
+    return parsePackageHashFromOData(transfer.body, version);
+}
+
+bool PackageInternalizationEngine::verifyNupkgIntegrity(const QString& package_id,
+                                                        const QString& version,
+                                                        const QByteArray& body,
+                                                        InternalizationResult& result) {
+    const auto meta = fetchPackageHashMeta(package_id, version);
+    if (meta.first.isEmpty()) {
+        finishWithError(
+            result, "Cannot verify package integrity: feed published no hash for " + package_id);
+        return false;
+    }
+    if (!nupkgHashMatches(body, meta.first, meta.second)) {
+        sak::logError("[InternalizationEngine] .nupkg hash mismatch for {}",
+                      package_id.toStdString());
+        finishWithError(result, "Package integrity verification failed for " + package_id);
+        return false;
+    }
+    sak::logInfo("[InternalizationEngine] Verified .nupkg hash for {} v{}",
+                 package_id.toStdString(),
+                 version.toStdString());
     return true;
 }
 
@@ -543,50 +670,57 @@ QString PackageInternalizationEngine::resolveLatestVersion(const QString& packag
 QString PackageInternalizationEngine::parseLatestVersionFromOData(const QByteArray& data) {
     QDomDocument doc;
     if (!doc.setContent(data)) {
-        sak::logError(
-            "[InternalizationEngine] XML parse failed "
-            "({} bytes)",
-            static_cast<int>(data.size()));
+        sak::logError("[InternalizationEngine] XML parse failed ({} bytes)",
+                      static_cast<int>(data.size()));
         return {};
     }
 
-    QDomElement root = doc.documentElement();
-    QDomNodeList entries = root.elementsByTagName("entry");
-    QString fallback_version;
-
+    QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
+    QStringList all_versions;
     for (int idx = 0; idx < entries.count(); ++idx) {
-        QDomElement entry = entries.at(idx).toElement();
-
-        QDomNodeList prop_nodes = entry.elementsByTagName("m:properties");
-        if (prop_nodes.isEmpty()) {
-            prop_nodes = entry.elementsByTagName("properties");
-        }
-        if (prop_nodes.isEmpty()) {
+        const QDomElement props = odataProperties(entries.at(idx).toElement());
+        if (props.isNull()) {
             continue;
         }
-
-        QDomElement props = prop_nodes.at(0).toElement();
-        QDomElement version_elem = props.firstChildElement("d:Version");
-        if (version_elem.isNull()) {
-            version_elem = props.firstChildElement("Version");
-        }
-        if (version_elem.isNull()) {
+        const QString ver = odataChildText(props, "d:Version", "Version");
+        if (ver.isEmpty()) {
             continue;
         }
-
-        QString ver = version_elem.text().trimmed();
-        fallback_version = ver;
-
-        QDomElement latest_elem = props.firstChildElement("d:IsLatestVersion");
-        if (latest_elem.isNull()) {
-            latest_elem = props.firstChildElement("IsLatestVersion");
-        }
-        if (!latest_elem.isNull() && latest_elem.text().trimmed().toLower() == "true") {
+        // The feed's explicit IsLatestVersion flag wins outright when present.
+        if (odataChildText(props, "d:IsLatestVersion", "IsLatestVersion").toLower() ==
+            QLatin1String("true")) {
             return ver;
         }
+        all_versions.append(ver);
     }
 
-    return fallback_version;
+    // No entry flagged latest: pick the SemVer-max rather than trusting feed order
+    // (a hostile/unsorted feed could otherwise push a downgrade via last-entry).
+    const QString best = semverMaxVersion(all_versions);
+    if (!best.isEmpty()) {
+        return best;
+    }
+    return all_versions.isEmpty() ? QString() : all_versions.last();
+}
+
+QPair<QString, QString> PackageInternalizationEngine::parsePackageHashFromOData(
+    const QByteArray& data, const QString& version) {
+    QDomDocument doc;
+    if (!doc.setContent(data)) {
+        return {};
+    }
+    QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
+    for (int idx = 0; idx < entries.count(); ++idx) {
+        const QDomElement props = odataProperties(entries.at(idx).toElement());
+        if (props.isNull() || odataChildText(props, "d:Version", "Version") != version) {
+            continue;
+        }
+        const QString hash = odataChildText(props, "d:PackageHash", "PackageHash");
+        const QString algo =
+            odataChildText(props, "d:PackageHashAlgorithm", "PackageHashAlgorithm");
+        return {hash, algo};
+    }
+    return {};
 }
 
 void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result,
@@ -647,6 +781,48 @@ bool PackageInternalizationEngine::binaryChecksumMatches(const QByteArray& data,
     return actual.compare(expected, Qt::CaseInsensitive) == 0;
 }
 
+bool PackageInternalizationEngine::installerVerified(const QByteArray& data,
+                                                     const QString& expected_checksum,
+                                                     const QString& checksum_type) {
+    // Fail closed: an installer whose script declared no checksum cannot be
+    // verified against a trusted value, so it must not ship in an offline bundle.
+    if (expected_checksum.trimmed().isEmpty()) {
+        return false;
+    }
+    return binaryChecksumMatches(data, expected_checksum, checksum_type);
+}
+
+QString PackageInternalizationEngine::sanitizedBinaryBasename(const QString& url_filename,
+                                                              int index) {
+    if (url_filename.isEmpty() || !isSafePackageComponent(url_filename)) {
+        return QStringLiteral("binary_%1").arg(index + 1);
+    }
+    return url_filename;
+}
+
+bool PackageInternalizationEngine::isAllowedInstallerUrl(const QString& url) {
+    const QUrl parsed(url, QUrl::StrictMode);
+    if (!parsed.isValid() || parsed.host().isEmpty()) {
+        return false;  // malformed, hostless (file:///, bare path), or UNC -> refuse
+    }
+    return parsed.scheme().compare(QLatin1String("https"), Qt::CaseInsensitive) == 0;
+}
+
+bool PackageInternalizationEngine::nupkgHashMatches(const QByteArray& data,
+                                                    const QString& expected_base64,
+                                                    const QString& algorithm) {
+    const QString expected = expected_base64.trimmed();
+    if (expected.isEmpty()) {
+        return false;  // no trusted hash available -> cannot verify -> fail closed
+    }
+    const auto algo = hashAlgorithmByName(algorithm.trimmed().toLower());
+    if (!algo) {
+        return false;  // unknown algorithm -> fail closed
+    }
+    const QString actual = QString::fromLatin1(QCryptographicHash::hash(data, *algo).toBase64());
+    return actual == expected;
+}
+
 QHash<QString, QPair<QString, QString>> PackageInternalizationEngine::binaryChecksumMap(
     const ParsedInstallScript& parsed) {
     QHash<QString, QPair<QString, QString>> map;
@@ -688,52 +864,76 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
             QString("Downloading binary %1 of %2...").arg(idx + 1).arg(urls_to_download.size()));
 
         const QString& url = urls_to_download[idx];
-        const QUrl parsed_url(url);
-        const QString filename = uniqueBinaryFilename(parsed_url, idx, used_names);
+        // Restrict installer sources to https before any fetch (no file://, ftp://,
+        // http://, UNC) so a hostile script cannot pull a binary off disk / insecurely.
+        if (!isAllowedInstallerUrl(url)) {
+            finishWithError(result, "Refusing non-https installer URL: " + url);
+            return false;
+        }
+        const QString filename = uniqueBinaryFilename(QUrl(url), idx, used_names);
         const QString output_path = tools_dir + "/" + filename;
-        const NetworkTransferRequest request = makeBinaryDownloadRequest(parsed_url);
 
-        const auto transfer = runNetworkTransfer(
-            request,
-            [this]() { return m_cancelled.load(); },
-            [this](qint64 received, qint64 total) {
-                m_current_progress.bytes_downloaded = received;
-                m_current_progress.bytes_total = total;
-                Q_EMIT progressChanged(m_current_progress);
-            });
-        if (transfer.cancelled) {
+        const auto body = fetchBinary(url, output_path, result);
+        if (!body || !binaryChecksumOk(*body, url, checksums, result)) {
             return false;
         }
-
-        bool ok = transfer.success && !transfer.body.isEmpty();
-        QString error = transfer.error_message;
-        if (ok) {
-            ok = writeBinaryBody(output_path, transfer.body, error);
-        }
-
-        if (!ok) {
-            sak::logWarning("[InternalizationEngine] Binary download failed: {} - {}",
-                            url.toStdString(),
-                            error.toStdString());
-            finishWithError(result, "Binary download failed: " + error);
-            return false;
-        }
-
-        // Verify the downloaded bytes against the script-declared checksum (when the
-        // parser captured one) BEFORE this file is repacked into the offline nupkg --
-        // a corrupted or substituted installer must never ship in the bundle.
-        const auto expected = checksums.constFind(url);
-        if (expected != checksums.constEnd() &&
-            !binaryChecksumMatches(transfer.body, expected->first, expected->second)) {
-            sak::logError("[InternalizationEngine] Checksum mismatch for {}", url.toStdString());
-            finishWithError(result, "Checksum verification failed for " + url);
-            return false;
-        }
-
         result.internalized_files.append(filename);
     }
 
     return !m_cancelled;
+}
+
+std::optional<QByteArray> PackageInternalizationEngine::fetchBinary(const QString& url,
+                                                                    const QString& output_path,
+                                                                    InternalizationResult& result) {
+    const NetworkTransferRequest request = makeBinaryDownloadRequest(QUrl(url));
+    const auto transfer = runNetworkTransfer(
+        request,
+        [this]() { return m_cancelled.load(); },
+        [this](qint64 received, qint64 total) {
+            m_current_progress.bytes_downloaded = received;
+            m_current_progress.bytes_total = total;
+            Q_EMIT progressChanged(m_current_progress);
+        });
+    if (transfer.cancelled) {
+        return std::nullopt;  // cancellation is reported by the caller's own gate
+    }
+
+    QString error = transfer.error_message;
+    bool ok = transfer.success && !transfer.body.isEmpty();
+    if (ok) {
+        ok = writeBinaryBody(output_path, transfer.body, error);
+    }
+    if (!ok) {
+        sak::logWarning("[InternalizationEngine] Binary download failed: {} - {}",
+                        url.toStdString(),
+                        error.toStdString());
+        finishWithError(result, "Binary download failed: " + error);
+        return std::nullopt;
+    }
+    return transfer.body;
+}
+
+bool PackageInternalizationEngine::binaryChecksumOk(
+    const QByteArray& body,
+    const QString& url,
+    const QHash<QString, QPair<QString, QString>>& checksums,
+    InternalizationResult& result) {
+    // Verify the downloaded bytes against the script-declared checksum BEFORE this
+    // file is repacked into the offline nupkg. Fails CLOSED when the script declared
+    // no checksum: an unverifiable installer is refused, not shipped as "verified".
+    const auto expected = checksums.constFind(url);
+    const QString cs = expected == checksums.constEnd() ? QString() : expected->first;
+    const QString cs_type = expected == checksums.constEnd() ? QString() : expected->second;
+    if (!installerVerified(body, cs, cs_type)) {
+        sak::logError(
+            "[InternalizationEngine] Unverified installer (missing/mismatched "
+            "checksum): {}",
+            url.toStdString());
+        finishWithError(result, "Installer checksum verification failed for " + url);
+        return false;
+    }
+    return true;
 }
 
 QStringList PackageInternalizationEngine::collectBinaryUrls(
@@ -779,26 +979,15 @@ bool PackageInternalizationEngine::isBusy() const {
 bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
                                                 const QString& extract_dir,
                                                 QString& error_out) {
-    // Validate the file starts with the ZIP magic bytes (PK\x03\x04)
-    constexpr int kZipMagicSize = 4;
-    constexpr char kZipMagic[] = {'\x50', '\x4B', '\x03', '\x04'};
-    QFile nupkg_file(nupkg_path);
-    if (!nupkg_file.open(QIODevice::ReadOnly)) {
-        error_out = "Cannot open nupkg file: " + nupkg_path;
-        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
+    if (!nupkgHasZipMagic(nupkg_path, error_out)) {
         return false;
     }
-    QByteArray header = nupkg_file.read(kZipMagicSize);
-    qint64 file_size = nupkg_file.size();
-    nupkg_file.close();
-    if (header.size() < kZipMagicSize ||
-        std::memcmp(header.constData(), kZipMagic, kZipMagicSize) != 0) {
-        error_out = QString("Not a valid ZIP archive (%1 bytes)").arg(file_size);
-        sak::logError("[InternalizationEngine] {}: {}",
-                      error_out.toStdString(),
-                      nupkg_path.toStdString());
-        return false;
-    }
+
+    // Zip-bomb guard: a hostile .nupkg can inflate to exhaust the disk. Enumerate
+    // the archive first and refuse once the entry count or total DECOMPRESSED size
+    // exceeds the cap, before any file is written.
+    constexpr qint64 kMaxEntries = 20'000;
+    constexpr qint64 kMaxDecompressedBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
 
     // Use .NET ZipFile for reliable extraction with native path separators
     QString native_nupkg = QDir::toNativeSeparators(nupkg_path);
@@ -807,10 +996,20 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
     // a path containing ' would otherwise close the literal and inject commands.
     native_nupkg.replace(QLatin1Char('\''), QStringLiteral("''"));
     native_extract.replace(QLatin1Char('\''), QStringLiteral("''"));
-    QString ps_command = QString(
-                             "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
-                             "[System.IO.Compression.ZipFile]::ExtractToDirectory('%1', '%2')")
-                             .arg(native_nupkg, native_extract);
+    QString ps_command =
+        QString(
+            "$ErrorActionPreference='Stop'; $src='%1'; $dst='%2'; "
+            "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+            "try { $zip=[System.IO.Compression.ZipFile]::OpenRead($src); "
+            "try { $n=0; $sz=0; foreach($e in $zip.Entries){ $n++; $sz=$sz+$e.Length; "
+            "if($n -gt %3){ throw 'nupkg entry count exceeds limit' } "
+            "if($sz -gt %4){ throw 'nupkg decompressed size exceeds limit' } } } "
+            "finally { $zip.Dispose() } "
+            "[System.IO.Compression.ZipFile]::ExtractToDirectory($src, $dst) } "
+            "catch { Write-Error $_; exit 1 }")
+            .arg(native_nupkg, native_extract)
+            .arg(kMaxEntries)
+            .arg(kMaxDecompressedBytes);
 
     const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
         return m_cancelled.load();

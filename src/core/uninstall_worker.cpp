@@ -105,8 +105,7 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program,
 auto UninstallWorker::executeStandardMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
     reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
-    [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
-    Q_EMIT registrySnapshotCaptured();
+    captureSnapshotOrWarn(report);
 
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
@@ -115,12 +114,17 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
     reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Running native uninstaller...");
     Q_EMIT nativeUninstallerStarted(m_program.displayName);
 
-    if (!runNativeUninstaller()) {
-        // Return only: WorkerBase::run() emits the single terminal `failed` signal. Emitting
-        // uninstallComplete here too gave the batch orchestrator two terminal outcomes.
+    int exit_code = 0;
+    if (!runNativeUninstaller(exit_code)) {
+        // Capture the failing code (surfaced in the report), then return only: WorkerBase::run()
+        // emits the single terminal `failed` signal. Emitting uninstallComplete here too gave the
+        // batch orchestrator two terminal outcomes.
+        report.nativeExitCode = exit_code;
         return std::unexpected(sak::error_code::execution_failed);
     }
 
+    // Copy the native exit code so a 3010 (reboot-required success) reaches the report/UI.
+    report.nativeExitCode = exit_code;
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     Q_EMIT nativeUninstallerFinished(report.nativeExitCode);
     return {};
@@ -153,6 +157,56 @@ auto UninstallWorker::executeRegistryMode(UninstallReport& report)
     return {};
 }
 
+auto UninstallWorker::runRestorePointPhase(UninstallReport& report)
+    -> std::expected<void, sak::error_code> {
+    if (!m_createRestorePoint) {
+        return {};
+    }
+    reportProgress(0, sak::kPercentMax, "Creating system restore point...");
+    if (!createRestorePoint()) {
+        // FAIL CLOSED: the user asked for a rollback point before this (potentially destructive)
+        // uninstall. If it cannot be created, refuse rather than run with no way back.
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    report.restorePointCreated = true;
+    report.restorePointName = QString("SAK: Before uninstall %1").arg(m_program.displayName);
+    Q_EMIT restorePointCreated(report.restorePointName);
+    return {};
+}
+
+void UninstallWorker::captureSnapshotOrWarn(UninstallReport& report) {
+    if (captureRegistrySnapshot()) {
+        Q_EMIT registrySnapshotCaptured();
+        return;
+    }
+    // Fail-closed reporting: an empty/failed before-snapshot means the leftover diff is degraded.
+    // Surface it instead of signalling a snapshot that was never captured.
+    report.errorLog.append(
+        QStringLiteral("Registry snapshot capture failed or was empty; "
+                       "leftover detection may be incomplete."));
+}
+
+auto UninstallWorker::runLeftoverPhase(UninstallReport& report)
+    -> std::expected<void, sak::error_code> {
+    reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
+    Q_EMIT leftoverScanStarted(m_scanLevel);
+
+    auto leftovers = scanLeftovers();
+    report.foundLeftovers = leftovers;
+
+    // A cancel during the (possibly long) scan must not be reported as a completed uninstall:
+    // return operation_cancelled BEFORE the terminal uninstallComplete so run() emits a single
+    // `cancelled` signal instead of handing the orchestrator both a success and a cancel.
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    Q_EMIT leftoverScanFinished(leftovers);
+    report.endTime = QDateTime::currentDateTime();
+    Q_EMIT uninstallComplete(report);
+    return {};
+}
+
 auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     UninstallReport report;
     report.programName = m_program.displayName;
@@ -161,15 +215,9 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     report.startTime = QDateTime::currentDateTime();
     report.scanLevel = m_scanLevel;
 
-    // Phase 1: Create restore point (if requested)
-    if (m_createRestorePoint) {
-        reportProgress(0, sak::kPercentMax, "Creating system restore point...");
-        if (createRestorePoint()) {
-            report.restorePointCreated = true;
-            report.restorePointName =
-                QString("SAK: Before uninstall %1").arg(m_program.displayName);
-            Q_EMIT restorePointCreated(report.restorePointName);
-        }
+    // Phase 1: Create restore point (if requested) -- fails closed if it cannot be created.
+    if (auto rp = runRestorePointPhase(report); !rp) {
+        return rp;
     }
 
     if (checkStop()) {
@@ -188,8 +236,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     case Mode::ForcedUninstall: {
         report.uninstallResult = UninstallReport::UninstallResult::Skipped;
         reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
-        [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
-        Q_EMIT registrySnapshotCaptured();
+        captureSnapshotOrWarn(report);
         break;
     }
     case Mode::UwpRemove:
@@ -202,19 +249,8 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    // Phase 3: Leftover scanning
-    reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
-    Q_EMIT leftoverScanStarted(m_scanLevel);
-
-    auto leftovers = scanLeftovers();
-    report.foundLeftovers = leftovers;
-
-    Q_EMIT leftoverScanFinished(leftovers);
-
-    report.endTime = QDateTime::currentDateTime();
-    Q_EMIT uninstallComplete(report);
-
-    return {};
+    // Phase 3: Leftover scanning (returns operation_cancelled if stopped mid-scan).
+    return runLeftoverPhase(report);
 }
 
 bool UninstallWorker::createRestorePoint() {
@@ -248,7 +284,12 @@ bool UninstallWorker::buildSilentUninstallCommand(const ProgramInfo& program, QS
     return false;
 }
 
-bool UninstallWorker::runNativeUninstaller() {
+bool UninstallWorker::nativeUninstallSucceeded(int exitStatus, int exitCode, bool cancelled) {
+    return !cancelled && exitStatus == 0 && (exitCode == 0 || exitCode == kMsiRebootRequiredCode);
+}
+
+bool UninstallWorker::runNativeUninstaller(int& exitCode) {
+    exitCode = 0;
     QString cmd;
     int timeout_ms = 0;  // GUI: wait indefinitely -- a user may interact with the uninstaller.
     if (m_headlessSilent) {
@@ -274,8 +315,8 @@ bool UninstallWorker::runNativeUninstaller() {
     const auto result =
         sak::runProcess(parsed.exe, parsed.args, timeout_ms, [this]() { return stopRequested(); });
 
-    return !result.cancelled && result.exit_status == 0 &&
-           (result.exit_code == 0 || result.exit_code == kMsiRebootRequiredCode);
+    exitCode = result.exit_code;
+    return nativeUninstallSucceeded(result.exit_status, result.exit_code, result.cancelled);
 }
 
 QVector<LeftoverItem> UninstallWorker::scanLeftovers() {

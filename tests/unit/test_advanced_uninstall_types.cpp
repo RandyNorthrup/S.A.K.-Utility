@@ -7,6 +7,8 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/leftover_scan_provenance.h"
 
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <type_traits>
@@ -47,6 +49,7 @@ private Q_SLOTS:
     void provenanceKey_stableAcrossFormatting();
     void provenanceKey_distinctForDifferentItems();
     void provenanceStore_recordsAndMatches();
+    void provenanceStore_bindsRealObjectIdentity();
 
     // ── Compile-Time Invariants ──
     void staticAsserts_defaultConstructible();
@@ -423,6 +426,41 @@ void AdvancedUninstallTypesTests::provenanceStore_recordsAndMatches() {
 
     store.clear();
     QVERIFY(store.isEmpty());
+}
+
+void AdvancedUninstallTypesTests::provenanceStore_bindsRealObjectIdentity() {
+    using T = sak::LeftoverItem::Type;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("leftover.dat"));
+    {
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArrayLiteral("original-leftover-bytes"));
+    }
+
+    auto& store = sak::LeftoverScanProvenance::instance();
+    store.clear();
+    const quint64 gen0 = store.generation();
+    store.record({makeItem(T::File, filePath)});
+    QCOMPARE(store.generation(), gen0 + 1);
+
+    // Unchanged object: the scan proof still holds (a reformatted path also matches).
+    QVERIFY(store.contains(makeItem(T::File, filePath)));
+    QVERIFY(store.contains(makeItem(T::File, QDir::fromNativeSeparators(filePath).toUpper())));
+
+    // Swap the object at the SAME path for different content: the on-disk identity fingerprint
+    // changes, so the scan proof no longer authorizes deletion even though the path text is
+    // identical (fail closed against an ancestor-junction or delete-and-recreate swap).
+    QVERIFY(QFile::remove(filePath));
+    {
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArrayLiteral("attacker-swapped-in-a-larger-different-payload"));
+    }
+    QVERIFY(!store.contains(makeItem(T::File, filePath)));
+
+    store.clear();
 }
 
 QTEST_GUILESS_MAIN(AdvancedUninstallTypesTests)

@@ -75,6 +75,15 @@ struct BundleInstallContext {
     bool verify_local;         ///< Bundle: verify the local .nupkg before handing it to choco
 };
 
+/// @brief One installer to fetch in the direct-download path: its URL plus the
+/// checksum (and algorithm) the package declared for it, so a downloaded binary
+/// can be integrity-verified before it is counted as a successful download.
+struct InstallerDownload {
+    QString url;
+    QString checksum;
+    QString checksum_type;
+};
+
 /// @brief A package to be internalized as part of a batch operation
 struct BatchInternalizationJob {
     QString package_id;
@@ -201,6 +210,15 @@ public:
                                                    const QString& source_dir,
                                                    QString& error_out);
 
+    /// @brief Dependency ids declared WITHIN @p jobs that are absent from the job
+    ///        set (and are not the excluded Chocolatey framework). A non-empty
+    ///        result means the resolved closure is NOT self-contained -- for a
+    ///        Bundle that is a fatal build error, not a warning. A requested
+    ///        package re-appended to be "attempted directly" carries no dependency
+    ///        edges, so it never trips this check. Pure; unit-testable.
+    [[nodiscard]] static QStringList unmetClosureDependencies(
+        const QVector<BatchInternalizationJob>& jobs);
+
 Q_SIGNALS:
     /// @brief Batch operation started
     void operationStarted(int total_packages);
@@ -319,9 +337,16 @@ public:
     ///        dependency edges). Required because a Bundle install passes
     ///        --ignore-dependencies (we install each closure member ourselves), so
     ///        choco does not order them. A dependency cycle falls back to the
-    ///        original order. Pure; unit-testable.
+    ///        original order. When @p cyclic_ids is non-null it is filled with the
+    ///        ids of any package caught in a cycle (appended in original order
+    ///        rather than dependency-ordered) so the caller can warn. Pure;
+    ///        unit-testable.
     [[nodiscard]] static QVector<DeploymentManifestEntry> topologicalInstallOrder(
-        const QVector<DeploymentManifestEntry>& packages);
+        const QVector<DeploymentManifestEntry>& packages, QStringList* cyclic_ids = nullptr);
+
+    /// @brief True if a choco/MSI install exit code means success: 0 (ok), or
+    ///        1641 / 3010 (reboot initiated / required). Pure; unit-testable.
+    [[nodiscard]] static bool isSuccessInstallExitCode(int exit_code);
 
     /// @brief Build the per-package install strategy for a payload mode. Bundle
     ///        installs from the local @p local_source_dir with --ignore-dependencies
@@ -330,10 +355,13 @@ public:
     [[nodiscard]] static BundleInstallContext installContextForMode(
         PayloadMode mode, const QString& local_source_dir);
 
-    /// @brief Collect ALL installer URLs (32- and 64-bit, every resource) from a
-    ///        parsed install script -- direct download must not silently drop the
-    ///        secondary installers a multi-resource package declares. Pure.
-    [[nodiscard]] static QStringList collectInstallerUrls(const ParsedInstallScript& parsed);
+    /// @brief Collect ALL installers (32- and 64-bit, every resource) from a parsed
+    ///        install script, each carrying the checksum the package declared for it
+    ///        so a downloaded binary can be integrity-verified. Direct download must
+    ///        not silently drop the secondary installers a multi-resource package
+    ///        declares. De-duplicated by URL. Pure; unit-testable.
+    [[nodiscard]] static QVector<InstallerDownload> collectInstallerDownloads(
+        const ParsedInstallScript& parsed);
 
     /// @brief Return @p desired if unused, else a de-duplicated variant ("x_1.exe"),
     ///        inserting the chosen name into @p used. Two installer URLs that share
@@ -378,11 +406,14 @@ private:
                             bool success,
                             const QString& message);
 
-    /// @brief Download installer binaries for a single package
+    /// @brief Download installer binaries for a single package. @p used_names is
+    ///        shared across ALL packages in the run so two packages that emit the
+    ///        same basename never overwrite each other on disk.
     /// @return Number of files successfully downloaded (0 on failure)
     [[nodiscard]] int downloadOnePackageInstallers(const QString& pkg_id,
                                                    const QString& resolved_version,
-                                                   const QString& output_dir);
+                                                   const QString& output_dir,
+                                                   QSet<QString>& used_names);
 
     /// @brief Download and extract a .nupkg into a temp directory
     /// @return Path to the extracted directory, empty on failure
@@ -396,20 +427,32 @@ private:
                                                                        const QString& extract_dir,
                                                                        const QString& temp_dir);
 
-    /// @brief Copy embedded installer files from the nupkg tools/ directory
+    /// @brief Copy embedded installer files from the nupkg tools/ directory,
+    ///        disambiguating each dest name against @p used_names so a second
+    ///        package's identically-named installer never overwrites the first.
     /// @return Number of files successfully copied
     [[nodiscard]] int copyEmbeddedInstallers(const QString& pkg_id,
                                              const QString& pkg_extract_dir,
-                                             const QString& output_dir);
+                                             const QString& output_dir,
+                                             QSet<QString>& used_names);
 
-    /// @brief Download a list of URLs to a directory
+    /// @brief Download a list of installers to a directory, verifying each against
+    ///        its declared checksum before counting it and disambiguating colliding
+    ///        basenames via @p used_names.
     /// @return Number of files successfully downloaded
-    [[nodiscard]] int downloadUrlsToDir(const QString& pkg_id,
-                                        const QStringList& urls,
-                                        const QString& output_dir);
+    [[nodiscard]] int downloadInstallersToDir(const QString& pkg_id,
+                                              const QVector<InstallerDownload>& downloads,
+                                              const QString& output_dir,
+                                              QSet<QString>& used_names);
 
-    /// @brief Download a single file from a URL to disk
-    [[nodiscard]] bool downloadFileFromUrl(const QString& url, const QString& output_path);
+    /// @brief Download a single file from a URL to disk. When @p expected_checksum
+    ///        is non-empty the downloaded bytes must match it (under @p
+    ///        checksum_type, or inferred from length) or the download fails closed
+    ///        and nothing is committed.
+    [[nodiscard]] bool downloadFileFromUrl(const QString& url,
+                                           const QString& output_path,
+                                           const QString& expected_checksum = QString(),
+                                           const QString& checksum_type = QString());
 
     /// @brief Emit a log message to the UI from a background thread
     void emitLog(const QString& message);

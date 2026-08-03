@@ -33,6 +33,7 @@ private Q_SLOTS:
     void registryKeyAllowsSpecificVendorKey();
     void registryKeyRefusesControlChar();
     void registryKeyRefusesSeparatorTricks();
+    void registryKeyRefusesBrickCriticalDescendants();
 
     // -- Registry values --
     void registryValueRefusesEmptyNameAndSubtree();
@@ -123,6 +124,30 @@ void TestLeftoverCleanupGuard::registryKeyRefusesSeparatorTricks() {
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\/SYSTEM"))));
     // A shared root reached via a doubled separator is still the exact shared root.
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\\\"))));
+}
+
+void TestLeftoverCleanupGuard::registryKeyRefusesBrickCriticalDescendants() {
+    // Launch/logon-critical DESCENDANTS that live under keys blocked only exact-at-parent: deleting
+    // these bricks .exe launching or breaks login, so they are prefix-blocked (not just the
+    // parent).
+    QVERIFY(
+        blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\exefile\\shell\\open\\command"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(
+        QStringLiteral("HKLM\\SOFTWARE\\Classes\\exefile\\shell\\open\\command"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\lnkfile\\shell\\open"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral(
+        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\S-1-5-21-1-2-3"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral(
+        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SvcHost\\netsvcs"))));
+    // File-extension class registrations: the exact key unregisters the whole association.
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.lnk"))));
+    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Classes\\.exe"))));
+    // A NON-launch descendant of a file class (e.g. context-menu-handler / icon subkeys) stays a
+    // cleanable app leftover -- the prefix block is scoped to the shell-verb tree only.
+    QVERIFY(!blocked(
+        registryKeyDeletionRefusal(QStringLiteral("HKCR\\exefile\\shellex\\ContextMenuHandlers"))));
+    QVERIFY(!blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe\\OpenWithProgids"))));
 }
 
 void TestLeftoverCleanupGuard::registryValueRefusesEmptyNameAndSubtree() {

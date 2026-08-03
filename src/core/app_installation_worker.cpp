@@ -8,6 +8,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
+#include "sak/nuget_version_range.h"
 #include "sak/package_matcher.h"
 
 #include <QMetaObject>
@@ -16,7 +17,6 @@
 #include <QtGlobal>
 #include <QThread>
 #include <QTimer>
-#include <QVersionNumber>
 
 namespace sak {
 
@@ -26,12 +26,15 @@ constexpr size_t kSelectedJobReserveDivisor = 2;
 
 namespace {
 
-bool isVersionNewer(const QString& version, const QVersionNumber& requested) {
-    if (version.isEmpty()) {
-        return false;
-    }
-    QVersionNumber system_ver = QVersionNumber::fromString(version);
-    return !system_ver.isNull() && system_ver >= requested;
+// SemVer-aware "installed satisfies requested". QVersionNumber ignores the
+// prerelease tag, so it would treat an installed "1.0.0-beta" as >= a requested
+// stable "1.0.0" and WRONGLY skip the install. NuGetVersion honors prerelease
+// precedence (1.0.0-beta < 1.0.0), so a prerelease never satisfies a stable
+// request. An unparseable installed version is not treated as newer (fail-open
+// would mean silently skipping a needed install).
+bool isVersionNewer(const QString& version, const NuGetVersion& requested) {
+    const auto installed = NuGetVersion::parse(version);
+    return installed.has_value() && installed->compare(requested) >= 0;
 }
 
 ChocolateyManager::InstallConfig makeInstallConfig(const MigrationJob& job) {
@@ -460,15 +463,15 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
                                                     QString& installed_version) {
     installed_version.clear();
 
-    QVersionNumber requested = QVersionNumber::fromString(job.version);
-    if (requested.isNull()) {
+    const auto requested = NuGetVersion::parse(job.version);
+    if (!requested.has_value()) {
         return false;
     }
 
     AppScanner scanner;
     for (const auto& app : scanner.scanRegistry()) {
         if (app.name.contains(job.appName, Qt::CaseInsensitive) &&
-            isVersionNewer(app.version, requested)) {
+            isVersionNewer(app.version, *requested)) {
             installed_version = app.version;
             return true;
         }
@@ -477,7 +480,7 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
     for (const auto& app : AppScanner::scanAppX()) {
         bool name_match = app.name.contains(job.appName, Qt::CaseInsensitive) ||
                           app.name.contains(job.packageId, Qt::CaseInsensitive);
-        if (name_match && isVersionNewer(app.version, requested)) {
+        if (name_match && isVersionNewer(app.version, *requested)) {
             installed_version = app.version;
             return true;
         }

@@ -6,6 +6,7 @@
 
 #include "sak/app_scanner.h"
 
+#include <QDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -23,6 +24,9 @@ private Q_SLOTS:
     void appInfo_fieldAssignment();
     void scanRegistry_returnsInstalledPrograms();
     void scanAll_returnsNonEmpty();
+
+    // Anti-hijack: AppX scan must invoke PowerShell by absolute System32 path.
+    void composePowerShellPath_absoluteUnderSystemRoot();
 };
 
 void TestAppScanner::construction_default() {
@@ -108,6 +112,17 @@ void TestAppScanner::scanAll_returnsNonEmpty() {
     const auto programs = scanner.scanAll();
 
     QVERIFY2(!programs.empty(), "scanAll should find installed programs on any Windows system");
+}
+
+void TestAppScanner::composePowerShellPath_absoluteUnderSystemRoot() {
+    // Empty SystemRoot -> fail closed (never run a bare powershell.exe).
+    QVERIFY(AppScanner::composePowerShellPath(QString()).isEmpty());
+
+    const QString path = AppScanner::composePowerShellPath(QStringLiteral("C:\\Windows"));
+    QVERIFY(!path.isEmpty());
+    QVERIFY(path.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")));
+    // Must be an absolute, rooted path -- not a bare executable name.
+    QVERIFY(QDir::isAbsolutePath(path));
 }
 
 QTEST_MAIN(TestAppScanner)
