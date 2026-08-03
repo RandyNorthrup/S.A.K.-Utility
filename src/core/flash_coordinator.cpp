@@ -477,9 +477,46 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
 void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
                                            const sak::FlashResult& result,
                                            const QString& statusMessage) {
+    // Re-online every drive that was successfully flashed+verified. The unmount
+    // step set a PERSISTENT OFFLINE attribute (so Windows could not auto-mount and
+    // corrupt the write); it survives the flash, so completed media would be left
+    // permanently offline unless we clear it here.
+    reonlineDrives(result.successfulDrives);
     Q_EMIT stateChanged(state, statusMessage);
     Q_EMIT flashCompleted(result);
     cleanupWorkers();
+}
+
+void FlashCoordinator::reonlineDrives(const QStringList& drivePaths) {
+    if (drivePaths.isEmpty()) {
+        return;
+    }
+    DriveUnmounter unmounter;
+    for (const QString& devicePath : drivePaths) {
+        const int driveNumber = parsePhysicalDriveNumber(devicePath);
+        if (driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
+            sak::logWarning(QString("Cannot re-online %1: unparseable drive number")
+                                .arg(devicePath)
+                                .toStdString());
+            continue;
+        }
+        if (!unmounter.allowAutoMount(driveNumber)) {
+            sak::logWarning(QString("Failed to bring drive %1 back online: %2")
+                                .arg(devicePath, unmounter.lastError())
+                                .toStdString());
+        }
+    }
+}
+
+int FlashCoordinator::parsePhysicalDriveNumber(const QString& devicePath) {
+    const QString prefix = QStringLiteral("PhysicalDrive");
+    const int idx = devicePath.lastIndexOf(prefix);
+    if (idx < 0) {
+        return -1;
+    }
+    bool ok = false;
+    const int number = devicePath.mid(idx + prefix.size()).toInt(&ok);
+    return ok ? number : -1;
 }
 
 QString FlashCoordinator::firstDuplicateTarget(const QStringList& targetDrives) {
@@ -571,16 +608,8 @@ bool FlashCoordinator::passesOsDiskGuard(const QString& devicePath) {
     // Parse the physical drive number and refuse if it backs the system volume OR
     // if the OS-disk identity cannot be established -- no fallback to "assume safe",
     // which would allow a write when protection is unproven.
-    QString driveNumStr = devicePath;
-    const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
-    const int prefixIdx = driveNumStr.lastIndexOf(physicalDrivePrefix);
-    bool numOk = false;
-    int driveNumber = -1;
-    if (prefixIdx >= 0) {
-        driveNumStr.remove(0, prefixIdx + physicalDrivePrefix.size());
-        driveNumber = driveNumStr.toInt(&numOk);
-    }
-    if (!numOk) {
+    const int driveNumber = parsePhysicalDriveNumber(devicePath);
+    if (driveNumber < 0) {
         // Cannot parse the physical-drive number -> cannot run the OS-disk guard.
         sak::logError(QString("Refusing raw write to %1: cannot parse a PhysicalDrive number "
                               "for the OS-disk safety check")
@@ -617,14 +646,9 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
         sak::logInfo(QString("Unmounting volumes on %1").arg(devicePath).toStdString());
 
         // Extract drive number from path (e.g., "\\.\PhysicalDrive1" -> 1)
-        QString driveNumStr = devicePath;
-        const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
-        driveNumStr.remove(
-            0, driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
-        bool ok = false;
-        int driveNumber = driveNumStr.toInt(&ok);
+        const int driveNumber = parsePhysicalDriveNumber(devicePath);
 
-        if (!ok || driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
+        if (driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
             sak::logError(QString("Invalid device path format or drive number out of range: %1")
                               .arg(devicePath)
                               .toStdString());

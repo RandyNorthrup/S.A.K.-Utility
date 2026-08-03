@@ -150,6 +150,11 @@ public:
     ///        rejected before flashing. Pure; unit-testable.
     [[nodiscard]] static QString firstDuplicateTarget(const QStringList& targetDrives);
 
+    /// @brief Parse the PhysicalDrive number from a device path such as
+    ///        "\\.\PhysicalDriveN". Returns the number (>=0), or -1 when the path
+    ///        contains no parseable PhysicalDrive index. Pure; unit-testable.
+    [[nodiscard]] static int parsePhysicalDriveNumber(const QString& devicePath);
+
     /**
      * @brief Cancel ongoing flash operation
      */
@@ -261,6 +266,11 @@ private:
     void emitTerminalOutcome(sak::FlashState state,
                              const sak::FlashResult& result,
                              const QString& statusMessage);
+    /// Clear the persistent OFFLINE attribute on every successfully flashed+verified
+    /// drive so completed media is not left permanently offline (the attribute was
+    /// set at unmount time and survives the flash). Best-effort per drive; MUST be
+    /// called with m_mutex released (it opens the physical drive).
+    void reonlineDrives(const QStringList& drivePaths);
     void cleanupWorkers();
     /// Wire one worker's progress/completion/error/abort signals to the coordinator.
     void connectWorkerSignals(FlashWorker* worker);

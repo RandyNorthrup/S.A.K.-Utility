@@ -705,6 +705,14 @@ bool nativePathExists(const QString& root, const char* rel) {
     return attrs != INVALID_FILE_ATTRIBUTES;
 }
 
+// Windows boot-loader files. On a split-boot system the ESP that boots the OS
+// lives on a SEPARATE disk from the \Windows tree, so these appear with no Windows
+// dir; a disk carrying them is boot-critical and must not be erased.
+bool hasBootManagerIndicators(const QString& root) {
+    return nativePathExists(root, "EFI/Microsoft/Boot/bootmgfw.efi") ||
+           nativePathExists(root, "bootmgr") || nativePathExists(root, "BOOTNXT");
+}
+
 }  // namespace
 
 bool DriveScanner::hasWindowsIndicators(const QString& root) {
@@ -734,8 +742,20 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     // partition without a drive letter is still classified as a system drive.
     const QStringList roots = getVolumeRootsForDrive(driveNumber);
 
+    if (std::any_of(roots.begin(), roots.end(), [](const QString& root) {
+            return hasWindowsIndicators(root);
+        })) {
+        return true;
+    }
+    // A FIXED disk carrying the Windows boot loader (e.g. a split-boot ESP whose
+    // \Windows lives on another disk) IS the boot disk -- protect it from erasure.
+    // Removable media carrying boot files (a bootable USB the user wants to
+    // re-flash) is NOT treated as system, so it stays a valid flash target.
+    if (isDriveRemovable(driveNumber)) {
+        return false;
+    }
     return std::any_of(roots.begin(), roots.end(), [](const QString& root) {
-        return hasWindowsIndicators(root);
+        return hasBootManagerIndicators(root);
     });
 }
 

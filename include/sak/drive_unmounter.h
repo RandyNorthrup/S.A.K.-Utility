@@ -140,9 +140,16 @@ private:
     /**
      * @brief Close all handles to a drive
      * @param driveNumber Physical drive number
-     * @return true if successful
+     * @return true if the Restart Manager handle-close pass completed; false if it
+     *         could not run/complete. ADVISORY ONLY -- the authoritative guard
+     *         against concurrent access is the persistent OFFLINE attribute plus
+     *         the exclusive volume locks, so unmountDrive does not fail on false.
      */
     bool closeAllHandles(int driveNumber);
+
+    /// @brief Run the advisory closeAllHandles() pass and log a warning (not fatal)
+    ///        if it was incomplete. Keeps unmountDrive within complexity limits.
+    void advisoryCloseHandles(int driveNumber);
 
     /**
      * @brief Find all volume GUID paths belonging to a physical drive
@@ -155,8 +162,19 @@ private:
      * @brief Use Restart Manager to force-close open handles on volumes
      * @param dwSession Active Restart Manager session handle
      * @param mountPoints Volume GUID paths to process
+     * @return true if the Restart Manager pass completed (nothing left holding a
+     *         handle, or handles were force-closed); false if it could not run or
+     *         complete. Advisory only -- see closeAllHandles.
      */
-    void shutdownHandlesViaRestartManager(DWORD dwSession, const QStringList& mountPoints);
+    bool shutdownHandlesViaRestartManager(DWORD dwSession, const QStringList& mountPoints);
+
+    /**
+     * @brief Delete each mount point in a double-null-terminated path-name list
+     * @param multiSz MULTI_SZ buffer from GetVolumePathNamesForVolumeNameW
+     * @param count Length of the buffer in wchar_t (bounds the walk)
+     * @return true if every mount point was deleted
+     */
+    bool deleteVolumePathNames(const wchar_t* multiSz, size_t count);
 
     QString m_lastError;                    // Last error message
     QMap<QString, HANDLE> m_lockedVolumes;  // Volume path -> handle mapping

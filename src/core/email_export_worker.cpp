@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTextStream>
 
 #include <algorithm>
@@ -176,6 +177,64 @@ void prepareMessageWriters(sak::ExportFormat format,
             return true;  // last (short) page reached cleanly
         }
     }
+}
+
+/// Depth-first collect a folder's own id plus every descendant folder id.
+void collectFolderSubtreeIds(const sak::PstFolder& folder, QVector<uint64_t>& out) {
+    out.append(folder.node_id);
+    for (const auto& child : folder.children) {
+        collectFolderSubtreeIds(child, out);
+    }
+}
+
+/// Locate a folder by node id anywhere in the hierarchy tree.
+const sak::PstFolder* findFolderById(const sak::PstFolderTree& tree, uint64_t id) {
+    for (const auto& folder : tree) {
+        if (folder.node_id == id) {
+            return &folder;
+        }
+        if (const auto* found = findFolderById(folder.children, id)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+/// Expand each requested folder id to also cover its descendant folders,
+/// preserving order and dropping duplicates. Used when recurse_subfolders is set
+/// so a folder export descends into sub-folders instead of stopping at the top.
+QVector<uint64_t> expandWithSubfolders(const sak::PstFolderTree& tree,
+                                       const QVector<uint64_t>& roots) {
+    QVector<uint64_t> expanded;
+    QSet<uint64_t> seen;
+    for (uint64_t root : roots) {
+        QVector<uint64_t> subtree;
+        if (const auto* folder = findFolderById(tree, root)) {
+            collectFolderSubtreeIds(*folder, subtree);
+        } else {
+            subtree.append(root);
+        }
+        for (uint64_t id : subtree) {
+            if (!seen.contains(id)) {
+                seen.insert(id);
+                expanded.append(id);
+            }
+        }
+    }
+    return expanded;
+}
+
+/// Clear the RFC 5322 addressing/metadata fields that EmlWriter renders as
+/// headers, so an export with eml_include_headers=false yields a body-only .eml.
+void clearEmlHeaderFields(sak::PstItemDetail& item) {
+    item.sender_name.clear();
+    item.sender_email.clear();
+    item.display_to.clear();
+    item.display_cc.clear();
+    item.subject.clear();
+    item.message_id.clear();
+    item.in_reply_to.clear();
+    item.date = QDateTime();
 }
 
 /// Human-readable name for an attachment, falling back to an index-based label.
@@ -462,6 +521,11 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
     if (folders.isEmpty() && config.folder_id != 0) {
         folders.append(config.folder_id);
     }
+    // Honor recurse_subfolders: fold each requested folder's descendant folders
+    // into the pass so sub-folder items are exported, not silently skipped.
+    if (config.recurse_subfolders && !folders.isEmpty()) {
+        folders = expandWithSubfolders(parser->folderTree(), folders);
+    }
     for (uint64_t folder : folders) {
         if (!pageFolderItemIds(parser, folder, item_ids)) {
             result.errors.append(
@@ -547,7 +611,11 @@ bool EmailExportWorker::writePstItemFormat(
     int index) {
     switch (context.config.format) {
     case sak::ExportFormat::Eml:
-        return writeEml(*context.writers.eml, detail, attachment_data, context.result.total_bytes);
+        return writeEml(*context.writers.eml,
+                        detail,
+                        attachment_data,
+                        context.result.total_bytes,
+                        context.config.eml_include_headers);
     case sak::ExportFormat::Html:
         return writeHtml(
             *context.writers.html, detail, attachment_data, context.result.total_bytes);
@@ -556,14 +624,24 @@ bool EmailExportWorker::writePstItemFormat(
                                context.config.output_path,
                                index,
                                attachment_data,
-                               context.config.save_attachments_with_messages},
+                               context.config.save_attachments_with_messages,
+                               context.config.flatten_attachments},
                               context.result.total_bytes);
     case sak::ExportFormat::Pdf:
-        return writePdf(*context.writers.pdf, detail, attachment_data, context.result.total_bytes);
+        return writePdf(*context.writers.pdf,
+                        detail,
+                        attachment_data,
+                        context.result.total_bytes,
+                        context.config.flatten_attachments);
     case sak::ExportFormat::Vcf:
         return writeVcf(detail, context.config.output_path, index);
     case sak::ExportFormat::PlainTextNotes:
-        return writePlainText({detail, context.config.output_path, index, attachment_data, false},
+        return writePlainText({detail,
+                               context.config.output_path,
+                               index,
+                               attachment_data,
+                               false,
+                               context.config.flatten_attachments},
                               context.result.total_bytes);
     case sak::ExportFormat::Attachments:
         return exportAttachments(
@@ -649,7 +727,7 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
     QString csv_name = csvFilename(config.format);
     QString csv_path = config.output_path + QLatin1Char('/') + csv_name;
 
-    if (writeCsv(items, csv_path, columns, config.csv_delimiter)) {
+    if (writeCsv(items, csv_path, columns, config.csv_delimiter, config.csv_include_header)) {
         result.items_exported += items.size();
         QFileInfo fi(csv_path);
         result.total_bytes = fi.size();
@@ -741,16 +819,26 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
             return writeHtml(
                 *context.writers.html, item, attachment_data, context.result.total_bytes);
         case sak::ExportFormat::Text:
-            return writePlainText(
-                {item, context.config.output_path, loop_index, attachment_data, false},
-                context.result.total_bytes);
+            return writePlainText({item,
+                                   context.config.output_path,
+                                   loop_index,
+                                   attachment_data,
+                                   false,
+                                   context.config.flatten_attachments},
+                                  context.result.total_bytes);
         case sak::ExportFormat::Pdf:
-            return writePdf(
-                *context.writers.pdf, item, attachment_data, context.result.total_bytes);
+            return writePdf(*context.writers.pdf,
+                            item,
+                            attachment_data,
+                            context.result.total_bytes,
+                            context.config.flatten_attachments);
         case sak::ExportFormat::Eml:
         default:
-            return writeEml(
-                *context.writers.eml, item, attachment_data, context.result.total_bytes);
+            return writeEml(*context.writers.eml,
+                            item,
+                            attachment_data,
+                            context.result.total_bytes,
+                            context.config.eml_include_headers);
         }
     }();
 
@@ -773,9 +861,20 @@ void EmailExportWorker::cancel() {
 bool EmailExportWorker::writeEml(sak::EmlWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                 qint64& bytes_written) {
+                                 qint64& bytes_written,
+                                 bool include_headers) {
     const qint64 before = writer.totalBytesWritten();
-    auto write_result = writer.writeMessage(item, attachment_data, {});
+    // When eml_include_headers is false, strip the addressing fields on a local
+    // copy so EmlWriter emits a body-only .eml (it always renders whatever headers
+    // the item carries, and it is not ours to modify).
+    sak::PstItemDetail stripped;
+    const sak::PstItemDetail* source = &item;
+    if (!include_headers) {
+        stripped = item;
+        clearEmlHeaderFields(stripped);
+        source = &stripped;
+    }
+    auto write_result = writer.writeMessage(*source, attachment_data, {});
     if (!write_result.has_value()) {
         return false;
     }
@@ -799,14 +898,16 @@ bool EmailExportWorker::writeHtml(sak::HtmlEmailWriter& writer,
 bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                 qint64& bytes_written) {
+                                 qint64& bytes_written,
+                                 bool flatten_attachments) {
     const qint64 before = writer.totalBytesWritten();
     auto write_result = writer.writeMessage(item, attachment_data, {});
     if (!write_result.has_value()) {
         return false;
     }
     bytes_written += writer.totalBytesWritten() - before;
-    if (!saveSidecarAttachments(attachment_data, write_result.value(), bytes_written)) {
+    if (!saveSidecarAttachments(
+            attachment_data, write_result.value(), bytes_written, flatten_attachments)) {
         return attachment_data.isEmpty();
     }
     return true;
@@ -949,7 +1050,8 @@ QByteArray EmailExportWorker::buildIcsContent(const QVector<sak::PstItemDetail>&
 bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
                                  const QString& output_path,
                                  const QStringList& columns,
-                                 QChar delimiter) {
+                                 QChar delimiter,
+                                 bool include_header) {
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -959,14 +1061,16 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
     stream.setEncoding(QStringConverter::Utf8);
     stream.setGenerateByteOrderMark(true);
 
-    // Write header row
-    for (int col = 0; col < columns.size(); ++col) {
-        if (col > 0) {
-            stream << delimiter;
+    // Write header row (omitted when csv_include_header is false).
+    if (include_header) {
+        for (int col = 0; col < columns.size(); ++col) {
+            if (col > 0) {
+                stream << delimiter;
+            }
+            stream << csvEscape(columns[col], delimiter);
         }
-        stream << csvEscape(columns[col], delimiter);
+        stream << "\r\n";
     }
-    stream << "\r\n";
 
     // Write data rows
     for (const auto& item : items) {
@@ -1124,7 +1228,8 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     QFileInfo info(full_path);
     bytes_written += info.size();
     if (request.save_attachments &&
-        !saveSidecarAttachments(request.attachment_data, full_path, bytes_written)) {
+        !saveSidecarAttachments(
+            request.attachment_data, full_path, bytes_written, request.flatten_attachments)) {
         return false;
     }
     return true;
@@ -1204,14 +1309,20 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectMboxAttachment
 bool EmailExportWorker::saveSidecarAttachments(
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& exported_file_path,
-    qint64& bytes_written) {
+    qint64& bytes_written,
+    bool flatten_attachments) {
     if (attachment_data.isEmpty()) {
         return true;
     }
 
+    // flatten_attachments: pool every message's attachments in one shared folder;
+    // otherwise keep a per-message folder next to the exported file.
     const QFileInfo exported_info(exported_file_path);
-    const QString attach_dir = exported_info.absolutePath() + QLatin1Char('/') +
-                               exported_info.completeBaseName() + QStringLiteral("_attachments");
+    const QString attach_dir = flatten_attachments
+                                   ? exported_info.absolutePath() + QStringLiteral("/attachments")
+                                   : exported_info.absolutePath() + QLatin1Char('/') +
+                                         exported_info.completeBaseName() +
+                                         QStringLiteral("_attachments");
     QDir dir;
     if (!dir.mkpath(attach_dir)) {
         return false;
@@ -1248,6 +1359,22 @@ bool EmailExportWorker::exportAttachments(PstParser* parser,
         return true;
     }
 
+    // flatten_attachments: extract straight into output_dir; otherwise into a
+    // per-message subfolder so each message's attachments stay grouped.
+    QString target_dir = output_dir;
+    if (!config.flatten_attachments) {
+        QString sub = sanitizeFilename(item.subject, kMaxFilenameLength);
+        if (sub.isEmpty()) {
+            sub = QStringLiteral("message_%1").arg(item.node_id);
+        }
+        target_dir = output_dir + QLatin1Char('/') + sub;
+        if (!QDir().mkpath(target_dir)) {
+            result.errors.append(QStringLiteral("Item NID %1: failed to create attachment folder")
+                                     .arg(item.node_id));
+            return false;
+        }
+    }
+
     int eligible = 0;
     int succeeded = 0;
     QStringList failed_names;
@@ -1257,7 +1384,7 @@ bool EmailExportWorker::exportAttachments(PstParser* parser,
             continue;
         }
         ++eligible;
-        if (extractAttachment(parser, item.node_id, att, output_dir)) {
+        if (extractAttachment(parser, item.node_id, att, target_dir)) {
             ++succeeded;
         } else {
             failed_names.append(attachmentDisplayName(att, att_idx));

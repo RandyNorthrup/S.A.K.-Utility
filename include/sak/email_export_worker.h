@@ -74,6 +74,7 @@ private:
         int index{0};
         const QVector<QPair<QString, QByteArray>>& attachment_data;
         bool save_attachments{false};
+        bool flatten_attachments{true};
     };
 
     /// Collected attachment payloads plus how many eligible attachments could not
@@ -89,7 +90,8 @@ private:
     [[nodiscard]] bool writeEml(sak::EmlWriter& writer,
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                qint64& bytes_written);
+                                qint64& bytes_written,
+                                bool include_headers);
     [[nodiscard]] bool writeHtml(sak::HtmlEmailWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
@@ -97,7 +99,8 @@ private:
     [[nodiscard]] bool writePdf(sak::PdfEmailWriter& writer,
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                qint64& bytes_written);
+                                qint64& bytes_written,
+                                bool flatten_attachments);
     [[nodiscard]] bool writeVcf(const sak::PstItemDetail& contact,
                                 const QString& output_dir,
                                 int index);
@@ -106,7 +109,8 @@ private:
     [[nodiscard]] bool writeCsv(const QVector<sak::PstItemDetail>& items,
                                 const QString& output_path,
                                 const QStringList& columns,
-                                QChar delimiter);
+                                QChar delimiter,
+                                bool include_header);
     [[nodiscard]] bool extractAttachment(PstParser* parser,
                                          uint64_t msg_nid,
                                          const sak::PstAttachmentInfo& att,
@@ -144,7 +148,8 @@ private:
     [[nodiscard]] bool saveSidecarAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& exported_file_path,
-        qint64& bytes_written);
+        qint64& bytes_written,
+        bool flatten_attachments);
 
     // Early-failure helper: emits an exportComplete result carrying a single error.
     void emitEarlyFailure(const QString& error_message);

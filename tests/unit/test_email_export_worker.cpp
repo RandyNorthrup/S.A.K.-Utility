@@ -48,6 +48,9 @@ private Q_SLOTS:
 
     // -- B7-25/27: real MBOX export with a readable attachment -----------
     void mboxExportWithAttachmentSucceeds();
+
+    // -- eml_include_headers wiring --------------------------------------
+    void emlExportRespectsIncludeHeaders();
 };
 
 // ============================================================================
@@ -294,6 +297,72 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     // One .eml file was written.
     const QStringList eml = QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files);
     QCOMPARE(eml.size(), 1);
+    parser.close();
+}
+
+// eml_include_headers must take effect: with it disabled the exported .eml is
+// body-only (no From/Subject addressing headers); with it enabled those headers
+// are present. Exercises the worker's writeEml header-strip wiring end to end via
+// the MBOX->EML path.
+void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Subject: SecretSubjectLine\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Plain body content.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    const auto read_single_eml = [](const QString& dir) -> QByteArray {
+        const QStringList eml = QDir(dir).entryList({QStringLiteral("*.eml")}, QDir::Files);
+        if (eml.size() != 1) {
+            return {};
+        }
+        QFile file(dir + QLatin1Char('/') + eml.first());
+        if (!file.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        return file.readAll();
+    };
+
+    // Headers omitted.
+    QTemporaryDir off_dir;
+    QVERIFY(off_dir.isValid());
+    sak::EmailExportConfig off_config;
+    off_config.format = sak::ExportFormat::Eml;
+    off_config.output_path = off_dir.path();
+    off_config.eml_include_headers = false;
+    EmailExportWorker off_worker;
+    off_worker.exportMboxItems(&parser, off_config);
+    const QByteArray off_eml = read_single_eml(off_dir.path());
+    QVERIFY(!off_eml.isEmpty());
+    QVERIFY(!off_eml.contains("Subject: SecretSubjectLine"));
+    QVERIFY(!off_eml.contains("From: "));
+    QVERIFY(off_eml.contains("Plain body content."));
+
+    // Headers included (default).
+    QTemporaryDir on_dir;
+    QVERIFY(on_dir.isValid());
+    sak::EmailExportConfig on_config;
+    on_config.format = sak::ExportFormat::Eml;
+    on_config.output_path = on_dir.path();
+    on_config.eml_include_headers = true;
+    EmailExportWorker on_worker;
+    on_worker.exportMboxItems(&parser, on_config);
+    const QByteArray on_eml = read_single_eml(on_dir.path());
+    QVERIFY(!on_eml.isEmpty());
+    QVERIFY(on_eml.contains("Subject: SecretSubjectLine"));
+
     parser.close();
 }
 

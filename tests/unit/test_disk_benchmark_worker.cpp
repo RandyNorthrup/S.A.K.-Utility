@@ -36,6 +36,10 @@ private Q_SLOTS:
     // Codex-2 disk:564: a too-small test-file size must fail closed before any
     // offset arithmetic (max_offset underflows at 0).
     void execute_undersizedTestFile_failsClosed();
+    // Codex-2 diagnostic_types:254: configured block sizes are wired into the
+    // I/O sizing via effectiveBlockBytes -- validate/clamp/align, fail closed.
+    void effectiveBlockBytes_failsClosedOnNonpositive();
+    void effectiveBlockBytes_clampsAndAligns();
 };
 
 void TestDiskBenchmarkWorker::construction_default() {
@@ -140,6 +144,29 @@ void TestDiskBenchmarkWorker::execute_undersizedTestFile_failsClosed() {
     const auto result = worker.runExecute();
     QVERIFY(!result.has_value());
     QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// A nonpositive configured block size is invalid: effectiveBlockBytes must
+// return 0 (fail closed) so execute() aborts rather than running a benchmark
+// with a degenerate block size.
+void TestDiskBenchmarkWorker::effectiveBlockBytes_failsClosedOnNonpositive() {
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(0, 4, 64), static_cast<size_t>(0));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(-4, 4, 64), static_cast<size_t>(0));
+}
+
+// In-range values convert KiB->bytes; out-of-range values clamp to [min,max];
+// non-sector-multiple sizes round up to the 4096-byte sector boundary so direct
+// I/O (FILE_FLAG_NO_BUFFERING) stays aligned.
+void TestDiskBenchmarkWorker::effectiveBlockBytes_clampsAndAligns() {
+    // Config defaults map to their expected byte sizes.
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1024, 4, 8192),
+             static_cast<size_t>(1024 * 1024));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4, 4, 64), static_cast<size_t>(4096));
+    // Above max clamps to max (64 KiB); below min clamps to min (4 KiB).
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4096, 4, 64), static_cast<size_t>(64 * 1024));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1, 4, 64), static_cast<size_t>(4096));
+    // A non-sector-aligned request (5 KiB = 5120 B) rounds up to 8192.
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(5, 4, 64), static_cast<size_t>(8192));
 }
 
 QTEST_MAIN(TestDiskBenchmarkWorker)

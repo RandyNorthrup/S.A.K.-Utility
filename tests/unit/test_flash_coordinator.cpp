@@ -37,6 +37,7 @@ private Q_SLOTS:
     void testStartFlashEmptyDrives();
     void testStartFlashRejectsDuplicateTargets();
     void testFirstDuplicateTargetSeam();
+    void testParsePhysicalDriveNumberSeam();
     void testCancelWhenIdle();
 
 private:
@@ -152,6 +153,23 @@ void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
     QVERIFY(!FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive4"),
                                                      QStringLiteral("  \\\\.\\PHYSICALDRIVE4 ")})
                  .isEmpty());
+}
+
+void TestFlashCoordinator::testParsePhysicalDriveNumberSeam() {
+    // Well-formed device paths -> the numeric index.
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("\\\\.\\PhysicalDrive0")),
+             0);
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("\\\\.\\PhysicalDrive7")),
+             7);
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("\\\\.\\PhysicalDrive42")),
+             42);
+
+    // No parseable index -> -1 (the re-online / guard paths then fail closed).
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("\\\\.\\PhysicalDrive")),
+             -1);
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("\\\\.\\C:")), -1);
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QString()), -1);
+    QCOMPARE(FlashCoordinator::parsePhysicalDriveNumber(QStringLiteral("PhysicalDriveX")), -1);
 }
 
 void TestFlashCoordinator::testCancelWhenIdle() {

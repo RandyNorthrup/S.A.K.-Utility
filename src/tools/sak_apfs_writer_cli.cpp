@@ -248,8 +248,11 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
 
 // True when the --output-json path would truncate-write onto the operation's
 // target device/image or its --output-image, which would clobber the filesystem
-// result with JSON. Compares both literally (raw device paths like
-// \\.\PhysicalDriveN) and canonicalized (file paths, case-insensitive).
+// result with JSON. Compares literally (raw device paths like \\.\PhysicalDriveN)
+// and by resolved path: canonicalFilePath() FOLLOWS symlinks for an existing
+// path, so a symlinked --output-json aimed at the target is caught. (Hardlink
+// aliases -- two real names for one file -- cannot be told apart by path and
+// remain an inherent limitation of a not-yet-created output file.)
 bool outputJsonAliasesTarget(const QString& outputJson,
                              const QString& targetPath,
                              const QString& outputImagePath) {
@@ -257,7 +260,9 @@ bool outputJsonAliasesTarget(const QString& outputJson,
         return false;
     }
     const auto canon = [](const QString& p) {
-        return QDir::cleanPath(QFileInfo(p).absoluteFilePath());
+        const QFileInfo fi(p);
+        const QString real = fi.canonicalFilePath();  // resolves symlinks; empty if absent
+        return real.isEmpty() ? QDir::cleanPath(fi.absoluteFilePath()) : real;
     };
     const QString jsonCanon = canon(outputJson);
     const auto aliases = [&](const QString& other) {

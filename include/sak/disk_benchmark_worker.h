@@ -19,7 +19,8 @@ namespace sak {
 ///
 /// Uses direct I/O (FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH) to
 /// bypass OS caching for accurate measurements. Tests sequential read/write
-/// with 1 MB blocks and random 4K at queue depths 1 and 32.
+/// and random read/write at queue depths 1 and 32, using the configured block
+/// sizes (default 1 MB sequential / 4K random; see DiskBenchmarkConfig).
 ///
 /// The test file is created at the start and cleaned up on completion or
 /// cancellation.
@@ -64,6 +65,18 @@ public:
     [[nodiscard]] static QString makeUniqueBenchmarkFileName(quint32 pid,
                                                              qint64 msecs,
                                                              quint64 counter);
+
+    /// @brief Convert a configured block size (KiB) into a validated,
+    ///        sector-aligned byte count for direct I/O.
+    /// @param block_kb Requested block size in KiB (from DiskBenchmarkConfig).
+    /// @param min_kb Smallest accepted block size in KiB.
+    /// @param max_kb Largest accepted block size in KiB.
+    /// @return Effective block size in bytes, or 0 when @p block_kb is
+    ///         nonpositive (fail closed). In-range values are clamped to
+    ///         [min_kb, max_kb] and rounded up to the sector boundary so every
+    ///         FILE_FLAG_NO_BUFFERING transfer stays aligned.
+    /// @note Pure + static for unit testing.
+    [[nodiscard]] static size_t effectiveBlockBytes(int block_kb, int min_kb, int max_kb);
 
 Q_SIGNALS:
     /// @brief Emitted when the benchmark suite completes
@@ -124,6 +137,12 @@ private:
     auto runRandomQd1Benchmarks() -> std::expected<void, sak::error_code>;
     auto runRandomQd32Benchmarks() -> std::expected<void, sak::error_code>;
     auto continueOrCancelBenchmark() -> std::expected<void, sak::error_code>;
+
+    /// @brief Resolve the configured block sizes into m_seq_block_bytes /
+    ///        m_rand_block_bytes, failing closed on a nonpositive size.
+    /// @return Success, or invalid_argument when a configured block size is
+    ///         nonpositive (effectiveBlockBytes returned 0).
+    auto resolveBlockSizes() -> std::expected<void, sak::error_code>;
 
     /// Accumulated I/O stats for random benchmark loops
     struct RandomIoStats {
@@ -194,6 +213,15 @@ private:
 
     DiskBenchmarkConfig m_config;
     DiskBenchmarkResult m_result;
+
+    /// @brief Effective, validated I/O block sizes in bytes for this run.
+    ///        Set from m_config by execute() (via effectiveBlockBytes) before any
+    ///        benchmark phase runs; the defaults mirror the config defaults so a
+    ///        member is never read uninitialized.
+    size_t m_seq_block_bytes{static_cast<size_t>(kDiskBenchmarkSequentialBlockSizeKb) *
+                             static_cast<size_t>(kBytesPerKB)};
+    size_t m_rand_block_bytes{static_cast<size_t>(kDiskBenchmarkRandomBlockSizeKb) *
+                              static_cast<size_t>(kBytesPerKB)};
 
     /// @brief Path exclusively claimed by createTestFile for this run. Empty
     ///        until a file is claimed; every read/write/cleanup uses it so the

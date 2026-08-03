@@ -37,8 +37,12 @@ namespace {
 
 /// Alignment required for FILE_FLAG_NO_BUFFERING (sector size)
 constexpr size_t kSectorAlignment = 4096;
-constexpr size_t kSequentialBlockSize = sak::kBytesPerMB;  // 1 MB
-constexpr size_t kRandomBlockSize = 4096;                  // 4 KB
+// Sane bounds for the configurable I/O block sizes (KiB). effectiveBlockBytes()
+// clamps DiskBenchmarkConfig values into these ranges and fails closed below 1.
+constexpr int kSeqBlockMinKb = 4;     // 4 KiB (one sector)
+constexpr int kSeqBlockMaxKb = 8192;  // 8 MiB
+constexpr int kRandBlockMinKb = 4;    // 4 KiB (one sector)
+constexpr int kRandBlockMaxKb = 64;   // 64 KiB
 constexpr int kDiskBenchmarkStepTotal = 8;
 constexpr int kDiskProgressSequentialRead = 1;
 constexpr int kDiskProgressSequentialWrite = 2;
@@ -58,8 +62,9 @@ constexpr int kBenchmarkMillisecondsPerSecond = 1000;
 constexpr size_t kLatencySampleReserve = 100'000;
 constexpr double kP99Percentile = 0.99;
 // Smallest sane test-file size. Below this the random-I/O offset math
-// (file_size / kRandomBlockSize - 1) underflows to a huge value at 0, and there
-// are too few 4K slots for a meaningful random benchmark.
+// (file_size / random_block - 1) underflows to a huge value at 0, and there are
+// too few block slots for a meaningful random benchmark. The 16 MiB floor also
+// stays well above the 64 KiB max random block so the slot count is never < 1.
 constexpr uint64_t kMinTestFileSizeMb = 16;
 constexpr double kSeqReadScoreWeight = 0.20;
 constexpr double kSeqWriteScoreWeight = 0.20;
@@ -153,9 +158,10 @@ void finalizeLatencies(std::vector<double>& latencies,
 }
 
 // Fill a freshly-created benchmark file with @p total_bytes of reproducible
-// pseudo-random data via direct, sector-aligned writes. Closes @p h on failure.
-bool fillTestFileWithRandom(HANDLE h, size_t total_bytes) {
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+// pseudo-random data via direct, sector-aligned writes of @p block_bytes. Closes
+// @p h on failure.
+bool fillTestFileWithRandom(HANDLE h, size_t total_bytes, size_t block_bytes) {
+    AlignedBuffer buf(block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return false;
@@ -215,6 +221,12 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
+    // Wire the configured block sizes into the actual I/O; fail closed on a
+    // nonpositive size before any benchmark phase runs.
+    if (auto status = resolveBlockSizes(); !status) {
+        return status;
+    }
+
     logInfo("Starting disk benchmark on {}", m_config.drive_path.toStdString());
     m_result = DiskBenchmarkResult{};
     m_result.drive_path = m_config.drive_path;
@@ -253,6 +265,23 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
             m_result.rand_4k_write_iops);
 
     Q_EMIT benchmarkComplete(m_result);
+    return {};
+}
+
+auto DiskBenchmarkWorker::resolveBlockSizes() -> std::expected<void, sak::error_code> {
+    // effectiveBlockBytes clamps to a sane range and rounds to the sector
+    // boundary; a nonpositive configured size returns 0 and we fail closed rather
+    // than run a benchmark with a degenerate block size.
+    m_seq_block_bytes =
+        effectiveBlockBytes(m_config.sequential_block_size_kb, kSeqBlockMinKb, kSeqBlockMaxKb);
+    m_rand_block_bytes =
+        effectiveBlockBytes(m_config.random_block_size_kb, kRandBlockMinKb, kRandBlockMaxKb);
+    if (m_seq_block_bytes == 0 || m_rand_block_bytes == 0) {
+        logError("Disk benchmark: nonpositive block size (seq {} KB, rand {} KB)",
+                 m_config.sequential_block_size_kb,
+                 m_config.random_block_size_kb);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
     return {};
 }
 
@@ -366,6 +395,23 @@ QString DiskBenchmarkWorker::makeUniqueBenchmarkFileName(quint32 pid,
     return QStringLiteral("sak_disk_benchmark_%1_%2_%3.tmp").arg(pid).arg(msecs).arg(counter);
 }
 
+size_t DiskBenchmarkWorker::effectiveBlockBytes(int block_kb, int min_kb, int max_kb) {
+    // Fail closed: a nonpositive configured block size is invalid, not "use the
+    // default". The caller treats 0 as an error and aborts the benchmark.
+    if (block_kb <= 0) {
+        return 0;
+    }
+    const int clamped = std::clamp(block_kb, min_kb, max_kb);
+    size_t bytes = static_cast<size_t>(clamped) * static_cast<size_t>(sak::kBytesPerKB);
+    // Direct I/O (FILE_FLAG_NO_BUFFERING) requires sector-aligned transfers; round
+    // up to the next sector so every read/write stays aligned.
+    const size_t remainder = bytes % kSectorAlignment;
+    if (remainder != 0) {
+        bytes += kSectorAlignment - remainder;
+    }
+    return bytes;
+}
+
 QString DiskBenchmarkWorker::testFilePath() const {
     return m_test_file_path;
 }
@@ -406,7 +452,7 @@ bool DiskBenchmarkWorker::createTestFile() {
     m_test_file_path = path;
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    if (!fillTestFileWithRandom(h, total_bytes)) {
+    if (!fillTestFileWithRandom(h, total_bytes, m_seq_block_bytes)) {
         return false;  // helper closed the handle
     }
 
@@ -451,7 +497,7 @@ auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_
         return std::unexpected(sak::error_code::read_error);
     }
 
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+    AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return std::unexpected(sak::error_code::out_of_memory);
@@ -519,7 +565,7 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+    AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         return std::unexpected(sak::error_code::out_of_memory);
     }
@@ -617,14 +663,14 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
         return std::unexpected(sak::error_code::read_error);
     }
 
-    AlignedBuffer buf(kRandomBlockSize * static_cast<size_t>(queue_depth), kSectorAlignment);
+    AlignedBuffer buf(m_rand_block_bytes * static_cast<size_t>(queue_depth), kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return std::unexpected(sak::error_code::out_of_memory);
     }
 
     const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
+    const uint64_t max_offset = (file_size / m_rand_block_bytes - 1) * m_rand_block_bytes;
     const int duration_ms = m_config.random_duration_sec * kBenchmarkMillisecondsPerSecond;
 
     std::vector<double> latencies;
@@ -686,8 +732,8 @@ void DiskBenchmarkWorker::processRandomReadOp(
 
     DWORD bytes_read = 0;
     if (!ReadFile(h,
-                  buf_data + queue_index * kRandomBlockSize,
-                  static_cast<DWORD>(kRandomBlockSize),
+                  buf_data + queue_index * m_rand_block_bytes,
+                  static_cast<DWORD>(m_rand_block_bytes),
                   &bytes_read,
                   nullptr)) {
         logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
@@ -708,7 +754,7 @@ double DiskBenchmarkWorker::runRandom4KReadLoop(void* file_handle,
                                                 const RandomIoLoopConfig& config,
                                                 RandomIoStats& stats) {
     std::mt19937_64 rng(kRandomReadOffsetSeed);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / m_rand_block_bytes);
 
     QElapsedTimer total_timer;
     total_timer.start();
@@ -719,7 +765,7 @@ double DiskBenchmarkWorker::runRandom4KReadLoop(void* file_handle,
         }
 
         for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+            const uint64_t offset = offset_dist(rng) * m_rand_block_bytes;
             processRandomReadOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
@@ -750,8 +796,8 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
 
     DWORD bytes_written = 0;
     if (!WriteFile(h,
-                   buf_data + queue_index * kRandomBlockSize,
-                   static_cast<DWORD>(kRandomBlockSize),
+                   buf_data + queue_index * m_rand_block_bytes,
+                   static_cast<DWORD>(m_rand_block_bytes),
                    &bytes_written,
                    nullptr)) {
         logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
@@ -772,7 +818,7 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
                                                  const RandomIoLoopConfig& config,
                                                  RandomIoStats& stats) {
     std::mt19937_64 rng(kRandomWriteOffsetSeed);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / m_rand_block_bytes);
 
     QElapsedTimer total_timer;
     total_timer.start();
@@ -783,7 +829,7 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
         }
 
         for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+            const uint64_t offset = offset_dist(rng) * m_rand_block_bytes;
             processRandomWriteOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
@@ -809,7 +855,7 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
         return std::unexpected(sak::error_code::write_error);
     }
 
-    AlignedBuffer buf(kRandomBlockSize * static_cast<size_t>(queue_depth), kSectorAlignment);
+    AlignedBuffer buf(m_rand_block_bytes * static_cast<size_t>(queue_depth), kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return std::unexpected(sak::error_code::out_of_memory);
@@ -818,7 +864,7 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
     fillRandomWriteBuffer(buf);
 
     const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
+    const uint64_t max_offset = (file_size / m_rand_block_bytes - 1) * m_rand_block_bytes;
 
     std::vector<double> latencies;
     latencies.reserve(kLatencySampleReserve);
