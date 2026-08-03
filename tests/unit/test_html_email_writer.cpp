@@ -413,6 +413,24 @@ private Q_SLOTS:
         // No HTML page was left behind claiming a complete message.
         QVERIFY(!QFile::exists(temp_dir.path() + QStringLiteral("/AttFail.html")));
     }
+
+    // A subfolder path escaping the output directory must be refused (defense-in-
+    // depth), not silently written outside the export tree.
+    void rejectsSubfolderTraversal() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::HtmlEmailWriter writer(temp_dir.path(), false, true);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("x");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("b");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QStringLiteral("../escape"));
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::path_traversal_attempt);
+    }
 };
 
 QTEST_MAIN(TestHtmlEmailWriter)

@@ -4,8 +4,10 @@
 #pragma once
 
 #include <QCheckBox>
+#include <QDateTime>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHash>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -95,8 +97,10 @@ private Q_SLOTS:
     void onOpenMicrosoftWindowsDownloadClicked();
     /** @brief Launch the Linux distribution ISO download dialog */
     void onDownloadLinuxClicked();
-    /** @brief Handle a successfully chosen image path */
-    void onImageSelected(const QString& imagePath);
+    /** @brief Handle a successfully chosen image path; returns false when the image fails
+     *         validation (missing/empty/directory/declined-unknown-format) so no selection is made
+     *         and navigation stays disabled (fail closed). */
+    bool onImageSelected(const QString& imagePath);
     /** @brief Handle a completed Windows ISO download */
     void onWindowsISODownloaded(const QString& isoPath);
 
@@ -156,8 +160,21 @@ private:
 
     /** @brief Show or hide back/next/flash buttons per current page */
     void updateNavigationButtons();
-    /** @brief Validate the selected image file format and readability */
-    void validateImageFile(const QString& filePath);
+    /** @brief Validate the selected image file: returns true only when it exists, is a regular
+     *         readable non-empty file and either has a known format or the user confirmed an
+     *         unknown format. Fail closed: an invalid image returns false. */
+    [[nodiscard]] bool validateImageFile(const QString& filePath);
+    /** @brief Re-validate the selected image just before flashing: still exists as a regular file
+     *         with the same size and modification time captured at selection (guards a source-file
+     *         swap between selection and flash). */
+    [[nodiscard]] bool selectedImageUnchanged() const;
+    /** @brief Re-verify every selected drive still maps to the same physical device (identity
+     *         signature captured at selection); guards a removable-drive swap / disk-number reuse
+     *         between selection and the confirmed write. */
+    [[nodiscard]] bool selectedDrivesIdentityUnchanged() const;
+    /** @brief Fail-closed gate run at confirmation: image and every target drive must still match
+     *         what was selected; warns and returns false otherwise. */
+    [[nodiscard]] bool confirmSelectionStillValid();
     /** @brief Ask the user to confirm before destructive write */
     void showConfirmationDialog();
     /** @brief Build a formatted list of selected drives and detect system drives */
@@ -244,7 +261,13 @@ private:
     // State
     QString m_selectedImagePath;
     qint64 m_imageSize;
+    // Modification time captured when the image was selected, so a source-file swap before flash
+    // can be detected (size alone would miss a same-size replacement).
+    QDateTime m_imageLastModified;
     QStringList m_selectedDrives;
+    // devicePath -> identity signature (name|size|busType|blockSize) captured at selection, so a
+    // removable-drive swap or disk-number reuse before the write can be detected and refused.
+    QHash<QString, QString> m_selectedDriveSignatures;
     bool m_isFlashing;
     int m_currentPage;
     LogToggleSwitch* m_logToggle{nullptr};

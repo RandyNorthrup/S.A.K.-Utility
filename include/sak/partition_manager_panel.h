@@ -218,6 +218,12 @@ private:
     void updateRefreshButtonState();
     void updateDetails();
     void queueOperation(PartitionOperationType type, const QJsonObject& payload = {});
+    // Binds an explicit, already-confirmed target instead of re-reading the live selection, so a
+    // mid-modal reselection cannot retarget a destructive operation confirmed against another row.
+    void queueOperation(PartitionOperationType type,
+                        const PartitionTarget& target,
+                        const QJsonObject& payload = {});
+    [[nodiscard]] bool queueMutationBlockedByRunningOperation();
     bool queueUnallocatedFreeSpace(const PartitionTarget& target, const PartitionDiskInfo& disk);
     bool queueAdjacentDonorFreeSpace(const PartitionTarget& target,
                                      const PartitionDiskInfo& disk,
@@ -267,6 +273,13 @@ private:
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 [[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& rootPath);
+// Test seam for the Quick Partition size logic: exposes the pure size-derivation and validity
+// helpers so the fail-closed handling of malformed custom sizes and the overflow-safe total can be
+// unit tested without driving the full modal flow.
+[[nodiscard]] QVector<uint64_t> partitionQuickSizesForOptionsForTest(const QJsonObject& options,
+                                                                     uint64_t usableBytes);
+[[nodiscard]] bool partitionQuickSizesAreValidForTest(const QVector<uint64_t>& sizes,
+                                                      uint64_t usableBytes);
 #endif
 
 }  // namespace sak

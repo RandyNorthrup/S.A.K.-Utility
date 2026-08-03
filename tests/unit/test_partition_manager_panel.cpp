@@ -42,7 +42,9 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
+#include <limits>
 
 class PartitionManagerPanelTests : public QObject {
     Q_OBJECT
@@ -84,6 +86,7 @@ private Q_SLOTS:
     void formerCommercialCompatibilityActionsQueueDirectEngines();
     void createDialogExposesSynchronizedHandleControls();
     void wipeActionLetsUserChooseScope();
+    void quickPartitionSizesFailClosedOnMalformedCustomAndOverflow();
 };
 
 namespace {
@@ -2395,6 +2398,48 @@ void PartitionManagerPanelTests::wipeActionLetsUserChooseScope() {
     QVERIFY(QMetaObject::invokeMethod(&panel, "onWipeSelected", Qt::DirectConnection));
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel, QStringLiteral("Wipe Partition"));
+}
+
+// Fail-closed rule for Quick Partition size derivation: malformed custom sizes must NOT be
+// silently substituted with an equal-size layout, and adversarial near-UINT64_MAX sizes must not
+// overflow the total into a value that slips past the "total <= usable" validity check.
+void PartitionManagerPanelTests::quickPartitionSizesFailClosedOnMalformedCustomAndOverflow() {
+    const uint64_t usable = 400 * kTestMegabyteBytes;
+
+    // Equal mode yields a valid even split.
+    const QJsonObject equalOpts{{QStringLiteral("partition_count"), 4},
+                                {QStringLiteral("size_mode"), QStringLiteral("equal")}};
+    const auto equalSizes = sak::partitionQuickSizesForOptionsForTest(equalOpts, usable);
+    QCOMPARE(equalSizes.size(), 4);
+    QVERIFY(sak::partitionQuickSizesAreValidForTest(equalSizes, usable));
+
+    // Custom mode with a malformed (zero) size fails closed: empty result, never an equal-size
+    // substitution, and nothing enqueueable.
+    const QJsonArray badSizes{QString::number(100ULL * kTestMegabyteBytes), QStringLiteral("0")};
+    const QJsonObject badOpts{{QStringLiteral("partition_count"), 2},
+                              {QStringLiteral("size_mode"), QStringLiteral("custom")},
+                              {QStringLiteral("custom_size_bytes"), badSizes}};
+    const auto bad = sak::partitionQuickSizesForOptionsForTest(badOpts, usable);
+    QVERIFY(bad.isEmpty());
+    QVERIFY(!sak::partitionQuickSizesAreValidForTest(bad, usable));
+
+    // Custom array count mismatching partition_count is malformed -> refused.
+    const QJsonArray shortSizes{QString::number(100ULL * kTestMegabyteBytes)};
+    const QJsonObject mismatchOpts{{QStringLiteral("partition_count"), 2},
+                                   {QStringLiteral("size_mode"), QStringLiteral("custom")},
+                                   {QStringLiteral("custom_size_bytes"), shortSizes}};
+    QVERIFY(sak::partitionQuickSizesForOptionsForTest(mismatchOpts, usable).isEmpty());
+
+    // Overflow: two near-UINT64_MAX custom sizes parse fine but their saturated total must stay
+    // greater than usable so validity is false (no wrap-around acceptance).
+    const QString huge = QString::number(std::numeric_limits<uint64_t>::max() - 10);
+    const QJsonArray overflowSizes{huge, huge};
+    const QJsonObject overflowOpts{{QStringLiteral("partition_count"), 2},
+                                   {QStringLiteral("size_mode"), QStringLiteral("custom")},
+                                   {QStringLiteral("custom_size_bytes"), overflowSizes}};
+    const auto overflow = sak::partitionQuickSizesForOptionsForTest(overflowOpts, usable);
+    QCOMPARE(overflow.size(), 2);
+    QVERIFY(!sak::partitionQuickSizesAreValidForTest(overflow, usable));
 }
 
 QTEST_MAIN(PartitionManagerPanelTests)

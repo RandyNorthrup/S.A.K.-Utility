@@ -521,7 +521,25 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
         // QThread must not be destroyed with the panel. Interactive stops go
         // through the non-blocking stopExplorerSearch instead.
         m_search_worker->requestStop();
-        m_search_worker->wait(5000);
+        if (!m_search_worker->wait(5000)) {
+            // Refuses to stop within the bounded join (e.g. blocked in a slow
+            // network-path enumeration that does not poll requestStop in time):
+            // detach exactly like the IO-worker path below so ~QObject cannot
+            // destroy a live QThread and qFatal-abort the process. Sever the
+            // panel-targeted finish handlers and wire a self-owned deleteLater so
+            // the orphaned thread still frees itself once it exits.
+            AdvancedSearchWorker* worker = m_search_worker;
+            disconnect(worker, nullptr, this, nullptr);
+            worker->setParent(nullptr);
+            QObject::connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            // Race: it may have finished between the wait() timeout and the
+            // connect above, so its finished signal already fired and will not
+            // replay -- delete it directly then.
+            if (worker->isFinished()) {
+                worker->deleteLater();
+            }
+        }
+        m_search_worker = nullptr;
     }
     // Same for the MUTATING copy/move + archive workers: a running child QThread must be joined (or
     // detached) before ~QObject destroys it, else the write is aborted mid-flight and Qt fatally

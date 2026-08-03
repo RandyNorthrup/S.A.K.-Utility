@@ -383,6 +383,93 @@ private Q_SLOTS:
         QCOMPARE(ok.accepted(), static_cast<qint64>(5));
     }
 
+    // A message with no sender address must fail closed rather than fabricate an
+    // "unknown@localhost" envelope sender (no-fallback rule).
+    void failsClosedOnMissingSender() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("no sender");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::missing_required_field);
+    }
+
+    // A message with no valid date must fail closed rather than stamp the current
+    // time into the envelope/Date header (no-fallback rule).
+    void failsClosedOnMissingDate() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("no date");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("body");
+        // item.date left invalid
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::missing_required_field);
+    }
+
+    // Both the plain-text and HTML alternatives must be preserved; the plain part
+    // must not be dropped merely because an HTML body exists.
+    void keepsBothPlainAndHtmlBodies() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("both");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("PLAIN_ALTERNATIVE_TEXT");
+        item.body_html = QStringLiteral("<p>HTML_ALTERNATIVE_TEXT</p>");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        writer.finalize();
+
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(content.contains("PLAIN_ALTERNATIVE_TEXT"));
+        QVERIFY(content.contains("HTML_ALTERNATIVE_TEXT"));
+        QVERIFY(content.contains("text/plain"));
+        QVERIFY(content.contains("text/html"));
+    }
+
+    // Attachment base64 must be wrapped to <=76-column lines (RFC 2045).
+    void attachmentBase64IsWrapped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("wrap");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("see attached");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        const QByteArray blob(300, 'A');
+        QVERIFY(
+            writer.writeMessage(item, {{QStringLiteral("a.bin"), blob}}, QString()).has_value());
+        writer.finalize();
+
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        const QByteArray unwrapped = blob.toBase64();
+        QVERIFY(unwrapped.size() > 76);
+        QVERIFY(!content.contains(unwrapped));
+        QVERIFY(content.contains(unwrapped.left(76)));
+    }
+
 private:
     // Test double: accepts at most `cap` bytes, then every further write stalls at 0.
     class CappedDevice : public QIODevice {

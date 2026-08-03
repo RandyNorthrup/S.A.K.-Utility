@@ -70,6 +70,15 @@ private Q_SLOTS:
     void registryBackupFileName_sanitizesTraversal();
     void restoreRejectsOversizedManifest();
 
+    // -- Codex-3 wave E2 hardening ---------------------------------------
+    void restoreRejectsNonEmailExtensionInHome();       // finding 1
+    void registryBackupDestination_dedupesCollision();  // finding 2
+    void regContent_rejectsAnyDeletion();               // finding 4
+    void regKeyPathAllowed_allowsWmsProfiles();         // finding 6
+    void restoreRejectsBadVersion();                    // finding 7
+    void restoreDoesNotCountEmptyProfile();             // finding 7
+    void thunderbirdProfileDir_confinesRelative();      // finding 9
+
     // -- B7-16: single-flight guard --------------------------------------
     void singleFlightRefusesReentry();
 
@@ -248,6 +257,7 @@ void TestEmailProfileManager::restoreRejectsPathTraversal() {
     QJsonArray profiles;
     profiles.append(prof);
     QJsonObject root;
+    root[QStringLiteral("version")] = 1;  // valid version so the restore reaches the confinement
     root[QStringLiteral("profiles")] = profiles;
 
     const QString manifest = backup_dir + QStringLiteral("/backup_manifest.json");
@@ -531,8 +541,8 @@ void TestEmailProfileManager::restoreCountsOnlyCleanProfiles() {
     // restored, so it must NOT be counted (before B7-29 it was counted regardless).
     QJsonObject file_obj;
     file_obj[QStringLiteral("original_path")] = QDir::homePath() +
-                                                QStringLiteral("/sak_restore_test/data.dat");
-    file_obj[QStringLiteral("backed_up_name")] = QStringLiteral("data.dat");  // never created
+                                                QStringLiteral("/sak_restore_test/data.pst");
+    file_obj[QStringLiteral("backed_up_name")] = QStringLiteral("data.pst");  // never created
     QJsonArray files;
     files.append(file_obj);
     QJsonObject prof;
@@ -540,6 +550,7 @@ void TestEmailProfileManager::restoreCountsOnlyCleanProfiles() {
     QJsonArray profiles;
     profiles.append(prof);
     QJsonObject root;
+    root[QStringLiteral("version")] = 1;
     root[QStringLiteral("profiles")] = profiles;
 
     const QString manifest = backup_dir + QStringLiteral("/backup_manifest.json");
@@ -555,6 +566,197 @@ void TestEmailProfileManager::restoreCountsOnlyCleanProfiles() {
 
     QCOMPARE(complete_spy.count(), 1);
     QCOMPARE(complete_spy.first().first().toInt(), 0);  // failed profile not counted
+}
+
+// ============================================================================
+// Codex-3 wave E2 hardening regressions
+// ============================================================================
+
+void TestEmailProfileManager::restoreRejectsNonEmailExtensionInHome() {
+    // Finding 1: home containment alone let a crafted manifest create a NEW file with an
+    // arbitrary extension anywhere under home (e.g. a .lnk in the Startup folder for logon
+    // code execution). The restore must now also confine to email data-file types.
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+    const QString backup_dir = backup_root.path() + QStringLiteral("/bk");
+    QVERIFY(QDir().mkpath(backup_dir));
+
+    // A real backup source with a bare name inside the backup dir.
+    {
+        QFile src(backup_dir + QStringLiteral("/srcfile"));
+        QVERIFY(src.open(QIODevice::WriteOnly));
+        src.write("payload");
+    }
+
+    // Destination is UNDER home but carries an executable-shortcut extension.
+    const QString dest_dir = QDir::homePath() + QStringLiteral("/sak_test_email_restore_e2");
+    const QString dest = dest_dir + QStringLiteral("/evil.lnk");
+
+    QJsonObject file_obj;
+    file_obj[QStringLiteral("original_path")] = dest;
+    file_obj[QStringLiteral("backed_up_name")] = QStringLiteral("srcfile");
+    QJsonArray files;
+    files.append(file_obj);
+    QJsonObject prof;
+    prof[QStringLiteral("data_files")] = files;
+    QJsonArray profiles;
+    profiles.append(prof);
+    QJsonObject root;
+    root[QStringLiteral("version")] = 1;
+    root[QStringLiteral("profiles")] = profiles;
+
+    const QString manifest = backup_dir + QStringLiteral("/backup_manifest.json");
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson());
+    }
+
+    EmailProfileManager manager;
+    manager.restoreProfiles(manifest);
+
+    const bool created = QFile::exists(dest);
+    QDir(dest_dir).removeRecursively();  // never pollute the real home tree
+    QVERIFY2(!created, "a non-email extension under home must not be restorable");
+}
+
+void TestEmailProfileManager::registryBackupDestination_dedupesCollision() {
+    // Finding 2: two profiles whose names sanitize to the same component must not target the
+    // same .reg (reg.exe export /y would overwrite the first, and both manifest entries would
+    // point at it). The unique-destination helper adds a collision suffix.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString first =
+        EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Default"));
+    QCOMPARE(QFileInfo(first).fileName(), QStringLiteral("registry_Default.reg"));
+    {
+        QFile f(first);  // simulate the first export having been written
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    const QString second =
+        EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Default"));
+    QVERIFY(second != first);
+    QVERIFY(!QFile::exists(second));  // a fresh, non-colliding target
+    QVERIFY(QFileInfo(second).fileName().startsWith(QStringLiteral("registry_Default_")));
+    QVERIFY(QFileInfo(second).fileName().endsWith(QStringLiteral(".reg")));
+
+    // Names that only COLLIDE after sanitization ('Test/1' and 'Test:1' -> registry_Test_1) also
+    // get distinct files.
+    const QString a =
+        EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Test/1"));
+    {
+        QFile f(a);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    const QString b =
+        EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Test:1"));
+    QVERIFY(a != b);
+}
+
+void TestEmailProfileManager::regContent_rejectsAnyDeletion() {
+    // Finding 4: a genuine `reg export` never emits a [-HKEY...] deletion, so a backup that
+    // contains one is crafted/corrupt and is refused outright -- even when confined to the
+    // Outlook subtree.
+    const QString reg =
+        "Windows Registry Editor Version 5.00\n"
+        "\n"
+        "[-HKEY_CURRENT_USER\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles\\Default]\n";
+    QVERIFY(!EmailProfileManager::regContentConfinedToEmailHives(reg));
+}
+
+void TestEmailProfileManager::regKeyPathAllowed_allowsWmsProfiles() {
+    // Finding 6: WMS profiles are discovered and exported as Outlook, so restore must accept the
+    // Windows Messaging Subsystem profiles subtree (previously refused, silently breaking restore).
+    QVERIFY(EmailProfileManager::regKeyPathAllowed(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows NT\\CurrentVersion"
+                       "\\Windows Messaging Subsystem\\Profiles")));
+    QVERIFY(EmailProfileManager::regKeyPathAllowed(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows NT\\CurrentVersion"
+                       "\\Windows Messaging Subsystem\\Profiles\\MyProfile")));
+    // A sibling merely beginning with 'Profiles' is still refused (segment boundary).
+    QVERIFY(!EmailProfileManager::regKeyPathAllowed(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows NT\\CurrentVersion"
+                       "\\Windows Messaging Subsystem\\ProfilesEvil")));
+    // And a whole .reg confined to that subtree passes the file-level check.
+    QVERIFY(EmailProfileManager::regContentConfinedToEmailHives(
+        QStringLiteral("Windows Registry Editor Version 5.00\n\n"
+                       "[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows NT\\CurrentVersion"
+                       "\\Windows Messaging Subsystem\\Profiles\\MyProfile]\n")));
+}
+
+void TestEmailProfileManager::restoreRejectsBadVersion() {
+    // Finding 7: a missing/wrong-typed version must fail closed (no restoreComplete), never
+    // coerce to a default.
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+
+    QJsonObject root;
+    root[QStringLiteral("version")] = QStringLiteral("1");  // string, not the required integer
+    root[QStringLiteral("profiles")] = QJsonArray();
+    const QString manifest = backup_root.path() + QStringLiteral("/backup_manifest.json");
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson());
+    }
+
+    EmailProfileManager manager;
+    QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
+    manager.restoreProfiles(manifest);
+
+    QVERIFY(error_spy.count() > 0);
+    QCOMPARE(complete_spy.count(), 0);
+}
+
+void TestEmailProfileManager::restoreDoesNotCountEmptyProfile() {
+    // Finding 7: an empty profile object restores nothing and must not inflate the count.
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+
+    QJsonArray profiles;
+    profiles.append(QJsonObject{});  // no registry_file, no data_files
+    QJsonObject root;
+    root[QStringLiteral("version")] = 1;
+    root[QStringLiteral("profiles")] = profiles;
+    const QString manifest = backup_root.path() + QStringLiteral("/backup_manifest.json");
+    {
+        QFile file(manifest);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson());
+    }
+
+    EmailProfileManager manager;
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
+    manager.restoreProfiles(manifest);
+
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().first().toInt(), 0);
+}
+
+void TestEmailProfileManager::thunderbirdProfileDir_confinesRelative() {
+    // Finding 9: a relative Thunderbird profile Path must be confined beneath the TB root so a
+    // tampered profiles.ini with '../../..' cannot redirect the scan/backup out of tree.
+    QTemporaryDir tb;
+    QVERIFY(tb.isValid());
+    const QString root = tb.path();
+
+    const QString ok = EmailProfileManager::thunderbirdProfileDir(
+        root, QStringLiteral("Profiles/abc.default"), true);
+    QVERIFY(!ok.isEmpty());
+    QVERIFY(QDir(ok).absolutePath().startsWith(QDir(root).absolutePath()));
+
+    // A relative '..' escape is rejected (empty).
+    QVERIFY(EmailProfileManager::thunderbirdProfileDir(root, QStringLiteral("../../evil"), true)
+                .isEmpty());
+
+    // An absolute path (IsRelative=0) is a supported user choice and passes through unchanged.
+    QCOMPARE(
+        EmailProfileManager::thunderbirdProfileDir(root, QStringLiteral("C:/elsewhere/tb"), false),
+        QStringLiteral("C:/elsewhere/tb"));
 }
 
 QTEST_MAIN(TestEmailProfileManager)

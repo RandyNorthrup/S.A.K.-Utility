@@ -53,6 +53,52 @@ protected:
         return {};  // deny file://, http(s)://, cid:, absolute/UNC paths -- no resource load
     }
 };
+
+/// Reject a subfolder_path that escapes the output directory (a ".." traversal or
+/// an absolute/UNC root). Defense-in-depth: current callers sanitize, but the
+/// writer must not trust raw input and quietly write outside its tree.
+bool subfolderEscapes(const QString& output_dir, const QString& target_dir) {
+    const QString base = QDir::cleanPath(output_dir);
+    const QString resolved = QDir::cleanPath(target_dir);
+    return resolved != base && !resolved.startsWith(base + QLatin1Char('/'));
+}
+
+/// Render the message HTML into an open QSaveFile via QPdfWriter/QTextDocument.
+void renderPdfDocument(QSaveFile& out_file, const QString& html, const PstItemDetail& item) {
+    QPdfWriter writer(&out_file);
+    QPageLayout layout(QPageSize(QPageSize::Letter),
+                       QPageLayout::Portrait,
+                       QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
+                       QPageLayout::Millimeter);
+    writer.setPageLayout(layout);
+    writer.setResolution(kPdfDpi);
+    writer.setTitle(item.subject);
+    writer.setCreator(QStringLiteral("S.A.K. Utility"));
+
+    // ResourceDenyingTextDocument refuses external resource loads (no local-file disclosure).
+    ResourceDenyingTextDocument doc;
+    doc.setHtml(html);
+    doc.setPageSize(QSizeF(writer.width(), writer.height()));
+    doc.print(&writer);
+}
+
+/// A committed nonzero file is not proof of a valid PDF: a partial render can flush
+/// a truncated/corrupt file. Verify the %PDF- magic and the trailing %%EOF marker
+/// so a structurally-broken PDF is reported failed rather than counted a success.
+bool pdfLooksValid(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    constexpr qint64 kTrailerScan = 1024;
+    const QByteArray head = file.read(5);
+    if (!head.startsWith("%PDF-")) {
+        return false;
+    }
+    const qint64 size = file.size();
+    file.seek(std::max<qint64>(0, size - kTrailerScan));
+    return file.readAll().contains("%%EOF");
+}
 }  // namespace
 
 // ======================================================================
@@ -77,6 +123,9 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
     QString target_dir = m_output_dir;
     if (m_preserve_folders && !subfolder_path.isEmpty()) {
         target_dir = m_output_dir + QStringLiteral("/") + subfolder_path;
+        if (subfolderEscapes(m_output_dir, target_dir)) {
+            return std::unexpected(error_code::path_traversal_attempt);
+        }
     }
 
     QDir dir(target_dir);
@@ -84,21 +133,8 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
         return std::unexpected(error_code::write_error);
     }
 
-    QString filename = sanitizeFilename(item.subject, item.date);
-
-    // De-duplicate by re-checking existence (mirrors EmlWriter). The old counter-only scheme never
-    // verified the "_N" candidate was free, so a crafted subject could overwrite a distinct earlier
-    // message's .pdf whose name collided.
-    QString full_path = target_dir + QStringLiteral("/") + filename;
-    if (QFile::exists(full_path)) {
-        const QString base = QFileInfo(filename).completeBaseName();
-        int& counter = m_filename_counters[target_dir + QStringLiteral("/") + base];
-        do {
-            ++counter;
-            filename = base + QStringLiteral("_%1.pdf").arg(counter);
-            full_path = target_dir + QStringLiteral("/") + filename;
-        } while (QFile::exists(full_path));
-    }
+    const QString filename = sanitizeFilename(item.subject, item.date);
+    const QString full_path = resolveCollisionPath(target_dir, filename);
 
     // Build HTML content for the PDF
     QString html_content = buildHtmlForPdf(item, attachment_data);
@@ -111,39 +147,44 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
         return std::unexpected(error_code::write_error);
     }
     {
-        QPdfWriter writer(&out_file);
-        QPageLayout layout(QPageSize(QPageSize::Letter),
-                           QPageLayout::Portrait,
-                           QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
-                           QPageLayout::Millimeter);
-        writer.setPageLayout(layout);
-        writer.setResolution(kPdfDpi);
-        writer.setTitle(item.subject);
-        writer.setCreator(QStringLiteral("S.A.K. Utility"));
-
-        // ResourceDenyingTextDocument refuses external resource loads (no local-file disclosure).
-        ResourceDenyingTextDocument doc;
-        doc.setHtml(html_content);
-        doc.setPageSize(QSizeF(writer.width(), writer.height()));
-        doc.print(&writer);
+        renderPdfDocument(out_file, html_content, item);
     }  // writer destroyed here: PDF fully flushed to out_file before commit
 
     if (!out_file.commit()) {
         return std::unexpected(error_code::write_error);
     }
 
-    QFileInfo fi(full_path);
-    if (fi.size() == 0) {
+    // Verify the committed file is a structurally-complete PDF, not just nonzero.
+    if (!pdfLooksValid(full_path)) {
+        QFile::remove(full_path);  // do not leave a corrupt .pdf behind
         return std::unexpected(error_code::write_error);
     }
 
-    m_bytes_written += fi.size();
+    m_bytes_written += QFileInfo(full_path).size();
     return full_path;
 }
 
 // ======================================================================
 // Private helpers
 // ======================================================================
+
+// De-duplicate by re-checking existence (mirrors EmlWriter). A counter-only scheme
+// never verifies the "_N" candidate is free, so a crafted subject could overwrite a
+// distinct earlier message's .pdf whose name collided.
+QString PdfEmailWriter::resolveCollisionPath(const QString& target_dir, const QString& filename) {
+    QString name = filename;
+    QString full_path = target_dir + QStringLiteral("/") + name;
+    if (QFile::exists(full_path)) {
+        const QString base = QFileInfo(name).completeBaseName();
+        int& counter = m_filename_counters[target_dir + QStringLiteral("/") + base];
+        do {
+            ++counter;
+            name = base + QStringLiteral("_%1.pdf").arg(counter);
+            full_path = target_dir + QStringLiteral("/") + name;
+        } while (QFile::exists(full_path));
+    }
+    return full_path;
+}
 
 QString PdfEmailWriter::buildHtmlForPdf(
     const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {

@@ -16,8 +16,6 @@
 
 #include <expected>
 
-class QMimeDatabase;
-
 namespace sak {
 
 /// @brief Writes Outlook Express DBX files for legacy migration
@@ -44,30 +42,9 @@ public:
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
 private:
-    void writeDbxHeader(QFile& file, const QString& folder_name);
-    [[nodiscard]] QByteArray buildDbxMessageEntry(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
-
-    // Helpers split out of buildDbxMessageEntry to keep complexity tractable.
-    static void appendRfc5322Headers(QByteArray& message, const PstItemDetail& item);
-    static void appendSinglePartBody(QByteArray& message, const PstItemDetail& item);
-    static void appendMultipartBody(QByteArray& message,
-                                    const PstItemDetail& item,
-                                    const QVector<QPair<QString, QByteArray>>& attachments);
-    static void appendAttachmentPart(QByteArray& message,
-                                     const QByteArray& boundary,
-                                     const QString& att_name,
-                                     const QByteArray& att_data,
-                                     QMimeDatabase& mime_db);
-
     QString m_output_dir;
     QHash<QString, QFile*> m_open_files;
-    QHash<QString, int> m_message_counts;
     qint64 m_bytes_written = 0;
-
-public:
-    static constexpr uint32_t kDbxFolderMagic = 0xFE'12'AD'CF;
-    static constexpr int kDbxHeaderSize = 0x24BC;
 };
 
 }  // namespace sak

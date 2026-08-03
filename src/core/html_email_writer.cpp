@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTextStream>
 
 namespace sak {
@@ -97,6 +98,15 @@ QString embedInlineImages(const PstItemDetail& item,
     return body_html;
 }
 
+// Reject a subfolder_path that escapes the output directory (a ".." traversal or an
+// absolute/UNC root). Defense-in-depth: current callers sanitize, but the writer
+// must not trust raw input and quietly write outside its tree.
+bool subfolderEscapes(const QString& output_dir, const QString& target_dir) {
+    const QString base = QDir::cleanPath(output_dir);
+    const QString resolved = QDir::cleanPath(target_dir);
+    return resolved != base && !resolved.startsWith(base + QLatin1Char('/'));
+}
+
 }  // namespace
 
 // ============================================================================
@@ -121,6 +131,11 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
     QString dir_path = m_output_dir;
     if (m_preserve_folders && !subfolder_path.isEmpty()) {
         dir_path += QStringLiteral("/") + subfolder_path;
+        if (subfolderEscapes(m_output_dir, dir_path)) {
+            logError("HtmlEmailWriter: subfolder path escapes output dir: {}",
+                     subfolder_path.toStdString());
+            return std::unexpected(error_code::path_traversal_attempt);
+        }
     }
     QDir().mkpath(dir_path);
 
@@ -149,24 +164,22 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
         return std::unexpected(error_code::write_error);
     }
 
-    // Build and write HTML
+    // Build and write HTML. QSaveFile writes to a temp sibling and atomically
+    // renames on commit(), so a write/flush/close error never leaves a truncated
+    // .html the user would trust as a complete message; fail closed on any error.
     QString html = buildHtmlPage(item, attachment_data);
-    QFile file(full_path);
+    QSaveFile file(full_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         logError("HtmlEmailWriter: failed to create: {}", full_path.toStdString());
         return std::unexpected(error_code::write_error);
     }
 
     QByteArray content = html.toUtf8();
-    if (!writeFully(file, content)) {
-        // A short/failed write leaves a truncated .html the user would trust as a
-        // complete message; fail closed instead of counting it as success.
+    if (!writeFully(file, content) || !file.commit()) {
         logError("HtmlEmailWriter: incomplete write to: {}", full_path.toStdString());
-        file.close();
         return std::unexpected(error_code::write_error);
     }
     m_bytes_written += content.size();
-    file.close();
 
     return full_path;
 }

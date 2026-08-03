@@ -20,11 +20,14 @@
 #include <QWidget>
 
 #include <atomic>
+#include <utility>
 
 class QLabel;
 class QFormLayout;
 class QStackedWidget;
 class QVBoxLayout;
+class QTextStream;
+class QFileDevice;
 
 namespace sak {
 
@@ -71,6 +74,16 @@ public:
     ///       unit tested; a truncated credential table must never report
     ///       success (NO FALLBACKS / FAIL CLOSED).
     [[nodiscard]] static bool jsonWriteSucceeded(qint64 written, qint64 expected, bool committed);
+
+    /// @brief Map a security-type label to WLAN-profile {authentication, encryption}.
+    /// @return {authType, encType}; an EMPTY authType means the security type is unsupported by
+    ///         this PSK/open profile builder (WPA/WPA2/WPA3 Enterprise, or an unknown/malformed
+    ///         value) and the profile MUST be refused. Fail closed: never silently downgrade a
+    ///         WPA3 or Enterprise network to WPA2-PSK (NO FALLBACKS / FAIL CLOSED).
+    /// @note Public + static so the fail-closed refusal and the WPA3-vs-WPA2 mapping can be unit
+    ///       tested; the security string reaches here untrusted (imported JSON / scanned profile).
+    [[nodiscard]] static std::pair<QString, QString> wlanAuthEncForSecurity(
+        const QString& security);
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -296,7 +309,13 @@ private:
     // Persistence
     // -------------------------------------------------------------------------
     void saveTableToJson(const QString& path);
+    /// Atomically (QSaveFile) write the checked-row subset to JSON; fail closed on a short write or
+    /// failed commit so a truncated credential table is never reported as saved.
+    void saveCheckedRowsToJson(const QString& path, const QList<int>& checkedRows);
     void loadTableFromJson(const QString& path);
+    /// Fail-closed finalize for a QTextStream-backed export: flush and verify no stream/device
+    /// error before any success is reported (disk-full / IO failure must fail closed).
+    [[nodiscard]] static bool flushTextStreamOk(QTextStream& stream, const QFileDevice& file);
 
     // =========================================================================
     // UI widgets

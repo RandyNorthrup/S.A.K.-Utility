@@ -39,6 +39,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -50,6 +52,41 @@ constexpr int kCompletionPageIndex = 3;
 constexpr int kIsoInfoLabelColumnMinWidth = 100;
 constexpr int kCompletionMessageFontSize = 14;
 constexpr int kImageFlasherStatusTimeoutMs = kTimerStatusDefaultMs;
+
+// Stable identity signature for a physical drive. Binds the selection to the concrete device so a
+// mid-flow swap (same PhysicalDriveN number, different hardware) or disk-number reuse is detected.
+QString driveIdentitySignature(const DriveInfo& drive) {
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(drive.name,
+             QString::number(drive.size),
+             drive.busType,
+             QString::number(drive.blockSize));
+}
+
+QString imageFormatLabel(ImageFormat format) {
+    switch (format) {
+    case ImageFormat::ISO:
+        return QStringLiteral("ISO 9660");
+    case ImageFormat::IMG:
+        return QStringLiteral("Raw Image");
+    case ImageFormat::WIC:
+        return QStringLiteral("Windows Imaging");
+    case ImageFormat::GZIP:
+        return QStringLiteral("GZIP Compressed");
+    case ImageFormat::BZIP2:
+        return QStringLiteral("BZIP2 Compressed");
+    case ImageFormat::XZ:
+        return QStringLiteral("XZ Compressed");
+    case ImageFormat::ZIP:
+        return QStringLiteral("ZIP Archive");
+    case ImageFormat::DMG:
+        return QStringLiteral("Apple Disk Image");
+    case ImageFormat::DSK:
+        return QStringLiteral("Disk Image");
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
 
 }  // namespace
 
@@ -553,12 +590,9 @@ void ImageFlasherPanel::createCompletionPage() {
 
 bool ImageFlasherPanel::loadImageFile(const QString& filePath) {
     Q_ASSERT(!filePath.isEmpty());
-    if (!QFileInfo::exists(filePath)) {
-        return false;
-    }
-
-    onImageSelected(filePath);
-    return true;
+    // Validation (existence, regular file, non-empty, format) lives in onImageSelected, which
+    // returns false and makes no selection when the image is invalid.
+    return onImageSelected(filePath);
 }
 
 void ImageFlasherPanel::onSelectImageClicked() {
@@ -639,50 +673,22 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
     dialog->deleteLater();
 }
 
-void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
+bool ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     Q_ASSERT(m_imagePathLabel);
     Q_ASSERT(!imagePath.isEmpty());
+    // Fail closed: never select (or enable navigation for) an image that fails validation.
+    if (!validateImageFile(imagePath)) {
+        return false;
+    }
     m_selectedImagePath = imagePath;
 
     QFileInfo fileInfo(imagePath);
     m_imageSize = fileInfo.size();
+    m_imageLastModified = fileInfo.lastModified();
 
     m_imagePathLabel->setText(QString("Selected: %1").arg(fileInfo.fileName()));
 
-    ImageFormat format = FileImageSource::detectFormat(imagePath);
-    QString formatStr = "Unknown";
-    switch (format) {
-    case ImageFormat::ISO:
-        formatStr = "ISO 9660";
-        break;
-    case ImageFormat::IMG:
-        formatStr = "Raw Image";
-        break;
-    case ImageFormat::WIC:
-        formatStr = "Windows Imaging";
-        break;
-    case ImageFormat::GZIP:
-        formatStr = "GZIP Compressed";
-        break;
-    case ImageFormat::BZIP2:
-        formatStr = "BZIP2 Compressed";
-        break;
-    case ImageFormat::XZ:
-        formatStr = "XZ Compressed";
-        break;
-    case ImageFormat::ZIP:
-        formatStr = "ZIP Archive";
-        break;
-    case ImageFormat::DMG:
-        formatStr = "Apple Disk Image";
-        break;
-    case ImageFormat::DSK:
-        formatStr = "Disk Image";
-        break;
-    default:
-        break;
-    }
-    m_detectedFormat = formatStr;
+    m_detectedFormat = imageFormatLabel(FileImageSource::detectFormat(imagePath));
 
     // Run ISO analyzer for detailed info
     populateIsoInfo(imagePath);
@@ -694,11 +700,16 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
                              .arg(fileInfo.fileName(), formatFileSize(m_imageSize)),
                          kImageFlasherStatusTimeoutMs);
     logInfo(QString("Image selected: %1").arg(imagePath).toStdString());
+    return true;
 }
 
 void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
     Q_ASSERT(!isoPath.isEmpty());
-    onImageSelected(isoPath);
+    // Do not report a successful download when the downloaded image fails validation
+    // (validateImageFile has already surfaced the specific reason).
+    if (!onImageSelected(isoPath)) {
+        return;
+    }
 
     sak::showInformationLogged(
         this,
@@ -730,6 +741,8 @@ void ImageFlasherPanel::onDriveListUpdated() {
 
         auto* item = new QListWidgetItem(text, m_driveListWidget);
         item->setData(Qt::UserRole, drive.devicePath);
+        // Bind the concrete device identity to the row so a later swap can be detected.
+        item->setData(Qt::UserRole + 1, driveIdentitySignature(drive));
 
         if (drive.isSystem) {
             item->setForeground(QBrush(Qt::red));
@@ -742,10 +755,13 @@ void ImageFlasherPanel::onDriveListUpdated() {
 
 void ImageFlasherPanel::onDriveSelectionChanged() {
     m_selectedDrives.clear();
+    m_selectedDriveSignatures.clear();
 
     auto selectedItems = m_driveListWidget->selectedItems();
     for (auto* item : selectedItems) {
-        m_selectedDrives.append(item->data(Qt::UserRole).toString());
+        const QString path = item->data(Qt::UserRole).toString();
+        m_selectedDrives.append(path);
+        m_selectedDriveSignatures.insert(path, item->data(Qt::UserRole + 1).toString());
     }
 
     updateNavigationButtons();
@@ -897,50 +913,87 @@ void ImageFlasherPanel::updateNavigationButtons() {
     m_cancelButton->setEnabled(m_isFlashing);
 }
 
-void ImageFlasherPanel::validateImageFile(const QString& filePath) {
+bool ImageFlasherPanel::validateImageFile(const QString& filePath) {
     Q_ASSERT(!filePath.isEmpty());
-    QFileInfo fileInfo(filePath);
+    const QFileInfo fileInfo(filePath);
 
-    // Check if file exists
-    if (!fileInfo.exists()) {
-        logWarning(QString("Invalid Image: File does not exist: %1").arg(filePath).toStdString());
+    // A directory or a missing path is not a flashable image (fail closed).
+    if (!fileInfo.exists() || !fileInfo.isFile()) {
+        logWarning(QString("Invalid Image: not a file: %1").arg(filePath).toStdString());
         sak::showWarningLogged(this,
                                "Invalid Image",
-                               QString("File does not exist: %1").arg(filePath));
-        return;
+                               QString("Not a readable image file: %1").arg(filePath));
+        return false;
     }
-
-    // Check if file is readable
     if (!fileInfo.isReadable()) {
         logWarning(QString("Invalid Image: File is not readable: %1").arg(filePath).toStdString());
         sak::showWarningLogged(this,
                                "Invalid Image",
                                QString("File is not readable: %1").arg(filePath));
-        return;
+        return false;
     }
-
-    // Check if file is not empty
     if (fileInfo.size() == 0) {
         logWarning("Invalid Image: Image file is empty");
         sak::showWarningLogged(this, "Invalid Image", "Image file is empty");
-        return;
+        return false;
     }
 
-    // Detect and validate format
-    ImageFormat format = FileImageSource::detectFormat(filePath);
-    if (format == ImageFormat::Unknown) {
-        auto reply = sak::showQuestionLogged(this,
-                                             "Unknown Format",
-                                             "Unable to detect image format. Continue anyway?",
-                                             QMessageBox::Yes | QMessageBox::No);
-
+    // Unknown format is not a hard error (raw .img images are legitimate), but require explicit
+    // user confirmation instead of silently proceeding.
+    if (FileImageSource::detectFormat(filePath) == ImageFormat::Unknown) {
+        const auto reply =
+            sak::showQuestionLogged(this,
+                                    "Unknown Format",
+                                    "Unable to detect image format. Continue anyway?",
+                                    QMessageBox::Yes | QMessageBox::No);
         if (reply != QMessageBox::Yes) {
-            return;
+            return false;
         }
     }
 
-    // File is valid
     logInfo(QString("Image file validated: %1").arg(filePath).toStdString());
+    return true;
+}
+
+bool ImageFlasherPanel::selectedImageUnchanged() const {
+    const QFileInfo info(m_selectedImagePath);
+    // Refuse if the source was swapped/truncated/removed since selection (identity == size + mtime
+    // captured at selection). A same-size, same-mtime replacement is not detectable without a full
+    // rehash, which is infeasible for multi-GB images on the UI thread.
+    return info.exists() && info.isFile() && info.size() == m_imageSize && m_imageSize > 0 &&
+           info.lastModified() == m_imageLastModified;
+}
+
+bool ImageFlasherPanel::selectedDrivesIdentityUnchanged() const {
+    const QList<DriveInfo> current = m_driveScanner->getDrives();
+    for (const QString& path : m_selectedDrives) {
+        const auto match = std::find_if(current.cbegin(), current.cend(), [&](const DriveInfo& d) {
+            return d.devicePath == path;
+        });
+        if (match == current.cend() ||
+            driveIdentitySignature(*match) != m_selectedDriveSignatures.value(path)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ImageFlasherPanel::confirmSelectionStillValid() {
+    if (!selectedImageUnchanged()) {
+        sak::showCriticalLogged(this,
+                                "Image Changed",
+                                "The selected image changed or is no longer available. Reselect "
+                                "the image before flashing.");
+        return false;
+    }
+    if (!selectedDrivesIdentityUnchanged()) {
+        sak::showCriticalLogged(this,
+                                "Drive Changed",
+                                "A selected drive changed or was removed since you selected it. "
+                                "Rescan and reselect the target before flashing.");
+        return false;
+    }
+    return true;
 }
 
 QStringList ImageFlasherPanel::buildDriveDetailsList(bool& hasSystemDrive) const {
@@ -1012,6 +1065,11 @@ void ImageFlasherPanel::showConfirmationDialog() {
             "Flashing to the system drive would destroy your Windows installation "
             "and render this computer unbootable.\n\n"
             "Please deselect the system drive and try again.");
+        return;
+    }
+
+    // Fail closed on a mid-flow swap of the source image or any target drive.
+    if (!confirmSelectionStillValid()) {
         return;
     }
 

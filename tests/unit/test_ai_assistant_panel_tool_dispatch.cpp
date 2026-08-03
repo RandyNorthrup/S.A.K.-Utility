@@ -13,6 +13,7 @@
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_skill.h"
 #include "sak/ai/ai_skill_store.h"
 #include "sak/ai/ai_tool_dispatcher.h"
@@ -223,6 +224,71 @@ private Q_SLOTS:
         // Destroy mid-flight; must return without hanging or crashing.
         panel.reset();
         QVERIFY(true);
+    }
+
+    // Offline install_bundle with a wrong-typed 'packed_only' (a JSON number, which
+    // QJsonValue::toBool() would silently read as false) is REJECTED up front, so a
+    // stringified/mistyped flag can never quietly disable the air-gap and let the
+    // install fetch from the network.
+    void offlineInstallRejectsWrongTypedPackedOnly() {
+        AiAssistantPanel panel;
+        const QJsonObject result = panel.offlineRunOperation(
+            QJsonObject{{QStringLiteral("manifest_path"), QStringLiteral("m.json")},
+                        {QStringLiteral("packed_only"), 1}},
+            QStringLiteral("install_bundle"));
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("packed_only")));
+    }
+
+    // A malformed package_id (a path-like 'fire/fox') is rejected rather than
+    // silently repaired into a DIFFERENT valid package ('firefox'), which would
+    // redirect the install to the wrong product.
+    void offlineDownloadRejectsMalformedPackageId() {
+        AiAssistantPanel panel;
+        QJsonArray packages;
+        packages.append(QJsonObject{{QStringLiteral("package_id"), QStringLiteral("fire/fox")}});
+        const QJsonObject result = panel.offlineRunOperation(
+            QJsonObject{{QStringLiteral("packages"), packages}}, QStringLiteral("direct_download"));
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("invalid package_id")));
+    }
+
+    // A valid recovery-resume snapshot enables resume at its recorded index; a
+    // tampered snapshot (unknown schema, or a non-integer / negative / out-of-range
+    // start index) is REFUSED so it cannot blind-replay or skip safety phases -- the
+    // run then restarts fresh under the normal per-phase human gates.
+    void workflowResumeSnapshotFailsClosedOnTamper() {
+        QJsonArray history;
+        history.append(QJsonObject{{QStringLiteral("phase_id"), QStringLiteral("p0")}});
+        history.append(QJsonObject{{QStringLiteral("phase_id"), QStringLiteral("p1")}});
+        const QString schema = QStringLiteral("sak.ai.workflow_recovery_resume.v1");
+        const auto snapshot = [&](const QJsonValue& index, const QString& snapshot_schema) {
+            return QJsonObject{{QStringLiteral("schema"), snapshot_schema},
+                               {QStringLiteral("phase_history"), history},
+                               {QStringLiteral("resume_start_phase_index"), index}};
+        };
+
+        ai::AiOrchestrationOptions ok_opts;
+        AiAssistantPanel::applyWorkflowResumeState(&ok_opts, snapshot(2, schema));
+        QVERIFY(ok_opts.resume_enabled);
+        QCOMPARE(ok_opts.resume_start_phase_index, 2);
+        QCOMPARE(ok_opts.resume_prior_phases.size(), 2);
+
+        for (const QJsonValue& bad :
+             {QJsonValue(5), QJsonValue(-1), QJsonValue(QStringLiteral("1"))}) {
+            ai::AiOrchestrationOptions opts;
+            AiAssistantPanel::applyWorkflowResumeState(&opts, snapshot(bad, schema));
+            QVERIFY(!opts.resume_enabled);
+        }
+
+        ai::AiOrchestrationOptions wrong_schema;
+        AiAssistantPanel::applyWorkflowResumeState(&wrong_schema,
+                                                   snapshot(1, QStringLiteral("sak.ai.other.v9")));
+        QVERIFY(!wrong_schema.resume_enabled);
     }
 
     // sak_app_action "list" returns the seeded built-in action catalog with risk

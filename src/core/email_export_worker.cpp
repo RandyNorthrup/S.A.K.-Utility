@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QTextStream>
 
@@ -81,6 +82,43 @@ QString escapeCalendarText(const QString& value) {
     out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
     out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
     return out;
+}
+
+/// Strip C0 control characters (including CR/LF) so a value cannot terminate an
+/// iCalendar content line or a MIME/param context.
+QString stripControlChars(const QString& value) {
+    QString out;
+    out.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch.unicode() >= kMinimumPrintableCodePoint) {
+            out.append(ch);
+        }
+    }
+    return out;
+}
+
+/// Quote an iCalendar (RFC 5545) parameter value. Parameter values use a DQUOTE
+/// wrapper -- NOT TEXT backslash-escaping -- and cannot themselves contain a DQUOTE,
+/// so embedded quotes are dropped. Prevents a CN value from injecting extra params.
+QString icsParamQuote(const QString& value) {
+    QString v = stripControlChars(value);
+    v.remove(QLatin1Char('"'));
+    return QLatin1Char('"') + v + QLatin1Char('"');
+}
+
+/// Detect an image MIME subtype (for a vCard PHOTO TYPE) from magic bytes; empty
+/// when the format is not recognized so the caller does not mislabel it.
+QString detectPhotoType(const QByteArray& data) {
+    if (data.startsWith("\xFF\xD8\xFF")) {
+        return QStringLiteral("JPEG");
+    }
+    if (data.startsWith("\x89PNG")) {
+        return QStringLiteral("PNG");
+    }
+    if (data.startsWith("GIF8")) {
+        return QStringLiteral("GIF");
+    }
+    return {};
 }
 
 /// Format a datetime for iCalendar (DTSTART/DTEND)
@@ -322,7 +360,7 @@ void appendTextHeader(QTextStream& stream, const QString& label, const QString& 
 /// Flush a text stream and confirm both the stream and its backing file report no
 /// error. A QTextStream swallows write failures, so without this a disk-full / I/O
 /// error would let a truncated CSV/TXT export return success (B7-B).
-bool textStreamOk(QTextStream& stream, QFile& file) {
+bool textStreamOk(QTextStream& stream, QFileDevice& file) {
     stream.flush();
     return stream.status() == QTextStream::Ok && file.error() == QFileDevice::NoError;
 }
@@ -435,6 +473,13 @@ void addCalendarTaskCsvFields(CsvFieldMap& map) {
     });
 }
 
+/// Validate a CSV export config. Every requested column must map to a known
+/// extractor, and the delimiter must be a single ordinary character. Returns an
+/// error string (empty when valid) so the caller fails closed instead of silently
+/// emitting blank cells for unknown columns or a delimiter that would corrupt the
+/// row structure (a quote/CR/LF) (B7-config).
+QString validateCsvConfig(const QStringList& columns, QChar delimiter);
+
 /// Build the complete CSV column→extractor dispatch table
 const CsvFieldMap& csvFieldMap() {
     static const auto map = [] {
@@ -445,6 +490,20 @@ const CsvFieldMap& csvFieldMap() {
         return result;
     }();
     return map;
+}
+
+QString validateCsvConfig(const QStringList& columns, QChar delimiter) {
+    if (delimiter.isNull() || delimiter == QLatin1Char('"') || delimiter == QLatin1Char('\r') ||
+        delimiter == QLatin1Char('\n')) {
+        return QStringLiteral("Invalid CSV delimiter (must be a single ordinary character)");
+    }
+    const auto& map = csvFieldMap();
+    for (const QString& col : columns) {
+        if (!map.contains(col)) {
+            return QStringLiteral("Unknown CSV column requested: '%1'").arg(col);
+        }
+    }
+    return {};
 }
 
 }  // namespace
@@ -471,6 +530,16 @@ void EmailExportWorker::emitEarlyFailure(const QString& error_message) {
     result.errors.append(error_message);
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
+}
+
+void EmailExportWorker::noteIfCancelled(sak::EmailExportResult& result) const {
+    // EmailExportResult carries no dedicated cancelled flag, so record the state in
+    // the error list: without this a cancelled run reports partial output as a clean
+    // exportComplete and the caller cannot tell it was truncated (B7-B).
+    if (m_cancelled.load()) {
+        result.errors.append(
+            QStringLiteral("Export was cancelled before completion; output is partial"));
+    }
 }
 
 void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportConfig& config) {
@@ -578,6 +647,7 @@ void EmailExportWorker::exportPerItemFormats(PstParser* parser,
         }
     }
 
+    noteIfCancelled(result);
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
 }
@@ -596,12 +666,14 @@ bool EmailExportWorker::exportOnePstItem(const PstItemExportContext& context,
             ? collectAttachmentData(context.parser, detail.value(), context.config, context.result)
             : AttachmentCollection{};
 
-    const bool written = writePstItemFormat(context, detail.value(), attachments.data, index);
+    // An unreadable eligible attachment makes any artifact we could write a PARTIAL
+    // one. Fail closed BEFORE writing so no incomplete .eml/.html/.pdf is left on
+    // disk (the specific loss is already recorded in result.errors) (B7-25).
+    if (attachments.dropped > 0) {
+        return false;
+    }
 
-    // A message that wrote but lost an embedded attachment is a PARTIAL export, so it
-    // is counted as a failure (with the specific loss in result.errors), not a clean
-    // success (B7-25).
-    return written && attachments.dropped == 0;
+    return writePstItemFormat(context, detail.value(), attachments.data, index);
 }
 
 bool EmailExportWorker::writePstItemFormat(
@@ -692,6 +764,7 @@ void EmailExportWorker::exportIcsFormat(PstParser* parser,
         result.items_failed += events.size();
         result.errors.append(QStringLiteral("Failed to write ICS file"));
     }
+    noteIfCancelled(result);
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
 }
@@ -727,14 +800,20 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
     QString csv_name = csvFilename(config.format);
     QString csv_path = config.output_path + QLatin1Char('/') + csv_name;
 
-    if (writeCsv(items, csv_path, columns, config.csv_delimiter, config.csv_include_header)) {
+    // Reject a malformed config BEFORE writing rather than coerce unknown columns to
+    // blank cells or accept a structure-breaking delimiter (fail closed).
+    const QString cfg_error = validateCsvConfig(columns, config.csv_delimiter);
+    if (cfg_error.isEmpty() &&
+        writeCsv(items, csv_path, columns, config.csv_delimiter, config.csv_include_header)) {
         result.items_exported += items.size();
         QFileInfo fi(csv_path);
         result.total_bytes = fi.size();
     } else {
         result.items_failed += items.size();
-        result.errors.append(QStringLiteral("Failed to write CSV file"));
+        result.errors.append(cfg_error.isEmpty() ? QStringLiteral("Failed to write CSV file")
+                                                 : cfg_error);
     }
+    noteIfCancelled(result);
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
 }
@@ -750,6 +829,14 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
     }
     if (config.output_path.isEmpty()) {
         emitEarlyFailure(QStringLiteral("Export output path is empty"));
+        return;
+    }
+    // Fail closed instead of silently coercing an unsupported request to EML: MBOX
+    // export only produces per-message files (EML/HTML/TXT/PDF). A CSV/ICS/VCF
+    // request here is a caller error and must be surfaced, not reinterpreted.
+    if (!isMessageFileFormat(config.format)) {
+        emitEarlyFailure(
+            QStringLiteral("MBOX export supports only per-message formats (EML, HTML, TXT, PDF)"));
         return;
     }
 
@@ -794,6 +881,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
         }
     }
 
+    noteIfCancelled(result);
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
 }
@@ -811,6 +899,11 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
     // Read the real bytes so message-file writers embed/save them like the PST path.
     const AttachmentCollection attachments = collectMboxAttachmentData(
         context.parser, message_index, item, context.config, context.result);
+    // Fail closed before writing when an eligible attachment could not be read, so no
+    // partial artifact is left on disk (the loss is recorded in result.errors).
+    if (attachments.dropped > 0) {
+        return false;
+    }
     const auto& attachment_data = attachments.data;
 
     const bool written = [&]() -> bool {
@@ -842,8 +935,7 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
         }
     }();
 
-    // A lost attachment makes this a partial export -> counted as failure (B7-25).
-    return written && attachments.dropped == 0;
+    return written;
 }
 
 // ============================================================================
@@ -908,7 +1000,10 @@ bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
     bytes_written += writer.totalBytesWritten() - before;
     if (!saveSidecarAttachments(
             attachment_data, write_result.value(), bytes_written, flatten_attachments)) {
-        return attachment_data.isEmpty();
+        // A sidecar attachment failed: remove the .pdf so no partial artifact (a
+        // message advertising attachments that are not on disk) is left behind.
+        QFile::remove(write_result.value());
+        return false;
     }
     return true;
 }
@@ -940,15 +1035,13 @@ bool EmailExportWorker::writeVcf(const sak::PstItemDetail& contact,
     QString filename = name_part + QStringLiteral(".vcf");
     filename = resolveFilenameConflict(output_dir, filename);
 
-    QFile file(output_dir + QLatin1Char('/') + filename);
+    QSaveFile file(output_dir + QLatin1Char('/') + filename);
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    if (!sak::writeFully(file, content)) {
-        file.close();
+    if (!sak::writeFully(file, content) || !file.commit()) {
         return false;  // A truncated .vcf is not a successful export.
     }
-    file.close();
     return true;
 }
 
@@ -962,13 +1055,21 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
     vcf += "N:" + escapeCalendarText(contact.surname).toUtf8() + ";" +
            escapeCalendarText(contact.given_name).toUtf8() + ";;;\r\n";
 
-    // FN: Full name
+    // FN: Full name. FN is REQUIRED by RFC 6350; fall back to the (real) email
+    // address as the formatted name, and fail closed (empty content) if there is no
+    // name or address to identify the contact rather than emit an invalid vCard.
     QString full_name = contact.given_name;
     if (!contact.surname.isEmpty()) {
         if (!full_name.isEmpty()) {
             full_name += QLatin1Char(' ');
         }
         full_name += contact.surname;
+    }
+    if (full_name.isEmpty()) {
+        full_name = contact.email_address;
+    }
+    if (full_name.isEmpty()) {
+        return {};  // no identifying data -> caller treats as a failed contact
     }
     appendVcfField(vcf, "FN:", full_name);
     appendVcfField(vcf, "ORG:", contact.company_name);
@@ -978,8 +1079,12 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
     appendVcfField(vcf, "TEL;TYPE=CELL:", contact.mobile_phone);
     appendVcfField(vcf, "TEL;TYPE=HOME:", contact.home_phone);
 
-    if (!contact.contact_photo.isEmpty()) {
-        vcf += "PHOTO;ENCODING=b;TYPE=JPEG:" + contact.contact_photo.toBase64() + "\r\n";
+    // Label the PHOTO with its detected type instead of assuming JPEG; skip an
+    // unrecognized blob rather than mislabel it.
+    const QString photo_type = detectPhotoType(contact.contact_photo);
+    if (!contact.contact_photo.isEmpty() && !photo_type.isEmpty()) {
+        vcf += "PHOTO;ENCODING=b;TYPE=" + photo_type.toUtf8() + ":" +
+               contact.contact_photo.toBase64() + "\r\n";
     }
 
     vcf += "END:VCARD\r\n";
@@ -993,15 +1098,15 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
 bool EmailExportWorker::writeIcs(const QVector<sak::PstItemDetail>& events,
                                  const QString& output_path) {
     QByteArray content = buildIcsContent(events);
-    QFile file(output_path);
+    // QSaveFile writes to a temp sibling and atomically renames on commit(), so a
+    // failed write never truncates a previously valid .ics in place.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
-    if (!sak::writeFully(file, content)) {
-        file.close();
+    if (!sak::writeFully(file, content) || !file.commit()) {
         return false;  // A truncated .ics is not a successful export.
     }
-    file.close();
     return true;
 }
 
@@ -1012,8 +1117,20 @@ QByteArray EmailExportWorker::buildIcsContent(const QVector<sak::PstItemDetail>&
     ics += "PRODID:-//SAK Utility//Email Export//EN\r\n";
     ics += "CALSCALE:GREGORIAN\r\n";
 
+    // DTSTAMP is the object-creation time (the export moment): a legitimate value,
+    // not a fabricated stand-in for missing data.
+    const QByteArray dtstamp = toIcsDateTime(QDateTime::currentDateTimeUtc()).toUtf8();
+
     for (const auto& event : events) {
         ics += "BEGIN:VEVENT\r\n";
+
+        // UID and DTSTAMP are REQUIRED by RFC 5545; a VEVENT lacking them is rejected
+        // by strict consumers. Derive a stable UID from the message id or node id.
+        const QString uid = event.message_id.isEmpty()
+                                ? QStringLiteral("%1@sak-utility").arg(event.node_id)
+                                : event.message_id;
+        ics += "UID:" + escapeCalendarText(uid).toUtf8() + "\r\n";
+        ics += "DTSTAMP:" + dtstamp + "\r\n";
 
         if (event.start_time.isValid()) {
             ics += "DTSTART:" + toIcsDateTime(event.start_time).toUtf8() + "\r\n";
@@ -1032,8 +1149,12 @@ QByteArray EmailExportWorker::buildIcsContent(const QVector<sak::PstItemDetail>&
         }
 
         for (const auto& attendee : event.attendees) {
-            const QByteArray cn = escapeCalendarText(attendee).toUtf8();
-            ics += "ATTENDEE;CN=" + cn + ":mailto:" + cn + "\r\n";
+            // CN is a parameter (DQUOTE-quoted), the mailto value is the CAL-ADDRESS.
+            // Using TEXT escaping in the unquoted param context let a value inject
+            // extra parameters; quote the param and strip controls from the address.
+            const QString clean = stripControlChars(attendee);
+            ics += "ATTENDEE;CN=" + icsParamQuote(attendee).toUtf8() + ":mailto:" + clean.toUtf8() +
+                   "\r\n";
         }
 
         ics += "END:VEVENT\r\n";
@@ -1052,7 +1173,9 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
                                  const QStringList& columns,
                                  QChar delimiter,
                                  bool include_header) {
-    QFile file(output_path);
+    // QSaveFile writes to a temp sibling and atomically renames on commit(), so a
+    // failed write never truncates a previously valid .csv in place.
+    QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
@@ -1083,11 +1206,9 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
         stream << "\r\n";
     }
 
-    if (!textStreamOk(stream, file)) {
-        file.close();
+    if (!textStreamOk(stream, file) || !file.commit()) {
         return false;  // A truncated/failed CSV write is not a successful export.
     }
-    file.close();
     return true;
 }
 
@@ -1208,7 +1329,9 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     filename = resolveFilenameConflict(request.output_dir, filename);
     const QString full_path = request.output_dir + QLatin1Char('/') + filename;
 
-    QFile file(full_path);
+    // QSaveFile atomically renames on commit(), so a failed write leaves no
+    // truncated .txt behind.
+    QSaveFile file(full_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
@@ -1220,16 +1343,17 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     if (item.body_plain.isEmpty() && !item.body_html.isEmpty()) {
         stream << item.body_html;
     }
-    if (!textStreamOk(stream, file)) {
-        file.close();
+    if (!textStreamOk(stream, file) || !file.commit()) {
         return false;  // A truncated/failed .txt write is not a successful export.
     }
-    file.close();
     QFileInfo info(full_path);
     bytes_written += info.size();
     if (request.save_attachments &&
         !saveSidecarAttachments(
             request.attachment_data, full_path, bytes_written, request.flatten_attachments)) {
+        // A sidecar attachment failed: remove the main .txt so no partial artifact
+        // (message body without its promised attachments) is left on disk.
+        QFile::remove(full_path);
         return false;
     }
     return true;

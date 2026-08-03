@@ -1254,6 +1254,12 @@ void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
     }
     QTextStream out(&file);
     out << script;
+    if (!flushTextStreamOk(out, file)) {
+        file.close();
+        QFile::remove(path);  // never leave a truncated script behind
+        sak::showWarningLogged(this, "Export Error", "Failed to write the script:\n" + path);
+        return;
+    }
     Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), sak::kTimerStatusDefaultMs);
 }
 
@@ -1288,6 +1294,12 @@ void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sou
         }
         QTextStream out(&file);
         out << script;
+        if (!flushTextStreamOk(out, file)) {
+            file.close();
+            QFile::remove(path);  // never count a truncated script as saved
+            ++failed;
+            continue;
+        }
         ++saved;
     }
     const QString msg =
@@ -1333,6 +1345,12 @@ void WifiManagerPanel::onExportMacosProfileClicked() {
     }
     QTextStream out(&file);
     out << xml;
+    if (!flushTextStreamOk(out, file)) {
+        file.close();
+        QFile::remove(path);  // never leave a truncated profile behind
+        sak::showWarningLogged(this, "Export Error", "Failed to write the profile:\n" + path);
+        return;
+    }
 
     const QString label =
         (sources.size() == 1)
@@ -1367,34 +1385,46 @@ void WifiManagerPanel::onSaveTableClicked() {
     m_save_path = QFileInfo(path).absolutePath();
 
     if (!checkedRows.isEmpty()) {
-        QJsonArray arr;
-        for (int row_index : checkedRows) {
-            const WifiConfig cfg = configFromRow(row_index);
-            QJsonObject obj;
-            obj["location"] = cfg.location;
-            obj["ssid"] = cfg.ssid;
-            obj["password"] = cfg.password;
-            obj["security"] = cfg.security;
-            obj["hidden"] = cfg.hidden;
-            arr.append(obj);
-        }
-        QJsonDocument doc(arr);
-        QFile f(path);
-        if (!f.open(QIODevice::WriteOnly)) {
-            sak::logWarning(("Could not open file for writing: " + path).toStdString());
-            sak::showWarningLogged(this, "Save Error", "Could not open file for writing:\n" + path);
-            return;
-        }
-        const QByteArray json_bytes = doc.toJson();
-        if (f.write(json_bytes) != json_bytes.size()) {
-            sak::logWarning("Incomplete write to checked network file: {}", path.toStdString());
-        }
-        f.close();
-        Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path),
-                             sak::kTimerStatusDefaultMs);
+        saveCheckedRowsToJson(path, checkedRows);
     } else {
         saveTableToJson(path);
     }
+}
+
+void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<int>& checkedRows) {
+    QJsonArray arr;
+    for (int row_index : checkedRows) {
+        const WifiConfig cfg = configFromRow(row_index);
+        QJsonObject obj;
+        obj["location"] = cfg.location;
+        obj["ssid"] = cfg.ssid;
+        obj["password"] = cfg.password;
+        obj["security"] = cfg.security;
+        obj["hidden"] = cfg.hidden;
+        arr.append(obj);
+    }
+    QJsonDocument doc(arr);
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        sak::logWarning(("Could not open file for writing: " + path).toStdString());
+        sak::showWarningLogged(this, "Save Error", "Could not open file for writing:\n" + path);
+        return;
+    }
+    const QByteArray json_bytes = doc.toJson();
+    const qint64 written = f.write(json_bytes);
+    // Fail closed: a short write or failed atomic commit must leave the original file untouched
+    // and must NOT report the checked networks as saved.
+    const bool committed = (written == json_bytes.size()) && f.commit();
+    if (!jsonWriteSucceeded(written, json_bytes.size(), committed)) {
+        f.cancelWriting();
+        sak::logWarning("Incomplete write to checked network file: {}", path.toStdString());
+        sak::showWarningLogged(this,
+                               "Save Error",
+                               "Failed to write the network table (file left unchanged):\n" + path);
+        return;
+    }
+    Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path),
+                         sak::kTimerStatusDefaultMs);
 }
 
 void WifiManagerPanel::onLoadTableClicked() {
@@ -1821,7 +1851,9 @@ QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& c
             break;
         }
         const QString xml = WifiManagerPanel::buildWlanProfileXml(configs.at(index));
-        if (WifiManagerPanel::installWlanProfile(xml, index)) {
+        // Empty XML means the security type was refused (unsupported/unknown): count it as a
+        // failure rather than installing a downgraded profile.
+        if (!xml.isEmpty() && WifiManagerPanel::installWlanProfile(xml, index)) {
             ++added;
         } else {
             ++failed;
@@ -1830,20 +1862,36 @@ QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& c
     return QPair<int, int>{added, failed};
 }
 
+std::pair<QString, QString> WifiManagerPanel::wlanAuthEncForSecurity(const QString& security) {
+    const QString upper = security.toUpper();
+    // Enterprise (802.1X/EAP) profiles need EAP configuration this PSK/open builder cannot
+    // produce; refuse rather than emit a broken or downgraded profile.
+    if (upper.contains(QStringLiteral("ENTERPRISE"))) {
+        return {};
+    }
+    if (upper.contains(QStringLiteral("WEP"))) {
+        return {QStringLiteral("open"), QStringLiteral("WEP")};
+    }
+    if (upper.contains(QStringLiteral("NONE")) || upper.contains(QStringLiteral("OPEN"))) {
+        return {QStringLiteral("open"), QStringLiteral("none")};
+    }
+    // WPA3-Personal uses SAE: map it to WPA3SAE rather than silently downgrading it to WPA2-PSK.
+    if (upper.contains(QStringLiteral("WPA3")) || upper.contains(QStringLiteral("SAE"))) {
+        return {QStringLiteral("WPA3SAE"), QStringLiteral("AES")};
+    }
+    if (upper.contains(QStringLiteral("WPA"))) {  // WPA/WPA2 Personal (PSK)
+        return {QStringLiteral("WPA2PSK"), QStringLiteral("AES")};
+    }
+    return {};  // unknown / malformed -> refuse (fail closed)
+}
+
 QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg) {
     Q_ASSERT(!cfg.ssid.isEmpty());
-    const QString upper = cfg.security.toUpper();
-    QString authType;
-    QString encType;
-    if (upper.contains("WEP")) {
-        authType = "open";
-        encType = "WEP";
-    } else if (upper.contains("NONE") || upper.contains("OPEN")) {
-        authType = "open";
-        encType = "none";
-    } else {
-        authType = "WPA2PSK";
-        encType = "AES";
+    const auto [authType, encType] = wlanAuthEncForSecurity(cfg.security);
+    // Empty authType == unsupported/unknown security: return an empty document so the caller
+    // refuses the install instead of writing a downgraded or malformed profile.
+    if (authType.isEmpty()) {
+        return {};
     }
 
     QString xml;
@@ -2336,6 +2384,13 @@ void WifiManagerPanel::saveTableToJson(const QString& path) {
 
 bool WifiManagerPanel::jsonWriteSucceeded(qint64 written, qint64 expected, bool committed) {
     return written == expected && committed;
+}
+
+bool WifiManagerPanel::flushTextStreamOk(QTextStream& stream, const QFileDevice& file) {
+    // Fail-closed finalize: flush the buffered text and verify neither the stream nor its file
+    // device reported an error (disk full / IO failure). Callers must not report success on false.
+    stream.flush();
+    return stream.status() == QTextStream::Ok && file.error() == QFileDevice::NoError;
 }
 
 void WifiManagerPanel::loadTableFromJson(const QString& path) {

@@ -14,6 +14,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <functional>
 #include <tuple>
 #include <utility>
@@ -22,6 +23,7 @@ namespace sak {
 
 namespace {
 constexpr int kImapDefaultTimeoutMs = 30'000;
+constexpr qint64 kImapMaxTimeoutMs = 24LL * 60 * 60 * 1000;  // 24h ceiling
 constexpr int kImapReadBufferSize = 8192;
 constexpr int kImapMaxMessageSize = 25 * static_cast<int>(kBytesPerMB);
 constexpr int kImapDateTimeFieldWidth = kTimeFieldWidth;
@@ -131,8 +133,13 @@ private:
     const QVector<QDateTime>& dates() const { return *m_request.dates; }
 
     int timeoutMs() const {
-        return config().timeout_seconds > 0 ? config().timeout_seconds * kMillisecondsPerSecond
-                                            : kImapDefaultTimeoutMs;
+        if (config().timeout_seconds <= 0) {
+            return kImapDefaultTimeoutMs;
+        }
+        // Compute in 64-bit and clamp: a large timeout_seconds * 1000 would overflow
+        // a 32-bit int and could wrap to a tiny/negative timer interval.
+        const qint64 ms = static_cast<qint64>(config().timeout_seconds) * kMillisecondsPerSecond;
+        return static_cast<int>(std::min<qint64>(ms, kImapMaxTimeoutMs));
     }
 
     void finish(bool success, error_code code = error_code::success, const QString& message = {}) {
@@ -294,6 +301,13 @@ private:
         case ImapAuthMethod::XOAuth2:
             sendCommand(xoauth2AuthCommand(), auth_done);
             break;
+        default:
+            // An out-of-range auth enum would otherwise send nothing and hang until
+            // the timeout aborts the session. Fail closed immediately instead.
+            finish(false,
+                   error_code::invalid_argument,
+                   QStringLiteral("Unsupported IMAP authentication method"));
+            break;
         }
     }
 
@@ -386,11 +400,14 @@ private:
             return false;
         }
         // Wait for a complete greeting line before judging it (a partial read may
-        // not yet contain the OK).
+        // not yet contain the full first line).
         if (!m_buffer.contains(QStringLiteral("\r\n"))) {
             return true;
         }
-        if (!m_buffer.contains(QStringLiteral("OK"))) {
+        // Require a real untagged success greeting ("* OK"/"* PREAUTH"). A "* BYE"
+        // or "* NO" greeting -- even one that happens to contain "OK" somewhere --
+        // must not proceed to send credentials (loose-parse fix).
+        if (!ImapUploader::isValidImapGreeting(m_buffer)) {
             failConnection(QStringLiteral("Bad server greeting: ") +
                            m_buffer.left(kServerGreetingPreviewChars));
             return true;
@@ -751,6 +768,11 @@ bool ImapUploader::hasCompleteLineWithPrefix(const QString& buf, const QString& 
 
 bool ImapUploader::taggedLineIsOk(const QString& buf, const QString& tag) {
     return hasCompleteLineWithPrefix(buf, tag + QStringLiteral(" OK"));
+}
+
+bool ImapUploader::isValidImapGreeting(const QString& buf) {
+    return hasCompleteLineWithPrefix(buf, QStringLiteral("* OK")) ||
+           hasCompleteLineWithPrefix(buf, QStringLiteral("* PREAUTH"));
 }
 
 bool ImapUploader::isValidImapFlag(const QString& flag) {

@@ -56,6 +56,21 @@ private Q_SLOTS:
                                               QStringLiteral("A0007")));
     }
 
+    // Greeting must be an untagged success greeting; a BYE/NO that merely contains
+    // "OK" somewhere must be rejected before any credential is sent.
+    void isValidImapGreeting_onlyAcceptsOkOrPreauth() {
+        QVERIFY(
+            ImapUploader::isValidImapGreeting(QStringLiteral("* OK IMAP4rev1 Service Ready\r\n")));
+        QVERIFY(ImapUploader::isValidImapGreeting(
+            QStringLiteral("* PREAUTH already authenticated\r\n")));
+        // "* BYE" that happens to embed the substring "OK" must NOT pass.
+        QVERIFY(!ImapUploader::isValidImapGreeting(
+            QStringLiteral("* BYE server LOOKS busy, try later\r\n")));
+        QVERIFY(!ImapUploader::isValidImapGreeting(QStringLiteral("* NO not available\r\n")));
+        // A partial read with no complete line yet is not decided early.
+        QVERIFY(!ImapUploader::isValidImapGreeting(QStringLiteral("* OK still coming")));
+    }
+
     void hasCompleteLineWithPrefix_continuationOnlyAtLineStart() {
         // A continuation request is a line that starts with '+'.
         QVERIFY(ImapUploader::hasCompleteLineWithPrefix(QStringLiteral("+ Ready\r\n"),

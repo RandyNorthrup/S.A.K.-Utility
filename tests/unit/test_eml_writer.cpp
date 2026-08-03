@@ -374,6 +374,78 @@ private Q_SLOTS:
         QVERIFY(f.open(QIODevice::ReadOnly));
         QVERIFY(f.readAll().contains("body of foo_(1)"));
     }
+
+    // A non-ASCII Subject must be RFC 2047 'B'-encoded, not emitted as raw 8-bit
+    // (which RFC 5322 readers reject/mis-decode).
+    void nonAsciiSubjectIsRfc2047Encoded() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        // Split adjacent literals so \x does not greedily absorb the following ASCII
+        // hex-letters ("ber"/"50") into an out-of-range escape.
+        item.subject = QString::fromUtf8(
+            "Rechnung \xC3\xBC"
+            "ber \xE2\x82\xAC"
+            "50");  // "uber EUR50" (u-umlaut + euro sign)
+        item.sender_email = QStringLiteral("s@example.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(content.contains("Subject: =?UTF-8?B?"));
+        QVERIFY(
+            !content.contains(QByteArray("\xC3\xBC"
+                                         "ber")));  // no raw 8-bit in header
+    }
+
+    // Attachment base64 must be wrapped to <=76-column lines (RFC 2045); a single
+    // unbroken run is rejected by strict MIME readers.
+    void attachmentBase64IsWrapped() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::EmlWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("wrap");
+        item.sender_email = QStringLiteral("s@example.com");
+        item.body_plain = QStringLiteral("see attached");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        const QByteArray blob(300, 'A');
+        auto result = writer.writeMessage(item, {{QStringLiteral("a.bin"), blob}}, QString());
+        QVERIFY(result.has_value());
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        const QByteArray unwrapped = blob.toBase64();
+        QVERIFY(unwrapped.size() > 76);
+        QVERIFY(!content.contains(unwrapped));          // not one giant line
+        QVERIFY(content.contains(unwrapped.left(76)));  // but the first 76 cols are present
+    }
+
+    // A subfolder path that escapes the output directory must be refused, not
+    // silently written outside the tree (defense-in-depth).
+    void rejectsSubfolderTraversal() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::EmlWriter writer(temp_dir.path(), false, true);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("x");
+        item.sender_email = QStringLiteral("s@example.com");
+        item.body_plain = QStringLiteral("b");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QStringLiteral("../escape"));
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::path_traversal_attempt);
+    }
 };
 
 QTEST_MAIN(TestEmlWriter)

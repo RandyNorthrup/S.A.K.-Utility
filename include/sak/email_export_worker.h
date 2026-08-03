@@ -154,6 +154,10 @@ private:
     // Early-failure helper: emits an exportComplete result carrying a single error.
     void emitEarlyFailure(const QString& error_message);
 
+    // Append a partial/cancelled note to result.errors when the run was cancelled, so
+    // a truncated export is not reported as a clean exportComplete.
+    void noteIfCancelled(sak::EmailExportResult& result) const;
+
     // Resolve effective item-id list (explicit ids or derived from folder). Records
     // an error into result if folder paging stopped early on a read failure (B7-27).
     [[nodiscard]] static QVector<uint64_t> collectItemIds(PstParser* parser,

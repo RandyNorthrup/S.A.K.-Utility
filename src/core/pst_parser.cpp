@@ -344,13 +344,19 @@ static QString formatString8Value(const QByteArray& raw) {
     if (needed > 0) {
         QString result;
         result.resize(needed);
-        MultiByteToWideChar(CP_ACP,
-                            MB_PRECOMPOSED,
-                            raw.constData(),
-                            raw.size(),
-                            reinterpret_cast<wchar_t*>(result.data()),
-                            needed);
-        return result;
+        const int written = MultiByteToWideChar(CP_ACP,
+                                                MB_PRECOMPOSED,
+                                                raw.constData(),
+                                                raw.size(),
+                                                reinterpret_cast<wchar_t*>(result.data()),
+                                                needed);
+        // Trust the actually-written count, not the sizing pass: if the second call
+        // converts fewer code units (or fails, returning 0) do not leave uninitialized
+        // tail characters in the string.
+        if (written > 0) {
+            result.resize(written);
+            return result;
+        }
     }
 
     return QString::fromLatin1(raw);
@@ -816,6 +822,9 @@ PstParser::~PstParser() {
 // ============================================================================
 
 bool PstParser::failOpen(const QString& message, bool close_parser) {
+    // NOTE: despite the name, this FAILS CLOSED -- it means "fail the open()": log
+    // the real error, optionally close the parser, and return false so the caller
+    // aborts. It never proceeds with a partially-parsed file.
     sak::logError("PstParser: {}", message.toStdString());
     Q_EMIT errorOccurred(message);
     if (close_parser) {
@@ -1200,6 +1209,14 @@ std::expected<void, error_code> PstParser::parseHeaderEncryption(const QByteArra
 
     if (m_encryption_type == sak::email::kEncryptHigh) {
         sak::logError("PstParser: High encryption not supported");
+        return std::unexpected(error_code::pst_unsupported_encryption);
+    }
+    // Fail closed on any crypt method we do not recognize. Only None and
+    // Compressible are decoded downstream; an unknown value would otherwise be
+    // silently treated as unencrypted and mine garbage from encoded blocks.
+    if (m_encryption_type != sak::email::kEncryptNone &&
+        m_encryption_type != sak::email::kEncryptCompressible) {
+        sak::logError("PstParser: Unknown encryption method: 0x{:02X}", m_encryption_type);
         return std::unexpected(error_code::pst_unsupported_encryption);
     }
     return {};
@@ -3084,9 +3101,14 @@ std::expected<QByteArray, error_code> PstParser::readBytes(qint64 offset, qint64
 
 template <typename T>
 T PstParser::readLE(const QByteArray& data, int offset) {
-    Q_ASSERT(offset >= 0);
-    Q_ASSERT(offset + static_cast<int>(sizeof(T)) <= data.size());
-
+    // Bounds-check at runtime, not only via the release-disabled Q_ASSERT: page/BTH
+    // entry sizes are attacker-controlled, so a fixed-offset read can otherwise be
+    // driven past the buffer. Return 0 for an out-of-range field rather than memcpy
+    // out of bounds (mirrors the free-function localReadLE).
+    if (offset < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(sizeof(T)) > data.size()) {
+        return T{0};
+    }
     T value;
     std::memcpy(&value, data.constData() + offset, sizeof(T));
     return value;

@@ -51,6 +51,9 @@ private Q_SLOTS:
 
     // -- eml_include_headers wiring --------------------------------------
     void emlExportRespectsIncludeHeaders();
+
+    // -- B7: MBOX must reject non-per-message formats, not coerce to EML --
+    void mboxRejectsNonMessageFormat();
 };
 
 // ============================================================================
@@ -363,6 +366,39 @@ void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
     QVERIFY(!on_eml.isEmpty());
     QVERIFY(on_eml.contains("Subject: SecretSubjectLine"));
 
+    parser.close();
+}
+
+// An MBOX export requested in a non-per-message format (e.g. CSV) must fail closed
+// with a surfaced error rather than silently coerce the request to EML (B7-format).
+void TestEmailExportWorker::mboxRejectsNonMessageFormat() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    mbox.write("From s@example.com Mon Jan  1 00:00:00 2024\r\nSubject: x\r\n\r\nbody\r\n");
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    QTemporaryDir out_dir;
+    QVERIFY(out_dir.isValid());
+
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::CsvEmails;  // not a per-message format
+    config.output_path = out_dir.path();
+
+    EmailExportWorker worker;
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+    worker.exportMboxItems(&parser, config);
+
+    QVERIFY(complete_spy.count() > 0);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);
+    QVERIFY(!result.errors.isEmpty());  // the unsupported-format error is surfaced
+    // No stray .eml was written from a coerced format.
+    QVERIFY(QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files).isEmpty());
     parser.close();
 }
 

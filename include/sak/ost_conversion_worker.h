@@ -81,9 +81,14 @@ private:
     /// discriminates per-source output (e.g. a unique MBOX subdirectory).
     void createPerItemWriter(const OstConversionConfig& config, const QString& source_path);
 
-    void computeSourceChecksumIfRequested(const QString& source_path,
-                                          const OstConversionConfig& config,
-                                          OstConversionResult& result);
+    /// Compute the source SHA-256 when the config requests provenance checksums.
+    /// Returns true when not requested or the digest was computed over the whole
+    /// file; returns false (with an error recorded) when the source could not be
+    /// opened or fully read, so the caller aborts rather than producing output
+    /// whose requested provenance record is missing or a partial-prefix hash.
+    [[nodiscard]] bool computeSourceChecksumIfRequested(const QString& source_path,
+                                                        const OstConversionConfig& config,
+                                                        OstConversionResult& result);
 
     [[nodiscard]] std::unique_ptr<PstParser> openSourceParser(const QString& source_path,
                                                               OstConversionResult& result);

@@ -68,6 +68,12 @@ public:
     /// is OK (line "tag OK ..."), evaluated only at a line boundary (B9-05).
     [[nodiscard]] static bool taggedLineIsOk(const QString& buf, const QString& tag);
 
+    /// True only when @p buf holds a COMPLETE greeting line that is an untagged
+    /// success greeting -- "* OK ..." or "* PREAUTH ...". A "* BYE", "* NO" or any
+    /// other line (even one that merely contains "OK" somewhere) is rejected so a
+    /// malformed/hostile greeting cannot trigger credential transmission.
+    [[nodiscard]] static bool isValidImapGreeting(const QString& buf);
+
 Q_SIGNALS:
     void uploadStarted(int total_items);
     void uploadProgress(int items_done, int total_items, qint64 bytes_sent);

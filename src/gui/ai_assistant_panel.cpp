@@ -1210,6 +1210,25 @@ bool parseWorkflowToolInputValues(const QJsonValue& raw, QJsonObject* out, QStri
     return true;
 }
 
+// Validate a persisted recovery-resume start index fail-closed. The snapshot's
+// resume_start_phase_index selects which phases the orchestrator SKIPS as already
+// done; a tampered/corrupt value must not coerce via QJsonValue::toInt()'s default
+// (0 = replay everything) nor point past the recorded history (skip real phases).
+// Returns false unless the value is a genuine non-negative integer no greater than
+// @p phase_count; on success writes the validated index.
+bool workflowResumeStartIndex(const QJsonValue& value, int phase_count, int* out) {
+    if (!value.isDouble()) {
+        return false;
+    }
+    const double raw = value.toDouble();
+    const int index = static_cast<int>(raw);
+    if (static_cast<double>(index) != raw || index < 0 || index > phase_count) {
+        return false;
+    }
+    *out = index;
+    return true;
+}
+
 QSet<QString> subagentAllowedToolNames() {
     return {
         QStringLiteral("sak_session_search"),
@@ -1299,9 +1318,17 @@ QSet<QString> stringSetFromJson(const QJsonArray& array) {
     return values;
 }
 
+// Fail-closed package-id validator. Returns the trimmed/lowercased token ONLY when
+// every character is already in the safe [a-z0-9_.+-] set; a token carrying any
+// other character (e.g. the '/' in 'fire/fox') is REJECTED (returns empty) rather
+// than silently stripped into a DIFFERENT valid package, which could redirect an
+// install to the wrong product. Callers treat an empty return as an error.
 QString safePackageToken(const QString& value) {
-    QString out = value.trimmed().toLower();
-    out.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9_.+-])")));
+    const QString out = value.trimmed().toLower();
+    static const QRegularExpression valid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
+    if (out.isEmpty() || !valid.match(out).hasMatch()) {
+        return {};
+    }
     return out;
 }
 
@@ -1565,11 +1592,16 @@ QVector<QPair<QString, QString>> packagesFromJson(const QJsonArray& array, QStri
             return {};
         }
         const QJsonObject object = value.toObject();
-        const QString package_id =
-            safePackageToken(object.value(QStringLiteral("package_id")).toString());
+        const QString raw_id = object.value(QStringLiteral("package_id")).toString().trimmed();
+        const QString package_id = safePackageToken(raw_id);
         if (package_id.isEmpty()) {
             if (error_message) {
-                *error_message = QStringLiteral("Package item missing package_id");
+                // Fail closed: distinguish an absent id from one carrying illegal
+                // characters (rejected, not repaired) so the caller is not misled.
+                *error_message =
+                    raw_id.isEmpty()
+                        ? QStringLiteral("Package item missing package_id")
+                        : QStringLiteral("Package item has an invalid package_id: %1").arg(raw_id);
             }
             return {};
         }
@@ -1577,6 +1609,36 @@ QVector<QPair<QString, QString>> packagesFromJson(const QJsonArray& array, QStri
         packages.append({package_id, version});
     }
     return packages;
+}
+
+// Strict parse of the install_bundle 'packed_only' air-gap flag. Absent -> false
+// (the flag is opt-in). A genuine JSON bool is honored; a canonical string form
+// ("true"/"false", case-insensitive) is honored so a caller that stringifies the
+// flag still takes effect. Any other present-but-wrong-typed value is REJECTED via
+// the returned bool (fail closed) rather than silently coerced to false by
+// QJsonValue::toBool(), which would disable the intended air-gap and let the
+// install fetch from the network.
+bool parsePackedOnlyArg(const QJsonValue& value, bool* out, QString* error) {
+    if (value.isUndefined() || value.isNull()) {
+        *out = false;
+        return true;
+    }
+    if (value.isBool()) {
+        *out = value.toBool();
+        return true;
+    }
+    if (value.isString()) {
+        const QString text = value.toString().trimmed().toLower();
+        if (text == QLatin1String("true") || text == QLatin1String("false")) {
+            *out = (text == QLatin1String("true"));
+            return true;
+        }
+    }
+    if (error) {
+        *error = QStringLiteral(
+            "install_bundle 'packed_only' must be a boolean (or the string \"true\"/\"false\")");
+    }
+    return false;
 }
 
 QJsonArray packageInfoToJson(const std::vector<ChocolateyManager::PackageInfo>& packages) {
@@ -7066,6 +7128,17 @@ QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
     if (!output_error.isEmpty()) {
         return toolError(output_error);
     }
+    // Reject a wrong-typed air-gap flag up front (fail closed): a string/number that
+    // QJsonValue::toBool() would silently read as false must not slip through and
+    // disable the packed-only install so it fetches from the network.
+    if (operation == QLatin1String("install_bundle")) {
+        bool packed_only = false;
+        QString packed_error;
+        if (!parsePackedOnlyArg(
+                args.value(QStringLiteral("packed_only")), &packed_only, &packed_error)) {
+            return toolError(packed_error);
+        }
+    }
     if (!authorizeOfflineOperation(operation, args)) {
         return toolError(QStringLiteral("User declined or cancelled offline downloader operation"));
     }
@@ -7322,7 +7395,12 @@ void AiAssistantPanel::startOfflineWorkerOperation(OfflineDeploymentWorker* work
     const QString packages_dir =
         QFileInfo(manifest_path).dir().filePath(QStringLiteral("packages"));
     // packed_only: air-gap install of a self-contained bundle (skip will-fetch).
-    const bool packed_only = args.value(QStringLiteral("packed_only")).toBool();
+    // Wrong-typed values are rejected upstream in offlineRunOperation; if one somehow
+    // reaches here, parsePackedOnlyArg fails and packed_only stays true (air-gap ON),
+    // the safe side that blocks a network fetch, rather than silently falling open.
+    bool packed_only = true;
+    QString packed_error;
+    parsePackedOnlyArg(args.value(QStringLiteral("packed_only")), &packed_only, &packed_error);
     worker->installFromBundle(manifest_path, packages_dir, packed_only);
 }
 
@@ -9840,7 +9918,10 @@ AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunCon
         ctx.workflow = *workflow;
         ctx.found = true;
         for (const auto& input : workflow->required_inputs) {
-            if (input.required && !input_values.contains(input.id)) {
+            // Presence alone is not enough: a required field supplied as null, an
+            // empty string, or an empty list must fail preflight (matching the
+            // interactive path) instead of reaching ${} placeholder substitution.
+            if (input.required && !workflowInputHasValue(input_values.value(input.id))) {
                 ctx.missing_inputs << input.id;
             }
         }
@@ -9930,11 +10011,27 @@ void AiAssistantPanel::applyWorkflowResumeState(ai::AiOrchestrationOptions* opti
     if (resume_state.isEmpty()) {
         return;
     }
-    options->resume_enabled = true;
-    options->resume_start_phase_index =
-        resume_state.value(QStringLiteral("resume_start_phase_index")).toInt(0);
-    options->resume_prior_phases =
+    // Fail closed on a corrupt/tampered recovery snapshot: an unexpected schema or an
+    // out-of-range start index must NOT enable a resume that blind-replays or skips
+    // safety phases. Refusing leaves resume disabled so the run restarts fresh under
+    // the normal per-phase human gates instead of trusting the snapshot.
+    if (resume_state.value(QStringLiteral("schema")).toString() !=
+        QLatin1String("sak.ai.workflow_recovery_resume.v1")) {
+        qWarning("AiAssistantPanel: ignoring resume snapshot with unexpected schema");
+        return;
+    }
+    const QVector<ai::AiPhaseExecution> prior =
         phaseHistoryFromJson(resume_state.value(QStringLiteral("phase_history")).toArray());
+    int start_index = 0;
+    if (!workflowResumeStartIndex(resume_state.value(QStringLiteral("resume_start_phase_index")),
+                                  prior.size(),
+                                  &start_index)) {
+        qWarning("AiAssistantPanel: ignoring resume snapshot with invalid start index");
+        return;
+    }
+    options->resume_enabled = true;
+    options->resume_start_phase_index = start_index;
+    options->resume_prior_phases = prior;
     options->resume_flags =
         stringSetFromJson(resume_state.value(QStringLiteral("flags")).toArray());
     options->resume_phase_results = resume_state.value(QStringLiteral("phase_results")).toObject();

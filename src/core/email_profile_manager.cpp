@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTextStream>
 
 #ifdef Q_OS_WIN
@@ -94,6 +95,7 @@ QString realCanonicalPath(const QString& path) {
 }
 #endif
 
+constexpr int kSupportedManifestVersion = 1;
 constexpr int kRegExportTimeoutMs = 10'000;
 constexpr int kRegImportTimeoutMs = 10'000;
 constexpr int kRegistryPathMinimumBytes = 4;
@@ -155,6 +157,54 @@ QString deepestExistingAncestor(const QString& abs_path) {
     }
     return existing;
 }
+
+/// @brief True iff @p suffix-carrying @p path names a file type this tool legitimately backs up and
+/// restores (Outlook PST/OST, Windows Mail EML/PST, Thunderbird MBOX -- which is extensionless). A
+/// restore destination is otherwise confined only to the home tree, which still contains sensitive
+/// spots (e.g. the Startup folder): without an extension allowlist a crafted manifest could drop a
+/// new .lnk/.cmd there for logon code execution. Empty suffix is allowed because Thunderbird MBOX
+/// stores have no extension, and an extensionless file is inert (Windows never auto-runs one).
+bool isRestorableDataFile(const QString& path) {
+    static const QSet<QString> kAllowedSuffixes = {
+        QStringLiteral("pst"),
+        QStringLiteral("ost"),
+        QStringLiteral("eml"),
+        QStringLiteral("mbox"),
+    };
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix.isEmpty() || kAllowedSuffixes.contains(suffix);
+}
+
+/// @brief True iff @p haystack contains @p marker ending on a path-segment boundary (end-of-string
+/// or a following '\'), so "\OUTLOOK\PROFILES" matches "...\Profiles" and "...\Profiles\Sub" but
+/// NOT "...\ProfilesEvil". Case-sensitive; callers pass already-upper-cased strings.
+bool containsPathSegment(const QString& haystack, const QString& marker) {
+    for (int pos = haystack.indexOf(marker); pos >= 0; pos = haystack.indexOf(marker, pos + 1)) {
+        const int after = pos + marker.size();
+        if (after == haystack.size() || haystack.at(after) == QLatin1Char('\\')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// @brief True iff @p s begins with @p prefix ending on a path-segment boundary (end-of-string or a
+/// following '\'), so a root-anchored prefix cannot be laundered by a longer sibling name.
+bool startsWithPathSegment(const QString& s, const QString& prefix) {
+    if (!s.startsWith(prefix)) {
+        return false;
+    }
+    return s.size() == prefix.size() || s.at(prefix.size()) == QLatin1Char('\\');
+}
+
+/// Allowed HKCU Outlook-profile prefix (upper-cased), followed by an "\OUTLOOK\PROFILES" segment.
+const QString kOfficeKeyPrefix = QStringLiteral("HKEY_CURRENT_USER\\SOFTWARE\\MICROSOFT\\OFFICE\\");
+
+/// Allowed Windows Messaging Subsystem profiles subtree (upper-cased). WMS profiles are discovered
+/// and exported as Outlook, so restore must accept this hive too (finding 6).
+const QString kWmsKeyPrefix = QStringLiteral(
+    "HKEY_CURRENT_USER\\SOFTWARE\\MICROSOFT\\WINDOWS NT"
+    "\\CURRENTVERSION\\WINDOWS MESSAGING SUBSYSTEM\\PROFILES");
 
 /// Outlook version keys in order of preference (newest first)
 const QStringList kOutlookVersions = {
@@ -344,6 +394,7 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
     m_cancelled.store(false);
     m_backup_dest_names.clear();
     m_backup_reg_exports.clear();
+    m_backup_failures = 0;
 
     QDir dir(backup_path);
     if (!dir.mkpath(QStringLiteral("."))) {
@@ -377,6 +428,14 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
             QStringLiteral("Failed to write backup manifest; backup is incomplete"));
         return;
     }
+    // A partial backup (some exports/copies failed) still writes a manifest of the
+    // items that DID succeed, but a caller that only watches backupComplete must not
+    // read that as a fully successful backup: surface an aggregate failure first.
+    if (m_backup_failures > 0) {
+        Q_EMIT errorOccurred(QStringLiteral("Backup finished with %1 failed item(s); "
+                                            "some profiles were not fully backed up")
+                                 .arg(m_backup_failures));
+    }
     Q_EMIT backupComplete(backup_path, files_done, bytes_copied);
 }
 
@@ -397,16 +456,19 @@ void EmailProfileManager::backupSingleProfile(const sak::EmailClientProfile& pro
                                               qint64& bytes_copied) {
     if (profile.client_type == sak::EmailClientType::Outlook && !profile.profile_path.isEmpty()) {
         // Sanitize the untrusted profile name to a bare filename so the .reg cannot
-        // traverse out of the backup dir; the manifest reuses the same basename.
-        const QString reg_file = backup_path + QLatin1Char('/') +
-                                 registryBackupFileName(profile.profile_name);
+        // traverse out of the backup dir, and DEDUPE so two profiles that sanitize to
+        // the same component do not overwrite one another's export. The manifest reuses
+        // the exact on-disk basename we record below.
+        const QString reg_file = uniqueRegistryBackupDestination(backup_path, profile.profile_name);
         if (exportRegistryKey(profile.profile_path, reg_file)) {
-            // Only a successful export earns a registry_file entry in the manifest.
-            m_backup_reg_exports.insert(profile.profile_path);
+            // Only a successful export earns a registry_file entry in the manifest, keyed
+            // by the (unique) profile path and pointing at the real deduped basename.
+            m_backup_reg_exports.insert(profile.profile_path, QFileInfo(reg_file).fileName());
         } else {
             // A failed export is a backup failure, not silent success: surface it and
             // leave this profile without a registry_file so restore never chases a
             // missing .reg.
+            ++m_backup_failures;
             sak::logWarning("Failed to export registry key: {}",
                             profile.profile_path.toStdString());
             Q_EMIT errorOccurred(QStringLiteral("Failed to export registry for profile: %1")
@@ -421,13 +483,22 @@ void EmailProfileManager::backupSingleProfile(const sak::EmailClientProfile& pro
 
         QFileInfo fi(data_file.path);
         if (!fi.exists()) {
+            // A file discovery recorded is now gone: that is a backup gap, not a no-op.
+            ++m_backup_failures;
+            Q_EMIT errorOccurred(QStringLiteral("Backup source missing: %1").arg(data_file.path));
             continue;
         }
 
+        // NOTE (inherent limitation): PST/OST/MBOX stores may be open in a live client
+        // during this copy. Without a volume snapshot (VSS) or an exclusive lock -- both
+        // out of scope for a user-space copy -- the copy of an actively-written store can
+        // be internally inconsistent. QFile::copy still fails closed on any I/O error;
+        // silent same-size in-place mutation of an open DB is the residual we accept.
         const QString dest = uniqueBackupDestination(backup_path, fi);
         if (!QFile::copy(data_file.path, dest)) {
             // A failed required copy is a backup failure, not silent success:
             // surface it and do not count it toward files_done or the manifest.
+            ++m_backup_failures;
             Q_EMIT errorOccurred(QStringLiteral("Failed to back up: %1").arg(data_file.path));
             continue;
         }
@@ -459,6 +530,22 @@ QString EmailProfileManager::registryBackupFileName(const QString& profile_name)
            QStringLiteral(".reg");
 }
 
+QString EmailProfileManager::uniqueRegistryBackupDestination(const QString& backup_path,
+                                                             const QString& profile_name) {
+    const QString base = registryBackupFileName(profile_name);  // registry_<stem>.reg
+    QString dest = backup_path + QLatin1Char('/') + base;
+    // Insert a collision index before the ".reg" suffix so a second colliding profile
+    // gets its own file instead of reg.exe export /y overwriting the first.
+    const QString stem = base.left(base.size() - 4);  // drop trailing ".reg"
+    int attempt = 1;
+    while (QFile::exists(dest)) {
+        ++attempt;
+        dest = backup_path + QLatin1Char('/') + stem + QLatin1Char('_') + QString::number(attempt) +
+               QStringLiteral(".reg");
+    }
+    return dest;
+}
+
 void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
     if (m_operation_active.exchange(true)) {
         Q_EMIT errorOccurred(QStringLiteral("An email-profile operation is already in progress"));
@@ -468,33 +555,11 @@ void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
 
     m_cancelled.store(false);
 
-    QFile file(backup_manifest_path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to open backup manifest"));
-        return;
+    QJsonArray profiles;
+    QString backup_dir;
+    if (!readBackupManifest(backup_manifest_path, profiles, backup_dir)) {
+        return;  // readBackupManifest already surfaced the specific reason (fail closed)
     }
-
-    // A manifest is untrusted input. A real backup manifest is a few KiB of profile
-    // metadata; cap the read so a hostile/corrupt file cannot force an unbounded
-    // allocation + JSON parse (DoS). Fail closed above the cap.
-    constexpr qint64 kMaxManifestBytes = 8LL * 1024 * 1024;
-    if (file.size() > kMaxManifestBytes) {
-        file.close();
-        Q_EMIT errorOccurred(QStringLiteral("Backup manifest is too large"));
-        return;
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isObject()) {
-        Q_EMIT errorOccurred(QStringLiteral("Invalid backup manifest format"));
-        return;
-    }
-
-    QJsonObject root = doc.object();
-    QJsonArray profiles = root[QStringLiteral("profiles")].toArray();
-    QString backup_dir = QFileInfo(backup_manifest_path).absolutePath();
 
     int restored = 0;
     for (const auto& prof_val : profiles) {
@@ -511,16 +576,69 @@ void EmailProfileManager::restoreProfiles(const QString& backup_manifest_path) {
     Q_EMIT restoreComplete(restored);
 }
 
-bool EmailProfileManager::restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir) {
-    bool all_ok = restoreRegistryFromManifest(prof, backup_dir);
+bool EmailProfileManager::readBackupManifest(const QString& manifest_path,
+                                             QJsonArray& out_profiles,
+                                             QString& out_backup_dir) {
+    QFile file(manifest_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        Q_EMIT errorOccurred(QStringLiteral("Failed to open backup manifest"));
+        return false;
+    }
+    // A manifest is untrusted input. A real backup manifest is a few KiB of profile
+    // metadata; cap the read so a hostile/corrupt file cannot force an unbounded
+    // allocation + JSON parse (DoS). Fail closed above the cap.
+    constexpr qint64 kMaxManifestBytes = 8LL * 1024 * 1024;
+    if (file.size() > kMaxManifestBytes) {
+        Q_EMIT errorOccurred(QStringLiteral("Backup manifest is too large"));
+        return false;
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    if (!doc.isObject()) {
+        Q_EMIT errorOccurred(QStringLiteral("Invalid backup manifest format"));
+        return false;
+    }
+    // Validate the schema fail-closed: never coerce a missing/wrong-typed field to a default. The
+    // version must be exactly the supported integer, and "profiles" must be a real array (a
+    // scalar/object silently coercing to [] would hide a corrupt or hostile manifest).
+    const QJsonObject root = doc.object();
+    const QJsonValue version = root[QStringLiteral("version")];
+    if (!version.isDouble() || version.toInt() != kSupportedManifestVersion) {
+        Q_EMIT errorOccurred(QStringLiteral("Unsupported or missing backup manifest version"));
+        return false;
+    }
+    const QJsonValue profiles_val = root[QStringLiteral("profiles")];
+    if (!profiles_val.isArray()) {
+        Q_EMIT errorOccurred(QStringLiteral("Backup manifest has no profiles array"));
+        return false;
+    }
+    out_profiles = profiles_val.toArray();
+    out_backup_dir = QFileInfo(manifest_path).absolutePath();
+    return true;
+}
 
-    const QString home_root = QDir::homePath();
+bool EmailProfileManager::restoreSingleProfile(const QJsonObject& prof, const QString& backup_dir) {
+    const bool has_registry = !prof[QStringLiteral("registry_file")].toString().isEmpty();
     const QJsonArray files = prof[QStringLiteral("data_files")].toArray();
+
+    // An empty/garbage profile object (no registry component and no data files) restores
+    // nothing; counting it as "restored" would inflate the reported total (finding 7).
+    if (!has_registry && files.isEmpty()) {
+        return false;
+    }
+
+    // Restore data files BEFORE the registry import: a rejected/traversing file entry is
+    // then caught before any (non-rollback-able) registry mutation runs, shrinking the
+    // partial-state window (finding 7). Evaluate every file so all failures are logged.
+    bool all_ok = true;
+    const QString home_root = QDir::homePath();
     for (const auto& file_val : files) {
-        // Evaluate every file (don't short-circuit) so all failures are logged.
         if (!restoreOneDataFile(file_val.toObject(), backup_dir, home_root)) {
             all_ok = false;
         }
+    }
+    if (has_registry && !restoreRegistryFromManifest(prof, backup_dir)) {
+        all_ok = false;
     }
     return all_ok;
 }
@@ -574,6 +692,15 @@ bool EmailProfileManager::restoreOneDataFile(const QJsonObject& file_obj,
     }
     if (!destinationWithinRoot(home_root, original)) {
         sak::logWarning("Rejected restore destination outside user home: {}",
+                        original.toStdString());
+        return false;
+    }
+    // Home containment alone is not enough: the home tree still holds sensitive spots
+    // (e.g. %APPDATA%\...\Startup, normally empty) where a NEW .lnk/.cmd yields logon
+    // code execution. Confine the restore to the email data-file types this tool backs
+    // up so a crafted manifest cannot create an arbitrary executable/shortcut (finding 1).
+    if (!isRestorableDataFile(original)) {
+        sak::logWarning("Rejected restore destination with non-email file type: {}",
                         original.toStdString());
         return false;
     }
@@ -780,10 +907,24 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverThunderbirdProfile
         ini.beginGroup(group);
         QString name = ini.value(QStringLiteral("Name"), QStringLiteral("Default")).toString();
         QString path = ini.value(QStringLiteral("Path")).toString();
-        bool is_relative = ini.value(QStringLiteral("IsRelative"), 1).toInt();
+        bool is_relative_ok = false;
+        const int is_relative_raw =
+            ini.value(QStringLiteral("IsRelative"), 1).toInt(&is_relative_ok);
         ini.endGroup();
 
-        QString full_path = is_relative ? (tb_dir + QLatin1Char('/') + path) : path;
+        // A malformed IsRelative must not silently coerce to 0 (absolute) and let a crafted
+        // profiles.ini point Path at an out-of-tree directory: fail closed and skip the profile.
+        if (!is_relative_ok) {
+            sak::logWarning("Skipping Thunderbird profile with malformed IsRelative: {}",
+                            group.toStdString());
+            continue;
+        }
+        const QString full_path = thunderbirdProfileDir(tb_dir, path, is_relative_raw != 0);
+        if (full_path.isEmpty()) {
+            sak::logWarning("Skipping Thunderbird profile whose relative Path escapes the root: {}",
+                            path.toStdString());
+            continue;
+        }
 
         sak::EmailClientProfile profile;
         profile.client_type = sak::EmailClientType::Thunderbird;
@@ -897,22 +1038,18 @@ QString EmailProfileManager::decodeRegFile(const QByteArray& bytes) {
 
 bool EmailProfileManager::regKeyPathAllowed(const QString& key_path) {
     const QString upper = key_path.trimmed().toUpper();
-    // Only the HKCU Outlook profile subtree that a backup legitimately exports. This blocks HKLM
-    // entirely and every other HKCU location (Run/RunOnce persistence, shell hooks, etc.).
-    if (!upper.startsWith(QStringLiteral("HKEY_CURRENT_USER\\SOFTWARE\\MICROSOFT\\OFFICE\\"))) {
-        return false;
+    // The HKCU Outlook profile subtree a backup legitimately exports:
+    // Office\<ver>\Outlook\Profiles.
+    // '\OUTLOOK\PROFILES' must match as a whole path segment (not a bare substring), so
+    // '...\OUTLOOK\PROFILES_EVIL' / '...\OUTLOOK\PROFILESHACK' are refused. Blocks HKLM entirely
+    // and every other HKCU location (Run/RunOnce persistence, shell hooks, etc.).
+    if (upper.startsWith(kOfficeKeyPrefix) &&
+        containsPathSegment(upper, QStringLiteral("\\OUTLOOK\\PROFILES"))) {
+        return true;
     }
-    // Require '\OUTLOOK\PROFILES' as a whole path segment (followed by end-of-string or a '\'),
-    // not a bare substring -- '...\OUTLOOK\PROFILES_EVIL' or '...\OUTLOOK\PROFILESHACK' must NOT
-    // pass a containment check that a mere contains() would accept.
-    const QString marker = QStringLiteral("\\OUTLOOK\\PROFILES");
-    for (int pos = upper.indexOf(marker); pos >= 0; pos = upper.indexOf(marker, pos + 1)) {
-        const int after = pos + marker.size();
-        if (after == upper.size() || upper.at(after) == QLatin1Char('\\')) {
-            return true;
-        }
-    }
-    return false;
+    // The Windows Messaging Subsystem profiles subtree: discoverWmsProfiles exports WMS profiles as
+    // Outlook, so restore must accept this hive too, matched as a whole segment (finding 6).
+    return startsWithPathSegment(upper, kWmsKeyPrefix);
 }
 
 bool EmailProfileManager::regContentConfinedToEmailHives(const QString& reg_text) {
@@ -926,7 +1063,11 @@ bool EmailProfileManager::regContentConfinedToEmailHives(const QString& reg_text
         }
         QString key = line.mid(1, line.size() - 2).trimmed();
         if (key.startsWith(QLatin1Char('-'))) {
-            key = key.mid(1).trimmed();  // [-HKEY...] is a key DELETION -- confine it too
+            // [-HKEY...] is a destructive key DELETION. A genuine `reg export` never emits one, so
+            // a backup that contains it is crafted/corrupt: refuse the whole file rather than apply
+            // a deletion, even one confined to the Outlook subtree (finding 4).
+            sak::logWarning("Refused .reg import (contains a key deletion): {}", key.toStdString());
+            return false;
         }
         ++key_sections;
         if (!regKeyPathAllowed(key)) {
@@ -956,8 +1097,35 @@ bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
         return false;
     }
 
+    // Import from a private temp copy of the bytes we JUST validated, not from the backup
+    // path. reg.exe re-opens the file it is given, so importing the backup path directly
+    // leaves a TOCTOU window: an attacker with write access to the backup dir could swap
+    // the .reg between our validation read and reg.exe's read. The private temp has an
+    // unpredictable name outside the attacker-writable backup dir, so what we validated is
+    // exactly what gets imported (finding 3).
+    return importValidatedBytes(bytes);
+}
+
+bool EmailProfileManager::importValidatedBytes(const QByteArray& bytes) {
+    QTemporaryDir staging;
+    if (!staging.isValid()) {
+        sak::logWarning("Registry import: could not create a private staging directory");
+        return false;
+    }
+    const QString staged = staging.path() + QStringLiteral("/import.reg");
+    QFile out(staged);
+    if (!out.open(QIODevice::WriteOnly)) {
+        sak::logWarning("Registry import: could not write staged copy {}", staged.toStdString());
+        return false;
+    }
+    if (!sak::writeFully(out, bytes)) {
+        out.close();
+        sak::logWarning("Registry import: truncated staged copy {}", staged.toStdString());
+        return false;
+    }
+    out.close();
     const auto result = sak::runProcess(QStringLiteral("reg.exe"),
-                                        {QStringLiteral("import"), reg_file},
+                                        {QStringLiteral("import"), staged},
                                         kRegImportTimeoutMs);
     return result.succeeded();
 }
@@ -977,12 +1145,13 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
 
         prof[QStringLiteral("client_type")] = clientTypeManifestName(profile.client_type);
 
-        // Registry file reference -- only when the export actually succeeded, and
-        // using the same sanitized basename backupSingleProfile wrote, so restore
-        // never chases a missing or mis-named .reg.
+        // Registry file reference -- only when the export actually succeeded, using the
+        // EXACT deduped basename backupSingleProfile recorded, so restore never chases a
+        // missing/mis-named .reg or another profile's colliding export.
+        const auto reg_it = m_backup_reg_exports.constFind(profile.profile_path);
         if (profile.client_type == sak::EmailClientType::Outlook &&
-            m_backup_reg_exports.contains(profile.profile_path)) {
-            prof[QStringLiteral("registry_file")] = registryBackupFileName(profile.profile_name);
+            reg_it != m_backup_reg_exports.constEnd()) {
+            prof[QStringLiteral("registry_file")] = reg_it.value();
         }
 
         QJsonArray files_array;
@@ -1007,7 +1176,7 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
     }
 
     QJsonObject root;
-    root[QStringLiteral("version")] = 1;
+    root[QStringLiteral("version")] = kSupportedManifestVersion;
     root[QStringLiteral("created")] = QDateTime::currentDateTime().toString(Qt::ISODate);
     root[QStringLiteral("tool")] = QStringLiteral("SAK Utility");
     root[QStringLiteral("profiles")] = profiles_array;
@@ -1028,6 +1197,23 @@ bool EmailProfileManager::createBackupManifest(const QString& backup_path,
 // ============================================================================
 // Helper: Scan Thunderbird directory for MBOX files
 // ============================================================================
+
+QString EmailProfileManager::thunderbirdProfileDir(const QString& tb_dir,
+                                                   const QString& path,
+                                                   bool is_relative) {
+    if (!is_relative) {
+        // Absolute Path is a supported Thunderbird configuration (profile stored elsewhere);
+        // it is the user's own choice, not confined to the TB root.
+        return path;
+    }
+    const QString full = QDir(tb_dir).absoluteFilePath(path);
+    // Confine a relative Path beneath the TB root so a tampered 'Path=../../..' cannot redirect the
+    // scan/backup to an unrelated tree. destinationWithinRoot resolves '..' and reparse points.
+    if (!destinationWithinRoot(tb_dir, full)) {
+        return {};
+    }
+    return full;
+}
 
 void EmailProfileManager::scanThunderbirdDir(const QDir& dir, QVector<sak::EmailDataFile>& files) {
     constexpr int kMaxRecursionDepth = 20;

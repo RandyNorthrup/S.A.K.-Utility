@@ -220,6 +220,45 @@ private Q_SLOTS:
         QVERIFY(file.size() > 0);
         QVERIFY(file.read(5).startsWith("%PDF"));
     }
+
+    // The success check must require a structurally-complete PDF (magic + %%EOF
+    // trailer), not merely a nonzero file. A real render must satisfy both.
+    void writesStructurallyCompletePdf() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::PdfEmailWriter writer(temp_dir.path(), false, false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("Complete");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("hello");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QString());
+        QVERIFY(result.has_value());
+        QFile file(result.value());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.startsWith("%PDF-"));
+        QVERIFY(bytes.contains("%%EOF"));
+    }
+
+    // A subfolder path escaping the output directory must be refused.
+    void rejectsSubfolderTraversal() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::PdfEmailWriter writer(temp_dir.path(), false, true);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("x");
+        item.sender_email = QStringLiteral("s@test.com");
+        item.body_plain = QStringLiteral("b");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        auto result = writer.writeMessage(item, {}, QStringLiteral("../escape"));
+        QVERIFY(!result.has_value());
+        QCOMPARE(result.error(), sak::error_code::path_traversal_attempt);
+    }
 };
 
 QTEST_MAIN(TestPdfEmailWriter)

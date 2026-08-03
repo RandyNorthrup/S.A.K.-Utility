@@ -21,6 +21,7 @@ private Q_SLOTS:
     void controlCharSsidIsRejected();
     void envVarSsidNotExpandedInConnect();
     void jsonWriteFailsClosedOnShortWrite();
+    void securityMappingRefusesUnsupportedAndPreservesWpa3();
 };
 
 // A benign SSID yields a runnable script with the base64 profile and netsh call.
@@ -84,6 +85,40 @@ void WifiManagerPanelTests::jsonWriteFailsClosedOnShortWrite() {
     QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(128, 128, false));
     // QIODevice::write returns -1 on error -> failure.
     QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(-1, 128, true));
+}
+
+// Fail-closed rule: WLAN profile security must never be silently downgraded. WPA3-Personal maps
+// to WPA3SAE (not WPA2-PSK), the supported personal/open/WEP types map to concrete auth+enc, and
+// Enterprise / unknown / malformed / empty values are REFUSED (empty authType) rather than coerced
+// to WPA2-PSK.
+void WifiManagerPanelTests::securityMappingRefusesUnsupportedAndPreservesWpa3() {
+    const auto wpa2 = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA2-Personal"));
+    QCOMPARE(wpa2.first, QStringLiteral("WPA2PSK"));
+    QCOMPARE(wpa2.second, QStringLiteral("AES"));
+
+    const auto wpa = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA-Personal"));
+    QCOMPARE(wpa.first, QStringLiteral("WPA2PSK"));
+
+    // WPA3-Personal must NOT be downgraded to WPA2-PSK.
+    const auto wpa3 = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA3-Personal"));
+    QCOMPARE(wpa3.first, QStringLiteral("WPA3SAE"));
+    QCOMPARE(wpa3.second, QStringLiteral("AES"));
+
+    const auto open = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("Open"));
+    QCOMPARE(open.first, QStringLiteral("open"));
+    QCOMPARE(open.second, QStringLiteral("none"));
+
+    const auto wep = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WEP"));
+    QCOMPARE(wep.first, QStringLiteral("open"));
+    QCOMPARE(wep.second, QStringLiteral("WEP"));
+
+    // Refused (fail closed): empty authType means the caller must not install a profile.
+    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA2-Enterprise"))
+                .first.isEmpty());
+    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA3-Enterprise"))
+                .first.isEmpty());
+    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("not-a-mode")).first.isEmpty());
+    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QString()).first.isEmpty());
 }
 
 QTEST_MAIN(WifiManagerPanelTests)

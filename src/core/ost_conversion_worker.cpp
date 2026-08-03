@@ -100,7 +100,13 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     logInfo("OST Converter: starting conversion of {}", source_path.toStdString());
 
-    computeSourceChecksumIfRequested(source_path, config, result);
+    if (!computeSourceChecksumIfRequested(source_path, config, result)) {
+        // Provenance was requested but the digest could not be computed over the
+        // whole source. Abort closed rather than emit output missing its checksum.
+        result.finished = QDateTime::currentDateTime();
+        Q_EMIT conversionFinished(result);
+        return;
+    }
 
     if (m_cancelled.load()) {
         result.finished = QDateTime::currentDateTime();
@@ -148,11 +154,11 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
     Q_EMIT conversionFinished(result);
 }
 
-void OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
+bool OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
                                                            const OstConversionConfig& config,
                                                            OstConversionResult& result) {
     if (!config.include_source_checksums) {
-        return;
+        return true;
     }
 
     QFile source_file(source_path);
@@ -160,7 +166,7 @@ void OstConversionWorker::computeSourceChecksumIfRequested(const QString& source
         const QString msg = QStringLiteral("Failed to open source for checksum: ") + source_path;
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
-        return;
+        return false;
     }
 
     QCryptographicHash hasher(QCryptographicHash::Sha256);
@@ -180,16 +186,19 @@ void OstConversionWorker::computeSourceChecksumIfRequested(const QString& source
     // run leaves it empty (cancellation is surfaced by the caller); a mid-stream
     // read error is reported so the digest is not silently a prefix-only hash.
     if (m_cancelled.load()) {
-        return;
+        // Cancellation is surfaced by the caller's own m_cancelled check; leave the
+        // digest empty and let the normal cancelled path run.
+        return true;
     }
     if (read_failed || source_file.error() != QFileDevice::NoError) {
         const QString msg = QStringLiteral("Failed to read source for checksum: ") + source_path;
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
-        return;
+        return false;
     }
     result.source_sha256 = hasher.result().toHex();
     source_file.close();
+    return true;
 }
 
 std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& source_path,
@@ -494,6 +503,13 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
         auto items_result = parser->readFolderItems(folder.node_id, offset, kBatchSize);
 
         if (!items_result.has_value()) {
+            // Surface the loss in items_failed instead of silently under-reporting:
+            // every still-unread item in this folder is a message we could not
+            // convert, so count the remaining declared items as failed.
+            const int remaining = folder.content_count - offset;
+            if (remaining > 0) {
+                result.items_failed += remaining;
+            }
             QString err = "Failed to read items from folder: " + folder_path;
             logWarning("OST Converter: {}", err.toStdString());
             result.errors.append(err);
@@ -576,15 +592,17 @@ bool OstConversionWorker::folderPassesFilter(const QString& folder_name,
 
 bool OstConversionWorker::itemPassesDateFilter(const PstItemDetail& item,
                                                const OstConversionConfig& config) const {
-    if (!config.date_from.isNull() && item.date.isValid()) {
-        if (item.date < config.date_from) {
-            return false;
-        }
+    const bool filter_active = !config.date_from.isNull() || !config.date_to.isNull();
+    if (filter_active && !item.date.isValid()) {
+        // Fail closed: an item with no valid date cannot be proven to fall inside a
+        // requested date window, so exclude it rather than silently include it.
+        return false;
     }
-    if (!config.date_to.isNull() && item.date.isValid()) {
-        if (item.date > config.date_to) {
-            return false;
-        }
+    if (!config.date_from.isNull() && item.date < config.date_from) {
+        return false;
+    }
+    if (!config.date_to.isNull() && item.date > config.date_to) {
+        return false;
     }
     return true;
 }

@@ -54,6 +54,20 @@ constexpr int kProgramTableStretch = 3;
 constexpr int kLeftoverSectionStretch = 2;
 constexpr qint64 kEstimatedSizeBytesPerKb = sak::kBytesPerKB;
 
+// Reads a row's original-index payload fail-closed. A missing or wrong-typed
+// kOriginalIndexRole value must NOT silently coerce to 0 (QVariant::toInt()'s
+// default), which would target the FIRST program/leftover instead of the one the
+// row actually maps to. Returns -1 on any missing/invalid payload so the caller's
+// range check rejects it rather than acting on a mis-resolved row.
+int originalRowIndex(const QTableWidgetItem* item) {
+    if (item == nullptr) {
+        return -1;
+    }
+    bool ok = false;
+    const int idx = item->data(kOriginalIndexRole).toInt(&ok);
+    return ok ? idx : -1;
+}
+
 /// @brief Table item that sorts numerically by Qt::UserRole data
 class NumericSortItem : public QTableWidgetItem {
 public:
@@ -912,7 +926,7 @@ void AdvancedUninstallPanel::onProgramDoubleClicked(int row, int /*column*/) {
     if (!nameItem) {
         return;
     }
-    int idx = nameItem->data(kOriginalIndexRole).toInt();
+    int idx = originalRowIndex(nameItem);
     if (idx >= 0 && idx < m_filteredPrograms.size()) {
         showProgramProperties(m_filteredPrograms[idx]);
     }
@@ -929,7 +943,7 @@ void AdvancedUninstallPanel::onProgramContextMenu(const QPoint& pos) {
     if (!nameItem) {
         return;
     }
-    int idx = nameItem->data(kOriginalIndexRole).toInt();
+    int idx = originalRowIndex(nameItem);
     if (idx < 0 || idx >= m_filteredPrograms.size()) {
         return;
     }
@@ -998,7 +1012,7 @@ void AdvancedUninstallPanel::onSelectAll() {
             continue;
         }
 
-        const int idx = typeItem->data(kOriginalIndexRole).toInt();
+        const int idx = originalRowIndex(typeItem);
         if (idx < 0 || idx >= m_currentLeftovers.size()) {
             continue;
         }
@@ -1016,7 +1030,7 @@ void AdvancedUninstallPanel::onSelectAllSafe() {
         if (!typeItem) {
             continue;
         }
-        int idx = typeItem->data(kOriginalIndexRole).toInt();
+        int idx = originalRowIndex(typeItem);
         if (idx >= 0 && idx < m_currentLeftovers.size() &&
             m_currentLeftovers[idx].risk == LeftoverItem::RiskLevel::Safe) {
             auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
@@ -1046,7 +1060,7 @@ void AdvancedUninstallPanel::onDeselectAll() {
             continue;
         }
 
-        const int idx = typeItem->data(kOriginalIndexRole).toInt();
+        const int idx = originalRowIndex(typeItem);
         if (idx < 0 || idx >= m_currentLeftovers.size()) {
             continue;
         }
@@ -1462,7 +1476,7 @@ ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
     if (!nameItem) {
         return {};
     }
-    int idx = nameItem->data(kOriginalIndexRole).toInt();
+    int idx = originalRowIndex(nameItem);
     if (idx >= 0 && idx < m_filteredPrograms.size()) {
         return m_filteredPrograms[idx];
     }
@@ -1478,7 +1492,7 @@ QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms() const {
             if (!nameItem) {
                 continue;
             }
-            int idx = nameItem->data(kOriginalIndexRole).toInt();
+            int idx = originalRowIndex(nameItem);
             if (idx >= 0 && idx < m_filteredPrograms.size()) {
                 result.append(m_filteredPrograms[idx]);
             }
@@ -1496,7 +1510,7 @@ QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers() const {
             if (!typeItem) {
                 continue;
             }
-            int idx = typeItem->data(kOriginalIndexRole).toInt();
+            int idx = originalRowIndex(typeItem);
             if (idx >= 0 && idx < m_currentLeftovers.size()) {
                 auto item = m_currentLeftovers[idx];
                 item.selected = true;

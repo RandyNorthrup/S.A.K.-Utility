@@ -39,6 +39,10 @@ private:
 
     [[nodiscard]] QString sanitizeFilename(const QString& subject, const QDateTime& date) const;
 
+    /// Return a not-yet-existing ".pdf" path under target_dir for the base filename,
+    /// suffixing "_N" until free so a distinct message is never overwritten.
+    [[nodiscard]] QString resolveCollisionPath(const QString& target_dir, const QString& filename);
+
     QString m_output_dir;
     bool m_prefix_with_date;
     bool m_preserve_folders;
