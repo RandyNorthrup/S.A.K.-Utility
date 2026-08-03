@@ -21,12 +21,15 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#include <winioctl.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -43,8 +46,11 @@ constexpr int kExitReportFailed = 3;
 // real single-file HFS+ seed.
 constexpr qint64 kMaxPayloadFileBytes = 2LL * 1024 * 1024 * 1024;
 // HFS+ file names cap at 255 UTF-16 units; a --name-pad beyond that just wastes memory (a huge
-// value would allocate a multi-GB QString), so clamp it to the name-length limit.
+// value would allocate a multi-GB QString), so reject anything past the name-length limit.
 constexpr int kMaxNamePad = 255;
+// create-empty-files-image emits one image mutation per file; an unbounded --file-count would
+// run for an arbitrarily long time. Cap it so a malformed/huge value fails closed.
+constexpr int kMaxGeneratorFileCount = 100'000;
 
 QJsonArray stringArray(const QStringList& values) {
     QJsonArray array;
@@ -60,11 +66,18 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
         *error = QStringLiteral("Unable to read payload file: %1").arg(file.errorString());
         return std::nullopt;
     }
-    if (file.size() > kMaxPayloadFileBytes) {
+    const qint64 expected = file.size();
+    if (expected > kMaxPayloadFileBytes) {
         *error = QStringLiteral("Payload file exceeds the %1-byte limit").arg(kMaxPayloadFileBytes);
         return std::nullopt;
     }
-    return file.readAll();
+    // Fail closed on a read error or short read: never write a truncated payload into the image.
+    const QByteArray data = file.readAll();
+    if (file.error() != QFile::NoError || data.size() != expected) {
+        *error = QStringLiteral("Unable to fully read payload file: %1").arg(file.errorString());
+        return std::nullopt;
+    }
+    return data;
 }
 
 bool writeReport(const QJsonObject& report, const QString& outputPath, QString* error) {
@@ -75,13 +88,23 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
     }
 
     const QFileInfo outputInfo(outputPath);
-    QDir().mkpath(outputInfo.absolutePath());
+    if (!outputInfo.absoluteDir().exists() && !QDir().mkpath(outputInfo.absolutePath())) {
+        *error = QStringLiteral("Unable to create report directory for %1").arg(outputPath);
+        return false;
+    }
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         *error = file.errorString();
         return false;
     }
-    if (file.write(bytes) != bytes.size()) {
+    // Fail closed on a short write or a flush/close error so a truncated report never
+    // accompanies a success exit status.
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        *error = file.errorString();
+        return false;
+    }
+    file.close();
+    if (file.error() != QFile::NoError) {
         *error = file.errorString();
         return false;
     }
@@ -212,6 +235,9 @@ using FileCommandRunner = std::function<sak::PartitionHfsFileWriteResult(const C
 
 sak::PartitionHfsFileWriteOptions writeOptions(const CliInvocation& invocation) {
     sak::PartitionHfsFileWriteOptions options;
+    // By design for this tool tier: sak_hfs_writer_cli is the manual, elevated certifier that
+    // synthesizes its own evidence id and enables the writer to drive certified mutations
+    // (see review finding 4).
     options.enable_writer = true;
     options.target_write_confirmed = invocation.confirm_target;
     options.image_only = !invocation.allow_raw_target;
@@ -398,7 +424,18 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
 }
 
 sak::PartitionHfsFileWriteResult runFileWriteCommand(const CliInvocation& invocation) {
-    return fileCommandRunners().value(invocation.command)(invocation);
+    // QHash::value returns a default-constructed (empty) std::function for an unknown key, and
+    // invoking that throws std::bad_function_call. Fail closed on parser/registry drift rather
+    // than crash: surface a blocker for any command with no registered runner.
+    const FileCommandRunner runner = fileCommandRunners().value(invocation.command);
+    if (!runner) {
+        sak::PartitionHfsFileWriteResult result;
+        result.ok = false;
+        result.blockers.append(
+            QStringLiteral("No registered writer for command: %1").arg(invocation.command));
+        return result;
+    }
+    return runner(invocation);
 }
 
 QJsonObject fileWriteReport(const CliInvocation& invocation) {
@@ -614,6 +651,37 @@ QJsonObject invocationReport(const CliInvocation& invocation) {
     return fileWriteReport(invocation);
 }
 
+struct GeneratorCounts {
+    int file_count{0};
+    int name_pad{0};
+};
+
+// Validate the numeric generator options (used only by create-empty-files-image). A malformed
+// --name-pad previously coerced to 0 and a huge --file-count was unbounded; both now fail closed.
+std::optional<GeneratorCounts> parseGeneratorCounts(const QCommandLineParser& parser,
+                                                    const CliOptions& options,
+                                                    QString* error) {
+    GeneratorCounts counts;
+    if (parser.isSet(options.file_count)) {
+        bool ok = false;
+        counts.file_count = parser.value(options.file_count).toInt(&ok);
+        if (!ok || counts.file_count < 0 || counts.file_count > kMaxGeneratorFileCount) {
+            *error = QStringLiteral("--file-count must be an integer in [0, %1].")
+                         .arg(kMaxGeneratorFileCount);
+            return std::nullopt;
+        }
+    }
+    if (parser.isSet(options.name_pad)) {
+        bool ok = false;
+        counts.name_pad = parser.value(options.name_pad).toInt(&ok);
+        if (!ok || counts.name_pad < 0 || counts.name_pad > kMaxNamePad) {
+            *error = QStringLiteral("--name-pad must be an integer in [0, %1].").arg(kMaxNamePad);
+            return std::nullopt;
+        }
+    }
+    return counts;
+}
+
 std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
                                              const CliOptions& options,
                                              QString* error) {
@@ -645,6 +713,10 @@ std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
     if (!attributeArguments.has_value()) {
         return std::nullopt;
     }
+    const auto counts = parseGeneratorCounts(parser, options, error);
+    if (!counts.has_value()) {
+        return std::nullopt;
+    }
 
     QByteArray payload;
     if (!noPayloadFileCommand) {
@@ -663,8 +735,8 @@ std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
         .attribute_name = attributeArguments->attribute_name,
         .payload = payload,
         .evidence_id = evidenceIdForCommand(parser, options.evidence, *command),
-        .file_count = parser.value(options.file_count).toInt(),
-        .name_pad = parser.value(options.name_pad).toInt(),
+        .file_count = counts->file_count,
+        .name_pad = counts->name_pad,
         .confirm_target = parser.isSet(QStringLiteral("confirm-target")),
         .allow_journaled_volume = parser.isSet(QStringLiteral("allow-journaled-volume")),
         .allow_wrapped_volume = parser.isSet(QStringLiteral("allow-wrapped-volume")),
@@ -753,6 +825,172 @@ void registerPositionalCommand(QCommandLineParser& parser) {
             "grow-fork-attribute-image."));
 }
 
+#ifdef Q_OS_WIN
+// Physical drive number backing the OS system volume, or -1 if it cannot be
+// determined. Native (no elevation needed).
+int osSystemPhysicalDrive() {
+    wchar_t winDir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+        return -1;
+    }
+    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
+    HANDLE hVol = CreateFileW(
+        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVol == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+    constexpr DWORD kMaxExtents = 16;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(hVol,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(hVol);
+    if (!ok || extents->NumberOfDiskExtents == 0) {
+        return -1;
+    }
+    return static_cast<int>(extents->Extents[0].DiskNumber);
+}
+
+// Physical drive numbers backing a volume/device alias (\\.\C:, \\?\Volume{GUID},
+// \\.\GLOBALROOT\Device\HarddiskVolumeN). Empty when it cannot be opened/queried.
+std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
+    std::vector<int> drives;
+    const std::wstring wide = path.toStdWString();
+    HANDLE handle = CreateFileW(
+        wide.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return drives;
+    }
+    constexpr DWORD kMaxExtents = 32;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(handle,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(handle);
+    if (!ok) {
+        return drives;
+    }
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {
+        drives.push_back(static_cast<int>(extents->Extents[i].DiskNumber));
+    }
+    return drives;
+}
+#endif
+
+// A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
+bool isDriveLetterVolumePath(const QString& path) {
+    if (path.size() != 6 || path[5] != QLatin1Char(':') || !path[4].isLetter()) {
+        return false;
+    }
+    return path.startsWith(QStringLiteral("\\\\.\\")) || path.startsWith(QStringLiteral("\\\\?\\"));
+}
+
+// Raw volume/device aliases that resolve to a whole disk but are NOT the
+// \\.\PhysicalDriveN form the numeric guard covers: drive-letter volumes,
+// \Volume{GUID} handles, and GLOBALROOT device paths.
+bool isWindowsRawVolumeAliasPath(const QString& path) {
+    if (isDriveLetterVolumePath(path)) {
+        return true;
+    }
+    if (!path.startsWith(QStringLiteral("\\\\"))) {
+        return false;
+    }
+    return path.contains(QStringLiteral("Volume{"), Qt::CaseInsensitive) ||
+           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive);
+}
+
+// Refuse a \\.\PhysicalDriveN target that is PhysicalDrive0 or the OS system disk.
+// Fails closed when the number cannot be parsed or the OS identity is unknown.
+QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
+    bool ok = false;
+    const int drive = path.mid(prefix.size()).toInt(&ok);
+    if (!ok || drive < 0) {
+        return QStringLiteral(
+            "Refusing raw HFS write: could not parse the PhysicalDrive number of the target");
+    }
+    if (drive == 0) {
+        return QStringLiteral("Refusing raw HFS write to PhysicalDrive0 (the first physical disk)");
+    }
+#ifdef Q_OS_WIN
+    const int osDrive = osSystemPhysicalDrive();
+    if (osDrive < 0) {
+        return QStringLiteral(
+            "Refusing raw HFS write: could not establish the OS system-disk identity");
+    }
+    if (osDrive == drive) {
+        return QStringLiteral(
+            "Refusing raw HFS write: target PhysicalDrive backs the OS system volume");
+    }
+#endif
+    return QString();
+}
+
+// Refuse a volume/device alias (\\.\C:, \Volume{GUID}, GLOBALROOT) whose backing
+// disk is PhysicalDrive0 or the OS system disk. Fails closed when the OS identity
+// or the alias's backing drive cannot be resolved.
+QString volumeAliasTargetRefusal(const QString& path) {
+#ifdef Q_OS_WIN
+    const int osDrive = osSystemPhysicalDrive();
+    if (osDrive < 0) {
+        return QStringLiteral(
+            "Refusing raw HFS write: could not establish the OS system-disk identity");
+    }
+    const std::vector<int> drives = volumeBackingPhysicalDrives(path);
+    if (drives.empty()) {
+        return QStringLiteral(
+            "Refusing raw HFS write: could not resolve the backing physical drive of the "
+            "volume/device target");
+    }
+    for (const int drive : drives) {
+        if (drive == 0 || drive == osDrive) {
+            return QStringLiteral(
+                "Refusing raw HFS write: volume/device target resolves to the OS system disk "
+                "or PhysicalDrive0");
+        }
+    }
+#else
+    Q_UNUSED(path);
+#endif
+    return QString();
+}
+
+// Defense-in-depth OS-disk guard for --allow-raw-target HFS commands, mirroring the
+// APFS CLI. image_only = !allow_raw_target, so --allow-raw-target enables raw device
+// writes and a path typo could otherwise hit PhysicalDrive0 or the OS disk. Covers the
+// \\.\PhysicalDriveN form and volume/device aliases that resolve to the OS volume.
+QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
+    if (!invocation.allow_raw_target) {
+        return QString();
+    }
+    QString path = invocation.target_image_path.trimmed();
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    if (path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, prefix);
+    }
+    if (isWindowsRawVolumeAliasPath(path)) {
+        return volumeAliasTargetRefusal(path);
+    }
+    return QString();
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -782,6 +1020,14 @@ int main(int argc, char* argv[]) {
     const QString outputJsonPath = parser.value(options.output_json).trimmed();
     if (outputJsonAliasesTarget(outputJsonPath, invocation->target_image_path)) {
         QTextStream(stderr) << "--output-json path must not alias the target image" << Qt::endl;
+        return kExitInvalidArguments;
+    }
+
+    // Defense-in-depth: never let an --allow-raw-target command hit the OS disk or
+    // PhysicalDrive0 (there is no GUI validator in this CLI path).
+    const QString rawRefusal = rawTargetProtectedDiskRefusal(*invocation);
+    if (!rawRefusal.isEmpty()) {
+        QTextStream(stderr) << rawRefusal << Qt::endl;
         return kExitInvalidArguments;
     }
 

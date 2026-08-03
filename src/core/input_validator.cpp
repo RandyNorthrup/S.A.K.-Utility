@@ -206,12 +206,28 @@ bool componentIsReparsePoint(const std::filesystem::path& p) {
     // is_symlink does not report a junction, but the reparse-point attribute
     // does, and a junction ancestor is exactly the traversal we must block.
     const DWORD attrs = GetFileAttributesW(p.wstring().c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    }
+    // A component that is genuinely ABSENT (a not-yet-created leaf/ancestor) is
+    // safely not a reparse point. Any OTHER failure (access denied, sharing
+    // violation, device not ready) leaves the component's nature UNKNOWN and must
+    // fail CLOSED: report it as a blocking reparse point rather than silently treat
+    // it as a plain, traversable path.
+    const DWORD err = GetLastError();
+    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
 }
 #else
 bool componentIsReparsePoint(const std::filesystem::path& p) {
     std::error_code ec;
-    return std::filesystem::is_symlink(p, ec);
+    const bool is_link = std::filesystem::is_symlink(p, ec);
+    if (!ec) {
+        return is_link;
+    }
+    // A genuinely-absent component is not a link; any OTHER status error leaves its
+    // nature unknown and must fail CLOSED (treat as a blocking link) rather than be
+    // silently read as "not a link".
+    return ec != std::errc::no_such_file_or_directory;
 }
 #endif
 
@@ -240,10 +256,36 @@ std::vector<std::filesystem::path> input_validator::pathPrefixes(
     return prefixes;
 }
 
+namespace {
+
+// Enforce the file/directory type constraints for an existing path. Split out so
+// validatePathExistence stays within the complexity budget.
+validation_result validatePathTypeConstraints(const std::filesystem::path& path,
+                                              const path_validation_config& config) {
+    std::error_code ec;
+    if (config.must_be_directory && !std::filesystem::is_directory(path, ec)) {
+        return input_validator::failure(error_code::not_a_directory, "Path must be a directory");
+    }
+    if (config.must_be_file && !std::filesystem::is_regular_file(path, ec)) {
+        return input_validator::failure(error_code::invalid_file, "Path must be a regular file");
+    }
+    return input_validator::success();
+}
+
+}  // namespace
+
 validation_result input_validator::validatePathExistence(const std::filesystem::path& path,
                                                          const path_validation_config& config) {
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        // A stat that genuinely FAILS (permission denied on an ancestor, an I/O
+        // error) is not the same as a path that is simply absent: exists() clears
+        // ec for a genuinely-absent path and sets it only on a real error. Fail
+        // CLOSED rather than let an optional (must_exist == false) path pass on a
+        // status we could not resolve.
+        return failure(error_code::filesystem_error, "Cannot determine whether path exists");
+    }
 
     if (config.must_exist && !exists) {
         return failure(error_code::file_not_found, "Path must exist but does not");
@@ -262,19 +304,7 @@ validation_result input_validator::validatePathExistence(const std::filesystem::
         return success();
     }
 
-    // Check directory requirement
-    const bool is_dir = std::filesystem::is_directory(path, ec);
-    if (config.must_be_directory && !is_dir) {
-        return failure(error_code::not_a_directory, "Path must be a directory");
-    }
-
-    // Check file requirement
-    const bool is_file = std::filesystem::is_regular_file(path, ec);
-    if (config.must_be_file && !is_file) {
-        return failure(error_code::invalid_file, "Path must be a regular file");
-    }
-
-    return success();
+    return validatePathTypeConstraints(path, config);
 }
 
 namespace {
@@ -443,13 +473,41 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
     return success();
 }
 
+namespace {
+
+bool isPathSeparator(char c) noexcept {
+    return c == '/' || c == '\\';
+}
+
+// True when ".." appears as a WHOLE path segment (bounded by a separator or a
+// string boundary), i.e. an actual parent-directory reference. A blanket ".."
+// substring test also rejected legitimate names like "my..file" or "..bar";
+// this keeps the traversal block precise while still catching "..", "../x",
+// "x/..", and "a/../b" under either separator regardless of host platform.
+bool hasDotDotSegment(const std::string& s) noexcept {
+    std::size_t pos = 0;
+    while ((pos = s.find("..", pos)) != std::string::npos) {
+        const bool before_ok = pos == 0 || isPathSeparator(s[pos - 1]);
+        const std::size_t after = pos + 2;
+        const bool after_ok = after == s.size() || isPathSeparator(s[after]);
+        if (before_ok && after_ok) {
+            return true;
+        }
+        pos += 1;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
     // An empty path contains no traversal sequence; do not assert non-empty
     // (debug-only crash on a legitimate empty query).
     const auto path_str = path.string();
 
-    // Check for common traversal patterns
-    if (path_str.find("..") != std::string::npos) {
+    // Reject a real parent-directory segment (".." delimited by separators), not
+    // any incidental ".." inside an ordinary filename.
+    if (hasDotDotSegment(path_str)) {
         return true;
     }
 
@@ -468,6 +526,12 @@ bool input_validator::containsTraversalSequences(const std::filesystem::path& pa
 
 validation_result input_validator::validatePathWithinBase(const std::filesystem::path& path,
                                                           const std::filesystem::path& base_dir) {
+    // BY CONTRACT this is a pathname (string) containment check, not a handle-based
+    // one -- it cannot itself close the validate-then-open TOCTOU window. The
+    // ancestor reparse-point walk in validatePathExistence blocks junction/symlink
+    // redirection of the tree, and destructive callers additionally re-verify the
+    // opened handle (GetFinalPathNameByHandleW) against this result. Adding a handle
+    // probe here would open a path this function is not given the access intent for.
     try {
         // Canonicalize both paths
         std::error_code ec;
@@ -611,6 +675,11 @@ validation_result input_validator::validateBufferSize(std::size_t buffer_size,
                                                       std::size_t max_size,
                                                       std::size_t required_size) {
     Q_ASSERT_X(max_size > 0, "validateBufferSize", "max_size must be positive");
+    // Q_ASSERT_X is a no-op in release, so guard the invalid limit at runtime too:
+    // a zero maximum is a misconfiguration, not a validation that trivially passes.
+    if (max_size == 0) {
+        return failure(error_code::validation_failed, "Maximum buffer size must be positive");
+    }
 
     if (required_size > 0 && buffer_size < required_size) {
         return failure(error_code::validation_failed, "Buffer is too small");
@@ -631,6 +700,12 @@ validation_result input_validator::validate_disk_space(const std::filesystem::pa
                                                        std::uintmax_t required_bytes) {
     Q_ASSERT_X(!path.empty(), "validate_disk_space", "path must not be empty");
     Q_ASSERT_X(required_bytes > 0, "validate_disk_space", "required_bytes must be positive");
+    // Asserts are elided in release; fail closed on an empty path or a zero byte
+    // requirement rather than run a trivially-true check.
+    if (path.empty() || required_bytes == 0) {
+        return failure(error_code::validation_failed,
+                       "Disk space check needs a path and a positive byte count");
+    }
 
     try {
         std::error_code ec;
@@ -655,6 +730,10 @@ validation_result input_validator::validate_disk_space(const std::filesystem::pa
 
 validation_result input_validator::validate_available_memory(std::size_t required_bytes) {
     Q_ASSERT_X(required_bytes > 0, "validate_available_memory", "required_bytes must be positive");
+    // Asserts are elided in release; a zero requirement is a misconfiguration.
+    if (required_bytes == 0) {
+        return failure(error_code::validation_failed, "Required memory must be positive");
+    }
 
     const auto available = get_available_memory_impl();
 
@@ -695,6 +774,11 @@ validation_result input_validator::validate_thread_count(std::size_t requested_t
     Q_ASSERT_X(requested_threads > 0,
                "validate_thread_count",
                "requested_threads must be positive");
+    // Asserts are elided in release; a zero thread request is invalid, not a
+    // trivially-satisfied validation.
+    if (requested_threads == 0) {
+        return failure(error_code::validation_failed, "Requested thread count must be positive");
+    }
 
     const auto hardware_threads = std::thread::hardware_concurrency();
 

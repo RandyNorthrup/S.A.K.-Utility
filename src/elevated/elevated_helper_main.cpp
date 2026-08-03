@@ -75,14 +75,20 @@ HelperArgs parseArgs(int argc, char* argv[]) {
     return args;
 }
 
-void configurePortableRuntimeDirs() {
+// Redirect TMP/TEMP into a controlled runtime directory. Returns false if that directory
+// cannot be created so the caller can fail closed: an elevated helper must not fall back to
+// the inherited (potentially attacker-influenced) TMP/TEMP for its child processes.
+bool configurePortableRuntimeDirs() {
     const QString temp_dir = sak::app_paths::tempDirectory();
     if (!sak::app_paths::ensureDirectory(temp_dir)) {
-        return;
+        sak::logError("ElevatedHelper: failed to create controlled temp dir '{}'",
+                      temp_dir.toStdString());
+        return false;
     }
     const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
     qputenv("TMP", native_temp);
     qputenv("TEMP", native_temp);
+    return true;
 }
 
 // ======================================================================
@@ -144,6 +150,12 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
 // Task Registration
 // ======================================================================
 
+// Paths (path/source/destination) are supplied only by the main app's own trusted code over
+// the authenticated named-pipe IPC boundary, never from external input. No reparse/confinement
+// guard is added here: these ops legitimately target arbitrary paths (including symlinked ones),
+// so such a guard would break valid operations without fully closing the junction-TOCTOU window.
+// The elevated permission/copy ops are single synchronous syscalls with no interruptible loop,
+// so there is nothing to poll is_cancelled against mid-operation.
 sak::TaskHandlerResult runPermissionTask(
     const QJsonObject& payload,
     sak::ProgressCallback progress,
@@ -191,26 +203,46 @@ struct ElevatedJobGuard {
             ::CloseHandle(job);  // KILL_ON_JOB_CLOSE reaps survivors
         }
     }
-    void assign(qint64 pid) {
-        if (!job) {
-            job = ::CreateJobObjectW(nullptr, nullptr);
-            if (!job) {
-                return;
-            }
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            ::SetInformationJobObject(
-                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+    // Create the KILL_ON_JOB_CLOSE job on first use. Returns false (job left null) if
+    // creation or configuration fails so the caller does not rely on an unconfigured job.
+    bool ensureJob() {
+        if (job) {
+            return true;
         }
-        if (pid <= 0) {
+        job = ::CreateJobObjectW(nullptr, nullptr);
+        if (!job) {
+            sak::logError("ElevatedHelper: CreateJobObject failed: {}", ::GetLastError());
+            return false;
+        }
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!::SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            sak::logError("ElevatedHelper: SetInformationJobObject failed: {}", ::GetLastError());
+            ::CloseHandle(job);
+            job = nullptr;
+            return false;
+        }
+        return true;
+    }
+    void assign(qint64 pid) {
+        if (!ensureJob() || pid <= 0) {
             return;
         }
         const HANDLE handle =
             ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
         if (!handle) {
+            sak::logError("ElevatedHelper: OpenProcess for job assign failed: {}",
+                          ::GetLastError());
             return;
         }
-        ::AssignProcessToJobObject(job, handle);
+        // Fail closed: an unassigned elevated child escapes KILL_ON_JOB_CLOSE and could
+        // survive helper exit, so terminate it now rather than leak an orphaned descendant.
+        if (!::AssignProcessToJobObject(job, handle)) {
+            sak::logError("ElevatedHelper: AssignProcessToJobObject failed: {}; terminating child",
+                          ::GetLastError());
+            ::TerminateProcess(handle, 1);
+        }
         ::CloseHandle(handle);
     }
     void terminate() const {
@@ -307,6 +339,10 @@ QString elevatedPowerShellResultError(const sak::ProcessResult& result) {
     return {};
 }
 
+// timeout_seconds/max_output_bytes are optional operational parameters: an absent key uses a
+// documented default and the std::clamp calls enforce safe operational bounds (a security
+// control, not a fallback that hides a malformed request). payloadUInt64 (used for the raw-probe
+// numeric fields) already fails closed on wrong-typed input by returning std::nullopt.
 ElevatedPowerShellConfig elevatedPowerShellConfig(const QJsonObject& payload) {
     ElevatedPowerShellConfig config;
     config.command = payload[QStringLiteral("command")].toString();
@@ -349,6 +385,10 @@ QString resolveSystemPowerShellPath() {
 #endif
 }
 
+// The command is not allowlisted by design: it originates only from the main app's own
+// trusted code across the authenticated (parent-pid-gated) named-pipe IPC boundary, not
+// from any external input. -ExecutionPolicy Bypass is the standard programmatic mode; task
+// success is gated on completedSuccessfully(), so this is not a fail-open surface.
 QStringList elevatedPowerShellArgs(const QString& command) {
     return {QStringLiteral("-NoProfile"),
             QStringLiteral("-ExecutionPolicy"),
@@ -564,11 +604,18 @@ std::optional<QByteArray> readPartitionProbeBytes(const PartitionProbeRequest& r
         return std::nullopt;
     }
     const QByteArray bytes = device.read(static_cast<qint64>(request.read_limit));
-    if (!bytes.isEmpty() || device.error() == QFileDevice::NoError) {
-        return bytes;
+    // Fail closed: a read error invalidates the probe even if some bytes came back, and a
+    // zero-byte read yields no signature to analyze. A short (non-empty, error-free) read is
+    // legitimate on a small partition, so those are accepted.
+    if (device.error() != QFileDevice::NoError) {
+        *errorMessage = QStringLiteral("Raw probe read failed: %1").arg(device.errorString());
+        return std::nullopt;
     }
-    *errorMessage = QStringLiteral("Raw probe read failed: %1").arg(device.errorString());
-    return std::nullopt;
+    if (bytes.isEmpty()) {
+        *errorMessage = QStringLiteral("Raw probe read returned no data");
+        return std::nullopt;
+    }
+    return bytes;
 }
 
 sak::TaskHandlerResult partitionProbeSuccess(const PartitionProbeRequest& request,
@@ -714,6 +761,15 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
            sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
             progress(0, QStringLiteral("Querying thermal sensors..."));
 
+            // Resolve the absolute System32 PowerShell path. Launching an unqualified
+            // "powershell.exe" from this elevated helper would resolve via PATH/CWD, which
+            // an attacker controlling a PATH entry or the working directory could hijack to
+            // run arbitrary code elevated. Fail closed if it cannot be resolved.
+            const QString powershell_path = resolveSystemPowerShellPath();
+            if (powershell_path.isEmpty()) {
+                return {false, {}, "Could not resolve system PowerShell path"};
+            }
+
             QString script = QStringLiteral(
                 "try{"
                 "$t=Get-CimInstance -Namespace root/WMI "
@@ -724,7 +780,7 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 "}else{Write-Output '-1'}"
                 "}catch{Write-Output '-1'}");
 
-            const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+            const auto result = sak::runProcess(powershell_path,
                                                 {QStringLiteral("-NoProfile"),
                                                  QStringLiteral("-NoLogo"),
                                                  QStringLiteral("-Command"),
@@ -880,14 +936,20 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName("SAK Elevated Helper");
-    configurePortableRuntimeDirs();
 
-    // Initialize logger
+    // Initialize logger (logs directory is independent of TMP/TEMP)
     const QString log_path = sak::app_paths::logsDirectory();
     auto log_dir = std::filesystem::path(log_path.toStdWString());
     auto& logger = sak::logger::instance();
     if (auto result = logger.initialize(log_dir); !result) {
         return 1;
+    }
+
+    // Fail closed: refuse to run elevated tasks if we cannot establish a controlled
+    // TMP/TEMP rather than inherit an attacker-influenced one.
+    if (!configurePortableRuntimeDirs()) {
+        sak::logError("ElevatedHelper: cannot establish controlled runtime dirs; aborting");
+        return kHelperStartupFailureExitCode;
     }
 
     sak::logInfo("========================================");

@@ -321,6 +321,29 @@ private Q_SLOTS:
         }
     }
 
+    // Codex-3 finding 7: Undo/Redo REPLAY file-system writes, so they must route
+    // through the write-capability gate (enabled on a writable target, refused on a
+    // read-only one); CreateFolderWithSelection MOVES the selection and is classified
+    // destructive like FlattenFolder.
+    void registryGatesUndoRedoAndFlagsCreateFolderDestructive() {
+        using Reg = sak::FileExplorerCommandRegistry;
+        using Id = sak::FileExplorerCommandId;
+        const auto writable = contextFor(writableLocalTarget(), false);
+        const auto read_only =
+            contextFor(readOnlyRawTarget(QStringLiteral("raw target is read-only")), false);
+
+        QVERIFY(Reg::command(Id::Undo).write_operation);
+        QVERIFY(Reg::command(Id::Redo).write_operation);
+        const auto undo_ok = Reg::state(Id::Undo, writable);
+        const auto redo_ok = Reg::state(Id::Redo, writable);
+        QVERIFY2(undo_ok.enabled, qPrintable(undo_ok.blocker));
+        QVERIFY2(redo_ok.enabled, qPrintable(redo_ok.blocker));
+        QVERIFY(!Reg::state(Id::Undo, read_only).enabled);
+        QVERIFY(!Reg::state(Id::Redo, read_only).enabled);
+
+        QVERIFY(Reg::command(Id::CreateFolderWithSelection).destructive);
+    }
+
     void registryHashNeedsSingleReadableSelection() {
         using sak::FileExplorerCommandId;
         // No selection: hashing has nothing to act on.

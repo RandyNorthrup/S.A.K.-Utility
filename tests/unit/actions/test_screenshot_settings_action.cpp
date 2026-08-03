@@ -19,11 +19,15 @@ class ScreenshotSettingsActionTests : public QObject {
 
     using Action = ScreenshotSettingsAction;
     using CaptureResult = ScreenshotSettingsAction::CaptureResult;
+    using CaptureContext = ScreenshotSettingsAction::CaptureContext;
 
 private Q_SLOTS:
     void reportPathLine_onlyAdvertisesWrittenReport();
     void buildScreenshotReportText_containsPagesAndSections();
     void generateReport_writesAndDetectsFailure();
+    // WaveD-09: success requires a full capture AND a written report; a partial
+    // capture or an unwritten report must fail closed, not report success.
+    void buildExecutionResult_failsClosedOnPartialOrUnwrittenReport();
 };
 
 void ScreenshotSettingsActionTests::reportPathLine_onlyAdvertisesWrittenReport() {
@@ -67,6 +71,54 @@ void ScreenshotSettingsActionTests::generateReport_writesAndDetectsFailure() {
     // Non-existent parent directory -> open fails -> reported as a write failure.
     const QString missing = dir.filePath(QStringLiteral("no_such_subdir"));
     QVERIFY(!action.generateReport(missing, QStringLiteral("ts2"), 1, capture));
+}
+
+void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnPartialOrUnwrittenReport() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir out(dir.path());
+
+    auto contextWith = [&](bool report_written) {
+        CaptureContext ctx;
+        ctx.total_pages = 3;
+        ctx.monitor_count = 1;
+        ctx.timestamp = QStringLiteral("ts");
+        ctx.start_time = QDateTime::currentDateTime();
+        ctx.report_written = report_written;
+        return ctx;
+    };
+
+    // Full capture + written report -> success.
+    {
+        ScreenshotSettingsAction action(dir.path());
+        CaptureResult cap;
+        cap.captured_pages << QStringLiteral("a") << QStringLiteral("b") << QStringLiteral("c");
+        cap.screenshots_taken = 3;
+        action.buildExecutionResult(cap, out, contextWith(true));
+        QVERIFY2(action.lastExecutionResult().success, "full capture + report is a success");
+    }
+
+    // Some pages failed, even though the report was written -> fail closed.
+    {
+        ScreenshotSettingsAction action(dir.path());
+        CaptureResult cap;
+        cap.captured_pages << QStringLiteral("a") << QStringLiteral("b");
+        cap.screenshots_taken = 2;
+        cap.failed_attempts = 1;
+        action.buildExecutionResult(cap, out, contextWith(true));
+        QVERIFY2(!action.lastExecutionResult().success, "a partial capture must not be a success");
+    }
+
+    // Every page captured but the report could not be written -> fail closed.
+    {
+        ScreenshotSettingsAction action(dir.path());
+        CaptureResult cap;
+        cap.captured_pages << QStringLiteral("a") << QStringLiteral("b") << QStringLiteral("c");
+        cap.screenshots_taken = 3;
+        action.buildExecutionResult(cap, out, contextWith(false));
+        QVERIFY2(!action.lastExecutionResult().success,
+                 "an unwritten report must not be a success");
+    }
 }
 
 QTEST_GUILESS_MAIN(ScreenshotSettingsActionTests)

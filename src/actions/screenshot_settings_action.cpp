@@ -153,20 +153,30 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
         output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp));
     structured_log += reportPathLine(context.report_written, report_path);
 
-    if (capture.screenshots_taken > 0) {
-        result.success = true;
+    // Fail closed: only a full capture (every page) with a durably written report
+    // is a success. A partial capture or an unwritten report is surfaced as a
+    // failure rather than passed off as a complete settings backup.
+    const bool full_success = capture.screenshots_taken > 0 && capture.failed_attempts == 0 &&
+                              context.report_written;
+    result.success = full_success;
+
+    if (full_success) {
         result.message = QString("Captured %1/%2 settings pages (%3 monitors detected)")
                              .arg(capture.captured_pages.size())
                              .arg(context.total_pages)
                              .arg(context.monitor_count);
-        if (!context.report_written) {
-            result.message += " (report not written)";
-        }
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
-    } else {
-        result.success = false;
+    } else if (capture.screenshots_taken == 0) {
         result.message = "Failed to capture any screenshots";
         result.log = structured_log + "\nCheck display permissions and Settings app availability";
+    } else {
+        result.message = QString("Incomplete: captured %1/%2 pages, %3 failed%4")
+                             .arg(capture.captured_pages.size())
+                             .arg(context.total_pages)
+                             .arg(capture.failed_attempts)
+                             .arg(context.report_written ? QString()
+                                                         : QStringLiteral(", report not written"));
+        result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);

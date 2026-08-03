@@ -608,11 +608,13 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Shift+Del"),
                     {.destructive = true, .selection_required = true, .write_operation = true}),
         // Files CreateFolderWithSelectionAction: new folder that swallows the selection.
+        // It MOVES the selected items (their originals are relocated), so it is a
+        // destructive relocation like FlattenFolder, not a plain create (Codex-3).
         makeCommand(FileExplorerCommandId::CreateFolderWithSelection,
                     QStringLiteral("Create folder with selection"),
                     QStringLiteral("Create a new folder and move the selected items into it."),
                     {},
-                    {.selection_required = true, .write_operation = true}),
+                    {.destructive = true, .selection_required = true, .write_operation = true}),
         // Files RemoveTagsAction: clears app-level tags; never touches the file system.
         makeCommand(FileExplorerCommandId::RemoveTags,
                     QStringLiteral("Remove tags"),
@@ -638,14 +640,20 @@ QVector<FileExplorerCommand> writeCommands() {
 // empty-journal case is reported at execution time, matching TryUndo/TryRedo.
 QVector<FileExplorerCommand> historyCommands() {
     return {
+        // Undo/Redo REPLAY file-system mutations (an undone create becomes a delete,
+        // etc.), so they must route through the write-capability gate -- a read-only
+        // target cannot host a replayed write. They are NOT flagged destructive: undo
+        // is expected to be a reversible, non-confirming action (Codex-3).
         makeCommand(FileExplorerCommandId::Undo,
                     QStringLiteral("Undo"),
                     QStringLiteral("Undo the last file operation."),
-                    QStringLiteral("Ctrl+Z")),
+                    QStringLiteral("Ctrl+Z"),
+                    {.write_operation = true}),
         makeCommand(FileExplorerCommandId::Redo,
                     QStringLiteral("Redo"),
                     QStringLiteral("Redo the last undone file operation."),
-                    QStringLiteral("Ctrl+Y")),
+                    QStringLiteral("Ctrl+Y"),
+                    {.write_operation = true}),
         // Files FlattenFolderAction: experimental, gated by ShowFlattenOptions.
         makeCommand(FileExplorerCommandId::FlattenFolder,
                     QStringLiteral("Flatten folder"),

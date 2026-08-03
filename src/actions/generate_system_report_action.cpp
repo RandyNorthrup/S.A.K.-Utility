@@ -14,6 +14,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QStorageInfo>
 #include <QSysInfo>
 
@@ -26,6 +27,14 @@ constexpr int kDurationDisplayPrecision = 1;
 constexpr int kReportSizeDisplayPrecision = 1;
 constexpr int kStorageDisplayPrecision = 2;
 constexpr int kPercentDisplayPrecision = 1;
+
+// Millisecond resolution (_zzz): two reports generated in the same second would
+// otherwise collide and the atomic save would truncate the earlier one.
+QString buildReportFilePath(const QDir& output_dir) {
+    const QString filename = QString("SystemReport_%1.txt")
+                                 .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz"));
+    return output_dir.filePath(filename);
+}
 
 }  // namespace
 
@@ -111,9 +120,7 @@ void GenerateSystemReportAction::execute() {
         }
     }
 
-    QString filename = QString("SystemReport_%1.txt")
-                           .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
-    QString filepath = output_dir.filePath(filename);
+    QString filepath = buildReportFilePath(output_dir);
 
     report += QString("-").repeated(kTextReportRuleWidth) + "\n";
     report += QString("Report completed in %1 seconds\n")
@@ -185,7 +192,11 @@ QString GenerateSystemReportAction::buildReportHeader() const {
 }
 
 QString GenerateSystemReportAction::buildOsInfoScript() {
-    return "$info = Get-ComputerInfo\n"
+    // $ErrorActionPreference='Stop' promotes a collector cmdlet failure to a
+    // terminating error so the process exits non-zero and collectorFailed()
+    // rejects the partial output instead of saving it as a complete section.
+    return "$ErrorActionPreference = 'Stop'\n"
+           "$info = Get-ComputerInfo\n"
            "\n"
            "Write-Output \"=== OPERATING SYSTEM ===\"\n"
            "Write-Output \"OS Name: $($info.OsName)\"\n"
@@ -289,6 +300,7 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
 
 QString GenerateSystemReportAction::gatherStorageInfo() {
     QString ps_cmd_storage =
+        "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
         "foreach ($disk in $disks) {\n"
@@ -327,6 +339,7 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
 
 QString GenerateSystemReportAction::gatherNetworkInfo() {
     QString ps_cmd_network =
+        "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
         "foreach ($adapter in $adapters) {\n"
@@ -405,16 +418,19 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
 }
 
 bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath) {
-    QFile file(filepath);
+    // QSaveFile: the report is written to a temp file and atomically renamed on
+    // commit(), so a crash mid-write never leaves a truncated report in place,
+    // and commit() surfaces a close/flush error instead of it being ignored.
+    QSaveFile file(filepath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
     const QByteArray data = report.toUtf8();
     if (file.write(data) != data.size()) {
+        file.cancelWriting();
         return false;
     }
-    file.close();
-    return true;
+    return file.commit();
 }
 
 }  // namespace sak

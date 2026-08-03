@@ -227,14 +227,16 @@ public:
     /// case-sensitivity is not surfaced here). Pure; the core of B8-05.
     [[nodiscard]] static RawReplaceCaseAction rawReplaceCaseAction(const QString& normalized_fs,
                                                                    int case_insensitive_matches);
-    /// True only when `target` is genuinely writable: it advertises write support
-    /// (`can_write_files`) AND is not read-only (write-protect / read-only mount).
-    /// The certified raw HFS/APFS writer's enable + destructive/hardware
-    /// certification-evidence attestations and the per-op mutation confirmation are
-    /// all derived from this, so a non-writable target makes the writer engine fail
-    /// closed with its own certification blockers instead of mutating the medium.
-    /// Previously those attestations were hard-coded true, so `can_write_files` /
-    /// `read_only` were advisory badges the writer boundary never enforced (B8-04).
+    /// True only when `target` is genuinely writable. `can_write_files` is the sole
+    /// authoritative signal: applyCapabilities sets it only for a local volume or a
+    /// writer-certified raw FS and forces it FALSE on a real write-protect /
+    /// read-only mount (B8-03). The `read_only` FIELD is NOT consulted here -- it is
+    /// forced true for every non-local target as a browsing-semantics badge, so
+    /// gating on it wrongly disabled every advertised raw HFS/APFS write (B8-04);
+    /// gating on `can_write_files` restores the certified raw-writer path while a
+    /// genuine write-protect still fails closed (Codex-3). The certified writer's
+    /// enable + destructive/hardware certification-evidence attestations and the
+    /// per-op mutation confirmation are all derived from this predicate.
     [[nodiscard]] static bool targetPermitsMutation(const FileManagementTarget& target);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
     /// File-system-specific label for an entry's on-disk identifier (APFS Object

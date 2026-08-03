@@ -75,6 +75,18 @@ if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
 $runRoot = Join-Path $OutputRoot ("run-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 
+# --- Regression (review finding 1): the defense-in-depth OS-disk guard must refuse a
+# --- confirmed --allow-raw-target aimed at PhysicalDrive0 or an OS volume/device alias
+# --- (\\.\C:), not only \\.\PhysicalDriveN. Both must fail closed BEFORE any write.
+& $CliPath format-raw --target "\\.\PhysicalDrive0" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
+}
+& $CliPath format-raw --target "\\.\$($env:SystemDrive)" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
+}
+
 $sizeBytes = 67108864
 $imagePath = Join-Path $runRoot "generated.apfs"
 $formatReportPath = Join-Path $runRoot "format-image.json"

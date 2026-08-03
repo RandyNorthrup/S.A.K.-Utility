@@ -18,6 +18,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QStringConverter>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -31,6 +32,8 @@
 #include <windows.h>
 
 #include <winioctl.h>
+#else
+#include <sys/stat.h>
 #endif
 
 namespace {
@@ -106,18 +109,28 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
         *error = QStringLiteral("Unable to read payload file: %1").arg(file.errorString());
         return std::nullopt;
     }
-    if (file.size() > kMaxSeedPayloadFileBytes) {
+    const qint64 expected = file.size();
+    if (expected > kMaxSeedPayloadFileBytes) {
         *error =
             QStringLiteral("Payload file exceeds the %1-byte limit").arg(kMaxSeedPayloadFileBytes);
         return std::nullopt;
     }
-    return file.readAll();
+    // Fail closed on a read error or short read: never write a truncated payload into the image.
+    const QByteArray data = file.readAll();
+    if (file.error() != QFile::NoError || data.size() != expected) {
+        *error = QStringLiteral("Unable to fully read payload file: %1").arg(file.errorString());
+        return std::nullopt;
+    }
+    return data;
 }
 
 sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidenceId) {
     sak::PartitionApfsWriteOptions options;
     options.enable_experimental_writer = true;
     options.image_only = true;
+    // By design for this tool tier: sak_apfs_writer_cli is the manual, elevated certifier
+    // whose sole purpose is to drive certified writes, so it asserts the engine's
+    // destructive/hardware evidence gate itself (see review finding 4).
     options.destructive_certification_evidence = true;
     options.max_payload_bytes = kDefaultApfsMaxPayloadBytes;
     options.evidence_id = evidenceId;
@@ -231,28 +244,74 @@ bool writeReport(const QJsonObject& report, const QString& outputPath, QString* 
         return true;
     }
 
-    QFile file(outputPath);
-    if (!QFileInfo(outputPath).absoluteDir().exists()) {
-        QDir().mkpath(QFileInfo(outputPath).absolutePath());
+    if (!QFileInfo(outputPath).absoluteDir().exists() &&
+        !QDir().mkpath(QFileInfo(outputPath).absolutePath())) {
+        *error = QStringLiteral("Unable to create report directory for %1").arg(outputPath);
+        return false;
     }
+    QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         *error = file.errorString();
         return false;
     }
-    if (file.write(bytes) != bytes.size()) {
+    // Fail closed on a short write or a flush/close error so a truncated report never
+    // accompanies a success exit status.
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        *error = file.errorString();
+        return false;
+    }
+    file.close();
+    if (file.error() != QFile::NoError) {
         *error = file.errorString();
         return false;
     }
     return true;
 }
 
+// OS-level identity of an existing filesystem object: two paths that are
+// symlink/hardlink aliases of one file share this token. nullopt when the path
+// does not exist / cannot be opened (a not-yet-created output file or a raw
+// device needing elevation), so the caller falls back to string/canonical
+// comparison rather than treating "unknown" as "distinct".
+std::optional<QString> fileIdentityToken(const QString& path) {
+#ifdef _WIN32
+    const std::wstring wide = path.toStdWString();
+    HANDLE handle = ::CreateFileW(wide.c_str(),
+                                  0,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_FLAG_BACKUP_SEMANTICS,
+                                  nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return std::nullopt;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    const bool ok = ::GetFileInformationByHandle(handle, &info) != 0;
+    ::CloseHandle(handle);
+    if (!ok) {
+        return std::nullopt;
+    }
+    return QStringLiteral("win:%1:%2:%3")
+        .arg(info.dwVolumeSerialNumber)
+        .arg(info.nFileIndexHigh)
+        .arg(info.nFileIndexLow);
+#else
+    struct stat st{};
+    if (::stat(path.toLocal8Bit().constData(), &st) != 0) {
+        return std::nullopt;
+    }
+    return QStringLiteral("posix:%1:%2")
+        .arg(static_cast<qulonglong>(st.st_dev))
+        .arg(static_cast<qulonglong>(st.st_ino));
+#endif
+}
+
 // True when the --output-json path would truncate-write onto the operation's
 // target device/image or its --output-image, which would clobber the filesystem
-// result with JSON. Compares literally (raw device paths like \\.\PhysicalDriveN)
-// and by resolved path: canonicalFilePath() FOLLOWS symlinks for an existing
-// path, so a symlinked --output-json aimed at the target is caught. (Hardlink
-// aliases -- two real names for one file -- cannot be told apart by path and
-// remain an inherent limitation of a not-yet-created output file.)
+// result with JSON. Detects identical strings (raw device paths like
+// \\.\PhysicalDriveN), symlink aliases (canonicalFilePath follows symlinks), and
+// hardlink aliases (OS volume+file-id identity, which path comparison cannot see).
 bool outputJsonAliasesTarget(const QString& outputJson,
                              const QString& targetPath,
                              const QString& outputImagePath) {
@@ -265,12 +324,16 @@ bool outputJsonAliasesTarget(const QString& outputJson,
         return real.isEmpty() ? QDir::cleanPath(fi.absoluteFilePath()) : real;
     };
     const QString jsonCanon = canon(outputJson);
+    const std::optional<QString> jsonId = fileIdentityToken(outputJson);
     const auto aliases = [&](const QString& other) {
         if (other.trimmed().isEmpty()) {
             return false;
         }
-        return outputJson.trimmed().compare(other.trimmed(), Qt::CaseInsensitive) == 0 ||
-               jsonCanon.compare(canon(other), Qt::CaseInsensitive) == 0;
+        if (outputJson.trimmed().compare(other.trimmed(), Qt::CaseInsensitive) == 0 ||
+            jsonCanon.compare(canon(other), Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+        return jsonId.has_value() && jsonId == fileIdentityToken(other);
     };
     return aliases(targetPath) || aliases(outputImagePath);
 }
@@ -460,9 +523,47 @@ std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLinePars
         *fileName, *directoryName, *payload, patchOffset.value_or(0), patchOffsetError};
 }
 
+// Read a credential file's exact bytes and STRICT-UTF-8 decode them. Fails closed on an
+// unreadable/oversized file, a read error / short read, or invalid UTF-8 -- never
+// replacement-decodes a malformed credential into a silently-wrong password.
+QString readCredentialFile(const QString& filePath, QString* error) {
+    QFile credentialFile(filePath);
+    if (!credentialFile.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Unable to read credential file: %1").arg(filePath);
+        return QString();
+    }
+    const qint64 expected = credentialFile.size();
+    if (expected > kMaxCredentialFileBytes) {
+        *error = QStringLiteral("Credential file exceeds the %1-byte limit")
+                     .arg(kMaxCredentialFileBytes);
+        return QString();
+    }
+    QByteArray raw = credentialFile.readAll();
+    if (credentialFile.error() != QFile::NoError || raw.size() != expected) {
+        sak::secure_wiper::wipe(raw.data(), raw.size());
+        *error = QStringLiteral("Unable to fully read credential file: %1").arg(filePath);
+        return QString();
+    }
+    // Default UTF-8 decoder; decoder.hasError() below is set on any invalid sequence, so we
+    // fail closed on non-UTF-8 credential bytes rather than accept a replacement-char decode.
+    QStringDecoder decoder(QStringConverter::Utf8);
+    QString credential = decoder.decode(raw);
+    // Wipe the raw byte copy of the secret as soon as it is converted; the returned QString
+    // still holds the credential (unavoidable while it is in use) but this removes one
+    // lingering plaintext copy from the process heap.
+    sak::secure_wiper::wipe(raw.data(), raw.size());
+    if (decoder.hasError()) {
+        *error = QStringLiteral("Credential file is not valid UTF-8: %1").arg(filePath);
+        return QString();
+    }
+    return credential;
+}
+
 // Resolve a credential value: when the *-file option is set, return that file's exact UTF-8
 // bytes (so the secret never lands on the command line or in any generated script text);
-// otherwise fall back to the inline --volume-password / --recovery-key value.
+// otherwise fall back to the inline --volume-password / --recovery-key value. Specifying both
+// the inline and the file form is a conflicting-precedence error -- fail closed rather than
+// silently letting the file win.
 QString credentialFromParser(const QCommandLineParser& parser,
                              const QCommandLineOption& directOption,
                              const QCommandLineOption& fileOption,
@@ -471,23 +572,12 @@ QString credentialFromParser(const QCommandLineParser& parser,
     if (filePath.isEmpty()) {
         return parser.value(directOption);
     }
-    QFile credentialFile(filePath);
-    if (!credentialFile.open(QIODevice::ReadOnly)) {
-        *error = QStringLiteral("Unable to read credential file: %1").arg(filePath);
+    if (parser.isSet(directOption)) {
+        *error = QStringLiteral("Specify only one of --%1 or --%2, not both")
+                     .arg(directOption.names().constFirst(), fileOption.names().constFirst());
         return QString();
     }
-    if (credentialFile.size() > kMaxCredentialFileBytes) {
-        *error = QStringLiteral("Credential file exceeds the %1-byte limit")
-                     .arg(kMaxCredentialFileBytes);
-        return QString();
-    }
-    QByteArray raw = credentialFile.readAll();
-    QString credential = QString::fromUtf8(raw);
-    // Wipe the raw byte copy of the secret as soon as it is converted; the returned QString
-    // still holds the credential (unavoidable while it is in use) but this removes one
-    // lingering plaintext copy from the process heap.
-    sak::secure_wiper::wipe(raw.data(), raw.size());
-    return credential;
+    return readCredentialFile(filePath, error);
 }
 
 struct CliSparseXattrInputs {
@@ -711,11 +801,22 @@ bool collectImportSourceFiles(const QString& sourcePath,
                               QVector<ImportedFile>* files,
                               QString* volumeName,
                               QString* error) {
+    // Request one past the cap so an over-cap listing is detectable: if the reader returns
+    // more than the cap, the root has more files than we can enumerate and re-emitting would
+    // silently drop the overflow. Fail closed rather than build a truncated image.
+    constexpr int kRootBrowseCap = sak::kPartitionApfsDefaultBrowseEntryLimit;
     const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
-        sourcePath, QStringLiteral("/"), sak::kPartitionApfsDefaultBrowseEntryLimit);
+        sourcePath, QStringLiteral("/"), kRootBrowseCap + 1);
     if (!listing.ok) {
         *error = QStringLiteral("Unable to read source container: %1")
                      .arg(listing.blockers.join(QStringLiteral("; ")));
+        return false;
+    }
+    if (listing.entries.size() > kRootBrowseCap) {
+        *error = QStringLiteral(
+                     "Source container root holds more than %1 files; refusing to import a "
+                     "truncated set")
+                     .arg(kRootBrowseCap);
         return false;
     }
     *volumeName = listing.volume_name;
@@ -2154,25 +2255,68 @@ int osSystemPhysicalDrive() {
     }
     return static_cast<int>(extents->Extents[0].DiskNumber);
 }
+
+// Physical drive numbers backing a volume/device alias (\\.\C:, \\?\Volume{GUID},
+// \\.\GLOBALROOT\Device\HarddiskVolumeN). Empty when the path cannot be opened or
+// its disk extents cannot be queried. Native (no elevation needed).
+std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
+    std::vector<int> drives;
+    const std::wstring wide = path.toStdWString();
+    HANDLE handle = CreateFileW(
+        wide.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return drives;
+    }
+    constexpr DWORD kMaxExtents = 32;
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    std::vector<unsigned char> buffer(bufSize, 0);
+    auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
+    DWORD bytesReturned = 0;
+    const BOOL ok = DeviceIoControl(handle,
+                                    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                                    nullptr,
+                                    0,
+                                    extents,
+                                    bufSize,
+                                    &bytesReturned,
+                                    nullptr);
+    CloseHandle(handle);
+    if (!ok) {
+        return drives;
+    }
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {
+        drives.push_back(static_cast<int>(extents->Extents[i].DiskNumber));
+    }
+    return drives;
+}
 #endif
 
-// Defense-in-depth OS-disk guard for confirmed raw-device APFS commands. The GUI
-// path is guarded by PartitionSafetyValidator::isUnsafeRawWriteTargetDisk, but
-// this CLI bypasses it, so a confirmed --allow-raw path typo could otherwise
-// format PhysicalDrive0 or the OS disk. Returns a refusal reason, or an empty
-// string when the target is provably a different disk (or is not a whole-disk
-// \\.\PhysicalDriveN target this guard covers). Fails closed for a PhysicalDrive
-// target whose number cannot be parsed or whose OS identity cannot be established.
-QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
-    if (!invocation.allow_raw_target) {
-        return QString();
+// A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
+bool isDriveLetterVolumePath(const QString& path) {
+    if (path.size() != 6 || path[5] != QLatin1Char(':') || !path[4].isLetter()) {
+        return false;
     }
-    QString path = invocation.target_path.trimmed();
-    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
-    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
-    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
-        return QString();
+    return path.startsWith(QStringLiteral("\\\\.\\")) || path.startsWith(QStringLiteral("\\\\?\\"));
+}
+
+// Raw volume/device aliases that resolve to a whole disk but are NOT the
+// \\.\PhysicalDriveN form the numeric guard covers: drive-letter volumes,
+// \Volume{GUID} handles, and GLOBALROOT device paths. A \\.\C: alias resolves to
+// the OS volume yet slips past a PhysicalDrive-prefix-only check.
+bool isWindowsRawVolumeAliasPath(const QString& path) {
+    if (isDriveLetterVolumePath(path)) {
+        return true;
     }
+    if (!path.startsWith(QStringLiteral("\\\\"))) {
+        return false;
+    }
+    return path.contains(QStringLiteral("Volume{"), Qt::CaseInsensitive) ||
+           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive);
+}
+
+// Refuse a \\.\PhysicalDriveN target that is PhysicalDrive0 or the OS system disk.
+// Fails closed when the number cannot be parsed or the OS identity is unknown.
+QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
     bool ok = false;
     const int drive = path.mid(prefix.size()).toInt(&ok);
     if (!ok || drive < 0) {
@@ -2194,6 +2338,59 @@ QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
             "Refusing raw APFS write: target PhysicalDrive backs the OS system volume");
     }
 #endif
+    return QString();
+}
+
+// Refuse a volume/device alias (\\.\C:, \Volume{GUID}, GLOBALROOT) whose backing
+// disk is PhysicalDrive0 or the OS system disk. Fails closed when the OS identity
+// or the alias's backing drive cannot be resolved.
+QString volumeAliasTargetRefusal(const QString& path) {
+#ifdef _WIN32
+    const int osDrive = osSystemPhysicalDrive();
+    if (osDrive < 0) {
+        return QStringLiteral(
+            "Refusing raw APFS write: could not establish the OS system-disk identity");
+    }
+    const std::vector<int> drives = volumeBackingPhysicalDrives(path);
+    if (drives.empty()) {
+        return QStringLiteral(
+            "Refusing raw APFS write: could not resolve the backing physical drive of the "
+            "volume/device target");
+    }
+    for (const int drive : drives) {
+        if (drive == 0 || drive == osDrive) {
+            return QStringLiteral(
+                "Refusing raw APFS write: volume/device target resolves to the OS system disk "
+                "or PhysicalDrive0");
+        }
+    }
+#else
+    Q_UNUSED(path);
+#endif
+    return QString();
+}
+
+// Defense-in-depth OS-disk guard for confirmed raw-device APFS commands. The GUI
+// path is guarded by PartitionSafetyValidator::isUnsafeRawWriteTargetDisk, but
+// this CLI bypasses it, so a confirmed --allow-raw path typo could otherwise
+// format PhysicalDrive0 or the OS disk. Covers both the \\.\PhysicalDriveN form
+// and volume/device aliases (\\.\C:, \Volume{GUID}, GLOBALROOT) that resolve to
+// the OS volume yet bypass a PhysicalDrive-prefix-only check. Returns a refusal
+// reason, or an empty string when the target is provably a different disk / not a
+// raw whole-disk form this guard covers.
+QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
+    if (!invocation.allow_raw_target) {
+        return QString();
+    }
+    QString path = invocation.target_path.trimmed();
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    if (path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, prefix);
+    }
+    if (isWindowsRawVolumeAliasPath(path)) {
+        return volumeAliasTargetRefusal(path);
+    }
     return QString();
 }
 

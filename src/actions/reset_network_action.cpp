@@ -20,7 +20,15 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kAdapterCountPrefixLength = 9;
+
+// The verify probe only certifies the reset if it exited cleanly AND emitted its
+// success sentinel. A non-terminating cmdlet error leaves exit code 0 with no
+// sentinel, so checking the sentinel closes the "vacuous verify" gap.
+bool verificationFailed(const ProcessResult& proc) {
+    return ResetNetworkAction::stepFailed(proc.timed_out, proc.exit_code) ||
+           !proc.std_out.contains(QStringLiteral("VERIFY_OK"));
 }
+}  // namespace
 
 ResetNetworkAction::ResetNetworkAction(QObject* parent) : QuickAction(parent) {}
 
@@ -49,29 +57,45 @@ bool ResetNetworkAction::stepFailed(bool timed_out, int exit_code) {
 void ResetNetworkAction::scan() {
     setStatus(ActionStatus::Scanning);
 
+    // On a scan failure the catch emits an ERROR sentinel and exits non-zero, so
+    // a failed enumeration is never coerced into a valid "0 adapters" reading.
     QString ps_cmd =
-        "try { "
+        "$ErrorActionPreference = 'Stop'; try { "
         "  $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}; "
         "  Write-Output \"ADAPTERS:$($adapters.Count)\"; "
-        "} catch { Write-Output \"ADAPTERS:0\" }";
+        "} catch { Write-Output 'ADAPTERS:ERROR'; exit 1 }";
     ProcessResult proc = runPowerShell(ps_cmd, sak::kTimerNetshWaitMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Network adapter scan warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out.trimmed();
+
+    const bool scan_failed = stepFailed(proc.timed_out, proc.exit_code) ||
+                             output.contains(QStringLiteral("ADAPTERS:ERROR")) ||
+                             !output.contains(QStringLiteral("ADAPTERS:"));
     int adapters = 0;
-    if (output.contains("ADAPTERS:")) {
+    if (!scan_failed) {
         adapters =
             output.mid(output.indexOf("ADAPTERS:") + kAdapterCountPrefixLength).trimmed().toInt();
     }
 
     ScanResult result;
-    result.applicable = adapters > 0;
-    result.summary = adapters > 0 ? QString("Active adapters: %1").arg(adapters)
-                                  : "No active network adapters detected";
-    result.details = "Reset will refresh DNS, Winsock, TCP/IP and firewall";
-    if (adapters == 0) {
-        result.warning = "Network reset may not be applicable without active adapters";
+    if (scan_failed) {
+        // Surface the failed scan rather than silently claiming zero adapters.
+        result.applicable = false;
+        result.summary = "Network adapter scan failed";
+        result.details =
+            "Could not enumerate network adapters; administrator privileges "
+            "may be required.";
+        result.warning = "Adapter scan failed -- reset applicability is unknown";
+    } else {
+        result.applicable = adapters > 0;
+        result.summary = adapters > 0 ? QString("Active adapters: %1").arg(adapters)
+                                      : "No active network adapters detected";
+        result.details = "Reset will refresh DNS, Winsock, TCP/IP and firewall";
+        if (adapters == 0) {
+            result.warning = "Network reset may not be applicable without active adapters";
+        }
     }
 
     setScanResult(result);
@@ -361,11 +385,22 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
     // Step 9: Verify network configuration
     Q_EMIT executionProgress("Verifying network configuration...", progress::kStep95);
 
+    // $ErrorActionPreference='Stop' + try/catch promotes any cmdlet error to a
+    // terminating one (exit 1), and the trailing VERIFY_OK sentinel proves the
+    // probe ran to completion; without it a non-terminating error would exit 0
+    // and certify the reset on a vacuous verification.
     QString verifyScript =
-        "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}; "
-        "$ipConfigs = Get-NetIPConfiguration; "
-        "Write-Output \"Active adapters: $($adapters.Count)\"; "
-        "Write-Output \"Configured IPs: $($ipConfigs.Count)\"";
+        "$ErrorActionPreference = 'Stop'\n"
+        "try {\n"
+        "    $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
+        "    $ipConfigs = Get-NetIPConfiguration\n"
+        "    Write-Output \"Active adapters: $($adapters.Count)\"\n"
+        "    Write-Output \"Configured IPs: $($ipConfigs.Count)\"\n"
+        "    Write-Output 'VERIFY_OK'\n"
+        "} catch {\n"
+        "    Write-Error $_.Exception.Message\n"
+        "    exit 1\n"
+        "}\n";
 
     ProcessResult verifyProc = runPowerShell(verifyScript, sak::kTimeoutProcessShortMs);
     if (!verifyProc.std_err.trimmed().isEmpty()) {
@@ -373,11 +408,11 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
     }
     QString verifyOutput = verifyProc.std_out;
 
-    // Gate success on the verify probe: a timed-out / non-zero verification means
-    // we could not confirm the reset landed, so it must not be reported as a clean
-    // success. (Previously the verify result was logged but ignored.)
+    // Gate success on the verify probe: a timed-out / non-zero verification, or a
+    // run that never emitted its success sentinel, means we could not confirm the
+    // reset landed, so it must not be reported as a clean success.
     QStringList all_errors = errors;
-    if (stepFailed(verifyProc.timed_out, verifyProc.exit_code)) {
+    if (verificationFailed(verifyProc)) {
         all_errors << QString("Network verification failed (exit %1)").arg(verifyProc.exit_code);
     }
 

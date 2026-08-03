@@ -8,6 +8,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <limits>
+
 /**
  * @brief Unit tests for UupIsoBuilder.
  *
@@ -32,6 +34,16 @@ private Q_SLOTS:
 
     // ── Convert-then-replace (B10-21) ───────────────────────
     void replaceFinalIso_movesOverExisting();
+    void replaceFinalIso_leavesNoBackupArtifact();
+
+    // ── Metadata size accumulation (R3-14) ──────────────────
+    void computeTotalDownloadBytes_sumsValidSizes();
+    void computeTotalDownloadBytes_rejectsNegativeSize();
+    void computeTotalDownloadBytes_rejectsOverflow();
+
+    // ── ISO 9660 structural signature (R3-05) ───────────────
+    void hasIso9660Signature_acceptsValidPvd();
+    void hasIso9660Signature_rejectsNonIso();
 };
 
 // ============================================================================
@@ -132,6 +144,90 @@ void TestUupIsoBuilder::replaceFinalIso_movesOverExisting() {
     QVERIFY(out.open(QIODevice::ReadOnly));
     QCOMPARE(out.readAll(), QByteArrayLiteral("FRESH-ISO-BYTES"));
     out.close();
+}
+
+void TestUupIsoBuilder::replaceFinalIso_leavesNoBackupArtifact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString finalPath = QDir(dir.path()).filePath("win.iso");
+    const QString tempPath = QDir(dir.path()).filePath("win.iso.partial");
+    writeFile(finalPath, QByteArrayLiteral("OLD-ISO"));
+    writeFile(tempPath, QByteArrayLiteral("FRESH-ISO-BYTES"));
+
+    QVERIFY(UupIsoBuilder::replaceFinalIso(tempPath, finalPath));
+    // The prior image is moved aside by rename during the swap, then dropped: no
+    // ".prev" backup artifact must survive a successful replacement.
+    QVERIFY(!QFile::exists(finalPath + ".prev"));
+    QVERIFY(!QFile::exists(tempPath));
+}
+
+// ============================================================================
+// Metadata size accumulation (R3-14): reject negative and overflowing totals.
+// ============================================================================
+
+void TestUupIsoBuilder::computeTotalDownloadBytes_sumsValidSizes() {
+    UupDumpApi::FileInfo a;
+    a.size = 100;
+    UupDumpApi::FileInfo b;
+    b.size = 250;
+    const auto total = UupIsoBuilder::computeTotalDownloadBytes({a, b});
+    QVERIFY(total.has_value());
+    QCOMPARE(*total, qint64{350});
+}
+
+void TestUupIsoBuilder::computeTotalDownloadBytes_rejectsNegativeSize() {
+    UupDumpApi::FileInfo a;
+    a.size = 10;
+    UupDumpApi::FileInfo bad;
+    bad.size = -1;
+    QVERIFY(!UupIsoBuilder::computeTotalDownloadBytes({a, bad}).has_value());
+}
+
+void TestUupIsoBuilder::computeTotalDownloadBytes_rejectsOverflow() {
+    UupDumpApi::FileInfo a;
+    a.size = std::numeric_limits<qint64>::max();
+    UupDumpApi::FileInfo b;
+    b.size = 1;
+    QVERIFY(!UupIsoBuilder::computeTotalDownloadBytes({a, b}).has_value());
+}
+
+// ============================================================================
+// ISO 9660 structural signature (R3-05): "CD001" at byte offset 0x8001.
+// ============================================================================
+
+void TestUupIsoBuilder::hasIso9660Signature_acceptsValidPvd() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("valid.iso");
+
+    QByteArray image(0x8006, '\0');
+    image[0x8001] = 'C';
+    image[0x8002] = 'D';
+    image[0x8003] = '0';
+    image[0x8004] = '0';
+    image[0x8005] = '1';
+    writeFile(path, image);
+
+    QVERIFY(UupIsoBuilder::hasIso9660Signature(path));
+}
+
+void TestUupIsoBuilder::hasIso9660Signature_rejectsNonIso() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // A short, non-ISO payload (a zero-exit converter that produced garbage).
+    const QString shortPath = QDir(dir.path()).filePath("garbage.iso");
+    writeFile(shortPath, QByteArrayLiteral("not-an-iso"));
+    QVERIFY(!UupIsoBuilder::hasIso9660Signature(shortPath));
+
+    // Right length but wrong signature bytes at the PVD offset.
+    const QString wrongPath = QDir(dir.path()).filePath("wrongsig.iso");
+    writeFile(wrongPath, QByteArray(0x8006, 'X'));
+    QVERIFY(!UupIsoBuilder::hasIso9660Signature(wrongPath));
+
+    // Missing file entirely.
+    QVERIFY(!UupIsoBuilder::hasIso9660Signature(QDir(dir.path()).filePath("nope.iso")));
 }
 
 QTEST_MAIN(TestUupIsoBuilder)

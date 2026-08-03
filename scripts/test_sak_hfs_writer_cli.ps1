@@ -153,6 +153,29 @@ if (-not $invalidBlockers.Contains("Unable to open HFS+ filesystem")) {
     Fail "non-HFS run did not explain media rejection"
 }
 
+# --- Regression (review finding 3): the HFS CLI now carries the same defense-in-depth
+# --- OS-disk guard as the APFS CLI. A confirmed --allow-raw-target aimed at PhysicalDrive0
+# --- or an OS volume/device alias (\\.\C:) must fail closed BEFORE any device write.
+& $CliPath delete-file-image --target "\\.\PhysicalDrive0" --hfs-path "/x" --allow-raw-target 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
+}
+& $CliPath delete-file-image --target "\\.\$($env:SystemDrive)" --hfs-path "/x" --allow-raw-target 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
+}
+
+# --- Regression (review finding 7): create-empty-files-image must fail closed on a
+# --- malformed or out-of-range --file-count instead of coercing it to 0/unbounded.
+& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count "not-a-number" 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "create-empty-files-image accepted a malformed --file-count"
+}
+& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count 100000000 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "create-empty-files-image accepted an out-of-range --file-count"
+}
+
 & $CertifierPath `
     --hfs-build-writer-fixture $fixturePath `
     --output $fixtureReportPath

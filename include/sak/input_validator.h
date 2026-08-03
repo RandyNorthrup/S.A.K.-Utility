@@ -142,6 +142,11 @@ public:
     /// @param str String to sanitize
     /// @param allow_unicode If false, removes non-ASCII characters
     /// @return Sanitized string
+    /// @warning This is a lossy, transforming sanitizer BY DESIGN: it drops NUL,
+    ///          control, and (optionally) non-ASCII bytes rather than rejecting the
+    ///          input. A caller that must REJECT malformed input (to avoid silent
+    ///          semantic changes or collisions) must call validateString() instead
+    ///          of relying on this transform.
     [[nodiscard]] static std::string sanitizeString(std::string_view str,
                                                     bool allow_unicode = true);
 

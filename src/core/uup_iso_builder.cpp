@@ -18,9 +18,9 @@
 #include <QRegularExpression>
 #include <QTextStream>
 
-#ifdef Q_OS_WIN
-#include <numeric>
+#include <limits>
 
+#ifdef Q_OS_WIN
 #include <windows.h>
 #endif
 
@@ -72,6 +72,22 @@ static double convertHrSpeedToMBps(double value, const QString& unit) {
     return value;  // MiB
 }
 
+/// True if @p path exists and is a reparse point (junction/symlink). Used to
+/// refuse recursive deletes / reuse through an attacker-planted redirection of a
+/// predictable, elevated conversion workspace.
+static bool isReparsePoint(const QString& path) {
+    const QFileInfo info(path);
+    return info.exists() && (info.isSymLink() || info.isJunction());
+}
+
+/// A bundled tool is only launched when it exists as a real regular file that is
+/// NOT a reparse point (defense-in-depth against a planted junction/symlink
+/// redirecting the elevated converter or downloader to an attacker binary).
+static bool isTrustedBundledExe(const QString& path) {
+    const QFileInfo info(path);
+    return info.exists() && info.isFile() && !info.isSymLink() && !info.isJunction();
+}
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -90,6 +106,21 @@ UupIsoBuilder::~UupIsoBuilder() {
 // Public API
 // ============================================================================
 
+std::optional<qint64> UupIsoBuilder::computeTotalDownloadBytes(
+    const QList<UupDumpApi::FileInfo>& files) {
+    qint64 total = 0;
+    for (const auto& file : files) {
+        if (file.size < 0) {
+            return std::nullopt;  // Negative metadata size -> fail closed.
+        }
+        if (total > std::numeric_limits<qint64>::max() - file.size) {
+            return std::nullopt;  // Summation would overflow qint64 -> fail closed.
+        }
+        total += file.size;
+    }
+    return total;
+}
+
 void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
                                const QString& outputIsoPath,
                                const QString& edition,
@@ -97,6 +128,10 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
                                const QString& updateId) {
     if (isRunning()) {
         Q_EMIT buildError("A build is already in progress");
+        return;
+    }
+    if (files.isEmpty()) {
+        Q_EMIT buildError("No UUP files were provided; cannot start a build");
         return;
     }
 
@@ -114,11 +149,14 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     m_converterOutputTail.clear();
     m_converterErrors.clear();
 
-    // Calculate total download size
-    m_totalDownloadBytes = std::accumulate(
-        m_files.begin(), m_files.end(), qint64{0}, [](qint64 acc, const auto& file) {
-            return acc + file.size;
-        });
+    // Calculate total download size, rejecting negative or overflowing metadata.
+    const std::optional<qint64> total = computeTotalDownloadBytes(m_files);
+    if (!total) {
+        Q_EMIT buildError(
+            "UUP file metadata contains a negative or overflowing size total; refusing to build");
+        return;
+    }
+    m_totalDownloadBytes = *total;
 
     sak::logInfo("Starting UUP ISO build: " + std::to_string(m_files.size()) + " files, " +
                  std::to_string(m_totalDownloadBytes / sak::kBytesPerMB) + " MB total, edition=" +
@@ -157,11 +195,11 @@ QString UupIsoBuilder::findAria2Path() const {
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     const QString path = tools.toolPath("uup", "aria2c.exe");
-    if (QFileInfo::exists(path)) {
+    if (isTrustedBundledExe(path)) {
         return path;
     }
 
-    sak::logError("aria2c.exe not found at required bundled path");
+    sak::logError("aria2c.exe missing or not a trusted regular file at required bundled path");
     return {};
 }
 
@@ -171,7 +209,7 @@ QString UupIsoBuilder::findUupMediaConverterPath() const {
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     const QString path = tools.toolPath("uup/uupmc", "UUPMediaConverter.exe");
-    if (QFileInfo::exists(path)) {
+    if (isTrustedBundledExe(path)) {
         return path;
     }
 
@@ -743,14 +781,8 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
 
     // Native-separator path to the UUPs download folder.
     uupsDir = QDir::toNativeSeparators(QDir(m_workDir).filePath("UUPs"));
-    QString conversionTempDir = QDir(m_workDir).filePath("c");
-    QDir conversionDir(conversionTempDir);
-    if (conversionDir.exists()) {
-        conversionDir.removeRecursively();
-    }
-    if (!QDir().mkpath(conversionTempDir)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to create conversion temp directory: " + conversionTempDir);
+    const QString conversionTempDir = QDir(m_workDir).filePath("c");
+    if (!ensureCleanConversionTempDir(conversionTempDir)) {
         return false;
     }
     nativeConversionTempDir = QDir::toNativeSeparators(conversionTempDir);
@@ -778,12 +810,51 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
     // success (see onConverterFinished). A failed or aborted conversion must NOT
     // destroy a pre-existing good ISO -- so the final file is left untouched here.
     const QString partialIso = finalIso + ".partial";
-    if (QFile::exists(partialIso)) {
-        QFile::remove(partialIso);  // discard our own stale partial from a prior run
+    if (!clearStalePartialIso(partialIso)) {
+        return false;
     }
     outputIsoPath = QDir::toNativeSeparators(partialIso);
     m_converterOutputPath = outputIsoPath;
 
+    return true;
+}
+
+bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDir) {
+    // The workspace is predictable and written under elevation; refuse to recurse
+    // a delete through a planted junction/symlink, and surface any failed cleanup.
+    if (isReparsePoint(conversionTempDir)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("Conversion temp directory is a reparse point; refusing to reuse: " +
+                          conversionTempDir);
+        return false;
+    }
+    QDir conversionDir(conversionTempDir);
+    if (conversionDir.exists() && !conversionDir.removeRecursively()) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("Failed to remove stale conversion temp directory: " + conversionTempDir);
+        return false;
+    }
+    if (!QDir().mkpath(conversionTempDir)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("Failed to create conversion temp directory: " + conversionTempDir);
+        return false;
+    }
+    return true;
+}
+
+bool UupIsoBuilder::clearStalePartialIso(const QString& partialIso) {
+    // Discard our own stale partial from a prior run, but never through a reparse
+    // point and never silently: a failed removal must not be reused as output.
+    if (isReparsePoint(partialIso)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("Stale partial ISO is a reparse point; refusing to reuse: " + partialIso);
+        return false;
+    }
+    if (QFile::exists(partialIso) && !QFile::remove(partialIso)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("Failed to remove stale partial ISO: " + partialIso);
+        return false;
+    }
     return true;
 }
 
@@ -1070,10 +1141,36 @@ QStringList UupIsoBuilder::missingFiles(const QList<UupDumpApi::FileInfo>& expec
 }
 
 bool UupIsoBuilder::replaceFinalIso(const QString& tempPath, const QString& finalPath) {
-    if (QFile::exists(finalPath) && !QFile::remove(finalPath)) {
+    if (!QFile::exists(finalPath)) {
+        return QFile::rename(tempPath, finalPath);
+    }
+    // Move the prior good ISO ASIDE by rename (not delete) so a failed swap can
+    // roll it back; the previous image is only dropped once the new one is in place.
+    const QString backupPath = finalPath + ".prev";
+    QFile::remove(backupPath);
+    if (!QFile::rename(finalPath, backupPath)) {
         return false;
     }
-    return QFile::rename(tempPath, finalPath);
+    if (!QFile::rename(tempPath, finalPath)) {
+        QFile::rename(backupPath, finalPath);  // Roll back: restore the prior ISO.
+        return false;
+    }
+    QFile::remove(backupPath);
+    return true;
+}
+
+bool UupIsoBuilder::hasIso9660Signature(const QString& isoPath) {
+    QFile file(isoPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    // The Primary Volume Descriptor lives in sector 16 (offset 0x8000); its
+    // standard identifier "CD001" begins one byte in, at offset 0x8001.
+    constexpr qint64 kPvdSignatureOffset = 0x8001;
+    if (!file.seek(kPvdSignatureOffset)) {
+        return false;
+    }
+    return file.read(5) == QByteArrayLiteral("CD001");
 }
 
 void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitStatus) {
@@ -1085,8 +1182,14 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
         return;
     }
 
-    if (m_phase == Phase::Failed) {
-        return;  // a fatal errorOccurred (e.g. FailedToStart) already reported the failure
+    // Terminal-state guard against a double invocation: the pollConversionProgress
+    // watchdog may already have finalized this build (Completed), or a fatal
+    // errorOccurred (e.g. FailedToStart) may already have failed it (Failed),
+    // before the queued finished() signal is delivered. Re-entering with the temp
+    // ISO already renamed would flip a Completed build to Failure -- so refuse any
+    // second, redundant call.
+    if (m_phase == Phase::Completed || m_phase == Phase::Failed) {
+        return;
     }
 
     if (exitStatus == QProcess::CrashExit) {
@@ -1110,12 +1213,25 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
     }
 
     sak::logInfo("UUP converter process exited with code 0");
+    finalizeSuccessfulConversion();
+}
 
+void UupIsoBuilder::finalizeSuccessfulConversion() {
     const QFileInfo builtInfo(m_converterOutputPath);
     if (!builtInfo.exists() || builtInfo.size() <= 0) {
         m_phase = Phase::Failed;
-        QString classified = classifyConverterFailure();
-        Q_EMIT buildError(classified);
+        Q_EMIT buildError(classifyConverterFailure());
+        return;
+    }
+
+    // A zero exit code is not proof of a bootable image: reject any output that
+    // lacks a valid ISO 9660 volume descriptor signature (fail closed).
+    if (!hasIso9660Signature(m_converterOutputPath)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "The converter exited successfully but produced a file with no ISO 9660 "
+            "volume descriptor signature (not a valid ISO): " +
+            m_converterOutputPath);
         return;
     }
 
@@ -1129,7 +1245,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
         return;
     }
 
-    qint64 fileSize = QFileInfo(m_outputIsoPath).size();
+    const qint64 fileSize = QFileInfo(m_outputIsoPath).size();
     cleanupWorkDir();
     m_phase = Phase::Completed;
     Q_EMIT phaseChanged(Phase::Completed, "ISO build complete!");

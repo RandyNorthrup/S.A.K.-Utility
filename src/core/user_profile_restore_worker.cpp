@@ -10,12 +10,14 @@
 #include "sak/smart_file_filter.h"
 #include "sak/windows_user_scanner.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QtGlobal>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -31,8 +33,11 @@ bool buildSafePath(const QString& basePath, const QString& relativePath, QString
     auto nativeCombined = QDir::toNativeSeparators(combined);
     auto nativeBase = QDir::toNativeSeparators(basePath);
 
-    std::filesystem::path destPath = nativeCombined.toStdString();
-    std::filesystem::path base = nativeBase.toStdString();
+    // Build the filesystem paths from UTF-16, not a lossy narrow (system-ANSI)
+    // std::string: toStdString() would mangle any non-ASCII path component and
+    // could make the containment check compare corrupted bytes.
+    std::filesystem::path destPath(nativeCombined.toStdU16String());
+    std::filesystem::path base(nativeBase.toStdU16String());
 
     auto safe = path_utils::isSafePath(destPath, base);
     if (!safe || !(*safe)) {
@@ -201,6 +206,9 @@ void UserProfileRestoreWorker::run() {
                           false);
 
         if (!restoreUser(mapping)) {
+            // A whole-user setup failure (missing manifest entry, invalid/undefined
+            // destination) must fail the overall result, not read as clean success.
+            m_filesErrored++;
             Q_EMIT logMessage(tr("Failed to restore user: %1").arg(mapping.source_username), true);
         }
 
@@ -272,17 +280,20 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         QString folderDestPath;
         if (!buildSafePath(sourcePath, folder.relative_path, folderSourcePath)) {
             Q_EMIT logMessage(tr("Invalid source folder path: %1").arg(folder.relative_path), true);
+            m_filesErrored++;  // A rejected folder must fail the overall result.
             continue;
         }
         if (!buildSafePath(destProfilePath, folder.relative_path, folderDestPath)) {
             Q_EMIT logMessage(tr("Invalid destination folder path: %1").arg(folder.relative_path),
                               true);
+            m_filesErrored++;
             continue;
         }
 
         if (!restoreFolder(folder, folderSourcePath, folderDestPath)) {
             Q_EMIT logMessage(tr("Warning: Failed to restore folder: %1").arg(folder.display_name),
                               true);
+            m_filesErrored++;  // Folder-level failure -> overall restore is not clean.
             // Continue with other folders
         }
     }
@@ -293,6 +304,11 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
 bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
                                                     const QString& systemDrive,
                                                     QString& destProfilePath) {
+    if (systemDrive.isEmpty()) {
+        Q_EMIT logMessage(tr("SystemDrive is not set; cannot resolve a new-user profile location"),
+                          true);
+        return false;
+    }
     const QString destUsername = mapping.destination_username.isEmpty()
                                      ? mapping.source_username
                                      : mapping.destination_username;
@@ -331,10 +347,9 @@ bool UserProfileRestoreWorker::resolveExistingUser(const UserMapping& mapping,
 
 bool UserProfileRestoreWorker::resolveDestinationProfilePath(const UserMapping& mapping,
                                                              QString& destProfilePath) {
-    QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
-    if (systemDrive.isEmpty()) {
-        systemDrive = "C:";
-    }
+    // No "C:" fallback: an unset SystemDrive is surfaced by resolveCreateNewUser
+    // (the only branch that needs it), rather than silently guessing a drive.
+    const QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
 
     switch (mapping.mode) {
     case MergeMode::CreateNewUser:
@@ -343,7 +358,10 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(const UserMapping& 
     case MergeMode::MergeIntoDestination:
         return resolveExistingUser(mapping, destProfilePath);
     }
-    return true;
+    // Unknown/out-of-range merge mode: fail closed instead of returning success
+    // with an unset destination path.
+    Q_EMIT logMessage(tr("Unknown merge mode for user: %1").arg(mapping.source_username), true);
+    return false;
 }
 
 bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
@@ -412,6 +430,7 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
         // Recursively copy subdirectory
         if (entry.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
             Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
+            m_filesErrored++;  // A subtree that failed to copy must not read as success.
             continue;
         }
 
@@ -459,15 +478,22 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 
     // Apply permissions based on mode. Pass the current mapping's destination user
     // so AssignToDestination assigns ownership instead of always stripping (B7-21).
-    if (!applyPermissions(finalDestPath, m_currentDestUser)) {
-        Q_EMIT logMessage(tr("Warning: Failed to adjust permissions: %1").arg(finalDestPath), true);
+    // Fail CLOSED: a file whose ownership/ACL could not be set is NOT a clean restore.
+    const bool permsOk = applyPermissions(finalDestPath, m_currentDestUser);
+    if (!permsOk) {
+        Q_EMIT logMessage(tr("Error: Failed to adjust permissions: %1").arg(finalDestPath), true);
     }
 
-    // Verify file if requested
-    if (m_verify) {
-        if (!verifyFile(finalDestPath)) {
-            Q_EMIT logMessage(tr("Warning: File verification failed: %1").arg(finalDestPath), true);
-        }
+    // Verify file content against the source if requested. A verification failure
+    // means the copied bytes differ or are unreadable -> count it as an error.
+    const bool verifyOk = !m_verify || verifyFile(source, finalDestPath);
+    if (!verifyOk) {
+        Q_EMIT logMessage(tr("Error: File verification failed: %1").arg(finalDestPath), true);
+    }
+
+    if (!permsOk || !verifyOk) {
+        m_filesErrored++;
+        return false;
     }
 
     // Update progress
@@ -491,6 +517,11 @@ QString UserProfileRestoreWorker::generateConflictRenamePath(const QFileInfo& de
             QString("%1/%2_backup%3%4").arg(dirPath, baseName, QString::number(counter++), suffix);
     } while (QFileInfo::exists(renamed) && counter < kMaxRenameAttempts);
 
+    // Exhausted every candidate and the last one still exists: return empty so the
+    // caller fails closed instead of overwriting an existing unrelated file.
+    if (QFileInfo::exists(renamed)) {
+        return {};
+    }
     return renamed;
 }
 
@@ -505,27 +536,22 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
         return false;
 
     case ConflictResolution::RenameWithSuffix:
-        finalDestPath = generateConflictRenamePath(destInfo);
-        Q_EMIT logMessage(
-            tr("Renaming to avoid conflict: %1").arg(QFileInfo(finalDestPath).fileName()), false);
-        break;
+        return applyRenameTarget(generateConflictRenamePath(destInfo), destInfo, finalDestPath);
 
-    case ConflictResolution::KeepNewer: {
-        QFileInfo sourceInfo(source);
-        if (destInfo.lastModified() >= sourceInfo.lastModified()) {
+    case ConflictResolution::KeepNewer:
+        // Do not delete here: copyFileReplacingExisting removes the original only
+        // after the replacement is fully written, so a failed copy never leaves
+        // the destination missing.
+        if (destInfo.lastModified() >= QFileInfo(source).lastModified()) {
             Q_EMIT logMessage(tr("Keeping newer existing file: %1").arg(destInfo.fileName()),
                               false);
             m_filesSkipped++;
             return false;
         }
-        // Do not delete here: copyFileReplacingExisting removes the original
-        // only after the replacement is fully written, so a failed copy never
-        // leaves the destination missing.
         Q_EMIT logMessage(tr("Replacing with newer file: %1").arg(destInfo.fileName()), false);
-        break;
-    }
+        return true;
 
-    case ConflictResolution::KeepLarger: {
+    case ConflictResolution::KeepLarger:
         if (destInfo.size() >= size) {
             Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()),
                               false);
@@ -533,16 +559,31 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             return false;
         }
         Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
-        break;
-    }
+        return true;
 
     case ConflictResolution::PromptUser:
-        finalDestPath = resolveConflict(finalDestPath);
-        Q_EMIT logMessage(tr("File exists, auto-renamed: %1 -> %2")
-                              .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()),
-                          false);
-        break;
+        return applyRenameTarget(resolveConflict(finalDestPath), destInfo, finalDestPath);
     }
+    // Unknown/out-of-range conflict mode: fail closed rather than overwrite the
+    // original with finalDestPath left pointing at the existing destination.
+    Q_EMIT logMessage(tr("Unknown conflict resolution mode; skipping: %1").arg(destInfo.fileName()),
+                      true);
+    m_filesErrored++;
+    return false;
+}
+
+bool UserProfileRestoreWorker::applyRenameTarget(const QString& candidate,
+                                                 const QFileInfo& destInfo,
+                                                 QString& finalDestPath) {
+    if (candidate.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("Could not find a free rename target for: %1").arg(destInfo.fileName()), true);
+        m_filesErrored++;
+        return false;
+    }
+    finalDestPath = candidate;
+    Q_EMIT logMessage(
+        tr("Resolving conflict, restoring as: %1").arg(QFileInfo(candidate).fileName()), false);
     return true;
 }
 
@@ -645,43 +686,6 @@ bool UserProfileRestoreWorker::verifyUserPayloadChecksums() {
     return true;
 }
 
-bool UserProfileRestoreWorker::createRestoreStructure() {
-    Q_EMIT logMessage(tr("Creating restore directory structure..."), false);
-
-    // Create destination directories for each mapping
-    for (const auto& mapping : m_mappings) {
-        if (!mapping.selected) {
-            continue;
-        }
-
-        // Get destination profile path from username
-        QString destPath = WindowsUserScanner::getProfilePath(mapping.destination_username);
-        if (destPath.isEmpty()) {
-            Q_EMIT logMessage(
-                tr("Failed to resolve profile path for user: %1").arg(mapping.destination_username),
-                true);
-            return false;
-        }
-
-        QDir destDir(destPath);
-        bool needsCreation = !destDir.exists();
-
-        if (needsCreation && !destDir.mkpath(".")) {
-            Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
-            return false;
-        }
-        if (needsCreation) {
-            Q_EMIT logMessage(tr("Created directory: %1").arg(destPath), false);
-        }
-
-        // Create standard user profile subdirectories
-        createStandardSubfolders(destDir);
-    }
-
-    Q_EMIT logMessage(tr("Restore directory structure created"), false);
-    return true;
-}
-
 qint64 UserProfileRestoreWorker::calculateTotalSize() {
     qint64 totalSize = 0;
     m_totalFilesToRestore = 0;
@@ -700,12 +704,32 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
             if (!folder.selected) {
                 continue;  // Unchecked folders are skipped during restore; exclude from totals.
             }
-            totalSize += folder.size_bytes;
-            m_totalFilesToRestore += folder.file_count;
+            accumulateFolderTotals(folder, totalSize);
         }
     }
 
     return totalSize;
+}
+
+void UserProfileRestoreWorker::accumulateFolderTotals(const FolderSelection& folder,
+                                                      qint64& totalSize) {
+    // Guard against negative or overflowing manifest-declared totals: these feed a
+    // progress meter, so wrapping to a tiny value would badly mislead the user.
+    // Saturate instead of wrapping, and ignore nonsensical negative counts.
+    if (folder.size_bytes > 0) {
+        if (totalSize > std::numeric_limits<qint64>::max() - folder.size_bytes) {
+            totalSize = std::numeric_limits<qint64>::max();
+        } else {
+            totalSize += folder.size_bytes;
+        }
+    }
+    if (folder.file_count > 0) {
+        if (m_totalFilesToRestore > std::numeric_limits<int>::max() - folder.file_count) {
+            m_totalFilesToRestore = std::numeric_limits<int>::max();
+        } else {
+            m_totalFilesToRestore += folder.file_count;
+        }
+    }
 }
 
 const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& username) const {
@@ -713,28 +737,6 @@ const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& 
                            m_manifest.users.end(),
                            [&username](const auto& user) { return user.username == username; });
     return (it != m_manifest.users.end()) ? &(*it) : nullptr;
-}
-
-void UserProfileRestoreWorker::createStandardSubfolders(const QDir& destDir) {
-    Q_ASSERT(!destDir.isEmpty());
-    QStringList standardFolders = {"Documents",
-                                   "Desktop",
-                                   "Pictures",
-                                   "Videos",
-                                   "Music",
-                                   "Downloads",
-                                   "AppData",
-                                   "AppData/Local",
-                                   "AppData/Roaming",
-                                   "Favorites"};
-
-    for (const QString& folder : standardFolders) {
-        QString folderPath = destDir.filePath(folder);
-        if (!QDir(folderPath).exists() && !QDir().mkpath(folderPath)) {
-            Q_EMIT logMessage(tr("Failed to create subdirectory: %1").arg(folderPath), true);
-            // Continue anyway - not all folders may be needed
-        }
-    }
 }
 
 void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
@@ -750,23 +752,42 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
     }
 }
 
-bool UserProfileRestoreWorker::verifyFile(const QString& filePath) {
+bool UserProfileRestoreWorker::hashFile(const QString& filePath, QByteArray& outDigest) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    if (!hasher.addData(&file)) {
+        return false;
+    }
+    outDigest = hasher.result();
+    return true;
+}
+
+bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath, const QString& filePath) {
+    Q_ASSERT(!sourcePath.isEmpty());
     Q_ASSERT(!filePath.isEmpty());
     QFileInfo fileInfo(filePath);
 
-    if (!fileInfo.exists()) {
-        Q_EMIT logMessage(tr("Verification failed - file missing: %1").arg(filePath), true);
+    if (!fileInfo.exists() || !fileInfo.isReadable()) {
+        Q_EMIT logMessage(tr("Verification failed - file missing or unreadable: %1").arg(filePath),
+                          true);
         return false;
     }
 
-    if (!fileInfo.isReadable()) {
-        Q_EMIT logMessage(tr("Verification failed - file not readable: %1").arg(filePath), true);
+    // Re-hash the copied file and the source and require an exact match, so a
+    // truncated or corrupted copy is caught post-write (not just readability).
+    QByteArray sourceDigest;
+    QByteArray destDigest;
+    if (!hashFile(sourcePath, sourceDigest) || !hashFile(filePath, destDigest)) {
+        Q_EMIT logMessage(tr("Verification failed - could not hash file: %1").arg(filePath), true);
         return false;
     }
-
-    // Per-file existence + readability. Content integrity of the stored payload is
-    // covered upstream by validateBackup(), which recomputes each user's directory
-    // digest against the manifest's checksum_sha256 before any file is restored.
+    if (sourceDigest != destDigest) {
+        Q_EMIT logMessage(tr("Verification failed - content mismatch: %1").arg(filePath), true);
+        return false;
+    }
     return true;
 }
 
@@ -787,6 +808,10 @@ QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
                            extension.isEmpty() ? "" : "." + extension);
     } while (QFileInfo::exists(newPath) && counter < kRestoreConflictMaxAttempts);
 
+    // Exhausted: return empty so the caller fails closed rather than overwriting.
+    if (QFileInfo::exists(newPath)) {
+        return {};
+    }
     return newPath;
 }
 

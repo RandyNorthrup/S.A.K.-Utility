@@ -1059,6 +1059,54 @@ private Q_SLOTS:
         QVERIFY(B::confinedHostName(QStringLiteral("a/../..")).isEmpty());
     }
 
+    // Codex-3 finding 1: a foreign (untrusted image) entry name must be hardened
+    // against Windows filename hazards before it names a host file, not merely
+    // stripped of path components.
+    void confinedHostNameRejectsWindowsHazards() {
+        using B = sak::FileManagementFileSystemBridge;
+        // NTFS alternate-data-stream separator would divert the export into a stream.
+        QVERIFY(B::confinedHostName(QStringLiteral("foo:bar.txt")).isEmpty());
+        // Other reserved / wildcard characters.
+        QVERIFY(B::confinedHostName(QStringLiteral("a|b.txt")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("a?b.txt")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("a<b>.txt")).isEmpty());
+        // Reserved device names, including with an extension and case-folded.
+        QVERIFY(B::confinedHostName(QStringLiteral("NUL")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("nul.txt")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("CoM1")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("LPT9.log")).isEmpty());
+        // Trailing dot / space that Windows silently strips (would collapse onto a sibling).
+        QVERIFY(B::confinedHostName(QStringLiteral("name ")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("name.")).isEmpty());
+        // A device-name-like STEM that is actually a normal file stays allowed.
+        QCOMPARE(B::confinedHostName(QStringLiteral("console.txt")), QStringLiteral("console.txt"));
+        QCOMPARE(B::confinedHostName(QStringLiteral("com10.log")), QStringLiteral("com10.log"));
+    }
+
+    // Codex-3 finding 2: every bridge mutation entrypoint re-checks writability
+    // itself (defense in depth over the engine's evidence gate) so a headless / MCP
+    // caller cannot bypass an upstream UI gate. A not-writable local target is
+    // refused before any filesystem call.
+    void bridgeMutationsFailClosedOnNonWritableTarget() {
+        using B = sak::FileManagementFileSystemBridge;
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        sak::FileManagementTarget locked;
+        locked.file_system = QStringLiteral("NTFS");
+        locked.root_path = temp.path();
+        locked.local_file_system = true;
+        locked.read_only = true;
+        locked.can_write_files = false;  // e.g. a read-only-mounted local volume
+        const QString target_file = QDir(temp.path()).filePath(QStringLiteral("blocked.txt"));
+
+        QVERIFY(!B::createDirectory(locked, target_file).ok);
+        QVERIFY(!B::writeFile(locked, target_file, QByteArrayLiteral("x")).ok);
+        QVERIFY(!B::deleteFile(locked, target_file).ok);
+        QVERIFY(!B::removeExistingEntry(locked, target_file, 100).ok);
+        // Nothing was created on disk by the refused writes.
+        QVERIFY(!QFile::exists(target_file));
+    }
+
     // B8-03: a raw non-native target the inventory reports read-only (hardware
     // write-protect) must NOT be reported writable, even though its size is in the
     // certified engine range.
@@ -1114,14 +1162,21 @@ private Q_SLOTS:
             t.read_only = read_only;
             return t;
         };
-        QVERIFY(B::targetPermitsMutation(make(true, false)));    // genuinely writable
+        // can_write_files is the sole writability signal: applyCapabilities forces it
+        // FALSE on a real write-protect, and forces read_only TRUE for every non-local
+        // target purely as a browsing badge. So a writable raw target legitimately has
+        // can_write_files == true WITH read_only == true (the badge) and MUST permit
+        // mutation -- gating on read_only (the old B8-04 clause) disabled every
+        // advertised raw HFS/APFS write (Codex-3 finding 3).
+        QVERIFY(B::targetPermitsMutation(make(true, false)));    // genuinely writable local
+        QVERIFY(B::targetPermitsMutation(make(true, true)));     // writable raw (read_only = badge)
         QVERIFY(!B::targetPermitsMutation(make(false, false)));  // not write-capable
-        QVERIFY(!B::targetPermitsMutation(make(true, true)));    // write-protected
-        QVERIFY(!B::targetPermitsMutation(make(false, true)));
+        QVERIFY(!B::targetPermitsMutation(make(false, true)));   // write-protected
 
-        // End to end: a read-only raw APFS target (never a real device -- a temp path
-        // that is not an APFS container) must have its mutation refused. The bridge no
-        // longer hard-codes the writer attestations, so the read-only flag is enforced.
+        // End to end: a non-writable raw APFS target (never a real device -- a temp
+        // path that is not an APFS container) must have its mutation refused. The
+        // bridge no longer hard-codes the writer attestations, so can_write_files
+        // (false here) is enforced at the mutation entrypoint.
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
         sak::FileManagementTarget locked;

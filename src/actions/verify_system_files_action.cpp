@@ -195,6 +195,12 @@ void VerifySystemFilesAction::scan() {
 }
 
 QString VerifySystemFilesAction::buildSfcSummary() const {
+    if (!m_sfc_ran) {
+        // SFC never produced an authoritative verdict (e.g. elevation refused or
+        // the service aborted). Do NOT claim a clean bill of health -- that is
+        // distinct from a completed run that found no violations.
+        return QStringLiteral("SFC did not complete a verification run. ");
+    }
     if (!m_sfc_found_issues) {
         return QStringLiteral("SFC found no integrity violations. ");
     }
@@ -217,6 +223,7 @@ void VerifySystemFilesAction::execute() {
     m_dism_successful = false;
     m_dism_repaired_issues = false;
     m_dism_assessed = false;
+    m_cbs_log_path.clear();  // never carry a prior run's CBS log path into this run
 
     runSFC();
     if (isCancelled()) {

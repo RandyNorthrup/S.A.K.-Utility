@@ -347,63 +347,63 @@ Legend: [SEV/VERDICT] file:line -- one-line defect. CONF=confirmed, PART=partial
 ## Pass: misc (input_validator / file-mgmt / tools / actions / elevated)
 57 items (8 confirmed / 49 partial)
 
-- [ ] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:2166-2197 -- OS-disk defense-in-depth guard only inspects \\.\PhysicalDriveN; volume aliases (\\.\C:, \\?\Volume{GUID}, GLOBALROOT) bypass it.
-- [ ] [HIGH/CONF] src/actions/backup_bitlocker_keys_action.cpp:625-721 -- Plaintext recovery keys are written under the default inherited ACL and only hardened at the end; cancellation/crash leaves exposed files; failed cleanup is ignored while claiming keys were removed.
-- [ ] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:709-739 -- APFS arbitrary-import enumerates only the default browse-entry-limit listing and never rejects truncation; files beyond the cap are silently lost in the rebuilt image.
-- [ ] [HIGH/CONF] src/tools/sak_hfs_writer_cli.cpp:213-223,712-730 -- Raw HFS mutation CLI has no PhysicalDrive0/OS-disk identity guard (the APFS CLI has one).
-- [ ] [MEDI/CONF] src/core/file_management_file_system.cpp:843-851 -- Foreign export filenames via confinedHostName are not checked for Windows reserved device names, ADS syntax, trailing-dot/space, or case-fold collisions.
-- [ ] [MEDI/CONF] src/core/uup_iso_builder.cpp:635-642,1079-1137 -- pollConversionProgress watchdog can invoke onConverterFinished before the queued finished() signal; the second invocation flips a completed build to failure.
-- [ ] [MEDI/CONF] src/elevated/elevated_helper_main.cpp:710-732 -- ReadThermalData launches unqualified 'powershell.exe' from the elevated helper, allowing PATH/CWD resolution hijacking.
-- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:408-436,753-755 -- RunPowerShell executes unrestricted elevated PowerShell with ExecutionPolicy Bypass and no command/verb/target allowlist.
-- [ ] [MEDI/PART] src/core/file_management_file_system.cpp:1527-1602,1715-1824 -- createDirectory/writeFile/deleteFile/deleteDirectory ignore can_write_files and read_only at the bridge layer.
-- [ ] [MEDI/PART] src/core/file_management_file_system.cpp:274,888-894 -- Non-local targets are forced read_only=true while raw-writer enablement requires !read_only, so advertised HFS/APFS writes are blocked.
-- [ ] [MEDI/PART] src/core/input_validator.cpp:469-492 -- Containment is verified by pathname (weakly_canonical) and then discarded; destructive opens remain vulnerable to junction/symlink-replacement TOCTOU.
-- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:203-290 -- User/folder/nested-dir/enumeration failures are logged but not reliably counted, so a partial or empty restore can emit success.
-- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:460-471 -- ACL failures and verification failures do not fail the file restore; unknown modes fall back to stripping permissions.
-- [ ] [MEDI/PART] src/core/user_profile_restore_worker.cpp:27-56 -- Path checks use lossy narrow Windows paths and pathname-only reparse checks; ancestor replacement between validation and copy can escape roots.
-- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:1112-1137 -- Converter exit zero plus a nonempty file is accepted as a valid bootable ISO; no ISO structure/expected-content verification.
-- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:227-257,744-784 -- Predictable reusable workspace paths are not reparse-checked before elevated writes / recursive cleanup.
-- [ ] [MEDI/PART] src/core/uup_iso_builder.cpp:154-183 -- Bundled aria2c/UUPMediaConverter are checked only for existence before execution; no regular-file/reparse/signature/hash verification at use time.
-- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:186-220 -- Job-object configuration/assignment/termination/close results are ignored; timed-out elevated descendants may survive.
-- [ ] [MEDI/PART] src/elevated/elevated_helper_main.cpp:147-169,691-708 -- Ownership/ACL/file-copy tasks accept arbitrary paths without confinement or reparse checks and ignore cancellation.
-- [ ] [LOW/CONF] src/actions/reset_network_action.cpp:359-386 -- The verification PowerShell has no terminating-error handling or success sentinel; cmdlet failures still exit zero, so the reset is certified on a vacuous verify.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:480-495,773-790 -- Invalid conflict enums overwrite the original destination; exhausted rename attempts return an already-existing candidate and overwrite it.
-- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1116-1137,1318-1321 -- Truncated files, skipped links/special files, and partial directory transfers can return ok=true.
-- [ ] [LOW/PART] src/core/input_validator.cpp:204-227,243-277 -- Failed Win32 attribute / std::filesystem status queries are treated as 'not a reparse point' or 'does not exist', letting optional paths pass validation.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:753-770 -- Destination verification checks readability rather than content; checksum-less manifests/payloads accepted.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:62-105 -- Fixed .sakbak/.sakrestore.tmp/.sakold.tmp names can delete unrelated existing files; rollback/cleanup return values ignored.
-- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:301-340,405-437 -- JSON values are coerced with toObject/toString/toInt/toDouble; malformed entries accepted and recovery protectors silently omitted.
-- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:163-212,959-965 -- Unvalidated drive letters enter PowerShell source (DriveLetter='%1') and key filenames, enabling injection or backup-dir escape.
-- [ ] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:523-528 -- Execution reuses cached scan results, so volumes added/changed after scanning can be omitted from a successful backup.
-- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:746-755,780-784 -- Failed conversion-dir cleanup and failed stale-partial removal are ignored; stale/attacker-planted content is then reused.
-- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:1072-1077 -- replaceFinalIso deletes the previous good image before rename; an output under the workspace is deleted by cleanup while completion is reported.
-- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:93-127 -- Malformed metadata not rejected; missing hashes/sizes permit planted resume files; final validation accepts oversized/same-size corrupted payloads.
-- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:117-131;src/tools/sak_hfs_writer_cli.cpp:155-159 -- Both CLIs synthesize evidence IDs; APFS asserts destructive and hardware certification evidence unconditionally.
-- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:130-152;src/tools/sak_apfs_writer_cli.cpp:249-275 -- Report alias checks occur before mutation and report truncation; APFS omits hardlink identity checks.
-- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:103-115,474-490;src/tools/sak_hfs_writer_cli.cpp:57-68 -- Payload and credential readAll() results are accepted without checking read errors or short reads.
-- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:78-86 -- Failure to create the controlled runtime directory silently retains inherited elevated TMP/TEMP.
-- [ ] [LOW/PART] src/actions/generate_system_report_action.cpp:275-360 -- Collector scripts lack strict terminating-error handling; partial PowerShell output treated as a complete collector result.
-- [ ] [LOW/PART] src/actions/optimize_power_settings_action.cpp:133-153,293-306 -- Substring plan matching can activate a custom-named plan; failed discovery falls back to a hard-coded GUID.
-- [ ] [LOW/PART] src/core/file_explorer_command_registry.cpp:527-648 -- Cut, create-folder-with-selection, Undo, and Redo can move/delete data without destructive classification; Undo/Redo lack any write-capability gate.
-- [ ] [LOW/PART] src/core/input_validator.cpp:581-604 -- sanitizeString silently deletes NUL/control/non-ASCII bytes instead of rejecting malformed input.
-- [ ] [LOW/PART] src/core/input_validator.cpp:610-722 -- Zero/invalid limits are guarded only by Q_ASSERT; release accepts zero thread count, zero memory requirement, or zero max buffer size.
-- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1037-1049,1949-1952 -- Post-hash stat failure converts -1 to UINT64_MAX; a failed/inaccessible destination stat is treated as vacant.
-- [ ] [LOW/PART] src/core/file_management_file_system.cpp:1892-1931 -- max_entries + 1 can overflow, turning a bounded replacement check into unbounded enumeration.
-- [ ] [LOW/PART] src/core/uup_iso_builder.cpp:117-121 -- Signed file-size accumulation and progress multiplication can overflow; negative file sizes are not rejected.
-- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:310-324,490-552 -- Wrong-typed timeout/output values are defaulted/clamped; missing backup location silently becomes C:/SAK_Backups.
-- [ ] [LOW/PART] src/elevated/elevated_helper_main.cpp:555-572 -- Partition probes accept short or zero-byte reads as success and do not require bytes.size()==read_limit.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:332-347 -- Missing SystemDrive silently falls back to C:; an invalid merge mode returns success with no destination.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:685-708 -- Manifest-controlled byte/file totals and restored-byte counters have no overflow checks.
-- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:292-313 -- Malformed --name-pad becomes zero, huge --file-count is unbounded, padding silently clamped.
-- [ ] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:463-490 -- Malformed UTF-8 credentials are replacement-decoded, credential-file input silently overrides direct input, missing directory name falls back to --file-name.
-- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:70-88;src/tools/sak_apfs_writer_cli.cpp:227-246 -- Report-directory creation and final flush/close errors are unchecked, permitting truncated reports with success exit status.
-- [ ] [LOW/PART] src/actions/verify_system_files_action.cpp:197-256 -- Failed/unrun checks still produce 'found no issues' summaries; m_cbs_log_path is not reset between runs.
-- [ ] [LOW/PART] src/actions/screenshot_settings_action.cpp:120-172 -- Any successful screenshot makes the whole action successful even when pages fail or the report cannot be written.
-- [ ] [LOW/PART] src/actions/generate_system_report_action.cpp:103-125,407-417 -- Second-resolution filenames can collide and truncate prior reports; direct QFile writing is non-atomic and close errors ignored.
-- [ ] [LOW/PART] src/actions/reset_network_action.cpp:49-79 -- Scan exceptions and malformed adapter counts silently become zero adapters instead of a failed scan.
-- [ ] [LOW/PART] src/core/input_validator.cpp:446-466 -- Any filename containing '..' is rejected, including legitimate non-traversal names.
-- [ ] [LOW/PART] src/core/user_profile_restore_worker.cpp:648-683 -- Unused restore/screenshot helpers and an unreachable duplicate patch-offset branch add dead/misleading code.
-- [ ] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:395-402 -- Command dispatch calls a possibly-empty std::function without checking lookup success, making parser/registry drift a crash.
+- [x] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:2166-2197 -- OS-disk defense-in-depth guard only inspects \\.\PhysicalDriveN; volume aliases (\\.\C:, \\?\Volume{GUID}, GLOBALROOT) bypass it.  (wave D)
+- [x] [HIGH/CONF] src/actions/backup_bitlocker_keys_action.cpp:625-721 -- Plaintext recovery keys are written under the default inherited ACL and only hardened at the end; cancellation/crash leaves exposed files; failed cleanup is ignored while claiming keys were removed.  (wave D)
+- [x] [HIGH/CONF] src/tools/sak_apfs_writer_cli.cpp:709-739 -- APFS arbitrary-import enumerates only the default browse-entry-limit listing and never rejects truncation; files beyond the cap are silently lost in the rebuilt image.  (wave D)
+- [x] [HIGH/CONF] src/tools/sak_hfs_writer_cli.cpp:213-223,712-730 -- Raw HFS mutation CLI has no PhysicalDrive0/OS-disk identity guard (the APFS CLI has one).  (wave D)
+- [x] [MEDI/CONF] src/core/file_management_file_system.cpp:843-851 -- Foreign export filenames via confinedHostName are not checked for Windows reserved device names, ADS syntax, trailing-dot/space, or case-fold collisions.  (wave D)
+- [x] [MEDI/CONF] src/core/uup_iso_builder.cpp:635-642,1079-1137 -- pollConversionProgress watchdog can invoke onConverterFinished before the queued finished() signal; the second invocation flips a completed build to failure.  (wave D)
+- [x] [MEDI/CONF] src/elevated/elevated_helper_main.cpp:710-732 -- ReadThermalData launches unqualified 'powershell.exe' from the elevated helper, allowing PATH/CWD resolution hijacking.  (wave D)
+- [x] [MEDI/PART] src/elevated/elevated_helper_main.cpp:408-436,753-755 -- RunPowerShell executes unrestricted elevated PowerShell with ExecutionPolicy Bypass and no command/verb/target allowlist.  (wave D)
+- [x] [MEDI/PART] src/core/file_management_file_system.cpp:1527-1602,1715-1824 -- createDirectory/writeFile/deleteFile/deleteDirectory ignore can_write_files and read_only at the bridge layer.  (wave D)
+- [x] [MEDI/PART] src/core/file_management_file_system.cpp:274,888-894 -- Non-local targets are forced read_only=true while raw-writer enablement requires !read_only, so advertised HFS/APFS writes are blocked.  (wave D)
+- [x] [MEDI/PART] src/core/input_validator.cpp:469-492 -- Containment is verified by pathname (weakly_canonical) and then discarded; destructive opens remain vulnerable to junction/symlink-replacement TOCTOU.  (wave D)
+- [x] [MEDI/PART] src/core/user_profile_restore_worker.cpp:203-290 -- User/folder/nested-dir/enumeration failures are logged but not reliably counted, so a partial or empty restore can emit success.  (wave D)
+- [x] [MEDI/PART] src/core/user_profile_restore_worker.cpp:460-471 -- ACL failures and verification failures do not fail the file restore; unknown modes fall back to stripping permissions.  (wave D)
+- [x] [MEDI/PART] src/core/user_profile_restore_worker.cpp:27-56 -- Path checks use lossy narrow Windows paths and pathname-only reparse checks; ancestor replacement between validation and copy can escape roots.  (wave D)
+- [x] [MEDI/PART] src/core/uup_iso_builder.cpp:1112-1137 -- Converter exit zero plus a nonempty file is accepted as a valid bootable ISO; no ISO structure/expected-content verification.  (wave D)
+- [x] [MEDI/PART] src/core/uup_iso_builder.cpp:227-257,744-784 -- Predictable reusable workspace paths are not reparse-checked before elevated writes / recursive cleanup.  (wave D)
+- [x] [MEDI/PART] src/core/uup_iso_builder.cpp:154-183 -- Bundled aria2c/UUPMediaConverter are checked only for existence before execution; no regular-file/reparse/signature/hash verification at use time.  (wave D)
+- [x] [MEDI/PART] src/elevated/elevated_helper_main.cpp:186-220 -- Job-object configuration/assignment/termination/close results are ignored; timed-out elevated descendants may survive.  (wave D)
+- [x] [MEDI/PART] src/elevated/elevated_helper_main.cpp:147-169,691-708 -- Ownership/ACL/file-copy tasks accept arbitrary paths without confinement or reparse checks and ignore cancellation.  (wave D)
+- [x] [LOW/CONF] src/actions/reset_network_action.cpp:359-386 -- The verification PowerShell has no terminating-error handling or success sentinel; cmdlet failures still exit zero, so the reset is certified on a vacuous verify.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:480-495,773-790 -- Invalid conflict enums overwrite the original destination; exhausted rename attempts return an already-existing candidate and overwrite it.  (wave D)
+- [x] [LOW/PART] src/core/file_management_file_system.cpp:1116-1137,1318-1321 -- Truncated files, skipped links/special files, and partial directory transfers can return ok=true.  (wave D)
+- [x] [LOW/PART] src/core/input_validator.cpp:204-227,243-277 -- Failed Win32 attribute / std::filesystem status queries are treated as 'not a reparse point' or 'does not exist', letting optional paths pass validation.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:753-770 -- Destination verification checks readability rather than content; checksum-less manifests/payloads accepted.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:62-105 -- Fixed .sakbak/.sakrestore.tmp/.sakold.tmp names can delete unrelated existing files; rollback/cleanup return values ignored.  (wave D)
+- [x] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:301-340,405-437 -- JSON values are coerced with toObject/toString/toInt/toDouble; malformed entries accepted and recovery protectors silently omitted.  (wave D)
+- [x] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:163-212,959-965 -- Unvalidated drive letters enter PowerShell source (DriveLetter='%1') and key filenames, enabling injection or backup-dir escape.  (wave D)
+- [x] [LOW/PART] src/actions/backup_bitlocker_keys_action.cpp:523-528 -- Execution reuses cached scan results, so volumes added/changed after scanning can be omitted from a successful backup.  (wave D)
+- [x] [LOW/PART] src/core/uup_iso_builder.cpp:746-755,780-784 -- Failed conversion-dir cleanup and failed stale-partial removal are ignored; stale/attacker-planted content is then reused.  (wave D)
+- [x] [LOW/PART] src/core/uup_iso_builder.cpp:1072-1077 -- replaceFinalIso deletes the previous good image before rename; an output under the workspace is deleted by cleanup while completion is reported.  (wave D)
+- [x] [LOW/PART] src/core/uup_iso_builder.cpp:93-127 -- Malformed metadata not rejected; missing hashes/sizes permit planted resume files; final validation accepts oversized/same-size corrupted payloads.  (wave D)
+- [x] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:117-131;src/tools/sak_hfs_writer_cli.cpp:155-159 -- Both CLIs synthesize evidence IDs; APFS asserts destructive and hardware certification evidence unconditionally.  (wave D)
+- [x] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:130-152;src/tools/sak_apfs_writer_cli.cpp:249-275 -- Report alias checks occur before mutation and report truncation; APFS omits hardlink identity checks.  (wave D)
+- [x] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:103-115,474-490;src/tools/sak_hfs_writer_cli.cpp:57-68 -- Payload and credential readAll() results are accepted without checking read errors or short reads.  (wave D)
+- [x] [LOW/PART] src/elevated/elevated_helper_main.cpp:78-86 -- Failure to create the controlled runtime directory silently retains inherited elevated TMP/TEMP.  (wave D)
+- [x] [LOW/PART] src/actions/generate_system_report_action.cpp:275-360 -- Collector scripts lack strict terminating-error handling; partial PowerShell output treated as a complete collector result.  (wave D)
+- [x] [LOW/PART] src/actions/optimize_power_settings_action.cpp:133-153,293-306 -- Substring plan matching can activate a custom-named plan; failed discovery falls back to a hard-coded GUID.  (wave D)
+- [x] [LOW/PART] src/core/file_explorer_command_registry.cpp:527-648 -- Cut, create-folder-with-selection, Undo, and Redo can move/delete data without destructive classification; Undo/Redo lack any write-capability gate.  (wave D)
+- [x] [LOW/PART] src/core/input_validator.cpp:581-604 -- sanitizeString silently deletes NUL/control/non-ASCII bytes instead of rejecting malformed input.  (wave D)
+- [x] [LOW/PART] src/core/input_validator.cpp:610-722 -- Zero/invalid limits are guarded only by Q_ASSERT; release accepts zero thread count, zero memory requirement, or zero max buffer size.  (wave D)
+- [x] [LOW/PART] src/core/file_management_file_system.cpp:1037-1049,1949-1952 -- Post-hash stat failure converts -1 to UINT64_MAX; a failed/inaccessible destination stat is treated as vacant.  (wave D)
+- [x] [LOW/PART] src/core/file_management_file_system.cpp:1892-1931 -- max_entries + 1 can overflow, turning a bounded replacement check into unbounded enumeration.  (wave D)
+- [x] [LOW/PART] src/core/uup_iso_builder.cpp:117-121 -- Signed file-size accumulation and progress multiplication can overflow; negative file sizes are not rejected.  (wave D)
+- [x] [LOW/PART] src/elevated/elevated_helper_main.cpp:310-324,490-552 -- Wrong-typed timeout/output values are defaulted/clamped; missing backup location silently becomes C:/SAK_Backups.  (wave D)
+- [x] [LOW/PART] src/elevated/elevated_helper_main.cpp:555-572 -- Partition probes accept short or zero-byte reads as success and do not require bytes.size()==read_limit.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:332-347 -- Missing SystemDrive silently falls back to C:; an invalid merge mode returns success with no destination.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:685-708 -- Manifest-controlled byte/file totals and restored-byte counters have no overflow checks.  (wave D)
+- [x] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:292-313 -- Malformed --name-pad becomes zero, huge --file-count is unbounded, padding silently clamped.  (wave D)
+- [x] [LOW/PART] src/tools/sak_apfs_writer_cli.cpp:463-490 -- Malformed UTF-8 credentials are replacement-decoded, credential-file input silently overrides direct input, missing directory name falls back to --file-name.  (wave D)
+- [x] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:70-88;src/tools/sak_apfs_writer_cli.cpp:227-246 -- Report-directory creation and final flush/close errors are unchecked, permitting truncated reports with success exit status.  (wave D)
+- [x] [LOW/PART] src/actions/verify_system_files_action.cpp:197-256 -- Failed/unrun checks still produce 'found no issues' summaries; m_cbs_log_path is not reset between runs.  (wave D)
+- [x] [LOW/PART] src/actions/screenshot_settings_action.cpp:120-172 -- Any successful screenshot makes the whole action successful even when pages fail or the report cannot be written.  (wave D)
+- [x] [LOW/PART] src/actions/generate_system_report_action.cpp:103-125,407-417 -- Second-resolution filenames can collide and truncate prior reports; direct QFile writing is non-atomic and close errors ignored.  (wave D)
+- [x] [LOW/PART] src/actions/reset_network_action.cpp:49-79 -- Scan exceptions and malformed adapter counts silently become zero adapters instead of a failed scan.  (wave D)
+- [x] [LOW/PART] src/core/input_validator.cpp:446-466 -- Any filename containing '..' is rejected, including legitimate non-traversal names.  (wave D)
+- [x] [LOW/PART] src/core/user_profile_restore_worker.cpp:648-683 -- Unused restore/screenshot helpers and an unreachable duplicate patch-offset branch add dead/misleading code.  (wave D)
+- [x] [LOW/PART] src/tools/sak_hfs_writer_cli.cpp:395-402 -- Command dispatch calls a possibly-empty std::function without checking lookup success, making parser/registry drift a crash.  (wave D)
 
 ## Pass: gui (GUI panels (logic / thread-safety / lifetime))
 17 items (5 confirmed / 12 partial)

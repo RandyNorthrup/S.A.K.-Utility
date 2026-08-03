@@ -211,6 +211,26 @@ FileManagementMutationResult mutationBlocked(const QString& fileSystem,
     return result;
 }
 
+// Fail-closed capability gate every bridge mutation entrypoint re-checks itself.
+// The bridge is directly callable (headless / MCP), so it must not trust an
+// upstream UI/registry gate: a target that does not permit mutation is refused
+// here before any filesystem or certified-writer call. Returns a populated blocked
+// result to return, or nullopt when the mutation may proceed (Codex-3, defense in
+// depth over the engine's own evidence gate).
+std::optional<FileManagementMutationResult> mutationCapabilityBlock(
+    const FileManagementTarget& target, const QString& path) {
+    if (FileManagementFileSystemBridge::targetPermitsMutation(target)) {
+        return std::nullopt;
+    }
+    const QString fs = FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
+    return mutationBlocked(fs,
+                           path,
+                           target.read_only
+                               ? QStringLiteral("Target is read-only; the write was refused.")
+                               : QStringLiteral("Target does not permit writes; the write was "
+                                                "refused."));
+}
+
 bool computeWritableNonNative(const QString& fs, const FileManagementTarget& target) {
     // APFS writes route through the certified in-place COW engine, which supports both
     // S.A.K.-generated and real Apple-created (foreign) containers on raw partitions and
@@ -840,11 +860,61 @@ bool FileManagementFileSystemBridge::isReadableNonNativeFileSystem(const QString
            fs == QStringLiteral("hfsx") || fs == QStringLiteral("apfs");
 }
 
+namespace {
+
+// True when a bare filename carries a byte that is unsafe on a Windows host: the
+// NTFS alternate-data-stream separator ':', any reserved path/wildcard character,
+// or a raw control byte. A ':' would divert the export into a hidden ADS.
+bool hasUnsafeHostNameChar(const QString& base) {
+    static const QString kReserved = QStringLiteral(":<>\"|?*/\\");
+    for (const QChar ch : base) {
+        if (ch.unicode() < 0x20 || kReserved.contains(ch)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True when @p base resolves to a Windows reserved device name (CON, PRN, AUX,
+// NUL, COM1-9, LPT1-9) even with an extension -- "NUL.txt" still opens the device.
+// Matched case-insensitively on the stem before the first dot.
+bool isWindowsReservedDeviceName(const QString& base) {
+    const QString stem = base.section(QLatin1Char('.'), 0, 0).trimmed().toUpper();
+    static const QStringList kNames = {
+        QStringLiteral("CON"), QStringLiteral("PRN"), QStringLiteral("AUX"), QStringLiteral("NUL")};
+    if (kNames.contains(stem)) {
+        return true;
+    }
+    const QString prefix = stem.left(3);
+    if (stem.size() != 4 || (prefix != QStringLiteral("COM") && prefix != QStringLiteral("LPT"))) {
+        return false;
+    }
+    const QChar last = stem.at(3);
+    return last >= QLatin1Char('1') && last <= QLatin1Char('9');
+}
+
+}  // namespace
+
 QString FileManagementFileSystemBridge::confinedHostName(const QString& raw_name) {
     // QFileInfo::fileName drops any path components (a crafted "../../evil" or "a\b"
     // collapses to its last segment); "."/".."/empty are then rejected (B8-02).
     const QString base = QFileInfo(raw_name).fileName();
     if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..")) {
+        return QString();
+    }
+    // Foreign (untrusted image) entry names must additionally be hardened against
+    // Windows filename hazards before they name a host file (Codex-3): an NTFS
+    // alternate-data-stream separator or other reserved character, a reserved
+    // device name (CON/NUL/COM1...), and a trailing dot or space that Windows
+    // silently strips -- collapsing "name " onto sibling "name" and overwriting it.
+    // Reject fail-closed rather than coerce the name. The raw name is also scanned
+    // for ':' because QFileInfo may split "foo:bar" on a ':' it reads as a drive,
+    // hiding the ADS separator from the reduced base.
+    if (hasUnsafeHostNameChar(base) || raw_name.contains(QLatin1Char(':')) ||
+        isWindowsReservedDeviceName(base)) {
+        return QString();
+    }
+    if (base.endsWith(QLatin1Char('.')) || base.endsWith(QLatin1Char(' '))) {
         return QString();
     }
     return base;
@@ -886,12 +956,18 @@ RawReplaceCaseAction FileManagementFileSystemBridge::rawReplaceCaseAction(
 }
 
 bool FileManagementFileSystemBridge::targetPermitsMutation(const FileManagementTarget& target) {
-    // A write-protected / read-only-mounted / uncertified target advertises
-    // can_write_files == false (or read_only == true) after applyCapabilities. The
-    // certified writer's enable + destructive/hardware certification-evidence
-    // attestations are derived from this, so a non-writable target fails closed in
-    // the engine instead of the bridge asserting evidence it does not have (B8-04).
-    return target.can_write_files && !target.read_only;
+    // can_write_files is the single genuine-writability signal after
+    // applyCapabilities: it is set only for a local volume or a writer-certified raw
+    // FS, and is forced FALSE when the inventory reports a real write-protect /
+    // read-only mount (inbound_read_only, B8-03). The target.read_only FIELD is a
+    // DIFFERENT thing -- it is forced true for every non-local target purely as a
+    // browsing-semantics badge, so the previous `!read_only` clause disabled EVERY
+    // advertised raw HFS/APFS write (B8-04 accidentally broke the certified
+    // raw-writer path: enable_writer never turned on for a non-local target).
+    // Gate on can_write_files alone: a genuine write-protect still fails closed
+    // (can_write_files == false) while an advertised, in-range raw write reaches the
+    // certified engine (Codex-3).
+    return target.can_write_files;
 }
 
 QString FileManagementFileSystemBridge::normalizedFileSystem(const QString& file_system) {
@@ -1043,9 +1119,18 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
             result.blockers.append(QStringLiteral("Could not hash %1.").arg(local));
             return result;
         }
+        // QFileInfo::size() returns -1 on a stat failure; casting that to uint64_t
+        // would report UINT64_MAX hashed bytes. Fail closed on an unresolved size
+        // rather than surface a bogus count.
+        const qint64 size = QFileInfo(local).size();
+        if (size < 0) {
+            result.blockers.append(
+                QStringLiteral("Could not determine the size of %1.").arg(local));
+            return result;
+        }
         result.ok = true;
         result.sha256 = QString::fromStdString(*digest);
-        result.hashed_bytes = static_cast<uint64_t>(QFileInfo(local).size());
+        result.hashed_bytes = static_cast<uint64_t>(size);
         return result;
     }
 
@@ -1315,6 +1400,10 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
     }
     const DirectoryExportContext ctx{target, max_file_bytes, result, observer};
     exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
+    // ok == "the walk hit no hard blocker"; it is NOT a wholeness claim BY DESIGN.
+    // A caller that must distinguish a whole transfer from a partial one reads
+    // `complete` (below) and `capped_files` -- ok alone must never be read as "the
+    // entire tree copied" (Codex-3 finding 5, surfaced not coerced).
     result.ok = result.blockers.isEmpty();
     result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0 &&
                       result.capped_files == 0;
@@ -1526,6 +1615,9 @@ FileManagementPreview FileManagementFileSystemBridge::renderPreview(const QByteA
 
 FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -1577,6 +1669,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -1702,6 +1797,9 @@ FileManagementMutationResult deleteDirectoryTreeDepthFirst(const FileManagementT
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectoryTree(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     // Local (QDir::removeRecursively) and HFS+ (deleteFolderTree) already remove a
     // whole tree in one operation; everything else empties depth-first first.
@@ -1714,6 +1812,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectoryTree
 
 FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
     const FileManagementTarget& target, const QString& path, const QByteArray& data) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     // No artificial File Management cap: each backend enforces its own real bound (APFS
@@ -1760,11 +1861,26 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         QStringLiteral("File write is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// True for the raw backends that have a certified streaming fork writer (peak RAM
+// one window). Others must buffer the whole host file, so they take the size-bound
+// fallback path instead.
+bool isRawStreamingWriteFs(const QString& fs) {
+    return fs == QStringLiteral("apfs") || fs == QStringLiteral("hfsplus") ||
+           fs == QStringLiteral("hfsx");
+}
+
+}  // namespace
+
 FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPath(
     const FileManagementTarget& target,
     const QString& path,
     const QString& host_file_path,
     const FileManagementTransferObserver& observer) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     const QFileInfo srcInfo(host_file_path);
@@ -1783,8 +1899,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
     if (observer.isCancelled()) {
         return mutationBlocked(fs, cleanPath, kFileManagementTransferCancelledBlocker);
     }
-    if (fs == QStringLiteral("apfs") || fs == QStringLiteral("hfsplus") ||
-        fs == QStringLiteral("hfsx")) {
+    if (isRawStreamingWriteFs(fs)) {
         return writeObservedRawStream(target, cleanPath, host_file_path, size, observer);
     }
     // Any remaining backend has no streaming fork writer yet, so it reads the whole file;
@@ -1811,6 +1926,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -1857,6 +1975,13 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
 
 namespace {
 
+// Probe one past the caller's bound so a truncated listing is detectable, without
+// overflowing int when max_entries is INT_MAX -- a wrapped negative cap would turn
+// the bounded replacement check into an unbounded / empty enumeration (Codex-3).
+int listingProbeCap(const int max_entries) {
+    return max_entries < std::numeric_limits<int>::max() ? max_entries + 1 : max_entries;
+}
+
 FileManagementMutationResult deleteRawEntry(const FileManagementTarget& target,
                                             const FileManagementEntry& entry) {
     return entry.directory ? FileManagementFileSystemBridge::deleteDirectoryTree(target, entry.path)
@@ -1895,7 +2020,7 @@ FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& 
                                                     FileManagementMutationResult result) {
     const auto [parent, name] = apfsParentAndName(displayPath(path));
     const FileManagementListResult listing =
-        FileManagementFileSystemBridge::listDirectory(target, parent, max_entries + 1);
+        FileManagementFileSystemBridge::listDirectory(target, parent, listingProbeCap(max_entries));
     if (listing.ok) {
         for (const FileManagementEntry& entry : listing.entries) {
             if (entry.name == name) {
@@ -1940,6 +2065,9 @@ FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& 
 
 FileManagementMutationResult FileManagementFileSystemBridge::removeExistingEntry(
     const FileManagementTarget& target, const QString& path, const int max_entries) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
     FileManagementMutationResult result;
     result.file_system = target.file_system;
     result.path = path;
@@ -1948,6 +2076,22 @@ FileManagementMutationResult FileManagementFileSystemBridge::removeExistingEntry
     }
     const QFileInfo info(path);
     if (!info.exists() && !info.isSymLink()) {
+        // "Does not exist" from QFileInfo can also mean the stat FAILED (e.g. a
+        // permission-denied ancestor). Confirm GENUINE absence before declaring the path
+        // vacant, or the caller would overwrite an existing-but-inaccessible file. The
+        // returned file_type is authoritative (MSVC also sets ec to not-found for an absent
+        // path, so ec alone would misfire): only file_type::not_found is provably vacant;
+        // any other outcome (unknown/none from a permission error, or an occupant QFileInfo
+        // missed) cannot be proven vacant -> fail closed (Codex-3).
+        std::error_code ec;
+        const auto status =
+            std::filesystem::symlink_status(std::filesystem::path(path.toStdWString()), ec);
+        if (status.type() != std::filesystem::file_type::not_found) {
+            result.blockers.append(
+                QStringLiteral("Could not determine what occupies %1; nothing was replaced.")
+                    .arg(path));
+            return result;
+        }
         result.ok = true;
         return result;
     }
@@ -1997,6 +2141,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
     const FileManagementTarget& target,
     const QString& source_path,
     const QString& destination_path) {
+    if (auto blocked = mutationCapabilityBlock(target, source_path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanSource = displayPath(source_path);
     const QString cleanDestination = displayPath(destination_path);

@@ -135,13 +135,21 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPowerPla
     const QString& name) {
     QVector<PowerPlan> plans = enumeratePowerPlans();
 
+    // Exact (case-insensitive) name match, NOT a substring match: a custom plan
+    // named e.g. "My High Performance Rig" must not be selected when searching
+    // for the built-in "High Performance". If no exact match exists, the caller
+    // falls back to the canonical built-in GUID via getStandardPowerPlanGuid().
     auto it = std::find_if(plans.begin(), plans.end(), [&name](const PowerPlan& plan) {
-        return plan.name.contains(name, Qt::CaseInsensitive);
+        return plan.name.compare(name, Qt::CaseInsensitive) == 0;
     });
     return it != plans.end() ? *it : PowerPlan();
 }
 
 // ENTERPRISE-GRADE: Standard power scheme GUIDs
+// These are Microsoft's documented, canonical built-in scheme GUIDs -- not a
+// guessed default. Returning one when enumeration finds no exact-named plan
+// activates the REAL built-in plan, so this is correct-by-design, not an
+// error-hiding fallback.
 QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& plan_type) {
     if (plan_type == "High Performance" || plan_type == "high") {
         return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";  // SCHEME_MIN (High Performance)

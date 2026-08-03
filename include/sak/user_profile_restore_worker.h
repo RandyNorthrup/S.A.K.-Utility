@@ -142,6 +142,11 @@ private:
                              qint64 size,
                              QString& finalDestPath);
     QString generateConflictRenamePath(const QFileInfo& destInfo);
+    /// @brief Accept a rename candidate into finalDestPath, or fail closed (count an
+    ///        error, return false) when the candidate is empty (rename exhausted).
+    bool applyRenameTarget(const QString& candidate,
+                           const QFileInfo& destInfo,
+                           QString& finalDestPath);
     bool applyPermissions(const QString& filePath, const QString& destinationUser);
     /// Win32 ownership assignment for AssignToDestination, with strip fallback if the
     /// SID cannot be resolved or ownership cannot be taken.
@@ -150,14 +155,17 @@ private:
     // Helpers
     bool validateBackup();
     bool verifyUserPayloadChecksums();
-    bool createRestoreStructure();
-    /// @brief Create standard user profile subdirectories inside a destination dir
-    void createStandardSubfolders(const QDir& destDir);
     /// @brief Find a user's data in the manifest by username
     const BackupUserData* findManifestUser(const QString& username) const;
     qint64 calculateTotalSize();
+    /// @brief Add one folder's byte/file totals with saturating overflow guards
+    void accumulateFolderTotals(const FolderSelection& folder, qint64& totalSize);
     void updateProgress(qint64 bytesAdded);
-    bool verifyFile(const QString& filePath);
+    /// @brief Verify a restored file against its source: existence, readability, and
+    ///        an exact SHA-256 content match (fail closed on any mismatch).
+    bool verifyFile(const QString& sourcePath, const QString& filePath);
+    /// @brief SHA-256 a file's contents into @p outDigest; false if it cannot be read
+    static bool hashFile(const QString& filePath, QByteArray& outDigest);
     QString resolveConflict(const QString& destPath);
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,

@@ -154,6 +154,13 @@ private slots:
 
     // ---- B7-10: overwrite replaces via rename-aside, leaving no temp artifacts ----
     void overwriteRestoreLeavesNoTempArtifacts();
+
+    // ---- R3-02/R3-15: failures are counted and fail the overall result ----
+    void unknownMergeModeFailsClosed();
+    void missingFolderSourceFailsClosed();
+
+    // ---- R3-03/R3-09: content verification passes a good copy ----
+    void verifyGoodCopySucceeds();
 };
 
 // ===========================================================================
@@ -514,8 +521,10 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
-    // Still completes (loops through all mappings), but logs a warning.
-    QCOMPARE(completeSpy.first().at(0).toBool(), true);
+    // Fail closed (R3-02): a requested user absent from the manifest is a real
+    // failure to restore, so the overall result must be reported as failure --
+    // not the previous fail-open "success" that hid an incomplete restore.
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
 
     // Check that a warning was logged about the missing user.
     bool foundWarning = false;
@@ -1090,6 +1099,118 @@ void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
     QFile recovery(destBase + "data.txt.sakbak");
     QVERIFY(recovery.open(QIODevice::ReadOnly));
     QCOMPARE(recovery.readAll(), QByteArray("tiny"));
+}
+
+// ===========================================================================
+// R3-15: an unknown/out-of-range merge mode must fail closed (no silent success
+// with an unset destination). resolveDestinationProfilePath now returns false for
+// it, restoreUser fails, and the overall result is failure.
+// ===========================================================================
+void UserProfileRestoreWorkerTests::unknownMergeModeFailsClosed() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(
+        backupDir, QStringLiteral("UmmUser"), {QStringLiteral("Documents/file.txt")}, "content");
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto folder = makeFolder(
+        sak::FolderType::Documents, QStringLiteral("Documents"), QStringLiteral("Documents"), 7, 1);
+    auto manifest = buildManifest(QStringLiteral("UmmUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("UmmUser"));
+    mapping.mode = static_cast<sak::MergeMode>(999);  // out of range
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
+}
+
+// ===========================================================================
+// R3-02: a selected folder whose source directory is absent is a real failure
+// and must be counted -> overall result is failure (not fail-open success).
+// ===========================================================================
+void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    // Only a manifest is written; the "Documents" source folder is never created.
+    writeFile(backupDir.path() + "/manifest.json", "{}");
+    QDir().mkpath(backupDir.path() + "/MfsUser");  // user dir exists, folder does not
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto folder = makeFolder(
+        sak::FolderType::Documents, QStringLiteral("Documents"), QStringLiteral("Documents"), 0, 0);
+    auto manifest = buildManifest(QStringLiteral("MfsUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("MfsUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
+}
+
+// ===========================================================================
+// R3-03/R3-09: with verify enabled, a correctly copied file (content matches the
+// source) must still verify as success -- the content-hash check must not
+// false-fail a good restore.
+// ===========================================================================
+void UserProfileRestoreWorkerTests::verifyGoodCopySucceeds() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("VUser"),
+                     {QStringLiteral("Documents/verify.txt")},
+                     "verify-this-content");
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             19,
+                             1);
+    auto manifest = buildManifest(QStringLiteral("VUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("VUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    // verify = true (3rd field): the post-copy SHA-256 must match the source.
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, true});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.first().at(0).toBool(), true);
+
+    const QString destFile = destDir.path() + "/Users/VUser/Documents/verify.txt";
+    QVERIFY(QFile::exists(destFile));
 }
 
 QTEST_MAIN(UserProfileRestoreWorkerTests)

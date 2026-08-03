@@ -32,6 +32,12 @@ private Q_SLOTS:
     // B6-04: a malformed protector response is signalled, not treated as empty.
     void parseKeyProtectorResponse_signalsParseFailure();
     void parseKeyProtectorResponse_parsesValidPayload();
+    // WaveD-03: a well-formed JSON array with a non-object element (or a bare
+    // scalar) must fail closed, not silently drop a protector.
+    void parseKeyProtectorResponse_rejectsMalformedElements();
+    // WaveD-04: drive letters are validated before entering the PowerShell filter
+    // / key filename, so a malformed value cannot inject or escape the directory.
+    void buildKeyProtectorScript_rejectsInvalidDriveLetters();
     // Recovery-password accounting used by the gate and per-volume file writer.
     void recoveryPasswordHelpers_countAndDetect();
     // Enum formatters the recovery document depends on.
@@ -108,6 +114,39 @@ void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_parsesValidPayloa
     QCOMPARE(result[0].recovery_password, QStringLiteral("111111-222222-333333"));
     QCOMPARE(result[0].protector_type, Action::formatProtectorType(3));
     QVERIFY(result[1].recovery_password.isEmpty());
+}
+
+void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_rejectsMalformedElements() {
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    // A JSON array whose element is not an object must not be coerced to "no
+    // protectors" -- it must fail closed so the caller does not omit a key.
+    bool parse_ok = true;
+    QVector<KeyProtectorInfo> result =
+        action.parseKeyProtectorResponse(QStringLiteral("[123, \"nope\"]"), parse_ok);
+    QVERIFY2(!parse_ok, "a non-object array element must report parse failure");
+    QVERIFY(result.isEmpty());
+
+    // A valid-JSON bare scalar (neither array nor object) is likewise rejected.
+    parse_ok = true;
+    result = action.parseKeyProtectorResponse(QStringLiteral("\"unexpected\""), parse_ok);
+    QVERIFY2(!parse_ok, "a bare JSON scalar must report parse failure");
+    QVERIFY(result.isEmpty());
+}
+
+void BackupBitlockerKeysActionTests::buildKeyProtectorScript_rejectsInvalidDriveLetters() {
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    // Valid drive letters (with or without a colon) produce a real script.
+    QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:")).contains(QStringLiteral("C:")));
+    QVERIFY(!action.buildKeyProtectorScript(QStringLiteral("D")).isEmpty());
+
+    // Anything else yields an empty script (fail closed): empty, injection
+    // attempts, and path-escape sequences must all be refused.
+    QVERIFY(action.buildKeyProtectorScript(QString()).isEmpty());
+    QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:' ; Remove-Item C:\\ #")).isEmpty());
+    QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:\\..\\..\\evil")).isEmpty());
+    QVERIFY(action.buildKeyProtectorScript(QStringLiteral("CC")).isEmpty());
 }
 
 // ============================================================================

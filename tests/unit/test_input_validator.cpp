@@ -427,6 +427,12 @@ void InputValidatorTests::containsTraversal_normal() {
         std::filesystem::path("subdir/file.txt")));
     QVERIFY(
         !sak::input_validator::containsTraversalSequences(std::filesystem::path("normal_path")));
+    // Codex-3 finding 12: an incidental ".." INSIDE a filename is not a traversal
+    // segment and must NOT be over-rejected, while a real ".." segment still is.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("my..file")));
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("..bar")));
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("a/b..c/d")));
+    QVERIFY(sak::input_validator::containsTraversalSequences(std::filesystem::path("a/../b")));
 }
 
 void InputValidatorTests::containsNullBytes_detected() {

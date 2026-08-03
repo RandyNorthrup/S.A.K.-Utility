@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 /**
  * @brief Background UUP file downloader and ISO builder
@@ -128,6 +129,23 @@ public:
     [[nodiscard]] static bool replaceFinalIso(const QString& tempPath, const QString& finalPath);
 
     /**
+     * @brief Sum the API-declared sizes of @p files, rejecting negative sizes and
+     *        detecting qint64 overflow. Returns nullopt (fail closed) on either, so
+     *        malformed metadata cannot silently under-report the download total.
+     *        Unit-testable.
+     */
+    [[nodiscard]] static std::optional<qint64> computeTotalDownloadBytes(
+        const QList<UupDumpApi::FileInfo>& files);
+
+    /**
+     * @brief True if @p isoPath begins with a valid ISO 9660 Primary Volume
+     *        Descriptor signature ("CD001" at byte offset 0x8001). A zero-exit
+     *        converter that produced a non-ISO file is thereby rejected before the
+     *        output is promoted to the final image. Unit-testable.
+     */
+    [[nodiscard]] static bool hasIso9660Signature(const QString& isoPath);
+
+    /**
      * @brief Check if a build is currently in progress
      */
     bool isRunning() const {
@@ -193,6 +211,12 @@ private:
                                       QString& uupMediaConverter);
     /// @brief Connect QProcess signals for the converter process
     void connectConverterSignals();
+    /// @brief Reparse-check, clear, and recreate the elevated conversion temp dir
+    bool ensureCleanConversionTempDir(const QString& conversionTempDir);
+    /// @brief Reparse-check and remove our own stale .partial ISO before reuse
+    bool clearStalePartialIso(const QString& partialIso);
+    /// @brief Validate + promote the converter output on a clean exit code
+    void finalizeSuccessfulConversion();
     void cleanupWorkDir();
 
     // Tool path resolution
