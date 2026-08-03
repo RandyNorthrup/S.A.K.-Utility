@@ -46,6 +46,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QSplitter>
@@ -2308,19 +2309,33 @@ void WifiManagerPanel::saveTableToJson(const QString& path) {
         arr.append(obj);
     }
     QJsonDocument doc(arr);
-    QFile f(path);
+    QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         sak::logWarning(("Could not open file for writing: " + path).toStdString());
         sak::showWarningLogged(this, "Save Error", "Could not open file for writing:\n" + path);
         return;
     }
     const QByteArray json_bytes = doc.toJson();
-    if (f.write(json_bytes) != json_bytes.size()) {
+    const qint64 written = f.write(json_bytes);
+    // Fail closed: a short write or a failed atomic commit must leave the
+    // original credential table untouched and must NOT report success. The
+    // '&&' short-circuit means commit() is only attempted after a full write;
+    // otherwise the temp file is discarded via cancelWriting().
+    const bool committed = (written == json_bytes.size()) && f.commit();
+    if (!jsonWriteSucceeded(written, json_bytes.size(), committed)) {
+        f.cancelWriting();
         sak::logWarning("Incomplete write to network table file: {}", path.toStdString());
+        sak::showWarningLogged(this,
+                               "Save Error",
+                               "Failed to write the network table (file left unchanged):\n" + path);
+        return;
     }
-    f.close();
     Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path),
                          sak::kTimerStatusDefaultMs);
+}
+
+bool WifiManagerPanel::jsonWriteSucceeded(qint64 written, qint64 expected, bool committed) {
+    return written == expected && committed;
 }
 
 void WifiManagerPanel::loadTableFromJson(const QString& path) {

@@ -3129,66 +3129,172 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
     applyDnsServers(adapter->name, primary, secondary);
 }
 
+namespace {
+
+using TrackedFuture = QFuture<QPair<bool, QString>>;
+
+// Output text of a failed netsh step (timeout message or captured stderr/stdout).
+QString netshStepOutput(const ProcessResult& process) {
+    if (process.timed_out) {
+        return NetworkDiagnosticPanel::tr("netsh command timed out");
+    }
+    return process.std_out.isEmpty() ? process.std_err : process.std_out;
+}
+
+// Runs netsh steps in order on a worker thread, stopping at the first failure.
+// Returns {index of first failed step (or -1 if all succeeded), its output}.
+QPair<int, QString> runNetshStepsSequential(const QList<QStringList>& steps, int timeout_ms) {
+    for (int i = 0; i < steps.size(); ++i) {
+        const auto process = runProcess(QStringLiteral("netsh"), steps.at(i), timeout_ms);
+        if (!process.succeeded()) {
+            return {i, netshStepOutput(process)};
+        }
+    }
+    return {-1, QString()};
+}
+
+// Maps a DNS-apply outcome to an honest {success, message}. A failed secondary
+// step is reported as a partial failure, never as success (fail closed).
+QPair<bool, QString> dnsApplyMessage(const QString& adapter,
+                                     const QString& primary,
+                                     const QString& secondary,
+                                     int failed_index,
+                                     const QString& output) {
+    if (failed_index < 0) {
+        return {true, NetworkDiagnosticPanel::tr("DNS servers configured on '%1'").arg(adapter)};
+    }
+    if (failed_index == 0) {
+        return {false,
+                NetworkDiagnosticPanel::tr("Failed to set primary DNS on '%1'. Administrator "
+                                           "privileges may be required.\n\n%2")
+                    .arg(adapter, output)};
+    }
+    return {false,
+            NetworkDiagnosticPanel::tr("Partially configured DNS on '%1': primary %2 was set, "
+                                       "but adding secondary %3 failed.\n\n%4")
+                .arg(adapter, primary, secondary, output)};
+}
+
+// Applies primary (and optional secondary) DNS as ONE joined worker unit so the
+// sequence cannot be truncated mid-way by panel teardown.
+QPair<bool, QString> runDnsApplySequence(const QString& adapter,
+                                         const QString& primary,
+                                         const QString& secondary,
+                                         int timeout_ms) {
+    QList<QStringList> steps;
+    steps.append({QStringLiteral("interface"),
+                  QStringLiteral("ipv4"),
+                  QStringLiteral("set"),
+                  QStringLiteral("dns"),
+                  adapter,
+                  QStringLiteral("static"),
+                  primary});
+    if (!secondary.isEmpty()) {
+        steps.append({QStringLiteral("interface"),
+                      QStringLiteral("ipv4"),
+                      QStringLiteral("add"),
+                      QStringLiteral("dns"),
+                      adapter,
+                      secondary,
+                      QStringLiteral("index=2")});
+    }
+    const auto [failed_index, output] = runNetshStepsSequential(steps, timeout_ms);
+    return dnsApplyMessage(adapter, primary, secondary, failed_index, output);
+}
+
+// Maps a DHCP-enable outcome to an honest {success, message}. A failed
+// DNS-to-DHCP step is reported as a partial failure, never as success.
+QPair<bool, QString> dhcpApplyMessage(const QString& adapter,
+                                      int failed_index,
+                                      const QString& output) {
+    if (failed_index < 0) {
+        return {true, NetworkDiagnosticPanel::tr("DHCP enabled on '%1'").arg(adapter)};
+    }
+    if (failed_index == 0) {
+        return {false,
+                NetworkDiagnosticPanel::tr("Failed to enable DHCP on '%1'. Administrator "
+                                           "privileges may be required.\n\n%2")
+                    .arg(adapter, output)};
+    }
+    return {false,
+            NetworkDiagnosticPanel::tr("Partially enabled DHCP on '%1': the IP address was "
+                                       "switched to DHCP, but resetting DNS to DHCP failed.\n\n%2")
+                .arg(adapter, output)};
+}
+
+// Switches the adapter's IP and DNS to DHCP as ONE joined worker unit.
+QPair<bool, QString> runDhcpEnableSequence(const QString& adapter, int timeout_ms) {
+    QList<QStringList> steps;
+    steps.append({QStringLiteral("interface"),
+                  QStringLiteral("ipv4"),
+                  QStringLiteral("set"),
+                  QStringLiteral("address"),
+                  adapter,
+                  QStringLiteral("dhcp")});
+    steps.append({QStringLiteral("interface"),
+                  QStringLiteral("ipv4"),
+                  QStringLiteral("set"),
+                  QStringLiteral("dns"),
+                  adapter,
+                  QStringLiteral("dhcp")});
+    const auto [failed_index, output] = runNetshStepsSequential(steps, timeout_ms);
+    return dhcpApplyMessage(adapter, failed_index, output);
+}
+
+// Launches a multi-step netsh mutation as a single joined worker unit and tracks
+// its future so panel teardown can bounded-wait the WHOLE sequence rather than
+// truncate it. The report callback is context-bound to `owner`, so no slot fires
+// on a destroyed panel.
+void launchTrackedNetshSequence(NetworkDiagnosticPanel* owner,
+                                QList<TrackedFuture>& tracked,
+                                std::function<QPair<bool, QString>()> work,
+                                std::function<void(bool, const QString&)> report) {
+    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(owner);
+    QObject::connect(watcher,
+                     &QFutureWatcher<QPair<bool, QString>>::finished,
+                     owner,
+                     [watcher, report = std::move(report)]() {
+                         const auto [success, message] = watcher->result();
+                         watcher->deleteLater();
+                         report(success, message);
+                     });
+    TrackedFuture future = QtConcurrent::run(std::move(work));
+    watcher->setFuture(future);
+    tracked.removeIf([](const TrackedFuture& f) { return f.isFinished(); });
+    tracked.append(future);
+}
+
+}  // namespace
+
 void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
                                              const QString& primary,
                                              const QString& secondary) {
-    // Set primary DNS
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("dns"),
-                        adapter_name,
-                        QStringLiteral("static"),
-                        primary};
-
     Q_EMIT logOutput(
         tr("Setting DNS on '%1': primary=%2 secondary=%3").arg(adapter_name, primary, secondary));
 
-    runNetshCommandAsync(
-        args, [this, adapter_name, primary, secondary](bool success, const QString& output) {
-            if (!success) {
-                sak::logError("Failed to set primary DNS: {}", output.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] Failed to set primary DNS: %1").arg(output));
-                sak::showWarningLogged(this,
-                                       tr("DNS Configuration Failed"),
-                                       tr("Failed to set primary DNS server.\n\n"
-                                          "Administrator privileges may be required.\n\n%1")
-                                           .arg(output));
-                return;
-            }
-
-            auto finish_success = [this, adapter_name, primary, secondary]() {
-                Q_EMIT statusMessage(tr("DNS servers configured on '%1'").arg(adapter_name),
-                                     sak::kTimerStatusMessageMs);
-                Q_EMIT logOutput(tr("DNS configured on '%1'").arg(adapter_name));
+    const int timeout = sak::kTimeoutNetworkReadMs;
+    launchTrackedNetshSequence(
+        this,
+        m_pending_command_futures,
+        [adapter_name, primary, secondary, timeout]() {
+            return runDnsApplySequence(adapter_name, primary, secondary, timeout);
+        },
+        [this, adapter_name, primary, secondary](bool success, const QString& message) {
+            if (success) {
+                Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(message);
                 sak::logInfo("DNS set on {}: primary={} secondary={}",
                              adapter_name.toStdString(),
                              primary.toStdString(),
                              secondary.toStdString());
-                onRefreshAdapters();
-            };
-
-            if (secondary.isEmpty()) {
-                finish_success();
-                return;
+            } else {
+                sak::logError("DNS apply failed on {}: {}",
+                              adapter_name.toStdString(),
+                              message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(message));
+                sak::showWarningLogged(this, tr("DNS Configuration Failed"), message);
             }
-
-            QStringList add_args = {QStringLiteral("interface"),
-                                    QStringLiteral("ipv4"),
-                                    QStringLiteral("add"),
-                                    QStringLiteral("dns"),
-                                    adapter_name,
-                                    secondary,
-                                    QStringLiteral("index=2")};
-            runNetshCommandAsync(add_args,
-                                 [finish_success](bool secondary_success,
-                                                  const QString& secondary_output) {
-                                     if (!secondary_success) {
-                                         sak::logWarning("Failed to set secondary DNS: {}",
-                                                         secondary_output.toStdString());
-                                     }
-                                     finish_success();
-                                 });
+            onRefreshAdapters();
         });
 }
 
@@ -3212,39 +3318,26 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
 
     Q_EMIT logOutput(tr("Enabling DHCP on '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("address"),
-                        adapter->name,
-                        QStringLiteral("dhcp")};
     const QString adapter_name = adapter->name;
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (!success) {
-            sak::logError("Failed to enable DHCP: {}", output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to enable DHCP: %1").arg(output));
-            sak::showWarningLogged(this,
-                                   tr("DHCP Failed"),
-                                   tr("Failed to enable DHCP.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-            return;
-        }
-
-        QStringList dns_args = {QStringLiteral("interface"),
-                                QStringLiteral("ipv4"),
-                                QStringLiteral("set"),
-                                QStringLiteral("dns"),
-                                adapter_name,
-                                QStringLiteral("dhcp")};
-        runNetshCommandAsync(dns_args, [this, adapter_name](bool, const QString&) {
-            Q_EMIT statusMessage(tr("DHCP enabled on '%1'").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("DHCP enabled on '%1'").arg(adapter_name));
-            sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
+    const int timeout = sak::kTimeoutNetworkReadMs;
+    launchTrackedNetshSequence(
+        this,
+        m_pending_command_futures,
+        [adapter_name, timeout]() { return runDhcpEnableSequence(adapter_name, timeout); },
+        [this, adapter_name](bool success, const QString& message) {
+            if (success) {
+                Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(message);
+                sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("DHCP enable failed on {}: {}",
+                              adapter_name.toStdString(),
+                              message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(message));
+                sak::showWarningLogged(this, tr("DHCP Failed"), message);
+            }
             onRefreshAdapters();
         });
-    });
 }
 
 void NetworkDiagnosticPanel::onReleaseDhcpLease() {

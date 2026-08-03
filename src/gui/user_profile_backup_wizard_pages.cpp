@@ -30,7 +30,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
+#include <memory>
 
 namespace sak {
 
@@ -1274,7 +1276,7 @@ void UserProfileBackupInstalledAppsPage::onSelectNone() {
 // ============================================================================
 
 /// @brief Calculate size of a file or directory; returns -1 if path doesn't exist
-static qint64 calculateSourceSize(const QString& path) {
+static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* cancel) {
     Q_ASSERT(!path.isEmpty());
     QFileInfo info(path);
     if (!info.exists()) {
@@ -1286,6 +1288,9 @@ static qint64 calculateSourceSize(const QString& path) {
     qint64 size = 0;
     QDirIterator it(path, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        if (cancel && cancel->load()) {
+            return size;
+        }
         it.next();
         size += it.fileInfo().size();
     }
@@ -1457,7 +1462,24 @@ UserProfileBackupAppDataPage::UserProfileBackupAppDataPage(QVector<UserProfile>&
     setTitle(tr("Application Data"));
     setSubTitle(tr("Select application data and settings to include in the backup"));
 
+    m_scanWatcher = new QFutureWatcher<QVector<AppDataSourceInfo>>(this);
+    connect(m_scanWatcher,
+            &QFutureWatcher<QVector<AppDataSourceInfo>>::finished,
+            this,
+            &UserProfileBackupAppDataPage::onScanFinished);
+
     setupUi();
+}
+
+UserProfileBackupAppDataPage::~UserProfileBackupAppDataPage() {
+    // Cooperatively cancel then join so the scan never outlives the page and
+    // no slot fires on partially destroyed members.
+    if (m_scanCancel) {
+        m_scanCancel->store(true);
+    }
+    if (m_scanWatcher && m_scanWatcher->isRunning()) {
+        m_scanWatcher->waitForFinished();
+    }
 }
 
 void UserProfileBackupAppDataPage::setupUi() {
@@ -1541,27 +1563,23 @@ void UserProfileBackupAppDataPage::cleanupPage() {
     }
 }
 
-void UserProfileBackupAppDataPage::onScanAppData() {
-    Q_ASSERT(m_scanButton);
-    Q_ASSERT(m_statusLabel);
-    m_scanButton->setEnabled(false);
-    m_statusLabel->setText(tr("Scanning application data..."));
-    m_scanProgress->setVisible(true);
-    m_scanProgress->setRange(0, 0);
-    m_appDataTree->clear();
-
+// Worker-thread seam: size every common app-data source for the selected
+// users. Read-only (no mutation), so it is safe to run off the GUI thread.
+// Honors an optional cancel flag so an owner teardown can bound the wait.
+static QVector<AppDataSourceInfo> scanSelectedAppDataSources(const QVector<UserProfile>& users,
+                                                             const std::atomic_bool* cancel) {
     QVector<AppDataSourceInfo> allSources;
-    auto commonSources = getCommonAppDataSources();
-
-    // Check each common source against selected users
-    for (const auto& user : m_users) {
+    const auto commonSources = getCommonAppDataSources();
+    for (const auto& user : users) {
         if (!user.is_selected) {
             continue;
         }
-
         for (auto source : commonSources) {
-            QString fullPath = user.profile_path + "/" + source.relative_path;
-            qint64 pathSize = calculateSourceSize(fullPath);
+            if (cancel && cancel->load()) {
+                return allSources;
+            }
+            const QString fullPath = user.profile_path + "/" + source.relative_path;
+            const qint64 pathSize = calculateSourceSize(fullPath, cancel);
             if (pathSize < 0) {
                 continue;
             }
@@ -1570,7 +1588,34 @@ void UserProfileBackupAppDataPage::onScanAppData() {
             allSources.append(source);
         }
     }
+    return allSources;
+}
 
+void UserProfileBackupAppDataPage::onScanAppData() {
+    Q_ASSERT(m_scanButton);
+    Q_ASSERT(m_statusLabel);
+    Q_ASSERT(m_scanWatcher);
+    if (m_scanWatcher->isRunning()) {
+        return;  // A scan is already in flight; ignore re-entry.
+    }
+    m_scanButton->setEnabled(false);
+    m_statusLabel->setText(tr("Scanning application data..."));
+    m_scanProgress->setVisible(true);
+    m_scanProgress->setRange(0, 0);
+    m_appDataTree->clear();
+
+    // Snapshot inputs so the worker never touches page-owned state, and share
+    // a cancel flag the destructor can flip to bound the wait.
+    m_scanCancel = std::make_shared<std::atomic_bool>(false);
+    const QVector<UserProfile> users = m_users;
+    const auto cancel = m_scanCancel;
+    m_scanWatcher->setFuture(QtConcurrent::run(
+        [users, cancel] { return scanSelectedAppDataSources(users, cancel.get()); }));
+}
+
+void UserProfileBackupAppDataPage::onScanFinished() {
+    Q_ASSERT(m_scanWatcher);
+    const QVector<AppDataSourceInfo> allSources = m_scanWatcher->result();
     m_scanned = true;
     m_scanButton->setEnabled(true);
     m_selectAllButton->setEnabled(true);

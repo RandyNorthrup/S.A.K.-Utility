@@ -9,6 +9,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFutureWatcher>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProgressBar>
@@ -20,12 +21,12 @@
 #include <QWizard>
 #include <QWizardPage>
 
+#include <atomic>
+#include <memory>
+
 class QVBoxLayout;
 
 namespace sak {
-
-// Forward declarations
-class UserProfileBackupWorker;
 
 /**
  * @brief Wizard for backing up Windows user profiles
@@ -223,6 +224,7 @@ class UserProfileBackupAppDataPage : public QWizardPage {
 
 public:
     explicit UserProfileBackupAppDataPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
+    ~UserProfileBackupAppDataPage() override;
 
     void initializePage() override;
     bool isComplete() const override;
@@ -230,6 +232,8 @@ public:
 
 private Q_SLOTS:
     void onScanAppData();
+    /// @brief Apply worker-thread scan results to the tree (GUI thread)
+    void onScanFinished();
     void onSelectAll();
     void onSelectNone();
     void onItemChanged(QTreeWidgetItem* item, int column);
@@ -251,6 +255,11 @@ private:
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
     bool m_scanned{false};
+
+    /// @brief Watches the off-GUI-thread app-data size scan
+    QFutureWatcher<QVector<AppDataSourceInfo>>* m_scanWatcher{nullptr};
+    /// @brief Cooperative cancel flag so teardown can bound the scan wait
+    std::shared_ptr<std::atomic_bool> m_scanCancel;
 };
 
 /**
@@ -462,7 +471,6 @@ private:
     BackupManifest& m_manifest;
     QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page
     const QString& m_destinationPath;
-    UserProfileBackupWorker* m_worker{nullptr};
 
     QProgressBar* m_overallProgress{nullptr};
     QProgressBar* m_currentProgress{nullptr};

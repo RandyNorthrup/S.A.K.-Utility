@@ -52,6 +52,51 @@ constexpr int kDedupMinSizeMaxKb = 1'000'000;
 constexpr int kDedupThreadCountMax = 64;
 constexpr int kSizeGbPrecision = 2;
 constexpr int kFallbackCpuCoreCount = 4;
+// Upper bound for the on-UI-thread dedup summary walk: a deep recursive tree
+// would otherwise freeze the GUI, so enumeration stops here and the totals are
+// reported as a lower bound.
+constexpr int kDedupSummaryMaxFiles = 20'000;
+
+struct DedupScanTotals {
+    qint64 bytes = 0;
+    int files = 0;
+    bool truncated = false;
+};
+
+// Bounded file walk for the dedup summary. Stops after kDedupSummaryMaxFiles so
+// the GUI thread cannot be frozen enumerating a huge tree; a stopped walk sets
+// @c truncated so the caller shows a lower bound, never a wrong exact figure.
+DedupScanTotals scanDedupTotals(const QStringList& paths, const bool recursive) {
+    DedupScanTotals totals;
+    const auto flags = recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
+    for (const QString& path : paths) {
+        QDir dir(path);
+        if (!dir.exists()) {
+            continue;
+        }
+        QDirIterator it(dir.absolutePath(), QDir::Files, flags);
+        while (it.hasNext()) {
+            if (totals.files >= kDedupSummaryMaxFiles) {
+                totals.truncated = true;
+                return totals;
+            }
+            it.next();
+            totals.bytes += it.fileInfo().size();
+            ++totals.files;
+        }
+    }
+    return totals;
+}
+
+QString formatDedupBytes(const qint64 bytes) {
+    if (bytes >= sak::kBytesPerGB) {
+        return QString("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+    }
+    if (bytes >= sak::kBytesPerMB) {
+        return QString("%1 MB").arg(bytes / sak::kBytesPerMBf, 0, 'f', 1);
+    }
+    return QString("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 0);
+}
 
 struct DedupSettingsDefaults {
     int minSizeKb;
@@ -1270,36 +1315,24 @@ void OrganizerPanel::updateDedupDirectorySummary() {
         return;
     }
 
-    qint64 totalSize = 0;
-    int totalFiles = 0;
+    QStringList paths;
+    paths.reserve(count);
     for (int i = 0; i < count; ++i) {
-        QDir dir(m_dedup_directory_list->item(i)->text());
-        if (dir.exists()) {
-            QDirIterator it(dir.absolutePath(),
-                            QDir::Files,
-                            m_dedup_recursive->isChecked() ? QDirIterator::Subdirectories
-                                                           : QDirIterator::NoIteratorFlags);
-            while (it.hasNext()) {
-                it.next();
-                totalSize += it.fileInfo().size();
-                ++totalFiles;
-            }
-        }
+        paths.append(m_dedup_directory_list->item(i)->text());
     }
-
-    QString sizeStr;
-    if (totalSize >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
-    } else if (totalSize >= sak::kBytesPerMB) {
-        sizeStr = QString("%1 MB").arg(totalSize / sak::kBytesPerMBf, 0, 'f', 1);
-    } else {
-        sizeStr = QString("%1 KB").arg(totalSize / sak::kBytesPerKBf, 0, 'f', 0);
-    }
-
-    m_dedup_summary_label->setText(tr("%1 directory(ies) \u2022 %2 files (%3) to scan")
-                                       .arg(count)
-                                       .arg(totalFiles)
-                                       .arg(sizeStr));
+    const DedupScanTotals totals = scanDedupTotals(paths, m_dedup_recursive->isChecked());
+    const QString sizeStr = formatDedupBytes(totals.bytes);
+    // A truncated walk under-counts, so present files and size as a lower bound
+    // rather than a wrong exact figure.
+    m_dedup_summary_label->setText(
+        totals.truncated ? tr("%1 directory(ies) \u2022 at least %2 files (%3+) to scan")
+                               .arg(count)
+                               .arg(totals.files)
+                               .arg(sizeStr)
+                         : tr("%1 directory(ies) \u2022 %2 files (%3) to scan")
+                               .arg(count)
+                               .arg(totals.files)
+                               .arg(sizeStr));
 }
 
 void OrganizerPanel::onDedupAddDirectoryClicked() {

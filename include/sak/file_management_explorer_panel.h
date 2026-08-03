@@ -64,6 +64,47 @@ class FileExplorerStatusCenterFlyout;
 struct FileExplorerArchiveExtractItem;
 struct FileExplorerArchiveRequest;
 
+/// What occupies a destination path when an undo/redo replays: nothing, a
+/// file, a directory, or an indeterminate result (a non-authoritative raw
+/// listing) that callers must treat as fail-closed.
+enum class FileExplorerOccupant {
+    Vacant,
+    File,
+    Directory,
+    Unknown
+};
+
+/// What a redo of a create should do about the path it wants to recreate.
+enum class FileExplorerRedoCreateAction {
+    Create,
+    SkipIdentical,
+    Block
+};
+
+/// Whether an undo-delete may remove the on-disk entry.
+enum class FileExplorerHistoryDeleteVerdict {
+    Delete,
+    Skip,
+    Block
+};
+
+/// Pure decision for redoing a create: a create produced an empty file (or a
+/// directory), so recreate only when the path is vacant, and treat an already
+/// present identical entry as a harmless skip. Anything else -- a populated
+/// file, a kind swap, or an unverifiable listing -- blocks so redo never
+/// clobbers data the user placed there since.
+[[nodiscard]] FileExplorerRedoCreateAction fileExplorerRedoCreateAction(
+    FileExplorerOccupant existing, bool item_is_dir, bool existing_empty_file);
+
+/// Pure decision for undo-deleting what a Copy/CreateNew produced. A vacant
+/// path needs nothing (Skip); a kind mismatch, an indeterminate listing, an
+/// unmeasurable entry (@p observed < 0), a missing identity source
+/// (@p expected < 0), or a size/child-count that no longer matches the
+/// captured identity all Block so an unrelated same-named entry is never
+/// recycled or (on raw targets) permanently deleted.
+[[nodiscard]] FileExplorerHistoryDeleteVerdict fileExplorerHistoryDeleteVerdict(
+    FileExplorerOccupant existing, bool item_is_dir, qint64 observed, qint64 expected);
+
 class FileManagementExplorerPanel : public QWidget {
     Q_OBJECT
 
@@ -466,13 +507,39 @@ private:
     bool undoByDeletingCreatedEntries(const FileExplorerStorageHistory& history,
                                       bool undo_of_create);
     bool redoCreateEntries(const FileExplorerStorageHistory& history);
+    bool redoCreateOneEntry(const FileManagementTarget& target,
+                            const FileExplorerHistoryItem& item,
+                            QStringList* blockers);
+    /// One undo-delete leg. @p source_target is the Copy source used to
+    /// re-verify identity (unused for a create, whose identity is emptiness).
     void historyDeleteOneEntry(const FileManagementTarget& target,
+                               const FileManagementTarget& source_target,
                                const FileExplorerHistoryItem& item,
+                               bool undo_of_create,
                                QStringList* blockers);
+    /// Files/child count for a file/directory entry, or -1 when it is absent,
+    /// the wrong kind, or the listing is not authoritative (fail closed).
+    [[nodiscard]] qint64 historyEntryMeasure(const FileManagementTarget& target,
+                                             const QString& path,
+                                             bool directory) const;
+    [[nodiscard]] qint64 historyFileSize(const FileManagementTarget& target,
+                                         const QString& path) const;
+    [[nodiscard]] qint64 historyDirChildCount(const FileManagementTarget& target,
+                                              const QString& path) const;
+    [[nodiscard]] static FileExplorerOccupant occupantFor(PasteEntryKind kind);
+    void historyRemoveVerifiedEntry(const FileManagementTarget& target,
+                                    const FileExplorerHistoryItem& item,
+                                    QStringList* blockers);
     bool executeHistoryDelete(const FileExplorerStorageHistory& history,
-                              bool created_entries,
+                              const FileManagementTarget& target,
+                              bool undo_of_create,
                               QStringList* blockers);
-    bool confirmHistoryDelete(int item_count, bool undo_of_create);
+    [[nodiscard]] static QString historyDeletePathList(
+        const QVector<FileExplorerHistoryItem>& items);
+    [[nodiscard]] static QString historyDeleteScopeText(bool permanent, bool has_directory);
+    bool confirmHistoryDelete(const FileExplorerStorageHistory& history,
+                              const FileManagementTarget& target,
+                              bool undo_of_create);
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;

@@ -65,6 +65,13 @@ public:
                                                     const QString& security,
                                                     bool hidden);
 
+    /// @brief Fail-closed predicate for a credential-table JSON write
+    /// @return true only if every byte was written AND the file committed
+    /// @note Public + static so the short-write / commit-failure rule can be
+    ///       unit tested; a truncated credential table must never report
+    ///       success (NO FALLBACKS / FAIL CLOSED).
+    [[nodiscard]] static bool jsonWriteSucceeded(qint64 written, qint64 expected, bool committed);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void logOutput(const QString& message);

@@ -2046,6 +2046,56 @@ void EmailInspectorPanel::appendInlineImageAttr(QString& out,
     out.append(m.captured(kInlineImageAttrQuoteCaptureGroup));
 }
 
+namespace {
+
+// Remote-image fetch bounds: cap the requests dispatched per message and the
+// bytes read per reply so a hostile mail server cannot open unbounded
+// connections or exhaust memory with a giant response.
+constexpr int kMaxRemoteImageRequests = 64;
+constexpr qint64 kMaxRemoteImageBytes = 8LL * 1024 * 1024;
+
+// Normalize a raw img src to an http(s) URL, or empty when it is not an eligible
+// remote reference (data:, cid:, relative, unknown scheme).
+QString normalizeRemoteImageSrc(const QString& raw) {
+    const QString lower = raw.toLower();
+    if (lower.startsWith(QStringLiteral("//"))) {
+        return QStringLiteral("https:") + raw;
+    }
+    if (lower.startsWith(QStringLiteral("http://")) ||
+        lower.startsWith(QStringLiteral("https://"))) {
+        return raw;
+    }
+    return QString();
+}
+
+bool remoteImageOverBudget(const qint64 received, const qint64 total) {
+    return received > kMaxRemoteImageBytes || total > kMaxRemoteImageBytes;
+}
+
+// Store a finished reply's payload only when it is current, succeeded, non-empty,
+// and within the byte cap; otherwise release the reserved slot. Fail-closed: a
+// stale, failed, empty, or oversized fetch is dropped, never rendered.
+void applyRemoteImageReply(QNetworkReply* reply,
+                           const QString& src,
+                           const bool current,
+                           QHash<QString, QByteArray>& images,
+                           QTimer* redraw) {
+    reply->deleteLater();
+    if (!current || reply->error() != QNetworkReply::NoError) {
+        images.remove(src);
+        return;
+    }
+    const QByteArray payload = reply->readAll();
+    if (payload.isEmpty() || payload.size() > kMaxRemoteImageBytes) {
+        images.remove(src);
+        return;
+    }
+    images.insert(src, payload);
+    redraw->start();
+}
+
+}  // namespace
+
 void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
     if (!m_remote_image_nam) {
         m_remote_image_nam = new QNetworkAccessManager(this);
@@ -2057,16 +2107,14 @@ void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
     auto it = kImgSrc.globalMatch(body_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
-        QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
-        const QString lower = src.toLower();
-        if (lower.startsWith(QStringLiteral("//"))) {
-            src = QStringLiteral("https:") + src;
-        } else if (!lower.startsWith(QStringLiteral("http://")) &&
-                   !lower.startsWith(QStringLiteral("https://"))) {
+        const QString src =
+            normalizeRemoteImageSrc(m.captured(kInlineImageSrcCaptureGroup).trimmed());
+        if (src.isEmpty() || m_remote_images.contains(src)) {
             continue;
         }
-        if (m_remote_images.contains(src)) {
-            continue;
+        if (m_remote_images.size() >= kMaxRemoteImageRequests) {
+            // Per-message request cap: stop dispatching once the budget is spent.
+            break;
         }
         // Reserve the slot so duplicate `src` references in the body only
         // dispatch one request per URL.
@@ -2077,24 +2125,22 @@ void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                              QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply* reply = m_remote_image_nam->get(request);
+        // Bound in-flight buffering and abort a stream that blows the byte budget.
+        reply->setReadBufferSize(kMaxRemoteImageBytes + 1);
+        connect(reply,
+                &QNetworkReply::downloadProgress,
+                this,
+                [reply](const qint64 received, const qint64 total) {
+                    if (remoteImageOverBudget(received, total)) {
+                        reply->abort();
+                    }
+                });
         connect(reply, &QNetworkReply::finished, this, [this, reply, src, message_id]() {
-            reply->deleteLater();
-            // Drop stale results when the user has already moved on.
-            if (m_current_detail.node_id != message_id) {
-                m_remote_images.remove(src);
-                return;
-            }
-            if (reply->error() != QNetworkReply::NoError) {
-                m_remote_images.remove(src);
-                return;
-            }
-            const QByteArray payload = reply->readAll();
-            if (payload.isEmpty()) {
-                m_remote_images.remove(src);
-                return;
-            }
-            m_remote_images.insert(src, payload);
-            m_redraw_timer->start();
+            applyRemoteImageReply(reply,
+                                  src,
+                                  m_current_detail.node_id == message_id,
+                                  m_remote_images,
+                                  m_redraw_timer);
         });
     }
 }

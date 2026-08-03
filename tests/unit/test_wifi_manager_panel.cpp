@@ -20,6 +20,7 @@ private Q_SLOTS:
     void quoteSsidIsRejected();
     void controlCharSsidIsRejected();
     void envVarSsidNotExpandedInConnect();
+    void jsonWriteFailsClosedOnShortWrite();
 };
 
 // A benign SSID yields a runnable script with the base64 profile and netsh call.
@@ -68,6 +69,21 @@ void WifiManagerPanelTests::envVarSsidNotExpandedInConnect() {
     QVERIFY(!script.isEmpty());
     QVERIFY(script.contains(QStringLiteral("name=\"%%COMSPEC%%\"")));
     QVERIFY(!script.contains(QStringLiteral("name=\"%COMSPEC%\"")));
+}
+
+// Fail-closed rule: the credential-table JSON write reports success only when
+// every byte landed AND the atomic commit succeeded. A short write or a failed
+// commit must never be reported as success (a truncated credential table).
+void WifiManagerPanelTests::jsonWriteFailsClosedOnShortWrite() {
+    // Full write + successful commit -> success.
+    QVERIFY(WifiManagerPanel::jsonWriteSucceeded(128, 128, true));
+    // Short write (partial byte count) -> failure regardless of commit flag.
+    QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(64, 128, true));
+    QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(64, 128, false));
+    // Full byte count but the commit failed -> failure.
+    QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(128, 128, false));
+    // QIODevice::write returns -1 on error -> failure.
+    QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(-1, 128, true));
 }
 
 QTEST_MAIN(WifiManagerPanelTests)

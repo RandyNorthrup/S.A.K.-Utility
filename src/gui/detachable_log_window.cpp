@@ -10,9 +10,12 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QMainWindow>
+#include <QMouseEvent>
 #include <QMoveEvent>
 #include <QPainter>
 #include <QPushButton>
@@ -223,6 +226,39 @@ QWidget* DetachableLogWindow::findMainWindow() const {
 // LogToggleSwitch
 // ============================================================================
 
+namespace {
+
+/// @brief True for keys that should activate a toggle (Space / Enter).
+[[nodiscard]] bool isToggleActivationKey(int key) {
+    return key == Qt::Key_Space || key == Qt::Key_Return || key == Qt::Key_Enter;
+}
+
+/// @brief Gives LogToggleSwitch keyboard activation without adding a
+///        keyPressEvent override to its shared class header. Parented to the
+///        switch, so it shares the widget's lifetime.
+class ToggleKeyActivator : public QObject {
+public:
+    explicit ToggleKeyActivator(LogToggleSwitch* target) : QObject(target), m_target(target) {}
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() != QEvent::KeyPress) {
+            return QObject::eventFilter(watched, event);
+        }
+        const auto* key = static_cast<QKeyEvent*>(event);
+        if (!isToggleActivationKey(key->key())) {
+            return QObject::eventFilter(watched, event);
+        }
+        m_target->setChecked(!m_target->isChecked());
+        return true;
+    }
+
+private:
+    LogToggleSwitch* m_target;
+};
+
+}  // namespace
+
 LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     : QWidget(parent), m_label(label) {
     setMinimumSize(minimumSizeHint());
@@ -230,6 +266,10 @@ LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setCursor(Qt::PointingHandCursor);
     setToolTip(tr("Toggle log window"));
+    // Keyboard accessibility: focusable, and Space/Enter activate the toggle
+    // via the parented key filter above (header cannot gain a new override).
+    setFocusPolicy(Qt::StrongFocus);
+    installEventFilter(new ToggleKeyActivator(this));
 }
 
 QSize LogToggleSwitch::sizeHint() const {
@@ -282,8 +322,14 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
 }
 
 void LogToggleSwitch::mousePressEvent(QMouseEvent* event) {
-    QWidget::mousePressEvent(event);
+    // Only the left button toggles this security-sensitive control; right/middle
+    // clicks fall through to default handling instead of flipping state.
+    if (event->button() != Qt::LeftButton) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
     setChecked(!m_checked);
+    event->accept();
 }
 
 }  // namespace sak

@@ -3769,22 +3769,85 @@ bool FileManagementExplorerPanel::executeHistory(const FileExplorerStorageHistor
     return false;
 }
 
+FileExplorerRedoCreateAction fileExplorerRedoCreateAction(const FileExplorerOccupant existing,
+                                                          const bool item_is_dir,
+                                                          const bool existing_empty_file) {
+    if (existing == FileExplorerOccupant::Unknown) {
+        return FileExplorerRedoCreateAction::Block;
+    }
+    if (existing == FileExplorerOccupant::Vacant) {
+        return FileExplorerRedoCreateAction::Create;
+    }
+    const bool existing_dir = existing == FileExplorerOccupant::Directory;
+    if (existing_dir != item_is_dir) {
+        return FileExplorerRedoCreateAction::Block;
+    }
+    // Same kind already present: a directory create is idempotent, and an
+    // empty file matches what the create produced; a populated file would be
+    // clobbered by rewriting it empty, so block that.
+    if (item_is_dir || existing_empty_file) {
+        return FileExplorerRedoCreateAction::SkipIdentical;
+    }
+    return FileExplorerRedoCreateAction::Block;
+}
+
+FileExplorerHistoryDeleteVerdict fileExplorerHistoryDeleteVerdict(
+    const FileExplorerOccupant existing,
+    const bool item_is_dir,
+    const qint64 observed,
+    const qint64 expected) {
+    if (existing == FileExplorerOccupant::Vacant) {
+        return FileExplorerHistoryDeleteVerdict::Skip;
+    }
+    if (existing == FileExplorerOccupant::Unknown) {
+        return FileExplorerHistoryDeleteVerdict::Block;
+    }
+    const bool existing_dir = existing == FileExplorerOccupant::Directory;
+    if (existing_dir != item_is_dir || observed < 0 || expected < 0 || observed != expected) {
+        return FileExplorerHistoryDeleteVerdict::Block;
+    }
+    return FileExplorerHistoryDeleteVerdict::Delete;
+}
+
+FileExplorerOccupant FileManagementExplorerPanel::occupantFor(const PasteEntryKind kind) {
+    switch (kind) {
+    case PasteEntryKind::None:
+        return FileExplorerOccupant::Vacant;
+    case PasteEntryKind::File:
+        return FileExplorerOccupant::File;
+    case PasteEntryKind::Directory:
+        return FileExplorerOccupant::Directory;
+    case PasteEntryKind::Unknown:
+        break;
+    }
+    return FileExplorerOccupant::Unknown;
+}
+
 // Undo of Copy/CreateNew: delete what the operation produced, behind the
-// Files forced-confirmation dialog.
+// Files forced-confirmation dialog. The destination target is resolved once
+// so the confirmation can name paths and the raw-vs-recycle scope.
 bool FileManagementExplorerPanel::undoByDeletingCreatedEntries(
     const FileExplorerStorageHistory& history, const bool undo_of_create) {
-    if (!confirmHistoryDelete(static_cast<int>(history.items.size()), undo_of_create)) {
+    const int target_index = targetIndexForId(history.destination_target_id);
+    if (target_index < 0) {
+        Q_EMIT statusMessage(tr("Undo target is no longer available."), sak::kTimerStatusMessageMs);
+        return false;
+    }
+    const FileManagementTarget target = m_targets.at(target_index);
+    if (!confirmHistoryDelete(history, target, undo_of_create)) {
         return false;
     }
     QStringList blockers;
-    const bool resolved = executeHistoryDelete(history, undo_of_create, &blockers);
+    const bool resolved = executeHistoryDelete(history, target, undo_of_create, &blockers);
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Undo"), blockers.join(QStringLiteral("\n")));
     }
     return resolved;
 }
 
-// Redo of a create recreates the entries (folders, or empty files).
+// Redo of a create recreates the entries (folders, or empty files), but never
+// over data the user put at the path since - a populated file, a kind swap,
+// or an unverifiable listing blocks that item.
 bool FileManagementExplorerPanel::redoCreateEntries(const FileExplorerStorageHistory& history) {
     const int target_index = targetIndexForId(history.destination_target_id);
     if (target_index < 0) {
@@ -3794,20 +3857,45 @@ bool FileManagementExplorerPanel::redoCreateEntries(const FileExplorerStorageHis
     const FileManagementTarget target = m_targets.at(target_index);
     QStringList blockers;
     for (const FileExplorerHistoryItem& item : history.items) {
-        const auto result =
-            item.directory
-                ? FileManagementFileSystemBridge::createDirectory(target, item.destination_path)
-                : FileManagementFileSystemBridge::writeFile(target,
-                                                            item.destination_path,
-                                                            QByteArray());
-        if (!result.ok) {
-            blockers.append(result.blockers);
-        }
+        std::ignore = redoCreateOneEntry(target, item, &blockers);
     }
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Redo"), blockers.join(QStringLiteral("\n")));
     }
     return true;
+}
+
+// Recreate one created entry only when the path is vacant or already holds the
+// identical empty entry; otherwise record a blocker and leave the occupant
+// untouched.
+bool FileManagementExplorerPanel::redoCreateOneEntry(const FileManagementTarget& target,
+                                                     const FileExplorerHistoryItem& item,
+                                                     QStringList* blockers) {
+    const QString name = nameForPath(item.destination_path, target.local_file_system);
+    const QString parent = parentPathForEntry(item.destination_path, target.local_file_system);
+    const PasteEntryKind kind = destinationEntryKind(target, parent, name);
+    const bool existing_empty = kind == PasteEntryKind::File &&
+                                historyFileSize(target, item.destination_path) == 0;
+    switch (fileExplorerRedoCreateAction(occupantFor(kind), item.directory, existing_empty)) {
+    case FileExplorerRedoCreateAction::Block:
+        blockers->append(tr("%1 is occupied by a different entry; it was not recreated.")
+                             .arg(item.destination_path));
+        return false;
+    case FileExplorerRedoCreateAction::SkipIdentical:
+        return true;
+    case FileExplorerRedoCreateAction::Create:
+        break;
+    }
+    const auto result = item.directory
+                            ? FileManagementFileSystemBridge::createDirectory(target,
+                                                                              item.destination_path)
+                            : FileManagementFileSystemBridge::writeFile(target,
+                                                                        item.destination_path,
+                                                                        QByteArray());
+    if (!result.ok) {
+        blockers->append(result.blockers);
+    }
+    return result.ok;
 }
 
 // Rename/Move inverse: rename back on the same target, or reverse the
@@ -3913,24 +4001,59 @@ void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransfer
     }
 }
 
-// Undo-deletes one entry a Copy or CreateNew produced, but only when what
-// occupies the path is still the KIND the operation created: a same-named
-// entry the user put there since (or a kind swap) is not the copied item and
-// must not be deleted by an undo. An already-vacant path needs nothing.
-void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarget& target,
-                                                        const FileExplorerHistoryItem& item,
-                                                        QStringList* blockers) {
-    const QString name = nameForPath(item.destination_path, target.local_file_system);
-    const QString parent = parentPathForEntry(item.destination_path, target.local_file_system);
-    const PasteEntryKind kind = destinationEntryKind(target, parent, name);
-    if (kind == PasteEntryKind::None) {
-        return;
+// File size (files) or immediate child count (directories) for an entry, or
+// -1 when it is absent, the wrong kind, or the raw listing is not
+// authoritative - a negative measure always fails the identity check closed.
+qint64 FileManagementExplorerPanel::historyFileSize(const FileManagementTarget& target,
+                                                    const QString& path) const {
+    if (target.local_file_system) {
+        const QFileInfo info(path);
+        return (info.exists() && !info.isDir()) ? info.size() : -1;
     }
-    if (kind != (item.directory ? PasteEntryKind::Directory : PasteEntryKind::File)) {
-        blockers->append(
-            tr("%1 changed since the operation; it was not deleted.").arg(item.destination_path));
-        return;
+    const QString name = nameForPath(path, false);
+    const QString parent = parentPathForEntry(path, false);
+    const FileManagementListResult listing =
+        FileManagementFileSystemBridge::listDirectory(target, parent, kExplorerListMaxEntries + 1);
+    if (!listing.ok) {
+        return -1;
     }
+    for (const FileManagementEntry& entry : listing.entries) {
+        if (QString::compare(entry.name, name, Qt::CaseInsensitive) == 0) {
+            return entry.directory ? -1 : static_cast<qint64>(entry.size_bytes);
+        }
+    }
+    return -1;
+}
+
+qint64 FileManagementExplorerPanel::historyDirChildCount(const FileManagementTarget& target,
+                                                         const QString& path) const {
+    if (target.local_file_system) {
+        const QDir dir(path);
+        if (!dir.exists()) {
+            return -1;
+        }
+        return dir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries | QDir::Hidden | QDir::System)
+            .size();
+    }
+    const FileManagementListResult listing =
+        FileManagementFileSystemBridge::listDirectory(target, path, kExplorerListMaxEntries + 1);
+    if (!listing.ok || listing.entries.size() > kExplorerListMaxEntries) {
+        return -1;
+    }
+    return listing.entries.size();
+}
+
+qint64 FileManagementExplorerPanel::historyEntryMeasure(const FileManagementTarget& target,
+                                                        const QString& path,
+                                                        const bool directory) const {
+    return directory ? historyDirChildCount(target, path) : historyFileSize(target, path);
+}
+
+// Recycle (local) or permanently delete (raw) an entry whose identity has
+// already been verified by historyDeleteOneEntry.
+void FileManagementExplorerPanel::historyRemoveVerifiedEntry(const FileManagementTarget& target,
+                                                             const FileExplorerHistoryItem& item,
+                                                             QStringList* blockers) {
     if (target.local_file_system) {
         if (!sak::sendPathToRecycleBin(item.destination_path)) {
             blockers->append(
@@ -3947,28 +4070,57 @@ void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarg
     }
 }
 
+// Undo-deletes one entry a Copy or CreateNew produced, but only when its
+// identity still holds: the on-disk entry must be the same kind AND match the
+// captured identity - an empty entry for a create, or the source's size/child
+// count for a copy. A same-named entry the user put there since is not the
+// produced item and must not be recycled or permanently deleted. An
+// already-vacant path needs nothing.
+void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarget& target,
+                                                        const FileManagementTarget& source_target,
+                                                        const FileExplorerHistoryItem& item,
+                                                        const bool undo_of_create,
+                                                        QStringList* blockers) {
+    const QString name = nameForPath(item.destination_path, target.local_file_system);
+    const QString parent = parentPathForEntry(item.destination_path, target.local_file_system);
+    const PasteEntryKind kind = destinationEntryKind(target, parent, name);
+    const qint64 observed = historyEntryMeasure(target, item.destination_path, item.directory);
+    const qint64 expected =
+        undo_of_create ? 0 : historyEntryMeasure(source_target, item.source_path, item.directory);
+    const auto verdict =
+        fileExplorerHistoryDeleteVerdict(occupantFor(kind), item.directory, observed, expected);
+    if (verdict == FileExplorerHistoryDeleteVerdict::Skip) {
+        return;
+    }
+    if (verdict == FileExplorerHistoryDeleteVerdict::Block) {
+        blockers->append(
+            tr("%1 no longer matches the entry the operation produced; it was not deleted.")
+                .arg(item.destination_path));
+        return;
+    }
+    historyRemoveVerifiedEntry(target, item, blockers);
+}
+
 // Deletes the entries a Copy or CreateNew produced: local paths recycle
 // (Files undoes these with permanently:false), raw paths delete through the
-// certified writers.
+// certified writers. The Copy source (when still mounted) is the identity
+// oracle re-checked per item.
 bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorageHistory& history,
-                                                       const bool created_entries,
+                                                       const FileManagementTarget& target,
+                                                       const bool undo_of_create,
                                                        QStringList* blockers) {
-    Q_UNUSED(created_entries);
-    const int target_index = targetIndexForId(history.destination_target_id);
-    if (target_index < 0) {
-        Q_EMIT statusMessage(tr("Undo target is no longer available."), sak::kTimerStatusMessageMs);
-        return false;
+    FileManagementTarget source_target;
+    const int source_index = targetIndexForId(history.source_target_id);
+    if (source_index >= 0) {
+        source_target = m_targets.at(source_index);
     }
-    const FileManagementTarget target = m_targets.at(target_index);
+    QStringList removed;
     for (const FileExplorerHistoryItem& item : history.items) {
-        historyDeleteOneEntry(target, item, blockers);
+        historyDeleteOneEntry(target, source_target, item, undo_of_create, blockers);
+        removed.append(item.destination_path);
     }
     // Files: the undo-delete posts a Delete-family card (Recycle on local
     // volumes, permanent Delete on raw targets).
-    QStringList removed;
-    for (const FileExplorerHistoryItem& item : history.items) {
-        removed.append(item.destination_path);
-    }
     postHistoryCard(target.local_file_system ? FileExplorerOperationType::Recycle
                                              : FileExplorerOperationType::Delete,
                     removed,
@@ -3977,19 +4129,56 @@ bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorage
     return true;
 }
 
-bool FileManagementExplorerPanel::confirmHistoryDelete(const int item_count,
+// Enumerate the paths an undo will remove, capped so a huge batch does not
+// build an unbounded dialog.
+QString FileManagementExplorerPanel::historyDeletePathList(
+    const QVector<FileExplorerHistoryItem>& items) {
+    constexpr int kMaxShown = 15;
+    QStringList lines;
+    const int shown = std::min<int>(items.size(), kMaxShown);
+    for (int index = 0; index < shown; ++index) {
+        lines.append(items.at(index).destination_path);
+    }
+    if (items.size() > kMaxShown) {
+        lines.append(tr("... and %n more", nullptr, static_cast<int>(items.size()) - kMaxShown));
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+QString FileManagementExplorerPanel::historyDeleteScopeText(const bool permanent,
+                                                            const bool has_directory) {
+    QStringList notes;
+    notes.append(permanent ? tr("These are on a raw target and will be deleted PERMANENTLY (not "
+                                "sent to the Recycle Bin).")
+                           : tr("These will be moved to the Recycle Bin."));
+    if (has_directory) {
+        notes.append(tr("Any folder is removed together with its entire contents."));
+    }
+    return notes.join(QStringLiteral("\n"));
+}
+
+// Files ShowConfirmationAsync before deleting what an undo removes, but with
+// the real scope surfaced: the exact paths, raw-media permanence vs recycle,
+// and whether directory trees are in play.
+bool FileManagementExplorerPanel::confirmHistoryDelete(const FileExplorerStorageHistory& history,
+                                                       const FileManagementTarget& target,
                                                        const bool undo_of_create) {
-    // Files ShowConfirmationAsync before deleting what an undo removes.
+    const int count = static_cast<int>(history.items.size());
+    bool has_directory = false;
+    for (const FileExplorerHistoryItem& item : history.items) {
+        has_directory = has_directory || item.directory;
+    }
+    const QString header =
+        undo_of_create ? tr("Undoing this create will delete %n item(s):", nullptr, count)
+                       : tr("Undoing this copy will delete %n copied item(s):", nullptr, count);
+    const QString message =
+        QStringLiteral("%1\n\n%2\n\n%3\n\n%4")
+            .arg(header,
+                 historyDeletePathList(history.items),
+                 historyDeleteScopeText(!target.local_file_system, has_directory),
+                 tr("Continue?"));
     const auto response = sak::showQuestionLogged(
-        this,
-        tr("Undo"),
-        (undo_of_create
-             ? tr("Undoing this create will delete %n item(s). Continue?", nullptr, item_count)
-             : tr("Undoing this copy will delete %n copied item(s). Continue?",
-                  nullptr,
-                  item_count)),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
+        this, tr("Undo"), message, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     return response == QMessageBox::Yes;
 }
 

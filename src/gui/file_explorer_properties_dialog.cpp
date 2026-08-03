@@ -17,9 +17,18 @@
 #include <QLineEdit>
 #include <QTabWidget>
 #include <QtConcurrent>
+#include <QVariant>
 #include <QVBoxLayout>
 
+#include <atomic>
+#include <memory>
+
 #include <zlib.h>
+
+// The cooperative cancel flag is stashed on the dialog as a dynamic property so
+// the destructor can reach it without a header member; a shared_ptr keeps the
+// flag alive for the worker even if the dialog is torn down first.
+Q_DECLARE_METATYPE(std::shared_ptr<std::atomic_bool>)
 
 namespace sak {
 
@@ -38,14 +47,39 @@ QString crc32Hex(const QByteArray& data) {
     return QStringLiteral("%1").arg(value, 8, 16, QLatin1Char('0'));
 }
 
+// True once the shared cancel flag has been set (dialog closing). Cheap wrapper
+// so the size/hash workers can bail cooperatively.
+bool scanCancelled(const std::shared_ptr<const std::atomic_bool>& cancel) {
+    return cancel && cancel->load();
+}
+
+const char* const kScanCancelProperty = "sakScanCancelFlag";
+
+// Fetch (creating on first use) the dialog's shared cancel flag. Stored as a
+// dynamic property so the destructor can flip it without a header member.
+std::shared_ptr<std::atomic_bool> scanCancelFlag(QObject* owner) {
+    auto flag = owner->property(kScanCancelProperty).value<std::shared_ptr<std::atomic_bool>>();
+    if (!flag) {
+        flag = std::make_shared<std::atomic_bool>(false);
+        owner->setProperty(kScanCancelProperty, QVariant::fromValue(flag));
+    }
+    return flag;
+}
+
 // Compute the enabled digests over one bridge read of the file. Reads are capped
 // at kPropertiesHashMaxBytes, so a larger file is hashed from a prefix only; those
-// digests are marked so they are never taken for the whole-file hash.
+// digests are marked so they are never taken for the whole-file hash. A set cancel
+// flag short-circuits before the read and between digests so a closing dialog is
+// not held hostage by a 512 MB hash.
 QMap<QString, QString> computeHashes(const FileManagementTarget& target,
                                      const QString& path,
                                      const QStringList& algorithms,
-                                     const quint64 fullSize) {
+                                     const quint64 fullSize,
+                                     const std::shared_ptr<const std::atomic_bool>& cancel) {
     QMap<QString, QString> hashes;
+    if (scanCancelled(cancel)) {
+        return hashes;
+    }
     const FileManagementReadResult read =
         FileManagementFileSystemBridge::readFile(target, path, kPropertiesHashMaxBytes);
     if (!read.ok) {
@@ -63,6 +97,9 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
         {QStringLiteral("SHA-512"), QCryptographicHash::Sha512},
     };
     for (const QString& algorithm : algorithms) {
+        if (scanCancelled(cancel)) {
+            break;
+        }
         const QString digest =
             algorithm == QStringLiteral("CRC32")
                 ? crc32Hex(read.data)
@@ -74,6 +111,22 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
 }
 
 }  // namespace
+
+// Wrap a directory lister so that, once @p cancel is set, it stops calling @p base
+// and reports each directory as unlistable. treeSize then marks the total
+// incomplete and stops descending, so a cancelled walk unwinds promptly instead
+// of freezing the GUI in the destructor's waitForFinished(). Fail-closed: a
+// cancelled size is a lower bound, never a wrong exact figure.
+DirectoryLister makeCancelableLister(DirectoryLister base,
+                                     std::shared_ptr<const std::atomic_bool> cancel) {
+    return [base = std::move(base), cancel = std::move(cancel)](const QString& path,
+                                                                const int max_entries) {
+        if (scanCancelled(cancel)) {
+            return FileManagementListResult{};
+        }
+        return base(path, max_entries);
+    };
+}
 
 FileExplorerPropertiesDialog::FileExplorerPropertiesDialog(FileManagementTarget target,
                                                            QVector<FileManagementEntry> entries,
@@ -111,6 +164,12 @@ FileExplorerPropertiesDialog::FileExplorerPropertiesDialog(FileManagementTarget 
 }
 
 FileExplorerPropertiesDialog::~FileExplorerPropertiesDialog() {
+    // QtConcurrent::run futures ignore QFuture::cancel(), so flip the shared flag
+    // first: the walk's lister and the hash loop check it and bail, letting the
+    // waits below return promptly instead of freezing the GUI on close.
+    if (auto flag = property(kScanCancelProperty).value<std::shared_ptr<std::atomic_bool>>()) {
+        flag->store(true);
+    }
     m_size_watcher.cancel();
     m_hash_watcher.cancel();
     m_size_watcher.waitForFinished();
@@ -222,10 +281,12 @@ void FileExplorerPropertiesDialog::startSizeCalculation() {
     });
     const FileManagementTarget target = m_target;
     const QVector<FileManagementEntry> entries = m_entries;
-    m_size_watcher.setFuture(QtConcurrent::run([target, entries]() {
-        const DirectoryLister lister = [&target](const QString& path, const int max_entries) {
+    const std::shared_ptr<const std::atomic_bool> cancel = scanCancelFlag(this);
+    m_size_watcher.setFuture(QtConcurrent::run([target, entries, cancel]() {
+        DirectoryLister base = [&target](const QString& path, const int max_entries) {
             return FileManagementFileSystemBridge::listDirectory(target, path, max_entries);
         };
+        const DirectoryLister lister = makeCancelableLister(std::move(base), cancel);
         return combinedSize(lister, entries, kSizeWalkMaxDepth, kSizeWalkMaxEntriesPerDirectory);
     }));
 }
@@ -248,8 +309,9 @@ void FileExplorerPropertiesDialog::startHashCalculation() {
     const FileManagementTarget target = m_target;
     const QString path = m_entries.first().path;
     const quint64 full_size = m_entries.first().size_bytes;
-    m_hash_watcher.setFuture(QtConcurrent::run([target, path, pending, full_size]() {
-        return computeHashes(target, path, pending, full_size);
+    const std::shared_ptr<const std::atomic_bool> cancel = scanCancelFlag(this);
+    m_hash_watcher.setFuture(QtConcurrent::run([target, path, pending, full_size, cancel]() {
+        return computeHashes(target, path, pending, full_size, cancel);
     }));
 }
 

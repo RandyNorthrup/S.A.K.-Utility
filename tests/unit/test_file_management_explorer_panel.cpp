@@ -62,9 +62,19 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
 #include <tuple>
 
 #include <private/qzipwriter_p.h>
+
+namespace sak {
+// Defined in file_explorer_properties_dialog.cpp: wraps a directory lister so a
+// set cancel flag makes each directory report as unlistable, so the properties
+// size walk unwinds instead of freezing the closing dialog's waitForFinished().
+DirectoryLister makeCancelableLister(DirectoryLister base,
+                                     std::shared_ptr<const std::atomic_bool> cancel);
+}  // namespace sak
 
 namespace {
 
@@ -4694,6 +4704,116 @@ private Q_SLOTS:
         request.items_count = 1;
         panel.statusCenterModel()->addItem(request);
         QTRY_VERIFY(button->isVisible());
+    }
+
+    // CODEX_REVIEW_2 file_management_explorer_panel.cpp:3800 -- redo of a
+    // create must never rewrite an empty file over data (or a folder) the user
+    // placed at the historical path since.
+    void redoCreateActionRefusesToClobberOccupiedPaths() {
+        using sak::FileExplorerOccupant;
+        using sak::FileExplorerRedoCreateAction;
+
+        // Vacant paths recreate; an unauthoritative listing fails closed.
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::Vacant, false, false),
+                 FileExplorerRedoCreateAction::Create);
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::Vacant, true, false),
+                 FileExplorerRedoCreateAction::Create);
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::Unknown, false, false),
+                 FileExplorerRedoCreateAction::Block);
+
+        // A file create finds a same-named file: only an empty one is the item
+        // it produced; a populated file would be clobbered, so block it.
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::File, false, true),
+                 FileExplorerRedoCreateAction::SkipIdentical);
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::File, false, false),
+                 FileExplorerRedoCreateAction::Block);
+
+        // Kind swaps never recreate over the other kind.
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::Directory, false, false),
+                 FileExplorerRedoCreateAction::Block);
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::File, true, false),
+                 FileExplorerRedoCreateAction::Block);
+
+        // A directory create is idempotent when a directory already exists.
+        QCOMPARE(sak::fileExplorerRedoCreateAction(FileExplorerOccupant::Directory, true, false),
+                 FileExplorerRedoCreateAction::SkipIdentical);
+    }
+
+    // CODEX_REVIEW_2 file_management_explorer_panel.cpp:3925 -- undo-delete
+    // must re-verify identity (kind + size/child-count), not just kind, before
+    // recycling or (on raw targets) permanently deleting.
+    void historyDeleteVerdictRefusesMismatchedIdentity() {
+        using sak::FileExplorerHistoryDeleteVerdict;
+        using sak::FileExplorerOccupant;
+
+        // Vacant needs nothing; an unauthoritative listing fails closed.
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::Vacant, false, -1, 0),
+                 FileExplorerHistoryDeleteVerdict::Skip);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::Unknown, false, 0, 0),
+                 FileExplorerHistoryDeleteVerdict::Block);
+
+        // Identity holds: a file whose size still matches the captured value
+        // (0 for a created empty file, N for a copy) may be deleted.
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::File, false, 0, 0),
+                 FileExplorerHistoryDeleteVerdict::Delete);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::File, false, 42, 42),
+                 FileExplorerHistoryDeleteVerdict::Delete);
+
+        // A different size, an unmeasurable entry, or a missing identity
+        // source all block so an unrelated same-named entry is never deleted.
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::File, false, 99, 0),
+                 FileExplorerHistoryDeleteVerdict::Block);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::File, false, -1, 0),
+                 FileExplorerHistoryDeleteVerdict::Block);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::File, false, 42, -1),
+                 FileExplorerHistoryDeleteVerdict::Block);
+
+        // Kind mismatch (a folder now sits where a file was) blocks; matching
+        // empty directories delete; non-empty ones block.
+        QCOMPARE(
+            sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::Directory, false, 0, 0),
+            FileExplorerHistoryDeleteVerdict::Block);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::Directory, true, 0, 0),
+                 FileExplorerHistoryDeleteVerdict::Delete);
+        QCOMPARE(sak::fileExplorerHistoryDeleteVerdict(FileExplorerOccupant::Directory, true, 3, 0),
+                 FileExplorerHistoryDeleteVerdict::Block);
+    }
+
+    // The properties size walk runs on a QtConcurrent worker whose future ignores
+    // QFuture::cancel(); cancellation is cooperative via a shared flag threaded
+    // through the directory lister. A set flag must stop the walk cold so the
+    // dialog's destructor waitForFinished() returns instead of freezing the GUI.
+    void propertiesSizeWalkStopsWhenCancelFlagIsSet() {
+        int calls = 0;
+        sak::DirectoryLister base = [&calls](const QString& path, int) {
+            ++calls;
+            sak::FileManagementListResult listing;
+            listing.ok = true;
+            sak::FileManagementEntry file;
+            file.regular_file = true;
+            file.size_bytes = 100;
+            file.path = path + QStringLiteral("/f");
+            listing.entries.append(file);
+            return listing;
+        };
+
+        auto flag = std::make_shared<std::atomic_bool>(false);
+        const sak::DirectoryLister lister = sak::makeCancelableLister(base, flag);
+
+        const sak::TreeSizeResult counted = sak::treeSize(lister, QStringLiteral("/root"), 3, 100);
+        QVERIFY(counted.complete);
+        QCOMPARE(counted.bytes, quint64(100));
+        QVERIFY(calls > 0);
+
+        calls = 0;
+        flag->store(true);
+        const sak::TreeSizeResult cancelled =
+            sak::treeSize(lister, QStringLiteral("/root"), 3, 100);
+        // Cancelled: base lister never runs, nothing is counted, and the total is
+        // flagged incomplete so it can only ever be shown as a lower bound.
+        QCOMPARE(calls, 0);
+        QCOMPARE(cancelled.bytes, quint64(0));
+        QVERIFY(!cancelled.complete);
     }
 };
 
