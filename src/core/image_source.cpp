@@ -269,6 +269,15 @@ bool CompressedImageSource::open() {
         return false;
     }
 
+    // Record the true uncompressed size when the decompressor can report it. It
+    // feeds the flash capacity gate; a compressed stream must NEVER be gated on
+    // its on-disk (compressed) size. When it stays unknown, size() returns -1 so
+    // the gate fails closed instead of approving an oversized decompressed image.
+    const qint64 uncompressed = m_decompressor->uncompressedSize();
+    if (uncompressed >= 0) {
+        m_metadata.uncompressedSize = uncompressed;
+    }
+
     // Connect progress signals
     connect(m_decompressor.get(),
             &sak::StreamingDecompressor::progressUpdated,
@@ -321,10 +330,13 @@ qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
 }
 
 qint64 CompressedImageSource::size() const {
-    // uncompressedSize is only known once decompression has determined it; until
-    // then it is 0. Fall back to the compressed on-disk size (always set from the
-    // file) so callers get a meaningful non-zero size instead of a useless 0.
-    return m_metadata.uncompressedSize > 0 ? m_metadata.uncompressedSize : m_metadata.size;
+    // Report the true UNCOMPRESSED size, never the compressed on-disk size: the
+    // flash capacity gate compares this against the target device, and gating a
+    // stream that decompresses to 50 GB on its 100 MB compressed size would let
+    // it clobber the whole device before failing at end-of-media. When the size
+    // is unknown (the decompressor could not determine it), return -1 so the gate
+    // fails closed rather than approving an unbounded write.
+    return m_metadata.uncompressedSize > 0 ? m_metadata.uncompressedSize : -1;
 }
 
 qint64 CompressedImageSource::position() const {
@@ -396,6 +408,13 @@ QString CompressedImageSource::calculateChecksum() {
 }
 
 bool CompressedImageSource::isCompressed(const QString& filePath) {
-    QString ext = QFileInfo(filePath).suffix().toLower();
-    return (ext == "gz" || ext == "bz2" || ext == "xz" || ext == "zip");
+    // Single source of truth: a file is "compressed" for flashing purposes ONLY
+    // when DecompressorFactory can actually stream-decompress it (gz/gzip, bz2/
+    // bzip2, xz/lzma; NOT zip -- a multi-member archive it cannot produce a raw
+    // image from). The old hand-rolled {gz,bz2,xz,zip} set both missed .gzip/
+    // .bzip2/.lzma (written raw) and wrongly accepted .zip.
+    if (filePath.isEmpty()) {
+        return false;
+    }
+    return sak::DecompressorFactory::isCompressed(filePath);
 }

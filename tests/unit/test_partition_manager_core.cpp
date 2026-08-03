@@ -1858,6 +1858,7 @@ private Q_SLOTS:
     void extFileSystemReader_exportsDirectoriesRecursively();
     void extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths();
     void hfsFileSystemReader_listsDirectoriesAndReadsFiles();
+    void hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd();
     void hfsFileSystemReader_exportsDirectoriesAndResourceForks();
     void hfsFileSystemReader_checksCatalogConsistency();
     void hfsFileSystemReader_scansAttributeKeys();
@@ -2039,8 +2040,10 @@ private Q_SLOTS:
     void scriptBuilder_stripsControlCharsFromDiskPartLabel();
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_blocksWipeOfBootNotSystemDisk();
+    void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
+    void flushDeviceBuffers_surfacesFailureAndFlushesFile();
     void scriptBuilder_createImageEmitsDestinationGuard();
     void scriptBuilder_vssFallbackFailsClosedForVssCapableFs();
     void safetyValidator_createImageUsesReadOnlyRiskAndBlocksUnsafeDestinations();
@@ -3697,6 +3700,37 @@ void PartitionManagerCoreTests::hfsFileSystemReader_listsDirectoriesAndReadsFile
         PartitionHfsFileSystemReader::readFile(&buffer, QStringLiteral("Docs/note.txt"), 1024);
     QVERIFY2(note.ok, qPrintable(note.blockers.join(QStringLiteral("; "))));
     QCOMPARE(QString::fromLatin1(note.data), QStringLiteral("nested hfs note\n"));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd() {
+    // A volume header that claims more allocation blocks than the backing device can
+    // hold (total_blocks * block_size > device length) must be refused before any
+    // mutation, so a truncated or over-claimed volume is never partially written.
+    QByteArray image = hfsReaderFixture();
+    // The fixture is exactly 64 blocks; claim 65 so the volume runs one block past
+    // the end of the device without changing the device length.
+    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset, 65);
+    QBuffer buffer(&image);
+    QVERIFY(buffer.open(QIODevice::ReadWrite));
+
+    // renameOrMoveCatalogEntry surfaces the engine's own load blockers, so the
+    // geometry rejection is observable before any mutation is attempted.
+    PartitionHfsFileWriteOptions options;
+    const auto rejected = PartitionHfsFileSystemWriter::renameOrMoveCatalogEntry(
+        &buffer, QStringLiteral("/hello.txt"), QStringLiteral("/renamed.txt"), options);
+    QVERIFY(!rejected.ok);
+    QVERIFY(
+        rejected.blockers.join(' ').contains(QStringLiteral("exceeds the backing device length")));
+    // The image is left untouched -- the volume was refused, not partially mutated.
+    QCOMPARE(image, buffer.buffer());
+
+    // The exact-fit fixture (64 blocks in a 64-block device) still loads.
+    QByteArray exact = hfsReaderFixture();
+    QBuffer exactBuffer(&exact);
+    QVERIFY(exactBuffer.open(QIODevice::ReadOnly));
+    const auto ok =
+        PartitionHfsFileSystemReader::listDirectory(&exactBuffer, QStringLiteral("/"), 20);
+    QVERIFY2(ok.ok, qPrintable(ok.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::hfsFileSystemReader_exportsDirectoriesAndResourceForks() {
@@ -16854,6 +16888,17 @@ void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
     QVERIFY(script.script.contains(QStringLiteral("Copy-SakBytes")));
     QVERIFY(script.script.contains(QStringLiteral("Running full clone verification")));
     QVERIFY(script.script.contains(QStringLiteral("Assert-SakFullCopy")));
+    // B1-68: the target disk must stay offline through verification -- the online restore
+    // must come after the verify, so Windows cannot mount/modify the disk between the copy
+    // and the compare.
+    const int verifyAt = script.script.indexOf(QStringLiteral("Assert-SakFullCopy $srcVerify"));
+    const int restoreAt =
+        script.script.indexOf(QStringLiteral("finally { Restore-SakRawWriteTarget"));
+    QVERIFY(verifyAt >= 0);
+    QVERIFY(restoreAt > verifyAt);
+    // The unbounded zero-length CopyTo fallback is removed; unknown size fails closed.
+    QVERIFY(!script.script.contains(QStringLiteral("$from.CopyTo(")));
+    QVERIFY(script.script.contains(QStringLiteral("source size could not be established")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript() {
@@ -17096,6 +17141,53 @@ void PartitionManagerCoreTests::safetyValidator_blocksWipeOfBootNotSystemDisk() 
     QVERIFY(!dataDisk.blockers.join(' ').contains(QStringLiteral("wipe is blocked")));
 }
 
+void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {
+    // B0-82/B1-67: on a split-boot config the OS lives on the is_boot disk while the ESP is
+    // on the is_system disk. Unallocated create and OS migration must key off is_boot too.
+    PartitionInventory inventory;
+    appendDisposableTargetDisk(&inventory, 0);
+    appendDisposableTargetDisk(&inventory, 1);
+    inventory.disks.first().is_boot = true;
+    inventory.disks.first().is_system = false;
+
+    PartitionOperationPlanner planner;
+    PartitionTarget createTarget;
+    createTarget.kind = PartitionTargetKind::Unallocated;
+    createTarget.disk_number = 0;
+    createTarget.size_bytes = inventory.disks.first().size_bytes;
+    QJsonObject createPayload;
+    createPayload[QStringLiteral("size_bytes")] = QStringLiteral("1048576");
+    auto create = PartitionOperationPlanner::makeOperation(PartitionOperationType::Create,
+                                                           createTarget,
+                                                           createPayload);
+    auto createBlocked = planner.previewOperation(inventory, create);
+    QVERIFY(!createBlocked.canApply());
+    QVERIFY(createBlocked.blockers.join(' ').contains(QStringLiteral("current OS disk")));
+
+    // OS migration from the is_boot (non-system) disk to a disposable target is allowed to
+    // proceed past the source-disk gate; the ESP-only is_system disk is no longer required.
+    PartitionTarget migrateTarget;
+    migrateTarget.kind = PartitionTargetKind::Disk;
+    migrateTarget.disk_number = 0;
+    QJsonObject migratePayload;
+    migratePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    migratePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    migratePayload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    migratePayload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    migratePayload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto migrate = PartitionOperationPlanner::makeOperation(PartitionOperationType::MigrateOs,
+                                                            migrateTarget,
+                                                            migratePayload);
+    auto migrateOk = planner.previewOperation(inventory, migrate);
+    QVERIFY(!migrateOk.blockers.join(' ').contains(QStringLiteral("migration source")));
+
+    // A pure data disk (neither boot nor system) is not a valid OS-migration source.
+    inventory.disks.first().is_boot = false;
+    auto migrateBlocked = planner.previewOperation(inventory, migrate);
+    QVERIFY(!migrateBlocked.canApply());
+    QVERIFY(migrateBlocked.blockers.join(' ').contains(QStringLiteral("migration source")));
+}
+
 void PartitionManagerCoreTests::safetyValidator_blocksClonePartitionWithoutTargetOffset() {
     // B2-03: a region clone that names a target disk but no target_offset_bytes
     // must be blocked; the builder would otherwise default the offset to 0 and
@@ -17144,6 +17236,27 @@ void PartitionManagerCoreTests::rawDeviceClassifier_recognizesExtendedDeviceForm
     QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("/dev/sda")));
     QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("/home/x/img.dmg")));
 #endif
+}
+
+void PartitionManagerCoreTests::flushDeviceBuffers_surfacesFailureAndFlushesFile() {
+    // The durable-flush helper must fail closed on a null device (nothing to flush) with an
+    // error, so a write path never reports a durable commit it could not perform.
+    QString nullError;
+    QVERIFY(!sak::flushDeviceBuffers(nullptr, &nullError));
+    QVERIFY(!nullError.isEmpty());
+
+    // A writable file's buffers flush successfully through the QFileDevice path, and the
+    // written bytes reach the backing file.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("flush.bin"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArrayLiteral("durable")), static_cast<qint64>(7));
+    QString flushError;
+    QVERIFY2(sak::flushDeviceBuffers(&file, &flushError), qPrintable(flushError));
+    QCOMPARE(file.size(), static_cast<qint64>(7));
+    file.close();
 }
 
 void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard() {
@@ -17207,6 +17320,8 @@ void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmati
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CloneDisk,
                                                               target,
                                                               payload);
@@ -17216,7 +17331,16 @@ void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmati
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("overwrite confirmation")));
 
+    // B0-81: a disk clone with unknown (zero) source/target sizes must fail closed --
+    // an unknown size can be neither range-checked nor bounded during the byte copy.
     operation.payload[QStringLiteral("target_wipe_confirmed")] = true;
+    operation.payload.remove(QStringLiteral("source_size_bytes"));
+    auto missingSizes = planner.previewOperation(inventory, operation);
+    QVERIFY(!missingSizes.canApply());
+    QVERIFY(
+        missingSizes.blockers.join(' ').contains(QStringLiteral("known source and target sizes")));
+
+    operation.payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
     preview = planner.previewOperation(inventory, operation);
     QVERIFY(preview.canApply());
 }

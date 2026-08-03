@@ -106,6 +106,13 @@ struct LeftoverItem {
     // Registry-specific
     QString registryValueName;
     QString registryValueData;
+
+    // Firewall-rule-specific -- captured at SCAN time so cleanup can narrow the
+    // netsh delete (dir=/profile=/program=) to the ONE matching rule instead of
+    // deleting every rule that shares this display name.
+    QString firewallDirection;  ///< "in" or "out" (netsh dir=), empty if unknown
+    QString firewallProfile;    ///< e.g. "Domain,Private,Public" (netsh profile=)
+    QString firewallProgram;    ///< bound program path (netsh program=), empty if unbound
 };
 
 // -- UninstallReport ---------------------------------------------------------

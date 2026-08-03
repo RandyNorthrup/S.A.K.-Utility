@@ -36,9 +36,10 @@ struct LeftoverScanReliability {
     bool services_ok{true};         ///< sc.exe query succeeded
     bool scheduled_tasks_ok{true};  ///< schtasks.exe /query succeeded
     bool firewall_ok{true};         ///< netsh advfirewall show rule succeeded (both directions)
-    bool startup_ok{true};  ///< Run-key registry reads succeeded (absent key is NOT failure)
+    bool startup_ok{true};   ///< Run-key registry reads succeeded (absent key is NOT failure)
+    bool registry_ok{true};  ///< post-uninstall registry snapshot fully enumerated (not partial)
     [[nodiscard]] bool allOk() const {
-        return services_ok && scheduled_tasks_ok && firewall_ok && startup_ok;
+        return services_ok && scheduled_tasks_ok && firewall_ok && startup_ok && registry_ok;
     }
 };
 
@@ -91,7 +92,7 @@ private:
 
     // Phase 3: Registry (snapshot diff + known paths)
 #ifdef Q_OS_WIN
-    QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested, bool& ok);
     QVector<LeftoverItem> scanKnownRegistryPaths(const std::atomic<bool>& stopRequested);
     [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
 #endif
@@ -108,6 +109,12 @@ private:
                                const std::atomic<bool>& stopRequested,
                                QVector<LeftoverItem>& items,
                                bool& ok);
+    /// Append a FirewallRule item for a matched "Rule Name:" header line. Returns the
+    /// new item's index in @p items, or -1 when the rule name does not match this
+    /// program (so the caller ignores that rule's subsequent field lines).
+    [[nodiscard]] int appendFirewallRule(const QString& headerLine,
+                                         const QString& description,
+                                         QVector<LeftoverItem>& items) const;
 #ifdef Q_OS_WIN
     /// Read one Run key. Returns TRUE if the enumeration was reliable (key read OK, or the key was
     /// simply absent -- an honest "no entries"), FALSE on a real read failure (e.g.

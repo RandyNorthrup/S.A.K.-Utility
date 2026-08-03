@@ -218,7 +218,7 @@ QVector<LeftoverItem> LeftoverScanner::scan(
     // Phase 3: Registry (snapshot diff + known paths)
     if (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced) {
 #ifdef Q_OS_WIN
-        runPhase([&] { return scanRegistryDiff(stopRequested); });
+        runPhase([&] { return scanRegistryDiff(stopRequested, rel.registry_ok); });
         runPhase([&] { return scanKnownRegistryPaths(stopRequested); });
 #endif
     }
@@ -404,12 +404,19 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath
 
 #ifdef Q_OS_WIN
 
-QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>& stopRequested,
+                                                        bool& ok) {
     if (m_registryBefore.isEmpty() || stopRequested.load()) {
         return {};
     }
 
-    auto registry_after = RegistrySnapshotEngine::captureSnapshot();
+    // A PARTIAL "after" snapshot silently drops keys, so a survived leftover would be
+    // missed and read as an honest "clean" -- surface that as a reliability failure.
+    bool snapshot_ok = true;
+    auto registry_after = RegistrySnapshotEngine::captureSnapshot(&snapshot_ok);
+    if (!snapshot_ok) {
+        ok = false;
+    }
     QVector<LeftoverItem> items;
 
     for (const auto& key : registry_after) {
@@ -719,6 +726,47 @@ bool firewallDumpHeaderMissing(const QStringList& lines) {
     return saw_block && !saw_header;
 }
 
+namespace {
+// Value that follows a "Label:" prefix in a netsh rule block (labelLen counts the
+// prefix including the colon). Trimmed of the padding netsh inserts for alignment.
+QString netshFieldValue(const QString& trimmed, int labelLen) {
+    return trimmed.mid(labelLen).trimmed();
+}
+}  // namespace
+
+// Copy the direction/profile/program identity fields off one netsh rule-block line into
+// the pending item so cleanup can narrow the delete to this exact rule. An "Any"/empty
+// program means the rule is not program-bound, so program= is intentionally omitted.
+// External linkage so it is unit-testable without netsh.
+void applyFirewallField(const QString& trimmed, LeftoverItem& item) {
+    if (trimmed.startsWith("Direction:", Qt::CaseInsensitive)) {
+        item.firewallDirection = netshFieldValue(trimmed, 10).toLower();
+    } else if (trimmed.startsWith("Profiles:", Qt::CaseInsensitive)) {
+        item.firewallProfile = netshFieldValue(trimmed, 9);
+    } else if (trimmed.startsWith("Program:", Qt::CaseInsensitive)) {
+        const QString prog = netshFieldValue(trimmed, 8);
+        if (prog.compare("Any", Qt::CaseInsensitive) != 0) {
+            item.firewallProgram = prog;
+        }
+    }
+}
+
+int LeftoverScanner::appendFirewallRule(const QString& headerLine,
+                                        const QString& description,
+                                        QVector<LeftoverItem>& items) const {
+    const QString rule_name = netshFieldValue(headerLine, 10);
+    if (!matchesProgramStrict(rule_name)) {
+        return -1;
+    }
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::FirewallRule;
+    item.path = rule_name;
+    item.description = description;
+    item.risk = LeftoverItem::RiskLevel::Review;
+    items.append(item);
+    return static_cast<int>(items.size()) - 1;
+}
+
 void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
@@ -736,24 +784,20 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
     const QString output = result.std_out;
     const QStringList lines = output.split('\n');
 
+    // Track the pending matched rule by INDEX (append can reallocate items). Every
+    // field line after a matched "Rule Name:" feeds that rule until the next header;
+    // a non-matching header resets to -1 so its fields are ignored.
+    int current = -1;
     for (const auto& line : lines) {
         if (stopRequested.load()) {
             break;
         }
         const QString trimmed = line.trimmed();
-        if (!trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
-            continue;
+        if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
+            current = appendFirewallRule(trimmed, description, items);
+        } else if (current >= 0) {
+            applyFirewallField(trimmed, items[current]);
         }
-        const QString rule_name = trimmed.mid(10).trimmed();
-        if (!matchesProgramStrict(rule_name)) {
-            continue;
-        }
-        LeftoverItem item;
-        item.type = LeftoverItem::Type::FirewallRule;
-        item.path = rule_name;
-        item.description = description;
-        item.risk = LeftoverItem::RiskLevel::Review;
-        items.append(item);
     }
 
     // Rules clearly present (dashed separators) but zero parseable "Rule Name:" headers means the

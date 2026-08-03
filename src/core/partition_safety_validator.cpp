@@ -967,6 +967,16 @@ bool restoreImageMissingKnownSizes(const PartitionOperation& operation) {
             payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0);
 }
 
+// Clone/Migrate must know both source and target sizes before touching the target: an
+// unknown (zero) size can neither be range-checked against the target nor bounded during
+// the byte copy, so the operation fails closed rather than proceed with an unbounded write.
+bool cloneOrMigrateMissingKnownSizes(const PartitionOperation& operation) {
+    return (operation.type == PartitionOperationType::CloneDisk ||
+            operation.type == PartitionOperationType::MigrateOs) &&
+           (payloadUInt64(operation, QStringLiteral("source_size_bytes")) == 0 ||
+            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0);
+}
+
 bool clonePartitionTargetsRawDevice(const PartitionOperation& operation) {
     const QString targetPath =
         operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
@@ -1847,8 +1857,9 @@ void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
                                     const PartitionOperation& operation,
                                     PartitionValidationResult* result) {
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::MigrateOs && !disk.is_system,
-                 QStringLiteral("OS migration source must be a system disk"));
+                 operation.type == PartitionOperationType::MigrateOs &&
+                     !(disk.is_system || disk.is_boot),
+                 QStringLiteral("OS migration source must be the running OS (system/boot) disk"));
     addBlockerIf(result,
                  restoreOrMigrateMissingPhysicalTarget(operation),
                  QStringLiteral("Restore Image and OS migration require a physical target disk"));
@@ -1858,6 +1869,10 @@ void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
     addBlockerIf(result,
                  restoreImageMissingKnownSizes(operation),
                  QStringLiteral("Restore Image requires known image and target sizes"));
+    addBlockerIf(result,
+                 cloneOrMigrateMissingKnownSizes(operation),
+                 QStringLiteral("Disk clone and OS migration require known source and "
+                                "target sizes"));
     addBlockerIf(result,
                  blocksTooSmallCloneTarget(operation),
                  QStringLiteral("Target disk is smaller than the source disk"));
@@ -2035,7 +2050,10 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
                              0,
                      QStringLiteral("APFS create requires a GPT disk"));
     }
-    if (disk.is_system) {
+    if (disk.is_system || disk.is_boot) {
+        // On a split-boot config the OS lives on the is_boot disk while the ESP is on the
+        // is_system disk; guarding is_system alone would let a create land on the running
+        // OS (is_boot) disk. Block both.
         result->blockers.append(
             QStringLiteral("Creating partitions on current OS disk is blocked in v1"));
     }

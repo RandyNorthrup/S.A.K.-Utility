@@ -30,6 +30,13 @@ void markFileSparse(int fileDescriptor);
                                   const QString& destination,
                                   QString* errorMessage = nullptr);
 
+/// @brief Flush a writable file/raw-device's buffers to durable storage. Returns false (with
+///        @p errorMessage set) when the flush fails, so a caller can refuse to report a
+///        durable write on an unflushed target rather than swallowing the failure. Handles
+///        both a QFileDevice (QFile::flush) and the Windows raw-device helper
+///        (FlushFileBuffers). A null device is treated as a failure.
+[[nodiscard]] bool flushDeviceBuffers(QIODevice* device, QString* errorMessage = nullptr);
+
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(
     const QString& path, QString* errorMessage = nullptr);
 

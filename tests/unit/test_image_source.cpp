@@ -37,6 +37,8 @@ private Q_SLOTS:
     void isCompressed_xz();
     void isCompressed_iso();
     void isCompressed_emptyPath();
+    void isCompressed_longExtensions();
+    void isCompressed_zipNotStreamable();
 
     // ── FileImageSource construction ──────────────────────────────
     void fileSource_construction();
@@ -141,6 +143,22 @@ void TestImageSource::isCompressed_iso() {
 
 void TestImageSource::isCompressed_emptyPath() {
     QVERIFY(!CompressedImageSource::isCompressed(""));
+}
+
+// isCompressed now delegates to DecompressorFactory (single source of truth), so
+// the long-form extensions it can stream must classify as compressed -- the old
+// hand-rolled {gz,bz2,xz} set silently wrote these raw.
+void TestImageSource::isCompressed_longExtensions() {
+    QVERIFY(CompressedImageSource::isCompressed("file.img.gzip"));
+    QVERIFY(CompressedImageSource::isCompressed("file.bzip2"));
+    QVERIFY(CompressedImageSource::isCompressed("file.lzma"));
+}
+
+// A .zip is a multi-member archive DecompressorFactory cannot stream into a raw
+// image, so isCompressed must NOT report it as a streamable compressed source
+// (the coordinator refuses it separately rather than raw-writing the archive).
+void TestImageSource::isCompressed_zipNotStreamable() {
+    QVERIFY(!CompressedImageSource::isCompressed("file.zip"));
 }
 
 // ═══════════════════════════════════════════════════════════════════

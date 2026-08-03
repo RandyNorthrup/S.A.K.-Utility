@@ -2172,7 +2172,8 @@ QString cloneTransferOpenFunctionsScript() {
         "$off); if ($read -le 0) { throw 'Unexpected end of stream during verification' }; "
         "$off += $read }; return $buf }\n"
         "function Copy-SakBytes($from, $to, [uint64]$bytes) { if ($bytes -eq 0) { "
-        "$from.CopyTo($to, $bufferBytes); return }; $buf = New-Object byte[] $bufferBytes; "
+        "throw 'Clone source size could not be established; aborting before writing target' }; "
+        "$buf = New-Object byte[] $bufferBytes; "
         "$left = $bytes; while ($left -gt 0) { $take = "
         "[int][Math]::Min([uint64]$bufferBytes, $left); $read = $from.Read($buf, 0, $take); "
         "if ($read -le 0) { throw 'Source ended before expected byte count' }; "
@@ -2220,24 +2221,20 @@ QString cloneTransferRawTargetFunctionsScript() {
         "-IsOffline $false -ErrorAction SilentlyContinue } }\n");
 }
 
-QString cloneTransferExecutionScript() {
+QString cloneTransferCopyBodyScript() {
     return QStringLiteral(
-        "$in = Open-SakRead $src\n"
-        "if ($expectedBytes -gt 0 -and $sourceOffset -eq 0 -and -not "
-        "$src.StartsWith('\\\\.\\') -and [uint64]$in.Length -ne $expectedBytes) { $in.Dispose(); "
-        "throw \"Source image changed since it was queued (expected $expectedBytes bytes, found "
-        "$($in.Length)); aborting before touching the target disk\" }\n"
-        "$sakRawTargetDisk = Assert-SakRawWriteTarget $dst\n"
-        "try { try { if ($expectedBytes -eq 0) { try { $expectedBytes = [uint64]$in.Length "
+        "try { if ($expectedBytes -eq 0) { try { $expectedBytes = [uint64]$in.Length "
         "- $sourceOffset } catch {} }; [void]$in.Seek([int64]$sourceOffset, "
         "[System.IO.SeekOrigin]::Begin); $out = Open-SakWrite $dst; try { "
         "[void]$out.Seek([int64]$targetOffset, [System.IO.SeekOrigin]::Begin); "
         "Copy-SakBytes $in $out $expectedBytes; $out.Flush() } finally { $out.Dispose() } } "
-        "finally { $in.Dispose() } }\n"
-        "finally { Restore-SakRawWriteTarget $sakRawTargetDisk }\n");
+        "finally { $in.Dispose() }\n");
 }
 
-QString cloneTransferVerifyExecutionScript() {
+// The verification runs while the target disk is still held offline (inside the outer
+// try that Restore-SakRawWriteTarget closes), so Windows cannot mount or modify the disk
+// between the byte copy and the compare.
+QString cloneTransferVerifyBodyScript() {
     return QStringLiteral(
         "if (-not [string]::IsNullOrWhiteSpace($verifyMode)) { if ($expectedBytes -eq 0) { "
         "throw 'Verification requires known source size' }; $srcVerify = Open-SakRead $src; "
@@ -2247,6 +2244,20 @@ QString cloneTransferVerifyExecutionScript() {
         "'Running sample clone verification'; Assert-SakSampleCopy $srcVerify $dstVerify "
         "$expectedBytes $sourceOffset $targetOffset } } finally { $dstVerify.Dispose(); "
         "$srcVerify.Dispose() } }\n");
+}
+
+QString cloneTransferExecutionScript() {
+    return QStringLiteral(
+               "$in = Open-SakRead $src\n"
+               "if ($expectedBytes -gt 0 -and $sourceOffset -eq 0 -and -not "
+               "$src.StartsWith('\\\\.\\') -and [uint64]$in.Length -ne $expectedBytes) { "
+               "$in.Dispose(); throw \"Source image changed since it was queued (expected "
+               "$expectedBytes bytes, found $($in.Length)); aborting before touching the "
+               "target disk\" }\n"
+               "$sakRawTargetDisk = Assert-SakRawWriteTarget $dst\n"
+               "try {\n") +
+           cloneTransferCopyBodyScript() + cloneTransferVerifyBodyScript() +
+           QStringLiteral("}\nfinally { Restore-SakRawWriteTarget $sakRawTargetDisk }\n");
 }
 
 // Runtime authoritative guard for Create Image: the validator's textual
@@ -2277,7 +2288,7 @@ QString createImageDestinationGuardScript(const QString& target, uint32_t source
 QString cloneTransferScript(const CloneTransferSpec& spec) {
     return cloneTransferPreludeScript(spec) + cloneTransferOpenFunctionsScript() +
            cloneTransferVerificationFunctionsScript() + cloneTransferRawTargetFunctionsScript() +
-           cloneTransferExecutionScript() + cloneTransferVerifyExecutionScript();
+           cloneTransferExecutionScript();
 }
 
 QString osMigrationBootValidationScript() {

@@ -9996,7 +9996,29 @@ private:
             m_volume.block_size > kMaximumHfsBlockSize || !isPowerOfTwo(m_volume.block_size) ||
             m_volume.total_blocks == 0 || m_volume.free_blocks > m_volume.total_blocks) {
             m_blockers.append(QStringLiteral("Unsupported HFS+ volume geometry"));
+            return;
         }
+        if (volumeExceedsDeviceLength()) {
+            m_blockers.append(
+                QStringLiteral("HFS+ volume geometry exceeds the backing device length"));
+        }
+    }
+
+    // Fail closed: a volume whose claimed extent (offset + total_blocks * block_size)
+    // runs past the backing device would be partially mutated before an end-of-device
+    // failure, so refuse when the capacity cannot be verified or does not fit.
+    [[nodiscard]] bool volumeExceedsDeviceLength() const {
+        const qint64 deviceLength = m_device ? m_device->size() : -1;
+        if (deviceLength < 0) {
+            return true;
+        }
+        uint64_t volumeBytes = 0;
+        uint64_t volumeEnd = 0;
+        if (!checkedMul(m_volume.total_blocks, m_volume.block_size, &volumeBytes) ||
+            !checkedAdd(m_volume.volume_offset, volumeBytes, &volumeEnd)) {
+            return true;
+        }
+        return volumeEnd > static_cast<uint64_t>(deviceLength);
     }
 
     void appendCatalogForkBlockers() {

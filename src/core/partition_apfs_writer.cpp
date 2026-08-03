@@ -12707,7 +12707,14 @@ bool sizeOrVerifyResizeTarget(QIODevice* image,
                               QStringList* blockers) {
     if (deviceAlreadySized) {
         const qint64 deviceSize = image->size();
-        if (deviceSize > 0 && static_cast<uint64_t>(deviceSize) < newSizeBytes) {
+        if (deviceSize <= 0) {
+            // Unknown device length (GetFileSizeEx and IOCTL_DISK_GET_LENGTH_INFO both
+            // failed): fail closed rather than assume the target spans the new size.
+            blockers->append(
+                QStringLiteral("APFS resize-grow: the raw device length could not be determined"));
+            return false;
+        }
+        if (static_cast<uint64_t>(deviceSize) < newSizeBytes) {
             blockers->append(QStringLiteral(
                 "APFS resize-grow: the raw device is smaller than the requested new size"));
             return false;
@@ -20824,10 +20831,6 @@ void finalizeExistingFormatResult(PartitionApfsImageBuildResult* result, bool ha
     if (result->ok && hashWholeTarget) {
         result->image_sha256 = fileSha256Hex(result->image_path, &result->blockers);
         result->ok = result->blockers.isEmpty();
-    } else if (result->ok) {
-        result->warnings.append(
-            QStringLiteral("Raw APFS format target full-device SHA-256 skipped; certification uses "
-                           "bounded APFS detection and root listing readback"));
     }
 }
 
@@ -20906,6 +20909,70 @@ std::optional<PartitionFileSystemDetection> detectApfsRawTarget(const QString& t
             ? QStringLiteral("APFS raw %1 target was not detected as APFS").arg(purpose)
             : detectError);
     return std::nullopt;
+}
+
+// Verify the opened format target can hold the requested container BEFORE any zeroing or
+// write, so a too-small or unidentifiable target is never zeroed at the start and then failed
+// at the tail. A file must be exactly the requested size; a raw device (whose true length
+// comes from IOCTL_DISK_GET_LENGTH_INFO via QIODevice::size()) must span it. An unknown length
+// (size() <= 0) fails closed.
+bool verifyFormatTargetSize(QIODevice* target,
+                            bool rawTarget,
+                            uint64_t containerBytes,
+                            QStringList* blockers) {
+    const qint64 openedSize = target->size();
+    if (openedSize <= 0) {
+        blockers->append(QStringLiteral("APFS format target size could not be determined"));
+        return false;
+    }
+    const auto opened = static_cast<uint64_t>(openedSize);
+    const bool fits = rawTarget ? (opened >= containerBytes) : (opened == containerBytes);
+    if (!fits) {
+        blockers->append(QStringLiteral(
+            "APFS format target opened size cannot hold the requested container size"));
+        return false;
+    }
+    return true;
+}
+
+// Real post-write read-back for a raw format target (a raw device cannot be cheaply
+// whole-image hashed): re-detect the written bytes as APFS and read the root listing back,
+// confirming the requested volume name. Any failure appends a blocker so the format fails
+// closed instead of claiming an unverified success.
+void verifyRawFormatReadback(PartitionApfsImageBuildResult* result,
+                             const PartitionApfsImageFormatRequest& request) {
+    if (!detectApfsRawTarget(result->image_path,
+                             request.target_container_bytes,
+                             QLatin1StringView("format"),
+                             &result->blockers)
+             .has_value()) {
+        return;
+    }
+    if (appendVolumeLabelReadback(result->image_path,
+                                  result->plan.volume_name,
+                                  QLatin1StringView("format"),
+                                  &result->blockers)) {
+        result->warnings.append(QStringLiteral(
+            "Raw APFS format certified via post-write APFS detection and root-listing "
+            "read-back (full-device SHA-256 skipped)"));
+    }
+}
+
+// Certify the written format target: a small generated file by whole-image SHA-256, and a raw
+// device by a real post-write APFS detection + root-listing read-back.
+void finalizeFormatTargetResult(PartitionApfsImageBuildResult* result,
+                                const PartitionApfsImageFormatRequest& request,
+                                bool rawTarget) {
+    if (rawTarget) {
+        if (result->blockers.isEmpty()) {
+            verifyRawFormatReadback(result, request);
+        }
+        result->ok = result->blockers.isEmpty();
+        return;
+    }
+    const bool hashWholeTarget = request.target_container_bytes <=
+                                 kGeneratedApfsSingleChunkMaxBytes;
+    finalizeExistingFormatResult(result, hashWholeTarget);
 }
 
 PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImage(
@@ -20987,31 +21054,29 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingContainerTarget
             QStringLiteral("Unable to open APFS format target: %1").arg(openError));
         return result;
     }
-    if (!isWindowsRawDevicePath(result.image_path)) {
-        const qint64 openedSize = target->size();
-        if (openedSize < 0 || static_cast<uint64_t>(openedSize) != request.target_container_bytes) {
-            result.blockers.append(QStringLiteral(
-                "APFS format target opened size must match requested container size"));
-            return result;
-        }
+    // Size guard runs for BOTH file and raw targets before any write: a raw device length
+    // (IOCTL_DISK_GET_LENGTH_INFO) that cannot hold the container fails closed here rather
+    // than zeroing the device start and only failing at the tail.
+    const bool rawTarget = isWindowsRawDevicePath(result.image_path);
+    if (!verifyFormatTargetSize(
+            target.get(), rawTarget, request.target_container_bytes, &result.blockers)) {
+        return result;
     }
 
     QStringList writeBlockers;
     constructZeroAndWriteFormatTarget(request, result.plan, target.get(), &writeBlockers);
-    if (auto* file = dynamic_cast<QFile*>(target.get())) {
-        file->flush();
+    QString flushError;
+    if (writeBlockers.isEmpty() && !flushDeviceBuffers(target.get(), &flushError)) {
+        writeBlockers.append(
+            QStringLiteral("APFS format target durable flush failed: %1").arg(flushError));
     }
     target->close();
     result.blockers.append(writeBlockers);
     // The whole-target SHA-256 reads the entire container; on a multi-CIB / metadata-overflow
     // container (held as a sparse image) that means reading terabytes of free space and
-    // dominates the format. Skip it above the single-chunk size -- those tiers are certified
-    // via fsck_apfs + kernel mount, not a whole-image hash -- and keep it for the small
-    // generated containers whose evidence chain is the image hash.
-    const bool hashWholeTarget = !isWindowsRawDevicePath(result.image_path) &&
-                                 request.target_container_bytes <=
-                                     kGeneratedApfsSingleChunkMaxBytes;
-    finalizeExistingFormatResult(&result, hashWholeTarget);
+    // dominates the format. A raw device is certified via a real post-write APFS detection +
+    // root-listing read-back instead of a whole-device hash.
+    finalizeFormatTargetResult(&result, request, rawTarget);
     return result;
 }
 

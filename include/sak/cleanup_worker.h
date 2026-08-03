@@ -182,7 +182,7 @@ private:
     [[nodiscard]] bool deleteRegistryValue(const QString& keyPath, const QString& valueName);
     [[nodiscard]] bool removeService(const QString& serviceName);
     [[nodiscard]] bool removeScheduledTask(const QString& taskName);
-    [[nodiscard]] bool removeFirewallRule(const QString& ruleName);
+    [[nodiscard]] bool removeFirewallRule(const LeftoverItem& item);
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

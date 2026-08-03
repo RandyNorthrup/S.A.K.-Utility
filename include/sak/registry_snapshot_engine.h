@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file registry_snapshot_engine.h
-/// @brief Registry key snapshot capture and diff for leftover detection
+/// @brief Registry key snapshot capture for leftover detection
 
 #pragma once
 
@@ -20,10 +20,11 @@
 
 namespace sak {
 
-/// @brief Captures a snapshot of registry keys under monitored paths and diffs them
+/// @brief Captures a snapshot of registry keys under monitored paths
 ///
 /// Used before and after uninstallation to identify registry keys that survived
-/// the native uninstaller -- potential leftovers that should be cleaned.
+/// the native uninstaller -- potential leftovers that should be cleaned. The
+/// before/after diff is performed by the caller (LeftoverScanner::scanRegistryDiff).
 class RegistrySnapshotEngine {
 public:
     RegistrySnapshotEngine() = default;
@@ -35,29 +36,29 @@ public:
     RegistrySnapshotEngine& operator=(RegistrySnapshotEngine&&) = default;
 
     /// @brief Capture a snapshot of registry keys under monitored paths
+    /// @param reliable Optional out-param. Set FALSE when any monitored subtree could
+    ///        not be fully enumerated (open/query/enum failure) so a PARTIAL snapshot
+    ///        is never consumed as an authoritative, complete one. TRUE means every
+    ///        reachable key was captured. Null preserves the caller not caring.
     /// @return Set of full key paths (e.g., "HKLM\\SOFTWARE\\CompanyName\\Product")
-    [[nodiscard]] static QSet<QString> captureSnapshot();
-
-    /// @brief Diff two snapshots to find potential leftover keys
-    /// @param before Snapshot before uninstall
-    /// @param after Snapshot after uninstall
-    /// @param programNamePatterns Patterns to match against key names
-    /// @return Leftover items for keys that match program patterns
-    [[nodiscard]] static QVector<LeftoverItem> diffSnapshots(
-        const QSet<QString>& before,
-        const QSet<QString>& after,
-        const QStringList& programNamePatterns);
+    [[nodiscard]] static QSet<QString> captureSnapshot(bool* reliable = nullptr);
 
 private:
-    [[nodiscard]] static bool matchesAnyPattern(const QString& key, const QStringList& patterns);
 #ifdef Q_OS_WIN
     static constexpr int kDefaultMaxDepth = 3;
+
+    /// @brief Accumulator threaded through the recursive walk: the captured key set
+    ///        plus the reliability flag that any enumeration failure clears.
+    struct SnapshotSink {
+        QSet<QString>& keys;
+        bool& reliable;
+    };
 
     /// @brief Enumerate all subkeys under a registry path
     static void enumerateKeys(HKEY hive,
                               const QString& subkey,
                               const QString& hiveName,
-                              QSet<QString>& output,
+                              SnapshotSink sink,
                               int maxDepth = kDefaultMaxDepth);
 #endif
 

@@ -147,12 +147,12 @@ public:
     [[nodiscard]] static qint64 alignUpToSectorSize(qint64 bytes, qint64 sectorSize);
 
     /// @brief Does an image fit on the target device?
-    /// @param imageBytes Total image size in bytes.
+    /// @param imageBytes Total (uncompressed) image size, or < 0 when unknown.
     /// @param deviceBytes Device capacity in bytes, or < 0 when it cannot be
     ///        queried.
-    /// @return false ONLY when the capacity is known and the image exceeds it.
-    ///         An unknown capacity (deviceBytes < 0) returns true -- best-effort,
-    ///         since the raw write itself fails safely at the device boundary.
+    /// @return true only when BOTH sizes are known and the image fits. Fails
+    ///         closed (false) on an unknown capacity (deviceBytes < 0) or an
+    ///         undetermined image size (imageBytes < 0) -- never assumes "fits".
     [[nodiscard]] static bool imageFitsDevice(qint64 imageBytes, qint64 deviceBytes);
 
 Q_SIGNALS:
@@ -210,7 +210,7 @@ private:
     bool writeImage();
     /// @brief Flush + fail-closed completeness check after the write loop.
     bool finalizeWrite();
-    bool writeChunk(const QByteArray& buffer, qint64 bytesRead);
+    bool writeChunk(const char* buffer, qint64 bytesRead);
     bool prepareSourceChecksum();
     /// @brief Query the target's logical sector size (IOCTL_DISK_GET_DRIVE_GEOMETRY)
     /// @return true and sets m_sectorSize on success; false (fail closed) if the
@@ -219,7 +219,13 @@ private:
     /// @brief Query the target device's total capacity (IOCTL_DISK_GET_LENGTH_INFO)
     /// @return Capacity in bytes, or -1 if it cannot be determined
     qint64 queryDeviceCapacity();
-    bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) const;
+    /// @brief Zero-pad the tail of a sector-aligned I/O buffer up to a whole
+    ///        multiple of the device sector size, in place (no realloc).
+    /// @param data Buffer base (must have @p capacity bytes; sector-aligned).
+    /// @param bytesRead In/out valid byte count; set to the padded size on success.
+    /// @param capacity Total allocated bytes of @p data.
+    /// @return false on bogus geometry, overflow, or padded size > capacity.
+    [[nodiscard]] bool padAlignedBuffer(char* data, qint64& bytesRead, qint64 capacity) const;
     sak::ValidationResult verifyImage();
     /// @brief Whole-image compare for images smaller than one sample block
     /// @note Fail-closed: mutates @p result to passed=false on any read failure
@@ -240,17 +246,18 @@ private:
     /// @return Number of blocks successfully verified
     int verifySampleBlocks(sak::ValidationResult& result,
                            const VerifyBlocksConfig& config,
-                           QByteArray& sourceBuffer,
-                           QByteArray& targetBuffer);
+                           char* sourceData,
+                           char* targetData);
     /// @brief Read one block back from the device at @p offset_bytes and compare
-    ///        it to @p sourceBuffer. Fails closed on a short device read.
+    ///        it to @p sourceData. Fails closed on a short device read.
+    /// @param targetData Sector-aligned read-back buffer (FILE_FLAG_NO_BUFFERING).
     /// @return true if the block was fully read back (counts as a verified
     ///         sample, match or mismatch); false if it must be skipped.
     bool compareDeviceBlock(sak::ValidationResult& result,
                             qint64 offset_bytes,
                             qint64 compareLen,
-                            const QByteArray& sourceBuffer,
-                            QByteArray& targetBuffer);
+                            const char* sourceData,
+                            char* targetData);
 
     void updateProgress(qint64 bytesWritten);
     void updateSpeed(qint64 bytesWritten);
@@ -263,6 +270,10 @@ private:
 
     std::atomic<qint64> m_bytesWritten;
     qint64 m_totalBytes;
+    /// Decompressed (unpadded) content length actually written; the meaningful
+    /// prefix a full verify must hash. Distinct from m_bytesWritten, which counts
+    /// the sector-padding tail as well.
+    qint64 m_contentBytesWritten;
     std::atomic<double> m_speedMBps;
     qint64 m_bufferSize;
     qint64 m_sectorSize;  ///< Target logical sector size; 512 until queryDeviceSectorSize()

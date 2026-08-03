@@ -127,6 +127,7 @@ private slots:
     void imageFitsDeviceUnderAndExact();
     void imageFitsDeviceRejectsOversize();
     void imageFitsDeviceRejectsUnknownCapacity();
+    void imageFitsDeviceRejectsUnknownImageSize();
 };
 
 // ===========================================================================
@@ -441,6 +442,14 @@ void FlashWorkerTests::imageFitsDeviceRejectsUnknownCapacity() {
     // the whole device before failing at end-of-media.
     QVERIFY(!FlashWorker::imageFitsDevice(1LL << 40, -1));
     QVERIFY(!FlashWorker::imageFitsDevice(0, -1));
+}
+
+void FlashWorkerTests::imageFitsDeviceRejectsUnknownImageSize() {
+    // Fail closed on an undetermined image size (-1), e.g. a compressed stream
+    // whose decompressed length the decompressor cannot report. Without a known
+    // size the gate cannot bound the write, so it must refuse.
+    QVERIFY(!FlashWorker::imageFitsDevice(-1, 1LL << 40));
+    QVERIFY(!FlashWorker::imageFitsDevice(-1, 0));
 }
 
 // ===========================================================================

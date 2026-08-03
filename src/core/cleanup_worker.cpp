@@ -32,6 +32,21 @@ constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kCleanupCommandTimeoutMs = 10'000;
 constexpr int kCleanupServiceStopSettleMs = kTimerProgressPollMs;
 
+// Append the scan-time identity qualifiers that narrow a netsh firewall delete to the
+// single matching rule. Each is emitted only when known so an unbound/unknown field
+// does not over-constrain (and thus fail to delete) the intended rule.
+void appendFirewallDeleteFilters(QStringList& args, const LeftoverItem& item) {
+    if (!item.firewallDirection.isEmpty()) {
+        args << QStringLiteral("dir=%1").arg(item.firewallDirection);
+    }
+    if (!item.firewallProfile.isEmpty()) {
+        args << QStringLiteral("profile=%1").arg(item.firewallProfile);
+    }
+    if (!item.firewallProgram.isEmpty()) {
+        args << QStringLiteral("program=%1").arg(item.firewallProgram);
+    }
+}
+
 #ifdef Q_OS_WIN
 // Open a handle to the EXACT path for delete-time verification, WITHOUT following a leaf reparse
 // point (FILE_FLAG_OPEN_REPARSE_POINT). Ancestor junctions are still traversed by the OS during
@@ -245,7 +260,7 @@ bool CleanupWorker::cleanSingleItem(const LeftoverItem& item) {
     case LeftoverItem::Type::ScheduledTask:
         return removeScheduledTask(item.path);
     case LeftoverItem::Type::FirewallRule:
-        return removeFirewallRule(item.path);
+        return removeFirewallRule(item);
     case LeftoverItem::Type::StartupEntry:
         return cleanStartupEntry(item);
     case LeftoverItem::Type::ShellExtension:
@@ -822,14 +837,19 @@ bool CleanupWorker::removeScheduledTask(const QString& taskName) {
     return result.succeeded();
 }
 
-bool CleanupWorker::removeFirewallRule(const QString& ruleName) {
-    const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
-                                        {QStringLiteral("advfirewall"),
-                                         QStringLiteral("firewall"),
-                                         QStringLiteral("delete"),
-                                         QStringLiteral("rule"),
-                                         QStringLiteral("name=%1").arg(ruleName)},
-                                        kCleanupCommandTimeoutMs);
+bool CleanupWorker::removeFirewallRule(const LeftoverItem& item) {
+    // netsh "delete rule name=X" with NO other qualifier removes EVERY rule sharing
+    // that display name (inbound + outbound, all profiles, all programs). Narrow it
+    // with the dir=/profile=/program= identity captured at scan time so only the one
+    // matching rule is deleted.
+    QStringList args{QStringLiteral("advfirewall"),
+                     QStringLiteral("firewall"),
+                     QStringLiteral("delete"),
+                     QStringLiteral("rule"),
+                     QStringLiteral("name=%1").arg(item.path)};
+    appendFirewallDeleteFilters(args, item);
+    const auto result =
+        sak::runProcess(QStringLiteral("netsh.exe"), args, kCleanupCommandTimeoutMs);
     return result.succeeded();
 }
 

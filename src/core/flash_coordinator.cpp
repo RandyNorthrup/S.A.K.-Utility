@@ -33,6 +33,15 @@ enum class OsDiskCheck {
     Undetermined
 };
 
+// A file the flasher recognizes as a compressed container but the streaming
+// DecompressorFactory cannot turn into a raw disk image (currently .zip -- a
+// multi-member archive). Such a file MUST be refused, never raw-written: writing
+// the archive bytes verbatim produces a corrupt, unbootable target.
+bool isUnsupportedCompressedContainer(const QString& imagePath) {
+    return FileImageSource::detectFormat(imagePath) == sak::ImageFormat::ZIP &&
+           !CompressedImageSource::isCompressed(imagePath);
+}
+
 // Returns whether the given physical-drive number backs the current OS (system)
 // volume. Used as an engine-level guard so a bad caller cannot raw write the
 // running OS disk. Determined natively (no elevation needed). If the OS disk
@@ -191,6 +200,12 @@ bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
     Q_ASSERT(!imagePath.isEmpty());
     if (CompressedImageSource::isCompressed(imagePath)) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
+    } else if (isUnsupportedCompressedContainer(imagePath)) {
+        sak::logError("Refusing to flash an unsupported compressed container (e.g. .zip)");
+        m_state = sak::FlashState::Failed;
+        Q_EMIT stateChanged(m_state, "Unsupported compressed image");
+        Q_EMIT flashError("Unsupported compressed image; extract the disk image before flashing");
+        return false;
     } else {
         m_imageSource = std::make_unique<FileImageSource>(imagePath);
     }
@@ -691,9 +706,16 @@ void FlashCoordinator::cleanupWorkers() {
         // finishes its current write and self-cleans, instead of being killed
         // mid-write.
         sak::logError(
-            "Worker thread did not stop within 15s -- detaching (bounded leak) "
+            "Worker thread did not stop within 15s -- detaching "
             "to avoid terminating a live disk write");
-        worker->setParent(nullptr);
+        // Self-delete once the wedged write finally finishes, so a repeated wedge
+        // does not leak a QThread + FlashWorker each time. Connect BEFORE releasing
+        // ownership; QThread::finished fires on every exit path once run() returns,
+        // and the queued deleteLater reclaims the detached worker on the owning
+        // thread's event loop.
+        FlashWorker* detached = worker.get();
+        connect(detached, &QThread::finished, detached, &QObject::deleteLater);
+        detached->setParent(nullptr);
         static_cast<void>(worker.release());
     }
 

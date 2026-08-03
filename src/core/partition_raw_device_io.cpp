@@ -7,6 +7,7 @@
 #include "sak/partition_raw_device_io.h"
 
 #include <QFile>
+#include <QFileDevice>
 #include <QIODevice>
 
 #include <algorithm>
@@ -92,6 +93,9 @@ public:
 
     void close() override {
         if (handle_ != INVALID_HANDLE_VALUE) {
+            // Best-effort final flush on teardown; QIODevice::close() cannot report a
+            // failure. Callers that must surface a durable-flush failure call
+            // syncToDevice() (via flushDeviceBuffers) BEFORE close while the handle lives.
             if (writable_) {
                 FlushFileBuffers(handle_);
             }
@@ -100,6 +104,20 @@ public:
         }
         position_ = 0;
         QIODevice::close();
+    }
+
+    // Flush written blocks to durable storage, returning false (with the Win32 error
+    // recorded) when FlushFileBuffers fails, so a caller never reports a durable write it
+    // could not flush. A read-only or closed device has nothing to flush and succeeds.
+    [[nodiscard]] bool syncToDevice() {
+        if (handle_ == INVALID_HANDLE_VALUE || !writable_) {
+            return true;
+        }
+        if (!FlushFileBuffers(handle_)) {
+            setErrorString(win32ErrorMessage(GetLastError()));
+            return false;
+        }
+        return true;
     }
 
     bool isSequential() const override { return false; }
@@ -134,10 +152,13 @@ public:
             return -1;
         }
         LARGE_INTEGER fileSize{};
-        if (!GetFileSizeEx(handle_, &fileSize)) {
-            return -1;
+        if (GetFileSizeEx(handle_, &fileSize)) {
+            return fileSize.QuadPart;
         }
-        return fileSize.QuadPart;
+        // A physical-drive / partition / volume handle rejects GetFileSizeEx; ask the
+        // device for its true length so a caller can fail closed on an oversized request
+        // instead of treating an unknown size as sufficient.
+        return rawDeviceLength();
     }
 
 protected:
@@ -177,6 +198,24 @@ private:
     // larger transfer is satisfied as a short read/write that QIODevice loops over.
     static constexpr qint64 kMaxAlignedRequest =
         (static_cast<qint64>(std::numeric_limits<DWORD>::max()) / kRawAlignment) * kRawAlignment;
+
+    // The device's true byte length via IOCTL_DISK_GET_LENGTH_INFO (works on both disk and
+    // volume/partition handles), or -1 if it cannot be determined -- callers fail closed on -1.
+    [[nodiscard]] qint64 rawDeviceLength() const {
+        GET_LENGTH_INFORMATION info{};
+        DWORD returned = 0;
+        if (DeviceIoControl(handle_,
+                            IOCTL_DISK_GET_LENGTH_INFO,
+                            nullptr,
+                            0,
+                            &info,
+                            sizeof(info),
+                            &returned,
+                            nullptr)) {
+            return info.Length.QuadPart;
+        }
+        return -1;
+    }
 
     [[nodiscard]] bool isAlignedRawRequest(qint64 maxSize) const {
         const qint64 prefixBytes = position_ - alignedStart();
@@ -588,6 +627,30 @@ bool isWindowsRawDevicePath(const QString& path) {
     // image-only gate refuses them rather than opening a read-write QFile.
     return path.startsWith(QStringLiteral("/dev/"));
 #endif
+}
+
+bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
+    if (device == nullptr) {
+        setError(errorMessage, QStringLiteral("No open device to flush"));
+        return false;
+    }
+#ifdef Q_OS_WIN
+    if (auto* raw = dynamic_cast<WindowsRawDevice*>(device)) {
+        if (!raw->syncToDevice()) {
+            setError(errorMessage, raw->errorString());
+            return false;
+        }
+        return true;
+    }
+#endif
+    if (auto* file = qobject_cast<QFileDevice*>(device)) {
+        if (!file->flush()) {
+            setError(errorMessage, file->errorString());
+            return false;
+        }
+        return true;
+    }
+    return true;
 }
 
 std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QString* errorMessage) {

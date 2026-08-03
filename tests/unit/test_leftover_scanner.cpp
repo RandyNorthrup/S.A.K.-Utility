@@ -26,6 +26,7 @@ using sak::ScanLevel;
 // the security-critical parse/fail-closed logic can be exercised without netsh or a live registry.
 namespace sak {
 bool firewallDumpHeaderMissing(const QStringList& lines);
+void applyFirewallField(const QString& trimmed, LeftoverItem& item);
 #ifdef Q_OS_WIN
 bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
                          std::vector<BYTE>& data_buf,
@@ -78,6 +79,13 @@ private Q_SLOTS:
     void firewallDump_englishParsesReliable();
     void firewallDump_localizedMarksUnreliable();
     void firewallDump_emptyIsHonestNotUnreliable();
+
+    // -- Firewall rule identity capture (narrows the delete to ONE rule) --
+    void firewallField_directionLowercased();
+    void firewallField_profileCaptured();
+    void firewallField_programPathCaptured();
+    void firewallField_programAnyIgnored();
+    void firewallField_unrelatedLineNoOp();
 
     // -- Run-key ERROR_MORE_DATA buffer growth (long values must not be skipped) --
 #ifdef Q_OS_WIN
@@ -539,6 +547,42 @@ void LeftoverScannerTests::firewallDump_emptyIsHonestNotUnreliable() {
     // No rule blocks at all -> honest empty, not a failed parse.
     const QString body = QStringLiteral("No rules match the specified criteria.\n");
     QVERIFY(!sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+// -- Firewall rule identity capture ------------------------------------------
+// applyFirewallField pulls the dir=/profile=/program= identity off a netsh rule block so
+// cleanup deletes only the ONE matching rule instead of every rule sharing the name.
+
+void LeftoverScannerTests::firewallField_directionLowercased() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Direction:                            In"), item);
+    QCOMPARE(item.firewallDirection, QStringLiteral("in"));
+}
+
+void LeftoverScannerTests::firewallField_profileCaptured() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Profiles:  Domain,Private,Public"), item);
+    QCOMPARE(item.firewallProfile, QStringLiteral("Domain,Private,Public"));
+}
+
+void LeftoverScannerTests::firewallField_programPathCaptured() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Program:  C:\\Apps\\Acme\\acme.exe"), item);
+    QCOMPARE(item.firewallProgram, QStringLiteral("C:\\Apps\\Acme\\acme.exe"));
+}
+
+void LeftoverScannerTests::firewallField_programAnyIgnored() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Program:  Any"), item);
+    QVERIFY(item.firewallProgram.isEmpty());
+}
+
+void LeftoverScannerTests::firewallField_unrelatedLineNoOp() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Enabled:  Yes"), item);
+    QVERIFY(item.firewallDirection.isEmpty());
+    QVERIFY(item.firewallProfile.isEmpty());
+    QVERIFY(item.firewallProgram.isEmpty());
 }
 
 #ifdef Q_OS_WIN
