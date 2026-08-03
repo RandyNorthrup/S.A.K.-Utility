@@ -126,7 +126,7 @@ private slots:
     void alignUpToSectorSizeRejectsOverflow();
     void imageFitsDeviceUnderAndExact();
     void imageFitsDeviceRejectsOversize();
-    void imageFitsDeviceUnknownCapacityAllows();
+    void imageFitsDeviceRejectsUnknownCapacity();
 };
 
 // ===========================================================================
@@ -435,11 +435,12 @@ void FlashWorkerTests::imageFitsDeviceRejectsOversize() {
     QVERIFY(!FlashWorker::imageFitsDevice(1LL << 40, (1LL << 40) - 1));
 }
 
-void FlashWorkerTests::imageFitsDeviceUnknownCapacityAllows() {
-    // A device whose capacity cannot be queried (-1) is allowed through:
-    // best-effort, the raw write fails safely at the device boundary.
-    QVERIFY(FlashWorker::imageFitsDevice(1LL << 40, -1));
-    QVERIFY(FlashWorker::imageFitsDevice(0, -1));
+void FlashWorkerTests::imageFitsDeviceRejectsUnknownCapacity() {
+    // Fail closed: a device whose capacity cannot be queried (-1) is REFUSED, not
+    // written best-effort. Assuming "fits" would let an oversized image overwrite
+    // the whole device before failing at end-of-media.
+    QVERIFY(!FlashWorker::imageFitsDevice(1LL << 40, -1));
+    QVERIFY(!FlashWorker::imageFitsDevice(0, -1));
 }
 
 // ===========================================================================

@@ -171,13 +171,22 @@ void FlashWorker::cleanupFlashResources() {
 }
 
 bool FlashWorker::ensureImageFitsTarget() {
-    // Capacity is best-effort -- an unqueryable device (returns -1) still writes,
-    // and the raw write then fails safely at the device boundary.
-    if (imageFitsDevice(m_totalBytes, queryDeviceCapacity())) {
+    // Fail closed: the device capacity MUST be known before writing. A previous
+    // "capacity unknown -> write anyway, it fails at end-of-device" fallback would
+    // let an oversized image overwrite the entire device before failing.
+    const qint64 deviceBytes = queryDeviceCapacity();
+    if (deviceBytes < 0) {
+        sak::logError("Refusing to flash: could not determine target device capacity");
+        Q_EMIT error("Could not determine the target device capacity");
+        cleanupFlashResources();
+        return false;
+    }
+    if (imageFitsDevice(m_totalBytes, deviceBytes)) {
         return true;
     }
-    sak::logError(QString("Image (%1 bytes) exceeds the target device capacity")
+    sak::logError(QString("Image (%1 bytes) exceeds the target device capacity (%2 bytes)")
                       .arg(m_totalBytes)
+                      .arg(deviceBytes)
                       .toStdString());
     Q_EMIT error("Image is larger than the target device");
     cleanupFlashResources();
@@ -211,17 +220,20 @@ bool FlashWorker::openDevice() {
         return false;
     }
 
-    queryDeviceSectorSize();
+    if (!queryDeviceSectorSize()) {
+        closeDevice();
+        return false;
+    }
     return true;
 }
 
-void FlashWorker::queryDeviceSectorSize() {
-    // Default stays 512 (historical assumption). A 4Kn device answers this basic
-    // IOCTL reliably; if it somehow fails there, a 512-padded write is rejected by
-    // WriteFile and the flash aborts with an error -- surfaced, never silent.
-    m_sectorSize = kDeviceSectorSizeBytes;
+bool FlashWorker::queryDeviceSectorSize() {
+    // Fail closed: the logical sector size MUST be known before any sector-padded
+    // write. A fallback to an assumed 512 bytes would let 4K-aligned writes onto a
+    // 4Kn device silently overwrite most of it before the padded tail is rejected.
+    m_sectorSize = 0;
     if (m_deviceHandle == INVALID_HANDLE_VALUE) {
-        return;
+        return false;
     }
 
     DISK_GEOMETRY geometry{};
@@ -238,12 +250,12 @@ void FlashWorker::queryDeviceSectorSize() {
         m_sectorSize = static_cast<qint64>(geometry.BytesPerSector);
         sak::logInfo(
             QString("Target logical sector size: %1 bytes").arg(m_sectorSize).toStdString());
-    } else {
-        sak::logWarning(QString("Could not query sector size (error %1); assuming %2 bytes")
-                            .arg(GetLastError())
-                            .arg(m_sectorSize)
-                            .toStdString());
+        return true;
     }
+    sak::logError(QString("Could not query device sector size (error %1); refusing to flash")
+                      .arg(GetLastError())
+                      .toStdString());
+    return false;
 }
 
 void FlashWorker::closeDevice() {
@@ -291,8 +303,11 @@ qint64 FlashWorker::alignUpToSectorSize(qint64 bytes, qint64 sectorSize) {
 }
 
 bool FlashWorker::imageFitsDevice(qint64 imageBytes, qint64 deviceBytes) {
+    // Fail closed: an unknown/unqueryable capacity (deviceBytes < 0) is NOT treated
+    // as "fits". That fallback would let an oversized image overwrite the whole
+    // device before failing at end-of-media. The image must fit a KNOWN capacity.
     if (deviceBytes < 0) {
-        return true;  // capacity unknown: best-effort, the write fails safely at end-of-device
+        return false;
     }
     return imageBytes <= deviceBytes;
 }

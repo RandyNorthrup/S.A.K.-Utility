@@ -24,22 +24,31 @@ constexpr qint64 kDefaultFlashBufferSizeMb = 256;
 constexpr int kMaxPhysicalDriveNumber = 99;
 constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
 
-// Returns true when the given physical-drive number backs the current OS
-// (system) volume. Used as an engine-level guard so a bad caller cannot raw
-// write the running OS disk. Determined natively (no elevation needed); if the
-// OS disk cannot be identified this returns false and the GUI's removable-only
-// selection remains the gate.
-bool physicalDriveHostsSystemVolume(int driveNumber) {
+// Tri-state result of the OS-disk identity probe. Undetermined MUST be treated
+// as unsafe by callers (fail closed) -- a fallback to "not system" would let a
+// raw write proceed when protection could not be established.
+enum class OsDiskCheck {
+    NotSystem,
+    IsSystem,
+    Undetermined
+};
+
+// Returns whether the given physical-drive number backs the current OS (system)
+// volume. Used as an engine-level guard so a bad caller cannot raw write the
+// running OS disk. Determined natively (no elevation needed). If the OS disk
+// cannot be identified at any step this returns Undetermined; the caller then
+// refuses the write rather than assuming the disk is safe.
+OsDiskCheck physicalDriveOsDiskCheck(int driveNumber) {
     wchar_t winDir[MAX_PATH] = {};
     const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
     if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
-        return false;
+        return OsDiskCheck::Undetermined;
     }
     const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
     HANDLE hVol = CreateFileW(
         volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (hVol == INVALID_HANDLE_VALUE) {
-        return false;
+        return OsDiskCheck::Undetermined;
     }
     constexpr DWORD kMaxExtents = 16;
     const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
@@ -56,14 +65,14 @@ bool physicalDriveHostsSystemVolume(int driveNumber) {
                                     nullptr);
     CloseHandle(hVol);
     if (!ok) {
-        return false;
+        return OsDiskCheck::Undetermined;
     }
     for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
         if (static_cast<int>(extents->Extents[i].DiskNumber) == driveNumber) {
-            return true;
+            return OsDiskCheck::IsSystem;
         }
     }
-    return false;
+    return OsDiskCheck::NotSystem;
 }
 
 // Returns the first target path that appears more than once (case-insensitive,
@@ -534,24 +543,54 @@ bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
 
     CloseHandle(hDevice);
 
-    // Engine-level safety gate: never raw-write the current OS disk. Parse the
-    // physical drive number and refuse if it backs the system volume.
-    QString driveNumStr = devicePath;
-    const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
-    driveNumStr.remove(0,
-                       driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
-    bool numOk = false;
-    const int driveNumber = driveNumStr.toInt(&numOk);
-    if (numOk && physicalDriveHostsSystemVolume(driveNumber)) {
-        sak::logError(QString("Refusing raw write to %1: it backs the OS system volume")
-                          .arg(devicePath)
-                          .toStdString());
-        Q_EMIT flashError(
-            QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
+    // Engine-level safety gate: never raw-write the current OS disk (fail closed).
+    if (!passesOsDiskGuard(devicePath)) {
         return false;
     }
 
     sak::logInfo(QString("Validated device: %1").arg(devicePath).toStdString());
+    return true;
+}
+
+bool FlashCoordinator::passesOsDiskGuard(const QString& devicePath) {
+    // Parse the physical drive number and refuse if it backs the system volume OR
+    // if the OS-disk identity cannot be established -- no fallback to "assume safe",
+    // which would allow a write when protection is unproven.
+    QString driveNumStr = devicePath;
+    const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
+    const int prefixIdx = driveNumStr.lastIndexOf(physicalDrivePrefix);
+    bool numOk = false;
+    int driveNumber = -1;
+    if (prefixIdx >= 0) {
+        driveNumStr.remove(0, prefixIdx + physicalDrivePrefix.size());
+        driveNumber = driveNumStr.toInt(&numOk);
+    }
+    if (!numOk) {
+        // Cannot parse the physical-drive number -> cannot run the OS-disk guard.
+        sak::logError(QString("Refusing raw write to %1: cannot parse a PhysicalDrive number "
+                              "for the OS-disk safety check")
+                          .arg(devicePath)
+                          .toStdString());
+        Q_EMIT flashError(QString("Refusing to write %1: unable to verify it is not the OS disk")
+                              .arg(devicePath));
+        return false;
+    }
+    const OsDiskCheck osCheck = physicalDriveOsDiskCheck(driveNumber);
+    if (osCheck != OsDiskCheck::NotSystem) {
+        const bool undetermined = (osCheck == OsDiskCheck::Undetermined);
+        sak::logError(QString("Refusing raw write to %1: %2")
+                          .arg(devicePath,
+                               undetermined ? QStringLiteral("OS system-disk identity could not be "
+                                                             "established")
+                                            : QStringLiteral("it backs the OS system volume"))
+                          .toStdString());
+        Q_EMIT flashError(
+            undetermined
+                ? QString("Refusing to write %1: could not verify it is not the OS disk")
+                      .arg(devicePath)
+                : QString("Refusing to write %1: it is the current OS disk").arg(devicePath));
+        return false;
+    }
     return true;
 }
 

@@ -213,8 +213,9 @@ private:
     bool writeChunk(const QByteArray& buffer, qint64 bytesRead);
     bool prepareSourceChecksum();
     /// @brief Query the target's logical sector size (IOCTL_DISK_GET_DRIVE_GEOMETRY)
-    /// @note Sets m_sectorSize; keeps the 512-byte default if the query fails
-    void queryDeviceSectorSize();
+    /// @return true and sets m_sectorSize on success; false (fail closed) if the
+    ///         size cannot be determined -- no fallback to an assumed 512 bytes.
+    [[nodiscard]] bool queryDeviceSectorSize();
     /// @brief Query the target device's total capacity (IOCTL_DISK_GET_LENGTH_INFO)
     /// @return Capacity in bytes, or -1 if it cannot be determined
     qint64 queryDeviceCapacity();

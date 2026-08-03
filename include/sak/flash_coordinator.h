@@ -246,6 +246,11 @@ private:
     /// @brief Validate one target device (accessible, valid disk, not the OS disk).
     /// @note Emits flashError() on rejection.
     bool validateSingleTarget(const QString& devicePath);
+    /// @brief Fail-closed OS-disk guard: true only when devicePath is provably NOT
+    ///        the running OS disk. Refuses (logs + emits flashError, returns false)
+    ///        on an unparseable drive number, a system-volume disk, or an
+    ///        indeterminate probe -- never assumes "safe".
+    bool passesOsDiskGuard(const QString& devicePath);
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();
     /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at

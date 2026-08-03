@@ -8,10 +8,11 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QStandardPaths>
+#include <QProcessEnvironment>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -276,23 +277,29 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
 std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     std::vector<AppInfo> apps;
 
-    // Prefer bundled portable choco, fall back to system PATH
-    QString choco_path;
+    // Bundled portable choco ONLY. A portable technician tool must never depend on
+    // (or require the install of) a Chocolatey on the serviced machine, and must
+    // never read the system %ProgramData%\chocolatey store. If the bundled choco is
+    // absent the scan simply reports no Chocolatey packages -- it never falls back
+    // to a PATH choco.
     const auto& tools = BundledToolsManager::instance();
-    if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
-        choco_path = tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
-    } else {
-        choco_path = QStandardPaths::findExecutable(QStringLiteral("choco"));
-        if (choco_path.isEmpty()) {
-            sak::logWarning("Chocolatey not found (bundled or system PATH)");
-            return apps;
-        }
+    if (!tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
+        sak::logWarning("Bundled Chocolatey not present; skipping Chocolatey package scan");
+        return apps;
     }
+    const QString choco_path = tools.toolPath(QStringLiteral("chocolatey"),
+                                              QStringLiteral("choco.exe"));
 
-    const auto result = sak::runProcess(
+    // Pin ChocolateyInstall to the bundled portable root so `choco list` reads OUR
+    // store, not the system one (matches OfflineDeploymentWorker/ChocolateyManager).
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(choco_path).absolutePath());
+
+    const auto result = sak::runProcessWithEnvironment(
         choco_path,
         {QStringLiteral("list"), QStringLiteral("--local-only"), QStringLiteral("--limit-output")},
-        sak::kTimeoutProcessMediumMs);
+        sak::kTimeoutProcessMediumMs,
+        env);
     if (!result.succeeded()) {
         sak::logWarning(
             "Chocolatey package scan failed/timed out after 10s -- choco may not be installed "
