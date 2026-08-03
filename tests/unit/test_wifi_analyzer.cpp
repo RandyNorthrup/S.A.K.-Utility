@@ -45,6 +45,8 @@ private Q_SLOTS:
     void bssSecurity_wpa3RsnSae();
     void bssSecurity_evilTwinOpenStaysInsecure();
     void bssSecurity_truncatedIeNoCrash();
+    void bssSecurity_emptyRsnPayloadNotSecure();
+    void bssSecurity_rsnInvalidVersionNotSecure();
 
     // ── lookupVendor (once-init OUI table, B9-14) ─────────────────
     void lookupVendor_knownFallbackPrefix();
@@ -241,6 +243,25 @@ void TestWiFiAnalyzer::bssSecurity_truncatedIeNoCrash() {
     // Malformed IE claiming a length past the buffer end must not over-read; the
     // walk bails and falls back to the Privacy bit (here clear => Open).
     const unsigned char ie[] = {48, 50, 0x01, 0x00};
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(false, ie, sizeof(ie));
+    QVERIFY(!sec.isSecure);
+    QCOMPARE(sec.authentication, QStringLiteral("Open"));
+}
+
+// A zero-length RSN IE payload must NOT be trusted as WPA2-secure on element-id
+// presence alone (codex-review-3). With no Privacy bit it resolves to Open.
+void TestWiFiAnalyzer::bssSecurity_emptyRsnPayloadNotSecure() {
+    const unsigned char ie[] = {48, 0};  // RSN id, length 0 -> no version field
+    const auto sec = WiFiAnalyzer::deriveBssSecurity(false, ie, sizeof(ie));
+    QVERIFY(!sec.isSecure);
+    QCOMPARE(sec.authentication, QStringLiteral("Open"));
+}
+
+// An RSN IE whose version field is not 1 (the only defined version) is garbage
+// and must not be labelled WPA2-secure.
+void TestWiFiAnalyzer::bssSecurity_rsnInvalidVersionNotSecure() {
+    // RSN id, length 6, version=2 (invalid), then a zeroed group-cipher suite.
+    const unsigned char ie[] = {48, 6, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
     const auto sec = WiFiAnalyzer::deriveBssSecurity(false, ie, sizeof(ie));
     QVERIFY(!sec.isSecure);
     QCOMPARE(sec.authentication, QStringLiteral("Open"));

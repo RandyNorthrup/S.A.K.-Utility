@@ -36,10 +36,16 @@ private Q_SLOTS:
     // Codex-2 disk:564: a too-small test-file size must fail closed before any
     // offset arithmetic (max_offset underflows at 0).
     void execute_undersizedTestFile_failsClosed();
+    // Codex-3 disk:214-228: an absurdly large test-file size must fail closed before
+    // total_bytes = size_mb * 1 MiB can wrap size_t.
+    void execute_oversizedTestFile_failsClosed();
     // Codex-2 diagnostic_types:254: configured block sizes are wired into the
-    // I/O sizing via effectiveBlockBytes -- validate/clamp/align, fail closed.
+    // I/O sizing via effectiveBlockBytes -- validate/align, fail closed.
     void effectiveBlockBytes_failsClosedOnNonpositive();
-    void effectiveBlockBytes_clampsAndAligns();
+    // Codex-3 disk:398-412: an out-of-range block size is REJECTED (0), not clamped
+    // to a bound; inverted bounds (min>max) fail closed instead of invoking clamp UB.
+    void effectiveBlockBytes_rejectsOutOfRange();
+    void effectiveBlockBytes_acceptsInRangeAndAligns();
 };
 
 void TestDiskBenchmarkWorker::construction_default() {
@@ -146,6 +152,24 @@ void TestDiskBenchmarkWorker::execute_undersizedTestFile_failsClosed() {
     QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
 }
 
+// Codex-3 disk:214-228: test_file_size_mb above the maximum would let
+// total_bytes = size_mb * 1 MiB wrap size_t and underflow the offset math. execute()
+// must reject it up front with invalid_argument. The drive path is non-empty so
+// validation reaches the size check, which returns before any disk I/O happens.
+void TestDiskBenchmarkWorker::execute_oversizedTestFile_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    // Just above the 1 TiB (1024*1024 MB) cap; still well within uint64 so this is a
+    // pure validation check, not itself a wrap.
+    config.test_file_size_mb = (static_cast<uint64_t>(1024) * 1024) + 1;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
 // A nonpositive configured block size is invalid: effectiveBlockBytes must
 // return 0 (fail closed) so execute() aborts rather than running a benchmark
 // with a degenerate block size.
@@ -154,18 +178,29 @@ void TestDiskBenchmarkWorker::effectiveBlockBytes_failsClosedOnNonpositive() {
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(-4, 4, 64), static_cast<size_t>(0));
 }
 
-// In-range values convert KiB->bytes; out-of-range values clamp to [min,max];
-// non-sector-multiple sizes round up to the 4096-byte sector boundary so direct
-// I/O (FILE_FLAG_NO_BUFFERING) stays aligned.
-void TestDiskBenchmarkWorker::effectiveBlockBytes_clampsAndAligns() {
+// Codex-3 disk:398-412: an out-of-range positive request is REJECTED (returns 0),
+// never silently coerced to the nearest bound -- coercing a wrong input to a default
+// is the fallback the standing rule forbids. Inverted/invalid bounds also fail closed
+// rather than invoke std::clamp UB (which is undefined when min > max).
+void TestDiskBenchmarkWorker::effectiveBlockBytes_rejectsOutOfRange() {
+    // Above max and below min both fail closed (previously clamped to a bound).
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4096, 4, 64), static_cast<size_t>(0));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1, 4, 64), static_cast<size_t>(0));
+    // Inverted bounds (min > max) and a nonpositive min fail closed, never clamp-UB.
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 64, 4), static_cast<size_t>(0));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 0, 64), static_cast<size_t>(0));
+}
+
+// In-range values convert KiB->bytes; non-sector-multiple sizes round up to the
+// 4096-byte sector boundary so direct I/O (FILE_FLAG_NO_BUFFERING) stays aligned.
+void TestDiskBenchmarkWorker::effectiveBlockBytes_acceptsInRangeAndAligns() {
     // Config defaults map to their expected byte sizes.
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1024, 4, 8192),
              static_cast<size_t>(1024 * 1024));
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4, 4, 64), static_cast<size_t>(4096));
-    // Above max clamps to max (64 KiB); below min clamps to min (4 KiB).
-    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4096, 4, 64), static_cast<size_t>(64 * 1024));
-    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1, 4, 64), static_cast<size_t>(4096));
-    // A non-sector-aligned request (5 KiB = 5120 B) rounds up to 8192.
+    // The min and max bounds themselves are accepted (inclusive range).
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(64, 4, 64), static_cast<size_t>(64 * 1024));
+    // A non-sector-aligned in-range request (5 KiB = 5120 B) rounds up to 8192.
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(5, 4, 64), static_cast<size_t>(8192));
 }
 

@@ -308,6 +308,42 @@ void appendPortRange(QVector<uint16_t>& ports, int start, int end) {
         ports.append(static_cast<uint16_t>(p));
     }
 }
+
+// True if any comma-separated token in the expression is neither a numeric port
+// nor a numeric range -- i.e. a named service (e.g. "RPC", "RPC-EPMap") that
+// parsePorts silently drops. portsOverlap needs this because "80,RPC" and
+// "443,RPC" parse to [80] vs [443] (disjoint) yet share the named RPC scope, so
+// the pair cannot be proven disjoint and must be treated as overlapping (B9-11).
+[[nodiscard]] bool portExprHasUnknownToken(const QString& portStr) {
+    const auto parts = portStr.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const auto& part : parts) {
+        const auto trimmed = part.trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        int start = 0;
+        int end = 0;
+        if (tryParsePortRange(trimmed, start, end)) {
+            continue;
+        }
+        uint16_t port = 0;
+        if (!tryParsePortValue(trimmed, port)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True if the two parsed port sets share at least one concrete port. Split out of
+// portsOverlap so that function stays within the complexity budget.
+[[nodiscard]] bool portVectorsIntersect(const QVector<uint16_t>& a, const QVector<uint16_t>& b) {
+    for (const auto port : a) {
+        if (b.contains(port)) {
+            return true;
+        }
+    }
+    return false;
+}
 }  // namespace
 
 FirewallRuleAuditor::FirewallRuleAuditor(QObject* parent) : QObject(parent) {}
@@ -329,12 +365,33 @@ void FirewallRuleAuditor::enumerateRules() {
 }
 
 void FirewallRuleAuditor::detectConflicts() {
+    // Standalone analysis must not emit a clean result over a rule set that came
+    // from a FAILED enumeration -- that would look like "no conflicts" on a broken
+    // audit (fail-open). fullAudit gates on this too (B9-09).
+    if (!m_enumerationOk) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot detect conflicts: the last firewall enumeration failed."));
+        return;
+    }
     m_cancelled.store(false);
     auto conflicts = findConflicts(m_rules);
+    if (m_cancelled.load()) {
+        // findConflicts breaks on cancel with PARTIAL results; do not emit them as
+        // a complete analysis. Surface the cancellation instead.
+        Q_EMIT errorOccurred(QStringLiteral("Firewall conflict detection was cancelled."));
+        return;
+    }
     Q_EMIT conflictsDetected(conflicts);
 }
 
 void FirewallRuleAuditor::analyzeGaps() {
+    // Same fail-closed gate as detectConflicts: never emit a clean gap result over
+    // a failed enumeration's (stale/empty) rule set.
+    if (!m_enumerationOk) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot analyze gaps: the last firewall enumeration failed."));
+        return;
+    }
     m_cancelled.store(false);
     auto gaps = findGaps(m_rules);
     Q_EMIT gapsAnalyzed(gaps);
@@ -345,7 +402,11 @@ void FirewallRuleAuditor::fullAudit() {
     m_rules = enumerateViaCOM();
 
     if (m_cancelled.load()) {
-        Q_EMIT auditComplete({}, {}, {});
+        // A cancelled enumeration yields a TRUNCATED rule set. Emitting
+        // auditComplete({},{},{}) let the controller cache/log it as a clean
+        // "0 rules, 0 conflicts, 0 gaps" audit (fail-open). Surface the
+        // cancellation and emit nothing, mirroring the enumeration-failed path.
+        Q_EMIT errorOccurred(QStringLiteral("Firewall audit was cancelled before completion."));
         return;
     }
     if (!m_enumerationOk) {
@@ -357,6 +418,14 @@ void FirewallRuleAuditor::fullAudit() {
 
     auto conflicts = findConflicts(m_rules);
     auto gaps = findGaps(m_rules);
+
+    if (m_cancelled.load()) {
+        // Cancelled DURING conflict/gap analysis -> conflicts/gaps are partial.
+        // Surface the cancellation instead of presenting partial results as a
+        // complete audit.
+        Q_EMIT errorOccurred(QStringLiteral("Firewall audit was cancelled before completion."));
+        return;
+    }
 
     Q_EMIT auditComplete(m_rules, conflicts, gaps);
 }
@@ -370,8 +439,10 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByPort(
             continue;
         }
 
-        const auto ports = parsePorts(rule.localPorts);
-        if (ports.contains(port) || rule.localPorts == QStringLiteral("*")) {
+        // Use the shared coverage helper so an empty LocalPorts (Windows default
+        // "no port restriction" == ALL ports) matches too, not just literal "*"
+        // (B9-12): an all-ports rule genuinely applies to `port`.
+        if (localPortsCoverPort(rule.localPorts, port)) {
             matching.append(rule);
         }
     }
@@ -542,6 +613,12 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
 }
 
 bool protocolsOverlap(FirewallRule::Protocol proto_a, FirewallRule::Protocol proto_b) {
+    // Two Other==Other rules (e.g. GRE vs ESP) may be different unmodeled protocols
+    // yet compare equal, producing a phantom conflict. This is a conservative
+    // OVER-report that never HIDES a real conflict, so it stays fail-safe. Proving
+    // them distinct would require storing the raw protocol number on FirewallRule
+    // (network_diagnostic_types.h), and treating Other!=Other would instead HIDE a
+    // real GRE-vs-GRE conflict -- a fail-open we must not introduce (finding 7).
     if (proto_a == proto_b) {
         return true;
     }
@@ -704,7 +781,11 @@ void FirewallRuleAuditor::checkWildcardGap(const QVector<FirewallRule>& rules,
         if (!rule.enabled || rule.action != FirewallRule::Action::Allow) {
             continue;
         }
-        if (rule.applicationPath.isEmpty() && rule.localPorts == QStringLiteral("*")) {
+        // An empty LocalPorts is the Windows default "no port restriction" == ALL
+        // ports, exactly as permissive as literal "*". Counting only "*" undercounted
+        // the equally-permissive empty-all-ports rules (B9-12).
+        if (rule.applicationPath.isEmpty() &&
+            (rule.localPorts.isEmpty() || rule.localPorts == QStringLiteral("*"))) {
             wildcardRules++;
         }
     }
@@ -821,6 +902,16 @@ bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {
         return true;
     }
 
+    // A MIXED named/numeric expression (e.g. "80,RPC" vs "443,RPC") parses to
+    // disjoint numeric sets but shares the named scope, which parsePorts drops. If
+    // either side carries an unrecognized token we cannot prove disjointness, so
+    // fail SAFE to overlap. The all-tokens-unknown case is also covered here, so
+    // the isEmpty() fail-safe below only remains for defensive belt-and-suspenders
+    // (e.g. an expression of only separators) (B9-11).
+    if (portExprHasUnknownToken(a) || portExprHasUnknownToken(b)) {
+        return true;
+    }
+
     const auto portsA = parsePorts(a);
     const auto portsB = parsePorts(b);
 
@@ -833,12 +924,7 @@ bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {
         return true;
     }
 
-    for (const auto port : portsA) {
-        if (portsB.contains(port)) {
-            return true;
-        }
-    }
-    return false;
+    return portVectorsIntersect(portsA, portsB);
 }
 
 }  // namespace sak

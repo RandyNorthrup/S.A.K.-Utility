@@ -16,6 +16,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <limits>
+
 #include <zlib.h>
 
 #ifdef _WIN32
@@ -111,6 +113,12 @@ private Q_SLOTS:
     void firstInvalidExcludePattern_detectsBadRegex();
     void invalidExcludePattern_failsClosed();
     void unreadableFile_isCounted();
+
+    // ── Codex review 3 (search) ──
+    void missingRoot_failsClosed();
+    void binarySearch_byteExactOffsetsAndArbitraryBytes();
+    void negativeContextLines_noCrash();
+    void archiveUnreadable_isCounted();
 
 private:
     void createTextFixtures();
@@ -1322,6 +1330,120 @@ void AdvancedSearchWorkerTests::unreadableFile_isCounted() {
     QVERIFY(finished);
 
     // The locked file could not be read -> counted, not a silent false negative.
+    QCOMPARE(worker.filesUnreadable(), 1);
+}
+
+// ============================================================================
+// Codex review 3 (search)
+// ============================================================================
+
+void AdvancedSearchWorkerTests::missingRoot_failsClosed() {
+    // A nonexistent local directory root must fail closed, not fall through to
+    // QDirIterator and report a clean "0 matches" (a false negative).
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/no_such_directory_xyz123";
+    config.pattern = QStringLiteral("Hello");
+    config.exclude_patterns.clear();
+
+    AdvancedSearchWorker worker(config);
+    QSignalSpy failedSpy(&worker, &WorkerBase::failed);
+    worker.start();
+    QVERIFY(worker.wait(10'000));
+
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy[0][0].toInt(), static_cast<int>(sak::error_code::file_not_found));
+}
+
+void AdvancedSearchWorkerTests::binarySearch_byteExactOffsetsAndArbitraryBytes() {
+    // File: two bytes that are invalid UTF-8 (0xFF 0xFE) followed by "TOKEN".
+    QByteArray bytes;
+    bytes.append(static_cast<char>(0xFF));
+    bytes.append(static_cast<char>(0xFE));
+    bytes.append("TOKEN");
+    const QString path = m_temp_dir.path() + "/bytes.bin";
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QCOMPARE(f.write(bytes), static_cast<qint64>(bytes.size()));
+        f.close();
+    }
+
+    // (a) The reported byte offset must equal the raw file offset (2), not the
+    // UTF-8 re-encoded offset the old fromUtf8() path produced.
+    {
+        SearchConfig config;
+        config.root_path = path;
+        config.pattern = QStringLiteral("TOKEN");
+        config.hex_search = true;
+        config.exclude_patterns.clear();
+
+        auto matches = runWorker(config);
+        QCOMPARE(matches.size(), 1);
+        QCOMPARE(matches[0].line_number, 2);  // byte offset of 'T'
+    }
+
+    // (b) An arbitrary non-UTF-8 byte must be matchable via a regex \xNN escape;
+    // under the old UTF-8 decode 0xFF collapsed to U+FFFD and never matched.
+    {
+        SearchConfig config;
+        config.root_path = path;
+        config.pattern = QStringLiteral("\\xff");
+        config.use_regex = true;
+        config.hex_search = true;
+        config.exclude_patterns.clear();
+
+        auto matches = runWorker(config);
+        QVERIFY(matches.size() >= 1);
+        QCOMPARE(matches[0].line_number, 0);  // 0xFF is the first byte
+    }
+}
+
+void AdvancedSearchWorkerTests::negativeContextLines_noCrash() {
+    // INT_MIN context_lines used to make line_index - ctx overflow (UB). It must
+    // now be clamped to 0: the search still succeeds with no context lines.
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/hello.txt";
+    config.pattern = QStringLiteral("line 2");
+    config.context_lines = std::numeric_limits<int>::min();
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].context_before.size(), 0);
+    QCOMPARE(matches[0].context_after.size(), 0);
+}
+
+void AdvancedSearchWorkerTests::archiveUnreadable_isCounted() {
+    // An archive that cannot be opened must be counted as unreadable, not
+    // reported as an archive that genuinely holds no match.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString zipPath = QDir(dir.path()).filePath(QStringLiteral("locked.zip"));
+    {
+        QFile z(zipPath);
+        QVERIFY(z.open(QIODevice::WriteOnly));
+        z.write(createMinimalZip(QStringLiteral("readme.txt"), QByteArray("hello zip")));
+        z.close();
+    }
+
+    const std::wstring wpath = zipPath.toStdWString();
+    HANDLE handle = CreateFileW(
+        wpath.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    QVERIFY(handle != INVALID_HANDLE_VALUE);
+
+    SearchConfig config;
+    config.root_path = zipPath;
+    config.pattern = QStringLiteral("hello");
+    config.search_in_archives = true;
+    config.exclude_patterns.clear();
+
+    AdvancedSearchWorker worker(config);
+    worker.start();
+    const bool finished = worker.wait(10'000);
+    CloseHandle(handle);
+    QVERIFY(finished);
+
     QCOMPARE(worker.filesUnreadable(), 1);
 }
 

@@ -24,6 +24,10 @@
 namespace sak {
 
 inline constexpr int kAdvancedSearchDefaultContextLines = 2;
+/// Upper bound for context_lines. A negative value silently inverts the context
+/// window and INT_MIN overflows the line_index +/- ctx arithmetic (UB), so the
+/// worker clamps the configured value into [0, this] before use.
+inline constexpr int kAdvancedSearchMaxContextLines = 1000;
 inline constexpr int kAdvancedSearchDefaultFileSizeMb = 50;
 inline constexpr qint64 kAdvancedSearchDefaultFileSizeBytes =
     static_cast<qint64>(kAdvancedSearchDefaultFileSizeMb) * kBytesPerMB;
@@ -115,7 +119,16 @@ struct SearchPreferences {
 inline const QSet<QString> kImageExtensions = {
     "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp", "heic", "heif"};
 
-/// @brief File extensions supporting metadata extraction
+/// @brief File extensions routed through the file-metadata search path.
+///
+/// Depth of extraction is NOT uniform across this set. Only a subset has a
+/// format-specific parser: pdf (leading Info-dictionary region only), the
+/// ZIP-based Office/OpenDocument/EPUB formats (docx/xlsx/pptx/odt/ods/odp/epub),
+/// and mp3 (ID3v2). Every other extension here (audio/video containers,
+/// databases, json/csv/xml, rtf, screenwriting) receives filesystem metadata
+/// only (name, size, type, timestamps) -- still searchable, but not a deep
+/// content/tag parse. They remain in the set so they are handled here rather
+/// than being byte-searched as opaque binaries.
 inline const QSet<QString> kFileMetadataExtensions = {
     // Documents
     "pdf",

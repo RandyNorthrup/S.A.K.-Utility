@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <thread>
@@ -54,6 +55,10 @@ constexpr uint64_t kInitialMemoryPatternSeed = 0xCA'FE'BA'BEULL;
 constexpr size_t kDiskBufferAlignment = 4096;
 constexpr uint32_t kDiskStressRandomSeed = 0xD15CU;
 constexpr uint64_t kGpuHealthCheckMask = 0xFFULL;
+// Upper bound on the requested run length. duration_minutes * kSecondsPerMinute is
+// computed as int; capping at one week keeps total_seconds well within int range so
+// the monitor-loop bound never overflows. A longer request is rejected, not clamped.
+constexpr int kMaxStressDurationMinutes = 7 * 24 * 60;  // 10080 minutes
 
 /// @brief Pattern-fill a memory region with a known repeating pattern
 /// @param data Pointer to memory
@@ -68,14 +73,18 @@ void patternFill(volatile uint64_t* data, size_t count, uint64_t seed) {
 /// @brief Verify pattern integrity
 /// @return Number of mismatches
 int patternVerify(const volatile uint64_t* data, size_t count, uint64_t seed) {
-    int errors = 0;
+    size_t errors = 0;
     for (size_t i = 0; i < count; ++i) {
         const uint64_t expected = seed ^ (i * kMemoryPatternMultiplier);
         if (data[i] != expected) {
             ++errors;
         }
     }
-    return errors;
+    // A single >16 GiB pass has > INT_MAX words, so a fully-corrupt pass would
+    // overflow the signed int result type (and StressTestResult::memory_pattern_errors,
+    // whose type is fixed in the public header). Saturate instead of invoking UB.
+    constexpr size_t kMaxInt = static_cast<size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(errors, kMaxInt));
 }
 
 constexpr int kStatusIntervalSec = 5;  // Report status every 5 seconds
@@ -143,8 +152,13 @@ HANDLE openClaimedStressFile(const std::wstring& path) {
         return INVALID_HANDLE_VALUE;
     }
     BY_HANDLE_FILE_INFORMATION info{};
+    // Fail closed on a reparse point (symlink/junction) OR a file with more than one
+    // hard link: claimUniqueStressFile created a unique regular file (exactly one
+    // link, no reparse attr), so a same-name hard-link swap onto an unrelated target
+    // in the claim->reopen window would raise nNumberOfLinks above one and is rejected
+    // here rather than overwritten.
     if (!GetFileInformationByHandle(h, &info) ||
-        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.nNumberOfLinks != 1) {
         CloseHandle(h);
         return INVALID_HANDLE_VALUE;
     }
@@ -161,6 +175,26 @@ void fillDiskStressBuffer(uint8_t* buf, size_t size) {
 }
 #endif
 
+// Fail closed on a stress config that would do no work or overflow the monitor
+// timer. Every component disabled, or a nonpositive/absurd duration, must be rejected
+// -- such a run launches nothing (or exits the monitor loop immediately) yet
+// computeStressPassed() would otherwise report PASSED. An invalid memory percentage
+// is also rejected so determineTargetMemoryBytes never casts a negative/NaN value.
+std::expected<void, sak::error_code> validateStressConfig(const StressTestConfig& cfg) {
+    if (!cfg.stress_cpu && !cfg.stress_memory && !cfg.stress_disk && !cfg.stress_gpu) {
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    if (cfg.duration_minutes <= 0 || cfg.duration_minutes > kMaxStressDurationMinutes) {
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    // !(x > 0) rejects <= 0 and NaN; the upper check rejects > 100%.
+    if (cfg.stress_memory &&
+        (!(cfg.memory_usage_percent > 0.0) || cfg.memory_usage_percent > sak::kPercentMaxF)) {
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return {};
+}
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -175,6 +209,22 @@ StressTestWorker::StressTestWorker(QObject* parent) : WorkerBase(parent) {}
 
 auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Stress test");
+
+    // Fail closed BEFORE any work on a config that would do nothing yet pass, or whose
+    // duration would overflow the monitor timer. A run that reaches the code below has
+    // at least one component and a sane, non-overflowing duration.
+    if (auto status = validateStressConfig(m_config); !status) {
+        logError(
+            "Stress test: invalid config (cpu:{} mem:{} disk:{} gpu:{} dur:{}min mem%:{:.1f})"
+            " -- refusing to run",
+            m_config.stress_cpu,
+            m_config.stress_memory,
+            m_config.stress_disk,
+            m_config.stress_gpu,
+            m_config.duration_minutes,
+            m_config.memory_usage_percent);
+        return status;
+    }
 
     logInfo("Starting stress test -- CPU:{} Mem:{} Disk:{} GPU:{} Duration:{}min",
             m_config.stress_cpu,
@@ -216,6 +266,10 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
             m_result.duration_seconds,
             m_result.errors_detected);
 
+    // The expected<void> here means "the worker RAN to completion" (matching the disk
+    // benchmark and hardware workers); the PASS/FAIL verdict is m_result.passed and is
+    // delivered via stressTestComplete(m_result). A failing run is NOT an execute()
+    // error -- only a config/setup failure returns std::unexpected above.
     Q_EMIT stressTestComplete(m_result);
     return {};
 }
@@ -316,7 +370,11 @@ bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
     m_current_temp.store(temp, std::memory_order_relaxed);
     updateMaxTemperature(temp);
 
-    // Thermal abort check
+    // Thermal abort check. temp <= 0 (or NaN, for which `temp > 0` is false) means the
+    // sensor is unavailable -- common without admin/OEM drivers. We deliberately do NOT
+    // abort in that case: with no reading there is nothing to protect against, and
+    // failing closed would make stress testing impossible on every machine that cannot
+    // report CPU temperature. This is an intentional accommodation, not a fail-open bug.
     if (temp > 0 && temp >= m_config.thermal_limit_celsius) {
         logWarning("Thermal limit reached: {:.1f} degC >= {:.1f} degC -- aborting",
                    temp,
@@ -405,8 +463,15 @@ bool StressTestWorker::isPrimeStress(uint64_t candidate) const {
 // ============================================================================
 
 int StressTestWorker::runMemoryStress() {
-    constexpr size_t kFallbackMemoryBytes = 512ULL * 1024 * 1024;  // 512 MB
-    const size_t target_bytes = determineTargetMemoryBytes(kFallbackMemoryBytes);
+    // No 512 MiB guessed default: if available RAM cannot be read we fail closed
+    // (count one error) rather than fabricate an allocation size (no-fallbacks rule).
+    // The argument is vestigial -- the signature is fixed in the public header -- and
+    // ignored; determineTargetMemoryBytes returns 0 to signal a query failure.
+    const size_t target_bytes = determineTargetMemoryBytes(0);
+    if (target_bytes == 0) {
+        logError("Memory stress: could not read available RAM -- marking memory stress failed");
+        return 1;
+    }
 
     // Cap at available memory, minimum 64 MB, maximum 16 GB
     constexpr size_t kMaxAlloc = 16ULL * 1024 * 1024 * 1024;
@@ -454,6 +519,11 @@ int StressTestWorker::runMemoryStress() {
 }
 
 size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const {
+    // fallback_bytes is vestigial: the old 512 MiB guessed default was removed per the
+    // no-fallbacks rule. A query failure returns 0 so the caller fails the memory
+    // component closed instead of allocating a fabricated size. memory_usage_percent is
+    // validated in (0, 100] by validateStressConfig(), so the cast below is well-defined.
+    Q_UNUSED(fallback_bytes)
 #ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
@@ -461,12 +531,9 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
         return static_cast<size_t>(static_cast<double>(mem_status.ullAvailPhys) *
                                    (m_config.memory_usage_percent / sak::kPercentMaxF));
     }
-    logWarning(
-        "GlobalMemoryStatusEx failed (error {}), "
-        "using {} MB fallback allocation",
-        GetLastError(),
-        fallback_bytes / sak::kBytesPerMB);
-    return fallback_bytes;
+    logError("GlobalMemoryStatusEx failed (error {}) -- failing memory stress closed",
+             GetLastError());
+    return 0;
 #else
 #if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
     {
@@ -476,14 +543,12 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
             return static_cast<size_t>(static_cast<double>(pages) * static_cast<double>(page_size) *
                                        (m_config.memory_usage_percent / sak::kPercentMaxF));
         }
-        logWarning("sysconf memory query failed, using {} MB fallback",
-                   fallback_bytes / sak::kBytesPerMB);
+        logError("sysconf memory query failed -- failing memory stress closed");
     }
 #else
-    logInfo("Platform memory detection unavailable, using {} MB fallback",
-            fallback_bytes / sak::kBytesPerMB);
+    logError("Platform memory detection unavailable -- failing memory stress closed");
 #endif
-    return fallback_bytes;
+    return 0;
 #endif
 }
 
@@ -514,34 +579,31 @@ void StressTestWorker::runDiskStress() {
     if (wpath.empty()) {
         logError("Disk stress: could not exclusively create test file -- refusing to overwrite");
         m_result.disk_errors = 1;
+        m_error_count.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
     constexpr size_t kBlockSize = 1024 * 1024;          // 1 MB blocks
     constexpr size_t kFileSize = 256ULL * 1024 * 1024;  // 256 MB file
-
-    // Allocate aligned buffer
+    // A disk stress that cannot allocate its buffer did no work: record an error so
+    // the run cannot report PASSED (mirrors the could-not-claim-file guard above).
     auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
     if (!buf) {
-        // Requested disk stress that could not allocate its buffer did no work:
-        // record a disk error so the run cannot report PASSED (mirrors the
-        // could-not-claim-file guard above).
         logError("Disk stress: buffer allocation failed -- marking disk stress failed");
         m_result.disk_errors = 1;
-        DeleteFileW(wpath.c_str());  // remove the file we just claimed
+        m_error_count.fetch_add(1, std::memory_order_relaxed);
+        DeleteFileW(wpath.c_str());
         return;
     }
-
-    // Fill buffer with reproducible pseudo-random data.
     fillDiskStressBuffer(buf, kBlockSize);
 
-    // Pin ONE handle to the claimed file for the whole run instead of re-creating
-    // the guessable path with CREATE_ALWAYS every loop (which would follow a reparse
-    // point swapped in between iterations). See openClaimedStressFile.
+    // Pin ONE handle for the whole run (see openClaimedStressFile) rather than
+    // re-creating the guessable path each loop and following a swapped-in reparse point.
     HANDLE h = openClaimedStressFile(wpath);
     if (h == INVALID_HANDLE_VALUE) {
         logError("Disk stress: could not open claimed test file -- refusing to overwrite");
         m_result.disk_errors = 1;
+        m_error_count.fetch_add(1, std::memory_order_relaxed);
         _aligned_free(buf);
         DeleteFileW(wpath.c_str());
         return;
@@ -549,23 +611,25 @@ void StressTestWorker::runDiskStress() {
 
     uint64_t total_bytes_written = 0;
     int disk_errors = 0;
-
     while (!childrenShouldStop()) {
-        // Rewind and overwrite the same pinned file each pass.
         LARGE_INTEGER zero{};
         if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
-            ++disk_errors;
             logError("Disk stress: failed to rewind test file");
+            ++disk_errors;
+            m_error_count.fetch_add(1, std::memory_order_relaxed);
             break;
         }
-
-        // Write phase
-        disk_errors += writeDiskStressFile(h, buf, kBlockSize, kFileSize, total_bytes_written);
-
-        FlushFileBuffers(h);
+        // writeDiskStressFile durably writes one pass (write + flush); feed its errors
+        // into m_error_count so abort_on_error can stop mid-run (it reads only that).
+        const int pass_errors =
+            writeDiskStressFile(h, buf, kBlockSize, kFileSize, total_bytes_written);
+        if (pass_errors > 0) {
+            disk_errors += pass_errors;
+            m_error_count.fetch_add(pass_errors, std::memory_order_relaxed);
+            break;
+        }
     }
 
-    // Cleanup
     CloseHandle(h);
     _aligned_free(buf);
     DeleteFileW(wpath.c_str());
@@ -588,10 +652,19 @@ int StressTestWorker::writeDiskStressFile(void* file_handle,
     HANDLE h = static_cast<HANDLE>(file_handle);
     for (size_t written = 0; written < fileSize && !childrenShouldStop(); written += blockSize) {
         DWORD bytes_written = 0;
-        if (!WriteFile(h, buf, static_cast<DWORD>(blockSize), &bytes_written, nullptr)) {
+        // A short write (bytes_written < blockSize) with NO_BUFFERING is a real device
+        // error, not partial progress -- count it as a failure rather than as success.
+        if (!WriteFile(h, buf, static_cast<DWORD>(blockSize), &bytes_written, nullptr) ||
+            bytes_written != static_cast<DWORD>(blockSize)) {
             return 1;
         }
         total_bytes_written += bytes_written;
+    }
+    // A durability/stress test must confirm the writes reached the device. An ignored
+    // FlushFileBuffers failure would silently pass a flush failure as a good pass.
+    if (!FlushFileBuffers(h)) {
+        logError("Disk stress: FlushFileBuffers failed -- durability not guaranteed");
+        return 1;
     }
     return 0;
 }
@@ -688,7 +761,9 @@ namespace sak {
 
 bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
 #ifdef SAK_PLATFORM_WINDOWS
-    ctx.d3d11 = LoadLibraryW(L"d3d11.dll");
+    // d3d11.dll is a KnownDLL (always resolved from System32), but pin the search path
+    // explicitly for defense in depth and consistency with the d3dcompiler load.
+    ctx.d3d11 = LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!ctx.d3d11) {
         logWarning("GPU stress: d3d11.dll not available -- skipping");
         return false;
@@ -729,9 +804,13 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
 
 bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
 #ifdef SAK_PLATFORM_WINDOWS
-    ctx.d3dCompiler = LoadLibraryW(L"d3dcompiler_47.dll");
+    // Load from System32 ONLY. d3dcompiler_47.dll is not a KnownDLL and is not always
+    // present in System32, so a plain basename LoadLibrary can fall through the default
+    // search order to the app dir / CWD and load a planted copy -- dangerous when the
+    // tool runs elevated. Fail closed (skip GPU stress) if it is not in System32.
+    ctx.d3dCompiler = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!ctx.d3dCompiler) {
-        logWarning("GPU stress: d3dcompiler_47.dll not available");
+        logWarning("GPU stress: d3dcompiler_47.dll not available in System32");
         return false;
     }
 
@@ -870,6 +949,9 @@ void StressTestWorker::runGpuStress() {
     if (!initGpuDevice(ctx) || !compileGpuShader(ctx) || !createGpuUavBuffer(ctx)) {
         logError("GPU stress: initialization failed -- marking GPU stress failed");
         m_result.gpu_errors = 1;
+        // Feed into the shared counter so abort_on_error can act on a GPU-init failure
+        // (handleStatusUpdate reads only m_error_count), not just the final verdict.
+        m_error_count.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -879,6 +961,7 @@ void StressTestWorker::runGpuStress() {
     // Requested but unsupported here -> not a pass.
     logWarning("GPU stress: not supported on this platform -- marking GPU stress failed");
     m_result.gpu_errors = 1;
+    m_error_count.fetch_add(1, std::memory_order_relaxed);
 #endif
 }
 

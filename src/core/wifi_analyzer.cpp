@@ -110,8 +110,17 @@ constexpr uint16_t kCapabilityPrivacy = 0x0010;  ///< Beacon capability Privacy 
 constexpr int kIeHeaderLen = 2;                  ///< element id + length octets
 constexpr int kSuiteLen = 4;                     ///< OUI(3) + type(1)
 
+constexpr int kRsnVersion = 1;                   ///< the only RSN IE version defined by 802.11
+
 [[nodiscard]] int readLe16(const unsigned char* p) {
     return static_cast<int>(p[0]) | (static_cast<int>(p[1]) << 8);
+}
+
+// A valid RSN IE carries at least the 2-byte Version field, and the only defined
+// RSN version is 1. Reject a zero-length or garbage RSN payload so a malformed
+// beacon is never labelled WPA2-secure on element-id presence alone.
+[[nodiscard]] bool rsnIeIsValid(const unsigned char* d, int len) {
+    return len >= 2 && readLe16(d) == kRsnVersion;
 }
 
 // WPA1 vendor IE payload begins with OUI 00:50:F2 followed by type 0x01.
@@ -163,7 +172,7 @@ struct IeSecurityScan {
             break;
         }
         const unsigned char* data = ie + pos + kIeHeaderLen;
-        if (id == kIeIdRsn) {
+        if (id == kIeIdRsn && rsnIeIsValid(data, len)) {
             scan.rsn = true;
             scan.sae = scan.sae || rsnHasSae(data, len);
         } else if (id == kIeIdVendor && isWpaVendorIe(data, len)) {
@@ -261,8 +270,11 @@ void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& 
             return;
         }
     }
-    encryption = QStringLiteral("Other");
-    is_secure = true;
+    // An unrecognized cipher must NOT be assumed secure. Fail closed with a
+    // neutral label; the authoritative isSecure comes from the beacon IE and
+    // applyAuthAndEncryption only adopts this label when the two classes agree.
+    encryption = QStringLiteral("Unknown");
+    is_secure = false;
 }
 
 void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
@@ -304,10 +316,12 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
     }
 }
 
-// Scan one interface. @p readOk is set true if AT LEAST ONE of the two list reads succeeded
-// (so an empty result is a genuine "no networks"); it stays false only when BOTH reads errored
-// -- e.g. the radio is powered off (ERROR_NDIS_DOT11_POWER_STATE_INVALID) -- which the caller
-// surfaces as an honest scan failure rather than a misleading empty success.
+// Scan one interface. @p readOk is set true ONLY when the BSS-list read succeeds, because that
+// is the sole read that POPULATES `networks` -- the available-network list only annotates entries
+// the BSS read already produced and never adds new ones. Keying readOk on the BSS read means a
+// failed BSS read (e.g. the radio is off, ERROR_NDIS_DOT11_POWER_STATE_INVALID) yields readOk=false
+// even if the available-list read happened to succeed, so the caller surfaces an honest scan
+// failure instead of a misleading empty success.
 constexpr int kScanCompleteTimeoutMs = 4000;  // upper bound on waiting for a scan to finish
 
 void CALLBACK onWlanScanNotification(PWLAN_NOTIFICATION_DATA data, PVOID context) {
@@ -324,7 +338,9 @@ void CALLBACK onWlanScanNotification(PWLAN_NOTIFICATION_DATA data, PVOID context
 // Trigger a scan and wait (bounded) for the driver's ACM scan-complete/scan-fail
 // notification instead of blindly sleeping a fixed interval -- a fixed sleep may be
 // too short (the BSS list read then returns STALE cached results) or wastefully long.
-// Falls back to the fixed sleep only if WlanScan or the notification registration fails.
+// A failed WlanScan, a wait timeout, or WAIT_FAILED are logged so a subsequent stale
+// cache read is surfaced; the fixed sleep is used only when the scan started but we
+// could not register for the completion notification (no signal to wait on).
 void triggerScanAndWait(HANDLE handle, const GUID& guid) {
     HANDLE scanDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     DWORD prevSource = 0;
@@ -338,9 +354,20 @@ void triggerScanAndWait(HANDLE handle, const GUID& guid) {
                                                      &prevSource) == ERROR_SUCCESS;
 
     const DWORD scanStatus = WlanScan(handle, &guid, nullptr, nullptr, nullptr);
+    if (scanStatus != ERROR_SUCCESS) {
+        logWarning("WiFi: WlanScan failed ({}); reading the driver's cached BSS list", scanStatus);
+    }
     if (scanStatus == ERROR_SUCCESS && registered) {
-        WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
-    } else {
+        const DWORD waited = WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
+        if (waited != WAIT_OBJECT_0) {
+            // WAIT_TIMEOUT / WAIT_FAILED: the completion never signalled, so the BSS
+            // list read below may return stale cached results -- surface that.
+            logWarning("WiFi: scan-complete wait did not signal ({}); results may be stale",
+                       waited);
+        }
+    } else if (scanStatus == ERROR_SUCCESS && !registered) {
+        // Scan started but we could not register for the ACM completion notification;
+        // give the driver a bounded moment to refresh before reading its cache.
         QThread::msleep(kForcedScanDelayMs);
     }
 
@@ -379,8 +406,9 @@ void scanInterface(HANDLE handle,
     WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
 
     if (result == ERROR_SUCCESS && netList != nullptr) {
+        // Annotates existing (BSS-derived) networks only; never adds entries, so it
+        // must NOT mark the read successful on its own -- see the function comment.
         applyAvailableNetworkList(*netList, networks);
-        readOk = true;
     }
 }
 
@@ -452,6 +480,11 @@ void seedFallbackVendors(QHash<QString, QString>& db) {
         QHash<QString, QString> table;
         loadOuiDatabaseFile(table);
         if (table.isEmpty()) {
+            // No oui_database.txt shipped/readable beside the app. This is the ONLY
+            // vendor data path that ships, so seed the bundled built-in set (vendor
+            // display is purely cosmetic) -- but surface that the richer file DB was
+            // absent instead of silently substituting it.
+            logInfo("WiFi: OUI text database not found; using the built-in vendor set");
             seedFallbackVendors(table);
         }
         return table;
@@ -528,8 +561,10 @@ void WiFiAnalyzer::scan() {
 }
 
 void WiFiAnalyzer::startContinuousScan(int intervalMs) {
-    if (intervalMs < 0) {
-        sak::logWarning("WiFiAnalyzer::startContinuousScan: ignoring negative interval {}",
+    if (intervalMs <= 0) {
+        // Reject 0 too: a 0 ms timer fires every event-loop turn, spinning the CPU
+        // and hammering the driver. A continuous scan needs a positive interval.
+        sak::logWarning("WiFiAnalyzer::startContinuousScan: ignoring non-positive interval {}",
                         intervalMs);
         return;
     }

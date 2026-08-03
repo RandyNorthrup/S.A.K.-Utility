@@ -157,6 +157,16 @@ void TestFirewallRuleAuditor::portsOverlap_unknownExpressionOverlapsConservative
     // rather than fail-open to no-overlap and hide a conflict.
     QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("RPC"), QStringLiteral("80")));
     QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80"), QStringLiteral("RPC-EPMap")));
+    // A MIXED named/numeric expression parses to a numeric subset that drops the
+    // named token: "80,RPC" -> [80] and "443,RPC" -> [443] look disjoint, but the
+    // shared RPC scope means they are NOT provably disjoint, so they must overlap.
+    // Previously the fail-safe only fired when ALL tokens were unknown, so this
+    // real conflict was silently missed (finding 2).
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80,RPC"), QStringLiteral("443")));
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80,RPC"), QStringLiteral("443,RPC")));
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("443"), QStringLiteral("80,RPC")));
+    // Purely numeric mixed expressions with no shared port are still disjoint.
+    QVERIFY(!FirewallRuleAuditor::portsOverlap(QStringLiteral("80,81"), QStringLiteral("443,444")));
 }
 
 void TestFirewallRuleAuditor::rulesConflict_requiresAllSelectorsToOverlap() {

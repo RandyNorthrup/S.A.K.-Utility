@@ -32,6 +32,7 @@ private Q_SLOTS:
     void volumeDiskMap_parsesArray();
     void volumeDiskMap_parsesSingleObject();
     void volumeDiskMap_dropsNullDiskIndex();
+    void volumeDiskMap_dropsNegativeDiskIndex();
     void volumeDiskMap_dropsEmptyLetter();
     void volumeDiskMap_handlesMalformed();
     // B5-12: WMI failure must not read as an empty-but-successful result.
@@ -39,6 +40,7 @@ private Q_SLOTS:
     void wmiFailure_timeoutExitParseAreFailures();
     void wmiFailure_cancelIsNotFailure();
     void jsonDocToVariantMaps_arrayObjectAndSkips();
+    void jsonDocToVariantMaps_scalarYieldsEmpty();
 };
 
 void TestHardwareInventoryScanner::construction_default() {
@@ -184,6 +186,16 @@ void TestHardwareInventoryScanner::volumeDiskMap_dropsNullDiskIndex() {
     QVERIFY(!map.contains(QStringLiteral("E:")));
 }
 
+// A negative DiskIndex is out-of-range garbage; it must be dropped rather than
+// wrapped into a huge uint32_t disk number (codex-review-3).
+void TestHardwareInventoryScanner::volumeDiskMap_dropsNegativeDiskIndex() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"F:","DiskIndex":-1}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QVERIFY(map.contains(QStringLiteral("C:")));
+    QVERIFY(!map.contains(QStringLiteral("F:")));
+}
+
 void TestHardwareInventoryScanner::volumeDiskMap_dropsEmptyLetter() {
     const QByteArray json = R"([{"Letter":"","DiskIndex":1}])";
     const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
@@ -239,6 +251,16 @@ void TestHardwareInventoryScanner::jsonDocToVariantMaps_arrayObjectAndSkips() {
     const auto mixed = HardwareInventoryScanner::jsonDocToVariantMaps(
         QJsonDocument::fromJson(R"([{"A":1},7,"str"])"));
     QCOMPARE(mixed.size(), 1);
+}
+
+// A syntactically valid but scalar top-level JSON (neither object nor array)
+// yields no instances. wmiQuery treats this unexpected shape as a failure so it
+// is never mistaken for a clean empty inventory (codex-review-3).
+void TestHardwareInventoryScanner::jsonDocToVariantMaps_scalarYieldsEmpty() {
+    QVERIFY(
+        HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson("42")).isEmpty());
+    QVERIFY(HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson(R"("hi")"))
+                .isEmpty());
 }
 
 QTEST_MAIN(TestHardwareInventoryScanner)

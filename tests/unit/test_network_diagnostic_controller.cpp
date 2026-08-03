@@ -6,6 +6,7 @@
 
 #include "sak/network_diagnostic_controller.h"
 
+#include <QSignalSpy>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -21,6 +22,9 @@ private Q_SLOTS:
     void cancel_doesNotCrash();
     void iperfServer_notRunningInitially();
     void lanTransferServer_notRunningInitially();
+    void generateReport_unknownFormat_failsClosed();
+    void runLanTransferTest_durationOverMax_failsClosed();
+    void runLanTransferTest_blockSizeOverMax_failsClosed();
 };
 
 void TestNetworkDiagnosticController::construction_default() {
@@ -58,6 +62,46 @@ void TestNetworkDiagnosticController::iperfServer_notRunningInitially() {
 void TestNetworkDiagnosticController::lanTransferServer_notRunningInitially() {
     NetworkDiagnosticController controller;
     QVERIFY(!controller.isLanTransferServerRunning());
+}
+
+void TestNetworkDiagnosticController::generateReport_unknownFormat_failsClosed() {
+    // Codex-3: an unrecognized format must fail closed (surface an error), not silently
+    // fall back to producing an HTML report.
+    NetworkDiagnosticController controller;
+    QSignalSpy failed(&controller, &NetworkDiagnosticController::errorOccurred);
+    QSignalSpy done(&controller, &NetworkDiagnosticController::reportGenerated);
+
+    controller.generateReport(
+        QStringLiteral("out.xyz"), QStringLiteral("xml"), QString(), QString(), QString());
+
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(done.count(), 0);
+    QVERIFY(!controller.hasActiveOperations());
+    QCOMPARE(controller.currentState(), NetworkDiagnosticController::State::Idle);
+}
+
+void TestNetworkDiagnosticController::runLanTransferTest_durationOverMax_failsClosed() {
+    // Codex-3: an out-of-range duration must fail closed rather than be coerced or overflow
+    // the int duration-ms math. No worker thread must be started.
+    NetworkDiagnosticController controller;
+    QSignalSpy failed(&controller, &NetworkDiagnosticController::errorOccurred);
+
+    controller.runLanTransferTest(QStringLiteral("192.168.0.1"), 5201, 10'000'000, 64);
+
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(!controller.hasActiveOperations());
+}
+
+void TestNetworkDiagnosticController::runLanTransferTest_blockSizeOverMax_failsClosed() {
+    // Codex-3: an out-of-range block size must fail closed rather than overflow the int
+    // block-buffer / socket-queue math. No worker thread must be started.
+    NetworkDiagnosticController controller;
+    QSignalSpy failed(&controller, &NetworkDiagnosticController::errorOccurred);
+
+    controller.runLanTransferTest(QStringLiteral("192.168.0.1"), 5201, 10, 10'000'000);
+
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(!controller.hasActiveOperations());
 }
 
 QTEST_MAIN(TestNetworkDiagnosticController)

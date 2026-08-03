@@ -41,8 +41,13 @@ constexpr unsigned char kBytePatternMask = 0xFF;
 constexpr int kLanUploadPumpIntervalMs = 20;
 constexpr int kLanUploadConnectTimeoutMs = sak::kTimeoutProcessShortMs;
 constexpr int kLanSocketQueueBlocks = 64;
-constexpr int kDefaultLanDurationSec = 10;
-constexpr int kDefaultLanBlockSizeKb = 64;
+// Upper bounds for LAN transfer parameters. A non-GUI API caller (the GUI spinboxes are
+// already bounded) must not pass values that overflow the int block buffer
+// (blockSizeKB * 1024), the int socket-queue threshold (blockSize * kLanSocketQueueBlocks),
+// or the int duration-ms (durationSec * 1000). These caps keep every product well inside
+// INT_MAX: 8192 KB * 1024 * 64 blocks == 536'870'912 < 2^31, 3600 s * 1000 == 3'600'000.
+constexpr int kMaxLanDurationSec = 3600;
+constexpr int kMaxLanBlockSizeKb = 8192;
 // A silent (idle) LAN client socket is closed after this long so an unauthenticated peer
 // cannot hold the single accepted slot open indefinitely without sending data.
 constexpr int kLanIdleTimeoutMs = 30'000;
@@ -159,6 +164,10 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
         return;
     }
 
+    // Drop any prior cached result for this op BEFORE it runs: if this run fails or is
+    // cancelled, the stale prior-run data must not remain eligible for the next report.
+    clearCacheFor(operationState);
+
     cleanupThread(operationState);
     addOperation(operationState);
 
@@ -166,7 +175,11 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
     m_workerThreads.insert(operationState, thread);
 
     // NOTE: No context object -> DirectConnection -> runs in emitting thread (worker).
-    // Capture thread pointer locally to avoid racing with cleanupThread().
+    // Capture thread pointer locally to avoid racing with cleanupThread(). By design the
+    // worker QObject keeps its controller-thread affinity while work() runs synchronously
+    // and blocking on the worker thread; results cross back via queued AutoConnection
+    // signals. This is an intentional blocking-synchronous invocation, not an off-affinity
+    // event-driven use, so the affinity boundary is safe here.
     QObject::connect(thread, &QThread::started, [thread, work]() {
         work();
         thread->quit();  // Exit event loop so thread finishes
@@ -188,17 +201,15 @@ void NetworkDiagnosticController::cleanupThread(State op) {
     QThread* thread = it.value();
     if (thread->isRunning()) {
         thread->quit();
-        constexpr int kThreadQuitTimeoutMs = 5000;
-        if (!thread->wait(kThreadQuitTimeoutMs)) {
-            // The worker ignored the cooperative cancel (cancel() is issued before teardown)
-            // and did not return within the timeout. QThread::terminate() would kill it
-            // mid-syscall and can corrupt shared state or leak held locks, so instead detach
-            // the still-running thread as a bounded safe leak: unparented, ~QObject never
-            // destroys a live QThread (which would abort), and it exits once its work returns.
-            thread->setParent(nullptr);
-            m_workerThreads.erase(it);
-            return;
-        }
+        // We MUST join the worker before returning: the worker's work() lambda dereferences
+        // this controller's unique_ptr members (m_connectivityTester, m_dnsTool, ...), which
+        // are freed immediately after ~NetworkDiagnosticController returns. Detaching a still-
+        // running thread would leave it executing on freed workers (use-after-free). cancel()
+        // is issued before teardown and every worker has a bounded internal timeout, so the
+        // cooperative stop is guaranteed to return; blocking here is the fail-closed choice
+        // (a bounded shutdown delay) over a UAF. terminate() is never used -- it would kill a
+        // worker mid-syscall and corrupt shared state or leak held locks.
+        thread->wait();
     }
     thread->deleteLater();
     m_workerThreads.erase(it);
@@ -209,6 +220,53 @@ void NetworkDiagnosticController::cleanupAllThreads() {
     for (auto op : states) {
         cleanupThread(op);
     }
+}
+
+void NetworkDiagnosticController::clearCacheFor(State op) {
+    switch (op) {
+    case State::ScanningAdapters:
+        m_cachedAdapters.clear();
+        break;
+    case State::RunningPing:
+        m_cachedPing = PingResult{};
+        break;
+    case State::RunningTraceroute:
+        m_cachedTraceroute = TracerouteResult{};
+        break;
+    case State::ScanningPorts:
+        m_cachedPortScan.clear();
+        break;
+    case State::RunningBandwidthTest:
+        m_cachedBandwidth = BandwidthTestResult{};
+        break;
+    case State::ScanningWiFi:
+        m_cachedWifi.clear();
+        break;
+    case State::AuditingFirewall:
+        m_cachedFirewallRules.clear();
+        m_cachedFirewallConflicts.clear();
+        m_cachedFirewallGaps.clear();
+        break;
+    case State::MonitoringConnections:
+        m_cachedConnections.clear();
+        break;
+    case State::BrowsingShares:
+        m_cachedShares.clear();
+        break;
+    default:
+        // RunningDnsQuery deliberately accumulates across queries (append-on-success), and
+        // Idle/report/LAN ops own no result cache -- nothing to clear.
+        break;
+    }
+}
+
+bool NetworkDiagnosticController::canGenerateReport() const {
+    for (auto op : m_activeOps) {
+        if (op != State::MonitoringConnections) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void NetworkDiagnosticController::connectWorkerSignals() {
@@ -750,6 +808,9 @@ void NetworkDiagnosticController::startConnectionMonitor(
     config.filterPort = portFilter;
 
     Q_EMIT logOutput(QStringLiteral("Starting connection monitor (refresh: %1 ms)").arg(refreshMs));
+    // Drop any stale prior-run connections so a monitor that yields nothing this run cannot
+    // surface a previous run's connections in a report.
+    clearCacheFor(State::MonitoringConnections);
     setState(State::MonitoringConnections);
     m_connectionMonitor->startMonitoring(config);
 }
@@ -1036,6 +1097,15 @@ private:
         QObject::connect(m_pumpTimer, &QTimer::timeout, this, [this]() { pump(); });
         QObject::connect(m_socket, &QTcpSocket::bytesWritten, this, [this](qint64) { pump(); });
         QObject::connect(m_socket, &QTcpSocket::connected, this, [this]() { onConnected(); });
+        QObject::connect(m_socket, &QTcpSocket::disconnected, this, [this]() {
+            // The peer closed before the duration elapsed (we close ourselves from finish()).
+            // A premature close means the measured transfer never completed -- fail closed.
+            finish(false,
+                   QStringLiteral("LAN transfer failed: %1:%2 closed the connection before the "
+                                  "test completed")
+                       .arg(m_request.target_addr)
+                       .arg(m_request.port));
+        });
         QObject::connect(m_socket,
                          &QTcpSocket::errorOccurred,
                          this,
@@ -1052,7 +1122,11 @@ private:
     }
 
     void onSocketError(QAbstractSocket::SocketError error) {
-        if (m_finished || error == QAbstractSocket::RemoteHostClosedError) {
+        Q_UNUSED(error)
+        // Every pre-finish socket error (including RemoteHostClosedError -- a peer that closed
+        // early) is a real failure: the transfer never reached its measured duration. Once
+        // finish() has run, m_finished short-circuits the errors our own disconnect emits.
+        if (m_finished) {
             return;
         }
         finish(false, m_socket->errorString());
@@ -1134,11 +1208,18 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
         Q_EMIT errorOccurred(QStringLiteral("Target address cannot be empty"));
         return;
     }
-    if (durationSec < 1) {
-        durationSec = kDefaultLanDurationSec;
+    // Fail closed on out-of-range parameters (surface the real error) rather than coercing
+    // to a default: an oversized value would overflow the int block/queue/duration math.
+    if (durationSec < 1 || durationSec > kMaxLanDurationSec) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("LAN transfer duration must be between 1 and %1 seconds")
+                .arg(kMaxLanDurationSec));
+        return;
     }
-    if (blockSizeKB < 1) {
-        blockSizeKB = kDefaultLanBlockSizeKb;
+    if (blockSizeKB < 1 || blockSizeKB > kMaxLanBlockSizeKb) {
+        Q_EMIT errorOccurred(QStringLiteral("LAN transfer block size must be between 1 and %1 KB")
+                                 .arg(kMaxLanBlockSizeKb));
+        return;
     }
 
     Q_EMIT logOutput(QStringLiteral("Starting LAN transfer test to %1:%2 (%3s, %4 KB blocks)")
@@ -1240,8 +1321,19 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
                                                  const QString& technician,
                                                  const QString& ticket,
                                                  const QString& notes) {
-    if (m_state != State::Idle && m_state != State::MonitoringConnections) {
+    if (!canGenerateReport()) {
         Q_EMIT errorOccurred(QStringLiteral("Another operation is in progress"));
+        return;
+    }
+
+    // Fail closed on an unrecognized format rather than silently defaulting to HTML: an
+    // unsupported request must surface an error, not produce a wrong-format report.
+    const bool is_json = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
+    const bool is_html = (format.compare(QStringLiteral("html"), Qt::CaseInsensitive) == 0);
+    if (!is_json && !is_html) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Unsupported report format '%1' (expected 'html' or 'json')")
+                .arg(format));
         return;
     }
 
@@ -1253,7 +1345,6 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
 
     Q_EMIT statusMessage(QStringLiteral("Generating report..."), 0);
 
-    const bool is_json = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
     runOnThread(
         [this, outputPath, is_json]() {
             if (is_json) {

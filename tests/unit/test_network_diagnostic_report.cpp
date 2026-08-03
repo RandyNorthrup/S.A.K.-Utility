@@ -50,6 +50,8 @@ private Q_SLOTS:
     void html_section_wifiAnalysis();
     void html_section_firewallAudit();
     void html_section_connectionMonitor();
+    void html_adapterFields_htmlEscaped();
+    void html_connectionFields_htmlEscaped();
     void html_section_networkShares();
 
     // ── HTML: Section exclusion ──
@@ -310,6 +312,50 @@ void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("ESTABLISHED")) ||
             html.contains(QStringLiteral("chrome.exe")));
+}
+
+void NetworkDiagnosticReportTests::html_adapterFields_htmlEscaped() {
+    // Codex-3: adapter type/IP/MAC entered the HTML report unescaped (only the name was
+    // escaped). A crafted value must be escaped so it cannot inject markup.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::AdapterConfig});
+
+    NetworkAdapterInfo adapter;
+    adapter.name = QStringLiteral("Ethernet 1");
+    adapter.adapterType = QStringLiteral("<b>Ethernet</b>");
+    adapter.macAddress = QStringLiteral("<script>alert(1)</script>");
+    adapter.ipv4Addresses = {QStringLiteral("10.0.0.1<img>")};
+    adapter.isConnected = true;
+    gen.setAdapterData({adapter});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>alert(1)</script>")));
+    QVERIFY(!html.contains(QStringLiteral("<b>Ethernet</b>")));
+    QVERIFY(!html.contains(QStringLiteral("10.0.0.1<img>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
+}
+
+void NetworkDiagnosticReportTests::html_connectionFields_htmlEscaped() {
+    // Codex-3: connection local/remote address and state entered the HTML report unescaped
+    // (only the process name was escaped). A crafted value must be escaped.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::ActiveConnections});
+
+    ConnectionInfo conn;
+    conn.protocol = ConnectionInfo::Protocol::TCP;
+    conn.localAddress = QStringLiteral("127.0.0.1<img>");
+    conn.localPort = 80;
+    conn.remoteAddress = QStringLiteral("<script>x</script>");
+    conn.remotePort = 443;
+    conn.state = QStringLiteral("<b>ESTABLISHED</b>");
+    conn.processName = QStringLiteral("app.exe");
+    gen.setConnectionData({conn});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>x</script>")));
+    QVERIFY(!html.contains(QStringLiteral("<b>ESTABLISHED</b>")));
+    QVERIFY(!html.contains(QStringLiteral("127.0.0.1<img>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
 }
 
 void NetworkDiagnosticReportTests::html_section_networkShares() {

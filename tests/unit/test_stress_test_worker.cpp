@@ -8,7 +8,20 @@
 
 #include <QtTest/QtTest>
 
+#include <cmath>
+#include <limits>
+
 using namespace sak;
+
+namespace {
+// Exposes the protected execute() so a test can drive the config-validation fast
+// path. Every config used here is INVALID, so execute() fails closed and returns
+// before launching any stress thread -- no CPU/memory/disk/GPU work is done.
+class StressExecProbe : public StressTestWorker {
+public:
+    std::expected<void, sak::error_code> runExecute() { return execute(); }
+};
+}  // namespace
 
 class TestStressTestWorker : public QObject {
     Q_OBJECT
@@ -33,6 +46,12 @@ private Q_SLOTS:
     // B5-13: a requested component that could not run must not report PASSED.
     void computeStressPassed_errorsDetected_fails();
     void resolveCpuThreadCount_neverZero();
+    // Codex-3 stress:176-220: a no-work / bad-duration / bad-memory config must fail
+    // closed in execute() rather than run nothing yet report PASSED.
+    void execute_allComponentsDisabled_failsClosed();
+    void execute_nonPositiveDuration_failsClosed();
+    void execute_excessiveDuration_failsClosed();
+    void execute_invalidMemoryPercent_failsClosed();
 };
 
 void TestStressTestWorker::construction_default() {
@@ -196,6 +215,77 @@ void TestStressTestWorker::resolveCpuThreadCount_neverZero() {
     // Detection failure (0) must never yield 0 threads -> clamp to 1.
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(0, 0), 1);
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(-5, 0), 1);
+}
+
+// Every stress_* flag false does no work, yet computeStressPassed() would report
+// PASSED. execute() must reject it up front with invalid_configuration.
+void TestStressTestWorker::execute_allComponentsDisabled_failsClosed() {
+    StressExecProbe worker;
+    StressTestConfig config;
+    config.stress_cpu = false;
+    config.stress_memory = false;
+    config.stress_disk = false;
+    config.stress_gpu = false;
+    config.duration_minutes = 10;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()),
+             static_cast<int>(sak::error_code::invalid_configuration));
+}
+
+// duration_minutes <= 0 exits the monitor loop immediately (no work) yet passes.
+// execute() must reject it with invalid_argument.
+void TestStressTestWorker::execute_nonPositiveDuration_failsClosed() {
+    StressExecProbe worker;
+    StressTestConfig config;
+    config.stress_cpu = true;
+    config.duration_minutes = 0;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// An absurd duration would overflow duration_minutes * kSecondsPerMinute (int).
+// execute() must reject it rather than run with a wrapped monitor bound.
+void TestStressTestWorker::execute_excessiveDuration_failsClosed() {
+    StressExecProbe worker;
+    StressTestConfig config;
+    config.stress_cpu = true;
+    config.duration_minutes = std::numeric_limits<int>::max();
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// A negative/NaN/over-100 memory_usage_percent would corrupt the target-bytes cast.
+// With memory stress requested, execute() must reject an invalid percentage.
+void TestStressTestWorker::execute_invalidMemoryPercent_failsClosed() {
+    StressExecProbe worker;
+    StressTestConfig config;
+    config.stress_cpu = false;
+    config.stress_memory = true;
+    config.duration_minutes = 10;
+    config.memory_usage_percent = std::nan("");
+    worker.setConfig(config);
+
+    const auto nan_result = worker.runExecute();
+    QVERIFY(!nan_result.has_value());
+    QCOMPARE(static_cast<int>(nan_result.error()),
+             static_cast<int>(sak::error_code::invalid_argument));
+
+    config.memory_usage_percent = -5.0;
+    worker.setConfig(config);
+    QVERIFY(!worker.runExecute().has_value());
+
+    config.memory_usage_percent = 150.0;
+    worker.setConfig(config);
+    QVERIFY(!worker.runExecute().has_value());
 }
 
 QTEST_MAIN(TestStressTestWorker)

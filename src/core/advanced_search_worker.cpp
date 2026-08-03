@@ -18,7 +18,11 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <future>
+#include <memory>
+#include <thread>
 
 #include <zlib.h>
 
@@ -66,6 +70,32 @@ constexpr int kId3SizeByte2 = 8;
 constexpr int kId3SizeByte3 = 9;
 constexpr qint64 kDefaultBinarySearchBytes = 100LL * sak::kBytesPerMB;
 constexpr int kTargetSearchBrowseMaxEntries = 10'000;
+
+/// @brief Whether searchTargetFile would only read a prefix of @p size_bytes.
+///
+/// Truncation happens solely when the caller left max_file_size unlimited (<=0):
+/// searchTargetFile then caps the read at kDefaultBinarySearchBytes. With a
+/// positive max_file_size, oversized files are dropped up front by
+/// shouldSkipTargetFile and never read. A truncated read searches only the head,
+/// so a real match past the cap would look like a clean "not found" -- the scan
+/// must be marked incomplete rather than reported as authoritative.
+[[nodiscard]] bool targetReadWouldTruncate(qint64 max_file_size, uint64_t size_bytes) {
+    return max_file_size <= 0 && size_bytes > static_cast<uint64_t>(kDefaultBinarySearchBytes);
+}
+
+/// @brief Validate a local (non-target, non-network) directory root before it is
+///        iterated: it must exist, be a directory, and be readable. Returns the
+///        fail-closed error code, or nullopt when the root is usable.
+[[nodiscard]] std::optional<sak::error_code> validateLocalDirectoryRoot(const QString& root) {
+    const QFileInfo info(root);
+    if (!info.exists() || !info.isDir()) {
+        return sak::error_code::file_not_found;
+    }
+    if (!info.isReadable()) {
+        return sak::error_code::permission_denied;
+    }
+    return std::nullopt;
+}
 }  // namespace
 
 // -- Zlib Inflate Helper ------------------------------------------------------
@@ -188,9 +218,23 @@ bool AdvancedSearchWorker::isNetworkPath(const QString& path) {
 }
 
 bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const {
-    // Simple accessibility check -- try to list directory contents
-    const QFileInfo info(path);
-    return info.exists() && info.isReadable();
+    // A stat on an unresponsive SMB share can block indefinitely, hanging the
+    // whole search. Bound it by network_timeout_sec: run the probe on a detached
+    // thread and, if it does not answer in time, fail closed (treat the path as
+    // inaccessible) rather than block. The shared packaged_task keeps the future
+    // valid without blocking this thread on the future's destructor.
+    const int timeout_sec = m_config.network_timeout_sec > 0 ? m_config.network_timeout_sec
+                                                             : kAdvancedSearchNetworkTimeoutSec;
+    auto probe = std::make_shared<std::packaged_task<bool()>>([path]() {
+        const QFileInfo info(path);
+        return info.exists() && info.isReadable();
+    });
+    std::future<bool> result = probe->get_future();
+    std::thread([probe]() { (*probe)(); }).detach();
+    if (result.wait_for(std::chrono::seconds(timeout_sec)) != std::future_status::ready) {
+        return false;
+    }
+    return result.get();
 }
 
 // -- Main Search Execution ---------------------------------------------------
@@ -208,6 +252,11 @@ std::optional<QString> AdvancedSearchWorker::firstInvalidExcludePattern(
 auto AdvancedSearchWorker::prepareSearchConfig()
     -> std::expected<QRegularExpression, sak::error_code> {
     m_files_unreadable = 0;  // fresh count for this run
+
+    // Clamp context_lines before any match is built: a negative value silently
+    // inverts the context window, and INT_MIN makes line_index - ctx overflow
+    // (signed-overflow UB) in buildContextMatch/appendArchiveLineMatches.
+    m_config.context_lines = std::clamp(m_config.context_lines, 0, kAdvancedSearchMaxContextLines);
 
     auto regexResult = compileRegex();
     if (!regexResult) {
@@ -389,9 +438,14 @@ bool AdvancedSearchWorker::processTargetEntry(const FileManagementEntry& entry,
                                               int& total_files,
                                               TargetBatchState& batch) {
     ++batch.file_count;
-    if (!shouldSkipTargetFile(entry) &&
-        !processTargetFile(entry, regex, batch.batch_matches, total_matches, total_files)) {
-        return false;
+    if (!shouldSkipTargetFile(entry)) {
+        if (targetReadWouldTruncate(m_config.max_file_size, entry.size_bytes)) {
+            markTargetScanIncomplete(batch,
+                                     QStringLiteral("file read truncated at '%1'").arg(entry.path));
+        }
+        if (!processTargetFile(entry, regex, batch.batch_matches, total_matches, total_files)) {
+            return false;
+        }
     }
     if (batch.file_count % kBatchSize == 0 && !batch.batch_matches.isEmpty()) {
         Q_EMIT resultsReady(batch.batch_matches);
@@ -472,6 +526,20 @@ bool AdvancedSearchWorker::processTargetFile(const FileManagementEntry& file,
     auto matches = searchTargetFile(file, regex);
     if (matches.isEmpty()) {
         return true;
+    }
+
+    // Cap the running total: searchTargetFile caps a single file at max_results,
+    // not at the remaining allowance, so without truncating here the aggregate
+    // could overshoot the requested limit by up to a full file's worth (the
+    // local processSearchFile path already does this).
+    if (m_config.max_results > 0) {
+        const int remaining = m_config.max_results - total_matches;
+        if (remaining <= 0) {
+            return false;
+        }
+        if (matches.size() > remaining) {
+            matches.resize(remaining);
+        }
     }
 
     Q_EMIT fileSearched(file.path, matches.size());
@@ -569,6 +637,16 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
             1,
             QString("Search complete: %1 matches in %2 files").arg(totalMatches).arg(totalFiles));
         return {};
+    }
+
+    // A local directory root must be an accessible directory before we iterate
+    // it; otherwise a mistyped/unmounted/permission-denied root falls through to
+    // QDirIterator, yields zero files, and reports a clean "0 matches" (a false
+    // negative). Fail closed and surface the real reason.
+    if (const auto root_err = validateLocalDirectoryRoot(m_config.root_path)) {
+        logError("AdvancedSearchWorker: search root not an accessible directory: {}",
+                 m_config.root_path.toStdString());
+        return std::unexpected(*root_err);
     }
 
     runDirectorySearch(regex, totalMatches, totalFiles);
@@ -968,7 +1046,14 @@ QString extractExifValue(uint16_t type, uint32_t count, const char* valuePtr, bo
     switch (type) {
     case kExifTypeAscii:
         if (count > 0) {
-            return QString::fromLatin1(valuePtr, static_cast<int>(count - 1)).trimmed();
+            // EXIF ASCII values are NUL-terminated, but a malformed tag may not
+            // be. Drop the final byte only when it is actually the NUL, otherwise
+            // a real trailing character would be silently lost.
+            int len = static_cast<int>(count);
+            if (valuePtr[len - 1] == '\0') {
+                --len;
+            }
+            return QString::fromLatin1(valuePtr, len).trimmed();
         }
         return {};
     case kExifTypeShort:
@@ -1112,7 +1197,13 @@ void processApp1Segment(const QByteArray& file_data,
     if (tiff_data.size() < kMinTiffSize) {
         return;
     }
+    // Require a valid TIFF byte-order mark. Treating any non-"II" header as
+    // big-endian would misread offsets/counts from a corrupt payload.
     const bool little_endian = (tiff_data[0] == 'I' && tiff_data[1] == 'I');
+    const bool big_endian = (tiff_data[0] == 'M' && tiff_data[1] == 'M');
+    if (!little_endian && !big_endian) {
+        return;
+    }
     const uint32_t ifd0_offset = readU32(tiff_data.constData() + kExifEntryCountOffset,
                                          little_endian);
     parseExifIFD(tiff_data, ifd0_offset, little_endian, metadata);
@@ -1340,6 +1431,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
+        // Unreadable image: count it so an empty result is not mistaken for a
+        // genuinely metadata-free file (a false negative the caller must surface).
+        ++m_files_unreadable;
         return matches;
     }
 
@@ -1540,8 +1634,10 @@ QByteArray decompressZipEntry(
     static const QRegularExpression infoPattern(QString::fromLatin1(kPdfInfoPattern),
                                                 QRegularExpression::MultilineOption);
 
-    // Only scan the last 4KB of the file (xref/trailer area) plus first 4KB
-    // to find the Info dictionary reference, then search relevant sections
+    // Scan only the leading region of the (already length-capped) buffer for
+    // /Key (value) Info entries. This is a deliberately shallow parse: an Info
+    // dictionary that lives near the tail of a large PDF (past this window) is
+    // not extracted -- filesystem metadata still applies via the caller.
     constexpr qsizetype kPdfScanMaxBytes = 32 * 1024;
     const qsizetype scanSizeBytes = std::min(kPdfScanMaxBytes, fileData.size());
     const int scanSize = static_cast<int>(scanSizeBytes);
@@ -1663,7 +1759,10 @@ QString decodeId3FrameValue(const QByteArray& frame_data, std::uint8_t encoding)
     case kId3EncodingUtf8:
         return QString::fromUtf8(frame_data).trimmed();
     default:
-        return QString::fromLatin1(frame_data).trimmed();
+        // ID3v2 defines encodings 0-3 only. An out-of-range byte marks a
+        // malformed frame: decode nothing rather than guess a codec (which would
+        // surface garbage as if it were real text).
+        return {};
     }
 }
 
@@ -1780,6 +1879,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& fil
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
+        // Unreadable file: count it so an empty result is not mistaken for a
+        // genuinely metadata-free file (a false negative the caller must surface).
+        ++m_files_unreadable;
         return matches;
     }
 
@@ -1976,6 +2078,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
+        // Unreadable archive: count it so an empty result is not mistaken for an
+        // archive that genuinely contains no match (a false negative to surface).
+        ++m_files_unreadable;
         return matches;
     }
 
@@ -1983,6 +2088,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath
         logWarning("AdvancedSearchWorker: archive '{}' too large ({} bytes), skipping",
                    filePath.toStdString(),
                    file.size());
+        // Over the cap -> not searched at all; surface it as incomplete rather
+        // than reporting a clean "no matches".
+        ++m_files_unreadable;
         return matches;
     }
 
@@ -2019,26 +2127,6 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath
     return matches;
 }
 
-namespace {
-
-/// @brief Map a UTF-16 code-unit position to its UTF-8 byte offset.
-///
-/// QRegularExpression reports match positions as UTF-16 code-unit indexes into
-/// the decoded QString, but binary matches must report and slice raw UTF-8 byte
-/// offsets. Each non-ASCII codepoint occupies more bytes than code units, so the
-/// two indexes diverge after the first multibyte sequence.
-int utf16PosToUtf8Byte(const QString& text, int utf16_pos) {
-    if (utf16_pos <= 0) {
-        return 0;
-    }
-    if (utf16_pos >= text.size()) {
-        return static_cast<int>(text.toUtf8().size());
-    }
-    return static_cast<int>(text.left(utf16_pos).toUtf8().size());
-}
-
-}  // namespace
-
 QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
                                                         const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
@@ -2062,20 +2150,21 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
     const QByteArray content = file.readAll();
     file.close();
 
-    // Search as UTF-8 text (binary files may contain text segments)
-    const QString textContent = QString::fromUtf8(content);
+    // Decode as Latin-1, not UTF-8: each byte maps 1:1 to a distinct code point
+    // (U+0000..U+00FF) and the mapping is fully reversible. This makes ANY byte
+    // value matchable -- including arbitrary "hex" bytes via regex \xNN escapes --
+    // and makes a code-unit index equal the raw byte offset exactly. UTF-8
+    // decoding instead collapsed every invalid byte to U+FFFD, so non-text bytes
+    // could never match and toUtf8() re-encoding skewed the reported offsets.
+    const QString textContent = QString::fromLatin1(content);
     auto matchIter = regex.globalMatch(textContent);
 
     while (matchIter.hasNext()) {
         auto regexMatch = matchIter.next();
 
-        // capturedStart()/capturedEnd() are UTF-16 indexes into textContent;
-        // convert to raw byte offsets so the reported offset and the hex slice
-        // align with the underlying file bytes.
-        const int matchStartByte = utf16PosToUtf8Byte(textContent,
-                                                      static_cast<int>(regexMatch.capturedStart()));
-        const int matchEndByte = utf16PosToUtf8Byte(textContent,
-                                                    static_cast<int>(regexMatch.capturedEnd()));
+        // With a Latin-1 decode the code-unit position IS the raw byte offset.
+        const int matchStartByte = static_cast<int>(regexMatch.capturedStart());
+        const int matchEndByte = static_cast<int>(regexMatch.capturedEnd());
 
         SearchMatch match;
         match.file_path = filePath;
@@ -2103,15 +2192,15 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
 QVector<SearchMatch> AdvancedSearchWorker::searchBinaryBytes(
     const QString& file_path, const QByteArray& data, const QRegularExpression& regex) const {
     QVector<SearchMatch> matches;
-    const QString textContent = QString::fromUtf8(data);
+    // Latin-1 (not UTF-8): byte-exact, reversible, and code-unit index == byte
+    // offset. See searchBinary for the full rationale.
+    const QString textContent = QString::fromLatin1(data);
     auto matchIter = regex.globalMatch(textContent);
     while (matchIter.hasNext()) {
         const auto regexMatch = matchIter.next();
 
-        const int matchStartByte = utf16PosToUtf8Byte(textContent,
-                                                      static_cast<int>(regexMatch.capturedStart()));
-        const int matchEndByte = utf16PosToUtf8Byte(textContent,
-                                                    static_cast<int>(regexMatch.capturedEnd()));
+        const int matchStartByte = static_cast<int>(regexMatch.capturedStart());
+        const int matchEndByte = static_cast<int>(regexMatch.capturedEnd());
 
         SearchMatch match;
         match.file_path = file_path;

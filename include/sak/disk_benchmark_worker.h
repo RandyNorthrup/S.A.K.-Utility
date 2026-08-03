@@ -71,9 +71,11 @@ public:
     /// @param block_kb Requested block size in KiB (from DiskBenchmarkConfig).
     /// @param min_kb Smallest accepted block size in KiB.
     /// @param max_kb Largest accepted block size in KiB.
-    /// @return Effective block size in bytes, or 0 when @p block_kb is
-    ///         nonpositive (fail closed). In-range values are clamped to
-    ///         [min_kb, max_kb] and rounded up to the sector boundary so every
+    /// @return Effective block size in bytes, or 0 (fail closed) when @p block_kb
+    ///         is nonpositive, falls outside [min_kb, max_kb], or the bounds are
+    ///         invalid (min_kb <= 0 or max_kb < min_kb). An out-of-range request
+    ///         is REJECTED, not silently coerced to a bound (no-fallbacks rule).
+    ///         In-range values are rounded up to the sector boundary so every
     ///         FILE_FLAG_NO_BUFFERING transfer stays aligned.
     /// @note Pure + static for unit testing.
     [[nodiscard]] static size_t effectiveBlockBytes(int block_kb, int min_kb, int max_kb);
@@ -144,11 +146,23 @@ private:
     ///         nonpositive (effectiveBlockBytes returned 0).
     auto resolveBlockSizes() -> std::expected<void, sak::error_code>;
 
+    /// @brief Fail closed on a configured test-file size outside the sane range.
+    /// @return Success, or invalid_argument when test_file_size_mb is below the
+    ///         minimum (offset-math underflow) or above the maximum (size_t wrap).
+    auto validateTestFileSize() const -> std::expected<void, sak::error_code>;
+
+    /// @brief Resolve drive info and fail closed on an unusable target or when the
+    ///        drive lacks room for the test file. Records drive_capacity_bytes.
+    /// @return Success, invalid_path (drive not valid/ready), or
+    ///         insufficient_disk_space (free space < test file size).
+    auto validateDriveAndSpace() -> std::expected<void, sak::error_code>;
+
     /// Accumulated I/O stats for random benchmark loops
     struct RandomIoStats {
         std::vector<double>& latencies;
-        uint64_t& total_ops;
+        uint64_t& total_ops;       ///< Fully-completed ops (full-size transfer)
         uint64_t& total_bytes;
+        uint64_t& total_failures;  ///< Ops that failed or completed short
     };
 
     /// Configuration for a random I/O loop iteration

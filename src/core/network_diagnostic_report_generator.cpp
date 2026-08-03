@@ -191,10 +191,17 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
                                ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / kBitsPerMegabit)
                                : QStringLiteral("--");
 
+        // status/speed are our own generated markup; every upstream-derived field
+        // (name/type/ip/mac) is HTML-escaped so a malformed value cannot inject markup.
         html += QStringLiteral(
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
                     "<td>%4</td><td>%5</td><td>%6</td></tr>\n")
-                    .arg(a.name.toHtmlEscaped(), a.adapterType, status, ip, a.macAddress, speed);
+                    .arg(a.name.toHtmlEscaped(),
+                         a.adapterType.toHtmlEscaped(),
+                         status,
+                         ip.toHtmlEscaped(),
+                         a.macAddress.toHtmlEscaped(),
+                         speed);
     }
     html += QStringLiteral("</table>\n");
     return html;
@@ -487,14 +494,16 @@ QString NetworkDiagnosticReportGenerator::buildConnectionSection() const {
         const auto& c = m_connections[i];
         const auto proto = (c.protocol == ConnectionInfo::Protocol::TCP) ? QStringLiteral("TCP")
                                                                          : QStringLiteral("UDP");
+        // proto is our own literal; the OS-derived address/state fields are HTML-escaped
+        // (consistent with processName) so a malformed value cannot inject markup.
         html += QStringLiteral(
                     "<tr><td>%1</td><td>%2:%3</td><td>%4:%5</td>"
                     "<td>%6</td><td>%7</td></tr>\n")
-                    .arg(proto, c.localAddress)
+                    .arg(proto, c.localAddress.toHtmlEscaped())
                     .arg(c.localPort)
-                    .arg(c.remoteAddress)
+                    .arg(c.remoteAddress.toHtmlEscaped())
                     .arg(c.remotePort)
-                    .arg(c.state, c.processName.toHtmlEscaped());
+                    .arg(c.state.toHtmlEscaped(), c.processName.toHtmlEscaped());
     }
     html += QStringLiteral("</table>\n");
 
