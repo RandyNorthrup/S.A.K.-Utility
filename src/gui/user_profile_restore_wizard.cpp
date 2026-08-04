@@ -128,7 +128,18 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     Q_ASSERT(m_manifestInfoLabel);
     QString path = m_backupPathEdit->text();
 
+    // Drop any backup/manifest previously stored in the wizard. A path that is empty,
+    // invalid, or fails to load must not leave a stale valid manifest from an earlier
+    // selection behind for the later pages to restore.
+    auto clearStoredBackup = [this]() {
+        if (auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard())) {
+            wiz->setBackupPath(QString());
+            wiz->setManifest(BackupManifest{});
+        }
+    };
+
     if (path.isEmpty()) {
+        clearStoredBackup();
         m_manifestInfoLabel->hide();
         Q_EMIT completeChanged();
         return;
@@ -144,6 +155,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         manifestPath = path;
         m_backupPathEdit->setText(fileInfo.absolutePath());
     } else {
+        clearStoredBackup();
         m_manifestInfoLabel->setText(
             tr("[X] Invalid backup path. Please select a backup directory "
                "or manifest.json file."));
@@ -155,6 +167,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     // Load manifest
     BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
     if (manifest.version.isEmpty()) {
+        clearStoredBackup();
         m_manifestInfoLabel->setText(
             tr("[X] Failed to load backup manifest. The backup may be "
                "corrupted."));
@@ -163,7 +176,10 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         return;
     }
 
-    // Display manifest info
+    showLoadedManifest(manifest);
+}
+
+void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& manifest) {
     QString info = QString(
                        "<b>[OK] Valid Backup Found</b><br>"
                        "<b>Version:</b> %1<br>"

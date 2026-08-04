@@ -251,7 +251,7 @@ profile-restore / network (A2):
 - [x] M-A2-14 worker.cpp:470 FIXED (wave 8): copyDirectory fails closed on an unreadable source dir; QDir::System added so system entries aren't silently skipped.
 - [x] M-A2-11 worker.cpp:276 FIXED (wave 8): success = (m_filesErrored==0) && !m_cancelled.
 - [x] M-A2-15 execute.cpp:134 FIXED (wave 8): onStartRestore returns early if m_worker is already set (no second concurrent worker).
-- [ ] M-A2-16 wizard.cpp:59,146 backupPath* only checks non-empty; invalid edit never clears stale backupPath/manifest.
+- [x] M-A2-16 wizard.cpp:59,146 FIXED (wave 17): onBackupPathChanged now clears the wizard's stored backupPath+manifest on the empty/invalid/failed branches (clearStoredBackup), so a stale valid manifest from an earlier selection can't be restored after the field is edited to an invalid path.
 - [ ] M-A2-12 worker.cpp:734,753 empty manifest_checksum/checksum_sha256 logged and accepted.
 - [ ] M-A2-2  worker.cpp:110,479 leaf-only reparse check; ancestor dirs not re-validated after mkpath; check-then-copy race.
 - [ ] M-A2-5  worker.cpp:156 rollback QFile::rename return ignored; predictable temp names.
@@ -275,7 +275,7 @@ apfs/partition (A4):
 ai (B1):
 - [ ] M-B1-5  ai_app_action_planner.cpp:116 provider-gateway app_run_action has no catastrophic path.
 - [ ] M-B1-6  ai_provider_gateway_tool_runner.cpp:397 recipe input-tier steps run without the per-call hard confirm.
-- [ ] M-B1-13 ai_mcp_session_pool.cpp:33 timeout_ms in key + no eviction -> unbounded server processes.
+- [~] M-B1-13 ai_mcp_session_pool.cpp:33 DEFERRED: timeout_ms in the key is DELIBERATE (a pooled session bakes its timeout at open(); dropping it reintroduces stale-timeout inheritance). The real fix is LRU eviction / a capacity cap on m_sessions (close+evict oldest), which needs a careful pool refactor + safe session close. Tracked.
 - [ ] M-B1-14 ai_mcp_stdio_client.cpp:165 reads a full line before the byte cap.
 - [ ] M-B1-15 ai_mcp_stdio_client.cpp:128 server-exit uses terminate() not tree-kill.
 - [ ] M-B1-16 ai_execution_broker.cpp:90 job-create/assign failure -> kill primary only, descendants survive.

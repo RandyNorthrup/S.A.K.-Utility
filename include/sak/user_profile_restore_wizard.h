@@ -50,6 +50,8 @@ public:
 
 private:
     void setupUi();
+    /// @brief Render a successfully loaded manifest's summary and store it in the wizard.
+    void showLoadedManifest(const BackupManifest& manifest);
 
     QLabel* m_infoLabel;
     QLineEdit* m_backupPathEdit;
