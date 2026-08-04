@@ -10,6 +10,8 @@
 #include <QLatin1String>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 namespace sak::ai {
 
 namespace {
@@ -91,7 +93,45 @@ QString workflowPlaceholderValue(const AiWorkflowPhaseContext& context,
     return value;
 }
 
+// True when @p offset in @p text falls inside a PowerShell single-quoted literal. Each unescaped
+// single quote toggles in/out; inside a literal, '' is an escaped quote and stays inside.
+bool offsetInsideSingleQuotedSpan(const QString& text, qsizetype offset) {
+    bool inside = false;
+    const qsizetype limit = std::min(offset, text.size());
+    for (qsizetype i = 0; i < limit; ++i) {
+        if (text.at(i) != QLatin1Char('\'')) {
+            continue;
+        }
+        if (inside && i + 1 < text.size() && text.at(i + 1) == QLatin1Char('\'')) {
+            ++i;  // '' escaped quote inside a single-quoted literal; remains inside
+            continue;
+        }
+        inside = !inside;
+    }
+    return inside;
+}
+
 }  // namespace
+
+bool powerShellCommandTemplateIsSingleQuoteSafe(const QString& command, QString* error) {
+    // Use the SAME placeholder grammar the substitutor recognizes, so PowerShell's own unbraced
+    // $vars (and ${...} spellings the substitutor ignores, e.g. containing ':') are not flagged.
+    static const QRegularExpression placeholder(QStringLiteral(R"(\$\{[A-Za-z0-9_]+\})"));
+    auto matches = placeholder.globalMatch(command);
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        if (!offsetInsideSingleQuotedSpan(command, match.capturedStart())) {
+            if (error != nullptr) {
+                *error = QStringLiteral(
+                             "PowerShell workflow command places placeholder '%1' outside a "
+                             "single-quoted literal, so its value would be injected unescaped")
+                             .arg(match.captured());
+            }
+            return false;
+        }
+    }
+    return true;
+}
 
 QString workflowInputValue(const AiWorkflowPhaseContext& context,
                            const QString& key,

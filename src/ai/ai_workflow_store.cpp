@@ -79,6 +79,11 @@ bool WorkflowStore::addWorkflow(const WorkflowTemplate& workflow, QStringList* e
 
     const auto existing = m_index_by_id.constFind(workflow.id);
     if (existing != m_index_by_id.constEnd()) {
+        // A user-directory workflow intentionally OVERRIDES a built-in of the same id (a supported
+        // customization; see userDirectoryOverridesBuiltInWorkflow). Not a shadowing vulnerability:
+        // writing to the user workflow directory already requires local access, and every template
+        // -- built-in or user -- is validated at load (including the run_powershell single-quote
+        // invariant), so an override cannot smuggle an unescaped placeholder past validation.
         m_workflows[*existing] = workflow;
     } else {
         m_index_by_id.insert(workflow.id, m_workflows.size());

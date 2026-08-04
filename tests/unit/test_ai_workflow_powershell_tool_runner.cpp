@@ -18,6 +18,7 @@ private Q_SLOTS:
     void successfulRunRecordsRedactedCommand();
     void clampsCallerControlledOutputCap();
     void singleQuotedModeEscapesEmbeddedQuotes();
+    void templateSingleQuoteSafetyGatesRawPlaceholders();
 };
 
 void AiWorkflowPowerShellToolRunnerTests::rejectsMissingCommand() {
@@ -170,6 +171,32 @@ void AiWorkflowPowerShellToolRunnerTests::singleQuotedModeEscapesEmbeddedQuotes(
     // Raw mode leaves the single quotes intact (never used to build a shell command).
     QVERIFY(raw.contains(QStringLiteral("x'; Remove-Item C:\\ -Recurse; '")));
     QVERIFY(quoted != raw);
+}
+
+void AiWorkflowPowerShellToolRunnerTests::templateSingleQuoteSafetyGatesRawPlaceholders() {
+    // CODEX_REVIEW_4 M-B1-21: the single-quote escaping is only sufficient when every ${...}
+    // placeholder sits INSIDE a single-quoted literal. Validate that invariant at load.
+    using sak::ai::powerShellCommandTemplateIsSingleQuoteSafe;
+
+    // Safe: placeholder inside '...', including the $var='${...}' capture the bundled templates
+    // use.
+    QVERIFY(powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output '${user_message}'")));
+    QVERIFY(powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("$name='${app_name}'; foo")));
+    // '' escaped quotes inside a literal keep the span open, so a following placeholder is safe.
+    QVERIFY(powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("$x='a''b ${app_name}'")));
+    // No placeholders at all -> safe (PowerShell $vars/${braced:with:colon} are not our grammar).
+    QVERIFY(
+        powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("Write-Output $LASTEXITCODE")));
+
+    // Unsafe: placeholder OUTSIDE any single-quoted literal -> raw injection risk, rejected.
+    QString error;
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output ${user_message}"), &error));
+    QVERIFY(!error.isEmpty());
+    // Unsafe: placeholder after the single-quoted span has closed.
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("$a='x'; Invoke-Expression ${user_message}")));
 }
 
 QTEST_GUILESS_MAIN(AiWorkflowPowerShellToolRunnerTests)

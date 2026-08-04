@@ -49,4 +49,13 @@ enum class WorkflowPlaceholderMode {
     const AiWorkflowPhaseContext& context,
     WorkflowPlaceholderMode mode = WorkflowPlaceholderMode::Raw);
 
+/// @brief Validate that a run_powershell workflow command template is safe for
+/// PowerShellSingleQuoted substitution: every `${key}` placeholder (using the same
+/// `[A-Za-z0-9_]+` grammar the substitutor recognizes) must sit INSIDE a single-quoted
+/// literal. In that mode the substitutor only doubles embedded single quotes; a placeholder
+/// placed outside a `'...'` literal would inject its value UNESCAPED. Returns false and sets
+/// @p error on the first offending placeholder. Pure; unit-testable.
+[[nodiscard]] bool powerShellCommandTemplateIsSingleQuoteSafe(const QString& command,
+                                                              QString* error = nullptr);
+
 }  // namespace sak::ai

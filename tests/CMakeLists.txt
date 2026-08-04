@@ -2809,6 +2809,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_clarifier.cpp")
         unit/test_ai_workflow_clarifier.cpp
         ../src/ai/ai_workflow_clarifier.cpp
         ../src/ai/ai_workflow_template.cpp
+        ../src/ai/ai_workflow_placeholders.cpp
     )
     set_target_properties(test_ai_workflow_clarifier PROPERTIES
         AUTOMOC ON
@@ -3260,6 +3261,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_store.cpp")
         ../src/ai/ai_paths.cpp
         ../src/ai/ai_workflow_store.cpp
         ../src/ai/ai_workflow_template.cpp
+        ../src/ai/ai_workflow_placeholders.cpp
         ../include/sak/ai/ai_paths.h
         ../include/sak/app_paths.h
         ../include/sak/ai/ai_workflow_store.h

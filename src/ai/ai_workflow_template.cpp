@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_workflow_template.h"
 
+#include "sak/ai/ai_workflow_placeholders.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -190,6 +192,16 @@ void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* error
         }
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
+        }
+        // A run_powershell command is substituted in PowerShellSingleQuoted mode, which only
+        // escapes embedded single quotes: reject at load any command whose ${...} placeholder is
+        // NOT inside a single-quoted literal (raw injection risk), for user AND bundled templates.
+        if (phase.tool == QLatin1String("run_powershell")) {
+            QString ps_error;
+            const QString command = phase.arguments.value(QStringLiteral("command")).toString();
+            if (!powerShellCommandTemplateIsSingleQuoteSafe(command, &ps_error)) {
+                errors->append(QStringLiteral("Phase %1: %2").arg(phase.id, ps_error));
+            }
         }
     }
 }
