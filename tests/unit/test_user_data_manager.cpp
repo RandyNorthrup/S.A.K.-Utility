@@ -413,6 +413,47 @@ private Q_SLOTS:
         QVERIFY(!UserDataManager::encryptedArchiveSizeOk(kCap + 1));  // oversized -> fail closed
     }
 
+    // --- CODEX_REVIEW_4 M-A1-26: atomicReplaceFile renames the original aside first (never a
+    // delete-then-rename that could destroy the original on a rename failure).
+    void atomicReplaceFileSwapsWithoutDataLossWindow() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+
+        // Replacing an existing target: content becomes the staged one; tmp + the aside-copy gone.
+        const QString target = QDir(work.path()).filePath("data.bin");
+        const QString tmp = QDir(work.path()).filePath("data.bin.new");
+        {
+            QFile t(target);
+            QVERIFY(t.open(QIODevice::WriteOnly));
+            t.write("old");
+        }
+        {
+            QFile s(tmp);
+            QVERIFY(s.open(QIODevice::WriteOnly));
+            s.write("new");
+        }
+        QVERIFY(UserDataManager::atomicReplaceFile(tmp, target));
+        {
+            QFile r(target);
+            QVERIFY(r.open(QIODevice::ReadOnly));
+            QCOMPARE(r.readAll(), QByteArray("new"));
+        }
+        QVERIFY(!QFileInfo::exists(tmp));
+        QVERIFY(!QFileInfo::exists(target + ".sak_old"));
+
+        // Replacing a not-yet-existing target: the staged file is simply moved into place.
+        const QString target2 = QDir(work.path()).filePath("fresh.bin");
+        const QString tmp2 = QDir(work.path()).filePath("fresh.bin.new");
+        {
+            QFile s2(tmp2);
+            QVERIFY(s2.open(QIODevice::WriteOnly));
+            s2.write("hello");
+        }
+        QVERIFY(UserDataManager::atomicReplaceFile(tmp2, target2));
+        QVERIFY(QFileInfo::exists(target2));
+        QVERIFY(!QFileInfo::exists(tmp2));
+    }
+
     // End-to-end: an arbitrary directory with no sidecar is left intact.
     void deleteBackupRefusesUnmanagedDirectory() {
         QTemporaryDir work;

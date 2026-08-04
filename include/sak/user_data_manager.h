@@ -149,6 +149,10 @@ public:
     ///        on the decrypted .zip).
     static bool encryptedArchiveSizeOk(qint64 size);
 
+    /// @brief Atomically replace @p target with @p tmp by renaming the original aside first;
+    ///        rolls the original back and cleans up @p tmp if the swap fails (no data-loss window).
+    static bool atomicReplaceFile(const QString& tmp, const QString& target);
+
     // Utilities
     qint64 calculateSize(const QStringList& paths) const;
     QString generateChecksum(const QString& file_path) const;
@@ -259,8 +263,6 @@ private:
     ///        failure never destroys the original.
     static bool overwriteFile(const QString& source_file, const QString& dest_file);
 
-    /// @brief Remove @p target then rename @p tmp onto it; cleans up @p tmp on failure.
-    static bool atomicReplaceFile(const QString& tmp, const QString& target);
 
     /// @brief Copy all source paths into a single destination directory
     bool copySourcesToDest(const QStringList& source_paths,

@@ -211,8 +211,10 @@ constexpr uint16_t kPstContentType = 0x4D53;
 /// OST content type: bytes { 0x53, 0x4F } = "SO"
 constexpr uint16_t kOstContentType = 0x4F53;
 
-/// ANSI PST format version
+/// ANSI PST format version (MS-PST 2.2.2.6: an ANSI wVer is 14 or 15; both use the
+/// same 32-bit BREF/trailer/page layout).
 constexpr uint16_t kAnsiVersion = 14;
+constexpr uint16_t kAnsiVersion2 = 15;
 
 /// Unicode PST format version
 constexpr uint16_t kUnicodeVersion = 23;

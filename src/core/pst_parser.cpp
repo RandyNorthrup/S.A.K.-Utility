@@ -341,8 +341,10 @@ static bool isPcVariableType(uint16_t prop_type) {
 
 /// Validate that the PST data version is a known format
 static bool isKnownDataVersion(uint16_t version) {
-    return version == sak::email::kAnsiVersion || version == sak::email::kUnicodeVersion ||
-           version == sak::email::kUnicode4kVersion;
+    // MS-PST 2.2.2.6: an ANSI store's wVer is 14 OR 15 (both accepted); 15 stays classified as
+    // ANSI since 15 < kUnicodeVersion and 15 != kUnicode4kVersion.
+    return version == sak::email::kAnsiVersion || version == sak::email::kAnsiVersion2 ||
+           version == sak::email::kUnicodeVersion || version == sak::email::kUnicode4kVersion;
 }
 
 // ============================================================================

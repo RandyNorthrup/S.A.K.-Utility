@@ -990,14 +990,25 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
 }
 
 bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& target) {
-    if (!QFile::remove(target)) {
+    // Move the existing target ASIDE instead of deleting it: if renaming the staged replacement
+    // onto target fails, roll the original back into place. The original is never destroyed while
+    // the swap is incomplete (fail closed, no data-loss window that the old delete-then-rename
+    // left when a rename failed between the two steps).
+    const QString backup = target + QStringLiteral(".sak_old");
+    QFile::remove(backup);
+    const bool had_target = QFileInfo::exists(target);
+    if (had_target && !QFile::rename(target, backup)) {
         QFile::remove(tmp);
         return false;
     }
     if (!QFile::rename(tmp, target)) {
+        if (had_target) {
+            QFile::rename(backup, target);  // restore the untouched original
+        }
         QFile::remove(tmp);
         return false;
     }
+    QFile::remove(backup);
     return true;
 }
 
