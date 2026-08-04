@@ -18,6 +18,30 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Compute SHA-256 without depending on Get-FileHash. Under a sanitized hook environment
+# (pre-commit runs powershell.exe -NoProfile -NonInteractive) PSModulePath can be reduced
+# far enough that Microsoft.PowerShell.Utility does not auto-load, and Get-FileHash then
+# resolves to nothing. The gate must not depend on module auto-loading to run at all.
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LiteralPath
+    )
+
+    $stream = [System.IO.File]::OpenRead($LiteralPath)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash($stream)
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+    return [System.BitConverter]::ToString($bytes).Replace("-", "")
+}
+
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent $PSScriptRoot
 }
@@ -153,7 +177,7 @@ foreach ($tool in $tools) {
 
     $binaryPath = Assert-SafeRelativeToolPath -ToolsRoot $toolsRoot `
         -RelativePath ([string]$tool.relative_path) -ToolId $toolId
-    $actualHash = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash
+    $actualHash = Get-Sha256Hex -LiteralPath $binaryPath
     Assert-Condition -Condition ($actualHash.Equals([string]$tool.binary_sha256,
             [StringComparison]::OrdinalIgnoreCase)) `
         -Message "Tool '$toolId' binary hash mismatch"
@@ -169,7 +193,7 @@ foreach ($tool in $tools) {
                 -RelativePath ([string]$runtimeFile.relative_path) `
                 -ToolId $toolId `
                 -Description "runtime file"
-            $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash
+            $runtimeHash = Get-Sha256Hex -LiteralPath $runtimePath
             Assert-Condition -Condition ($runtimeHash.Equals([string]$runtimeFile.sha256,
                     [StringComparison]::OrdinalIgnoreCase)) `
                 -Message "Tool '$toolId' runtime file hash mismatch: $($runtimeFile.relative_path)"

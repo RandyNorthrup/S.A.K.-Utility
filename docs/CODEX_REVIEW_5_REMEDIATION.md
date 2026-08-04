@@ -1522,17 +1522,55 @@ project's own release and certification claims are not machine-verified:
 - [ ] **R5-G8-14** run and wire scripts/verify_build.ps1
 - [ ] **R5-G8-15** run and wire scripts/verify_partition_manager_certification.ps1
 
-### G9 - style, literal, and accessibility debt
+### G9 - style, literal, and accessibility debt (MEASURED)
 
-Once G8 gates run, their findings are tracked here and fixed to zero. Enterprise
-target: every gate green, no suppression, no exclusion list.
+Every G8 gate was executed to measure the real debt. Totals below are actual counts,
+not estimates. Enterprise target: every gate green, no suppression, no exclusion list.
 
-- [ ] R5-G9-1 Magic-number literals: fix all to named constants
-- [ ] R5-G9-2 Inline stylesheet literals: move to the style-token system
-- [ ] R5-G9-3 Accessibility pattern violations: fix all
-- [ ] R5-G9-4 Logged-message-box violations: fix all
-- [ ] R5-G9-5 Blocking-pattern violations (gate runs in CI only; add to pre-commit)
-- [ ] R5-G9-6 Third-party license compliance (gate runs in CI only; add to pre-commit)
+| Gate | Result | Violations |
+|---|---|---|
+| check_magic_numbers.py | FAIL | 452 |
+| check_gui_stylesheet_literals.ps1 | FAIL | 73 |
+| check_gui_magic_numbers.ps1 | FAIL | 18 |
+| check_blocking_patterns.ps1 | FAIL | 10 |
+| check_accessibility_patterns.ps1 | FAIL | 2 of 1967 widgets |
+| check_gui_style_tokens.ps1 | FAIL | 1 |
+| check_logged_message_boxes.ps1 | PASS | 0 |
+
+Total measured style and quality debt: 556 violations.
+
+- [ ] R5-G9-1 452 magic-number literals -> named constants
+- [ ] R5-G9-2 73 raw stylesheet literals -> the style-token system (concentrated in
+      src/gui/file_explorer_style.cpp)
+- [ ] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens
+- [ ] R5-G9-4 10 blocking-pattern violations: nested event loops and processEvents
+      pumping in src/gui/ai_assistant_panel.cpp, src/gui/splash_screen.cpp,
+      src/core/app_action_bridge.cpp, include/sak/app_action_service.h. This is the
+      class that causes re-entrancy and use-after-free during teardown, and it
+      overlaps the GUI worker-lifetime findings in Phase 1.
+- [ ] R5-G9-5 2 widgets missing accessible names (runtime audit over 1967 widgets)
+- [ ] R5-G9-6 1 raw color token outside the theme constants
+- [ ] R5-G9-7 Third-party license compliance gate runs in CI only; add to pre-commit
+
+### G11 - the gates could not even run (tooling fail-open)
+
+ripgrep was not installed on the development machine, so three gates could not execute
+at all. This was only discovered by running them; nothing reported it.
+
+All three scripts were individually reviewed for this failure mode and all three DO fail
+closed: check_blocking_patterns.ps1 throws 'Required tool missing: rg';
+check_logged_message_boxes.ps1 throws on any rg exit code other than 0 or 1 (rg uses 2
+for error); check_accessibility_patterns.ps1 throws on a missing executable, an accessor
+count below its minimum, and on audit timeout. The defect is therefore NOT a silent pass
+inside the scripts -- it is that a required tool could be absent for an unknown length of
+time with nothing reporting it, because no preflight asserts the toolchain exists.
+
+- [x] R5-G11-1 Install ripgrep (15.2.0 installed)
+- [ ] R5-G11-2 Add a preflight gate that asserts every required tool is present and
+      records its version, so a missing tool is a hard, immediate failure rather than
+      something discovered only when someone happens to run the gate
+- [ ] R5-G11-3 check_blocking_patterns.ps1 is wired into CI and currently reports 10
+      violations; determine whether CI is red or whether the failure is not blocking
 
 ### G10 - definition of done for this campaign
 

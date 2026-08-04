@@ -41,6 +41,20 @@ repos:
   - repo: local
     hooks:
       # -------------------------------------------------------------------
+      # 0. Toolchain preflight - a gate that cannot run is not a gate.
+      #    Runs first so a missing tool fails immediately and explicitly
+      #    instead of being discovered by accident later.
+      # -------------------------------------------------------------------
+      - id: tool-preflight
+        name: "Quality-gate toolchain preflight"
+        description: "Assert every required gate tool is installed; record versions"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_tool_preflight.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
       # 1. Secret/path scan - no key-shaped literals or developer paths
       # -------------------------------------------------------------------
       - id: secret-path-scan
@@ -112,3 +126,49 @@ repos:
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
         exclude: (third_party|3rdparty|external|_archived)/
+
+      # -------------------------------------------------------------------
+      # NOTE: five further gate scripts exist and are NOT yet listed here
+      # because they currently report real debt, and a failing hook would
+      # block the very commits that fix it. They are wired the moment their
+      # debt reaches zero. Tracked as R5-G9 in
+      # docs/CODEX_REVIEW_5_REMEDIATION.md with measured counts:
+      #   check_magic_numbers.py             452 violations
+      #   check_gui_stylesheet_literals.ps1   73 violations
+      #   check_gui_magic_numbers.ps1         18 violations
+      #   check_blocking_patterns.ps1         10 violations (also runs in CI)
+      #   check_gui_style_tokens.ps1           1 violation
+      # -------------------------------------------------------------------
+
+      # -------------------------------------------------------------------
+      # 7. Logged message boxes - user-facing dialogs must also be logged
+      # -------------------------------------------------------------------
+      - id: logged-message-boxes
+        name: "Logged message box check"
+        description: "Every user-facing message box must also write a log record"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_logged_message_boxes.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # 8. Partition filesystem tool manifest integrity
+      # -------------------------------------------------------------------
+      - id: partition-fs-tool-manifest
+        name: "Partition filesystem tool manifest check"
+        description: "Reject a filesystem tool manifest that does not match the code"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_filesystem_tool_manifest.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # 9. Third-party licenses (previously CI-only)
+      # -------------------------------------------------------------------
+      - id: third-party-licenses
+        name: "Third-party license check"
+        description: "Every bundled third-party component must carry its license"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_third_party_licenses.ps1
+        language: system
+        pass_filenames: false
