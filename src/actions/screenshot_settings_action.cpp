@@ -11,6 +11,7 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QGuiApplication>
@@ -35,32 +36,40 @@ constexpr int kScreenshotReportFieldWidth = 61;
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
     : QuickAction(parent), m_output_location(output_location) {}
 
-void ScreenshotSettingsAction::captureScreen(const QString& filename) {
+bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
     QScreen* screen = QGuiApplication::primaryScreen();
     if (!screen) {
-        return;
+        return false;
     }
-
-    QPixmap screenshot = screen->grabWindow(0);
-    screenshot.save(filename, "PNG");
+    const QPixmap shot = screen->grabWindow(window);  // 0 = the whole primary screen
+    if (shot.isNull()) {
+        return false;
+    }
+    return shot.save(filepath, "PNG");
 }
 
-void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const QString& name) {
-    if (uri.isEmpty() || name.isEmpty()) {
-        sak::logWarning("openSettingsAndCapture: empty uri or name; skipping");
-        return;
+bool ScreenshotSettingsAction::captureWindowToPng(WId window, const QString& filepath) {
+    // QScreen::grabWindow has GUI-thread affinity, but execute() runs on the quick-action worker
+    // thread. Marshal the grab onto the GUI thread and block until it finishes. Fail closed if
+    // there is no application object or the invocation cannot be marshalled.
+    QCoreApplication* app = QCoreApplication::instance();
+    if (!app) {
+        sak::logError("ScreenshotSettingsAction: no QCoreApplication to marshal capture onto");
+        return false;
     }
-    // Open Windows Settings
-    QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(uri));
-
-    // Wait for window to open
-    QThread::msleep(sak::kTimerServiceDelayMs);
-
-    // Capture screenshot
-    QString filepath = m_output_location + "/SettingsScreenshots/" + name + ".png";
-    captureScreen(filepath);
-
-    m_screenshots_taken++;
+    if (QThread::currentThread() == app->thread()) {
+        return grabAndSaveOnGui(window, filepath);
+    }
+    bool ok = false;
+    const bool invoked = QMetaObject::invokeMethod(
+        app,
+        [window, filepath, &ok]() { ok = grabAndSaveOnGui(window, filepath); },
+        Qt::BlockingQueuedConnection);
+    if (!invoked) {
+        sak::logError("ScreenshotSettingsAction: failed to marshal capture onto the GUI thread");
+        return false;
+    }
+    return ok;
 }
 
 void ScreenshotSettingsAction::scan() {
@@ -250,18 +259,9 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
         return false;
     }
 
-    QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) {
-        return false;
-    }
-
-    QPixmap screenshot = screen->grabWindow(reinterpret_cast<WId>(settings_hwnd));
-    if (screenshot.isNull()) {
-        return false;
-    }
-
-    QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
-    return screenshot.save(filepath, "PNG");
+    const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
+    // grabWindow must run on the GUI thread; execute() runs on the worker thread, so marshal it.
+    return captureWindowToPng(reinterpret_cast<WId>(settings_hwnd), filepath);
 }
 
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,

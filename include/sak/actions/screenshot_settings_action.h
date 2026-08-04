@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QString>
+#include <qwindowdefs.h>              // WId
 
 class ScreenshotSettingsActionTests;  // unit-test friend (global namespace)
 
@@ -49,10 +50,14 @@ private:
 
     int detectMonitorCount();
     bool isProcessRunning(const QString& process_name);
-    void openSettingsAndCapture(const QString& uri, const QString& name);
-    void captureScreen(const QString& filename);
-    void openSettings(const QString& page);
-    void captureScreen();
+    /// @brief Grab @p window (0 = whole primary screen) and save it as PNG to @p filepath.
+    ///        MUST run on the GUI thread (QScreen::grabWindow has GUI-thread affinity). Returns
+    ///        false on no primary screen, a null grab, or a failed save.
+    static bool grabAndSaveOnGui(WId window, const QString& filepath);
+    /// @brief Marshal grabAndSaveOnGui onto the GUI thread (BlockingQueuedConnection) so a worker
+    ///        thread can capture safely; fails closed (returns false) if there is no
+    ///        QCoreApplication or the invocation cannot be marshalled.
+    static bool captureWindowToPng(WId window, const QString& filepath);
 
     static QMap<QString, QString> buildSettingsPageMap();
     bool captureSettingsPage(const QString& ms_uri,

@@ -8,6 +8,7 @@
 
 #include "sak/actions/screenshot_settings_action.h"
 
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -28,6 +29,7 @@ private Q_SLOTS:
     // WaveD-09: success requires a full capture AND a written report; a partial
     // capture or an unwritten report must fail closed, not report success.
     void buildExecutionResult_failsClosedOnPartialOrUnwrittenReport();
+    void captureWindowToPng_failsClosedWithoutScreen();
 };
 
 void ScreenshotSettingsActionTests::reportPathLine_onlyAdvertisesWrittenReport() {
@@ -119,6 +121,17 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnPartialOrU
         QVERIFY2(!action.lastExecutionResult().success,
                  "an unwritten report must not be a success");
     }
+}
+
+void ScreenshotSettingsActionTests::captureWindowToPng_failsClosedWithoutScreen() {
+    // CODEX_REVIEW_4 M-B3-9: the capture now marshals onto the GUI thread (grabWindow has
+    // GUI-thread affinity) and fails closed. In this GUILESS harness there is no primary screen,
+    // so the grab must return false and never write a file (rather than crash or claim success).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("shot.png"));
+    QVERIFY(!ScreenshotSettingsAction::captureWindowToPng(0, path));
+    QVERIFY(!QFileInfo::exists(path));
 }
 
 QTEST_GUILESS_MAIN(ScreenshotSettingsActionTests)
