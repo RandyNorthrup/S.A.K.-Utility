@@ -921,6 +921,7 @@ private:
         if (header->uncompressed_size > bytesToRead) {
             result->warnings.append(
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
+            result->truncated = true;
         }
         return FileReadTarget{
             inode, bytesToRead, true, attribute, resourceForkObjIdByInode_.value(fileId, 0)};
@@ -962,6 +963,7 @@ private:
         if (inode->size > bytesToRead) {
             result->warnings.append(
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
+            result->truncated = true;
         }
         return FileReadTarget{*inode, bytesToRead};
     }

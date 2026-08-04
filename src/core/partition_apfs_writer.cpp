@@ -12017,6 +12017,17 @@ bool buildFilePatchRequest(const ApfsPatchPrep& in,
             QStringLiteral("APFS file-patch-commit: file '%1' was not found").arg(in.fileName));
         return false;
     }
+    // A patch is a read-modify-write: the seed buffer becomes the file's new full
+    // contents. If the read hit the seed cap the seed is only a prefix, so committing
+    // it would silently drop the file's tail. Fail closed rather than truncate.
+    if (read.truncated) {
+        blockers->append(
+            QStringLiteral(
+                "APFS file-patch-commit: file '%1' is larger than the maximum patchable size; "
+                "refusing to truncate it")
+                .arg(in.fileName));
+        return false;
+    }
     // Bound the patch window in uint64 space before applyBytePatch casts the offset
     // to signed qsizetype: an offset near UINT64_MAX would cast to a negative index
     // and drive an out-of-bounds heap write. A patch may extend the file, but never

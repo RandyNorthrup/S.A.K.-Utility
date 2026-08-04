@@ -125,7 +125,10 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   Fix: bind creds to the arming origin (only ProvideCredentials when the auth
   challenge origin matches) and clear httpAuthCreds in the topFrameNav branch.
 
-- [ ] H5 [A4-5] partition_apfs_file_system_reader.cpp:961 / partition_apfs_writer.cpp:12034
+- [x] H5 [A4-5] partition_apfs_file_system_reader.cpp:961 / partition_apfs_writer.cpp:12034
+  FIXED (wave 4): PartitionApfsFileReadResult gained a `truncated` flag set whenever the
+  read hits the byte cap (regular + compressed paths); buildFilePatchRequest now fails
+  closed when read.truncated (a read-modify-write must not write a prefix back).
   APFS patch truncates large files: the reader caps at kApfsMaximumSeedFileBytes
   and only WARNS (read.ok stays true), so the patch writer replaces the whole
   file with the truncated buffer, dropping the tail.
