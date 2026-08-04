@@ -267,9 +267,9 @@ apfs/partition (A4):
 - [ ] M-A4-6  partition_apfs_writer.cpp:17198 non-atomic APFS replace (delete then insert as two checkpoints).
 - [ ] M-A4-8  partition_safety_validator.cpp:1390 OS-disk data partitions lack the disk-level backstop.
 - [ ] M-A4-11 partition_script_builder.cpp:2074 CreateImage overwrites an existing file without confirm.
-- [ ] M-A4-14 partition_script_builder.cpp:4563 merge target_folder path traversal (`..`).
+- [x] M-A4-14 partition_script_builder.cpp:4563 FIXED (wave 14): buildMergeScript rejects a target_folder containing a path separator, ':', or '..'. Test scriptBuilder_mergeRejectsTraversalTargetFolder.
 - [ ] M-A4-27 partition_apfs_file_system_reader.cpp:359 / partition_ext_file_system_reader.cpp:1060 export junction/symlink TOCTOU.
-- [ ] M-A4-28 partition_safety_validator.cpp:1825 validator target.kind switch has no default -> enum fail-open.
+- [x] M-A4-28 partition_safety_validator.cpp:1825 FIXED (wave 14): validate()'s target.kind switch has a default: branch that appends a blocker, so an out-of-range/forged kind fails closed.
 - [ ] M-A4-31 partition_apfs_writer.cpp:18402 incompatible-feature mask value_or(0) -> missing metadata passes preflight.
 
 ai (B1):

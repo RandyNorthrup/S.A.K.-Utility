@@ -4571,6 +4571,16 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
     if (source_partition == 0) {
         return invalidScript(QStringLiteral("Merge requires source_partition_number"));
     }
+    // target_folder is a bare folder name created directly under the target volume
+    // root. quotePowerShell only escapes quotes, so a value containing '..' or a path
+    // separator would let the merged data escape the intended folder into an arbitrary
+    // directory. Reject anything that is not a plain name.
+    if (target_folder.contains(QLatin1Char('/')) || target_folder.contains(QLatin1Char('\\')) ||
+        target_folder.contains(QLatin1Char(':')) || target_folder.contains(QStringLiteral(".."))) {
+        return invalidScript(QStringLiteral(
+            "Merge target_folder must be a bare folder name (no path separators, '..', "
+            "or drive qualifier)"));
+    }
 
     PartitionScript out;
     out.preview = QStringLiteral("Merge Disk %1 Partition %2 into Partition %3")

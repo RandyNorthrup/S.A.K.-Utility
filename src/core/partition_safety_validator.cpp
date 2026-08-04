@@ -1870,6 +1870,11 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     case PartitionTargetKind::Unallocated:
         validateUnallocatedOperation(*disk, operation, &result);
         break;
+    default:
+        // An out-of-range target.kind (corrupted/forged) must never fall through with
+        // only warnings and leave allowed() true. Fail closed.
+        result.blockers.append(QStringLiteral("Unknown partition target kind"));
+        break;
     }
 
     return result;

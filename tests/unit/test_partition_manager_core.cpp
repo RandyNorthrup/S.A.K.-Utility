@@ -2039,6 +2039,7 @@ private Q_SLOTS:
     void scriptBuilder_buildsOsMigrationBootValidationScript();
     void safetyValidator_blocksUnsafeParityOperations();
     void scriptBuilder_buildsClearLevelDiskWipeScript();
+    void scriptBuilder_mergeRejectsTraversalTargetFolder();
     void safetyValidator_blocksUnsafeSystemStyleConversion();
     void scriptBuilder_buildsEmptyDataDiskStyleConversionScript();
     void scriptBuilder_rejectsEnumArgumentCommandInjection();
@@ -17125,6 +17126,30 @@ void PartitionManagerCoreTests::scriptBuilder_buildsClearLevelDiskWipeScript() {
     QVERIFY(ssdScript.valid());
     QVERIFY(ssdScript.script.contains(QStringLiteral("Optimize-Volume -DriveLetter")));
     QVERIFY(ssdScript.script.contains(QStringLiteral("-ReTrim -Verbose")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_mergeRejectsTraversalTargetFolder() {
+    // CODEX_REVIEW_4 M-A4-14: a merge target_folder is created directly under the target
+    // volume root, so a '..' or path separator would let the merged data escape it.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 1;
+    target.partition_number = 2;
+    QJsonObject payload;
+    payload[QStringLiteral("source_partition_number")] = 3;
+
+    PartitionScriptBuilder builder;
+    payload[QStringLiteral("target_folder")] = QStringLiteral("..\\..\\evil");
+    const auto blocked = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Merge, target, payload));
+    QVERIFY(!blocked.valid());
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("bare folder name")));
+
+    // A plain folder name is accepted (the traversal guard does not reject legitimate names).
+    payload[QStringLiteral("target_folder")] = QStringLiteral("MergedData");
+    const auto ok = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Merge, target, payload));
+    QVERIFY2(ok.valid(), qPrintable(ok.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeSystemStyleConversion() {
