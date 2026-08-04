@@ -368,18 +368,43 @@ bool PackageInternalizationEngine::scriptHasNetworkDownload(const QString& scrip
     return false;
 }
 
+namespace {
+// A Windows reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with or
+// without an extension, is not a usable file-name component and can alias a device.
+bool isReservedWindowsDeviceName(const QString& component) {
+    static const QSet<QString> kReserved = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    const QString base = component.section(QLatin1Char('.'), 0, 0).trimmed().toUpper();
+    return kReserved.contains(base);
+}
+}  // namespace
+
 bool PackageInternalizationEngine::isSafePackageComponent(const QString& component) {
     if (component.isEmpty() || component == QLatin1String(".") ||
         component == QLatin1String("..")) {
         return false;
     }
+    // Path separators, the drive colon, and the Win32-illegal filename characters
+    // (< > " | ? *) plus control characters are all rejected.
+    static const QString kForbidden = QStringLiteral("/\\:<>\"|?*");
     for (const QChar c : component) {
-        if (c == QLatin1Char('/') || c == QLatin1Char('\\') || c == QLatin1Char(':') ||
-            c.unicode() < 0x20) {
+        if (kForbidden.contains(c) || c.unicode() < 0x20) {
             return false;
         }
     }
-    return true;
+    // A trailing dot or space is stripped by Win32 path resolution and can alias a
+    // different name; a reserved device name is not a usable component either.
+    if (component.endsWith(QLatin1Char('.')) || component.endsWith(QLatin1Char(' '))) {
+        return false;
+    }
+    return !isReservedWindowsDeviceName(component);
 }
 
 bool PackageInternalizationEngine::beginInternalization(const QString& package_id,

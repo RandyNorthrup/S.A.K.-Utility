@@ -55,6 +55,17 @@ void TestPackageInternalizationEngine::isSafePackageComponent_rejectsTraversalAn
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a\\b")));
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("C:evil")));
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a\nb")));
+    // CODEX_REVIEW_4 M-B2-35: Windows reserved device names, trailing dot/space, and
+    // the Win32-illegal filename characters must also be rejected.
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("CON")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("nul.txt")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("LPT1")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("name.")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("name ")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a<b")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a*b")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a?b")));
+    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a|b")));
 }
 
 void TestPackageInternalizationEngine::binaryChecksumMatches_verifiesNamedAndInferredAlgorithms() {

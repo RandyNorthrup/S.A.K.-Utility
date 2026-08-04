@@ -1043,10 +1043,29 @@ QString OfflineDeploymentWorker::resolveChocoExecutable() {
     // with the app's rights). A missing bundled copy is a packaging fault: fail
     // closed rather than silently borrow the host's tooling.
     const auto& tools = BundledToolsManager::instance();
-    if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
-        return tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
+    if (!tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
+        return QString();
     }
-    return QString();
+    const QString path = tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
+    // Existence alone is the weakest check: confirm choco.exe is a real regular file
+    // (not a planted symlink/junction) whose canonical path stays under the resolved
+    // bundled-tools root, so a junctioned ancestor cannot substitute an attacker
+    // binary that would then run with install-time privileges.
+    const QFileInfo info(path);
+    if (!info.isFile() || info.isSymLink() || info.isJunction()) {
+        return QString();
+    }
+    const QString canonical = info.canonicalFilePath();
+    const QString canonicalRoot = QFileInfo(tools.toolsPath()).canonicalFilePath();
+    if (canonical.isEmpty() || canonicalRoot.isEmpty()) {
+        return QString();
+    }
+    const QString rootWithSep =
+        canonicalRoot.endsWith(QLatin1Char('/')) ? canonicalRoot : canonicalRoot + QLatin1Char('/');
+    if (!canonical.startsWith(rootWithSep, Qt::CaseInsensitive)) {
+        return QString();
+    }
+    return path;
 }
 
 bool OfflineDeploymentWorker::verifyBundledPackage(const DeploymentManifestEntry& entry,

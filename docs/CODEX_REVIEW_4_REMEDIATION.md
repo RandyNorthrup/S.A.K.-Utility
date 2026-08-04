@@ -285,13 +285,13 @@ ai (B1):
 - [ ] M-B1-28 ai_credential_store.cpp:357 secret redaction misses "password":"x" (no optional quote before colon).
 
 core-util (B2):
-- [ ] M-B2-11 offline_deployment_worker.cpp:1046 resolveChocoExecutable existence-only (weakest bundled-exe check).
+- [x] M-B2-11 offline_deployment_worker.cpp:1046 FIXED (wave 11): resolveChocoExecutable now requires choco.exe be a real regular file (not symlink/junction) canonically confined under the bundled-tools root, mirroring the H9 pattern.
 - [ ] M-B2-1  uup_iso_builder.cpp:268,1266 workspace create/removeRecursively no reparse/ownership check.
 - [ ] M-B2-10 offline_deployment_worker.cpp:244,746 marker-write failure returns true; no reparse/identity before removeRecursively.
 - [ ] M-B2-13 offline_deployment_worker.cpp:359 header says unmet-dep=fatal but code warns+proceeds; zero-package bundle emits operationCompleted.
 - [ ] M-B2-15 offline_deployment_worker.cpp:1580 empty declared checksum passes unverified; downloaded>0 ships partial.
 - [ ] M-B2-16 vulnerability_scanner.cpp:1525 enumerateInstalledProgramsFast no incomplete flag -> denied hive = "complete" inventory.
-- [ ] M-B2-35 package_internalization_engine.cpp:371 isSafePackageComponent misses Windows device names / trailing dot-space / < > " | ? *.
+- [x] M-B2-35 package_internalization_engine.cpp:371 FIXED (wave 11): isSafePackageComponent now rejects Win32-illegal chars (< > " | ? *), trailing dot/space, and reserved device names (CON/PRN/AUX/NUL/COM1-9/LPT1-9). Regression rows added.
 - [ ] M-B2-31 windows_usb_creator_extract.cpp:618 bcdboot given drive root not a Windows dir (tracked in-code).
 - [x] M-B2-28 disk_benchmark_worker.cpp:600,765 FIXED (wave 10): validateTestFileSize now rejects sequential_passes<=0/>1000 (loop-skip 0 MB/s success) and random_duration_sec<=0/>3600 (bounds the *1000 int overflow).
 - [x] M-B2-29 disk_benchmark_worker.cpp:183 FIXED (wave 10): randomIoResultUsable requires total_failures < total_ops (was <=), so a 50%-failure run is not scored as usable.
