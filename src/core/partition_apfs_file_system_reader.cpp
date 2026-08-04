@@ -375,10 +375,36 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
     return {};
 }
 
+// True when @p child resolves (junctions/symlinks followed) to a real path at or under
+// @p canonicalRoot. Fail closed on an empty root or an unresolvable/vanished child: a reparse
+// point planted at an ancestor after the root check would otherwise redirect the write outside
+// the export directory. canonicalFilePath yields '/'-separated paths, so the boundary test uses
+// '/'; a sibling-prefix (Root vs RootX) is rejected by requiring the separator.
+[[nodiscard]] bool realizedPathWithinRoot(const QString& canonicalRoot, const QString& child) {
+    if (canonicalRoot.isEmpty()) {
+        return false;
+    }
+    const QString canonicalChild = QFileInfo(child).canonicalFilePath();
+    if (canonicalChild.isEmpty()) {
+        return false;
+    }
+    return canonicalChild == canonicalRoot ||
+           canonicalChild.startsWith(canonicalRoot + QLatin1Char('/'));
+}
+
 bool writeExportFile(const QString& path,
                      const QByteArray& data,
                      QStringList* blockers,
-                     const QString& sourcePath) {
+                     const QString& sourcePath,
+                     const QString& canonicalRoot) {
+    // Re-check the leaf's PARENT directory on every write: mkpath created the ancestor chain, but
+    // a junction swapped in afterward would redirect this file outside the export root. The
+    // NewOnly guard below only protects the final component.
+    if (!realizedPathWithinRoot(canonicalRoot, QFileInfo(path).absolutePath())) {
+        blockers->append(QStringLiteral("Export target escapes the export root (reparse point): %1")
+                             .arg(sourcePath));
+        return false;
+    }
     QFile file(path);
     // NewOnly (O_EXCL/CREATE_NEW) fails closed if anything already exists at `path`: uniquePath
     // returned a non-existent candidate, so a file/symlink appearing here is a TOCTOU race and
@@ -2320,8 +2346,10 @@ void appendApfsExportRequestBlockers(const QString& imagePath,
 
 class ApfsDirectoryExporter {
 public:
-    ApfsDirectoryExporter(QIODevice* image, const PartitionApfsDirectoryExportOptions& options)
-        : reader_(image), options_(options) {}
+    ApfsDirectoryExporter(QIODevice* image,
+                          const PartitionApfsDirectoryExportOptions& options,
+                          const QString& canonicalRoot)
+        : reader_(image), options_(options), canonical_root_(canonicalRoot) {}
 
     PartitionApfsDirectoryExportResult run(const QString& sourcePath,
                                            const QString& outputDirectory) {
@@ -2413,6 +2441,12 @@ private:
                 QStringLiteral("Unable to create exported directory: %1").arg(targetPath));
             return false;
         }
+        if (!realizedPathWithinRoot(canonical_root_, targetPath)) {
+            result_.blockers.append(
+                QStringLiteral("Exported directory escapes the export root (reparse point): %1")
+                    .arg(targetPath));
+            return false;
+        }
         ++result_.directories_exported;
         pending_.append({entry.path, targetPath, entry.object_id});
         return true;
@@ -2434,7 +2468,8 @@ private:
             result_.blockers.append(file.blockers);
             return false;
         }
-        if (!writeExportFile(targetPath, file.data, &result_.blockers, entry.path)) {
+        if (!writeExportFile(
+                targetPath, file.data, &result_.blockers, entry.path, canonical_root_)) {
             return false;
         }
         ++result_.files_exported;
@@ -2460,6 +2495,7 @@ private:
     PartitionApfsDirectoryExportResult result_;
     QVector<ApfsExportFrame> pending_;
     QSet<uint64_t> visited_directories_;
+    const QString canonical_root_;
 };
 
 PartitionApfsFileReadResult withOpenedApfsImage(
@@ -2527,8 +2563,19 @@ PartitionApfsDirectoryExportResult PartitionApfsFileSystemReader::exportDirector
         exportResult.blockers.append(QStringLiteral("Unable to create output directory"));
         return exportResult;
     }
+    const QString canonicalRoot = QFileInfo(root.absolutePath()).canonicalFilePath();
+    if (canonicalRoot.isEmpty()) {
+        exportResult.blockers.append(QStringLiteral("Unable to resolve export root path"));
+        return exportResult;
+    }
 
-    return ApfsDirectoryExporter(image.get(), options).run(source_path, root.absolutePath());
+    return ApfsDirectoryExporter(image.get(), options, canonicalRoot)
+        .run(source_path, root.absolutePath());
+}
+
+bool PartitionApfsFileSystemReader::exportPathWithinRootForTesting(const QString& canonical_root,
+                                                                   const QString& child) {
+    return realizedPathWithinRoot(canonical_root, child);
 }
 
 }  // namespace sak

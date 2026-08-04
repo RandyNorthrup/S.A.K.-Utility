@@ -102,6 +102,13 @@ public:
         const QString& source_path,
         const QString& output_directory,
         const PartitionApfsDirectoryExportOptions& options);
+
+    /// @brief True when @p child resolves (junctions/symlinks followed) to a real path at or
+    ///        under the canonical @p canonical_root. Pure seam for the export junction/symlink
+    ///        TOCTOU guard: fails closed on an empty root or an unresolvable/vanished child, and
+    ///        rejects a sibling-prefix (Root vs RootX). Same logic guards the ext exporter.
+    [[nodiscard]] static bool exportPathWithinRootForTesting(const QString& canonical_root,
+                                                             const QString& child);
 };
 
 }  // namespace sak

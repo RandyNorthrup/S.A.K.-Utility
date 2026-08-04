@@ -2050,6 +2050,7 @@ private Q_SLOTS:
     void safetyValidator_blocksOsDiskDataPartitionMutation();
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
+    void exporter_realizedPathWithinRootRejectsEscape();
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
@@ -17378,6 +17379,29 @@ void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange
     QVERIFY(
         !PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, ~0ULL, kBlocks));    // length wrap
     QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, 1, 0));  // empty container
+}
+
+void PartitionManagerCoreTests::exporter_realizedPathWithinRootRejectsEscape() {
+    // CODEX_REVIEW_4 M-A4-27: the export writers re-check that every realized target stays
+    // under the canonical export root, so a junction planted at an ancestor after mkpath cannot
+    // redirect the write outside. The pure containment seam (shared logic for both exporters):
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+    QVERIFY(QDir(base.path()).mkpath(QStringLiteral("Out/inner")));
+    QVERIFY(QDir(base.path()).mkpath(QStringLiteral("OutX")));
+    const QString root = QFileInfo(base.path() + QStringLiteral("/Out")).canonicalFilePath();
+    const QString inner = QFileInfo(base.path() + QStringLiteral("/Out/inner")).canonicalFilePath();
+    const QString sibling = QFileInfo(base.path() + QStringLiteral("/OutX")).canonicalFilePath();
+    QVERIFY(!root.isEmpty());
+
+    using R = PartitionApfsFileSystemReader;
+    QVERIFY(R::exportPathWithinRootForTesting(root, inner));     // nested child -> allowed
+    QVERIFY(R::exportPathWithinRootForTesting(root, root));      // the root itself -> allowed
+    QVERIFY(!R::exportPathWithinRootForTesting(root, sibling));  // sibling prefix OutX -> rejected
+    QVERIFY(!R::exportPathWithinRootForTesting(root, QString()));   // empty child -> closed
+    QVERIFY(!R::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
+    QVERIFY(!R::exportPathWithinRootForTesting(
+        root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {
