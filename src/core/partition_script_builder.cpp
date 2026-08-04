@@ -2343,6 +2343,35 @@ QString createImageDestinationGuardScript(const QString& target,
                     overwriteConfirmed ? QStringLiteral("$true") : QStringLiteral("$false"));
 }
 
+// Runtime authoritative guard for Restore Image (symmetric to createImageDestinationGuardScript):
+// reject a UNC/network source (which cannot be proven off the target disk -- a \\localhost\C$ or
+// \\127.0.0.1\C$ alias could name the target volume), and resolve the source image file's real
+// volume identity (Get-SakVolumeGuid follows reparse points) and throw if it maps onto the TARGET
+// disk being restored, since restoring would overwrite the source mid-copy.
+QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDiskNumber) {
+    return sakVolumeGuidFunctionScript() +
+           QStringLiteral(
+               "$imgSrc = %1\n"
+               "$tgtDiskNumber = %2\n"
+               "if ($imgSrc.StartsWith('\\\\') -and -not $imgSrc.StartsWith('\\\\.\\') -and -not "
+               "$imgSrc.StartsWith('\\\\?\\')) { throw 'Restore Image source must be a local, "
+               "resolvable path; UNC/network sources are not supported for raw restore' }\n"
+               "$srcGuid = $null\n"
+               "try { $srcGuid = (Get-SakVolumeGuid $imgSrc).TrimEnd('\\') } catch "
+               "{ throw ('Restore Image cannot resolve the source volume identity for {0}: {1}; "
+               "refusing to proceed without the off-target-disk guard' -f $imgSrc, "
+               "$_.Exception.Message) }\n"
+               "if (-not $srcGuid) { throw ('Restore Image source volume identity for {0} resolved "
+               "empty; refusing to proceed without the off-target-disk guard' -f $imgSrc) }\n"
+               "$tgtVolGuids = @(Get-Partition -DiskNumber $tgtDiskNumber -ErrorAction Stop | "
+               "Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
+               "{ if ($_.UniqueId) { $_.UniqueId.TrimEnd('\\') } })\n"
+               "if ($tgtVolGuids -contains $srcGuid) { throw 'Restore Image source resides on the "
+               "target disk; it would be overwritten mid-restore' }\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)),
+                    QString::number(targetDiskNumber));
+}
+
 QString cloneTransferScript(const CloneTransferSpec& spec) {
     return cloneTransferPreludeScript(spec) + cloneTransferOpenFunctionsScript() +
            cloneTransferVerificationFunctionsScript() + cloneTransferRawTargetFunctionsScript() +
@@ -4716,6 +4745,9 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
             spec.target,
             operation.target.disk_number,
             payloadBool(operation, QStringLiteral("overwrite_confirmed")));
+    }
+    if (operation.type == PartitionOperationType::RestoreImage) {
+        out.script += restoreImageSourceGuardScript(spec.source, operation.target.disk_number);
     }
     out.script += cloneTransferScript(spec);
     if (operation.type == PartitionOperationType::MigrateOs) {

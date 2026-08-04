@@ -2049,6 +2049,7 @@ private Q_SLOTS:
     void safetyValidator_blocksDiskScopedWipeWithPartitionTarget();
     void safetyValidator_blocksOsDiskDataPartitionMutation();
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
+    void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void exporter_realizedPathWithinRootRejectsEscape();
     void safetyValidator_blocksSplitBootOsDiskMutations();
@@ -17364,6 +17365,30 @@ void PartitionManagerCoreTests::scriptBuilder_createImageRefusesExistingWithoutO
     auto allowed = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, target, payload));
     QVERIFY(allowed.script.contains(QStringLiteral("$allowOverwrite = $true")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource() {
+    // CODEX_REVIEW_4 M-B3-1 (parts B/C): Restore Image had no off-target-disk guard (unlike
+    // Create Image) and a UNC source bypassed the same-disk check. The emitted guard must reject
+    // a UNC/network source and a source volume that resolves onto the target disk.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 2;
+    target.size_bytes = 107'374'182'400ULL;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("D:\\images\\disk.img");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    payload[QStringLiteral("overwrite_confirmed")] = true;
+
+    const auto script =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreImage, target, payload));
+    QVERIFY(script.script.contains(QStringLiteral("UNC/network sources are not supported")));
+    QVERIFY(script.script.contains(QStringLiteral("resides on the target disk")));
+    QVERIFY(script.script.contains(QStringLiteral("$tgtDiskNumber = 2")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange() {
