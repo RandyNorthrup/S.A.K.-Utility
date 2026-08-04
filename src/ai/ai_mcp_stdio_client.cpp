@@ -102,6 +102,12 @@ public:
         , m_done(done)
         , m_ownerThread(owner_thread) {}
 
+    ~StdioToolCallWorker() override {
+#ifdef Q_OS_WIN
+        closeJob();  // Safety net: reap the tree if teardown did not already close the job.
+#endif
+    }
+
     void start() {
         m_process = new QProcess(this);
         m_timeoutTimer = new QTimer(this);
@@ -158,8 +164,51 @@ private:
 
     void onStarted() {
         m_phase = StdioPhase::AwaitInitialize;
+        // Place the live server in a kill-on-close Job Object NOW (while it is running) so its
+        // whole descendant tree is reaped at teardown -- even when the server later exits on its
+        // OWN, where stopProcess sees NotRunning and a parent-PID snapshot walk would find nothing
+        // (children reparented). Best-effort: if the job cannot be set up, stopProcess falls back
+        // to the per-process terminate/kill path so cleanup is never weaker than before.
+        assignProcessToJob();
         (void)write(mcp::initializePayload(kInitializeId));
     }
+
+#ifdef Q_OS_WIN
+    void assignProcessToJob() {
+        if (!m_process || m_process->processId() <= 0) {
+            return;
+        }
+        m_jobHandle = ::CreateJobObjectW(nullptr, nullptr);
+        if (!m_jobHandle) {
+            return;
+        }
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!::SetInformationJobObject(
+                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
+            return;
+        }
+        const HANDLE proc = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
+                                          FALSE,
+                                          static_cast<DWORD>(m_process->processId()));
+        if (!proc) {
+            closeJob();
+            return;
+        }
+        if (!::AssignProcessToJobObject(m_jobHandle, proc)) {
+            closeJob();  // Not in the job -> closing it would reap nothing; fall back.
+        }
+        ::CloseHandle(proc);
+    }
+
+    void closeJob() {
+        if (m_jobHandle) {
+            ::CloseHandle(m_jobHandle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
+            m_jobHandle = nullptr;
+        }
+    }
+#endif
 
     void handleReadyRead() {
         // Enforce the byte cap BEFORE reading any line: a fast server can buffer a single
@@ -260,6 +309,17 @@ private:
     }
 
     void stopProcess(bool force_kill) {
+#ifdef Q_OS_WIN
+        if (m_jobHandle) {
+            // The Job Object reaps the entire tree via KILL_ON_JOB_CLOSE -- including a server
+            // that already exited on its own and left orphaned descendants (the NotRunning
+            // early-return below would otherwise skip cleanup entirely). Supersedes the
+            // per-process terminate/kill.
+            closeJob();
+            return;
+        }
+#endif
+        // Fallback path when no Job Object could be established: best-effort per-process teardown.
         if (m_process->state() == QProcess::NotRunning) {
             return;
         }
@@ -284,6 +344,9 @@ private:
     QByteArray m_stderrTail;
     StdioPhase m_phase{StdioPhase::Starting};
     std::atomic_bool m_completed{false};
+#ifdef Q_OS_WIN
+    HANDLE m_jobHandle{nullptr};
+#endif
 };
 
 bool validateStdioToolCall(const AiMcpStdioCallRequest& request, QString* error_message) {
