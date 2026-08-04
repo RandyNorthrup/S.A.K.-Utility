@@ -479,7 +479,9 @@ QJsonObject serializeProgram(const ProgramInfo& program) {
 }
 
 AppActionResult listInstalledPrograms(const QJsonObject&) {
-    const QVector<ProgramInfo> programs = VulnerabilityScanner::enumerateInstalledProgramsFast();
+    bool inventory_complete = true;
+    const QVector<ProgramInfo> programs =
+        VulnerabilityScanner::enumerateInstalledProgramsFast(&inventory_complete);
     QJsonArray listed;
     for (const ProgramInfo& program : programs) {
         if (listed.size() >= kMaxListedPrograms) {
@@ -491,6 +493,7 @@ AppActionResult listInstalledPrograms(const QJsonObject&) {
     QJsonObject data{{QStringLiteral("total_count"), programs.size()},
                      {QStringLiteral("listed_count"), listed.size()},
                      {QStringLiteral("truncated"), truncated},
+                     {QStringLiteral("inventory_complete"), inventory_complete},
                      {QStringLiteral("programs"), listed}};
     return {true, QStringLiteral("Found %1 installed program(s)").arg(programs.size()), data};
 }
@@ -751,7 +754,9 @@ VulnerabilityScanOptions scanOptionsFromArgs(const QJsonObject& args) {
 }
 
 AppActionResult scanVulnerabilities(const QJsonObject& args) {
-    const QVector<ProgramInfo> programs = VulnerabilityScanner::enumerateInstalledProgramsFast();
+    bool inventory_complete = true;
+    const QVector<ProgramInfo> programs =
+        VulnerabilityScanner::enumerateInstalledProgramsFast(&inventory_complete);
     const VulnerabilityScanOptions options = scanOptionsFromArgs(args);
     const VulnerabilityScanResult scan = VulnerabilityScanner::scanInstalledPrograms(programs,
                                                                                      options);
@@ -767,7 +772,15 @@ AppActionResult scanVulnerabilities(const QJsonObject& args) {
     for (const QString& err : scan.sourceErrors) {
         source_errors.append(err);
     }
+    if (!inventory_complete) {
+        // A denied/partial registry read means some installed apps were not enumerated, so the
+        // scan may miss real vulnerabilities. Surface it rather than implying full coverage.
+        source_errors.append(QStringLiteral(
+            "Installed-app inventory incomplete (a registry hive could not be fully read; run "
+            "elevated for full coverage) -- vulnerabilities in unlisted apps may be missed"));
+    }
     QJsonObject data{{QStringLiteral("installed_apps_scanned"), scan.installedAppsScanned},
+                     {QStringLiteral("inventory_complete"), inventory_complete},
                      {QStringLiteral("total_findings"), scan.findings.size()},
                      {QStringLiteral("reported_findings"), findings.size()},
                      {QStringLiteral("critical_count"), scan.criticalCount},

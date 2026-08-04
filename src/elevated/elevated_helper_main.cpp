@@ -842,8 +842,18 @@ bool finishActiveTaskWithCancelPolling(
     bool shutdown_after_task = false;
     while (future->wait_for(std::chrono::milliseconds(kActiveTaskCancelPollMs)) !=
            std::future_status::ready) {
-        if (!server.hasPendingMessage()) {
+        switch (server.pollPipe()) {
+        case sak::ElevatedPipeServer::PipePoll::NoData:
             continue;
+        case sak::ElevatedPipeServer::PipePoll::Broken:
+            // The client pipe is broken (the client died): cancel the privileged task rather than
+            // spin forever treating a dead pipe as "no message" -- a dead client can no longer
+            // send an explicit cancel.
+            cancel_requested->store(true, std::memory_order_relaxed);
+            sak::logWarning("ElevatedHelper: client pipe broken during active task; cancelling");
+            return true;
+        case sak::ElevatedPipeServer::PipePoll::MessageReady:
+            break;
         }
 
         auto msg = server.readMessage();

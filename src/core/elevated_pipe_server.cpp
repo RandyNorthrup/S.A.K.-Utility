@@ -286,6 +286,19 @@ bool ElevatedPipeServer::hasPendingMessage() const {
 #endif
 }
 
+ElevatedPipeServer::PipePoll ElevatedPipeServer::pollPipe() const {
+#ifdef _WIN32
+    if (m_pipe_handle == INVALID_HANDLE_VALUE) {
+        return PipePoll::Broken;
+    }
+    DWORD available = 0;
+    const BOOL peek_ok = PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr);
+    return classifyPeek(peek_ok != 0, available);
+#else
+    return PipePoll::Broken;
+#endif
+}
+
 void ElevatedPipeServer::stop() {
 #ifdef _WIN32
     if (m_pipe_handle != INVALID_HANDLE_VALUE) {

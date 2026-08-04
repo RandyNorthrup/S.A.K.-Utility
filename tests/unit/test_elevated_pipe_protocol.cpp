@@ -244,6 +244,19 @@ private Q_SLOTS:
         QVERIFY(!S::clientPidMatchesParent(-1, -1));
         QVERIFY(!S::clientPidMatchesParent(0, 1234));
     }
+
+    // ======================================================================
+    // CODEX_REVIEW_4 M-B3-5: a broken pipe must be distinguishable from no-data so a
+    // dead client cancels the active privileged task instead of looping forever.
+    // ======================================================================
+
+    void testClassifyPeekDistinguishesBrokenFromNoData() {
+        using S = sak::ElevatedPipeServer;
+        QCOMPARE(S::classifyPeek(false, 0), S::PipePoll::Broken);  // failed peek -> broken
+        QCOMPARE(S::classifyPeek(false, 8), S::PipePoll::Broken);  // failed peek wins over bytes
+        QCOMPARE(S::classifyPeek(true, 0), S::PipePoll::NoData);   // ok, nothing pending
+        QCOMPARE(S::classifyPeek(true, 5), S::PipePoll::MessageReady);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestElevatedPipeProtocol)

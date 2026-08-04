@@ -63,6 +63,26 @@ public:
     /// @brief Check whether at least one byte is pending on the pipe
     [[nodiscard]] bool hasPendingMessage() const;
 
+    /// @brief Tri-state pipe poll that distinguishes a broken pipe from merely no-data, so a
+    ///        caller can cancel a privileged task when the client has died instead of looping
+    ///        forever treating a dead pipe as "no message".
+    enum class PipePoll {
+        NoData,
+        MessageReady,
+        Broken
+    };
+    /// @brief Pure classifier: a failed PeekNamedPipe means Broken; otherwise data-available maps
+    ///        to MessageReady and none to NoData. Unit-testable without a real pipe.
+    [[nodiscard]] static PipePoll classifyPeek(bool peek_ok, unsigned long bytes_available) {
+        if (!peek_ok) {
+            return PipePoll::Broken;
+        }
+        return bytes_available > 0 ? PipePoll::MessageReady : PipePoll::NoData;
+    }
+    /// @brief Poll the live pipe and classify the result (Broken on an invalid handle or a failed
+    ///        PeekNamedPipe).
+    [[nodiscard]] PipePoll pollPipe() const;
+
     /// @brief Check if client is still connected
     [[nodiscard]] bool isConnected() const;
 
