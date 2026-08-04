@@ -4542,10 +4542,15 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
                          "if ($disk.IsBoot -or $disk.IsSystem) { throw 'System disk conversion "
                          "must use MBR2GPT' }\n"
-                         "$parts = @(Get-Partition -DiskNumber %1 -ErrorAction SilentlyContinue)\n"
-                         "if ($parts.Count -gt 0) { throw 'Data disk partition-style conversion "
-                         "requires an empty disk' }\n"
+                         // A RAW disk has no partitions by definition, so only a
+                         // non-RAW disk is enumerated -- and that enumeration uses
+                         // -ErrorAction Stop so an enumeration FAILURE aborts instead
+                         // of being swallowed into an empty list that passes the
+                         // empty-disk gate and wipes a disk that actually holds data.
                          "if ($disk.PartitionStyle -ne 'RAW') {\n"
+                         "  $parts = @(Get-Partition -DiskNumber %1 -ErrorAction Stop)\n"
+                         "  if ($parts.Count -gt 0) { throw 'Data disk partition-style "
+                         "conversion requires an empty disk' }\n"
                          "  Clear-Disk -Number %1 -RemoveData -Confirm:$false\n"
                          "}\n"
                          "Initialize-Disk -Number %1 -PartitionStyle %2\n")
@@ -4589,7 +4594,11 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "New-Item -ItemType Directory -Force -Path $destination | Out-Null\n"
                      "robocopy.exe ('{0}:\\' -f $sourceVolume.DriveLetter) $destination /E "
                      "/COPYALL /DCOPY:DAT /R:1 /W:1\n"
-                     "if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }\n"
+                     // robocopy exit codes are bit flags: 1=copied, 2=extra, 4=MISMATCH,
+                     // 8=some files/dirs could not be copied, 16=fatal. Only 0-3 mean a
+                     // complete, consistent copy. Anything >=4 (mismatch or failure) must
+                     // abort BEFORE the source partition is deleted, or data is lost.
+                     "if ($LASTEXITCODE -ge 4) { exit $LASTEXITCODE }\n"
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
                      "$supported = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %4\n"
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %4 -Size "

@@ -131,15 +131,21 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   file with the truncated buffer, dropping the tail.
   Fix: treat read truncation on the patch path as a blocker (fail closed).
 
-- [ ] H6 [B1-3] ai_execution_broker.cpp:194,482
+- [~] H6 [B1-3] ai_execution_broker.cpp:194,482 DEFERRED (wave 3): a correct fix requires
+  deriving effective elevation from the process token and either routing an
+  already-elevated plain launch through the gated elevated path or de-elevating it -- a
+  privilege-architecture change too risky to retrofit inline without an elevated-path
+  test harness. Concrete exploit is now bounded by the strengthened content classifier
+  (C2/C3/C4): a destructive command is gated by content regardless of requires_admin.
+  Tracked for a dedicated design pass.
   requires_admin is model-controlled and defaults false on malformed input; the
   non-admin path launches via plain QProcess inheriting S.A.K.'s token, so when
   S.A.K. is elevated a model can set requires_admin=false and still run elevated,
   skipping the elevated-runner gate, and drops the auto-risky flag.
-  Fix: derive elevation from the actual process token; classify commands by
-  content regardless of the flag.
 
-- [ ] H7 [B1-8] ai_tool_policy.cpp:194
+- [x] H7 [B1-8] ai_tool_policy.cpp:194 FIXED (wave 3): the action verb is matched as a
+  whole word (textContainsAnyWord), so "list installed apps" no longer satisfies install
+  intent via the substring. Regression row install-substring-in-installed.
   Install-intent inferred from a question: "Can you list installed apps?" ->
   substring "installed" + directed-request marker "can you " => hasDirectedIntentFor
   true, authorizing an install mutation from an unrelated question.
@@ -197,13 +203,18 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   Fix: resolve every system exe to its GetSystemDirectoryW absolute path (the
   helper already has resolveSystemPowerShellPath for its own tasks).
 
-- [ ] H15 [A4-16] partition_script_builder.cpp:4545
+- [x] H15 [A4-16] partition_script_builder.cpp:4545 FIXED (wave 3): the partition
+  enumeration now runs only in the non-RAW branch with -ErrorAction Stop, so an
+  enumeration failure aborts instead of being swallowed into an empty "empty disk"
+  result that would Clear-Disk. RAW->GPT conversion still works (RAW has no partitions).
   ConvertPartitionStyle enumeration fail-open: `Get-Partition -DiskNumber %1
   -ErrorAction SilentlyContinue` yields empty on error, the "requires empty
   disk" gate passes, and Clear-Disk proceeds.
   Fix: -ErrorAction Stop before the empty-disk gate.
 
-- [ ] H16 [A4-15] partition_script_builder.cpp:4592
+- [x] H16 [A4-15] partition_script_builder.cpp:4592 FIXED (wave 3): robocopy exit is now
+  gated at >= 4 (any mismatch/failure aborts) before Remove-Partition, instead of > 7.
+  Source GUID/size pinning beyond number+adjacency remains a follow-on hardening.
   Merge deletes source after an incomplete copy: robocopy exit 4-7 (mismatch)
   is accepted, then Remove-Partition deletes the source, which is pinned only by
   number + adjacency.

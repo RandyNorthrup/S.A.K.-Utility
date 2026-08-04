@@ -394,6 +394,10 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent_data() {
         << QStringLiteral("install") << QStringLiteral("can you install firefox for me") << true;
     QTest::newRow("install-affirmative")
         << QStringLiteral("install") << QStringLiteral("yes, install it") << true;
+    // CODEX_REVIEW_4 H7: the action verb must be a whole word -- "installed" in a
+    // listing question must not authorize an install via the "install" substring.
+    QTest::newRow("install-substring-in-installed")
+        << QStringLiteral("install") << QStringLiteral("can you list installed apps?") << false;
     QTest::newRow("uninstall-question")
         << QStringLiteral("uninstall") << QStringLiteral("how do I uninstall this app?") << false;
     QTest::newRow("uninstall-please")

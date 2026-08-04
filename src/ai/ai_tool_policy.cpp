@@ -89,6 +89,22 @@ bool textMatchesAny(const QString& text, const QStringList& needles) {
     return false;
 }
 
+// Word-boundary variant: the action VERB that authorizes a mutation must appear as
+// a whole word, so "list installed apps" does not satisfy the "install" intent via
+// the substring inside "installed". Phrases ("set up") are matched with boundaries
+// on each end.
+bool textContainsAnyWord(const QString& text, const QStringList& words) {
+    for (const auto& word : words) {
+        const QRegularExpression re(QStringLiteral("\\b") + QRegularExpression::escape(word) +
+                                        QStringLiteral("\\b"),
+                                    QRegularExpression::CaseInsensitiveOption);
+        if (re.match(text).hasMatch()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool hasScanIntent(const QString& user_message) {
     const QString text = norm(user_message);
     if (text.isEmpty()) {
@@ -191,7 +207,7 @@ bool hasDirectedIntentFor(const QString& text,
     // request marker ("please/can you ... install X"). A bare substring mention, a
     // question, or a how-to request fails and is not treated as consent.
     if (hasNegatedActionIntent(text) || hasExplanatoryFraming(text) ||
-        !textMatchesAny(text, verb_keywords)) {
+        !textContainsAnyWord(text, verb_keywords)) {
         return false;
     }
     return startsWithAny(text, imperative_prefixes) || hasDirectedRequestMarker(text);
