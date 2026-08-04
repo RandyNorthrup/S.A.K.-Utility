@@ -353,9 +353,11 @@ QString CredentialStore::redactSecrets(const QString& text) {
         QStringLiteral(R"(\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b)"));
     result.replace(kStripeKey, QStringLiteral("[redacted-stripe-key]"));
 
-    // Generic "password=", "passwd=", "secret=", "token=", "api[_-]?key=" values.
+    // Generic "password=", "passwd=", "secret=", "token=", "api[_-]?key=" values, INCLUDING
+    // the quoted-JSON form "password":"..." -- the optional "? after the key name lets the
+    // closing quote of a JSON key sit between the name and the ':' separator.
     static const QRegularExpression kAssignmentSecret(QStringLiteral(
-        R"RX((?i)\b(password|passwd|secret|token|api[_\-]?key)\s*[:=]\s*"?([^\s"';,]{4,})"?)RX"));
+        R"RX((?i)\b(password|passwd|secret|token|api[_\-]?key)"?\s*[:=]\s*"?([^\s"';,]{4,})"?)RX"));
     QRegularExpressionMatchIterator it = kAssignmentSecret.globalMatch(result);
     QString rewritten;
     rewritten.reserve(result.size());

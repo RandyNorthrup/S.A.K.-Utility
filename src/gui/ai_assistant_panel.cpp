@@ -5450,8 +5450,28 @@ bool AiAssistantPanel::rejectCommandBeforeRun(const PendingToolCallContext& cont
 bool AiAssistantPanel::acquireCommandToolLease(const PendingToolCallContext& context,
                                                const ai::AiCommandToolPlan& plan,
                                                ai::OpenAIFunctionOutput* output) {
-    if (!plan.policy_decision.requires_lease || !m_leaseManager) {
+    if (!plan.policy_decision.requires_lease) {
         return true;
+    }
+    if (!m_leaseManager) {
+        // The mutation requires a lease but no lease manager is wired to serialize it.
+        // Fail closed -- block the tool call rather than run an unserialized change --
+        // instead of the previous fail-open "return true".
+        const QString reason = QStringLiteral("mutating lease manager is unavailable");
+        const QJsonObject blocked = ai::AiToolDispatcher::leaseDeniedResult(plan.policy_request,
+                                                                            reason);
+        output->output = QString::fromUtf8(QJsonDocument(blocked).toJson(QJsonDocument::Compact));
+        QJsonObject metadata = context.metadata;
+        metadata[QStringLiteral("lease_denied")] = true;
+        metadata[QStringLiteral("reason")] = reason;
+        traceAiEvent(QStringLiteral("tool_call"),
+                     context.call->name,
+                     QStringLiteral("lease_denied"),
+                     metadata);
+        appendLocalEvent(
+            tr("Mutating lease unavailable for %1: %2").arg(context.call->name, reason));
+        appendToolOutputAndContinue(std::move(*output));
+        return false;
     }
     const auto acquire = m_leaseManager->acquire(QStringLiteral("overseer"),
                                                  QStringList{context.call->name},

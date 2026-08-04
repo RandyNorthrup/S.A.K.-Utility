@@ -281,8 +281,8 @@ ai (B1):
 - [ ] M-B1-16 ai_execution_broker.cpp:90 job-create/assign failure -> kill primary only, descendants survive.
 - [ ] M-B1-17 ai_provider_registry.cpp:72 exe confinement lexical cleanPath, not canonicalFilePath; validate/launch TOCTOU.
 - [ ] M-B1-21 ai_workflow_placeholders.cpp:81 PowerShell single-quote invariant never validated; user workflows override built-in ids.
-- [ ] M-B1-22 ai_assistant_panel.cpp:5453 lease fail-open: !m_leaseManager -> return true.
-- [ ] M-B1-28 ai_credential_store.cpp:357 secret redaction misses "password":"x" (no optional quote before colon).
+- [x] M-B1-22 ai_assistant_panel.cpp:5453 FIXED (wave 12): a mutation requiring a lease now fails closed (emits leaseDeniedResult, blocks) when m_leaseManager is absent, instead of returning true.
+- [x] M-B1-28 ai_credential_store.cpp:357 FIXED (wave 12): the assignment-secret regex gained an optional "? after the key name so quoted-JSON secrets ("password":"...") are redacted.
 
 core-util (B2):
 - [x] M-B2-11 offline_deployment_worker.cpp:1046 FIXED (wave 11): resolveChocoExecutable now requires choco.exe be a real regular file (not symlink/junction) canonically confined under the bundled-tools root, mirroring the H9 pattern.
