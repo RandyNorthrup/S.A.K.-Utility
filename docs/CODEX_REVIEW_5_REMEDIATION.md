@@ -1497,9 +1497,57 @@ and analyzed nothing. Even if the hook had existed, it would have checked zero c
       (previously 0), verified with clang-tidy --list-checks
 - [x] R5-G12-2 Produce a compilation database (Ninja + vcpkg toolchain + Qt 6.10.3),
       1844 entries, which the Visual Studio generator cannot emit
-- [ ] R5-G12-3 Measure the full clang-tidy debt across all first-party sources
+- [x] R5-G12-3 Measure the full clang-tidy debt across all first-party sources
 - [ ] R5-G12-4 Fix every clang-tidy finding
 - [ ] R5-G12-5 Wire clang-tidy into pre-commit and CI
+
+MEASURED DEBT: 39830 unique first-party diagnostics (512 translation units, 59 minutes
+of analysis). Deduplicated by file, line, column and check, because a source file
+appears once per target that compiles it and clang-tidy re-analyzes each entry.
+
+| Check | Count |
+|---|---|
+| readability-identifier-naming | 23612 |
+| misc-const-correctness | 3632 |
+| cppcoreguidelines-pro-bounds-avoid-unchecked-container-access | 3612 |
+| modernize-use-designated-initializers | 2071 |
+| readability-implicit-bool-conversion | 1483 |
+| readability-function-size | 886 |
+| misc-use-internal-linkage | 592 |
+| cppcoreguidelines-narrowing-conversions | 451 |
+| readability-math-missing-parentheses | 328 |
+| modernize-use-ranges | 325 |
+| clang-diagnostic-error | 251 |
+| cppcoreguidelines-avoid-c-arrays | 208 |
+| bugprone-implicit-widening-of-multiplication-result | 173 |
+
+SECURITY AND CORRECTNESS TIER -- 995 diagnostics, fix these first:
+
+- [ ] R5-G12-6 451 cppcoreguidelines-narrowing-conversions. Note that
+      bugprone-narrowing-conversions, the sibling check, is one of the checks this
+      config explicitly disables (R5-G2). The disabled check was concealing 451
+      instances of precisely the truncation class this review found in the raw
+      filesystem parsers.
+- [ ] R5-G12-7 251 clang-diagnostic-error: clang cannot parse these constructs. Each
+      must be triaged as either a real defect or an MSVC-specific construct needing a
+      parse flag; a file that fails to parse is a file clang-tidy never checked.
+- [ ] R5-G12-8 173 bugprone-implicit-widening-of-multiplication-result: a 32-bit
+      multiplication widened only after it can already overflow -- the exact pattern
+      behind the block and offset arithmetic findings in the raw filesystem passes.
+- [ ] R5-G12-9 51 bugprone-throwing-static-initialization
+- [ ] R5-G12-10 30 cert-err33-c: return values not checked, the fail-open class
+- [ ] R5-G12-11 24 bugprone-misplaced-widening-cast
+- [ ] R5-G12-12 3 bugprone-unchecked-optional-access, 2 bugprone-integer-division,
+      1 bugprone-use-after-move
+
+The remaining ~38800 are style and modernization tier (naming, const-correctness,
+designated initializers, implicit bool conversion). They are mechanical but large,
+and are the 'big refactor' this campaign explicitly accepts.
+
+Highest-density files, which are also the files this review found the most defects in:
+test_partition_manager_core.cpp 4347, partition_apfs_writer.cpp 4086,
+partition_manager_panel.cpp 1684, ai_assistant_panel.cpp 1238,
+file_management_explorer_panel.cpp 823.
 
 ### G13 - the cppcheck gate was analyzing code that never compiles
 
