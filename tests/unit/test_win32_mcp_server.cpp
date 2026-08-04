@@ -86,6 +86,7 @@ private slots:
     void serverProfile_unknownTokenFailsClosedToReadOnly();
     void request_rejectsWrongJsonRpcVersion();
     void toolsCall_nonObjectArgumentsRejected();
+    void validateArgsAgainstSchema_enforcesRequiredUnknownAndType();
 };
 
 void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
@@ -665,6 +666,50 @@ void Win32McpServerTests::toolsCall_nonObjectArgumentsRejected() {
     QCOMPARE(
         response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
         -32'602);
+}
+
+void Win32McpServerTests::validateArgsAgainstSchema_enforcesRequiredUnknownAndType() {
+    // CODEX_REVIEW_4 M-A3-65: the server independently enforces a native tool's advertised
+    // inputSchema. A "text" string property, required, additionalProperties:false.
+    const QJsonObject schema{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("text"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+                     {QStringLiteral("count"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("text")}},
+        {QStringLiteral("additionalProperties"), false}};
+    using sak::win32mcp::win32McpValidateArgsAgainstSchema;
+
+    // Conforming args -> empty (accepted).
+    QVERIFY(win32McpValidateArgsAgainstSchema(
+                schema, QJsonObject{{QStringLiteral("text"), QStringLiteral("hi")}})
+                .isEmpty());
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema,
+                                              QJsonObject{{QStringLiteral("text"),
+                                                           QStringLiteral("hi")},
+                                                          {QStringLiteral("count"), 3}})
+                .isEmpty());
+
+    // Missing required 'text' -> rejected.
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema, QJsonObject{{QStringLiteral("count"), 1}})
+                .contains(QStringLiteral("required")));
+    // Unknown key under additionalProperties:false -> rejected.
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema,
+                                              QJsonObject{{QStringLiteral("text"),
+                                                           QStringLiteral("hi")},
+                                                          {QStringLiteral("bogus"), true}})
+                .contains(QStringLiteral("Unknown")));
+    // Wrong-typed value -> rejected (a string where a string is required).
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema, QJsonObject{{QStringLiteral("text"), 5}})
+                .contains(QStringLiteral("type")));
+    // Non-integer number for an integer property -> rejected.
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema,
+                                              QJsonObject{{QStringLiteral("text"),
+                                                           QStringLiteral("hi")},
+                                                          {QStringLiteral("count"), 2.5}})
+                .contains(QStringLiteral("type")));
 }
 
 QTEST_MAIN(Win32McpServerTests)

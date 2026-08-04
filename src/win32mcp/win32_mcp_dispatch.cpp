@@ -8,10 +8,13 @@
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QLatin1String>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <optional>
 
 namespace sak::win32mcp {
 
@@ -111,6 +114,82 @@ QJsonObject redactToolCallResult(QJsonObject result, const Win32McpServerPolicy&
     return result;
 }
 
+// True when a JSON value satisfies a JSON-Schema primitive type. An unconstrained/unknown type
+// string is accepted (nothing to reject) rather than guessed.
+bool win32McpJsonMatchesType(const QString& type, const QJsonValue& value) {
+    if (type == QLatin1String("string")) {
+        return value.isString();
+    }
+    if (type == QLatin1String("boolean")) {
+        return value.isBool();
+    }
+    if (type == QLatin1String("array")) {
+        return value.isArray();
+    }
+    if (type == QLatin1String("object")) {
+        return value.isObject();
+    }
+    if (type == QLatin1String("number")) {
+        return value.isDouble();
+    }
+    if (type == QLatin1String("integer")) {
+        return value.isDouble() &&
+               static_cast<double>(static_cast<qint64>(value.toDouble())) == value.toDouble();
+    }
+    return true;  // schema left the type unconstrained: nothing to reject (faithful, not fail-open)
+}
+
+QString schemaRequiredError(const QJsonObject& schema, const QJsonObject& args) {
+    const QJsonArray required = schema.value(QStringLiteral("required")).toArray();
+    for (const QJsonValue& r : required) {
+        const QString key = r.toString();
+        if (!args.contains(key)) {
+            return QStringLiteral("Missing required argument '%1'").arg(key);
+        }
+    }
+    return QString();
+}
+
+QString schemaUnknownKeyError(const QJsonObject& schema, const QJsonObject& args) {
+    if (schema.value(QStringLiteral("additionalProperties")).toBool(true)) {
+        return QString();  // schema permits extra keys
+    }
+    const QJsonObject props = schema.value(QStringLiteral("properties")).toObject();
+    for (auto it = args.constBegin(); it != args.constEnd(); ++it) {
+        if (!props.contains(it.key())) {
+            return QStringLiteral("Unknown argument '%1'").arg(it.key());
+        }
+    }
+    return QString();
+}
+
+QString schemaTypeError(const QJsonObject& schema, const QJsonObject& args) {
+    const QJsonObject props = schema.value(QStringLiteral("properties")).toObject();
+    for (auto it = props.constBegin(); it != props.constEnd(); ++it) {
+        if (!args.contains(it.key())) {
+            continue;
+        }
+        const QString type = it.value().toObject().value(QStringLiteral("type")).toString();
+        if (!type.isEmpty() && !win32McpJsonMatchesType(type, args.value(it.key()))) {
+            return QStringLiteral("Argument '%1' must be of type %2").arg(it.key(), type);
+        }
+    }
+    return QString();
+}
+
+// The advertised inputSchema for a NATIVE (non-browser) tool, or nullopt if the tool is not in
+// the native catalog. Browser tools validate their own args downstream, so they are not looked
+// up here.
+std::optional<QJsonObject> nativeToolInputSchema(const QString& name) {
+    for (const QJsonValue& tool : toolCatalog()) {
+        const QJsonObject entry = tool.toObject();
+        if (entry.value(QStringLiteral("name")).toString() == name) {
+            return entry.value(QStringLiteral("inputSchema")).toObject();
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<QJsonObject> handleToolsCall(const QJsonValue& id,
                                            const QJsonObject& params,
                                            BrowserControl* browser,
@@ -142,11 +221,36 @@ std::optional<QJsonObject> handleToolsCall(const QJsonValue& id,
         return resultResponse(
             id, redactToolCallResult(toolCallResult(browser->invoke(name, arguments)), policy));
     }
+    // Independent server-side enforcement of the advertised inputSchema for NATIVE tools (never
+    // trust the client): reject a call whose arguments violate the tool's schema -- missing
+    // required, an unknown key under additionalProperties:false, or a wrong-typed value -- rather
+    // than dispatch it. Only validated when the tool is in the native catalog, so an unknown tool
+    // still takes the existing invokeTool error path.
+    const std::optional<QJsonObject> schema = nativeToolInputSchema(name);
+    if (schema.has_value()) {
+        const QString invalid = win32McpValidateArgsAgainstSchema(*schema, arguments);
+        if (!invalid.isEmpty()) {
+            return errorResponse(id, kInvalidParams, invalid);
+        }
+    }
     return resultResponse(
         id, redactToolCallResult(toolCallResult(invokeTool(name, arguments)), policy));
 }
 
 }  // namespace
+
+QString win32McpValidateArgsAgainstSchema(const QJsonObject& input_schema,
+                                          const QJsonObject& args) {
+    QString error = schemaRequiredError(input_schema, args);
+    if (!error.isEmpty()) {
+        return error;
+    }
+    error = schemaUnknownKeyError(input_schema, args);
+    if (!error.isEmpty()) {
+        return error;
+    }
+    return schemaTypeError(input_schema, args);
+}
 
 Win32McpServerPolicy Win32McpServerPolicy::fromEnvironment() {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();

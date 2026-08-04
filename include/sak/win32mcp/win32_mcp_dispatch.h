@@ -43,6 +43,13 @@ struct Win32McpServerPolicy {
 /// sensitive output never reaches the model. Exposed for unit testing.
 [[nodiscard]] QString redactWin32McpSensitiveText(const QString& text);
 
+/// Validate tool-call @p args against a native tool's advertised @p input_schema: returns an
+/// empty string when the args conform, else a fail-closed rejection reason (missing required
+/// argument, unknown key under additionalProperties:false, or a wrong-typed value). The server
+/// enforces this independently of the client. Exposed for unit testing.
+[[nodiscard]] QString win32McpValidateArgsAgainstSchema(const QJsonObject& input_schema,
+                                                        const QJsonObject& args);
+
 /// Shape a ToolResult into the MCP `tools/call` result object. A screenshot (image
 /// present) becomes an `image` content block plus an optional text summary; a text
 /// result stays a single `text` block. Exposed so the content shaping -- including the
