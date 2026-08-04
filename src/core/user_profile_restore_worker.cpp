@@ -112,6 +112,25 @@ bool restoreEntryEscapesRoot(const QFileInfo& sourceEntry, const QString& destIt
     return isReparsePoint(sourceEntry) || isReparsePoint(QFileInfo(destItem));
 }
 
+// True when destItem's realized PARENT directory (junctions/symlinks followed) is at or under
+// the canonical profile root. The leaf reparse check catches destItem itself, but an ANCESTOR
+// directory that is (or becomes) a junction after mkpath would redirect the write outside the
+// root while the leaf still looks clean; re-checking the parent on every entry catches that.
+// Fails closed on an empty root or an unresolvable parent. canonicalFilePath yields '/'-paths,
+// so the boundary test uses '/' and a sibling-prefix (Root vs RootX) is rejected.
+bool destinationParentWithinRoot(const QString& canonicalRoot, const QString& destItem) {
+    if (canonicalRoot.isEmpty()) {
+        return false;
+    }
+    const QString canonicalParent =
+        QFileInfo(QFileInfo(destItem).absolutePath()).canonicalFilePath();
+    if (canonicalParent.isEmpty()) {
+        return false;
+    }
+    return canonicalParent == canonicalRoot ||
+           canonicalParent.startsWith(canonicalRoot + QLatin1Char('/'));
+}
+
 // Save the pre-restore contents of an about-to-be-overwritten file to a
 // recoverable sidecar so the user can undo the overwrite. Returns false (fail
 // closed) if the copy fails, so the caller never destroys the original without
@@ -339,6 +358,17 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         return false;
     }
 
+    // Pin the CANONICAL profile root once (the dir exists here: resolveExistingUser required it,
+    // resolveCreateNewUser mkpath'd it). Every entry's realized parent is re-checked against this
+    // so an ancestor junction cannot redirect a write out of the profile. Fail closed if the
+    // root cannot be resolved rather than restoring against an unverifiable destination.
+    m_currentProfileRoot = QFileInfo(destProfilePath).canonicalFilePath();
+    if (m_currentProfileRoot.isEmpty()) {
+        Q_EMIT logMessage(tr("Unable to resolve destination profile root: %1").arg(destProfilePath),
+                          true);
+        return false;
+    }
+
     // The effective destination user for permission assignment: an explicit
     // destination, else the source (a same-name restore). Consumed by
     // copyFileWithConflictResolution -> applyPermissions (B7-21).
@@ -556,6 +586,18 @@ void UserProfileRestoreWorker::copyDirectoryEntry(const QFileInfo& entry,
     if (restoreEntryEscapesRoot(entry, destItem)) {
         Q_EMIT logMessage(
             tr("Skipping reparse point to prevent restore escape: %1").arg(sourceItem), true);
+        m_filesErrored++;
+        return;
+    }
+
+    // Re-validate the realized destination parent against the pinned profile root: the leaf
+    // check above misses an ANCESTOR directory turned into a junction after its mkpath, which
+    // would redirect this write outside the profile. Fail closed on any escape.
+    if (!destinationParentWithinRoot(m_currentProfileRoot, destItem)) {
+        Q_EMIT logMessage(
+            tr("Skipping entry: destination escapes the profile root (reparse point): %1")
+                .arg(destItem),
+            true);
         m_filesErrored++;
         return;
     }

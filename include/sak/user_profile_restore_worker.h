@@ -250,6 +250,11 @@ private:
     /// user instead of always falling back to stripping permissions (B7-21). Safe as
     /// a member: restore runs one mapping at a time on the worker thread.
     QString m_currentDestUser;
+    /// Canonical destination profile root for the mapping currently being restored, resolved
+    /// once in restoreUser(). Every copied entry's realized parent directory must stay under
+    /// it, so an ancestor junction planted after mkpath cannot redirect the write out of the
+    /// profile (the leaf reparse check alone misses ancestor redirection). Set per mapping.
+    QString m_currentProfileRoot;
     ConflictResolution m_conflictMode{ConflictResolution::SkipDuplicate};
     PermissionMode m_permissionMode{PermissionMode::StripAll};
     bool m_verify{false};
