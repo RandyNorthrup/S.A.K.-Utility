@@ -2097,6 +2097,33 @@ struct CreateScriptSpec {
     QString mbr_type;
 };
 
+// The safety validator approves operation.target: a specific disk, partition and volume.
+// Volume-scoped builders then read a drive_letter out of the operation PAYLOAD, which is
+// caller-supplied and was never bound to what validation approved. A payload naming a
+// different volume was therefore formatted, relabelled or converted while validation had
+// approved another one -- the validator and the builder disagreed about the target.
+//
+// A payload letter may restate the validated target; it may never redirect to a different
+// volume. On mismatch this returns an empty letter, which every caller's existing
+// isValidDriveLetter guard turns into an invalid script, so the operation fails closed
+// rather than running against an unvalidated volume.
+//
+// Note this is deliberately NOT used by createScriptSpec below: there the letter is the one
+// to ASSIGN to a newly created partition, which by definition has no existing volume to
+// match against.
+QString validatedDriveLetter(const PartitionOperation& operation) {
+    const QString target = operation.target.drive_letter.left(1).toUpper();
+    const QString payload =
+        payloadString(operation, QStringLiteral("drive_letter")).left(1).toUpper();
+    if (payload.isEmpty()) {
+        return target;
+    }
+    if (!target.isEmpty() && payload != target) {
+        return {};
+    }
+    return payload;
+}
+
 CreateScriptSpec createScriptSpec(const PartitionOperation& operation) {
     CreateScriptSpec spec;
     spec.size = payloadUInt64(operation, QStringLiteral("size_bytes"));
@@ -2429,10 +2456,7 @@ PrimaryLogicalScriptPayload primaryLogicalScriptPayload(const PartitionOperation
             .toLower();
     payload.make_logical = payload.target_layout == QStringLiteral("logical");
     payload.source_size = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
-    payload.drive =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1)
-            .toUpper();
+    payload.drive = validatedDriveLetter(operation).left(1).toUpper();
     payload.file_system =
         payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
             .trimmed()
@@ -2479,10 +2503,7 @@ MovePartitionScriptPayload movePartitionScriptPayload(const PartitionOperation& 
     MovePartitionScriptPayload payload;
     payload.target_offset = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
     payload.target_size = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
-    payload.drive =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1)
-            .toUpper();
+    payload.drive = validatedDriveLetter(operation).left(1).toUpper();
     payload.file_system =
         payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
             .trimmed()
@@ -2827,9 +2848,7 @@ struct ClusterSizePayload {
 
 ClusterSizePayload clusterSizePayload(const PartitionOperation& operation) {
     ClusterSizePayload payload;
-    payload.drive =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1);
+    payload.drive = validatedDriveLetter(operation).left(1);
     payload.file_system =
         payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
             .trimmed()
@@ -4802,9 +4821,7 @@ PartitionScript PartitionScriptBuilder::buildBootRepairScript(
 
 PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
     const PartitionOperation& operation) const {
-    const QString letter =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1);
+    const QString letter = validatedDriveLetter(operation).left(1);
     if (!isValidDriveLetter(letter)) {
         return invalidScript(QStringLiteral("SSD optimization requires a drive letter"));
     }
@@ -4822,9 +4839,7 @@ PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
 
 PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
     const PartitionOperation& operation) const {
-    const QString letter =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1);
+    const QString letter = validatedDriveLetter(operation).left(1);
     if (!isValidDriveLetter(letter)) {
         return invalidScript(QStringLiteral("HDD defrag requires a drive letter"));
     }
@@ -4856,9 +4871,7 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
 
 PartitionScript PartitionScriptBuilder::buildBitLockerScript(
     const PartitionOperation& operation) const {
-    const QString letter =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1);
+    const QString letter = validatedDriveLetter(operation).left(1);
     if (!isValidDriveLetter(letter)) {
         return invalidScript(QStringLiteral("BitLocker mutation requires a drive letter"));
     }
@@ -5072,10 +5085,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
 
 PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
     const PartitionOperation& operation) const {
-    const QString drive =
-        payloadString(operation, QStringLiteral("drive_letter"), operation.target.drive_letter)
-            .left(1)
-            .toUpper();
+    const QString drive = validatedDriveLetter(operation).left(1).toUpper();
     const QString fs =
         payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
             .trimmed()
@@ -5141,8 +5151,7 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
 PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
     const PartitionOperation& operation) const {
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
-    const QString drive =
-        payloadString(operation, QStringLiteral("drive_letter")).left(1).toUpper();
+    const QString drive = validatedDriveLetter(operation);
     const QString fs =
         payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
             .trimmed()

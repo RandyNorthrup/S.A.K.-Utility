@@ -2093,6 +2093,7 @@ private Q_SLOTS:
     void safetyValidator_allowsConfirmedOfflineRebuildOperations();
     void safetyValidator_blocksUnsafeOfflineRebuildOperations();
     void scriptBuilder_buildsChangeClusterSizeScript();
+    void scriptBuilder_rejectsPayloadDriveLetterOffValidatedTarget();
     void safetyValidator_blocksUnsafeClusterSizePayloads();
     void scriptBuilder_buildsBitLockerMutationScripts();
     void scriptBuilder_buildsDirectDefragScript();
@@ -19267,6 +19268,50 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(
         QStringLiteral("Invoke-SakBackupViaShadow $targetRoot $backupPath")));
     QVERIFY(script.script.contains(QStringLiteral("Win32_ShadowCopy")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_rejectsPayloadDriveLetterOffValidatedTarget() {
+    // R5-P5-1: the safety validator approves operation.target, but volume-scoped builders
+    // read drive_letter out of the caller-supplied payload. A payload naming a DIFFERENT
+    // volume than the validated target was formatted or converted while validation had
+    // approved another one. A payload letter may restate the target, never redirect.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 2;
+    target.partition_number = 1;
+    target.size_bytes = 128 * 1024 * 1024;
+    target.drive_letter = QStringLiteral("T");
+
+    QJsonObject payload;
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("C");  // redirect to the OS volume
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("4096");
+    payload[QStringLiteral("label")] = QStringLiteral("Data");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("C:\\SAKBackups");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+
+    PartitionScriptBuilder builder;
+    const auto clusterScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ChangeClusterSize, target, payload));
+    QVERIFY(!clusterScript.valid());
+    QVERIFY(!clusterScript.script.contains(QStringLiteral("$drive = 'C'")));
+
+    // Dynamic-to-basic conversion previously took its letter from the payload alone, with
+    // no reference to the validated target at all.
+    QJsonObject convertPayload = payload;
+    convertPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("134217728");
+    const auto convertScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, convertPayload));
+    QVERIFY(!convertScript.valid());
+    QVERIFY(!convertScript.script.contains(QStringLiteral("$drive = 'C'")));
+
+    // A payload that restates the validated target stays valid.
+    QJsonObject matching = payload;
+    matching[QStringLiteral("drive_letter")] = QStringLiteral("T");
+    const auto ok = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ChangeClusterSize, target, matching));
+    QVERIFY(ok.valid());
+    QVERIFY(ok.script.contains(QStringLiteral("$drive = 'T'")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads() {
