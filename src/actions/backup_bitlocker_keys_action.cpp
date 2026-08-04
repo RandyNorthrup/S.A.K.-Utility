@@ -309,10 +309,12 @@ QString lockStatusLabel(int status) {
 }  // namespace
 
 QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseDetectedVolumes(
-    const QString& output) {
+    const QString& output, bool& parse_ok) {
+    parse_ok = false;
     QVector<VolumeInfo> volumes;
 
     if (output.isEmpty()) {
+        parse_ok = true;  // The query ran and the system genuinely reports no BitLocker volumes.
         return volumes;
     }
 
@@ -320,7 +322,12 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
     QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         Q_EMIT logMessage("Failed to parse BitLocker volume data: " + parse_error.errorString());
-        return volumes;
+        return volumes;  // parse_ok stays false: a parse failure is not "no volumes".
+    }
+    if (!doc.isArray() && !doc.isObject()) {
+        Q_EMIT logMessage(
+            "BitLocker volume data was neither an array nor an object; failing closed");
+        return volumes;  // parse_ok stays false.
     }
 
     QJsonArray volume_array;
@@ -349,10 +356,13 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
         volumes.append(vi);
     }
 
+    parse_ok = true;
     return volumes;
 }
 
-QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detectEncryptedVolumes() {
+QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detectEncryptedVolumes(
+    bool& query_ok) {
+    query_ok = false;
     const QString script = QString::fromUtf8(kDetectEncryptedVolumesScript);
 
     Q_EMIT logMessage("Querying BitLocker volume encryption status...");
@@ -367,10 +377,10 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detect
         } else if (!error.isEmpty()) {
             Q_EMIT logMessage("BitLocker detection error: " + error);
         }
-        return {};
+        return {};  // query_ok stays false: the volume set is unknown, not empty.
     }
 
-    return parseDetectedVolumes(proc.std_out.trimmed());
+    return parseDetectedVolumes(proc.std_out.trimmed(), query_ok);
 }
 
 // ============================================================================
@@ -479,7 +489,23 @@ void BackupBitlockerKeysAction::scan() {
     setStatus(ActionStatus::Scanning);
     Q_EMIT scanProgress("Detecting BitLocker-encrypted volumes...");
 
-    m_volumes = detectEncryptedVolumes();
+    bool query_ok = false;
+    m_volumes = detectEncryptedVolumes(query_ok);
+
+    // A failed/denied query must not be reported as "no BitLocker" (fail closed): the volume set
+    // is UNKNOWN, so surface that and tell the technician to retry elevated.
+    if (!query_ok) {
+        ScanResult failure;
+        failure.applicable = false;
+        failure.summary = "BitLocker detection failed";
+        failure.details =
+            "Could not query BitLocker volume status. Administrator privileges are required, or "
+            "the query failed. The volume set is unknown -- run elevated and retry.";
+        setScanResult(failure);
+        setStatus(ActionStatus::Ready);
+        Q_EMIT scanComplete(failure);
+        return;
+    }
 
     // Count total key protectors across all volumes
     // We haven't retrieved keys yet during scan (that requires admin)
@@ -560,7 +586,19 @@ bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_ti
     // Always re-detect at execution time rather than trusting the pre-scan
     // cache: a volume added, removed, or reconfigured between scan and execute
     // must be reflected so the backup never certifies a stale volume set.
-    m_volumes = detectEncryptedVolumes();
+    bool query_ok = false;
+    m_volumes = detectEncryptedVolumes(query_ok);
+
+    // Fail closed on a failed/denied query: an unknown volume set must not be reported as an
+    // empty one (which would read as "nothing to back up" and silently omit real keys).
+    if (!query_ok) {
+        emitFailedResult("BitLocker detection failed",
+                         "Could not query BitLocker volume status; the volume set is unknown. "
+                         "Run with administrator privileges and retry. No keys were backed up, "
+                         "so none were silently omitted.",
+                         start_time);
+        return false;
+    }
 
     if (m_volumes.isEmpty()) {
         emitFailedResult("No BitLocker-encrypted volumes found",

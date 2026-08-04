@@ -35,6 +35,7 @@ private Q_SLOTS:
     // WaveD-03: a well-formed JSON array with a non-object element (or a bare
     // scalar) must fail closed, not silently drop a protector.
     void parseKeyProtectorResponse_rejectsMalformedElements();
+    void parseDetectedVolumes_signalsParseState();
     // WaveD-04: drive letters are validated before entering the PowerShell filter
     // / key filename, so a malformed value cannot inject or escape the directory.
     void buildKeyProtectorScript_rejectsInvalidDriveLetters();
@@ -132,6 +133,30 @@ void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_rejectsMalformedE
     result = action.parseKeyProtectorResponse(QStringLiteral("\"unexpected\""), parse_ok);
     QVERIFY2(!parse_ok, "a bare JSON scalar must report parse failure");
     QVERIFY(result.isEmpty());
+}
+
+void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
+    // CODEX_REVIEW_4 M-B3-20: a failed/garbled detection must not be indistinguishable from a
+    // genuine "no BitLocker volumes" result (empty). parse_ok separates the two.
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    bool parse_ok = false;
+    QVERIFY(action.parseDetectedVolumes(QString(), parse_ok).isEmpty());
+    QVERIFY2(parse_ok, "empty output is a genuine 'no volumes' success");
+
+    parse_ok = true;
+    QVERIFY(action.parseDetectedVolumes(QStringLiteral("{ not json"), parse_ok).isEmpty());
+    QVERIFY2(!parse_ok, "malformed JSON must fail closed, not read as 'no volumes'");
+
+    parse_ok = true;
+    QVERIFY(action.parseDetectedVolumes(QStringLiteral("123"), parse_ok).isEmpty());
+    QVERIFY2(!parse_ok, "a JSON scalar (neither array nor object) must fail closed");
+
+    parse_ok = false;
+    const QVector<BackupBitlockerKeysAction::VolumeInfo> one =
+        action.parseDetectedVolumes(QStringLiteral("{\"DriveLetter\":\"C:\"}"), parse_ok);
+    QVERIFY2(parse_ok, "a well-formed object is a parse success");
+    QCOMPARE(one.size(), 1);
 }
 
 void BackupBitlockerKeysActionTests::buildKeyProtectorScript_rejectsInvalidDriveLetters() {

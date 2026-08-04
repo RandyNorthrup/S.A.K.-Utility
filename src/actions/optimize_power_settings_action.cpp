@@ -43,12 +43,16 @@ bool OptimizePowerSettingsAction::isHighPerformanceGuid(const QString& guid) {
 }
 
 // ENTERPRISE-GRADE: Enumerate all power plans using powercfg -LIST
-QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans() {
+QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans(
+    bool& discovery_ok) {
     QVector<PowerPlan> plans;
 
     ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
                                     QStringList() << "-LIST",
                                     sak::kTimeoutProcessShortMs);
+    // Whether powercfg itself ran. A failed run must not later be treated as "no plans found"
+    // and coerced into a hard-coded-GUID mutation.
+    discovery_ok = proc.succeeded();
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
     }
@@ -134,11 +138,9 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePow
     return active_plan;
 }
 
-// ENTERPRISE-GRADE: Find power plan by name (case-insensitive)
-OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPowerPlanByName(
-    const QString& name) {
-    QVector<PowerPlan> plans = enumeratePowerPlans();
-
+// ENTERPRISE-GRADE: Find power plan by name (case-insensitive) within an enumerated list.
+OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPlanByNameIn(
+    const QVector<PowerPlan>& plans, const QString& name) {
     // Exact (case-insensitive) name match, NOT a substring match: a custom plan
     // named e.g. "My High Performance Rig" must not be selected when searching
     // for the built-in "High Performance". If no exact match exists, the caller
@@ -147,6 +149,51 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPowerPla
         return plan.name.compare(name, Qt::CaseInsensitive) == 0;
     });
     return it != plans.end() ? *it : PowerPlan();
+}
+
+bool OptimizePowerSettingsAction::discoveryPermitsActivation(bool discovery_ok, int plans_found) {
+    return discovery_ok && plans_found > 0;
+}
+
+void OptimizePowerSettingsAction::finalizeDiscoveryFailure(const QDateTime& start_time,
+                                                           QString& report,
+                                                           const QString& previous_plan_name) {
+    report += QString("| Status:       Power plan discovery FAILED\n")
+                  .leftJustified(kReportInnerWidth, ' ') +
+              "|\n";
+    report += QString("| Error:        Could not enumerate power plans; not mutating\n")
+                  .leftJustified(kReportInnerWidth, ' ') +
+              "|\n";
+    report += "+================================================================+\n";
+    finalizePowerOptimizationResult({/*.start_time =*/start_time,
+                                     /*.report =*/report,
+                                     /*.previous_plan_name =*/previous_plan_name,
+                                     /*.high_perf_guid =*/QString(),
+                                     /*.already_optimized =*/false,
+                                     /*.success =*/false});
+}
+
+bool OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
+                                                             bool discovery_ok,
+                                                             PowerPlan& out_plan) {
+    // Fail closed if powercfg discovery did not actually succeed and return plans: we must never
+    // fall back to a hard-coded GUID and then mutate the system on a guess.
+    if (!discoveryPermitsActivation(discovery_ok, static_cast<int>(plans.size()))) {
+        return false;
+    }
+    PowerPlan found = findPlanByNameIn(plans, "High Performance");
+    if (found.guid.isEmpty()) {
+        found = findPlanByNameIn(plans, "Ultimate Performance");
+    }
+    if (!found.guid.isEmpty()) {
+        out_plan = found;
+        return true;
+    }
+    // The canonical built-in GUID is used ONLY now that discovery is known good and simply lacked
+    // a matching named plan (e.g. the hidden High Performance plan on some SKUs).
+    out_plan.guid = getStandardPowerPlanGuid("High Performance");
+    out_plan.name = "High Performance (Standard)";
+    return !out_plan.guid.isEmpty();
 }
 
 // ENTERPRISE-GRADE: Standard power scheme GUIDs
@@ -303,18 +350,17 @@ void OptimizePowerSettingsAction::execute() {
     PowerPlan current_plan = getActivePowerPlan();
 
     Q_EMIT executionProgress("Scanning available power plans...", progress::kStep25);
-    QVector<PowerPlan> all_plans = enumeratePowerPlans();
+    bool discovery_ok = false;
+    QVector<PowerPlan> all_plans = enumeratePowerPlans(discovery_ok);
 
     QString report = buildPowerPlanListReport(current_plan, all_plans);
 
     Q_EMIT executionProgress("Locating High Performance plan...", progress::kStep40);
-    PowerPlan high_perf_plan = findPowerPlanByName("High Performance");
-    if (high_perf_plan.guid.isEmpty()) {
-        high_perf_plan = findPowerPlanByName("Ultimate Performance");
-    }
-    if (high_perf_plan.guid.isEmpty()) {
-        high_perf_plan.guid = getStandardPowerPlanGuid("High Performance");
-        high_perf_plan.name = "High Performance (Standard)";
+    PowerPlan high_perf_plan;
+    if (!resolveHighPerformancePlan(all_plans, discovery_ok, high_perf_plan)) {
+        // Discovery failed: fail closed. Do NOT mutate the active power plan on a guessed GUID.
+        finalizeDiscoveryFailure(start_time, report, current_plan.name);
+        return;
     }
 
     report += QString("| Target Plan:  %1\n")

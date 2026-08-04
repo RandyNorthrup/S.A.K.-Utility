@@ -37,6 +37,11 @@ public:
     /// activation of the real plan).
     static bool isHighPerformanceGuid(const QString& guid);
 
+    /// @brief Whether powercfg discovery succeeded AND returned at least one plan. Only then may
+    ///        the optimizer activate a plan; a failed discovery must fail closed (no mutation on a
+    ///        guessed GUID). Pure decision seam.
+    static bool discoveryPermitsActivation(bool discovery_ok, int plans_found);
+
 private:
     /// @brief Represents a Windows power plan with its GUID and active state
     struct PowerPlan {
@@ -54,11 +59,19 @@ private:
         bool success{false};
     };
 
-    QVector<PowerPlan> enumeratePowerPlans();
+    QVector<PowerPlan> enumeratePowerPlans(bool& discovery_ok);
     PowerPlan queryPowerPlan(const QString& guid);
     PowerPlan getActivePowerPlan();
     bool setPowerPlan(const QString& guid);
-    PowerPlan findPowerPlanByName(const QString& name);
+    /// @brief Exact (case-insensitive) name match within an ALREADY-enumerated plan list, so the
+    ///        caller enumerates once instead of re-running powercfg per lookup.
+    static PowerPlan findPlanByNameIn(const QVector<PowerPlan>& plans, const QString& name);
+    /// @brief Pick the High/Ultimate Performance plan from @p plans, falling back to the canonical
+    ///        built-in GUID ONLY when discovery succeeded. Returns false (fail closed, no
+    ///        mutation) when discovery failed or no usable plan/GUID could be resolved.
+    bool resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
+                                    bool discovery_ok,
+                                    PowerPlan& out_plan);
     QString getStandardPowerPlanGuid(const QString& plan_type);
 
     /// @brief Activate the High Performance plan, verify, and append status to report
@@ -70,6 +83,11 @@ private:
                                      const QVector<PowerPlan>& all_plans) const;
     /// @brief Create and emit the final execution result with recommendations
     void finalizePowerOptimizationResult(const OptimizationResultContext& context);
+    /// @brief Append the discovery-failure status to @p report and emit a fail-closed result
+    ///        (no plan mutation). Extracted so execute() stays within the length cap.
+    void finalizeDiscoveryFailure(const QDateTime& start_time,
+                                  QString& report,
+                                  const QString& previous_plan_name);
 };
 
 }  // namespace sak

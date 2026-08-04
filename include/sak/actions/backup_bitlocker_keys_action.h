@@ -82,12 +82,17 @@ private:
 
     /**
      * @brief Detect all BitLocker-encrypted volumes using WMI
+     * @param query_ok Set true only when the query ran AND parsed successfully. A genuinely
+     *        empty result (no BitLocker volumes) is still query_ok=true; a denied/failed query
+     *        is query_ok=false so callers never treat "unknown" as "no BitLocker".
      * @return Vector of VolumeInfo for each encrypted volume
      */
-    QVector<VolumeInfo> detectEncryptedVolumes();
+    QVector<VolumeInfo> detectEncryptedVolumes(bool& query_ok);
 
-    /// @brief Parse PowerShell JSON output into VolumeInfo vector
-    QVector<VolumeInfo> parseDetectedVolumes(const QString& output);
+    /// @brief Parse PowerShell JSON output into VolumeInfo vector. @p parse_ok is true only on
+    ///        well-formed output (a genuinely empty result is a success); malformed or
+    ///        wrong-shaped JSON leaves it false so a parse failure is not read as "no volumes".
+    QVector<VolumeInfo> parseDetectedVolumes(const QString& output, bool& parse_ok);
 
     /**
      * @brief Retrieve key protectors for a specific volume

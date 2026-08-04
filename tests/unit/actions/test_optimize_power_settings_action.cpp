@@ -19,6 +19,7 @@ class OptimizePowerSettingsActionTests : public QObject {
 
 private Q_SLOTS:
     void isHighPerformanceGuid_matchesBuiltinsByGuid();
+    void discoveryPermitsActivation_failsClosedWithoutDiscovery();
 };
 
 void OptimizePowerSettingsActionTests::isHighPerformanceGuid_matchesBuiltinsByGuid() {
@@ -34,6 +35,17 @@ void OptimizePowerSettingsActionTests::isHighPerformanceGuid_matchesBuiltinsByGu
     QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("11111111-2222-3333-4444-555555555555")));
     QVERIFY(!Action::isHighPerformanceGuid(QString()));
     QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("High Performance")));
+}
+
+void OptimizePowerSettingsActionTests::discoveryPermitsActivation_failsClosedWithoutDiscovery() {
+    // CODEX_REVIEW_4 M-B3-22: a plan may be activated ONLY when powercfg discovery succeeded and
+    // returned at least one plan. A failed discovery (or an empty list) must fail closed so the
+    // optimizer never mutates the active plan on a hard-coded/guessed GUID.
+    QVERIFY(!Action::discoveryPermitsActivation(false, 5));  // discovery failed -> no mutation
+    QVERIFY(!Action::discoveryPermitsActivation(false, 0));
+    QVERIFY(!Action::discoveryPermitsActivation(true, 0));   // ran but found nothing -> no mutation
+    QVERIFY(Action::discoveryPermitsActivation(true, 1));    // ran and found plans -> may activate
+    QVERIFY(Action::discoveryPermitsActivation(true, 42));
 }
 
 QTEST_GUILESS_MAIN(OptimizePowerSettingsActionTests)
