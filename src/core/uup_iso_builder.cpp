@@ -80,12 +80,48 @@ static bool isReparsePoint(const QString& path) {
     return info.exists() && (info.isSymLink() || info.isJunction());
 }
 
-/// A bundled tool is only launched when it exists as a real regular file that is
-/// NOT a reparse point (defense-in-depth against a planted junction/symlink
-/// redirecting the elevated converter or downloader to an attacker binary).
-static bool isTrustedBundledExe(const QString& path) {
+// aria2 control-file fields are attacker-influenced (uupdump API). A newline in
+// url/sha1/fileName injects arbitrary aria2 directives; an absolute, drive-qualified,
+// or ".."-bearing out= value escapes the UUPs download directory. Reject fail-closed.
+static bool isSafeAria2Field(const QString& value) {
+    return !value.contains(QLatin1Char('\n')) && !value.contains(QLatin1Char('\r'));
+}
+
+static bool isSafeAria2OutName(const QString& name) {
+    if (!isSafeAria2Field(name) || name.startsWith(QLatin1Char('/')) ||
+        name.startsWith(QLatin1Char('\\'))) {
+        return false;
+    }
+    if (name.size() >= 2 && name.at(1) == QLatin1Char(':')) {
+        return false;  // drive-qualified (e.g. C:\...)
+    }
+    static const QRegularExpression pathSep(QStringLiteral(R"([\\/])"));
+    const QStringList segments = name.split(pathSep, Qt::SkipEmptyParts);
+    return !segments.contains(QStringLiteral(".."));
+}
+
+// A bundled tool is only launched when it exists as a real regular file that is
+// NOT a reparse point AND whose fully-resolved path is confined under the resolved
+// bundled-tools root with a real path-segment boundary. canonicalFilePath resolves
+// any junctioned ancestor, so a planted junction that redirects the elevated
+// converter/downloader outside the bundle no longer passes containment (a bare leaf
+// check let it through).
+static bool isTrustedBundledExe(const QString& path, const QString& rootDir) {
     const QFileInfo info(path);
-    return info.exists() && info.isFile() && !info.isSymLink() && !info.isJunction();
+    if (!info.exists() || !info.isFile() || info.isSymLink() || info.isJunction()) {
+        return false;
+    }
+    const QString canonical = info.canonicalFilePath();
+    const QString canonicalRoot = QFileInfo(rootDir).canonicalFilePath();
+    if (canonical.isEmpty() || canonicalRoot.isEmpty()) {
+        return false;
+    }
+    if (canonical.compare(canonicalRoot, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    const QString rootWithSep =
+        canonicalRoot.endsWith(QLatin1Char('/')) ? canonicalRoot : canonicalRoot + QLatin1Char('/');
+    return canonical.startsWith(rootWithSep, Qt::CaseInsensitive);
 }
 
 // ============================================================================
@@ -195,7 +231,7 @@ QString UupIsoBuilder::findAria2Path() const {
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     const QString path = tools.toolPath("uup", "aria2c.exe");
-    if (isTrustedBundledExe(path)) {
+    if (isTrustedBundledExe(path, tools.toolsPath())) {
         return path;
     }
 
@@ -209,7 +245,7 @@ QString UupIsoBuilder::findUupMediaConverterPath() const {
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     const QString path = tools.toolPath("uup/uupmc", "UUPMediaConverter.exe");
-    if (isTrustedBundledExe(path)) {
+    if (isTrustedBundledExe(path, tools.toolsPath())) {
         return path;
     }
 
@@ -390,9 +426,14 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
     return true;
 }
 
-void UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo) {
+bool UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo) {
     Q_ASSERT(!fileInfo.url.isEmpty());
     Q_ASSERT(!fileInfo.fileName.isEmpty());
+    if (!isSafeAria2Field(fileInfo.url) || !isSafeAria2Field(fileInfo.sha1) ||
+        !isSafeAria2OutName(fileInfo.fileName)) {
+        sak::logError("Rejected UUP file entry with unsafe aria2 url/out/checksum field");
+        return false;
+    }
     stream << fileInfo.url << "\n";
     stream << "  out=" << fileInfo.fileName << "\n";
 
@@ -407,6 +448,7 @@ void UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileI
     }
 
     stream << "\n";
+    return true;
 }
 
 bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
@@ -436,7 +478,13 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
             continue;
         }
 
-        writeAria2Entry(stream, fileInfo);
+        if (!writeAria2Entry(stream, fileInfo)) {
+            file.close();
+            sak::logError(
+                "UUP download-list generation aborted: a file entry failed aria2 safety "
+                "validation (injection/traversal)");
+            return false;
+        }
         validFiles++;
     }
 

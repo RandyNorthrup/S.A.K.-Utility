@@ -101,7 +101,8 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   fixtures were all sub-4 GiB, so it was not caught.
   Fix: delete the `value ^= (value >> 32)` line.
 
-- [ ] H2 [A1-16] email_profile_manager.cpp:167,712
+- [x] H2 [A1-16] email_profile_manager.cpp:167,712 FIXED (wave 2): extensionless
+  restore destinations now reject any dot-directory/dotfile segment (~/.ssh etc.).
   isRestorableDataFile returns true for an EMPTY suffix, so a crafted backup
   manifest restores attacker content to new extensionless files / dotfiles
   under $HOME (.ssh/authorized_keys, .bashrc) => persistence / code-exec.
@@ -145,38 +146,45 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   Fix: match verbs on word boundaries and require the verb to be the directed
   (imperative) action, not merely co-occurring with a request marker.
 
-- [ ] H8 [B2-2] windows_usb_creator_extract.cpp:50
+- [x] H8 [B2-2] windows_usb_creator_extract.cpp:50 FIXED (wave 2): separator-boundary
+  containment (== dir OR startsWith dir+'/'). Test isSafeBundledExecutable_rejectsSiblingPrefixDir.
   isSafeBundledExecutable containment uses boundary-free startsWith; a canonical
   sibling like C:/AppEvil passes C:/App => elevated arbitrary-code execution.
   Fix: require canonical == dir OR startsWith(dir + separator).
 
-- [ ] H9 [B2-3] uup_iso_builder.cpp:88
+- [x] H9 [B2-3] uup_iso_builder.cpp:88 FIXED (wave 2): isTrustedBundledExe now takes the
+  bundled-tools root and confines the canonical path under it (junctioned ancestor resolved).
   isTrustedBundledExe validates only the leaf (exists/isFile/!symlink/!junction),
   no canonicalization or ancestor confinement => elevated converter can run an
   attacker-planted binary via a junctioned ancestor.
   Fix: canonicalize and confine under the BundledTools root; reject ancestor
   reparse points.
 
-- [ ] H10 [B2-6] leftover_scanner.cpp:673,803
+- [x] H10 [B2-6] leftover_scanner.cpp:673,803 FIXED (wave 2): schtasks/netsh resolved via
+  system32Exe() (GetWindowsDirectoryW), fail-closed when the Windows root is untrusted.
   Bare `schtasks.exe` / `netsh.exe` (process_runner CreateProcess searches
   app-dir/CWD before System32) => executable hijack, potentially elevated.
   Fix: System32-qualify (the repo already does this for bcdboot and
   profile-restore netsh).
 
-- [ ] H11 [B2-5] uup_iso_builder.cpp:396
+- [x] H11 [B2-5] uup_iso_builder.cpp:396 FIXED (wave 2): writeAria2Entry returns bool and
+  rejects newline in url/sha1 and traversal/absolute/drive-qualified out=; caller aborts.
   writeAria2Entry writes uupdump-API-sourced fileName/url/checksum raw into the
   aria2 control file with no newline/traversal check => directive injection and
   `out=` path escape (arbitrary file overwrite).
   Fix: reject newline in url/sha1; reject `..` / absolute / drive-qualified
   fileName.
 
-- [ ] H12 [B2-7] leftover_scanner.cpp:1076
+- [x] H12 [B2-7] leftover_scanner.cpp:1076 FIXED (wave 2): install-location Safe classification
+  requires exact match or a '\'-boundary prefix, not a bare startsWith.
   classifyFileRisk install-location startsWith lacks a separator boundary => an
   adjacent-prefix sibling path is classified Safe and exempted from
   protected-root checks (eligible for automatic recursive deletion).
   Fix: reuse the correct boundary helper already present at :1129.
 
-- [ ] H13 [B3-13] verify_system_files_action.cpp:159
+- [x] H13 [B3-13] verify_system_files_action.cpp:159 FIXED (wave 2): DISM success now requires
+  completedSuccessfully() (exit 0, not timed out/cancelled) AND the phrase "completed
+  successfully" (excludes "did not complete successfully").
   DISM false success: `std_out.contains("successfully")` sets m_dism_successful,
   ignoring exit code and timeout; the failure string "did not complete
   successfully" matches.

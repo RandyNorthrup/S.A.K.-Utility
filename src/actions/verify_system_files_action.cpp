@@ -156,7 +156,12 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
         return;
     }
 
-    if (proc.std_out.contains("successfully", Qt::CaseInsensitive)) {
+    // Exit code + timeout are authoritative: a bare substring "successfully" also
+    // matches DISM's failure line "did not complete successfully". Require a clean
+    // exit AND the affirmative phrase "completed successfully" (note the 'd', which
+    // the failure phrase "complete successfully" lacks).
+    if (proc.completedSuccessfully() &&
+        proc.std_out.contains(QStringLiteral("completed successfully"), Qt::CaseInsensitive)) {
         m_dism_successful = true;
         m_dism_repaired_issues = true;
     }

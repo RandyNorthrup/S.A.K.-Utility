@@ -67,6 +67,7 @@ private slots:
     void isSafeBundledExecutable_acceptsRegularFileUnderAppDir();
     void isSafeBundledExecutable_rejectsMissingFile();
     void isSafeBundledExecutable_rejectsFileOutsideAppDir();
+    void isSafeBundledExecutable_rejectsSiblingPrefixDir();
 };
 
 // ===========================================================================
@@ -357,6 +358,24 @@ void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsFileOutsideAppDir() 
     f.close();
     // Real regular file, but NOT under the claimed application directory.
     QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(exe, dirB.path()));
+}
+
+void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsSiblingPrefixDir() {
+    // CODEX_REVIEW_4 H8: a bare startsWith let a sibling whose name merely begins
+    // with the app-dir name (<base>/app2 vs <base>/app) pass containment. Require a
+    // real path-segment boundary.
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+    const QString appDir = base.path() + QStringLiteral("/app");
+    const QString evilDir = base.path() + QStringLiteral("/app2");
+    QVERIFY(QDir().mkpath(appDir));
+    QVERIFY(QDir().mkpath(evilDir));
+    const QString exe = evilDir + QStringLiteral("/7z.exe");
+    QFile f(exe);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("MZ");
+    f.close();
+    QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(exe, appDir));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

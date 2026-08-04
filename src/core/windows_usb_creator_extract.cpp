@@ -47,7 +47,14 @@ bool WindowsUSBCreator::isSafeBundledExecutable(const QString& path, const QStri
     if (canonical.isEmpty() || canonicalDir.isEmpty()) {
         return false;
     }
-    return canonical.startsWith(canonicalDir, Qt::CaseInsensitive);
+    // Require a real path-segment boundary: a bare startsWith lets a sibling like
+    // C:/AppEvil pass containment under C:/App. canonicalFilePath uses '/'.
+    if (canonical.compare(canonicalDir, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    const QString canonicalDirWithSep =
+        canonicalDir.endsWith(QLatin1Char('/')) ? canonicalDir : canonicalDir + QLatin1Char('/');
+    return canonical.startsWith(canonicalDirWithSep, Qt::CaseInsensitive);
 }
 
 bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString& destPath) {

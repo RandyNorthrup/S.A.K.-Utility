@@ -172,7 +172,22 @@ bool isRestorableDataFile(const QString& path) {
         QStringLiteral("mbox"),
     };
     const QString suffix = QFileInfo(path).suffix().toLower();
-    return suffix.isEmpty() || kAllowedSuffixes.contains(suffix);
+    if (!suffix.isEmpty()) {
+        return kAllowedSuffixes.contains(suffix);
+    }
+    // Extensionless files (Thunderbird MBOX) are allowed, but "extensionless is
+    // inert" is not sufficient: a crafted manifest could drop an extensionless
+    // authorized_keys into a dot-directory such as ~/.ssh. Reject any destination
+    // that traverses a dot-directory/dotfile -- the sensitive config stores under
+    // the home tree -- which no legitimate mail store uses on Windows.
+    const QStringList segments = QDir::fromNativeSeparators(path).split(QLatin1Char('/'),
+                                                                        Qt::SkipEmptyParts);
+    for (const QString& segment : segments) {
+        if (segment.startsWith(QLatin1Char('.'))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /// @brief True iff @p haystack contains @p marker ending on a path-segment boundary (end-of-string

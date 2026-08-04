@@ -225,7 +225,10 @@ private:
 
     // aria2c input file generation
     bool generateAria2InputFile(const QString& outputPath);
-    void writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo);
+    /// @return false (fail closed) if the API-sourced url/fileName would inject an
+    ///         aria2 directive (newline) or escape the download dir (traversal/absolute
+    ///         out=); the caller then aborts the download-list generation.
+    [[nodiscard]] bool writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo);
     void logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes);
     void collectConverterError(const QString& line);
 

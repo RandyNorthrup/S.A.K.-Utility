@@ -33,6 +33,19 @@ constexpr int kRegistryHivePrefixLength = 5;
 #ifdef Q_OS_WIN
 constexpr DWORD kMaxRegistryValueNameLen = 256;
 constexpr DWORD kMaxRegistryValueDataLen = 1024;
+
+// Resolve a System32 executable to its absolute path so an elevated leftover scan
+// cannot be hijacked by a PATH/CWD-planted binary of the same name. Fail closed
+// (empty) if the Windows root cannot be trusted.
+QString system32Exe(const QString& exe) {
+    wchar_t buffer[MAX_PATH];
+    const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return {};
+    }
+    return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
+                           QStringLiteral("/System32/") + exe);
+}
 #endif
 
 const QSet<QString> kGenericDirNames = {
@@ -670,7 +683,15 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
                                                           bool& ok) {
     QVector<LeftoverItem> items;
 
-    const auto result = sak::runProcess(QStringLiteral("schtasks.exe"),
+    QString schtasks = QStringLiteral("schtasks.exe");
+#ifdef Q_OS_WIN
+    schtasks = system32Exe(QStringLiteral("schtasks.exe"));
+    if (schtasks.isEmpty()) {
+        ok = false;  // cannot resolve a trusted System32 schtasks -> fail closed
+        return items;
+    }
+#endif
+    const auto result = sak::runProcess(schtasks,
                                         {QStringLiteral("/query"),
                                          QStringLiteral("/fo"),
                                          QStringLiteral("CSV"),
@@ -800,10 +821,18 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const std::atomic<bool>& stopRequested,
                                             QVector<LeftoverItem>& items,
                                             bool& ok) {
-    const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
-                                        netsh_args,
-                                        kPowerShellTimeoutMs,
-                                        [&stopRequested]() { return stopRequested.load(); });
+    QString netsh = QStringLiteral("netsh.exe");
+#ifdef Q_OS_WIN
+    netsh = system32Exe(QStringLiteral("netsh.exe"));
+    if (netsh.isEmpty()) {
+        ok = false;  // cannot resolve a trusted System32 netsh -> fail closed
+        return;
+    }
+#endif
+    const auto result =
+        sak::runProcess(netsh, netsh_args, kPowerShellTimeoutMs, [&stopRequested]() {
+            return stopRequested.load();
+        });
     if (!result.succeeded()) {
         ok = false;  // netsh failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return;
@@ -1072,9 +1101,17 @@ void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
 // a Safe classification here still requires an exact program-name match -- the substring container
 // checks below only pick the risk tier for an already exact-matched path.
 LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lower) const {
-    if (!m_program.installLocation.isEmpty() &&
-        path_lower.startsWith(m_program.installLocation.toLower())) {
-        return LeftoverItem::RiskLevel::Safe;
+    // A bare startsWith would classify a sibling like C:\App2 as inside C:\App and
+    // exempt it from the protected-root check (eligible for auto-selected recursive
+    // deletion). Require an exact match or a real path-segment boundary.
+    const QString install_lower = m_program.installLocation.toLower();
+    if (!install_lower.isEmpty()) {
+        const QString install_with_sep = install_lower.endsWith(QLatin1Char('\\'))
+                                             ? install_lower
+                                             : install_lower + QLatin1Char('\\');
+        if (path_lower == install_lower || path_lower.startsWith(install_with_sep)) {
+            return LeftoverItem::RiskLevel::Safe;
+        }
     }
     if (path_lower.contains("appdata") || path_lower.contains("programdata") ||
         path_lower.contains("program files") || path_lower.contains("\\temp\\")) {
