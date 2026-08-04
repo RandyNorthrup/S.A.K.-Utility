@@ -36,7 +36,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 23 actionable
 
-- [ ] **R5-P1-1** [CRITICAL] [CONFIRMED_REAL] Catastrophic-gate bypass via cmd caret (^) / PowerShell backtick (`) escaping
+- [x] **R5-P1-1** [CRITICAL] [CONFIRMED_REAL] Catastrophic-gate bypass via cmd caret (^) / PowerShell backtick (`) escaping
+  - FIXED: 9ccf92a wave 1
   - Files: src/ai/ai_tool_policy.cpp:296, src/ai/ai_tool_policy.cpp:633, src/ai/ai_tool_policy.cpp:621
   - Boundary: untrusted-input (reachable)
   - Evidence: commandLooksCatastrophic (633) matches contiguous /bformat/b//bformat-volume/b; commandLooksObfuscated (621) + commandUsesResolutionIndirection (317) cover -enc/iex/concat/call-operator but NOT '^' or '`'. 'fo^rmat C: /q' and 'For`mat-Volume C:' break the word so BOTH catastrophic AND obfuscation return false; commandLooksRiskyChange also misses -> under MutatingRequiresLease evaluateMutatingPolicy(risky=false) runs it with NO lease/restore/confirm. R4 (doc line 76) added obfuscation-forces-catastrophic but did not cover cmd caret / PS backtick.
@@ -401,7 +402,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 13 actionable
 
-- [ ] **R5-P5-1** [HIGH] [CONFIRMED_REAL] drive_letter payload not bound to validated target (ChangeVolumeSerialNumber/ChangeClusterSize/dynamic-to-basic)
+- [x] **R5-P5-1** [HIGH] [CONFIRMED_REAL] drive_letter payload not bound to validated target (ChangeVolumeSerialNumber/ChangeClusterSize/dynamic-to-basic)
+  - FIXED: 5f34fe3 wave 4
   - Files: src/core/partition_safety_validator.cpp:1463, src/core/partition_safety_validator.cpp:1918, src/core/partition_script_builder.cpp:2828
   - Boundary: untrusted-input (reachable)
   - Evidence: validatePartitionMetadataOperation (1469-1471) only requires the SELECTED target partition to have a drive letter; no guard compares payload['drive_letter'] to partition.volume->drive_letter. Builders read payloadString(op,'drive_letter',target.drive_letter): clusterSizePayload (2830), buildChangeVolumeSerialNumberScript (5075), buildConvertDynamicDiskToBasicScript (5145). So an op can pass validation on innocuous target partition 5 (E:) while the elevated script Format-Volume's / diskpart-deletes the payload's D: -- an unrelated mounted volume the protected-partition/OS-disk guards never checked. Contrast allocationDonorVolumePayloadMismatch (1220) which DOES bind source_drive_letter for AllocateFreeSpace; the target-volume ops have no equivalent.
@@ -831,7 +833,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 35 actionable
 
-- [ ] **R5-P9-4** [HIGH] [CONFIRMED_REAL] Replace swaps an incomplete staged directory over the original then deletes the backup
+- [x] **R5-P9-4** [HIGH] [CONFIRMED_REAL] Replace swaps an incomplete staged directory over the original then deletes the backup
+  - FIXED: 58fc1cc wave 3
   - Files: src/core/file_explorer_transfer_worker.cpp:95, src/core/file_explorer_transfer_worker.cpp:100, src/core/file_explorer_transfer_worker.cpp:126
   - Boundary: untrusted-input (reachable)
   - Evidence: transferReplacing checks only the bool return of transferItemTo (100). importDirectoryFromHost/exportDirectoryToHost return ok=true while setting complete=false on depth/entry-cap/symlink drops (file_management_file_system.cpp:1546; transfer_worker:183-186,205-207). m_last_transfer_incomplete is never consulted before the original is moved to backup (109), staged swapped in (112), and backup deleted (127). An incomplete copy (crafted raw image tree >32 depth / >10000 entries / symlinks, or a deep local tree) destroys a COMPLETE destination. lastTransferComplete() is only checked later in transferOne (435) for moves, after the backup is already gone.
@@ -1276,12 +1279,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 15 actionable
 
-- [ ] **R5-P11-1** [HIGH] [CONFIRMED_REAL] Windows-ISO Cancel targets flashCoordinator not active windowsUsbCreator
+- [x] **R5-P11-1** [HIGH] [CONFIRMED_REAL] Windows-ISO Cancel targets flashCoordinator not active windowsUsbCreator
+  - FIXED: 519a88f wave 2
   - Files: src/gui/image_flasher_panel.cpp:863, src/gui/image_flasher_panel.cpp:1098
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: onCancelClicked (849-877) only calls m_flashCoordinator->cancel() at 863, then clears m_isFlashing and reports 'Flash cancelled'. The Windows-ISO path (1098-1099 createWindowsUSB) runs on m_windowsUsbCreator, whose cancel() is invoked ONLY in the destructor (149-150), never from onCancelClicked. Cancel button is visible on the progress page (912). So cancelling a Windows-ISO flash unlocks the UI and reports cancelled while WindowsUSBCreator (diskpart/DISM) keeps writing.
   - Fix: In onCancelClicked, when m_windowsUsbCreator is active call its cancel() (not flashCoordinator) and keep m_isFlashing set / stay on progress page until the writer acknowledges.
-- [ ] **R5-P11-11** [HIGH] [CONFIRMED_REAL] MBOX rows store page-local index, not message_index; index 0 dropped from exports
+- [x] **R5-P11-11** [HIGH] [CONFIRMED_REAL] MBOX rows store page-local index, not message_index; index 0 dropped from exports
+  - FIXED: 58fc1cc wave 3
   - Files: src/gui/email_inspector_panel.cpp:1548, src/gui/email_inspector_panel.cpp:1179
   - Boundary: untrusted-input (reachable)
   - Evidence: onMboxMessagesLoaded (1533-1553) builds visible_indices from the loop position within the loaded page vector and stores visible_indices.at(row) (a page-LOCAL 0-based index) as the row item id (1548/1552), NOT msg.message_index. MboxParser::readMessages assigns msg.message_index = offset+position (mbox_parser.cpp:220, offset from reloadCurrentPage m_current_page*page_size at 2311). So on page 2+ the stored id != the global index -> double-click/export opens the WRONG message. Separately checkedItemIds (1179) skips item_id==0, so genuine message_index 0 (first message) is silently omitted from checked exports.
