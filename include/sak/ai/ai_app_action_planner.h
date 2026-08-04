@@ -27,6 +27,10 @@ struct AiAppActionPlan {
     QString guard_approval_reason;
     QJsonArray steps;  // win32_gui recipe: ordered {tool, arguments, optional?} desktop-tool steps
     bool risky{false};
+    // A manifest command that formats/wipes/mass-deletes or is obfuscated/indirected. Unlike
+    // `risky` (which only warrants a restore point in Unattended), a catastrophic app action must
+    // take the SAME hard human confirm as the shell/own-action/workflow paths in every mode.
+    bool catastrophic{false};
 
     [[nodiscard]] bool ok() const { return error_message.isEmpty(); }
 };

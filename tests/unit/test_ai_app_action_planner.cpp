@@ -36,6 +36,7 @@ private Q_SLOTS:
     void blocksWin32GuiNonObjectStep();
     void blocksWin32GuiNonObjectArguments();
     void mistypedSafetyFlagStaysRisky();
+    void flagsCatastrophicManifestCommand();
     void blocksWin32GuiNonBoolOptionalStep();
 };
 
@@ -122,6 +123,28 @@ void AiAppActionPlannerTests::carriesGuardBlockForChecksumBypass() {
     QVERIFY(plan.guard_block_error.contains(QStringLiteral("checksum bypass")));
     QCOMPARE(plan.error_message, plan.guard_block_error);
     QVERIFY(plan.guard_approval_reason.isEmpty());
+}
+
+void AiAppActionPlannerTests::flagsCatastrophicManifestCommand() {
+    // CODEX_REVIEW_4 M-B1-5: a format/wipe manifest command must be flagged catastrophic so the
+    // provider-gateway app_run path forces the hard human confirm in every mode (not merely a
+    // restore-point offer in Unattended). Format-Volume passes the command guard, so the plan is
+    // ok() and reaches the catastrophic classification.
+    const QJsonObject destructive = actionManifest(QJsonObject{
+        {QStringLiteral("method"), QStringLiteral("powershell")},
+        {QStringLiteral("command"), QStringLiteral("Format-Volume -DriveLetter D -Force")}});
+    const auto destroy = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("some_app"), QStringLiteral("wipe"), destructive, QJsonObject{});
+    QVERIFY2(destroy.ok(), qPrintable(destroy.error_message));
+    QVERIFY(destroy.catastrophic);
+
+    const QJsonObject benign =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")}});
+    const auto safe = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("some_app"), QStringLiteral("time"), benign, QJsonObject{});
+    QVERIFY(safe.ok());
+    QVERIFY(!safe.catastrophic);
 }
 
 void AiAppActionPlannerTests::buildsWin32GuiActionPlan() {

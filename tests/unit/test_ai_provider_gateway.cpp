@@ -34,6 +34,7 @@ private Q_SLOTS:
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
+    void classifiesRecipeDesktopInputAllowlist();
     void classifiesDesktopInputAndCloseToolRisk();
     void classifiesBatch3BrowserTools();
     void planWin32McpCallFlagsBrowserInputForConfirmation();
@@ -201,6 +202,29 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
         QStringLiteral("browser_extension_uninstall")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(
         QStringLiteral("browser_extension_install")));
+}
+
+void AiProviderGatewayTests::classifiesRecipeDesktopInputAllowlist() {
+    // CODEX_REVIEW_4 M-B1-6: only the PHYSICAL-desktop input tools may auto-run inside a
+    // win32_gui recipe. The desktop subset is true; browser/clipboard/extension input tools are
+    // input-tier but NOT desktop-input, so they still require a per-call confirm in a recipe.
+    for (const QString& desktop : {QStringLiteral("click_text"),
+                                   QStringLiteral("uia_click_control"),
+                                   QStringLiteral("dismiss_dialog"),
+                                   QStringLiteral("mouse_click"),
+                                   QStringLiteral("type_text"),
+                                   QStringLiteral("send_keys"),
+                                   QStringLiteral("focus_window")}) {
+        QVERIFY2(sak::ai::AiProviderGateway::isWin32DesktopInputTool(desktop), qPrintable(desktop));
+    }
+    for (const QString& nonDesktop : {QStringLiteral("browser_click"),
+                                      QStringLiteral("browser_type"),
+                                      QStringLiteral("clipboard_write"),
+                                      QStringLiteral("browser_extension_install")}) {
+        QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(nonDesktop), qPrintable(nonDesktop));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32DesktopInputTool(nonDesktop),
+                 qPrintable(nonDesktop));
+    }
 }
 
 void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {

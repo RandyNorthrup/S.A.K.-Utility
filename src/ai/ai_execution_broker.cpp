@@ -12,6 +12,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+
+#include <tlhelp32.h>
 #endif
 
 #include <algorithm>
@@ -83,6 +85,36 @@ ExecutionBroker::~ExecutionBroker() {
 }
 
 #ifdef _WIN32
+namespace {
+// Recursively terminate a process and its descendants via a Toolhelp snapshot. Used only as a
+// fallback when the Job Object could not be established: it must run while the primary is still
+// alive (before m_process->kill()), because a parent-PID walk cannot find descendants once the
+// parent has exited and the children have been reparented.
+void killProcessTreeSnapshot(DWORD process_id) {
+    if (process_id == 0) {
+        return;
+    }
+    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (::Process32FirstW(snapshot, &entry)) {
+            do {
+                if (entry.th32ParentProcessID == process_id) {
+                    killProcessTreeSnapshot(entry.th32ProcessID);
+                }
+            } while (::Process32NextW(snapshot, &entry));
+        }
+        ::CloseHandle(snapshot);
+    }
+    HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
+    if (process) {
+        ::TerminateProcess(process, 1);
+        ::CloseHandle(process);
+    }
+}
+}  // namespace
+
 void ExecutionBroker::assignProcessToJob() {
     if (!m_process || m_process->processId() <= 0) {
         return;
@@ -121,6 +153,14 @@ void ExecutionBroker::assignProcessToJob() {
 void ExecutionBroker::terminateProcessTree() {
     if (m_job_handle) {
         ::TerminateJobObject(m_job_handle, 1);
+        return;
+    }
+    // The Job Object could not be established (CreateJobObject/SetInformation/OpenProcess/
+    // AssignProcessToJobObject failed and dropped the handle). Fall back to a snapshot walk while
+    // the primary is still alive so descendants are reaped rather than orphaned -- cleanup is
+    // never weaker than the direct primary kill that follows at the call sites.
+    if (m_process && m_process->processId() > 0) {
+        killProcessTreeSnapshot(static_cast<DWORD>(m_process->processId()));
     }
 }
 

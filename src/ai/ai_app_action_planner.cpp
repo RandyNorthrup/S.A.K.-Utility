@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_command_guard.h"
 #include "sak/ai/ai_command_tool_planner.h"
+#include "sak/ai/ai_tool_policy.h"
 
 #include <QLatin1String>
 
@@ -116,6 +117,10 @@ void applyCommandMethod(AiAppActionPlan& plan) {
     plan.risky = safetyFlag(plan.action_profile, QStringLiteral("high_risk")) ||
                  safetyFlag(plan.action_profile, QStringLiteral("requires_restore_point")) ||
                  AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);
+    // A catastrophic or obfuscated manifest command must not be downgradable to a restore-point
+    // offer in Unattended (the gap the provider-gateway app_run path had vs shell/own-action).
+    plan.catastrophic = commandLooksCatastrophic(plan.request.command) ||
+                        commandLooksObfuscated(plan.request.command);
 }
 }  // namespace
 

@@ -727,6 +727,25 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
     return input_tools.contains(tool_name.trimmed());
 }
 
+bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
+    // ONLY the physical-desktop-driving input tools: mouse/keyboard via SendInput, UIA
+    // activation, dialog dismissal, and focus. Deliberately EXCLUDES the browser input tools,
+    // clipboard_write, and extension install/uninstall -- those still require a per-call human
+    // confirm even inside a win32_gui recipe (a SUPERAntiSpyware-style desktop recipe does not
+    // need them). This is a positive allowlist, so a newly added input tool is rejected in
+    // recipes until it is explicitly added here.
+    static const QSet<QString> desktop_tools{
+        QStringLiteral("click_text"),
+        QStringLiteral("uia_click_control"),
+        QStringLiteral("dismiss_dialog"),
+        QStringLiteral("mouse_click"),
+        QStringLiteral("type_text"),
+        QStringLiteral("send_keys"),
+        QStringLiteral("focus_window"),
+    };
+    return desktop_tools.contains(tool_name.trimmed());
+}
+
 QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& security_profile,
                                                            const QJsonObject& provider) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();

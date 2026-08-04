@@ -66,6 +66,11 @@ public:
     /// Browser-control tools that inject input into the active tab and therefore
     /// require an explicit human confirmation in every non-chat access mode.
     [[nodiscard]] static bool isWin32InputTool(const QString& tool_name);
+    /// The subset of input tools that drive the PHYSICAL desktop (mouse/keyboard/UIA/focus).
+    /// Only these may auto-run inside a win32_gui recipe on the single recipe-level
+    /// authorization; browser/clipboard/extension input tools still demand a per-call confirm.
+    /// A newly added input tool defaults to REJECTED in recipes until whitelisted here.
+    [[nodiscard]] static bool isWin32DesktopInputTool(const QString& tool_name);
     [[nodiscard]] static QProcessEnvironment win32McpEnvironment(const QString& security_profile,
                                                                  const QJsonObject& provider);
     [[nodiscard]] static QJsonObject win32McpResult(const QJsonObject& provider,

@@ -229,10 +229,27 @@ QJsonObject authorizeUnattendedRiskyAppAction(const AiAppActionPlan& plan,
                : toolError(QStringLiteral("Restore point handling cancelled app action"));
 }
 
+QJsonObject authorizeCatastrophicAppAction(const AiAppActionPlan& plan,
+                                           const AiProviderGatewayToolCallbacks& callbacks) {
+    if (!plan.catastrophic) {
+        return {};
+    }
+    if (!callbacks.confirm) {
+        return toolError(QStringLiteral("App action confirmation callback is not configured"));
+    }
+    return callbacks.confirm(QStringLiteral("Catastrophic App Action"), plan.preview, true)
+               ? QJsonObject{}
+               : toolError(QStringLiteral("User declined catastrophic app action"));
+}
+
 QJsonObject authorizeAppAction(const AiAppActionPlan& plan,
                                AiProviderGatewayToolAccess access,
                                const AiProviderGatewayToolCallbacks& callbacks) {
-    for (const QJsonObject& error : {authorizeSensitiveAppAction(plan, callbacks),
+    // Catastrophic first and in EVERY mode: a format/wipe/mass-delete or obfuscated manifest
+    // command takes the same mandatory hard human confirm as the shell/own-action/workflow
+    // paths, so it can never be satisfied by only the Unattended restore-point offer below.
+    for (const QJsonObject& error : {authorizeCatastrophicAppAction(plan, callbacks),
+                                     authorizeSensitiveAppAction(plan, callbacks),
                                      authorizeAssistedAppAction(plan, access, callbacks),
                                      authorizeUnattendedRiskyAppAction(plan, access, callbacks)}) {
         if (!error.isEmpty()) {
@@ -398,11 +415,11 @@ Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGa
     // default -- browser cookies/http-auth/download/storage/permission, extension install/
     // uninstall, clipboard_write, ...) demands a per-call human confirmation on the direct path, so
     // it must not auto-run here. Flag it (do not execute) for executeWin32GuiSteps to reject.
-    if (!call_plan.read_only && !AiProviderGateway::isWin32InputTool(call_plan.tool_name)) {
+    if (!call_plan.read_only && !AiProviderGateway::isWin32DesktopInputTool(call_plan.tool_name)) {
         outcome.disallowed = true;
         outcome.error = QStringLiteral(
                             "tool '%1' is not permitted in a win32_gui recipe; only read-only and "
-                            "input-tier desktop tools may run without a per-call confirmation")
+                            "physical-desktop input tools may run without a per-call confirmation")
                             .arg(call_plan.tool_name);
         return outcome;
     }
