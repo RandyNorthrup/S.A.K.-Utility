@@ -297,8 +297,8 @@ core-util (B2):
 - [x] M-B2-29 disk_benchmark_worker.cpp:183 FIXED (wave 10): randomIoResultUsable requires total_failures < total_ops (was <=), so a 50%-failure run is not scored as usable.
 
 gui/actions/elevated (B3):
-- [ ] M-B3-10 network_diagnostic_panel.cpp:4658 Reset Network runs destructive with NO confirmation.
-- [ ] M-B3-11 diagnostic_benchmark_panel.cpp:1078 Verify System Files runs SFC/DISM with NO confirmation (require_confirmation Q_UNUSED).
+- [x] M-B3-10 network_diagnostic_panel.cpp:4658 FIXED (wave 13): onResetNetworkClicked now confirms (showQuestionLogged, default No) before the destructive reset.
+- [x] M-B3-11 diagnostic_benchmark_panel.cpp:1078 FIXED (wave 13): onQuickActionClicked confirms for the repairing "Verify System Files" action (SFC/DISM) before running.
 - [ ] M-B3-12 reset_network_action.cpp:224 reboot-required set even when Winsock failed; cancel leaves partial mutation unrolled.
 - [ ] M-B3-19 backup_bitlocker_keys_action.cpp:671 cancel ignores removeRecursively() -> plaintext keys may remain, reported clean.
 - [ ] M-B3-20 backup_bitlocker_keys_action.cpp:323 detection returns {} on parse/query error -> "no BitLocker" == failure.

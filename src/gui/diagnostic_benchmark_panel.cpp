@@ -15,6 +15,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -34,6 +35,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTextEdit>
@@ -1077,6 +1079,24 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
 
 void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
+    // Some quick actions shown in a diagnostic panel actually perform system REPAIRS
+    // (SFC /scannow, DISM /RestoreHealth) that modify Windows system files. Those must
+    // be confirmed rather than firing from a single click as if they were a read-only
+    // scan (the controller's require_confirmation flag is not honored on its own).
+    static const QSet<QString> kConfirmActions = {QStringLiteral("Verify System Files")};
+    if (kConfirmActions.contains(action->name())) {
+        auto confirm = sak::showQuestionLogged(
+            this,
+            action->name(),
+            tr("\"%1\" runs system repair operations (SFC /scannow and, if corruption is "
+               "found, DISM /RestoreHealth) that modify Windows system files. Run it now?")
+                .arg(action->name()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (confirm != QMessageBox::Yes) {
+            return;
+        }
+    }
     logMessage(QString("Executing: %1").arg(action->name()));
     Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(0);

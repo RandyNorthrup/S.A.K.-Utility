@@ -4656,6 +4656,20 @@ void NetworkDiagnosticPanel::createResetNetworkAction() {
 }
 
 void NetworkDiagnosticPanel::onResetNetworkClicked() {
+    // A network reset is destructive (Winsock/TCP-IP/firewall/adapter reset, dropped
+    // leases) and requires a reboot, so confirm before running it -- it must not fire
+    // from a single click with no prompt.
+    auto confirm = sak::showQuestionLogged(
+        this,
+        tr("Reset Network"),
+        tr("Reset the network stack now?\n\n"
+           "This resets Winsock, TCP/IP, the Windows Firewall, and network adapters, and "
+           "may drop your connection until you reboot."),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
     Q_EMIT logOutput(QStringLiteral("Executing: Reset Network Settings"));
     m_resetNetworkBtn->setEnabled(false);
     m_resetNetworkBtn->setText(tr("Resetting..."));
