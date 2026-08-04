@@ -44,6 +44,7 @@ private Q_SLOTS:
     void affirmativeRankingPrefersEarlierCaption();
     void collectButtonsFiltersToEnabledOnScreenButtons();
     void destructiveCaptionRejectedDespiteAffirmativeWord();
+    void negativeCaptionRejectedDespiteAffirmativeWord();
     void exactAffirmativeChosenOverDestructiveSibling();
     void substringAffirmativeNoLongerMatches();
 };
@@ -194,6 +195,21 @@ void Win32McpDialogChoiceTests::substringAffirmativeNoLongerMatches() {
     const int idx = chooseDialogButton(
         buttons({QStringLiteral("Yesterday"), QStringLiteral("Retry")}), QString(), why);
     QCOMPARE(idx, -1);
+}
+
+void Win32McpDialogChoiceTests::negativeCaptionRejectedDespiteAffirmativeWord() {
+    // CODEX_REVIEW_4 M-A3-41: "Yes, cancel" pairs an affirmative token with a
+    // cancellation and must NOT be auto-pressed. With a clean OK sibling, OK (index 1)
+    // is chosen -- never the contradictory "Yes, cancel" at index 0.
+    QString why;
+    const int idx = chooseDialogButton(
+        buttons({QStringLiteral("Yes, cancel"), QStringLiteral("OK")}), QString(), why);
+    QCOMPARE(idx, 1);
+    // With no clean affirmative sibling it refuses rather than pressing "Yes, cancel".
+    QString why2;
+    const int refused = chooseDialogButton(
+        buttons({QStringLiteral("Yes, cancel"), QStringLiteral("Back")}), QString(), why2);
+    QCOMPARE(refused, -1);
 }
 
 QTEST_GUILESS_MAIN(Win32McpDialogChoiceTests)

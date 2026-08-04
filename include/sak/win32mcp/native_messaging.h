@@ -24,6 +24,11 @@ namespace sak::win32mcp {
 /// or hostile length prefix from triggering a multi-gigabyte allocation.
 inline constexpr int kMaxNativeMessageBytes = 64 * 1024 * 1024;
 
+/// Chrome's hard limit on a single host->browser message. A native host that emits a
+/// frame larger than this is terminated by Chrome, so the Chrome-facing writer must
+/// refuse an oversized frame rather than let the whole bridge be killed.
+inline constexpr int kMaxHostToBrowserBytes = 1024 * 1024;
+
 /// Version of the browser-control bridge protocol spoken over native messaging.
 /// Bump when the message shapes change so both ends can detect a mismatch.
 inline constexpr int kBrowserBridgeProtocol = 1;

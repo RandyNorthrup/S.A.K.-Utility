@@ -39,9 +39,11 @@ const char* const kAffirmativeCaptions[] = {
     "next",
 };
 
-// Destructive/negative verbs that turn an otherwise-affirmative caption into a dangerous action.
-// If any appears as a whole word the caption is NEVER auto-affirmative -- so "Yes, delete all" or
-// "OK, format drive" is refused rather than auto-pressed just because it also contains "yes"/"ok".
+// Destructive OR negative verbs that turn an otherwise-affirmative caption into a dangerous or
+// contradictory action. If any appears as a whole word the caption is NEVER auto-affirmative --
+// so "Yes, delete all", "OK, format drive", and "Yes, cancel" are refused rather than auto-pressed
+// just because they also contain "yes"/"ok". The negative words (cancel/no/abort/...) stop a
+// caption that pairs an affirmative token with a cancellation from being clicked.
 const char* const kDestructiveWords[] = {
     "delete",
     "remove",
@@ -54,6 +56,13 @@ const char* const kDestructiveWords[] = {
     "overwrite",
     "replace",
     "uninstall",
+    "cancel",
+    "no",
+    "abort",
+    "deny",
+    "decline",
+    "stop",
+    "never",
 };
 
 // Split a lower-cased caption into its alphanumeric word tokens, so matching is whole-word rather

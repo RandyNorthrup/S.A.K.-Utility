@@ -257,8 +257,8 @@ profile-restore / network (A2):
 - [ ] M-A2-5  worker.cpp:156 rollback QFile::rename return ignored; predictable temp names.
 
 win32mcp (A3):
-- [ ] M-A3-16 native_messaging.cpp:11 encodeFrame has no 1 MiB host->browser cap -> Chrome kills the native host.
-- [ ] M-A3-41 win32_mcp_dialog_choice.cpp:45 affirmative classifier has no negative-word list -> "Yes, cancel" auto-affirms.
+- [x] M-A3-16 native_messaging.cpp:11 FIXED (wave 9): kMaxHostToBrowserBytes (1 MiB); writeStdoutFrame refuses an oversized Chrome-facing frame (returns false -> pipe torn down) instead of letting Chrome kill the host.
+- [x] M-A3-41 win32_mcp_dialog_choice.cpp:45 FIXED (wave 9): negative words (cancel/no/abort/deny/decline/stop/never) added to the disqualifier list so "Yes, cancel" is never auto-affirmed. Test negativeCaptionRejectedDespiteAffirmativeWord.
 - [ ] M-A3-65 win32_mcp_dispatch.cpp:135 advertised inputSchema not enforced server-side (defense-in-depth).
 - [ ] M-A3-3  background.js:790 lastSnapshotTabId set before capture completes.
 

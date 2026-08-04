@@ -123,6 +123,12 @@ bool readStdinFrame(QJsonObject* out) {
 
 bool writeStdoutFrame(const QJsonObject& message) {
     const QByteArray frame = encodeFrame(message);
+    // Chrome terminates a native host that emits a host->browser frame over 1 MiB.
+    // Refuse to write an oversized frame (report failure so relayPumpOnce tears the
+    // pipe down) rather than letting Chrome kill the host mid-stream.
+    if (frame.size() - 4 > kMaxHostToBrowserBytes) {
+        return false;
+    }
     const size_t wrote =
         std::fwrite(frame.constData(), 1, static_cast<size_t>(frame.size()), stdout);
     // A short write OR a failed flush means the frame did not reach Chrome intact; report it so
