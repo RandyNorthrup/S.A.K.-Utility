@@ -39,7 +39,11 @@ QJsonObject finalizeResult(QJsonObject result, const QString& operation) {
     if (result.isEmpty()) {
         return toolError(QStringLiteral("Provider gateway returned no data"));
     }
-    result[QStringLiteral("success")] = true;
+    // Only DEFAULT success to true when the handler did not set it; unconditionally
+    // overwriting would clobber a handler's own success:false into a false success.
+    if (!result.contains(QStringLiteral("success"))) {
+        result[QStringLiteral("success")] = true;
+    }
     result[QStringLiteral("operation")] = operation;
     return result;
 }
