@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRandomGenerator>
 #include <QTemporaryFile>
 #include <QtGlobal>
 
@@ -121,6 +122,17 @@ bool createRestoreRecoveryCopy(const QString& finalDestPath) {
     return QFile::copy(finalDestPath, recoveryPath);
 }
 
+// An unpredictable per-operation staging path in the destination directory. The internal
+// temp/old paths must not be guessable: a fixed suffix let a local attacker pre-plant a
+// dangling symlink at the known path in the window between QFile::remove and QFile::copy, so
+// the copy would follow it and write outside the profile root. A 64-bit random token closes
+// that (QFile::copy still refuses to overwrite an existing target = fail closed).
+QString makeRestoreTempPath(const QString& finalDestPath, const QString& tag) {
+    const quint64 token = QRandomGenerator::global()->generate64();
+    return finalDestPath + QStringLiteral(".sak-") + tag + QLatin1Char('-') +
+           QString::number(token, 16) + QStringLiteral(".tmp");
+}
+
 // Replace an existing destination file only after the new copy is fully written.
 // The original is moved aside by RENAME (never deleted) before the replacement is
 // swapped in, and restored if the swap fails, so no failure can lose the original
@@ -132,7 +144,7 @@ bool copyFileReplacingExisting(const QString& source,
     if (!QFileInfo::exists(finalDestPath)) {
         return QFile::copy(source, finalDestPath);
     }
-    const QString tempPath = finalDestPath + QStringLiteral(".sakrestore.tmp");
+    const QString tempPath = makeRestoreTempPath(finalDestPath, QStringLiteral("restore"));
     QFile::remove(tempPath);
     if (!QFile::copy(source, tempPath)) {
         return false;
@@ -146,7 +158,7 @@ bool copyFileReplacingExisting(const QString& source,
     // target, so the destination must be vacated first -- but by relocating the original, not
     // destroying it, so a failed swap can roll back. The old code removed the original THEN
     // renamed, and a rename failure between the two left the destination gone.
-    const QString oldPath = finalDestPath + QStringLiteral(".sakold.tmp");
+    const QString oldPath = makeRestoreTempPath(finalDestPath, QStringLiteral("old"));
     QFile::remove(oldPath);
     if (!QFile::rename(finalDestPath, oldPath)) {
         QFile::remove(tempPath);
@@ -332,8 +344,30 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     // copyFileWithConflictResolution -> applyPermissions (B7-21).
     m_currentDestUser = effectiveDestUser(mapping);
 
-    // Restore each folder
-    for (const auto& folder : sourceUser->backed_up_folders) {
+    if (!restoreUserFolders(mapping, *sourceUser, sourcePath, destProfilePath)) {
+        return false;  // Cancelled mid-user.
+    }
+
+    // Post-restore integrity re-check (fail closed): verifyFile only proves each copied file
+    // matched a RE-READ of the source, so a source swapped between pre-restore validation and
+    // the copy would pass. Re-hashing the source tree against the sealed manifest digest here
+    // binds the restored payload to the digest transitively (source==manifest at T0 AND at T2,
+    // dest==source per-file => dest==sealed). Only runs when verification was requested.
+    if (m_verify && !verifyUserPayloadChecksum(*sourceUser)) {
+        Q_EMIT logMessage(
+            tr("Post-restore payload integrity check failed: %1").arg(mapping.source_username),
+            true);
+        return false;
+    }
+
+    return true;
+}
+
+bool UserProfileRestoreWorker::restoreUserFolders(const UserMapping& mapping,
+                                                  const BackupUserData& sourceUser,
+                                                  const QString& sourcePath,
+                                                  const QString& destProfilePath) {
+    for (const auto& folder : sourceUser.backed_up_folders) {
         if (m_cancelled) {
             return false;
         }
@@ -755,6 +789,10 @@ bool UserProfileRestoreWorker::validateBackup() {
         return false;
     }
     if (m_manifest.manifest_checksum.isEmpty()) {
+        // A legacy backup with no integrity checksum is intentionally supported (documented in
+        // user_profile_types.h). Do NOT couple this to m_verify: verify enables per-file content
+        // hashing (verifyFile), which is independent of whether the manifest was ever sealed --
+        // failing closed here would wrongly reject content-only verification of a legacy backup.
         Q_EMIT logMessage(
             tr("Manifest has no integrity checksum (legacy backup); skipping verification"), false);
     }
@@ -773,17 +811,32 @@ bool UserProfileRestoreWorker::verifyUserPayloadChecksums() {
             continue;
         }
         const auto* user = findManifestUser(mapping.source_username);
-        if (user == nullptr || user->checksum_sha256.isEmpty()) {
-            continue;  // Unmapped, or a legacy payload with no recorded digest.
+        if (user == nullptr) {
+            continue;  // Unmapped.
         }
-        const QString actual =
-            BackupManifest::hashDirectoryTree(m_backupPath + "/" + user->username);
-        if (actual != user->checksum_sha256) {
-            Q_EMIT logMessage(tr("Payload integrity check failed for user '%1' (checksum mismatch)")
-                                  .arg(user->username),
-                              true);
+        if (!verifyUserPayloadChecksum(*user)) {
             return false;
         }
+    }
+    return true;
+}
+
+bool UserProfileRestoreWorker::verifyUserPayloadChecksum(const BackupUserData& user) {
+    if (user.checksum_sha256.isEmpty()) {
+        // Empty per-user digest: acceptable for a fully legacy backup (which has no manifest
+        // integrity checksum either). But when the manifest IS sealed (manifest_checksum
+        // present and already verified above), a missing payload digest is inconsistent with a
+        // sealed manifest -- an attacker who stripped the digest and re-sealed the manifest --
+        // so fail closed. This distinguishes genuine legacy from tampering without rejecting
+        // legitimate legacy backups.
+        return m_manifest.manifest_checksum.isEmpty();
+    }
+    const QString actual = BackupManifest::hashDirectoryTree(m_backupPath + "/" + user.username);
+    if (actual != user.checksum_sha256) {
+        Q_EMIT logMessage(tr("Payload integrity check failed for user '%1' (checksum mismatch)")
+                              .arg(user.username),
+                          true);
+        return false;
     }
     return true;
 }

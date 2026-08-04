@@ -125,6 +125,7 @@ private slots:
     void manifestChecksumMismatchFailsValidation();
     void payloadChecksumMismatchFailsValidation();
     void correctChecksumsPassValidation();
+    void sealedManifestMissingUserDigestFailsClosed();
 
     // ---- B7-21: AssignToDestination assigns ownership, not strip ----
     void assignToDestinationUsesUsername();
@@ -378,6 +379,47 @@ void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // valid integrity -> proceeds
     QVERIFY(QFile::exists(destDir.path() + "/Users/TestUser/Documents/hello.txt"));
+}
+
+// ---------------------------------------------------------------------------
+// CODEX_REVIEW_4 M-A2-12: a legacy backup (no manifest integrity checksum) is
+// intentionally accepted, but a SEALED manifest (manifest_checksum present) whose
+// per-user payload digest is empty is inconsistent -- an attacker stripped the digest
+// and re-sealed -- and must fail closed. Independent of the verify flag.
+// ---------------------------------------------------------------------------
+void UserProfileRestoreWorkerTests::sealedManifestMissingUserDigestFailsClosed() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
+                     {QStringLiteral("Documents/hello.txt")});
+
+    QTemporaryDir destDir;
+    QVERIFY(destDir.isValid());
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    auto manifest = buildManifest(QStringLiteral("TestUser"), {});
+    // Leave the per-user payload digest EMPTY but SEAL the manifest, so verifyManifestChecksum
+    // passes yet the payload is unauthenticated -- the stripped-digest tamper case.
+    QVERIFY(manifest.users[0].checksum_sha256.isEmpty());
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+    QVERIFY(!manifest.manifest_checksum.isEmpty());
+    auto mapping = makeMapping(QStringLiteral("TestUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+
+    // verify=false: the fail-closed decision is about manifest consistency, not content hashing.
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
+
+    QVERIFY(completeSpy.wait(5000));
+    QCOMPARE(completeSpy.count(), 1);
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);  // sealed manifest, no payload digest
 }
 
 // ---------------------------------------------------------------------------

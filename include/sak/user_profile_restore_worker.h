@@ -146,6 +146,13 @@ protected:
 private:
     // Core operations
     bool restoreUser(const UserMapping& mapping);
+    /// @brief Restore every selected folder of one user (extracted from restoreUser so the
+    ///        post-restore integrity re-check keeps restoreUser under the length cap). Returns
+    ///        false only on cancellation; per-folder failures increment m_filesErrored.
+    bool restoreUserFolders(const UserMapping& mapping,
+                            const BackupUserData& sourceUser,
+                            const QString& sourcePath,
+                            const QString& destProfilePath);
     /// @brief Resolve the destination profile directory based on merge mode
     bool resolveDestinationProfilePath(const UserMapping& mapping, QString& destProfilePath);
     bool resolveCreateNewUser(const UserMapping& mapping,
@@ -176,6 +183,11 @@ private:
     // Helpers
     bool validateBackup();
     bool verifyUserPayloadChecksums();
+    /// @brief Verify one manifest user's payload tree against its sealed SHA-256 digest.
+    ///        An absent digest is accepted only for a legacy backup when verification was NOT
+    ///        requested (m_verify); with verify on, an absent or mismatched digest fails closed.
+    ///        Reused post-restore so a source swapped after pre-restore validation is caught.
+    bool verifyUserPayloadChecksum(const BackupUserData& user);
     /// @brief Find a user's data in the manifest by username
     const BackupUserData* findManifestUser(const QString& username) const;
     qint64 calculateTotalSize();
