@@ -848,7 +848,6 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
 
 void ImageFlasherPanel::onCancelClicked() {
     Q_ASSERT(m_flashStateLabel);
-    Q_ASSERT(m_flashCoordinator);
     logWarning("Cancel Flash: User prompted to cancel flash operation.");
     auto reply = sak::showWarningLogged(
         this,
@@ -860,7 +859,31 @@ void ImageFlasherPanel::onCancelClicked() {
         QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
-        m_flashCoordinator->cancel();
+        // This panel drives two independent destructive writers: FlashCoordinator for raw
+        // image writes, and a separate WindowsUSBCreator worker for Windows ISO media.
+        // Cancel previously signalled only the coordinator, so cancelling a Windows USB
+        // creation asked nothing to stop: the worker kept writing the disk while the UI
+        // reported "Flash cancelled by user" and re-enabled the controls, letting the user
+        // start another operation against a drive that was still being written.
+        //
+        // Signal every writer that currently exists. Both cancels set an atomic flag the
+        // worker polls, and both are already invoked this way from the destructor.
+        bool cancel_signalled = false;
+        if (m_windowsUsbCreator) {
+            m_windowsUsbCreator->cancel();
+            cancel_signalled = true;
+        }
+        if (m_flashCoordinator) {
+            m_flashCoordinator->cancel();
+            cancel_signalled = true;
+        }
+        if (!cancel_signalled) {
+            // Nothing to cancel means the UI state and the worker state disagree. Refuse to
+            // report a cancellation that never happened.
+            logError("Cancel Flash: no active writer to cancel; refusing to report cancelled");
+            return;
+        }
+
         m_isFlashing = false;
         m_settingsButton->setEnabled(true);
 
