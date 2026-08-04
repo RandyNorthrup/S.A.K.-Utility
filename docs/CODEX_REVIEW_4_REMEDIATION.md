@@ -270,7 +270,7 @@ apfs/partition (A4):
 - [x] M-A4-14 partition_script_builder.cpp:4563 FIXED (wave 14): buildMergeScript rejects a target_folder containing a path separator, ':', or '..'. Test scriptBuilder_mergeRejectsTraversalTargetFolder.
 - [ ] M-A4-27 partition_apfs_file_system_reader.cpp:359 / partition_ext_file_system_reader.cpp:1060 export junction/symlink TOCTOU.
 - [x] M-A4-28 partition_safety_validator.cpp:1825 FIXED (wave 14): validate()'s target.kind switch has a default: branch that appends a blocker, so an out-of-range/forged kind fails closed.
-- [ ] M-A4-31 partition_apfs_writer.cpp:18402 incompatible-feature mask value_or(0) -> missing metadata passes preflight.
+- [x] M-A4-31 partition_apfs_writer.cpp:18402 FIXED (wave 15): appendFeatureBlockers now blocks when the incompatible-feature detail is absent/unparseable (the detector always emits it, so absence = incomplete detection), instead of value_or(0) passing preflight.
 
 ai (B1):
 - [ ] M-B1-5  ai_app_action_planner.cpp:116 provider-gateway app_run_action has no catastrophic path.
@@ -300,7 +300,7 @@ gui/actions/elevated (B3):
 - [x] M-B3-10 network_diagnostic_panel.cpp:4658 FIXED (wave 13): onResetNetworkClicked now confirms (showQuestionLogged, default No) before the destructive reset.
 - [x] M-B3-11 diagnostic_benchmark_panel.cpp:1078 FIXED (wave 13): onQuickActionClicked confirms for the repairing "Verify System Files" action (SFC/DISM) before running.
 - [ ] M-B3-12 reset_network_action.cpp:224 reboot-required set even when Winsock failed; cancel leaves partial mutation unrolled.
-- [ ] M-B3-19 backup_bitlocker_keys_action.cpp:671 cancel ignores removeRecursively() -> plaintext keys may remain, reported clean.
+- [x] M-B3-19 backup_bitlocker_keys_action.cpp:671 FIXED (wave 15): the cancel-cleanup lambda now checks removeRecursively(); if the partial backup dir cannot be removed it emits a FAILURE (plaintext keys may remain) instead of a clean cancel.
 - [ ] M-B3-20 backup_bitlocker_keys_action.cpp:323 detection returns {} on parse/query error -> "no BitLocker" == failure.
 - [ ] M-B3-22 optimize_power_settings_action.cpp:311 failed powercfg discovery -> hard-coded GUID fallback then mutates.
 - [ ] M-B3-5  elevated_helper_main.cpp:845 client-loss treated as "no message" -> dead client never cancels the privileged task.

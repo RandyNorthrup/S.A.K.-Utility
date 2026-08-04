@@ -666,9 +666,19 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     }
 
     // A cancellation between writes must not leave plaintext recovery keys on
-    // disk: remove the partial backup directory before reporting the cancel.
+    // disk: remove the partial backup directory before reporting the cancel. If the
+    // removal itself fails, plaintext keys may remain, so that is a failure -- not a
+    // clean cancel.
     auto cancelWithCleanup = [&]() {
-        QDir(backup_dir_path).removeRecursively();
+        if (!QDir(backup_dir_path).removeRecursively()) {
+            emitFailedResult(
+                "BitLocker key backup cancelled, but the partial backup directory "
+                "could not be removed; plaintext recovery keys may remain at " +
+                    backup_dir_path,
+                QString(),
+                start_time);
+            return;
+        }
         emitCancelledResult("BitLocker key backup cancelled", start_time);
     };
 

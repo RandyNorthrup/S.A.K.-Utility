@@ -18410,6 +18410,15 @@ void appendFeatureBlockers(const PartitionFileSystemDetection& detection,
                            PartitionApfsWritePreflight* result) {
     const auto incompatible = parseHexDetail(detection.details,
                                              QStringLiteral("Incompatible features:"));
+    if (!incompatible.has_value() && !options.allow_encrypted_or_protected_volume) {
+        // A valid APFS detection always reports the incompatible-feature mask. If it is
+        // absent/unparseable the detection is incomplete and the feature state cannot be
+        // proven safe -- fail closed (value_or(0) would have defaulted it to "no
+        // incompatible features"), mirroring the volumeSlots check below.
+        result->blockers.append(QStringLiteral(
+            "APFS incompatible-feature metadata is missing or unparseable; cannot prove the "
+            "container is safe to mutate"));
+    }
     const uint64_t incompatibleMask = incompatible.value_or(0);
     const uint64_t unsupportedIncompatible = incompatibleMask &
                                              ~static_cast<uint64_t>(kApfsContainerIncompatVersion2);
