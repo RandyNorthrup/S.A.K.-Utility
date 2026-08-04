@@ -792,35 +792,21 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
         return;
     }
 
-    QString appDataFilePath = wiz->backupPath() + "/app_data_sources.json";
-    QFile file(appDataFilePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No app_data_sources.json found in backup -- skipping"));
-        m_summaryLabel->setText(tr("No application data available in this backup"));
+    // Trust ONLY the checksum-verified manifest's embedded copy; the standalone
+    // app_data_sources.json sidecar is not integrity protected. Without a verified
+    // manifest the per-source exclusion UI is disabled (fail closed).
+    const BackupManifest& manifest = wiz->manifest();
+    if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
+        m_statusLabel->setText(
+            tr("Backup has no verified integrity checksum -- app-data selection is disabled"));
+        m_summaryLabel->setText(
+            tr("Application-data restore requires an integrity-checked backup"));
         return;
     }
 
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isArray()) {
-        m_statusLabel->setText(tr("Invalid app_data_sources.json format"));
-        return;
-    }
-
-    QJsonArray sourcesArray = doc.array();
-    QVector<AppDataSourceInfo> sources;
-    sources.reserve(sourcesArray.size());
-
-    for (const auto& val : sourcesArray) {
-        QJsonObject obj = val.toObject();
-        AppDataSourceInfo info;
-        info.name = obj["name"].toString();
-        info.category = obj["category"].toString();
-        info.relative_path = obj["relative_path"].toString();
-        info.size_bytes = obj["size_bytes"].toVariant().toLongLong();
+    QVector<AppDataSourceInfo> sources = manifest.app_data_sources;
+    for (auto& info : sources) {
         info.selected = true;  // All selected by default for restore
-        sources.append(info);
     }
 
     m_loaded = true;
@@ -1078,34 +1064,22 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
         return;
     }
 
-    QString networksFilePath = wiz->backupPath() + "/wifi_profiles.json";
-    QFile file(networksFilePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No wifi_profiles.json found in backup -- skipping"));
-        m_summaryLabel->setText(tr("No WiFi profile data available in this backup"));
+    // Trust ONLY the checksum-verified manifest's embedded copy of the WiFi
+    // selections; the standalone wifi_profiles.json sidecar is not integrity
+    // protected and could be tampered before an elevated `netsh wlan add profile`
+    // apply. A backup with no manifest checksum, or one whose checksum does not
+    // verify, gets no network restore (fail closed).
+    const BackupManifest& manifest = wiz->manifest();
+    if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
+        m_statusLabel->setText(
+            tr("Backup has no verified integrity checksum -- WiFi restore is disabled"));
+        m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
 
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isArray()) {
-        m_statusLabel->setText(tr("Invalid wifi_profiles.json format"));
-        return;
-    }
-
-    QJsonArray profilesArray = doc.array();
-    QVector<WifiProfileInfo> profiles;
-    profiles.reserve(profilesArray.size());
-
-    for (const auto& val : profilesArray) {
-        QJsonObject obj = val.toObject();
-        WifiProfileInfo info;
-        info.profile_name = obj["profile_name"].toString();
-        info.security_type = obj["security_type"].toString();
-        info.xml_data = obj["xml_data"].toString();
+    QVector<WifiProfileInfo> profiles = manifest.wifi_profiles;
+    for (auto& info : profiles) {
         info.selected = true;  // All selected by default
-        profiles.append(info);
     }
 
     m_loaded = true;
@@ -1289,39 +1263,21 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
         return;
     }
 
-    QString ethernetFilePath = wiz->backupPath() + "/ethernet_configs.json";
-    QFile file(ethernetFilePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No ethernet_configs.json found in backup -- skipping"));
-        m_summaryLabel->setText(tr("No ethernet configuration data available in this backup"));
+    // Trust ONLY the checksum-verified manifest's embedded copy; the standalone
+    // ethernet_configs.json sidecar is not integrity protected and could be tampered
+    // before an elevated `netsh interface ip set` apply. Without a verified manifest
+    // the Ethernet restore is disabled (fail closed).
+    const BackupManifest& manifest = wiz->manifest();
+    if (manifest.manifest_checksum.isEmpty() || !manifest.verifyManifestChecksum()) {
+        m_statusLabel->setText(
+            tr("Backup has no verified integrity checksum -- Ethernet restore is disabled"));
+        m_summaryLabel->setText(tr("Network restore requires an integrity-checked backup"));
         return;
     }
 
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isArray()) {
-        m_statusLabel->setText(tr("Invalid ethernet_configs.json format"));
-        return;
-    }
-
-    QJsonArray configsArray = doc.array();
-    QVector<EthernetConfigInfo> configs;
-    configs.reserve(configsArray.size());
-
-    for (const auto& val : configsArray) {
-        QJsonObject obj = val.toObject();
-        EthernetConfigInfo info;
-        info.adapter_name = obj["adapter_name"].toString();
-        info.description = obj["description"].toString();
-        info.dhcp_enabled = obj["dhcp_enabled"].toBool(true);
-        info.ip_address = obj["ip_address"].toString();
-        info.subnet_mask = obj["subnet_mask"].toString();
-        info.default_gateway = obj["default_gateway"].toString();
-        info.dns_primary = obj["dns_primary"].toString();
-        info.dns_secondary = obj["dns_secondary"].toString();
+    QVector<EthernetConfigInfo> configs = manifest.ethernet_configs;
+    for (auto& info : configs) {
         info.selected = true;  // All selected by default
-        configs.append(info);
     }
 
     m_loaded = true;

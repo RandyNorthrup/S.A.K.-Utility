@@ -212,6 +212,22 @@ private Q_SLOTS:
         QVERIFY(m.verifyManifestChecksum());  // nothing stored -> unverifiable, not a failure
     }
 
+    void manifestChecksumCoversNetworkSelections() {
+        // CODEX_REVIEW_4 H3: the WiFi/Ethernet/AppData selections are embedded in the
+        // manifest so its SHA-256 authenticates them (restore trusts these, not the
+        // unprotected *.json sidecars). A tampered embedded profile must be detected.
+        BackupManifest m = sampleManifest();
+        WifiProfileInfo w;
+        w.profile_name = "HomeNet";
+        w.xml_data = "<WLANProfile/>";
+        m.wifi_profiles.append(w);
+        m.manifest_checksum = m.computeManifestChecksum();
+        QVERIFY(m.verifyManifestChecksum());
+        // Tamper the embedded profile without updating the digest.
+        m.wifi_profiles[0].xml_data = "<WLANProfile>evil</WLANProfile>";
+        QVERIFY(!m.verifyManifestChecksum());
+    }
+
     void manifestChecksumSurvivesSaveLoad() {
         BackupManifest m = sampleManifest();
         m.manifest_checksum = m.computeManifestChecksum();

@@ -184,7 +184,31 @@ bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz)
     ok = saveWifiProfilesToBackup(wiz->wifiProfiles()) && ok;
     ok = saveEthernetConfigsToBackup(wiz->ethernetConfigs()) && ok;
     ok = saveAppDataSourcesToBackup(wiz->appDataSources()) && ok;
+    // Also embed the selections in the manifest (checksum-protected); the sidecars
+    // written above are not integrity-protected and are ignored by restore.
+    recordNetworkSelectionsInManifest(wiz);
     return ok;
+}
+
+void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(UserProfileBackupWizard* wiz) {
+    m_manifest.wifi_profiles.clear();
+    for (const auto& profile : wiz->wifiProfiles()) {
+        if (profile.selected) {
+            m_manifest.wifi_profiles.append(profile);
+        }
+    }
+    m_manifest.ethernet_configs.clear();
+    for (const auto& config : wiz->ethernetConfigs()) {
+        if (config.selected) {
+            m_manifest.ethernet_configs.append(config);
+        }
+    }
+    m_manifest.app_data_sources.clear();
+    for (const auto& source : wiz->appDataSources()) {
+        if (source.selected) {
+            m_manifest.app_data_sources.append(source);
+        }
+    }
 }
 
 bool UserProfileBackupExecutePage::ensureDestinationDirectory() {

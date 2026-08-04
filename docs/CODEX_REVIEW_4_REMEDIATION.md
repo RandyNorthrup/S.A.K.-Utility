@@ -109,7 +109,14 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   Fix: for extensionless entries require the destination under a known
   mail-store subtree; reject dot-directories / dotfiles.
 
-- [ ] H3 [A2-3] user_profile_restore_worker.cpp:727 / user_profile_restore_wizard_pages.cpp:803,1081,1292
+- [x] H3 [A2-3] user_profile_restore_worker.cpp:727 / user_profile_restore_wizard_pages.cpp:803,1081,1292
+  FIXED (wave 7): the manifest already serializes+checksums wifi_profiles/ethernet_configs/
+  app_data_sources but the backup never populated them and restore read the unprotected
+  *.json sidecars. Backup now mirrors the SELECTED entries into the manifest
+  (recordNetworkSelectionsInManifest, before the worker seals the checksum); restore reads
+  ONLY from the checksum-verified manifest and disables WiFi/Ethernet/AppData restore when
+  the manifest has no valid non-empty checksum (fail closed). Sidecars are still written for
+  inspection but ignored by restore. Regression test manifestChecksumCoversNetworkSelections.
   WiFi/Ethernet/AppData sidecars (wifi_profiles.json, ethernet_configs.json,
   app_data_sources.json) are loaded raw and never covered by the manifest /
   payload checksum set, then applied elevated via netsh
