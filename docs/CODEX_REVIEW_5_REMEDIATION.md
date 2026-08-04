@@ -1446,24 +1446,78 @@ properly (supply the include paths and --library=qt) rather than silence.
 - [ ] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them
 - [ ] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
 
-### G4 - real bugs that the gates were hiding
+### G4 - findings from running cppcheck with suppressions removed (VERIFIED)
 
-Found by running cppcheck with suppressions removed. These are genuine defects.
+Every item below was verified by reading the actual code before being accepted. That
+mattered: the two highest-severity cppcheck findings and twelve of the thirty-six
+vacuous conditions turned out to be tool artifacts, and 'fixing' them would have been
+churn on correct code. cppcheck findings get the same skeptical verification as Codex
+findings.
 
-- [ ] **R5-G4-1** [HIGH] src/core/mbox_parser.cpp:847 out-of-bounds read: payload_bytes[i] on an empty container, plus a negative-index path. Reached from untrusted mbox input.
-- [ ] **R5-G4-2** [HIGH] src/core/quick_action_controller.cpp:145 dangling lifetime: m_action_map retains a pointer to a local 'action' object.
-- [ ] **R5-G4-3** [HIGH] src/core/uup_iso_builder.cpp:231,245,350 Q_ASSERT wraps QDir calls with required side effects; in Release builds the assert compiles out and the work never happens.
-- [ ] **R5-G4-4** [HIGH] src/core/chocolatey_manager.cpp:222,633 '!ensureChocoAuthentic()' is always true, so the authenticity gate is vacuous.
-- [ ] **R5-G4-5** [HIGH] src/core/elevated_pipe_server.cpp:213,219,226,232,239,258 and src/core/elevation_broker.cpp:82,92,187,192,385,405 twelve always-true conditions on the elevation boundary (sendRaw and readExact results).
-- [ ] **R5-G4-6** [MEDIUM] src/core/cleanup_worker.cpp:652,664,734 tryScheduleReboot() always returns false, so reboot-scheduled deletion never actually happens.
-- [ ] **R5-G4-7** [MEDIUM] include/sak/partition_hfs_internal.h:4738,8715,10478,10889 four vacuous conditions in the HFS+ engine, including an always-false blockers.isEmpty() assignment.
-- [ ] **R5-G4-8** [MEDIUM] src/core/network_diagnostic_controller.cpp:1022 m_socket is reallocated without being deallocated first (leak).
-- [ ] **R5-G4-9** [MEDIUM] src/core/pst_parser.cpp:1990 'entry_size==0' is always false; the guard is dead.
-- [ ] **R5-G4-10** [MEDIUM] src/tools/sak_apfs_writer_cli.cpp:633 '!error->isEmpty()' is always false.
-- [ ] **R5-G4-11** [MEDIUM] src/win32mcp/browser_bridge_pipe.cpp:494 'got_response' is always false.
-- [ ] **R5-G4-12** [MEDIUM] src/gui/main_window.cpp:1804 m_tab_widget null check is redundant or a real null dereference.
-- [ ] **R5-G4-13** [MEDIUM] src/core/advanced_search_worker.cpp:2107, src/ai/ai_orchestrator.cpp:857,1035, src/ai/ai_execution_broker.cpp:442, src/core/diagnostic_report_generator.cpp:137, src/core/file_explorer_transfer_worker.cpp:310, src/core/program_enumerator.cpp:165, src/gui/detachable_log_window.cpp:115, src/gui/file_management_explorer_panel.cpp:3859,4402, src/gui/main_window.cpp:369, src/gui/network_diagnostic_panel.cpp:3812 remaining vacuous conditions, including two cancellation checks that can never fire.
-- [ ] **R5-G4-14** [MEDIUM] src/core/partition_apfs_writer.cpp:11024 cppcheck syntax error; determine whether this is a real malformed construct or a parser limit.
+FALSE POSITIVES, confirmed by reading the code (no change needed):
+
+- [x] mbox_parser.cpp:847 containerOutOfBounds / negativeContainerIndex. The line is
+      already guarded: 'i < payload_bytes.size() ? payload_bytes[i] : QByteArray()'.
+      cppcheck cannot model the m_attachment_sink pointer aliasing that fills the
+      vector, so it wrongly infers the container is always empty.
+- [x] quick_action_controller.cpp:145 danglingLifetime. 'action_ptr' points at the
+      pointee, which m_actions owns after the move; moving a unique_ptr does not
+      relocate the object. The raw pointer stays valid.
+- [x] Twelve always-true conditions on the elevated-pipe boundary
+      (elevated_pipe_server.cpp and elevation_broker.cpp) and the two vacuous
+      Chocolatey authenticity conditions. All were artifacts of cppcheck analyzing the
+      non-Windows '#else return false' branches -- see G13.
+
+REAL, still to fix:
+
+- [ ] **R5-G4-1** [HIGH] src/core/uup_iso_builder.cpp:231,245,350 Q_ASSERT wraps QDir calls that carry required side effects. Q_ASSERT compiles out in Release, so the work silently never happens in shipped builds.
+- [ ] **R5-G4-2** [MEDIUM] src/ai/ai_orchestrator.cpp:857,1035 'root_token.isValid() && root_token.isCancellationRequested()' is always false -- a cancellation check that can never fire.
+- [ ] **R5-G4-3** [MEDIUM] src/core/cleanup_worker.cpp:652,664,734 tryScheduleReboot() return value is always false, so reboot-scheduled deletion never reports success.
+- [ ] **R5-G4-4** [MEDIUM] include/sak/partition_hfs_internal.h:4738,8715,10478,10889 four vacuous conditions in the HFS+ engine, including an always-false blockers.isEmpty() assignment.
+- [ ] **R5-G4-5** [MEDIUM] src/core/network_diagnostic_controller.cpp:1022 m_socket is reallocated without being deallocated first (leak).
+- [ ] **R5-G4-6** [MEDIUM] src/core/pst_parser.cpp:1990 'entry_size==0' is always false; the guard is dead.
+- [ ] **R5-G4-7** [MEDIUM] src/tools/sak_apfs_writer_cli.cpp:633 '!error->isEmpty()' is always false.
+- [ ] **R5-G4-8** [MEDIUM] src/win32mcp/browser_bridge_pipe.cpp:494 'got_response' is always false.
+- [ ] **R5-G4-9** [MEDIUM] src/gui/main_window.cpp:1804 m_tab_widget null check is redundant or a real null dereference; 369 'index >= kTabShortcutBaseOffset' always true.
+- [ ] **R5-G4-10** [MEDIUM] src/gui/ai_assistant_panel.cpp:10286,10288 resumeWorkflowInputGate and resumeApprovalGate assigned values are always false.
+- [ ] **R5-G4-11** [MEDIUM] src/gui/file_management_explorer_panel.cpp:3859 executeHistoryDelete always true; 4402 details.isEmpty() always false.
+- [ ] **R5-G4-12** [MEDIUM] Remaining vacuous conditions: src/core/advanced_search_worker.cpp:2107 checkStop() always false, src/ai/ai_execution_broker.cpp:442, src/core/diagnostic_report_generator.cpp:137, src/core/file_explorer_transfer_worker.cpp:310, src/core/program_enumerator.cpp:165, src/gui/detachable_log_window.cpp:115, src/gui/network_diagnostic_panel.cpp:3812.
+- [ ] **R5-G4-13** [MEDIUM] src/core/partition_apfs_writer.cpp:11024 cppcheck syntax error; determine whether this is a real malformed construct or a parser limit.
+- [ ] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
+
+### G12 - the clang-tidy config enabled ZERO checks
+
+Beyond never being wired, .clang-tidy was non-functional. Its 'Checks:' value is a YAML
+folded block scalar, and inside a folded scalar a '#' does not start a comment -- it is
+literal text. The file carried decorative banner comments INSIDE that scalar, which
+corrupted the check-glob string. clang-tidy responded with 'Error: no checks enabled'
+and analyzed nothing. Even if the hook had existed, it would have checked zero code.
+
+- [x] R5-G12-1 Move every comment above the Checks key; config now enables 494 checks
+      (previously 0), verified with clang-tidy --list-checks
+- [x] R5-G12-2 Produce a compilation database (Ninja + vcpkg toolchain + Qt 6.10.3),
+      1844 entries, which the Visual Studio generator cannot emit
+- [ ] R5-G12-3 Measure the full clang-tidy debt across all first-party sources
+- [ ] R5-G12-4 Fix every clang-tidy finding
+- [ ] R5-G12-5 Wire clang-tidy into pre-commit and CI
+
+### G13 - the cppcheck gate was analyzing code that never compiles
+
+run_cppcheck.ps1 passed WIN32 and _WIN64 but never _WIN32 or _MSC_VER, which MSVC
+defines implicitly and therefore never appear on a command line. Combined with --force
+(check EVERY #ifdef configuration), cppcheck spent its analysis budget on the
+non-Windows branches of Windows-only code. Those branches are typically a bare
+'return false', which manufactured a list of phantom always-true conditions on real
+guards while the true Windows branch went unanalyzed.
+
+Correcting the configuration (add _WIN32 and _MSC_VER, drop --force for this
+Windows-only application) removed 12 phantom findings on the elevated-pipe boundary
+and 2 on the Chocolatey authenticity gate: knownConditionTrueFalse fell from 36 to 24.
+
+- [x] R5-G13-1 Define _WIN32 and _MSC_VER; drop --force so the real configuration is analyzed
+- [ ] R5-G13-2 Re-verify the remaining 24 vacuous conditions individually (tracked as G4)
+- [ ] R5-G13-3 Audit every other gate for the same defect: analyzing a configuration
+      that is not the one actually built
 
 ### G5 - inline suppressions
 

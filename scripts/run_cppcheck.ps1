@@ -63,7 +63,6 @@ $CppcheckArgs = @(
     "--inconclusive"                # Report uncertain findings
     "--std=c++23"                   # C++23 standard
     "--error-exitcode=1"            # Exit 1 on any error/warning
-    "--force"                       # Check all configurations
     "--inline-suppr"                # Respect // cppcheck-suppress comments
     "--language=c++"                # Force C++ language
     "--max-configs=12"              # Check up to 12 configurations
@@ -81,10 +80,21 @@ if (Test-Path $SuppressionsFile) {
 # Platform-specific: Windows 64-bit
 $CppcheckArgs += "--platform=win64"
 
-# Preprocessor defines matching our build
+# Preprocessor defines matching our build.
+#
+# _WIN32 and _MSC_VER are defined implicitly by MSVC, never on a command line, so cppcheck
+# does not see them unless they are supplied here. Without _WIN32 (and previously with
+# --force, which checks EVERY #ifdef configuration) cppcheck analyzed the non-Windows
+# branches of code that is compiled Windows-only. Those branches are frequently a bare
+# "return false", which made cppcheck report a long list of phantom always-true conditions
+# on real guards - including twelve on the elevated-pipe boundary - while spending its
+# analysis budget on code that never compiles. --force is deliberately NOT used: this
+# application is Windows-only, so the single Windows configuration is the real one.
 $CppcheckArgs += @(
     "-DSAK_PLATFORM_WINDOWS"
     "-DQ_OS_WIN"
+    "-D_WIN32"
+    "-D_MSC_VER=1939"
     "-DQT_NO_KEYWORDS"
     "-DWIN32"
     "-D_WIN64"

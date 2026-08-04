@@ -18,25 +18,29 @@ SystemHeaders: false
 
 FormatStyle: file
 
+# WARNING: 'Checks' below is a YAML folded block scalar. Inside a folded scalar a '#'
+# does NOT start a comment - it becomes part of the string. This file previously carried
+# decorative '# ---- bugprone ----' banners inside the scalar, which corrupted the glob
+# list so clang-tidy reported "Error: no checks enabled" and analyzed nothing. Keep every
+# comment ABOVE this key, never inside the scalar.
+#
+# Enabled families: bugprone, cert, clang-analyzer, concurrency, cppcoreguidelines,
+# google, hicpp, misc, modernize, performance, portability, readability.
+#
+# Each '-check' exclusion below is tracked in docs/CODEX_REVIEW_5_REMEDIATION.md (R5-G2)
+# and is to be re-enabled as its debt is paid. Two of them hide bug classes this review
+# found in the raw-filesystem parsers and are the highest priority to restore:
+#   bugprone-narrowing-conversions  (qsizetype/uint64 truncation)
+#   misc-no-recursion               (recursion with no depth or visited-set bound)
 Checks: >
   -*,
-
-  # ── bugprone: catch common programming mistakes ────────────────────
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-narrowing-conversions,
-
-  # ── cert: CERT C++ secure coding rules ─────────────────────────────
   cert-*,
   -cert-err58-cpp,
-
-  # ── clang-analyzer: deep static analysis ───────────────────────────
   clang-analyzer-*,
-
-  # ── concurrency: thread-safety checks ──────────────────────────────
   concurrency-*,
-
-  # ── cppcoreguidelines: C++ Core Guidelines ─────────────────────────
   cppcoreguidelines-*,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
@@ -47,35 +51,21 @@ Checks: >
   -cppcoreguidelines-owning-memory,
   -cppcoreguidelines-non-private-member-variables-in-classes,
   -cppcoreguidelines-avoid-non-const-global-variables,
-
-  # ── google: Google style subset ────────────────────────────────────
   google-*,
   -google-readability-todo,
   -google-build-using-namespace,
-
-  # ── hicpp: High Integrity C++ ──────────────────────────────────────
   hicpp-*,
   -hicpp-signed-bitwise,
   -hicpp-no-array-decay,
-
-  # ── misc: miscellaneous checks ─────────────────────────────────────
   misc-*,
   -misc-non-private-member-variables-in-classes,
   -misc-no-recursion,
   -misc-include-cleaner,
-
-  # ── modernize: use modern C++ idioms ───────────────────────────────
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
-
-  # ── performance: avoid unnecessary copies/allocations ──────────────
   performance-*,
-
-  # ── portability ────────────────────────────────────────────────────
   portability-*,
-
-  # ── readability: code clarity and consistency ──────────────────────
   readability-*,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,

@@ -518,6 +518,10 @@ scripts/sign-config.ps1
 
 # Local Qt 6.10.3 verification build tree
 build-qt610/
+# Ninja configuration used only to emit compile_commands.json for clang-tidy.
+# The Visual Studio generator cannot produce a compilation database, so this
+# parallel build tree exists purely to feed static analysis. See R5-G12.
+build-tidy/
 
 # Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
 .claude/
