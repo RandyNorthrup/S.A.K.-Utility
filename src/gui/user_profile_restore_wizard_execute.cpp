@@ -120,6 +120,13 @@ void UserProfileRestoreExecutePage::onStartRestore() {
         return;
     }
 
+    if (m_worker) {
+        // A restore worker is already running for this page (e.g. the page was
+        // re-entered). Do not spawn a second one that would race the same
+        // destinations and the shared .sakrestore.tmp/.sakold.tmp names.
+        return;
+    }
+
     m_statusLabel->setText(tr("Restore in progress..."));
     m_logText->append(tr("[INFO] Restore started..."));
 

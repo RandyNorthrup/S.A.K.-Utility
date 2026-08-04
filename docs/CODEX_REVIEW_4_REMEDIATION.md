@@ -247,10 +247,10 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
 profile-restore / network (A2):
 - [ ] M-A2-6  worker.cpp:552 verify/perms run AFTER swap-in; failure does not restore original.
 - [ ] M-A2-4  worker.cpp:756,860 payload verify TOCTOU + compares dest vs re-read source, not manifest digest.
-- [ ] M-A2-13 worker.cpp:694 SID-lookup/takeOwnership failure -> stripPermissions and returns success; unknown mode -> strip. Fail closed.
-- [ ] M-A2-14 worker.cpp:470 entryInfoList failure -> empty list -> return true; QDir::System omitted.
-- [ ] M-A2-11 worker.cpp:276 success=(m_filesErrored==0) ignores m_cancelled.
-- [ ] M-A2-15 execute.cpp:134 onStartRestore news worker with no m_worker guard -> re-entry spawns a 2nd.
+- [x] M-A2-13 worker.cpp:694 FIXED (wave 8): assignOwnershipToUser fails closed on SID-resolve/takeOwnership failure instead of silently stripping + reporting success.
+- [x] M-A2-14 worker.cpp:470 FIXED (wave 8): copyDirectory fails closed on an unreadable source dir; QDir::System added so system entries aren't silently skipped.
+- [x] M-A2-11 worker.cpp:276 FIXED (wave 8): success = (m_filesErrored==0) && !m_cancelled.
+- [x] M-A2-15 execute.cpp:134 FIXED (wave 8): onStartRestore returns early if m_worker is already set (no second concurrent worker).
 - [ ] M-A2-16 wizard.cpp:59,146 backupPath* only checks non-empty; invalid edit never clears stale backupPath/manifest.
 - [ ] M-A2-12 worker.cpp:734,753 empty manifest_checksum/checksum_sha256 logged and accepted.
 - [ ] M-A2-2  worker.cpp:110,479 leaf-only reparse check; ancestor dirs not re-validated after mkpath; check-then-copy race.

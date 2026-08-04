@@ -153,7 +153,17 @@ bool copyFileReplacingExisting(const QString& source,
         return false;  // Could not move the original aside -- leave everything intact.
     }
     if (!QFile::rename(tempPath, finalDestPath)) {
-        QFile::rename(oldPath, finalDestPath);  // Roll back: the original is restored in place.
+        // Roll back: move the original back into place. If even the rollback fails, do
+        // NOT delete oldPath -- the original stays there for manual recovery rather
+        // than being silently lost, and the failure is surfaced.
+        if (!QFile::rename(oldPath, finalDestPath)) {
+            sak::logError(
+                "Restore rollback failed: original preserved at '{}' (could not move back to '{}')",
+                oldPath.toStdString(),
+                finalDestPath.toStdString());
+            QFile::remove(tempPath);
+            return false;
+        }
         QFile::remove(tempPath);
         return false;
     }
@@ -287,8 +297,9 @@ void UserProfileRestoreWorker::run() {
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);
     // Report success only when nothing errored (copy/mkpath/remove failure or a
-    // refused reparse point); a partial restore must not read as clean success.
-    const bool success = (m_filesErrored == 0);
+    // refused reparse point) AND the run was not cancelled; a partial or cancelled
+    // restore must not read as clean success.
+    const bool success = (m_filesErrored == 0) && !m_cancelled;
     Q_EMIT restoreComplete(success, summary);
 }
 
@@ -459,6 +470,12 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     if (!dir.exists()) {
         return false;
     }
+    // An unreadable source directory would enumerate as an empty list and make the
+    // copy silently "succeed" having copied nothing. Fail closed instead.
+    if (!dir.isReadable()) {
+        Q_EMIT logMessage(tr("Source directory is not readable: %1").arg(sourceDir), true);
+        return false;
+    }
 
     // Create destination directory
     if (!QDir().mkpath(destDir)) {
@@ -467,8 +484,8 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     }
 
     // Iterate through all entries
-    QFileInfoList entries =
-        dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
+    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot |
+                                              QDir::Hidden | QDir::System);
 
     // cppcheck-suppress useStlAlgorithm ; loop has side effects (file copy, cancellation)
     for (const QFileInfo& entry : entries) {
@@ -690,16 +707,22 @@ QString UserProfileRestoreWorker::effectiveDestUser(const UserMapping& mapping) 
 
 bool UserProfileRestoreWorker::assignOwnershipToUser(const QString& filePath,
                                                      const QString& destinationUser) {
+    // The caller explicitly chose AssignToDestination. If the SID cannot be resolved
+    // or ownership cannot be taken, silently stripping permissions and reporting
+    // success would be a policy downgrade the user did not ask for. Fail closed so
+    // the restore records the error instead of installing weaker permissions.
     const QString userSID = WindowsUserScanner::getUserSID(destinationUser);
     if (userSID.isEmpty()) {
-        sak::logWarning("Could not resolve SID for user '{}', stripping permissions instead",
-                        destinationUser.toStdString());
-        return m_permissionManager->stripPermissions(filePath);
+        sak::logError(
+            "Could not resolve SID for user '{}'; failing closed instead of "
+            "silently stripping permissions",
+            destinationUser.toStdString());
+        return false;
     }
     if (!m_permissionManager->takeOwnership(filePath, userSID)) {
-        sak::logWarning("Failed to take ownership for '{}', stripping permissions",
-                        filePath.toStdString());
-        return m_permissionManager->stripPermissions(filePath);
+        sak::logError("Failed to take ownership of '{}' for the destination user; failing closed",
+                      filePath.toStdString());
+        return false;
     }
     return m_permissionManager->setStandardUserPermissions(filePath, userSID);
 }
