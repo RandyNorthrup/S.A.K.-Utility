@@ -279,7 +279,7 @@ ai (B1):
 - [ ] M-B1-14 ai_mcp_stdio_client.cpp:165 reads a full line before the byte cap.
 - [ ] M-B1-15 ai_mcp_stdio_client.cpp:128 server-exit uses terminate() not tree-kill.
 - [ ] M-B1-16 ai_execution_broker.cpp:90 job-create/assign failure -> kill primary only, descendants survive.
-- [ ] M-B1-17 ai_provider_registry.cpp:72 exe confinement lexical cleanPath, not canonicalFilePath; validate/launch TOCTOU.
+- [x] M-B1-17 ai_provider_registry.cpp:72 FIXED (wave 16): commandWithinAppDir now also requires the CANONICAL command path (symlinks/junctions resolved) to stay within the canonical app dir when the file exists, so a within-dir symlink cannot redirect the launch outside. The lexical check still governs a not-yet-existing command (reported "missing" separately). Residual validate/launch TOCTOU noted.
 - [ ] M-B1-21 ai_workflow_placeholders.cpp:81 PowerShell single-quote invariant never validated; user workflows override built-in ids.
 - [x] M-B1-22 ai_assistant_panel.cpp:5453 FIXED (wave 12): a mutation requiring a lease now fails closed (emits leaseDeniedResult, blocks) when m_leaseManager is absent, instead of returning true.
 - [x] M-B1-28 ai_credential_store.cpp:357 FIXED (wave 12): the assignment-secret regex gained an optional "? after the key name so quoted-JSON secrets ("password":"...") are redacted.

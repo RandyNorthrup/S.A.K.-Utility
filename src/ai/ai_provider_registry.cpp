@@ -71,7 +71,23 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     }
     const QString base = QDir::cleanPath(QDir(app_dir).absolutePath());
     const QString target = QDir::cleanPath(QFileInfo(command).absoluteFilePath());
-    return target == base || target.startsWith(base + QLatin1Char('/'), Qt::CaseInsensitive);
+    const bool lexicalWithin = target == base ||
+                               target.startsWith(base + QLatin1Char('/'), Qt::CaseInsensitive);
+    if (!lexicalWithin) {
+        return false;
+    }
+    // A lexical cleanPath resolves "../" but NOT symlinks/junctions, so a within-dir
+    // command that is a symlink to an executable OUTSIDE the app dir would still pass.
+    // When the command exists, also require its CANONICAL path (links resolved) to stay
+    // within the canonical app dir. A command that does not exist yet keeps the lexical
+    // verdict -- its absence is reported separately as "missing".
+    const QString canonicalBase = QFileInfo(app_dir).canonicalFilePath();
+    const QString canonicalTarget = QFileInfo(command).canonicalFilePath();
+    if (canonicalBase.isEmpty() || canonicalTarget.isEmpty()) {
+        return true;
+    }
+    return canonicalTarget == canonicalBase ||
+           canonicalTarget.startsWith(canonicalBase + QLatin1Char('/'), Qt::CaseInsensitive);
 }
 
 [[nodiscard]] QJsonObject providerStatusObject(const QString& app_dir,
