@@ -163,6 +163,30 @@ bool allowsDynamicDiskOperation(PartitionOperationType type) {
     return type == PartitionOperationType::ConvertDynamicDiskToBasic;
 }
 
+// A disk-scoped destructive operation (WipeDisk, InitializeDisk, CloneDisk,
+// ConvertPartitionStyle, DeleteAllPartitions, ...) MUST carry a whole-disk
+// target. validate() dispatches guards by target.kind, so a disk-scoped op
+// smuggled in with a Partition/Volume target would route to
+// validatePartitionOperation and skip every disk-state guard (OS-disk / wipe /
+// read-only / dynamic) while buildScript still keys on operation.type and emits
+// a whole-disk Clear-Disk against target.disk_number -- wiping the OS disk with
+// no guard. Reject any scope mismatch fail-closed. RestoreImage is legitimately
+// dual-scope (whole-disk or partition restore), so it is excluded by the
+// partition-scoped test; Unallocated targets are left to their own path.
+bool operationTargetScopeMismatch(const PartitionOperation& operation) {
+    const PartitionOperationType type = operation.type;
+    const PartitionTargetKind kind = operation.target.kind;
+    const bool diskScoped = isDestructiveDiskOperation(type);
+    const bool partitionScoped = isDestructivePartitionOperation(type);
+    if (diskScoped && !partitionScoped && kind != PartitionTargetKind::Disk) {
+        return true;
+    }
+    if (partitionScoped && !diskScoped && kind == PartitionTargetKind::Disk) {
+        return true;
+    }
+    return false;
+}
+
 bool blocksDataDiskStyleConversion(const PartitionDiskInfo& disk, PartitionOperationType type) {
     return type == PartitionOperationType::ConvertPartitionStyle && !disk.partitions.isEmpty() &&
            !disk.is_system;
@@ -1821,6 +1845,13 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     }
 
     addCommonDiskWarnings(*disk, &result);
+
+    if (operationTargetScopeMismatch(operation)) {
+        result.blockers.append(QStringLiteral(
+            "Operation scope does not match its target kind: a disk-scoped operation "
+            "requires a whole-disk target"));
+        return result;
+    }
 
     switch (operation.target.kind) {
     case PartitionTargetKind::Disk:

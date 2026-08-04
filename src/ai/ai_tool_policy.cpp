@@ -272,7 +272,13 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     context.provider_gateway = isReadOnlyProviderOperation(request);
     context.mutating_package = context.package_tool &&
                                isMutatingPackageOperation(request.operation);
-    context.catastrophic = context.shell && commandLooksCatastrophic(request.command_preview);
+    // An obfuscated/indirected shell command (encoded, concatenated verb, in-memory
+    // download-and-run) hides its real effect from commandLooksCatastrophic, so it
+    // cannot be proven non-catastrophic. Treat it as catastrophic and force the hard
+    // human confirmation rather than downgrading it to a mere restore-point (a wiped
+    // volume behind '& (\'For\'+\'mat-Volume\')' must not slip through unattended).
+    context.catastrophic = context.shell && (commandLooksCatastrophic(request.command_preview) ||
+                                             commandLooksObfuscated(request.command_preview));
     context.risky = request.requires_admin ||
                     (context.shell && commandLooksRiskyChange(request.command_preview)) ||
                     context.mutating_package || isMutatingProviderOperation(request);
@@ -339,17 +345,40 @@ bool segmentLeadIsReadOnly(const QString& segment) {
     return lead.match(segment).hasMatch();
 }
 
-bool commandIsReadOnlyDiagnostic(const QString& preview) {
-    QString normalized = preview.trimmed();
-    if (normalized.isEmpty() || commandHasUnsafeConstruct(normalized)) {
-        return false;
+// Contents of each top-level (...) group. PowerShell evaluates a parenthesized
+// sub-expression BEFORE the surrounding command, so a read-only-looking lead can
+// still run a mutation hidden in a group -- "Write-Output (Restart-Computer -Force)"
+// reboots the machine. Those groups must be validated as their own commands.
+QStringList topLevelParenGroups(const QString& s) {
+    QStringList groups;
+    int depth = 0;
+    qsizetype start = -1;
+    for (qsizetype i = 0; i < s.size(); ++i) {
+        const QChar c = s.at(i);
+        if (c == QLatin1Char('(')) {
+            if (depth == 0) {
+                start = i + 1;
+            }
+            ++depth;
+        } else if (c == QLatin1Char(')') && depth > 0) {
+            --depth;
+            if (depth == 0 && start >= 0) {
+                groups.append(s.mid(start, i - start));
+                start = -1;
+            }
+        }
     }
-    // Neutralize stream-merge redirections (2>&1, 1>&2) so their '&' is not mistaken
-    // for a command separator, then require EVERY &/|/;/newline-separated segment to
-    // lead with an allowlisted read-only command. One non-diagnostic segment (chained
-    // mutator, call-operator to a binary) refuses the whole command.
-    static const QRegularExpression merge(QStringLiteral(R"([0-9]?>&[0-9]?)"));
-    normalized.replace(merge, QStringLiteral(" "));
+    return groups;
+}
+
+constexpr int kMaxReadOnlyParenDepth = 8;
+
+bool commandIsReadOnlyDiagnostic(const QString& preview, int depthRemaining);
+
+// Require EVERY &/|/;/newline-separated segment to lead with an allowlisted
+// read-only command. One non-diagnostic segment (chained mutator, call-operator
+// to a binary) refuses the whole command.
+bool allSegmentsReadOnly(const QString& normalized) {
     static const QRegularExpression sep(QStringLiteral(R"([|;&\r\n])"));
     const QStringList segments = normalized.split(sep, Qt::SkipEmptyParts);
     if (segments.isEmpty()) {
@@ -363,12 +392,46 @@ bool commandIsReadOnlyDiagnostic(const QString& preview) {
     return true;
 }
 
+// Every parenthesized sub-expression is its own command context PowerShell runs
+// first, so it must be read-only too (this is what stops a nested mutator hiding
+// behind a read-only lead). Fail closed if the grouping nests deeper than we
+// will verify.
+bool parenSubExpressionsReadOnly(const QString& normalized, int depthRemaining) {
+    const QStringList groups = topLevelParenGroups(normalized);
+    if (groups.isEmpty()) {
+        return true;
+    }
+    if (depthRemaining <= 0) {
+        return false;
+    }
+    for (const QString& group : groups) {
+        const QString inner = group.trimmed();
+        if (!inner.isEmpty() && !commandIsReadOnlyDiagnostic(inner, depthRemaining - 1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool commandIsReadOnlyDiagnostic(const QString& preview, int depthRemaining) {
+    QString normalized = preview.trimmed();
+    if (normalized.isEmpty() || commandHasUnsafeConstruct(normalized)) {
+        return false;
+    }
+    // Neutralize stream-merge redirections (2>&1, 1>&2) so their '&' is not mistaken
+    // for a command separator.
+    static const QRegularExpression merge(QStringLiteral(R"([0-9]?>&[0-9]?)"));
+    normalized.replace(merge, QStringLiteral(" "));
+    return allSegmentsReadOnly(normalized) &&
+           parenSubExpressionsReadOnly(normalized, depthRemaining);
+}
+
 AiToolPolicyDecision evaluateReadOnlyShell(const QString& preview) {
     // Read-only shell is an ALLOWLIST, not a mutation blacklist. A blacklist is
     // fail-open: novel binaries (python -c, node -e), .NET/WMI method calls
     // ([IO.File]::WriteAllText, Invoke-WmiMethod), and unknown mutators slip through.
     // Only commands proven read-only by the allowlist run under the read-only lease.
-    if (!commandIsReadOnlyDiagnostic(preview)) {
+    if (!commandIsReadOnlyDiagnostic(preview, kMaxReadOnlyParenDepth)) {
         return block(QStringLiteral(
             "Read-only PC policy allows only known read-only diagnostic shell commands "
             "(ping, ipconfig, systeminfo, tasklist, netstat, whoami, Get-*/Test-* reads, ...); "
@@ -573,7 +636,7 @@ bool commandLooksRiskyChange(const QString& preview) {
     // they never slip through as safe.
     static const QRegularExpression risky(
         QStringLiteral(
-            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b|\breg\b\s+add\b|\bsc(\.exe)?\b\s+(stop|start|config|delete|create|failure|pause|continue)\b|\bnet\b\s+(stop|start)\b|\btaskkill\b|\bshutdown\b|\bschtasks\b\s*/(create|delete|change|run|end)|\bpowercfg\b\s*/(setactive|s\b|import|delete|x\b)|\s\d*>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
+            R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\brestart-service\b|\bstop-process\b|\bkill\b|\brestart-computer\b|\bstop-computer\b|(?:^|[|;&\r\n]\s*)r[im]\b|\]\s*::|\.\w+\s*\(|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b|\breg\b\s+add\b|\bsc(\.exe)?\b\s+(stop|start|config|delete|create|failure|pause|continue)\b|\bnet\b\s+(stop|start)\b|\btaskkill\b|\bshutdown\b|\bschtasks\b\s*/(create|delete|change|run|end)|\bpowercfg\b\s*/(setactive|s\b|import|delete|x\b)|\s\d*>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
     return risky.match(preview).hasMatch() || commandLooksObfuscated(preview) ||
            commandLooksCatastrophic(preview);

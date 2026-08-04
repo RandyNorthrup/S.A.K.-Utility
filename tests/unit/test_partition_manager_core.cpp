@@ -2045,6 +2045,7 @@ private Q_SLOTS:
     void scriptBuilder_stripsControlCharsFromDiskPartLabel();
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_blocksWipeOfBootNotSystemDisk();
+    void safetyValidator_blocksDiskScopedWipeWithPartitionTarget();
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
@@ -17256,6 +17257,33 @@ void PartitionManagerCoreTests::safetyValidator_blocksWipeOfBootNotSystemDisk() 
     inventory.disks.first().is_boot = false;
     auto dataDisk = planner.previewOperation(inventory, op);
     QVERIFY(!dataDisk.blockers.join(' ').contains(QStringLiteral("wipe is blocked")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksDiskScopedWipeWithPartitionTarget() {
+    // CODEX_REVIEW_4 C1: validate() dispatches guards by target.kind while the script
+    // builder emits the destructive script by operation.type. A disk-scoped WipeDisk
+    // smuggled in with a Partition target would route to validatePartitionOperation and
+    // skip validateDiskStateBlockers (the OS-disk / wipe guard), yet the builder still
+    // emits a whole-disk Clear-Disk against target.disk_number. The scope mismatch must
+    // fail closed before dispatch, even on a plain data disk.
+    PartitionInventory inventory;
+    appendDisposableTargetDisk(&inventory, 1);
+    inventory.disks.first().is_boot = true;  // OS disk -- the worst case
+    inventory.disks.first().is_system = false;
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;  // wrong scope for a whole-disk wipe
+    target.disk_number = 1;
+    target.partition_number = 1;
+    QJsonObject payload;
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto op =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk, target, payload);
+
+    PartitionOperationPlanner planner;
+    auto blocked = planner.previewOperation(inventory, op);
+    QVERIFY(!blocked.canApply());
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("does not match its target kind")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {

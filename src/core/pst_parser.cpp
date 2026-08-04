@@ -300,13 +300,15 @@ static bool msPstWeakCrc(const QByteArray& data, int offset, int len, uint32_t& 
     return true;
 }
 
-// MS-PST 5.4 ComputeSig: fold (ib XOR bid) down to 16 bits. Used to authenticate
-// that a page/block trailer belongs at its file offset with its declared BID.
+// MS-PST 5.4 ComputeSig: WORD(ib XOR bid >> 16) XOR WORD(ib XOR bid). The spec
+// folds only the low 32 bits of (ib XOR bid): dwCRC = WORD(value >> 16) ^ WORD(value).
+// Folding bits [32:63] as well diverges from the spec once the byte offset ib
+// exceeds 4 GiB (a >4 GiB OST/PST), which would false-reject every trailer past
+// that mark. Authenticates that a page/block trailer belongs at its file offset
+// with its declared BID.
 static uint16_t msPstComputeSig(uint64_t ib, uint64_t bid) {
-    uint64_t value = ib ^ bid;
-    value ^= (value >> 16);
-    value ^= (value >> 32);
-    return static_cast<uint16_t>(value & 0xFFFFu);
+    const uint64_t value = ib ^ bid;
+    return static_cast<uint16_t>(((value >> 16) ^ value) & 0xFFFFu);
 }
 
 // MS-OXCMSG: PR_SUBJECT may begin with a prefix marker (U+0001) followed by
