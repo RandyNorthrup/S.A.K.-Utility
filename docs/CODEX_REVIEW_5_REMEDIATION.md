@@ -1468,22 +1468,44 @@ FALSE POSITIVES, confirmed by reading the code (no change needed):
       Chocolatey authenticity conditions. All were artifacts of cppcheck analyzing the
       non-Windows '#else return false' branches -- see G13.
 
-REAL, still to fix:
+VERIFICATION RESULT: all 27 remaining cppcheck findings (the 24 surviving vacuous
+conditions plus 3 warnings) were verified by four independent agents reading the actual
+code. NONE is a real defect: 14 BENIGN_TRUE, 13 FALSE_POSITIVE, 0 CONFIRMED_REAL.
 
-- [ ] **R5-G4-1** [HIGH] src/core/uup_iso_builder.cpp:231,245,350 Q_ASSERT wraps QDir calls that carry required side effects. Q_ASSERT compiles out in Release, so the work silently never happens in shipped builds.
-- [ ] **R5-G4-2** [MEDIUM] src/ai/ai_orchestrator.cpp:857,1035 'root_token.isValid() && root_token.isCancellationRequested()' is always false -- a cancellation check that can never fire.
-- [ ] **R5-G4-3** [MEDIUM] src/core/cleanup_worker.cpp:652,664,734 tryScheduleReboot() return value is always false, so reboot-scheduled deletion never reports success.
-- [ ] **R5-G4-4** [MEDIUM] include/sak/partition_hfs_internal.h:4738,8715,10478,10889 four vacuous conditions in the HFS+ engine, including an always-false blockers.isEmpty() assignment.
-- [ ] **R5-G4-5** [MEDIUM] src/core/network_diagnostic_controller.cpp:1022 m_socket is reallocated without being deallocated first (leak).
-- [ ] **R5-G4-6** [MEDIUM] src/core/pst_parser.cpp:1990 'entry_size==0' is always false; the guard is dead.
-- [ ] **R5-G4-7** [MEDIUM] src/tools/sak_apfs_writer_cli.cpp:633 '!error->isEmpty()' is always false.
-- [ ] **R5-G4-8** [MEDIUM] src/win32mcp/browser_bridge_pipe.cpp:494 'got_response' is always false.
-- [ ] **R5-G4-9** [MEDIUM] src/gui/main_window.cpp:1804 m_tab_widget null check is redundant or a real null dereference; 369 'index >= kTabShortcutBaseOffset' always true.
-- [ ] **R5-G4-10** [MEDIUM] src/gui/ai_assistant_panel.cpp:10286,10288 resumeWorkflowInputGate and resumeApprovalGate assigned values are always false.
-- [ ] **R5-G4-11** [MEDIUM] src/gui/file_management_explorer_panel.cpp:3859 executeHistoryDelete always true; 4402 details.isEmpty() always false.
-- [ ] **R5-G4-12** [MEDIUM] Remaining vacuous conditions: src/core/advanced_search_worker.cpp:2107 checkStop() always false, src/ai/ai_execution_broker.cpp:442, src/core/diagnostic_report_generator.cpp:137, src/core/file_explorer_transfer_worker.cpp:310, src/core/program_enumerator.cpp:165, src/gui/detachable_log_window.cpp:115, src/gui/network_diagnostic_panel.cpp:3812.
-- [ ] **R5-G4-13** [MEDIUM] src/core/partition_apfs_writer.cpp:11024 cppcheck syntax error; determine whether this is a real malformed construct or a parser limit.
-- [ ] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
+Two would have been actively HARMFUL to 'fix':
+
+- ai_orchestrator.cpp:857 and :1035, and advanced_search_worker.cpp:2107. cppcheck
+  calls these cancellation checks always-false because it cannot model a cross-thread
+  atomic: CancellationToken reads std::atomic<bool> cancelled with memory_order_acquire
+  while the GUI thread calls cancel() on it, and WorkerBase::checkStop reads
+  m_stop_requested the same way. Single-translation-unit value-flow sees no local
+  mutation and concludes the value is invariant. Deleting these lines on the tool's
+  advice would have REMOVED WORKING USER CANCELLATION from long-running phases.
+- cleanup_worker.cpp:652,664,734. tryScheduleReboot deliberately returns false and is
+  called for its side effect of recording the path, which rebootPendingItems then
+  surfaces. The always-false return is documented fail-closed design: a
+  reboot-scheduled delete has NOT happened yet, so it must never read as an immediate
+  success.
+
+The correct action is therefore NOT to edit this code. It is to delete the blanket
+knownConditionTrueFalse suppression and replace it with narrow, individually justified
+inline suppressions at these verified sites, so that a NEW vacuous condition introduced
+later is still caught instead of being silently absorbed by a project-wide rule.
+
+- [ ] R5-G4-15 Replace the blanket knownConditionTrueFalse suppression with per-site
+      inline suppressions carrying the verified justification recorded above
+
+STANDING LESSON, now demonstrated twice in this campaign: a static-analysis finding is a
+lead, not a verdict. Across cppcheck, 16 findings that looked severe (an out-of-bounds
+read on untrusted mail input, a dangling lifetime, twelve always-true conditions on the
+elevation boundary, a vacuous package-authenticity gate) were all artifacts, and 27 more
+were benign. Zero real defects came out of the whole cppcheck vacuous-condition class.
+The real defects it exposed were in the GATE CONFIGURATION, not the code.
+
+REMAINING cppcheck items, still to fix:
+
+- [ ] **R5-G4-1** [LOW] src/core/uup_iso_builder.cpp:231,245,350 assertWithSideEffect. VERIFIED AND DOWNGRADED: all three are Q_ASSERT(QDir(x).exists()), a pure query, so nothing is lost when the assert compiles out. The residual is only that a precondition is Debug-only; both call sites already fail closed in Release (isTrustedBundledExe returns empty and logs; checkResumedDownloads early-returns on !dlDir.exists()). Optional hardening, not a defect.
+- [ ] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue, 25 functionConst, 20 shadowFunction and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
 
 ### G12 - the clang-tidy config enabled ZERO checks
 
