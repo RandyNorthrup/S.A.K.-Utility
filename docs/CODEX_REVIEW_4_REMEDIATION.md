@@ -293,7 +293,8 @@ core-util (B2):
 - [ ] M-B2-16 vulnerability_scanner.cpp:1525 enumerateInstalledProgramsFast no incomplete flag -> denied hive = "complete" inventory.
 - [ ] M-B2-35 package_internalization_engine.cpp:371 isSafePackageComponent misses Windows device names / trailing dot-space / < > " | ? *.
 - [ ] M-B2-31 windows_usb_creator_extract.cpp:618 bcdboot given drive root not a Windows dir (tracked in-code).
-- [ ] M-B2-28 disk_benchmark_worker.cpp:600,765 passes<=0 returns success 0.0; duration*1000 int overflow.
+- [x] M-B2-28 disk_benchmark_worker.cpp:600,765 FIXED (wave 10): validateTestFileSize now rejects sequential_passes<=0/>1000 (loop-skip 0 MB/s success) and random_duration_sec<=0/>3600 (bounds the *1000 int overflow).
+- [x] M-B2-29 disk_benchmark_worker.cpp:183 FIXED (wave 10): randomIoResultUsable requires total_failures < total_ops (was <=), so a 50%-failure run is not scored as usable.
 
 gui/actions/elevated (B3):
 - [ ] M-B3-10 network_diagnostic_panel.cpp:4658 Reset Network runs destructive with NO confirmation.

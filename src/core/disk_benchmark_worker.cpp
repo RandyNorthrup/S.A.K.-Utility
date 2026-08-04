@@ -70,6 +70,10 @@ constexpr uint64_t kMinTestFileSizeMb = 16;
 // test_file_size_mb * 1 MiB could (for absurd ~2^44 MB inputs) wrap size_t and
 // underflow the offset math; cap at 1 TiB, far above any real benchmark file.
 constexpr uint64_t kMaxTestFileSizeMb = 1024ULL * 1024;  // 1 TiB
+// A non-positive pass count would skip the measurement loop entirely and report a
+// bogus 0 MB/s "success"; an unbounded duration would overflow duration_sec * 1000.
+constexpr int kMaxSequentialPasses = 1000;
+constexpr int kMaxRandomDurationSec = 3600;  // 1 hour; * 1000 stays within int range
 constexpr double kSeqReadScoreWeight = 0.20;
 constexpr double kSeqWriteScoreWeight = 0.20;
 constexpr double kRandReadScoreWeight = 0.30;
@@ -180,7 +184,9 @@ void setRandomWriteResults(uint64_t total_ops,
 // more failures than successes means a mostly-broken drive whose IOPS would be
 // garbage. Either way, fail closed rather than report a misleading number.
 bool randomIoResultUsable(uint64_t total_ops, uint64_t total_failures) {
-    return total_ops > 0 && total_failures <= total_ops;
+    // Completed ops must strictly OUTNUMBER failures: failures == completed (a 50%
+    // failure rate) is a mostly-broken drive whose IOPS would be garbage, so reject it.
+    return total_ops > 0 && total_failures < total_ops;
 }
 
 // Compute the average latency and optionally hand the raw samples to the caller. Shared by the
@@ -341,6 +347,18 @@ auto DiskBenchmarkWorker::validateTestFileSize() const -> std::expected<void, sa
         logError("Disk benchmark: test_file_size_mb {} above maximum {} MB",
                  m_config.test_file_size_mb,
                  kMaxTestFileSizeMb);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.sequential_passes <= 0 || m_config.sequential_passes > kMaxSequentialPasses) {
+        logError("Disk benchmark: sequential_passes {} out of range (1..{})",
+                 m_config.sequential_passes,
+                 kMaxSequentialPasses);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.random_duration_sec <= 0 || m_config.random_duration_sec > kMaxRandomDurationSec) {
+        logError("Disk benchmark: random_duration_sec {} out of range (1..{})",
+                 m_config.random_duration_sec,
+                 kMaxRandomDurationSec);
         return std::unexpected(sak::error_code::invalid_argument);
     }
     return {};
