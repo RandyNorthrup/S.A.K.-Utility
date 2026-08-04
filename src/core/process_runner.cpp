@@ -5,8 +5,13 @@
 
 #include "sak/layout_constants.h"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QProcess>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace sak {
 
@@ -214,7 +219,33 @@ ProcessResult runPowerShell(const QString& script,
     }
     args << "-Command" << script;
 
-    return runProcess("powershell.exe", args, timeout_ms, should_cancel);
+    // Launch the System32-qualified interpreter, never a bare "powershell.exe": an
+    // elevated caller must not be redirected to a PATH/CWD-planted powershell.
+    const QString powershell =
+        system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
+    if (powershell.isEmpty()) {
+        ProcessResult result;
+        result.exit_code = -1;
+        result.std_err = QStringLiteral(
+            "Cannot resolve the System32 PowerShell path; refusing to launch a bare "
+            "powershell.exe");
+        return result;
+    }
+    return runProcess(powershell, args, timeout_ms, should_cancel);
+}
+
+QString system32Path(const QString& relativeExe) {
+#ifdef Q_OS_WIN
+    wchar_t buffer[MAX_PATH];
+    const UINT len = GetSystemDirectoryW(buffer, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return {};  // fail closed: cannot trust an unresolved system directory
+    }
+    return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
+                           QLatin1Char('/') + relativeExe);
+#else
+    return relativeExe;
+#endif
 }
 
 ProcessResult runProcessStreaming(const ProcessStreamingRequest& request) {

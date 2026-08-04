@@ -6,7 +6,9 @@
 
 #include "sak/process_runner.h"
 
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QtTest/QtTest>
 
@@ -34,6 +36,9 @@ private Q_SLOTS:
 
     // B5-05: strict success (cancellation counts as failure)
     void completedSuccessfully_strictOutcome();
+
+    // CODEX_REVIEW_4 H14: System32 qualification of system executables
+    void system32Path_qualifiesUnderSystem32();
 };
 
 // ============================================================================
@@ -247,6 +252,28 @@ void ProcessRunnerTests::completedSuccessfully_strictOutcome() {
     cancelled.cancelled = true;
     QVERIFY(cancelled.succeeded());  // documents the weaker check
     QVERIFY(!cancelled.completedSuccessfully());
+}
+
+// CODEX_REVIEW_4 H14: an elevated process must launch system tools by their
+// System32-qualified absolute path, never a bare name a PATH/CWD-planted binary
+// could satisfy. system32Path resolves under the real system directory.
+void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
+#ifndef Q_OS_WIN
+    QSKIP("System32 resolution is Windows-specific");
+#else
+    const QString netsh = sak::system32Path(QStringLiteral("netsh.exe"));
+    QVERIFY(!netsh.isEmpty());
+    QVERIFY(QDir::isAbsolutePath(netsh));
+    QVERIFY2(netsh.endsWith(QStringLiteral("/System32/netsh.exe"), Qt::CaseInsensitive),
+             qPrintable(netsh));
+    QVERIFY2(QFileInfo::exists(netsh), qPrintable(netsh));
+
+    const QString ps = sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
+    QVERIFY2(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                         Qt::CaseInsensitive),
+             qPrintable(ps));
+    QVERIFY2(QFileInfo::exists(ps), qPrintable(ps));
+#endif
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

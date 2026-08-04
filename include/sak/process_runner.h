@@ -79,4 +79,13 @@ struct ProcessStreamingRequest {
                                           const CancelCheck& should_cancel = {});
 [[nodiscard]] ProcessResult runProcessStreaming(const ProcessStreamingRequest& request);
 
+/// @brief Resolve a System32-relative executable to its absolute path so a trusted
+///        system tool cannot be hijacked by a PATH/CWD-planted binary of the same
+///        name when launched from an elevated process. @p relativeExe is joined under
+///        the real system directory (GetSystemDirectoryW), e.g. "netsh.exe" or
+///        "WindowsPowerShell/v1.0/powershell.exe". Returns an empty string (the caller
+///        MUST fail closed) if the system directory cannot be resolved. On non-Windows
+///        returns @p relativeExe unchanged.
+[[nodiscard]] QString system32Path(const QString& relativeExe);
+
 }  // namespace sak

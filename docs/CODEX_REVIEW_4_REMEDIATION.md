@@ -199,7 +199,12 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   successfully" matches.
   Fix: gate on `!timed_out && exit_code==0` plus a specific success phrase.
 
-- [ ] H14 [B3-2] reset_network_action.cpp:154 / process_runner.cpp:217 / verify_system_files_action.cpp:65,104
+- [x] H14 [B3-2] reset_network_action.cpp:154 / process_runner.cpp:217 / verify_system_files_action.cpp:65,104
+  FIXED (wave 5): added sak::system32Path() (GetSystemDirectoryW, fail-closed);
+  runPowerShell launches the System32-qualified interpreter (choke point for every PS
+  caller); netsh/ipconfig/nbtstat/powercfg qualified at their call sites; sfc/DISM in the
+  PS scripts resolved via [System.Environment]::GetFolderPath('System'). Regression test
+  system32Path_qualifiesUnderSystem32.
   Elevated PATH hijack: system exes launched by bare name
   (netsh/ipconfig/nbtstat/powercfg, powershell.exe, `Start-Process 'sfc'`,
   DISM.exe) from the elevated helper.

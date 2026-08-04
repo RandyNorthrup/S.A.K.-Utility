@@ -62,7 +62,9 @@ void VerifySystemFilesAction::runSFC() {
     QString ps_script =
         QStringLiteral(
             "$sfcOutput = Join-Path $env:TEMP '%1'; "
-            "$process = Start-Process -FilePath 'sfc' -ArgumentList '/scannow' -PassThru "
+            "$sys = [System.Environment]::GetFolderPath('System'); "
+            "$process = Start-Process -FilePath (Join-Path $sys 'sfc.exe') -ArgumentList "
+            "'/scannow' -PassThru "
             "-NoNewWindow -Wait -RedirectStandardOutput $sfcOutput; "
             "Get-Content $sfcOutput | Write-Output; "
             "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
@@ -101,7 +103,8 @@ void VerifySystemFilesAction::runSFC() {
 
 bool VerifySystemFilesAction::runDismCheckHealth() {
     QString script =
-        "DISM.exe /Online /Cleanup-Image /CheckHealth; "
+        "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
+        "/Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
 
     // Thread cancellation like runSFC/runDismRestoreHealth so cancel() force-terminates the
@@ -124,7 +127,9 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
 
 bool VerifySystemFilesAction::runDismScanHealth() {
     Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
-    QString script = "DISM.exe /Online /Cleanup-Image /ScanHealth";
+    QString script =
+        "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
+        "/Online /Cleanup-Image /ScanHealth";
 
     ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
         return isCancelled();
@@ -143,7 +148,9 @@ bool VerifySystemFilesAction::runDismScanHealth() {
 
 void VerifySystemFilesAction::runDismRestoreHealth() {
     Q_EMIT executionProgress("DISM: Repairing component store...", progress::kStep65);
-    QString script = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
+    QString script =
+        "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
+        "/Online /Cleanup-Image /RestoreHealth /LimitAccess";
 
     Q_EMIT executionProgress("DISM restoring...", progress::kStep75);
     ProcessResult proc = runPowerShell(script, sak::kTimeoutSystemRepairMs, true, true, [this]() {

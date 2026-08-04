@@ -151,7 +151,7 @@ bool ResetNetworkAction::executeBackupWinsock(QStringList& errors, const QDateTi
         // process. Wrapping this as `cmd.exe /C "netsh ... > <path>"` would let
         // cmd perform %VAR% expansion and metacharacter (& | < >) parsing on the
         // environment-derived TEMP path, an elevated command-injection vector.
-        ProcessResult proc = runProcess("netsh",
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
                                         QStringList() << "winsock" << "show" << "catalog",
                                         sak::kTimeoutNetworkReadMs);
         if (stepFailed(proc.timed_out, proc.exit_code)) {
@@ -199,8 +199,9 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     // Step 2: Flush DNS cache
     Q_EMIT executionProgress("Flushing DNS cache...", progress::kStep15);
     {
-        ProcessResult proc =
-            runProcess("ipconfig", QStringList() << "/flushdns", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("ipconfig.exe")),
+                                        QStringList() << "/flushdns",
+                                        sak::kTimeoutNetworkReadMs);
         if (stepFailed(proc.timed_out, proc.exit_code)) {
             errors << QString("DNS flush failed (exit %1)").arg(proc.exit_code);
         }
@@ -213,8 +214,9 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
     // Step 3: Reset Winsock catalog
     Q_EMIT executionProgress("Resetting Winsock catalog...", progress::kStep30);
     {
-        ProcessResult proc =
-            runProcess("netsh", QStringList() << "winsock" << "reset", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
+                                        QStringList() << "winsock" << "reset",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "Winsock reset timed out";
         } else if (proc.exit_code != 0) {
@@ -230,7 +232,7 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
     // Step 4: Reset TCP/IP stack
     Q_EMIT executionProgress("Resetting TCP/IP stack...", progress::kStep45);
     {
-        ProcessResult proc = runProcess("netsh",
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
                                         QStringList() << "int" << "ip" << "reset",
                                         sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
@@ -240,7 +242,7 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
         }
     }
     {
-        ProcessResult proc = runProcess("netsh",
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
                                         QStringList() << "int" << "ipv6" << "reset",
                                         sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
@@ -257,8 +259,9 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
     // Step 5: Release and renew IP addresses
     Q_EMIT executionProgress("Releasing IP addresses...", progress::kStep60);
     {
-        ProcessResult proc =
-            runProcess("ipconfig", QStringList() << "/release", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("ipconfig.exe")),
+                                        QStringList() << "/release",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "IP release timed out";
         } else if (proc.exit_code != 0) {
@@ -270,8 +273,9 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
 
     Q_EMIT executionProgress("Renewing IP addresses...", progress::kStep70);
     {
-        ProcessResult proc =
-            runProcess("ipconfig", QStringList() << "/renew", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("ipconfig.exe")),
+                                        QStringList() << "/renew",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "IP renew timed out";
         } else if (proc.exit_code != 0) {
@@ -305,8 +309,9 @@ void ResetNetworkAction::executeResetFirewall(QStringList& errors) {
     }
 
     Q_EMIT executionProgress("Resetting Windows Firewall...", progress::kStep80);
-    ProcessResult proc =
-        runProcess("netsh", QStringList() << "advfirewall" << "reset", sak::kTimeoutNetworkReadMs);
+    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
+                                    QStringList() << "advfirewall" << "reset",
+                                    sak::kTimeoutNetworkReadMs);
     if (stepFailed(proc.timed_out, proc.exit_code)) {
         errors << QString("Firewall reset failed (exit %1)").arg(proc.exit_code);
     }
@@ -324,7 +329,7 @@ QString ResetNetworkAction::exportFirewallRules(QStringList& errors) {
     // fresh and we can verify it is non-empty afterwards.
     QFile::remove(backupPath);
 
-    ProcessResult proc = runProcess("netsh",
+    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
                                     QStringList() << "advfirewall" << "export" << backupPath,
                                     sak::kTimeoutNetworkReadMs);
     if (stepFailed(proc.timed_out, proc.exit_code) || QFileInfo(backupPath).size() <= 0) {
@@ -359,8 +364,9 @@ bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     // Step 8: Clear NetBIOS cache
     Q_EMIT executionProgress("Clearing NetBIOS cache...", progress::kStep90);
     {
-        ProcessResult proc =
-            runProcess("nbtstat", QStringList() << "-R", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("nbtstat.exe")),
+                                        QStringList() << "-R",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "NetBIOS cache clear timed out";
         } else if (proc.exit_code != 0) {
@@ -368,8 +374,9 @@ bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
         }
     }
     {
-        ProcessResult proc =
-            runProcess("nbtstat", QStringList() << "-RR", sak::kTimeoutNetworkReadMs);
+        ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("nbtstat.exe")),
+                                        QStringList() << "-RR",
+                                        sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) {
             errors << "NetBIOS refresh timed out";
         } else if (proc.exit_code != 0) {
