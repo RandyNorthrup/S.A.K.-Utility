@@ -204,6 +204,33 @@ OfflineDeploymentWorker::WorkDirDisposition OfflineDeploymentWorker::classifyWor
     return is_empty ? WorkDirDisposition::CreateFresh : WorkDirDisposition::RefuseForeign;
 }
 
+bool OfflineDeploymentWorker::workDirSafeToDelete(bool exists,
+                                                  bool is_reparse_point,
+                                                  bool has_ownership_marker) {
+    if (!exists) {
+        return true;  // Nothing to delete -- a no-op removal is safe.
+    }
+    // Only recurse a delete through a directory that is NOT a reparse point AND carries our
+    // ownership marker, so a planted junction or a foreign dir is never recursively wiped.
+    return !is_reparse_point && has_ownership_marker;
+}
+
+bool OfflineDeploymentWorker::removeOwnedWorkDir(const QString& work_dir) {
+    const QFileInfo info(work_dir);
+    const bool has_marker = QFile::exists(work_dir + "/" + offline::kWorkDirOwnershipMarker);
+    if (!workDirSafeToDelete(info.exists(), info.isSymLink() || info.isJunction(), has_marker)) {
+        sak::logError(
+            "[OfflineDeployment] Refusing to recursively delete work directory (reparse "
+            "point or missing ownership marker): {}",
+            work_dir.toStdString());
+        return false;
+    }
+    if (!info.exists()) {
+        return true;
+    }
+    return QDir(work_dir).removeRecursively();
+}
+
 QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
                                                        const QString& fallback) {
     // Reduce to a single path segment: QUrl::fileName() decodes percent-encoding,
@@ -236,15 +263,25 @@ bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QStri
         error_out = "Refusing to reuse existing work directory not created by S.A.K.: " + work_dir;
         return false;
     }
+    // A reparse-point work dir would let a later removeRecursively() follow a junction out of the
+    // work tree; refuse it outright (the path is deterministic, so it can be pre-planted).
+    const QFileInfo work_info(work_dir);
+    if (exists && (work_info.isSymLink() || work_info.isJunction())) {
+        error_out = "Work directory is a reparse point; refusing to use: " + work_dir;
+        return false;
+    }
     if (!QDir().mkpath(work_dir)) {
         error_out = "Failed to create work directory: " + work_dir;
         return false;
     }
-    // Stamp ownership so a later removeRecursively() only ever deletes our tree.
-    QFile stamp(marker);
-    if (stamp.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        stamp.write("S.A.K. Utility offline-deployment work directory\n");
-        stamp.close();
+    // Stamp ownership (fail closed) so a later removeOwnedWorkDir() only ever deletes our tree. If
+    // the marker cannot be written, the tree would be indistinguishable from a foreign dir at
+    // cleanup and never deleted -- so refuse the build rather than proceed unmarked.
+    QSaveFile stamp(marker);
+    const QByteArray body = QByteArrayLiteral("S.A.K. Utility offline-deployment work directory\n");
+    if (!stamp.open(QIODevice::WriteOnly) || stamp.write(body) != body.size() || !stamp.commit()) {
+        error_out = "Failed to write work-directory ownership marker: " + marker;
+        return false;
     }
     return true;
 }
@@ -744,7 +781,7 @@ void OfflineDeploymentWorker::emitInternalizationResult(const QString& pkg_id,
 }
 
 void OfflineDeploymentWorker::finalizeCancelledBuild(const QString& work_dir) {
-    QDir(work_dir).removeRecursively();
+    removeOwnedWorkDir(work_dir);
     m_running = false;
     QMetaObject::invokeMethod(
         this,
@@ -762,31 +799,44 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
         return;
     }
 
-    // Write manifest. A failed/short manifest write must NOT be reported as a completed bundle:
-    // installFromBundle would later fail with "Manifest is empty or unreadable".
-    if (!manifest.packages.isEmpty()) {
-        if (!writeManifest(manifest, ctx.output_dir)) {
-            QDir(ctx.work_dir).removeRecursively();
-            m_running = false;
-            QMetaObject::invokeMethod(
-                this,
-                [this, dir = ctx.output_dir]() {
-                    Q_EMIT operationError("Failed to write manifest to " + dir);
-                },
-                Qt::QueuedConnection);
-            return;
-        }
-        writeReadme(manifest, ctx.output_dir);
+    // Fail closed on an empty bundle: no package was internalized, so no manifest is written and
+    // installFromBundle would fail with "Manifest is empty or unreadable". Reporting
+    // operationCompleted here would falsely claim a usable bundle. Mirror executeBuildListManifest.
+    if (manifest.packages.isEmpty()) {
+        removeOwnedWorkDir(ctx.work_dir);
+        m_running = false;
         QMetaObject::invokeMethod(
             this,
-            [this, output_dir = ctx.output_dir]() {
-                Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
+            [this]() {
+                Q_EMIT operationError("No packages could be internalized; nothing to bundle");
             },
             Qt::QueuedConnection);
+        return;
     }
 
+    // Write manifest. A failed/short manifest write must NOT be reported as a completed bundle:
+    // installFromBundle would later fail with "Manifest is empty or unreadable".
+    if (!writeManifest(manifest, ctx.output_dir)) {
+        removeOwnedWorkDir(ctx.work_dir);
+        m_running = false;
+        QMetaObject::invokeMethod(
+            this,
+            [this, dir = ctx.output_dir]() {
+                Q_EMIT operationError("Failed to write manifest to " + dir);
+            },
+            Qt::QueuedConnection);
+        return;
+    }
+    writeReadme(manifest, ctx.output_dir);
+    QMetaObject::invokeMethod(
+        this,
+        [this, output_dir = ctx.output_dir]() {
+            Q_EMIT manifestWritten(output_dir + "/" + offline::kManifestFilename);
+        },
+        Qt::QueuedConnection);
+
     // Clean up work directory
-    QDir(ctx.work_dir).removeRecursively();
+    removeOwnedWorkDir(ctx.work_dir);
 
     const BatchStats stats = computeBuildStats(manifest, ctx);
     m_running = false;

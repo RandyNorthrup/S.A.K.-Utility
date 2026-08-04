@@ -24,6 +24,7 @@ private Q_SLOTS:
     void classifyWorkDir_freshWhenMissingOrEmpty();
     void classifyWorkDir_reusesOwnedMarkedDir();
     void classifyWorkDir_refusesForeignNonEmptyDir();
+    void workDirSafeToDelete_guardsReparseAndOwnership();
     void safeInstallerFilename_keepsPlainNames();
     void safeInstallerFilename_confinesTraversalNames();
     void sanitizeManifestFilename_rejectsPathsAndTraversal();
@@ -64,6 +65,18 @@ void TestOfflineDeploymentWorker::classifyWorkDir_refusesForeignNonEmptyDir() {
     // A non-empty dir we never stamped must never be created-into or wiped.
     QCOMPARE(OfflineDeploymentWorker::classifyWorkDir(true, false, false),
              WorkDirDisposition::RefuseForeign);
+}
+
+void TestOfflineDeploymentWorker::workDirSafeToDelete_guardsReparseAndOwnership() {
+    // CODEX_REVIEW_4 M-B2-10: a work dir is only recursively deletable when it is not a reparse
+    // point AND bears our ownership marker; a missing dir is a safe no-op.
+    using W = OfflineDeploymentWorker;
+    QVERIFY(W::workDirSafeToDelete(false, false, false));  // missing -> safe no-op
+    QVERIFY(W::workDirSafeToDelete(false, true, true));    // missing (other flags moot) -> safe
+    QVERIFY(W::workDirSafeToDelete(true, false, true));    // owned, not reparse -> deletable
+    QVERIFY(!W::workDirSafeToDelete(true, true, true));    // reparse point -> refuse
+    QVERIFY(!W::workDirSafeToDelete(true, false, false));  // no ownership marker -> refuse
+    QVERIFY(!W::workDirSafeToDelete(true, true, false));   // reparse + unmarked -> refuse
 }
 
 void TestOfflineDeploymentWorker::safeInstallerFilename_keepsPlainNames() {

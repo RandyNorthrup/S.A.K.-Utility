@@ -190,6 +190,14 @@ public:
                                                             bool has_ownership_marker,
                                                             bool is_empty);
 
+    /// @brief Whether a work directory is safe to recursively delete: a missing dir is a safe
+    ///        no-op, and an existing dir is deletable ONLY when it is not a reparse point AND
+    ///        carries our ownership marker (so a planted junction or a foreign dir is never
+    ///        recursively wiped). Pure; unit-testable.
+    [[nodiscard]] static bool workDirSafeToDelete(bool exists,
+                                                  bool is_reparse_point,
+                                                  bool has_ownership_marker);
+
     /// @brief Reduce a URL-derived name to a single safe path segment, returning
     ///        @p fallback when it would escape the output dir (empty, ".", "..",
     ///        or containing a path separator after basename reduction). Pure;
@@ -212,10 +220,13 @@ public:
 
     /// @brief Dependency ids declared WITHIN @p jobs that are absent from the job
     ///        set (and are not the excluded Chocolatey framework). A non-empty
-    ///        result means the resolved closure is NOT self-contained -- for a
-    ///        Bundle that is a fatal build error, not a warning. A requested
-    ///        package re-appended to be "attempted directly" carries no dependency
-    ///        edges, so it never trips this check. Pure; unit-testable.
+    ///        result means the resolved closure is NOT self-contained. For a normal
+    ///        Bundle this is a WARNING, not a fatal error: the package is fetched
+    ///        from the feed at install time (will-fetch); only an air-gap
+    ///        (packed_only) install cannot fetch it, and that is enforced per-entry
+    ///        at install time. A requested package re-appended to be "attempted
+    ///        directly" carries no dependency edges, so it never trips this check.
+    ///        Pure; unit-testable.
     [[nodiscard]] static QStringList unmetClosureDependencies(
         const QVector<BatchInternalizationJob>& jobs);
 
@@ -255,6 +266,11 @@ private:
     ///        Refuses (returns false + @p error_out) a pre-existing foreign dir so
     ///        a recursive cleanup can never wipe unrelated user data (B10-13).
     [[nodiscard]] bool prepareOwnedWorkDir(const QString& work_dir, QString& error_out);
+
+    /// @brief Recursively delete a work directory ONLY when workDirSafeToDelete permits it (not a
+    ///        reparse point, bears our ownership marker); a missing dir is a successful no-op.
+    ///        Returns false (no delete performed) otherwise.
+    bool removeOwnedWorkDir(const QString& work_dir);
 
     /// @brief Execute a Bundle (self-contained) build on a background thread:
     ///        resolve the closure, internalize + pack every installer.
