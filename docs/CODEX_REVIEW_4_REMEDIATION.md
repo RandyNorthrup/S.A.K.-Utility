@@ -118,7 +118,11 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   verify before load/apply; refuse network apply from any backup lacking
   sidecar integrity.
 
-- [ ] H4 [A3-1] browser/extension/background.js:504,2353
+- [x] H4 [A3-1] browser/extension/background.js:504,2353 FIXED (wave 6): armed HTTP-auth
+  credentials are now bound to the arming tab's origin ({username,password,origin}); the
+  Fetch.authRequired handler provides them only when params.authChallenge.origin matches
+  (originsMatch), and they are cleared on top-frame navigation. Arming fails closed if the
+  tab origin cannot be resolved. (JS source; the packaged .crx must be rebuilt to deploy.)
   HTTP-auth credentials are armed with `urlPattern:"*"` and cleared only on
   detach (not on navigation), so armed Basic creds answer any later 401 --
   including cross-origin subresources of a controlled tab (credential leak).

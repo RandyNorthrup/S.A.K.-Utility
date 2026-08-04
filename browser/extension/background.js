@@ -120,9 +120,25 @@ let lastNetworkActivityMs = 0;
 // it. Null until first captured; cleared on detach (a new session recaptures its own).
 let originalUserAgent = null;
 // Credentials armed for HTTP auth challenges via browser_http_auth. Null = disarmed (no Fetch
-// interception). When set, the Fetch domain is enabled and the onEvent handler answers auth
-// challenges with these; cleared on detach (Fetch is per-session, so it auto-disables too).
+// interception). When set, it is { username, password, origin } and the Fetch domain is enabled;
+// the onEvent handler answers an auth challenge with these ONLY when the challenge origin matches
+// the armed origin. Cleared on detach and on top-frame navigation (Fetch is per-session, so it
+// auto-disables on detach too).
 let httpAuthCreds = null;
+
+// True when two origins are the same scheme://host:port. Both inputs are normalized through URL
+// so "https://host" and "https://host:443" compare equal; falls back to strict string equality
+// if either is not a parseable absolute origin (in which case a non-match fails closed).
+function originsMatch(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch (_e) {
+    return a === b;
+  }
+}
 
 let port = null;
 let health = { connected: false, bridge: null, error: null };
@@ -480,7 +496,16 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   // paused request or the page wedges: an auth challenge gets the armed credentials (or the
   // browser default when disarmed), and every other paused request is continued untouched.
   if (method === "Fetch.authRequired") {
-    const response = httpAuthCreds
+    // Only hand the armed credentials to a challenge from the SAME origin they were
+    // armed for. A bare urlPattern:"*" makes Fetch pause every request, so without
+    // this an armed 401 answer would also be sent to a cross-origin subresource or a
+    // redirected challenger and silently leak the password. Every other challenger
+    // gets the browser default (native dialog / cancel).
+    const challengeOrigin =
+      params && params.authChallenge ? params.authChallenge.origin : null;
+    const originMatches =
+      httpAuthCreds && originsMatch(challengeOrigin, httpAuthCreds.origin);
+    const response = originMatches
       ? { response: "ProvideCredentials", username: httpAuthCreds.username,
           password: httpAuthCreds.password }
       : { response: "Default" };
@@ -507,6 +532,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       // that never reported completion cannot keep network_idle from ever resolving.
       inflightRequests = 0;
       lastNetworkActivityMs = Date.now();
+      // Armed HTTP-auth credentials were meant for the page being left; disarm them so a
+      // navigation (or an attacker-driven redirect) cannot carry them into a new document.
+      httpAuthCreds = null;
     }
     // A navigation wiped the injected overlay; re-assert the control presence on the new
     // document so the assistant's control stays visible without waiting for the next action.
@@ -2348,10 +2376,25 @@ async function handleHttpAuth(tabId, args) {
   if (!username) {
     throw new Error("browser_http_auth needs a username (or clear:true to disarm).");
   }
-  httpAuthCreds = { username, password };
+  // Bind the credentials to the current tab's origin so the onEvent handler only ever hands
+  // them to a same-origin challenge. Fail closed if the tab has no resolvable origin.
+  let origin = null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab && tab.url) {
+      origin = new URL(tab.url).origin;
+    }
+  } catch (_e) {
+    origin = null;
+  }
+  if (!origin || origin === "null") {
+    throw new Error(
+      "browser_http_auth could not resolve the tab's origin to bind the credentials to.");
+  }
+  httpAuthCreds = { username, password, origin };
   await sendCdp(tabId, "Fetch.enable",
     { handleAuthRequests: true, patterns: [{ urlPattern: "*" }] });
-  return { ok: true, armed: true, username };
+  return { ok: true, armed: true, username, origin };
 }
 
 // -- Bring the bridge up -----------------------------------------------------
