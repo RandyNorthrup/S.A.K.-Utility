@@ -819,6 +819,13 @@ public:
     [[nodiscard]] static QVector<QPair<quint64, quint64>> readExtentRefTreeBlocksForTesting(
         const QVector<QByteArray>& node_blocks, uint32_t block_size);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
+    /// @brief True when a free-queue run {paddr, length} sits entirely inside a container of
+    ///        @p block_count blocks. A corrupt on-disk record would otherwise expand into a
+    ///        multi-exabyte block list (OOM) and wrap paddr+offset past 2^64. Pure seam for the
+    ///        fail-closed bounds guard in the free-queue leaf parser.
+    [[nodiscard]] static bool freeQueueRunInBoundsForTesting(quint64 paddr,
+                                                             quint64 length,
+                                                             quint64 block_count);
     /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
     ///        crash-safe in-place commit writes next, given the live cib block of
     ///        a generated single-chunk container. Round-robins the three IP slots

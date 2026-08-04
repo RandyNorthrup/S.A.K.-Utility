@@ -317,6 +317,16 @@ void UupIsoBuilder::prepareWorkspace() {
         m_workDir = QDir(tempBase).filePath(QString("sak_uup_%1").arg(timestamp));
     }
 
+    // The workspace path is deterministic (%TEMP%\sak_uup_<hash>), so an attacker could pre-plant
+    // a junction there and have our elevated create/removeRecursively follow it out of TEMP.
+    // Refuse to reuse a reparse-point workspace outright.
+    if (isReparsePoint(m_workDir)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(QString("Work directory path is a reparse point; refusing to reuse: %1")
+                              .arg(m_workDir));
+        return;
+    }
+
     QDir workDir(m_workDir);
     if (!workDir.mkpath(".")) {
         m_phase = Phase::Failed;
@@ -1315,6 +1325,13 @@ void UupIsoBuilder::cleanupWorkDir() {
     Q_ASSERT(!m_workDir.isEmpty());
     Q_ASSERT(m_phase != Phase::Idle);
     if (m_workDir.isEmpty()) {
+        return;
+    }
+
+    if (isReparsePoint(m_workDir)) {
+        sak::logError("Refusing to recursively delete a reparse-point work directory: " +
+                      m_workDir.toStdString());
+        m_workDir.clear();
         return;
     }
 

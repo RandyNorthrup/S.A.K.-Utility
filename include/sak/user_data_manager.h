@@ -9,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <initializer_list>
 #include <optional>
 #include <vector>
 
@@ -136,6 +137,17 @@ public:
     /// human-readable refusal reason. Pure (no I/O) so it is unit-testable in isolation.
     static QString backupDeletionRefusal(const QString& backup_path,
                                          const std::optional<QString>& recorded_backup_path);
+
+    /// @brief True only when every supplied path is non-empty. Release-effective replacement for
+    ///        the old Q_ASSERT_X entry guards (a no-op in release, which let empty paths run
+    ///        CWD-relative). Pure (no I/O), unit-testable in isolation.
+    static bool allPathsPresent(std::initializer_list<QString> paths);
+
+    /// @brief True when an attacker-supplied encrypted archive's size is within the bound we will
+    ///        read into memory (0 <= size <= 4 GiB). Pure seam for the fail-closed pre-read cap in
+    ///        decryptArchiveToTempFile (guards OOM before the zip-bomb preflight, which only runs
+    ///        on the decrypted .zip).
+    static bool encryptedArchiveSizeOk(qint64 size);
 
     // Utilities
     qint64 calculateSize(const QStringList& paths) const;

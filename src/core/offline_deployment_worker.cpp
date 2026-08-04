@@ -1595,11 +1595,13 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
 
     // Integrity-gate BEFORE anything is committed to disk: a declared checksum that
     // does not match (or is declared but unresolvable) fails closed, so a tampered
-    // or corrupt installer is never written or counted. An empty declared checksum
-    // (nothing to verify against) passes through unchanged.
-    if (!PackageInternalizationEngine::binaryChecksumMatches(
+    // or corrupt installer is never written or counted. An empty declared checksum now
+    // FAILS CLOSED too (installerVerified rejects an unverifiable installer) rather than
+    // shipping an unauthenticated direct download.
+    if (!PackageInternalizationEngine::installerVerified(
             transfer.body, expected_checksum, checksum_type)) {
-        sak::logError("[DirectDownload] Checksum mismatch for {}", url.toStdString());
+        sak::logError("[DirectDownload] Unverifiable or mismatched checksum for {}",
+                      url.toStdString());
         return false;
     }
 

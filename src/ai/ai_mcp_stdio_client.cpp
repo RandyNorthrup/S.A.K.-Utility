@@ -162,6 +162,15 @@ private:
     }
 
     void handleReadyRead() {
+        // Enforce the byte cap BEFORE reading any line: a fast server can buffer a single
+        // newline-terminated line larger than the cap, and canReadLine()/readLine() would
+        // allocate the whole oversized line before the post-loop guard runs. Fail closed up
+        // front so the cap bounds a single huge line and newline-free accumulation alike.
+        if (m_process->bytesAvailable() > kMaxStdioReadBufferBytes) {
+            fail(QStringLiteral("MCP stdio response exceeded %1 bytes without a newline")
+                     .arg(kMaxStdioReadBufferBytes));
+            return;
+        }
         while (m_process->canReadLine()) {
             if (!processLine(m_process->readLine().trimmed())) {
                 return;

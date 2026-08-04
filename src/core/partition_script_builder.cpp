@@ -2310,11 +2310,21 @@ QString cloneTransferExecutionScript() {
 // still land on the source disk. This emitted PowerShell resolves the real volume
 // identity of the destination (Get-SakVolumeGuid follows reparse points) and
 // throws if it matches any volume on the source disk, before any device is opened.
-QString createImageDestinationGuardScript(const QString& target, uint32_t sourceDiskNumber) {
+QString createImageDestinationGuardScript(const QString& target,
+                                          uint32_t sourceDiskNumber,
+                                          bool overwriteConfirmed) {
     return sakVolumeGuidFunctionScript() +
            QStringLiteral(
                "$imgDest = %1\n"
                "$srcDiskNumber = %2\n"
+               "$allowOverwrite = %3\n"
+               "$imgAlreadyExists = $false\n"
+               "try { $imgAlreadyExists = [System.IO.File]::Exists($imgDest) } catch { throw "
+               "('Create Image cannot stat the destination file {0}: {1}' -f $imgDest, "
+               "$_.Exception.Message) }\n"
+               "if ($imgAlreadyExists -and -not $allowOverwrite) { throw ('Create Image "
+               "destination file {0} already exists; pass overwrite_confirmed to replace it' "
+               "-f $imgDest) }\n"
                "$destGuid = $null\n"
                "try { $destGuid = (Get-SakVolumeGuid $imgDest).TrimEnd('\\') } catch "
                "{ throw ('Create Image cannot resolve the destination volume identity for {0}: "
@@ -2329,7 +2339,8 @@ QString createImageDestinationGuardScript(const QString& target, uint32_t source
                "if ($srcVolGuids -contains $destGuid) { throw 'Create Image destination "
                "resolves onto the source disk; choose an off-disk destination' }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(target)),
-                    QString::number(sourceDiskNumber));
+                    QString::number(sourceDiskNumber),
+                    overwriteConfirmed ? QStringLiteral("$true") : QStringLiteral("$false"));
 }
 
 QString cloneTransferScript(const CloneTransferSpec& spec) {
@@ -4701,7 +4712,10 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
                   QStringLiteral(" to ") + spec.target;
     out.script = commonHeader(out.preview);
     if (operation.type == PartitionOperationType::CreateImage) {
-        out.script += createImageDestinationGuardScript(spec.target, operation.target.disk_number);
+        out.script += createImageDestinationGuardScript(
+            spec.target,
+            operation.target.disk_number,
+            payloadBool(operation, QStringLiteral("overwrite_confirmed")));
     }
     out.script += cloneTransferScript(spec);
     if (operation.type == PartitionOperationType::MigrateOs) {

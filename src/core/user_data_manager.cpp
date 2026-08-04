@@ -275,11 +275,23 @@ UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& a
     return entry;
 }
 
+bool UserDataManager::allPathsPresent(std::initializer_list<QString> paths) {
+    return std::none_of(paths.begin(), paths.end(), [](const QString& p) { return p.isEmpty(); });
+}
+
+bool UserDataManager::encryptedArchiveSizeOk(qint64 size) {
+    constexpr qint64 kMaxEncryptedArchiveBytes = 4LL * 1024 * 1024 * 1024;
+    return size >= 0 && size <= kMaxEncryptedArchiveBytes;
+}
+
 bool UserDataManager::backupMultipleApps(const QStringList& app_names,
                                          const QString& backup_dir,
                                          const BackupConfig& config) {
-    Q_ASSERT_X(!app_names.isEmpty(), "backupMultipleApps", "app_names must not be empty");
-    Q_ASSERT_X(!backup_dir.isEmpty(), "backupMultipleApps", "backup_dir must not be empty");
+    if (!allPathsPresent({backup_dir}) || app_names.isEmpty()) {
+        Q_EMIT operationError(QStringLiteral("Unknown"),
+                              QStringLiteral("Empty app list or backup directory"));
+        return false;
+    }
     bool all_success = true;
 
     for (const auto& app_name : app_names) {
@@ -304,8 +316,11 @@ bool UserDataManager::backupMultipleApps(const QStringList& app_names,
 bool UserDataManager::restoreAppData(const QString& backup_path,
                                      const QString& restore_dir,
                                      const RestoreConfig& config) {
-    Q_ASSERT_X(!backup_path.isEmpty(), "restoreAppData", "backup_path must not be empty");
-    Q_ASSERT_X(!restore_dir.isEmpty(), "restoreAppData", "restore_dir must not be empty");
+    if (!allPathsPresent({backup_path, restore_dir})) {
+        Q_EMIT operationError(QStringLiteral("Unknown"),
+                              QStringLiteral("Empty backup path or restore directory"));
+        return false;
+    }
     // Read metadata
     auto entry_opt = readMetadata(backup_path + ".json");
     if (!entry_opt.has_value()) {
@@ -401,8 +416,11 @@ bool UserDataManager::verifyRestoreIntegrity(const QString& backup_path,
 bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,
                                           const QString& restore_dir,
                                           const RestoreConfig& config) {
-    Q_ASSERT_X(!backup_paths.isEmpty(), "restoreMultipleApps", "backup_paths must not be empty");
-    Q_ASSERT_X(!restore_dir.isEmpty(), "restoreMultipleApps", "restore_dir must not be empty");
+    if (!allPathsPresent({restore_dir}) || backup_paths.isEmpty()) {
+        Q_EMIT operationError(QStringLiteral("Unknown"),
+                              QStringLiteral("Empty backup list or restore directory"));
+        return false;
+    }
     bool all_success = true;
 
     for (const auto& backup_path : backup_paths) {
@@ -778,6 +796,15 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
     if (!archive.open(QIODevice::ReadOnly)) {
         sak::logError("[UserDataManager] Failed to open encrypted archive for reading: {}",
                       archive_path.toStdString());
+        return {};
+    }
+    // archive_path is an attacker-controlled backup file; readAll() would pull the whole file
+    // into memory BEFORE the zip-bomb preflight (which only runs on the decrypted .zip) ever
+    // sees it. Refuse an oversized/unreadable ciphertext outright -- fail closed rather than
+    // risk OOM. 4 GiB comfortably covers a legitimate compressed backup while bounding the read.
+    if (!encryptedArchiveSizeOk(archive.size())) {
+        sak::logError("[UserDataManager] Encrypted archive too large or unreadable: {} bytes",
+                      static_cast<long long>(archive.size()));
         return {};
     }
     QByteArray encrypted_data = archive.readAll();

@@ -159,6 +159,19 @@ bool blocksCurrentOsDiskMutation(const PartitionDiskInfo& disk, PartitionOperati
            !isSystemAllowedOperation(type);
 }
 
+bool blocksCurrentOsDiskPartitionMutation(const PartitionDiskInfo& disk,
+                                          PartitionOperationType type) {
+    // Partition-scoped mirror of blocksCurrentOsDiskMutation: a destructive partition op that
+    // MUTATES a partition on the current OS disk (system/boot) is blocked in v1 even when that
+    // specific partition is not itself flagged protected. Without this an OS-disk DATA partition
+    // slips past blocksProtectedPartition (which guards only system/boot/efi/msr/recovery
+    // partitions) while blocksCurrentOsDiskMutation covers only whole-disk ops. ClonePartition
+    // READS the selected partition (its write target is a separate, independently validated
+    // disk), so it is excluded here.
+    return (disk.is_system || disk.is_boot) && isDestructivePartitionOperation(type) &&
+           type != PartitionOperationType::ClonePartition;
+}
+
 bool allowsDynamicDiskOperation(PartitionOperationType type) {
     return type == PartitionOperationType::ConvertDynamicDiskToBasic;
 }
@@ -1425,6 +1438,11 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  blocksProtectedPartition(partition, operation.type),
                  QStringLiteral(
                      "System, boot, EFI, MSR, and recovery partitions are protected in v1"));
+    addBlockerIf(
+        result,
+        blocksCurrentOsDiskPartitionMutation(disk, operation.type),
+        QStringLiteral(
+            "Destructive changes to a partition on the current OS disk are blocked in v1"));
     addBlockerIf(result,
                  hasLockedBitLockerVolume(partition) &&
                      operation.type != PartitionOperationType::BitLockerUnlock,

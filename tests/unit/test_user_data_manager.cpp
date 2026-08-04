@@ -394,6 +394,25 @@ private Q_SLOTS:
         QVERIFY2(r.isEmpty(), qPrintable(r));  // safe local path + matching sidecar -> allowed
     }
 
+    // --- CODEX_REVIEW_4 M-A1-20: entry guards were Q_ASSERT_X (release no-op) so an empty
+    // path ran CWD-relative. allPathsPresent is the release-effective fail-closed replacement.
+    void allPathsPresentRejectsEmpty() {
+        QVERIFY(UserDataManager::allPathsPresent({QStringLiteral("a"), QStringLiteral("b")}));
+        QVERIFY(!UserDataManager::allPathsPresent({QStringLiteral(""), QStringLiteral("x")}));
+        QVERIFY(!UserDataManager::allPathsPresent({QStringLiteral("x"), QStringLiteral("")}));
+        QVERIFY(!UserDataManager::allPathsPresent({QString()}));
+    }
+
+    // --- CODEX_REVIEW_4 M-A1-25: cap the encrypted-archive read before readAll() so an
+    // attacker file cannot OOM the app ahead of the (post-decrypt) zip-bomb preflight.
+    void encryptedArchiveSizeCapBoundary() {
+        constexpr qint64 kCap = 4LL * 1024 * 1024 * 1024;
+        QVERIFY(UserDataManager::encryptedArchiveSizeOk(0));
+        QVERIFY(UserDataManager::encryptedArchiveSizeOk(kCap));
+        QVERIFY(!UserDataManager::encryptedArchiveSizeOk(-1));        // unreadable -> fail closed
+        QVERIFY(!UserDataManager::encryptedArchiveSizeOk(kCap + 1));  // oversized -> fail closed
+    }
+
     // End-to-end: an arbitrary directory with no sidecar is left intact.
     void deleteBackupRefusesUnmanagedDirectory() {
         QTemporaryDir work;

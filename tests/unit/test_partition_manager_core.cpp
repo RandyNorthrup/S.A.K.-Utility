@@ -2047,6 +2047,9 @@ private Q_SLOTS:
     void safetyValidator_requiresCloneOverwriteConfirmation();
     void safetyValidator_blocksWipeOfBootNotSystemDisk();
     void safetyValidator_blocksDiskScopedWipeWithPartitionTarget();
+    void safetyValidator_blocksOsDiskDataPartitionMutation();
+    void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
+    void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
@@ -17309,6 +17312,72 @@ void PartitionManagerCoreTests::safetyValidator_blocksDiskScopedWipeWithPartitio
     auto blocked = planner.previewOperation(inventory, op);
     QVERIFY(!blocked.canApply());
     QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("does not match its target kind")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_blocksOsDiskDataPartitionMutation() {
+    // CODEX_REVIEW_4 M-A4-8: blocksProtectedPartition guards only system/boot/efi/msr/recovery
+    // partitions, and blocksCurrentOsDiskMutation covers only whole-disk ops -- so a destructive
+    // op on a plain DATA partition that lives on the current OS (is_boot) disk had no backstop.
+    // The partition-scoped OS-disk guard must fail closed here.
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(&inventory);  // clear partition-level protections
+    inventory.disks.first().is_boot = true;       // ...but it sits on the OS disk
+    inventory.disks.first().is_system = false;
+    const auto& partition = inventory.disks.first().partitions.at(1);
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 0;
+    target.partition_number = partition.partition_number;
+    QJsonObject payload;
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto op =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Delete, target, payload);
+
+    PartitionOperationPlanner planner;
+    auto blocked = planner.previewOperation(inventory, op);
+    QVERIFY(!blocked.canApply());
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("current OS disk")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImageRefusesExistingWithoutOverwrite() {
+    // CODEX_REVIEW_4 M-A4-11: Create Image opened the destination with FileMode::Create
+    // (truncates), silently clobbering an existing image. The emitted guard must throw on an
+    // existing destination unless overwrite_confirmed was passed.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 0;
+    target.size_bytes = 107'374'182'400ULL;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    payload[QStringLiteral("source_size_bytes")] = QString::number(target.size_bytes);
+
+    PartitionScriptBuilder builder;
+    auto denied = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, payload));
+    QVERIFY(denied.script.contains(QStringLiteral("$allowOverwrite = $false")));
+    QVERIFY(denied.script.contains(QStringLiteral("already exists")));
+
+    payload[QStringLiteral("overwrite_confirmed")] = true;
+    auto allowed = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, payload));
+    QVERIFY(allowed.script.contains(QStringLiteral("$allowOverwrite = $true")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange() {
+    // CODEX_REVIEW_4 M-A4-4: a corrupt free-queue {paddr,length} must be rejected before it
+    // expands into a multi-exabyte block list (OOM) or wraps paddr+length past 2^64.
+    constexpr quint64 kBlocks = 1000;
+    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(0, 1, kBlocks));
+    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(999, 1, kBlocks));   // exact fit
+    QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(0, 0, kBlocks));    // zero length
+    QVERIFY(
+        !PartitionApfsWriter::freeQueueRunInBoundsForTesting(1000, 1, kBlocks));     // paddr == end
+    QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(999, 2, kBlocks));  // runs off end
+    QVERIFY(
+        !PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, ~0ULL, kBlocks));    // length wrap
+    QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, 1, 0));  // empty container
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {

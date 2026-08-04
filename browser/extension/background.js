@@ -815,7 +815,6 @@ async function collectMediaNodes(tabId, existing) {
 
 async function captureSnapshot(tabId) {
   await ensureAttached(tabId);
-  lastSnapshotTabId = tabId;  // refs from this snapshot are valid only against this tab
   const snapshot = await sendCdp(tabId, "DOMSnapshot.captureSnapshot", { computedStyles: [] });
   const boundsByBackend = buildBoundsMap(snapshot);
   const axTree = await sendCdp(tabId, "Accessibility.getFullAXTree", {});
@@ -842,6 +841,11 @@ async function captureSnapshot(tabId) {
     // If the frame tree is unavailable, do not claim completeness we cannot verify.
     iframesOmitted = true;
   }
+  // Mark this tab as the snapshot-of-record ONLY after the capture fully succeeded: a throw in
+  // any await above (DOMSnapshot/getFullAXTree/tabInfo) leaves lastSnapshotTabId untouched, so
+  // requireSnapshotTab keeps failing closed on refs the model never received rather than trusting
+  // a stale/aborted tab id.
+  lastSnapshotTabId = tabId;  // refs from this snapshot are valid only against this tab
   return { url: info.url, title: info.title, nodes, truncated, iframesOmitted, omittedFrames };
 }
 

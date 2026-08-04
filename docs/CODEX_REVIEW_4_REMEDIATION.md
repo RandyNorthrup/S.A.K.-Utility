@@ -260,13 +260,13 @@ win32mcp (A3):
 - [x] M-A3-16 native_messaging.cpp:11 FIXED (wave 9): kMaxHostToBrowserBytes (1 MiB); writeStdoutFrame refuses an oversized Chrome-facing frame (returns false -> pipe torn down) instead of letting Chrome kill the host.
 - [x] M-A3-41 win32_mcp_dialog_choice.cpp:45 FIXED (wave 9): negative words (cancel/no/abort/deny/decline/stop/never) added to the disqualifier list so "Yes, cancel" is never auto-affirmed. Test negativeCaptionRejectedDespiteAffirmativeWord.
 - [ ] M-A3-65 win32_mcp_dispatch.cpp:135 advertised inputSchema not enforced server-side (defense-in-depth).
-- [ ] M-A3-3  background.js:790 lastSnapshotTabId set before capture completes.
+- [x] M-A3-3  background.js:790 lastSnapshotTabId set before capture completes. FIXED (wave 20): assignment moved to AFTER the capture fully succeeds; a throw in any await leaves the prior (still-valid) tab id, so requireSnapshotTab fails closed on refs never delivered. (.crx needs rebuild to deploy.)
 
 apfs/partition (A4):
-- [ ] M-A4-4  partition_apfs_writer.cpp:8852 unvalidated free-queue {paddr,length} -> OOM / wrap.
+- [x] M-A4-4  partition_apfs_writer.cpp:8852 unvalidated free-queue {paddr,length} -> OOM / wrap. FIXED (wave 20): freeQueueRunInBounds() pure guard (paddr<blockCount, length<=blockCount-paddr, overflow-safe) at the parse chokepoint appends a blocker + returns {} on an out-of-range run, before expandFreeQueueEntries can allocate. Testing seam freeQueueRunInBoundsForTesting + unit test.
 - [ ] M-A4-6  partition_apfs_writer.cpp:17198 non-atomic APFS replace (delete then insert as two checkpoints).
-- [ ] M-A4-8  partition_safety_validator.cpp:1390 OS-disk data partitions lack the disk-level backstop.
-- [ ] M-A4-11 partition_script_builder.cpp:2074 CreateImage overwrites an existing file without confirm.
+- [x] M-A4-8  partition_safety_validator.cpp:1390 OS-disk data partitions lack the disk-level backstop. FIXED (wave 20): blocksCurrentOsDiskPartitionMutation() (partition-scoped mirror of blocksCurrentOsDiskMutation) blocks any destructive partition op on a system/boot disk, excluding read-only ClonePartition. Regression test safetyValidator_blocksOsDiskDataPartitionMutation.
+- [x] M-A4-11 partition_script_builder.cpp:2074 CreateImage overwrites an existing file without confirm. FIXED (wave 20): the CreateImage guard script now stats the destination and throws when it already exists unless overwrite_confirmed (a genuine payload bool) was passed; no silent FileMode::Create truncation. Regression test scriptBuilder_createImageRefusesExistingWithoutOverwrite. (Was previously listed as deferred; done.)
 - [x] M-A4-14 partition_script_builder.cpp:4563 FIXED (wave 14): buildMergeScript rejects a target_folder containing a path separator, ':', or '..'. Test scriptBuilder_mergeRejectsTraversalTargetFolder.
 - [ ] M-A4-27 partition_apfs_file_system_reader.cpp:359 / partition_ext_file_system_reader.cpp:1060 export junction/symlink TOCTOU.
 - [x] M-A4-28 partition_safety_validator.cpp:1825 FIXED (wave 14): validate()'s target.kind switch has a default: branch that appends a blocker, so an out-of-range/forged kind fails closed.
@@ -276,7 +276,7 @@ ai (B1):
 - [ ] M-B1-5  ai_app_action_planner.cpp:116 provider-gateway app_run_action has no catastrophic path.
 - [ ] M-B1-6  ai_provider_gateway_tool_runner.cpp:397 recipe input-tier steps run without the per-call hard confirm.
 - [~] M-B1-13 ai_mcp_session_pool.cpp:33 DEFERRED: timeout_ms in the key is DELIBERATE (a pooled session bakes its timeout at open(); dropping it reintroduces stale-timeout inheritance). The real fix is LRU eviction / a capacity cap on m_sessions (close+evict oldest), which needs a careful pool refactor + safe session close. Tracked.
-- [ ] M-B1-14 ai_mcp_stdio_client.cpp:165 reads a full line before the byte cap.
+- [x] M-B1-14 ai_mcp_stdio_client.cpp:165 reads a full line before the byte cap. FIXED (wave 20): handleReadyRead now enforces the byte cap BEFORE reading any line, so a single oversized newline-terminated line is refused up front (fail closed) instead of being allocated whole; the post-loop newline-free guard stays.
 - [ ] M-B1-15 ai_mcp_stdio_client.cpp:128 server-exit uses terminate() not tree-kill.
 - [ ] M-B1-16 ai_execution_broker.cpp:90 job-create/assign failure -> kill primary only, descendants survive.
 - [x] M-B1-17 ai_provider_registry.cpp:72 FIXED (wave 16): commandWithinAppDir now also requires the CANONICAL command path (symlinks/junctions resolved) to stay within the canonical app dir when the file exists, so a within-dir symlink cannot redirect the launch outside. The lexical check still governs a not-yet-existing command (reported "missing" separately). Residual validate/launch TOCTOU noted.
@@ -286,10 +286,10 @@ ai (B1):
 
 core-util (B2):
 - [x] M-B2-11 offline_deployment_worker.cpp:1046 FIXED (wave 11): resolveChocoExecutable now requires choco.exe be a real regular file (not symlink/junction) canonically confined under the bundled-tools root, mirroring the H9 pattern.
-- [ ] M-B2-1  uup_iso_builder.cpp:268,1266 workspace create/removeRecursively no reparse/ownership check.
+- [x] M-B2-1  uup_iso_builder.cpp:268,1266 workspace create/removeRecursively no reparse/ownership check. FIXED (wave 20): the deterministic %TEMP%\sak_uup_<hash> workspace is now refused (create) and never recursively deleted (cleanup) when it is a reparse point, via the existing isReparsePoint() seam -- an attacker-planted junction can no longer redirect the elevated create/removeRecursively out of TEMP.
 - [ ] M-B2-10 offline_deployment_worker.cpp:244,746 marker-write failure returns true; no reparse/identity before removeRecursively.
 - [ ] M-B2-13 offline_deployment_worker.cpp:359 header says unmet-dep=fatal but code warns+proceeds; zero-package bundle emits operationCompleted.
-- [ ] M-B2-15 offline_deployment_worker.cpp:1580 empty declared checksum passes unverified; downloaded>0 ships partial.
+- [x] M-B2-15 offline_deployment_worker.cpp:1580 empty declared checksum passes unverified; downloaded>0 ships partial. FIXED (wave 20): the direct-download integrity gate switched from the permissive binaryChecksumMatches (empty->true) to the fail-closed installerVerified (empty declared checksum -> reject), so an unauthenticated direct download is never written or counted.
 - [ ] M-B2-16 vulnerability_scanner.cpp:1525 enumerateInstalledProgramsFast no incomplete flag -> denied hive = "complete" inventory.
 - [x] M-B2-35 package_internalization_engine.cpp:371 FIXED (wave 11): isSafePackageComponent now rejects Win32-illegal chars (< > " | ? *), trailing dot/space, and reserved device names (CON/PRN/AUX/NUL/COM1-9/LPT1-9). Regression rows added.
 - [ ] M-B2-31 windows_usb_creator_extract.cpp:618 bcdboot given drive root not a Windows dir (tracked in-code).
@@ -311,9 +311,9 @@ gui/actions/elevated (B3):
 
 pst/email (A1):
 - [ ] M-A1-26 user_data_manager.cpp:965 atomicReplaceFile deletes target then renames; rename failure destroys the original.
-- [ ] M-A1-20 user_data_manager.cpp:281,307,404 public path validation via Q_ASSERT_X (release no-op) -> empty paths run CWD-relative.
+- [x] M-A1-20 user_data_manager.cpp:281,307,404 public path validation via Q_ASSERT_X (release no-op) -> empty paths run CWD-relative. FIXED (wave 20): backupMultipleApps/restoreAppData/restoreMultipleApps now use the release-effective allPathsPresent() guard (emits operationError + returns false) instead of Q_ASSERT_X. Regression test allPathsPresentRejectsEmpty.
 - [ ] M-A1-29 email_constants.h:215 kAnsiVersion=14 only; valid ANSI wVer 15 PSTs rejected.
-- [ ] M-A1-25 user_data_manager.cpp:783 decryptArchiveToTempFile readAll() of an attacker file with no size cap before the zip-bomb preflight -> OOM.
+- [x] M-A1-25 user_data_manager.cpp:783 decryptArchiveToTempFile readAll() of an attacker file with no size cap before the zip-bomb preflight -> OOM. FIXED (wave 20): a 4 GiB pre-read cap (encryptedArchiveSizeOk, also rejecting a negative/unreadable size) fails closed before readAll(), bounding the allocation ahead of the post-decrypt zip-bomb preflight. Regression test encryptedArchiveSizeCapBoundary.
 
 ===============================================================================
 ## LOW (robustness / defense-in-depth / dead code)

@@ -8823,6 +8823,17 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
     return 0;
 }
 
+// A free-queue run must sit entirely inside the container. A corrupt on-disk {paddr,length}
+// would otherwise expand into a multi-exabyte block list (OOM) and wrap paddr+offset past 2^64,
+// feeding out-of-range blocks into the allocator bitmap. Overflow-safe: paddr < blockCount =>
+// blockCount - paddr >= 1.
+[[nodiscard]] bool freeQueueRunInBounds(uint64_t paddr, uint64_t length, uint64_t blockCount) {
+    if (blockCount == 0 || length == 0 || paddr >= blockCount) {
+        return false;
+    }
+    return length <= blockCount - paddr;
+}
+
 // Decode the {xid, paddr}->length records of a free-queue leaf (a 0xFFFF value
 // offset is a ghost = length 1).
 QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
@@ -8850,6 +8861,15 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
         const uint64_t entryXid = le64(node, keyStart + koff);
         const uint64_t entryPaddr = le64(node, keyStart + koff + 8);
         const uint64_t length = (voff == 0xFFFF) ? 1 : le64(node, valueAreaEnd - voff);
+        if (!freeQueueRunInBounds(entryPaddr, length, geometry.blockCount)) {
+            blockers->append(
+                QStringLiteral("APFS free-queue: run {paddr=%1,length=%2} outside container "
+                               "(%3 blocks)")
+                    .arg(entryPaddr)
+                    .arg(length)
+                    .arg(geometry.blockCount));
+            return {};
+        }
         entries.append({entryXid, entryPaddr, length});
     }
     return entries;
@@ -19009,6 +19029,12 @@ bool PartitionApfsWriter::verifyObjectChecksum(const QByteArray& object_bytes) {
     }
     const auto* stored = reinterpret_cast<const uchar*>(object_bytes.constData());
     return qFromLittleEndian<uint64_t>(stored) == *checksum;
+}
+
+bool PartitionApfsWriter::freeQueueRunInBoundsForTesting(quint64 paddr,
+                                                         quint64 length,
+                                                         quint64 block_count) {
+    return freeQueueRunInBounds(paddr, length, block_count);
 }
 
 QStringList PartitionApfsWriter::enterpriseCertificationRequirements() {
