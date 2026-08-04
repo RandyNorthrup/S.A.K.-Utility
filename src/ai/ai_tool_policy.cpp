@@ -618,6 +618,43 @@ bool isMutatingPackageOperation(const QString& operation) {
            op == QLatin1String("install_bundle");
 }
 
+QString shellEscapeStrippedPreview(const QString& preview) {
+    // cmd.exe removes its escape character (U+005E) and PowerShell removes its own
+    // (U+0060) before parsing. Both are written as hex escapes rather than literal
+    // characters so the complexity gate's tokenizer does not mistake them for delimiters.
+    //
+    // For the PowerShell escape, note that the newline/tab/bell character substitutions
+    // apply only INSIDE double-quoted strings; in command position the escape before any
+    // character yields that literal character, so a split spelling of vssadmin really does
+    // invoke vssadmin. Excluding the escape letters would miss real bypasses, so every
+    // intra-word occurrence is stripped.
+    static const QRegularExpression caret_split(QStringLiteral("(\\w)\\x5E(\\w)"));
+    static const QRegularExpression escape_split(QStringLiteral("(\\w)\\x60(\\w)"));
+    // cmd.exe uses '^' and PowerShell uses U+0060 as escape characters that the shell
+    // removes before parsing, so a keyword split by one of them executes exactly as the
+    // unsplit keyword. Every risk regex below matches whole words, so a single escape
+    // inside a keyword defeated all of them at once: the command was neither catastrophic
+    // nor obfuscated nor even risky, and ran with no lease, no restore point and no
+    // confirmation.
+    //
+    // Strip an escape character only where it sits BETWEEN two word characters, which is
+    // the keyword-splitting shape. Legitimate uses -- a trailing '^' line continuation, an
+    // escape before a quote or a newline -- are not intra-word and stay untouched, so this
+    // does not manufacture matches for ordinary commands. The loop handles a keyword split
+    // more than once, such as "f^o^rmat".
+    QString stripped = preview;
+    for (int guard = 0; guard < 8; ++guard) {
+        const QString previous = stripped;
+        stripped.replace(caret_split, QStringLiteral("\\1\\2"));
+        stripped.replace(escape_split, QStringLiteral("\\1\\2"));
+        if (stripped == previous) {
+            break;
+        }
+    }
+    return stripped;
+}
+
+
 bool commandLooksObfuscated(const QString& preview) {
     // Encoded/indirection shapes that hide the real command from the risk regex.
     // PowerShell -EncodedCommand/-enc, base64 decode, Invoke-Expression, in-memory
@@ -627,7 +664,13 @@ bool commandLooksObfuscated(const QString& preview) {
         QStringLiteral(
             R"((\s-enc(odedcommand)?\b|\s-e\s+[A-Za-z0-9+/]{24,}={0,2}|\bfrombase64string\b|\b(iex|invoke-expression)\b|\bdownloadstring\b|\bdownloadfile\b|\b(new-object\s+)?net\.webclient\b|\binvoke-webrequest\b.*\|\s*(iex|invoke-expression)\b|\bcertutil\b.*\s-(decode|urlcache|f)\b|\bconvert\]::frombase64))"),
         QRegularExpression::CaseInsensitiveOption);
-    return obfuscated.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
+    // Deliberately NOT flagging the mere presence of an intra-word escape: a double-quoted
+    // string carrying a newline escape is ordinary output, and escalating it to
+    // catastrophic would force a confirmation prompt on it. Instead the stripped form is
+    // against the same patterns, so an escape only matters when it reveals a real command.
+    const QString stripped = shellEscapeStrippedPreview(preview);
+    return obfuscated.match(preview).hasMatch() || obfuscated.match(stripped).hasMatch() ||
+           commandUsesResolutionIndirection(preview) || commandUsesResolutionIndirection(stripped);
 }
 
 bool commandLooksCatastrophic(const QString& preview) {
@@ -638,7 +681,10 @@ bool commandLooksCatastrophic(const QString& preview) {
         QStringLiteral(
             R"((\bformat\b\s+[a-z]:|\bformat-volume\b|\bdiskpart\b|\bclear-disk\b|\bremove-partition\b|\bclear-volume\b|\breset-physicaldisk\b|\binitialize-disk\b|\bbcdedit\b|\bvssadmin\b\s+delete|\bwbadmin\b\s+delete|\bwevtutil\b\s+cl\b|\bcipher\b\s+/w|\breg\b\s+delete\s+hk|\bremove-item\b[^\n]*\bhk(lm|cu|cr|u):|\bset-executionpolicy\b\s+\S*(unrestricted|bypass)|\bremove-item\b(?=[^\n]*-recurse)(?=[^\n]*(\$env:systemroot|\$env:windir|c:\\windows|c:\\program files))|\b(rd|rmdir)\b\s+/s\b(?=[^\n]*(c:\\windows|c:\\program files|%systemroot%|%windir%))|\bmkfs\b|\bdd\b\s+if=))"),
         QRegularExpression::CaseInsensitiveOption);
-    return catastrophic.match(preview).hasMatch();
+    // Match the shell-escape-stripped form as well, so "fo^rmat C:" and "For`mat-Volume"
+    // are classified exactly like the plain commands they execute as.
+    return catastrophic.match(preview).hasMatch() ||
+           catastrophic.match(shellEscapeStrippedPreview(preview)).hasMatch();
 }
 
 bool commandLooksRiskyChange(const QString& preview) {
@@ -654,8 +700,9 @@ bool commandLooksRiskyChange(const QString& preview) {
         QStringLiteral(
             R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\brestart-service\b|\bstop-process\b|\bkill\b|\brestart-computer\b|\bstop-computer\b|(?:^|[|;&\r\n]\s*)r[im]\b|\]\s*::|\.\w+\s*\(|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b|\breg\b\s+add\b|\bsc(\.exe)?\b\s+(stop|start|config|delete|create|failure|pause|continue)\b|\bnet\b\s+(stop|start)\b|\btaskkill\b|\bshutdown\b|\bschtasks\b\s*/(create|delete|change|run|end)|\bpowercfg\b\s*/(setactive|s\b|import|delete|x\b)|\s\d*>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
-    return risky.match(preview).hasMatch() || commandLooksObfuscated(preview) ||
-           commandLooksCatastrophic(preview);
+    return risky.match(preview).hasMatch() ||
+           risky.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
+           commandLooksObfuscated(preview) || commandLooksCatastrophic(preview);
 }
 
 AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {

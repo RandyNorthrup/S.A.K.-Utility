@@ -31,6 +31,8 @@ private Q_SLOTS:
     void obfuscatedCommandsCountAsRisky();
     void catastrophicCommandsForceRiskyAndFlag_data();
     void catastrophicCommandsForceRiskyAndFlag();
+    void legitimateShellEscapesAreNotTreatedAsObfuscation_data();
+    void legitimateShellEscapesAreNotTreatedAsObfuscation();
     void ordinaryCommandsAreNotCatastrophic_data();
     void ordinaryCommandsAreNotCatastrophic();
     void obfuscatedShellCommandsForceCatastrophic_data();
@@ -513,6 +515,39 @@ void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag_data() {
         << QStringLiteral("Set-ExecutionPolicy Bypass -Scope Process -Force");
     QTest::newRow("recurse-windows")
         << QStringLiteral("Remove-Item C:\\Windows\\System32 -Recurse -Force");
+
+    // Shell escape characters split a keyword so that every whole-word risk regex misses
+    // it, while the shell strips the escape and runs the destructive command anyway.
+    // cmd.exe removes '^', PowerShell removes '`'.
+    QTest::newRow("format-caret-split") << QStringLiteral("fo^rmat D: /fs:ntfs /q");
+    QTest::newRow("format-caret-split-twice") << QStringLiteral("f^o^rmat D: /q");
+    QTest::newRow("format-volume-backtick-split")
+        << QStringLiteral("For`mat-Volume -DriveLetter D");
+    QTest::newRow("diskpart-caret-split") << QStringLiteral("disk^part /s wipe.txt");
+    QTest::newRow("vssadmin-backtick-split")
+        << QStringLiteral("vss`admin delete shadows /all /quiet");
+    QTest::newRow("cipher-caret-split") << QStringLiteral("ciph^er /w:C");
+}
+
+void AiToolPolicyTests::legitimateShellEscapesAreNotTreatedAsObfuscation_data() {
+    QTest::addColumn<QString>("command");
+    // A PowerShell backtick that introduces a character escape produces a DIFFERENT
+    // character, so it cannot splice a keyword back together and must not be read as
+    // obfuscation. These are ordinary read-only commands.
+    QTest::newRow("backtick-newline-escape") << QStringLiteral("Write-Output \"line1`nline2\"");
+    QTest::newRow("backtick-tab-escape") << QStringLiteral("Write-Output \"col1`tcol2\"");
+    QTest::newRow("backtick-return-escape") << QStringLiteral("Write-Output \"a`r`nb\"");
+    // A caret that is not between two word characters is a cmd line continuation or a
+    // literal, not a keyword split.
+    QTest::newRow("caret-line-continuation") << QStringLiteral("echo hello ^");
+    QTest::newRow("caret-after-space") << QStringLiteral("Get-Content log.txt ^ more");
+    QTest::newRow("plain-readonly") << QStringLiteral("Get-ChildItem C:\\Users -Recurse");
+}
+
+void AiToolPolicyTests::legitimateShellEscapesAreNotTreatedAsObfuscation() {
+    QFETCH(QString, command);
+    QVERIFY2(!sak::ai::commandLooksObfuscated(command), qPrintable(command));
+    QVERIFY2(!sak::ai::commandLooksCatastrophic(command), qPrintable(command));
 }
 
 void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag() {
