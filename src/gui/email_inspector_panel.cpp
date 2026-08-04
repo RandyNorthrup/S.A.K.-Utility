@@ -1105,17 +1105,24 @@ void EmailInspectorPanel::onSearchTextChanged() {
     // Placeholder for debounced incremental search
 }
 
-uint64_t EmailInspectorPanel::itemIdForRow(int row) const {
+std::optional<uint64_t> EmailInspectorPanel::itemIdForRow(int row) const {
+    // Returns nullopt for "this row carries no id", never 0. A PST node id is never 0, but
+    // an MBOX message_index legitimately IS 0 for the first message in the file, so using 0
+    // as the not-found sentinel silently dropped that message from every checkbox-driven
+    // export.
     if (m_item_list == nullptr || row < 0 || row >= m_item_list->rowCount()) {
-        return 0;
+        return std::nullopt;
     }
     auto* subject_item = m_item_list->item(row, ColSubject);
     if (subject_item == nullptr) {
-        return 0;
+        return std::nullopt;
     }
     bool ok = false;
     const uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
-    return ok ? item_id : 0;
+    if (!ok) {
+        return std::nullopt;
+    }
+    return item_id;
 }
 
 void EmailInspectorPanel::setAllItemListChecks(bool checked) {
@@ -1175,9 +1182,8 @@ QVector<uint64_t> EmailInspectorPanel::checkedItemIds() const {
         if (select_item == nullptr || select_item->checkState() != Qt::Checked) {
             continue;
         }
-        const uint64_t item_id = itemIdForRow(row);
-        if (item_id != 0) {
-            ids.append(item_id);
+        if (const auto item_id = itemIdForRow(row)) {
+            ids.append(*item_id);
         }
     }
     return ids;
@@ -1543,13 +1549,19 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     m_item_list->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& msg = messages.at(visible_indices.at(row));
+        // Identify the row by the message's absolute index in the MBOX file, NOT by its
+        // position within this page's vector. visible_indices holds offsets into the
+        // current page after blank-message filtering, so on any page beyond the first --
+        // and on any page where a blank message was filtered out -- that offset addresses
+        // a different message than the user selected. Opening, exporting or saving
+        // attachments then acted on the wrong email.
+        const auto message_id = static_cast<uint64_t>(msg.message_index);
         m_item_list->setItem(row,
                              ColSelect,
-                             makeEmailSelectItem(static_cast<uint64_t>(visible_indices.at(row)),
-                                                 tr("Select email for export")));
+                             makeEmailSelectItem(message_id, tr("Select email for export")));
 
         auto* subject_cell = new QTableWidgetItem(msg.subject);
-        subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(visible_indices.at(row)));
+        subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(message_id));
         m_item_list->setItem(row, ColSubject, subject_cell);
 
         m_item_list->setItem(row, ColFrom, new QTableWidgetItem(msg.from));

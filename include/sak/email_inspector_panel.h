@@ -17,6 +17,7 @@
 #include <QWidget>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 
 class QCheckBox;
@@ -169,7 +170,9 @@ private:
     void setAllItemListChecks(bool checked);
     void updateItemListHeaderCheckState();
     [[nodiscard]] QVector<uint64_t> checkedItemIds() const;
-    [[nodiscard]] uint64_t itemIdForRow(int row) const;
+    /// Item id stored on a row, or nullopt when the row carries none. Not 0-as-sentinel:
+    /// an MBOX message_index of 0 is a valid first message.
+    [[nodiscard]] std::optional<uint64_t> itemIdForRow(int row) const;
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);

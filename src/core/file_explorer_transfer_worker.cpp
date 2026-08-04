@@ -101,6 +101,18 @@ bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferIte
         removeDestinationEntry(staged);  // best-effort partial cleanup
         return false;
     }
+    // A directory copy can report ok while still being INCOMPLETE: depth or entry limits,
+    // skipped reparse points and capped reads each set m_last_transfer_incomplete without
+    // failing the copy. Swapping such a tree over the destination and then deleting the
+    // set-aside original (step 4) would destroy complete data and replace it with a subset.
+    // Replace therefore requires wholeness, not merely success, before it lands.
+    if (m_last_transfer_incomplete) {
+        m_blockers.append(QStringLiteral("The replacement copy of %1 is incomplete, so it was "
+                                         "not swapped in; the original is unchanged.")
+                              .arg(transferItemName(item.destination_path)));
+        removeDestinationEntry(staged);
+        return false;
+    }
     // 2. Try to move the current occupant aside. Success means there WAS an occupant
     //    and we hold a rollback copy; failure means the path was vacant (occupant
     //    vanished since collision-resolve) OR the occupant is stuck -- both are handled
