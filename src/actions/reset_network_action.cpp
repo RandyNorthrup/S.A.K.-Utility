@@ -221,9 +221,12 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
             errors << "Winsock reset timed out";
         } else if (proc.exit_code != 0) {
             errors << QString("Winsock reset failed (exit %1)").arg(proc.exit_code);
+        } else {
+            // Only a SUCCESSFUL Winsock reset needs a reboot to take effect. A failed
+            // reset made no change, so do not claim a reboot is required for it.
+            m_requires_reboot = true;
         }
     }
-    m_requires_reboot = true;
 
     if (isCancelled()) {
         return false;

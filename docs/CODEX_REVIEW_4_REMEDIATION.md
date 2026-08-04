@@ -299,7 +299,7 @@ core-util (B2):
 gui/actions/elevated (B3):
 - [x] M-B3-10 network_diagnostic_panel.cpp:4658 FIXED (wave 13): onResetNetworkClicked now confirms (showQuestionLogged, default No) before the destructive reset.
 - [x] M-B3-11 diagnostic_benchmark_panel.cpp:1078 FIXED (wave 13): onQuickActionClicked confirms for the repairing "Verify System Files" action (SFC/DISM) before running.
-- [ ] M-B3-12 reset_network_action.cpp:224 reboot-required set even when Winsock failed; cancel leaves partial mutation unrolled.
+- [x] M-B3-12 reset_network_action.cpp:224 FIXED (wave 18, reboot part): m_requires_reboot is set only on a SUCCESSFUL Winsock reset, not unconditionally. Residual: cancel mid-reset still leaves partial mutation unrolled (rollback from the captured winsock backup) -- noted for a follow-on.
 - [x] M-B3-19 backup_bitlocker_keys_action.cpp:671 FIXED (wave 15): the cancel-cleanup lambda now checks removeRecursively(); if the partial backup dir cannot be removed it emits a FAILURE (plaintext keys may remain) instead of a clean cancel.
 - [ ] M-B3-20 backup_bitlocker_keys_action.cpp:323 detection returns {} on parse/query error -> "no BitLocker" == failure.
 - [ ] M-B3-22 optimize_power_settings_action.cpp:311 failed powercfg discovery -> hard-coded GUID fallback then mutates.
