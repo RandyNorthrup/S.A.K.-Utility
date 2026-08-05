@@ -302,6 +302,8 @@ QJsonObject BackupManifest::toJson() const {
     obj["filter_rules"] = filter_rules.toJson();
     obj["total_backup_size_bytes"] = static_cast<double>(total_backup_size_bytes);
     obj["manifest_checksum"] = manifest_checksum;
+    obj["compressed"] = compressed;
+    obj["encrypted"] = encrypted;
 
     QJsonArray wifiArray;
     for (const auto& w : wifi_profiles) {
@@ -350,6 +352,10 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.filter_rules = SmartFilter::fromJson(json["filter_rules"].toObject());
     manifest.total_backup_size_bytes = qint64FromJson(json, "total_backup_size_bytes");
     manifest.manifest_checksum = json["manifest_checksum"].toString();
+    // Absent in manifests written before per-file transforms existed, which were always
+    // verbatim copies - so false is the correct reading of an older backup, not a guess.
+    manifest.compressed = json["compressed"].toBool(false);
+    manifest.encrypted = json["encrypted"].toBool(false);
 
     QJsonArray wifiArray = json["wifi_profiles"].toArray();
     for (const auto& val : wifiArray) {

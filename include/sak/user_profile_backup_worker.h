@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/backup_file_codec.h"
 #include "sak/permission_manager.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
@@ -20,18 +21,16 @@ namespace sak {
  * Copies selected user profile files/folders to backup destination
  * with smart filtering, permission handling, and progress reporting.
  *
- * This worker copies files verbatim. It has never compressed or encrypted
- * anything, so the compression_level / encrypt / password options were removed
- * along with the wizard controls that fed them: the wizard collected a password
- * twice, logged "Encryption: Enabled (AES-256)", and then the run aborted with
- * "Encrypted backup is not supported", while the compression box defaulted to
- * Balanced and produced an uncompressed copy on every default run. Advertising
- * either one is worse than not offering it.
+ * Compression and encryption are applied PER FILE as it is copied, through
+ * backup_file_codec, so memory stays constant on a multi-gigabyte profile and
+ * the directory tree survives for selective restore. Both are off by default: a
+ * default run still produces verbatim copies.
  *
- * UserDataManager DOES implement both for application-data backups. Bringing
- * them here means an archive format the restore side can read, a password
- * prompt in the restore wizard, and extract-to-temp-then-wipe so selective
- * folder restore keeps working - a real feature, not a checkbox. See R5-G19-1.
+ * Neither option is ever partially honoured. Encryption without a password
+ * fails the run instead of writing plaintext, and the log reports only what was
+ * actually applied - the wizard used to collect a password, log
+ * "Encryption: Enabled (AES-256)", and then abort with "Encrypted backup is not
+ * supported" (R5-G19-1).
  */
 class UserProfileBackupWorker : public QThread {
     Q_OBJECT
@@ -43,6 +42,17 @@ public:
     /// @brief Options controlling backup behavior
     struct BackupOptions {
         PermissionMode permission_mode{PermissionMode::StripAll};
+
+        /// Compress each file's content with zlib as it is copied. Off by default: the
+        /// old wizard defaulted this ON and then wrote uncompressed copies, so every
+        /// default run misreported what it had done.
+        bool compress{false};
+        int compression_level{kBackupDefaultCompressionLevel};  // 1-9
+
+        /// Encrypt each file's content with AES-256. Requires a non-empty password;
+        /// the worker refuses the run rather than writing plaintext (see startBackup).
+        bool encrypt{false};
+        QString password;
     };
 
     /**
@@ -142,6 +152,11 @@ private:
                       const QString& sourcePath,
                       const QString& destPath);
     bool copyFileWithFiltering(const QString& sourcePath, const QString& destPath, qint64 fileSize);
+
+    /// @brief Write one file to the backup: a verbatim copy, or a codec container when
+    /// compression or encryption is on. The single point where the transform is applied.
+    bool storeFile(const QString& sourcePath, const QString& destPath);
+
     bool applyPermissions(const QString& filePath);
 
     // Helper functions
@@ -173,6 +188,8 @@ private:
     QString m_destinationPath;
     SmartFilter m_smartFilter;
     PermissionMode m_permissionMode{PermissionMode::StripAll};
+    /// Empty of both transforms means a verbatim copy, which is the default path.
+    BackupCodecOptions m_codec;
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

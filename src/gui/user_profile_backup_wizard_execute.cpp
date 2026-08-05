@@ -391,7 +391,15 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
                 worker->deleteLater();
             });
 
-    const UserProfileBackupWorker::BackupOptions backup_options{permissionMode};
+    UserProfileBackupWorker::BackupOptions backup_options;
+    backup_options.permission_mode = permissionMode;
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
+        const BackupCodecOptions codec = wiz->getCodecOptions();
+        backup_options.compress = codec.compress;
+        backup_options.compression_level = codec.compression_level;
+        backup_options.encrypt = codec.encrypt;
+        backup_options.password = codec.password;
+    }
     worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
 
     m_overallProgress->setRange(0, m_users.size());

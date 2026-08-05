@@ -3613,6 +3613,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
         ../src/core/path_utils.cpp
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
+        ../src/core/backup_file_codec.cpp
+        ../src/core/encryption.cpp
+        ../src/core/secure_memory.cpp
         ../include/sak/elevated_task_dispatcher.h
         ../include/sak/permission_manager.h
         ../include/sak/user_profile_backup_worker.h
@@ -3623,7 +3626,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_mixed_tier_operations PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
     )
     target_include_directories(test_mixed_tier_operations PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -4700,13 +4703,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
         ../src/core/process_runner.cpp
         ../include/sak/process_runner.h
         ../src/core/logger.cpp
+        ../src/core/backup_file_codec.cpp
+        ../include/sak/backup_file_codec.h
+        ../src/core/encryption.cpp
+        ../src/core/secure_memory.cpp
     )
     set_target_properties(test_user_profile_restore_worker PROPERTIES
         AUTOMOC ON
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_profile_restore_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
     )
     target_include_directories(test_user_profile_restore_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -5000,13 +5007,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
         ../include/sak/elevation_manager.h
         ../src/core/path_utils.cpp
         ../src/core/logger.cpp
+        ../src/core/backup_file_codec.cpp
+        ../src/core/encryption.cpp
+        ../src/core/secure_memory.cpp
     )
     set_target_properties(test_user_profile_backup_worker PROPERTIES
         AUTOMOC ON
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_profile_backup_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
     )
     target_include_directories(test_user_profile_backup_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

@@ -23,9 +23,9 @@
 namespace sak {
 
 namespace {
-// kBackupWorkerMaxCompressionLevel was removed with the assert that was its only
-// use. Range-checking a value this worker deliberately ignores (it copies files
-// verbatim and says so at run()) validated nothing.
+// The compression level is range-checked where it is USED, by the codec, which refuses
+// anything outside 1-9 rather than clamping. A duplicate check here would be a second
+// place to keep in step with zlib.
 constexpr int kBackupSizeDisplayPrecision = 2;
 constexpr int kProgressEmitFileInterval = 100;
 constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
@@ -78,6 +78,16 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
         return;
     }
 
+    // Refuse BEFORE starting rather than aborting mid-run. Encryption with no password is
+    // the one case that must never degrade to a plaintext copy, and refusing here means
+    // the technician is told while they can still fix it.
+    if (options.encrypt && options.password.isEmpty()) {
+        Q_EMIT logMessage(tr("Encryption was requested without a password; backup not started"),
+                          true);
+        Q_EMIT backupComplete(false, tr("Encryption requires a password"), manifest);
+        return;
+    }
+
     QMutexLocker locker(&m_mutex);
 
     m_manifest = manifest;
@@ -85,6 +95,12 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_destinationPath = destinationPath;
     m_smartFilter = smartFilter;
     m_permissionMode = options.permission_mode;
+    m_codec.compress = options.compress;
+    m_codec.compression_level = options.compression_level;
+    m_codec.encrypt = options.encrypt;
+    m_codec.password = options.password;
+    m_manifest.compressed = options.compress;
+    m_manifest.encrypted = options.encrypt;
 
     m_cancelled = false;
     m_bytesCopied = 0;
@@ -124,9 +140,17 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
     Q_EMIT logMessage(tr("Users to backup: %1").arg(m_users.size()), false);
 
-    // The encryption refusal and the "compression is not applied" note that used to sit
-    // here are gone with the wizard controls that caused them: this worker copies files
-    // verbatim, and nothing now claims otherwise.
+    // Report only what is actually applied. The old wizard logged "Encryption: Enabled
+    // (AES-256)" and then refused to encrypt, and logged a compression level it never
+    // used; these lines are emitted from the same options the codec is driven by.
+    Q_EMIT logMessage(m_codec.compress
+                          ? tr("Compression: zlib level %1").arg(m_codec.compression_level)
+                          : tr("Compression: off"),
+                      false);
+    Q_EMIT logMessage(m_codec.encrypt ? tr("Encryption: AES-256 per file (file names and sizes "
+                                           "remain visible)")
+                                      : tr("Encryption: off"),
+                      false);
 
     // Validate inputs
     if (!validateSourcePaths()) {
@@ -441,9 +465,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
         return false;
     }
 
-    // Copy the file
-    if (!QFile::copy(sourcePath, destPath)) {
-        Q_EMIT logMessage(tr("Error copying file: %1").arg(sourcePath), true);
+    if (!storeFile(sourcePath, destPath)) {
         m_filesErrored++;
         return false;
     }
@@ -459,6 +481,34 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     updateProgress(fileSize);
 
     return true;
+}
+
+bool UserProfileBackupWorker::storeFile(const QString& sourcePath, const QString& destPath) {
+    if (m_codec.isPassThrough()) {
+        if (QFile::copy(sourcePath, destPath)) {
+            return true;
+        }
+        Q_EMIT logMessage(tr("Error copying file: %1").arg(sourcePath), true);
+        return false;
+    }
+
+    // Cancellation is polled inside the codec too, so a multi-gigabyte file does not have
+    // to finish before a Stop is noticed.
+    auto written = sak::writeBackupFile(sourcePath, destPath, m_codec, [this]() {
+        return m_cancelled.load();
+    });
+    if (written.has_value()) {
+        return true;
+    }
+    if (written.error() == sak::error_code::operation_cancelled) {
+        // Not an error to report per-file: run() emits the single cancelled outcome.
+        return false;
+    }
+    Q_EMIT logMessage(tr("Error writing file: %1 (%2)")
+                          .arg(sourcePath,
+                               QString::fromUtf8(sak::to_string(written.error()).data())),
+                      true);
+    return false;
 }
 
 bool UserProfileBackupWorker::applyPermissions(const QString& filePath) {

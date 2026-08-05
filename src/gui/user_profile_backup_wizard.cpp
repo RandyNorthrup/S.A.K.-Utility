@@ -82,6 +82,22 @@ PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     }
 }
 
+BackupCodecOptions UserProfileBackupWizard::getCodecOptions() const {
+    BackupCodecOptions options;
+    const auto* settings =
+        qobject_cast<const UserProfileBackupSettingsPage*>(page(Page_BackupSettings));
+    if (!settings) {
+        // Pass-through: a missing page must mean a verbatim copy, never a claim of
+        // protection the run would not deliver.
+        return options;
+    }
+    options.compress = settings->compressionEnabled();
+    options.compression_level = settings->compressionLevel();
+    options.encrypt = settings->encryptionEnabled();
+    options.password = settings->encryptionPassword();
+    return options;
+}
+
 // ============================================================================
 // UserProfileBackupWelcomePage
 // ============================================================================

@@ -1,10 +1,12 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/backup_file_codec.h"
 #include "sak/user_profile_backup_worker.h"
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -41,6 +43,11 @@ private Q_SLOTS:
     void backupMissingSelectedFolderReportsFailure();
     void backupExistingFolderReportsSuccess();
 
+    // -- R5-G19-1: the transforms must actually be applied, not just accepted --
+    void encryptedBackupStoresCiphertextAndRestoresIt();
+    void compressedBackupStoresContainerAndRestoresIt();
+    void encryptionWithoutPasswordRefusesToStart();
+
 private:
     struct BackupOutcome {
         std::atomic<bool> done{false};
@@ -59,6 +66,12 @@ private:
                                const QString& profilePath,
                                const sak::FolderSelection& folder,
                                const QString& destPath);
+    /// Same, with explicit transform options.
+    static BackupRun runBackupWith(UserProfileBackupWorker& worker,
+                                   const QString& profilePath,
+                                   const sak::FolderSelection& folder,
+                                   const QString& destPath,
+                                   const UserProfileBackupWorker::BackupOptions& options);
 };
 
 TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
@@ -66,6 +79,17 @@ TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
     const QString& profilePath,
     const sak::FolderSelection& folder,
     const QString& destPath) {
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;  // no ACL ops in the test
+    return runBackupWith(worker, profilePath, folder, destPath, options);
+}
+
+TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackupWith(
+    UserProfileBackupWorker& worker,
+    const QString& profilePath,
+    const sak::FolderSelection& folder,
+    const QString& destPath,
+    const UserProfileBackupWorker::BackupOptions& options) {
     UserProfile user;
     user.username = QStringLiteral("tester");
     user.profile_path = profilePath;
@@ -87,8 +111,6 @@ TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
         },
         Qt::DirectConnection);
 
-    UserProfileBackupWorker::BackupOptions options;
-    options.permission_mode = PermissionMode::PreserveOriginal;  // no ACL ops in the test
     worker.startBackup(BackupManifest{}, {user}, destPath, SmartFilter{}, options);
 
     // QTRY macros cannot return a value from a static helper; poll then join.
@@ -152,6 +174,147 @@ void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
     QFile copiedFile(copied);
     QVERIFY(copiedFile.open(QIODevice::ReadOnly));
     QCOMPARE(copiedFile.readAll(), QByteArray("hello"));
+}
+
+// ============================================================================
+// R5-G19-1: the transforms are applied, not merely accepted
+// ============================================================================
+
+namespace {
+
+/// Build a one-file profile whose content is a marker that must not survive in
+/// cleartext once encryption is on. Returns the marker.
+QByteArray seedProfile(const QString& profileRoot) {
+    const QByteArray marker = "PROFILE-SECRET-abcdefghijklmnopqrstuvwxyz-0123456789";
+    QByteArray content;
+    for (int i = 0; i < 200; ++i) {
+        content.append(marker);
+    }
+    if (!QDir(profileRoot).mkpath(QStringLiteral("Documents"))) {
+        return {};
+    }
+    QFile file(QDir(profileRoot).filePath(QStringLiteral("Documents/secret.txt")));
+    if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size()) {
+        return {};
+    }
+    file.close();
+    return content;
+}
+
+sak::FolderSelection documentsSelection() {
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    return folder;
+}
+
+QByteArray readAllBytes(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return file.readAll();
+}
+
+}  // namespace
+
+void TestUserProfileBackupWorker::encryptedBackupStoresCiphertextAndRestoresIt() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    const QByteArray original = seedProfile(srcDir.path());
+    QVERIFY(!original.isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.encrypt = true;
+    options.password = QStringLiteral("profile_backup_pw");
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    const QString stored = destPath + QStringLiteral("/tester/Documents/secret.txt");
+    QVERIFY2(QFile::exists(stored), qPrintable("Missing: " + stored));
+
+    // The defect this replaces was a run that reported AES-256 and wrote plaintext, so
+    // assert on the STORED BYTES, not on the log line.
+    const QByteArray storedBytes = readAllBytes(stored);
+    QVERIFY(!storedBytes.isEmpty());
+    QVERIFY2(!storedBytes.contains("PROFILE-SECRET"),
+             "the stored file still contains the plaintext marker");
+    QCOMPARE(sak::backupContainerKind(stored), sak::BackupContainerKind::Encrypted);
+
+    // ...and it is genuinely recoverable, which is what makes it a backup.
+    const QString restored = destParent.filePath(QStringLiteral("restored.txt"));
+    auto decoded = sak::readBackupFile(stored, restored, options.password);
+    QVERIFY2(decoded.has_value(), "the encrypted backup could not be decoded");
+    QCOMPARE(readAllBytes(restored), original);
+}
+
+void TestUserProfileBackupWorker::compressedBackupStoresContainerAndRestoresIt() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    const QByteArray original = seedProfile(srcDir.path());
+    QVERIFY(!original.isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.compress = true;
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    const QString stored = destPath + QStringLiteral("/tester/Documents/secret.txt");
+    QVERIFY(QFile::exists(stored));
+    QCOMPARE(sak::backupContainerKind(stored), sak::BackupContainerKind::Plain);
+
+    // A highly repetitive payload must actually get smaller: the removed version defaulted
+    // to "Balanced" and wrote a verbatim copy on every run.
+    QVERIFY2(QFileInfo(stored).size() < original.size() / 2,
+             "the compressed backup is not meaningfully smaller than the source");
+
+    const QString restored = destParent.filePath(QStringLiteral("restored.txt"));
+    auto decoded = sak::readBackupFile(stored, restored, QString());
+    QVERIFY(decoded.has_value());
+    QCOMPARE(readAllBytes(restored), original);
+}
+
+void TestUserProfileBackupWorker::encryptionWithoutPasswordRefusesToStart() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(!seedProfile(srcDir.path()).isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.encrypt = true;  // no password
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "the refusal must still report a terminal outcome");
+    QVERIFY2(!run.success, "encryption without a password must not report success");
+
+    // Fail closed: nothing may have been written, least of all a plaintext copy.
+    QVERIFY2(!QFile::exists(destPath + QStringLiteral("/tester/Documents/secret.txt")),
+             "a refused encrypted backup still wrote a file");
 }
 
 // ============================================================================

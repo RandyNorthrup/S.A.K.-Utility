@@ -242,6 +242,12 @@ struct BackupManifest {
     qint64 total_backup_size_bytes;
     QString manifest_checksum;
 
+    /// How the payload files were written. Restore needs these to know that a file is a
+    /// codec container and that a password will be required; the container magic is the
+    /// authority per file, and these are what let the UI say so before reading any file.
+    bool compressed{false};
+    bool encrypted{false};
+
     BackupManifest() : version("1.0"), backup_type("user_profiles"), total_backup_size_bytes(0) {}
 
     QJsonObject toJson() const;

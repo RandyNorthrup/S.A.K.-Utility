@@ -41,6 +41,10 @@ public:
         PermissionMode perm_mode;
         bool verify;
         bool create_backup;  // Save a recoverable copy before overwriting an existing file
+
+        /// Required to restore an encrypted backup. The worker refuses the run rather
+        /// than restoring the encrypted bytes as if they were file content.
+        QString password;
     };
 
     /// @brief WiFi/Ethernet/AppData selections forwarded from the restore wizard's
@@ -259,6 +263,7 @@ private:
     PermissionMode m_permissionMode{PermissionMode::StripAll};
     bool m_verify{false};
     bool m_createBackup{false};
+    QString m_password;
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

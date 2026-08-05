@@ -40,6 +40,13 @@ namespace sak {
 
 namespace {
 
+/// Short enough not to be a nuisance on a technician's bench, long enough that the
+/// PBKDF2 work factor is doing real work rather than covering a 4-character password.
+constexpr int kMinBackupPasswordLength = 8;
+/// zlib's ends of the range; the middle entry uses the codec's own default.
+constexpr int kCompressionLevelFastest = 1;
+constexpr int kCompressionLevelSmallest = 9;
+
 constexpr int kUserFolderColumnName = 0;
 constexpr int kUserFolderColumnFolders = 1;
 constexpr int kUserFolderColumnCount = 2;
@@ -594,14 +601,116 @@ void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     // verbatim copy. UserProfileBackupWorker has never compressed anything. See R5-G19-1.
 }
 
+void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
+    Q_ASSERT(layout);
+
+    // Compression. OFF by default: the version of this page removed in R5-G19-1 defaulted
+    // to "Balanced" and then wrote uncompressed copies, so every default run misreported
+    // what it had done. An opt-in that is actually applied is the fix, not a better default.
+    m_compressCheck = new QCheckBox(tr("Compress file contents"), this);
+    m_compressCheck->setToolTip(
+        tr("Stores each file compressed. Smaller backups, slower to write and restore."));
+    layout->addWidget(m_compressCheck);
+
+    auto* levelLayout = new QHBoxLayout();
+    levelLayout->addWidget(new QLabel(tr("Compression level:"), this));
+    m_compressionLevelCombo = new QComboBox(this);
+    m_compressionLevelCombo->addItem(tr("Fastest"), kCompressionLevelFastest);
+    m_compressionLevelCombo->addItem(tr("Balanced"), sak::kBackupDefaultCompressionLevel);
+    m_compressionLevelCombo->addItem(tr("Smallest"), kCompressionLevelSmallest);
+    m_compressionLevelCombo->setCurrentIndex(1);
+    m_compressionLevelCombo->setEnabled(false);
+    levelLayout->addWidget(m_compressionLevelCombo, 1);
+    layout->addLayout(levelLayout);
+
+    // Encryption. The controls are created BEFORE the toggle handler that enables them:
+    // the removed version captured m_passwordEdit in a lambda ten lines before it existed.
+    m_encryptCheck = new QCheckBox(tr("Encrypt file contents (AES-256)"), this);
+    layout->addWidget(m_encryptCheck);
+
+    m_passwordEdit = new QLineEdit(this);
+    m_passwordEdit->setEchoMode(QLineEdit::Password);
+    m_passwordEdit->setPlaceholderText(
+        tr("Password (at least %1 characters)").arg(kMinBackupPasswordLength));
+    m_passwordEdit->setEnabled(false);
+    layout->addWidget(m_passwordEdit);
+
+    m_passwordConfirmEdit = new QLineEdit(this);
+    m_passwordConfirmEdit->setEchoMode(QLineEdit::Password);
+    m_passwordConfirmEdit->setPlaceholderText(tr("Confirm password"));
+    m_passwordConfirmEdit->setEnabled(false);
+    layout->addWidget(m_passwordConfirmEdit);
+
+    // Say what encryption does NOT cover, where the choice is made. File names and sizes
+    // stay readable because the tree is preserved for selective restore; a technician
+    // deciding whether this is enough protection needs to know that here, not in a header.
+    auto* encryptNote = new QLabel(
+        tr("(i) File <b>contents</b> are encrypted. File <b>names</b>, folder structure and "
+           "file sizes remain visible. There is no password recovery - a lost password means "
+           "the backup cannot be restored."),
+        this);
+    encryptNote->setWordWrap(true);
+    encryptNote->setStyleSheet(
+        sak::ui::paddedTextStyle(sak::ui::kColorTextMuted, sak::ui::kSpacingSmall));
+    layout->addWidget(encryptNote);
+
+    connect(m_compressCheck, &QCheckBox::toggled, this, [this](const bool on) {
+        m_compressionLevelCombo->setEnabled(on);
+        updateSummary();
+    });
+    connect(m_encryptCheck, &QCheckBox::toggled, this, [this](const bool on) {
+        m_passwordEdit->setEnabled(on);
+        m_passwordConfirmEdit->setEnabled(on);
+        if (!on) {
+            m_passwordEdit->clear();
+            m_passwordConfirmEdit->clear();
+        }
+        updateSummary();
+    });
+}
+
+bool UserProfileBackupSettingsPage::compressionEnabled() const {
+    return m_compressCheck && m_compressCheck->isChecked();
+}
+
+int UserProfileBackupSettingsPage::compressionLevel() const {
+    return m_compressionLevelCombo ? m_compressionLevelCombo->currentData().toInt()
+                                   : sak::kBackupDefaultCompressionLevel;
+}
+
+bool UserProfileBackupSettingsPage::encryptionEnabled() const {
+    return m_encryptCheck && m_encryptCheck->isChecked();
+}
+
+QString UserProfileBackupSettingsPage::encryptionPassword() const {
+    // Never hand back a password for a run that is not encrypting: the worker treats a
+    // non-empty password as intent and would otherwise write containers unexpectedly.
+    return encryptionEnabled() && m_passwordEdit ? m_passwordEdit->text() : QString();
+}
+
+bool UserProfileBackupSettingsPage::validateEncryptionPassword() {
+    if (!encryptionEnabled()) {
+        return true;
+    }
+    const QString password = m_passwordEdit->text();
+    if (password.length() < kMinBackupPasswordLength) {
+        sak::showWarningLogged(this,
+                               tr("Password Too Short"),
+                               tr("The backup password must be at least %1 characters.")
+                                   .arg(kMinBackupPasswordLength));
+        return false;
+    }
+    if (password != m_passwordConfirmEdit->text()) {
+        sak::showWarningLogged(this,
+                               tr("Passwords Do Not Match"),
+                               tr("The password and its confirmation are different."));
+        return false;
+    }
+    return true;
+}
+
 void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    // The "Encrypt backup" checkbox and its two password fields used to sit here. They
-    // advertised AES-256, validated a password and its confirmation, and the run then
-    // aborted with "Encrypted backup is not supported" - this worker writes plaintext
-    // copies. Removed rather than left advertising a guarantee nothing delivered; the
-    // constructor ordering was also latently wrong, since the toggled lambda captured
-    // m_passwordEdit ten lines before it was created. See R5-G19-1.
 
     // Permission mode
     auto* permLayout = new QHBoxLayout();
@@ -661,6 +770,7 @@ void UserProfileBackupSettingsPage::setupUi() {
     layout->addWidget(instructionLabel);
 
     setupUi_destination(layout);
+    setupUi_transforms(layout);
     setupUi_permissions(layout);
     setupUi_summaryAndRegistration(layout);
 }
@@ -735,6 +845,9 @@ bool UserProfileBackupSettingsPage::validatePage() {
     Q_ASSERT(m_destinationEdit);
     // validateDestination() stores the screened destination in m_destinationPath.
     if (!validateDestination()) {
+        return false;
+    }
+    if (!validateEncryptionPassword()) {
         return false;
     }
 

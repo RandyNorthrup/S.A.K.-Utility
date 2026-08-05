@@ -6,6 +6,7 @@
 #endif
 #include "sak/user_profile_restore_worker.h"
 
+#include "sak/backup_file_codec.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
@@ -163,15 +164,29 @@ QString makeRestoreTempPath(const QString& finalDestPath, const QString& tag) {
 // swapped in, and restored if the swap fails, so no failure can lose the original
 // destination. When backupExisting is set, the original is also preserved to a
 // `.sakbak` recovery copy for user-visible undo.
+// Put the backup payload at `target`. A verbatim copy stays a copy; a codec container is
+// decoded (decompressed and/or decrypted). readBackupFile stages and verifies before it
+// publishes, so a wrong password or a corrupted container leaves no file at `target` --
+// which keeps the replace-by-rename logic below correct either way.
+bool materializeBackupPayload(const QString& source,
+                              const QString& target,
+                              const QString& password) {
+    if (backupContainerKind(source) == BackupContainerKind::None) {
+        return QFile::copy(source, target);
+    }
+    return readBackupFile(source, target, password).has_value();
+}
+
 bool copyFileReplacingExisting(const QString& source,
                                const QString& finalDestPath,
-                               bool backupExisting) {
+                               bool backupExisting,
+                               const QString& password) {
     if (!QFileInfo::exists(finalDestPath)) {
-        return QFile::copy(source, finalDestPath);
+        return materializeBackupPayload(source, finalDestPath, password);
     }
     const QString tempPath = makeRestoreTempPath(finalDestPath, QStringLiteral("restore"));
     QFile::remove(tempPath);
-    if (!QFile::copy(source, tempPath)) {
+    if (!materializeBackupPayload(source, tempPath, password)) {
         return false;
     }
     if (backupExisting && !createRestoreRecoveryCopy(finalDestPath)) {
@@ -247,6 +262,15 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
         return;
     }
 
+    // Refuse up front rather than failing file by file. Without the password every file
+    // would fail to decode, and the run would report hundreds of errors instead of the
+    // one thing that is actually wrong.
+    if (manifest.encrypted && config.password.isEmpty()) {
+        Q_EMIT logMessage(tr("This backup is encrypted; a password is required"), true);
+        Q_EMIT restoreComplete(false, tr("A password is required to restore this backup"));
+        return;
+    }
+
     QMutexLocker locker(&m_mutex);
 
     m_backupPath = backupPath;
@@ -259,6 +283,7 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     m_permissionMode = config.perm_mode;
     m_verify = config.verify;
     m_createBackup = config.create_backup;
+    m_password = config.password;
 
     m_cancelled = false;
     m_bytesRestored = 0;
@@ -657,7 +682,7 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 
     // Copy the file (atomically replacing an existing destination, if any). When
     // the safety option is on, the pre-restore file is saved to `.sakbak` first.
-    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup)) {
+    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup, m_password)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;

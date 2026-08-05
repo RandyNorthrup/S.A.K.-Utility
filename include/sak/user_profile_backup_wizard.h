@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/backup_file_codec.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
 #include "sak/windows_user_scanner.h"
@@ -85,6 +86,15 @@ public:
      * @return the selected PermissionMode, or StripAll (safest) if unset/invalid.
      */
     PermissionMode getPermissionMode() const;
+
+    /**
+     * @brief Per-file compression/encryption chosen on the settings page.
+     *
+     * Read from the page directly rather than through a registered wizard field: a
+     * QWizard field is readable by name from every page, and the encryption password
+     * should not be. Returns pass-through options if the page is not present.
+     */
+    [[nodiscard]] BackupCodecOptions getCodecOptions() const;
 
     /** @brief Get/set installed apps selected for backup */
     QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
@@ -374,6 +384,13 @@ public:
     void initializePage() override;
     bool validatePage() override;
 
+    /// @brief Per-file transforms chosen on this page, read by the execute page.
+    /// The password is only non-empty when encryption is actually enabled.
+    [[nodiscard]] bool compressionEnabled() const;
+    [[nodiscard]] int compressionLevel() const;
+    [[nodiscard]] bool encryptionEnabled() const;
+    [[nodiscard]] QString encryptionPassword() const;
+
 private Q_SLOTS:
     void onBrowseDestination();
     void updateSummary();
@@ -381,7 +398,10 @@ private Q_SLOTS:
 private:
     void setupUi();
     void setupUi_destination(QVBoxLayout* layout);
+    void setupUi_transforms(QVBoxLayout* layout);
     void setupUi_permissions(QVBoxLayout* layout);
+    /// @brief Refuse a mismatched or too-short password; true when the run may proceed.
+    bool validateEncryptionPassword();
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
     /// @brief Screen the typed destination and store the accepted form in m_destinationPath
     /// @return false (with a refusal dialog) for blank, relative, or source-overlapping paths
@@ -398,6 +418,12 @@ private:
     QComboBox* m_permissionModeCombo{nullptr};
     QCheckBox* m_verifyCheck{nullptr};
     QLabel* m_summaryLabel{nullptr};
+
+    QCheckBox* m_compressCheck{nullptr};
+    QComboBox* m_compressionLevelCombo{nullptr};
+    QCheckBox* m_encryptCheck{nullptr};
+    QLineEdit* m_passwordEdit{nullptr};
+    QLineEdit* m_passwordConfirmEdit{nullptr};
 };
 
 /**
