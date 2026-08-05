@@ -330,7 +330,6 @@ AppActionResult exportMbox(const QJsonObject& args) {
     }
 
     EmailExportConfig config;
-    config.format = *format;
     config.output_path = output_path;
     config.item_ids = item_ids;
 
@@ -502,7 +501,6 @@ AppActionResult exportPst(const QJsonObject& args) {
     }
 
     EmailExportConfig config;
-    config.format = *format;
     config.output_path = output_path;
     config.item_ids = item_ids;
     // No explicit item_ids => export the WHOLE store. PST enumeration is folder-based, so seed
@@ -3064,63 +3062,29 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
 // ---------------------------------------------------------------------------
 // email.convert_ost
 // ---------------------------------------------------------------------------
-// Convert an OST/PST mail store to a folder of files, driving the app's OWN OstConversionWorker
-// (the OST Converter feature). The source is read through the fan-out-hardened PstParser; the
-// worker sanitizes each folder segment (sanitizeFolderSegment) so a crafted folder name cannot
-// escape the output root, and writes only into the required-new/empty output_directory. Every
-// output format is a local file format -- the converter has no network egress path at all.
-// Mutating, not destructive (adds files into a new/empty dir), no elevation.
+// Convert an OST/PST mail store into an MBOX mailbox another mail client can import, driving
+// the app's OWN OstConversionWorker (the OST Converter feature). The source is read through the
+// fan-out-hardened PstParser; the worker sanitizes each folder segment (sanitizeFolderSegment)
+// so a crafted folder name cannot escape the output root, and writes only into the
+// required-new/empty output_directory. MBOX is a local file format -- the converter has no
+// network egress path at all. Mutating, not destructive (adds files into a new/empty dir), no
+// elevation.
+//
+// There is no format argument: per-message output (EML, HTML, Text, PDF, CSV) is the Email
+// Inspector's job and is reached through email.export_pst, so the two do not overlap.
 
 // Bound the OST/PST size a headless conversion will open (PstParser parses all node metadata up
 // front; larger stores use the GUI). Matches the export cap.
 constexpr qint64 kMaxConvertSourceBytes = 2LL * 1024 * 1024 * 1024;
 
-// Every output format the converter knows, gated or not.
-struct ConvertFormatName {
-    QLatin1String name;
-    OstOutputFormat format;
-};
-constexpr std::array<ConvertFormatName, 5> kConvertFormats{
-    {{QLatin1String("eml"), OstOutputFormat::Eml},
-     {QLatin1String("msg"), OstOutputFormat::Msg},
-     {QLatin1String("mbox"), OstOutputFormat::Mbox},
-     {QLatin1String("html"), OstOutputFormat::Html},
-     {QLatin1String("pdf"), OstOutputFormat::Pdf}}};
-
-// Map the model-facing format string to an OstOutputFormat, or nullopt for any unknown value.
-// Gated-off formats still MAP here so the refusal below can name the real reason instead of
-// blaming an unrecognized value.
-std::optional<OstOutputFormat> convertFormatFromArg(const QString& value) {
-    const QString v = value.trimmed().toLower();
-    for (const auto& entry : kConvertFormats) {
-        if (v == entry.name) {
-            return entry.format;
-        }
-    }
-    return std::nullopt;
-}
-
-// The formats a caller may actually ask for, derived from isOutputFormatSupported so the schema
-// and the error messages cannot drift from the gate that enforces them.
-QStringList supportedConvertFormatNames() {
-    QStringList names;
-    for (const auto& entry : kConvertFormats) {
-        if (isOutputFormatSupported(entry.format)) {
-            names.append(QString(entry.name));
-        }
-    }
-    return names;
-}
-
 // Map a completed conversion into the tool result. Honest: a hard error (folder read / open
 // failure, captured in result.errors) is a failure; otherwise success requires at least one item
 // written, and any per-item failures are surfaced in the message + payload (never hidden).
 AppActionResult buildConvertResult(const OstConversionResult& result,
-                                   const QString& format,
                                    const QString& output_dir,
                                    const QString& error_text) {
     QJsonObject data{{QStringLiteral("output_directory"), output_dir},
-                     {QStringLiteral("format"), format.trimmed().toLower()},
+                     {QStringLiteral("format"), QStringLiteral("mbox")},
                      {QStringLiteral("items_converted"), result.items_converted},
                      {QStringLiteral("items_failed"), result.items_failed},
                      {QStringLiteral("items_recovered"), result.items_recovered},
@@ -3134,9 +3098,9 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
     // when nothing was written.
     const int error_count = static_cast<int>(result.errors.size());
     if (result.items_converted > 0) {
-        QString message = QStringLiteral("Converted %1 item(s) to %2 in %3")
+        QString message = QStringLiteral("Converted %1 item(s) to MBOX in %2")
                               .arg(result.items_converted)
-                              .arg(format.trimmed().toLower(), output_dir);
+                              .arg(output_dir);
         if (result.items_failed > 0 || error_count > 0) {
             message += QStringLiteral(" (%1 failed, %2 warning(s))")
                            .arg(result.items_failed)
@@ -3160,32 +3124,6 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
     return {false, QStringLiteral("Conversion failed: %1").arg(reason), data};
 }
 
-// Resolve the requested format or explain exactly why it cannot run. Split out of convertOst
-// to keep that function inside the length budget. The error type is the refusal itself, so
-// there is no way to fail without carrying the reason the caller must return.
-std::expected<OstOutputFormat, AppActionResult> resolveConvertFormat(const QString& requested) {
-    const std::optional<OstOutputFormat> format = convertFormatFromArg(requested);
-    if (!format) {
-        return std::unexpected(
-            AppActionResult{false,
-                            QStringLiteral("format must be one of %1")
-                                .arg(supportedConvertFormatNames().join(QLatin1Char('/'))),
-                            {}});
-    }
-    // Refuse gated-off formats up front with a precise reason instead of letting the worker
-    // attempt and fail: the PST/MSG/DBX writers are not spec-conformant, so their output
-    // cannot be opened by any reader (B7-12).
-    if (!isOutputFormatSupported(*format)) {
-        return std::unexpected(AppActionResult{
-            false,
-            QStringLiteral("%1 output is not supported (no spec-conformant writer); use %2")
-                .arg(requested.trimmed().toLower(),
-                     supportedConvertFormatNames().join(QStringLiteral(", "))),
-            {}});
-    }
-    return *format;
-}
-
 AppActionResult convertOst(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_dir = args.value(QStringLiteral("output_directory")).toString().trimmed();
@@ -3201,19 +3139,23 @@ AppActionResult convertOst(const QJsonObject& args) {
         return *error;
     }
 
-    const std::expected<OstOutputFormat, AppActionResult> format =
-        resolveConvertFormat(args.value(QStringLiteral("format")).toString());
-    if (!format) {
-        return format.error();
+    // A caller that still passes a format is refused rather than silently given MBOX. The
+    // parameter used to exist and accepted eml/html/pdf, so a model working from an older
+    // description would otherwise ask for PDF, receive an MBOX mailbox, and be told the
+    // conversion succeeded.
+    if (args.contains(QStringLiteral("format"))) {
+        return {false,
+                QStringLiteral("convert_ost no longer takes a format: it produces an MBOX "
+                               "mailbox. For per-message files (eml/html/text/pdf/csv) use "
+                               "email.export_pst."),
+                {}};
     }
 
     OstConversionConfig config;
-    config.format = *format;
     config.output_directory = output_dir;
     config.recover_deleted_items = args.value(QStringLiteral("recover_deleted")).toBool(false);
-    // Every other field keeps its default (no folder/sender filters, no PST split, preserve
-    // structure). No ImapServerConfig is populated; format != ImapUpload guarantees the worker
-    // never takes a network-upload path.
+    // Every other field keeps its default: no folder/sender/date filters, and one .mbox per
+    // source folder so the folder tree survives into the importing client.
 
     // OstConversionWorker::convert runs synchronously and emits conversionFinished inline on THIS
     // thread (open/writer-init failures too), so a direct connection captures the result without
@@ -3240,22 +3182,13 @@ AppActionResult convertOst(const QJsonObject& args) {
                 error_text.isEmpty() ? QStringLiteral("Conversion did not complete") : error_text,
                 {}};
     }
-    return buildConvertResult(
-        captured, args.value(QStringLiteral("format")).toString(), output_dir, error_text);
+    return buildConvertResult(captured, output_dir, error_text);
 }
 
 QJsonObject convertOstParamsSchema() {
-    // Advertise ONLY the formats whose writers can produce a file a reader can open. The enum
-    // used to list pst/msg/dbx as well, which told the model those conversions were available
-    // when every one of them is refused -- a schema that invites a call it can only fail.
-    QJsonArray format_values;
-    for (const QString& name : supportedConvertFormatNames()) {
-        format_values.append(name);
-    }
-    QJsonObject format_prop{{QStringLiteral("type"), QStringLiteral("string")},
-                            {QStringLiteral("enum"), format_values},
-                            {QStringLiteral("description"),
-                             QStringLiteral("Output format to convert the store into")}};
+    // No format parameter. The converter produces MBOX and nothing else, so an argument the
+    // caller could only set to one value would be noise -- and a format enum listing values
+    // the op refuses is exactly what this action used to get wrong.
     QJsonObject recover_prop{
         {QStringLiteral("type"), QStringLiteral("boolean")},
         {QStringLiteral("description"),
@@ -3265,15 +3198,12 @@ QJsonObject convertOstParamsSchema() {
         {QStringLiteral("path"),
          stringProp(QStringLiteral("Absolute path to the source OST or PST file"))},
         {QStringLiteral("output_directory"),
-         stringProp(QStringLiteral("New or empty directory to write the converted files into"))},
-        {QStringLiteral("format"), format_prop},
+         stringProp(QStringLiteral("New or empty directory to write the MBOX mailbox into"))},
         {QStringLiteral("recover_deleted"), recover_prop}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"), properties},
                        {QStringLiteral("required"),
-                        QJsonArray{QStringLiteral("path"),
-                                   QStringLiteral("output_directory"),
-                                   QStringLiteral("format")}},
+                        QJsonArray{QStringLiteral("path"), QStringLiteral("output_directory")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
 
@@ -3323,15 +3253,16 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
     save_pst_attach.params_schema = savePstAttachmentsParamsSchema();
     add(save_pst_attach, savePstAttachments);
 
-    // email.convert_ost: converts an OST/PST store to a directory of files via the app's OWN
+    // email.convert_ost: converts an OST/PST store to an MBOX mailbox via the app's OWN
     // OstConversionWorker. Reads through the fan-out-hardened PstParser; the worker sanitizes
-    // folder segments and writes only into the required-new/empty output_directory. Every format
-    // is a local file format. Only ADDS files -> mutating, not destructive; no elevation.
+    // folder segments and writes only into the required-new/empty output_directory. MBOX is a
+    // local file format. Only ADDS files -> mutating, not destructive; no elevation. For
+    // per-message files (eml/html/text/pdf/csv) use email.export_pst instead.
     AppActionDescriptor convert = mutatingDescriptor(
         QStringLiteral("email.convert_ost"),
-        QStringLiteral("Convert an OST/PST store"),
-        QStringLiteral("Convert an OST/PST mail store to a directory of readable files "
-                       "(eml/mbox/html/pdf)"),
+        QStringLiteral("Convert an OST/PST store to MBOX"),
+        QStringLiteral("Convert an OST/PST mail store into an MBOX mailbox another mail client "
+                       "can import"),
         QStringLiteral("email"));
     convert.params_schema = convertOstParamsSchema();
     add(convert, convertOst);

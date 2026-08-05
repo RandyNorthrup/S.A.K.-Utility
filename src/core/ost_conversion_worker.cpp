@@ -8,15 +8,11 @@
 
 #include "sak/deleted_item_scanner.h"
 #include "sak/email_types.h"
-#include "sak/eml_writer.h"
 #include "sak/error_codes.h"
-#include "sak/html_email_writer.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/mbox_writer.h"
-#include "sak/msg_writer.h"
 #include "sak/ost_converter_constants.h"
-#include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
 
 #include <QCryptographicHash>
@@ -54,18 +50,6 @@ QString sanitizeFolderSegment(const QString& raw) {
     return out;
 }
 
-/// Human-readable label for a gated-off output format, used in the error surfaced
-/// to the user when they somehow request one. MSG is the only one left; this helper
-/// goes away with the gate once its writer is spec-conformant.
-QString unsupportedFormatLabel(sak::OstOutputFormat format) {
-    switch (format) {
-    case sak::OstOutputFormat::Msg:
-        return QStringLiteral("MSG");
-    default:
-        return QStringLiteral("Selected");
-    }
-}
-
 }  // namespace
 
 namespace sak {
@@ -89,7 +73,6 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     OstConversionResult result;
     result.source_path = source_path;
-    result.format = config.format;
     result.started = QDateTime::currentDateTime();
 
     logInfo("OST Converter: starting conversion of {}", source_path.toStdString());
@@ -121,7 +104,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     // Abort before touching the source if the output writer could not be created,
     // so nothing is reported as converted into a writer that was never opened.
-    if (!initializeFormatWriters(config, source_path, result)) {
+    if (!initializeMboxWriter(config, source_path, result)) {
         result.finished = QDateTime::currentDateTime();
         Q_EMIT conversionFinished(result);
         return;
@@ -231,61 +214,26 @@ QString uniqueMboxSubdir(const QString& directory, const QString& base_name) {
 
 }  // namespace
 
-void OstConversionWorker::createPerItemWriter(const OstConversionConfig& config,
-                                              const QString& source_path) {
-    switch (config.format) {
-    case OstOutputFormat::Eml:
-        m_eml_writer = std::make_unique<EmlWriter>(config.output_directory,
-                                                   config.prefix_filename_with_date,
-                                                   config.preserve_folder_structure);
-        break;
-    case OstOutputFormat::Msg:
-        m_msg_writer = std::make_unique<MsgWriter>(config.output_directory,
-                                                   config.prefix_filename_with_date,
-                                                   config.preserve_folder_structure);
-        break;
-    case OstOutputFormat::Html:
-        m_html_writer = std::make_unique<HtmlEmailWriter>(config.output_directory,
-                                                          config.prefix_filename_with_date,
-                                                          config.preserve_folder_structure);
-        break;
-    case OstOutputFormat::Pdf:
-        m_pdf_writer = std::make_unique<PdfEmailWriter>(config.output_directory,
-                                                        config.prefix_filename_with_date,
-                                                        config.preserve_folder_structure);
-        break;
-    case OstOutputFormat::Mbox: {
-        // Isolate each source under its own subdirectory so concurrent/sequential
-        // MBOX jobs sharing one output directory never truncate mailbox.mbox.
-        const QString sub = uniqueMboxSubdir(config.output_directory,
-                                             QFileInfo(source_path).completeBaseName());
-        m_mbox_writer = std::make_unique<MboxWriter>(
-            config.output_directory + QStringLiteral("/") + sub, config.one_mbox_per_folder);
-        break;
-    }
-    }
-}
-
-bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
-                                                  const QString& source_path,
-                                                  OstConversionResult& result) {
+bool OstConversionWorker::initializeMboxWriter(const OstConversionConfig& config,
+                                               const QString& source_path,
+                                               OstConversionResult& result) {
     m_mbox_writer.reset();
-    m_eml_writer.reset();
-    m_msg_writer.reset();
-    m_html_writer.reset();
-    m_pdf_writer.reset();
 
-    // MSG's writer emits a broken CFB directory tree, so it can only produce files no
-    // reader can open. Reject once here rather than writing per-message garbage.
-    if (!isOutputFormatSupported(config.format)) {
-        const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
-                                .arg(unsupportedFormatLabel(config.format));
+    if (config.output_directory.trimmed().isEmpty()) {
+        // Refuse rather than construct a writer rooted at the process working directory,
+        // which would scatter mailbox files somewhere the technician never chose.
+        const QString msg = QStringLiteral("No output directory was set for the conversion");
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
         return false;
     }
 
-    createPerItemWriter(config, source_path);
+    // Isolate each source under its own subdirectory so concurrent/sequential MBOX jobs
+    // sharing one output directory never truncate each other's mailbox.mbox.
+    const QString sub = uniqueMboxSubdir(config.output_directory,
+                                         QFileInfo(source_path).completeBaseName());
+    m_mbox_writer = std::make_unique<MboxWriter>(
+        config.output_directory + QStringLiteral("/") + sub, config.one_mbox_per_folder);
     return true;
 }
 
@@ -315,25 +263,6 @@ void OstConversionWorker::processFolderTree(PstParser* parser,
     }
 }
 
-bool OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
-                                            PstParser* parser,
-                                            const QString& folder_path,
-                                            const OstConversionConfig& config,
-                                            OstConversionResult& result) {
-    switch (config.format) {
-    case OstOutputFormat::Eml:
-        return writeItemEml(item, parser, folder_path, config, result);
-    case OstOutputFormat::Msg:
-        return writeItemMsg(item, parser, folder_path, config, result);
-    case OstOutputFormat::Mbox:
-        return writeItemMbox(item, parser, folder_path, config, result);
-    case OstOutputFormat::Html:
-        return writeItemHtml(item, parser, folder_path, config, result);
-    case OstOutputFormat::Pdf:
-        return writeItemPdf(item, parser, folder_path, config, result);
-    }
-    return true;
-}
 
 void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary,
                                               PstParser* parser,
@@ -368,7 +297,7 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
 
     // Count exactly one outcome per item: the writers already increment
     // items_failed on failure, so items_converted must only rise on success.
-    if (writeItemByFormat(detail, parser, folder_path, config, result)) {
+    if (writeItemMbox(detail, parser, folder_path, config, result)) {
         ++result.items_converted;
     }
 
@@ -522,75 +451,6 @@ bool OstConversionWorker::collectAttachments(const PstItemDetail& item,
     return complete;
 }
 
-bool OstConversionWorker::writeItemEml(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_eml_writer) {
-        ++result.items_failed;
-        result.errors.append("EML writer not initialized for: " + item.subject);
-        return false;
-    }
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    auto write_result = m_eml_writer->writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write EML for: " + item.subject);
-        return false;
-    }
-
-    // The writer persists across the run, so its byte count is cumulative: assign
-    // it rather than add a per-message delta.
-    result.bytes_written = m_eml_writer->totalBytesWritten();
-    return true;
-}
-
-bool OstConversionWorker::writeItemMsg(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_msg_writer) {
-        ++result.items_failed;
-        result.errors.append("MSG writer not initialized for: " + item.subject);
-        return false;
-    }
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    // Get all MAPI properties for forensic-grade export
-    QVector<MapiProperty> all_props;
-    auto props_result = parser->readItemProperties(item.node_id);
-    if (props_result.has_value()) {
-        all_props = props_result.value();
-    }
-
-    auto write_result = m_msg_writer->writeMessage(item, all_props, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write MSG for: " + item.subject);
-        return false;
-    }
-
-    result.bytes_written = m_msg_writer->totalBytesWritten();
-    return true;
-}
-
 bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
                                         PstParser* parser,
                                         const QString& folder_path,
@@ -620,66 +480,6 @@ bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
     // The writer persists across the run, so its byte count is cumulative: assign
     // it rather than add a per-message delta (which would triangular-overcount).
     result.bytes_written = m_mbox_writer->totalBytesWritten();
-    return true;
-}
-
-bool OstConversionWorker::writeItemHtml(const PstItemDetail& item,
-                                        PstParser* parser,
-                                        const QString& folder_path,
-                                        const OstConversionConfig& config,
-                                        OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_html_writer) {
-        ++result.items_failed;
-        result.errors.append("HTML writer not initialized for: " + item.subject);
-        return false;
-    }
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    auto write_result = m_html_writer->writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write HTML for: " + item.subject);
-        return false;
-    }
-
-    result.bytes_written = m_html_writer->totalBytesWritten();
-    return true;
-}
-
-bool OstConversionWorker::writeItemPdf(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_pdf_writer) {
-        ++result.items_failed;
-        result.errors.append("PDF writer not initialized for: " + item.subject);
-        return false;
-    }
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    auto write_result = m_pdf_writer->writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write PDF for: " + item.subject);
-        return false;
-    }
-
-    result.bytes_written = m_pdf_writer->totalBytesWritten();
     return true;
 }
 
@@ -762,7 +562,7 @@ void OstConversionWorker::processRecoveredItems(PstParser* parser,
 
         // Only count a recovered item once it was actually written; a failed
         // write already increments items_failed inside the writer.
-        if (writeItemByFormat(item, parser, recovery_folder, config, result)) {
+        if (writeItemMbox(item, parser, recovery_folder, config, result)) {
             ++result.items_recovered;
         }
 

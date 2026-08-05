@@ -22,52 +22,6 @@ namespace sak {
 inline constexpr int kDefaultOstConversionThreads = 2;
 
 // ============================================================================
-// Output Format
-// ============================================================================
-
-/// @brief Output format for OST/PST conversion.
-///
-/// This tab READS an OST or PST store and converts it to portable, readable
-/// formats. Writing a PST or an OST back out is deliberately not in scope, so
-/// there is no Pst entry here -- reading a .pst source is PstParser's job and is
-/// unaffected. DBX (Outlook Express) and direct IMAP upload were removed for the
-/// same reason: the first is an obsolete format nobody converts TO, the second is
-/// server migration rather than file conversion.
-enum class OstOutputFormat {
-    Eml,   ///< RFC 5322 MIME .eml files (one per message)
-    Msg,   ///< MS-OXMSG compound files (one per message)
-    Mbox,  ///< Unix mbox format (one file per folder)
-    Html,  ///< HTML pages with embedded images
-    Pdf    ///< PDF via QTextDocument/QPdfWriter
-};
-
-/// @brief True when the format's writer emits files a real reader can open.
-///
-/// MSG is the last entry that can return false: its writer emits a broken CFB
-/// directory tree with no mini-stream allocation, so Outlook cannot open the
-/// result. Once a spec-conformant MS-OXMSG writer lands, every format is
-/// supported and this function -- along with the "not supported" labelling it
-/// drives in the picker -- is deleted rather than left as a permanent home for
-/// half-finished formats.
-///
-/// Single source of truth shared by the worker (which rejects unsupported formats
-/// before touching the source), the GUI (which disables them in the format
-/// picker) and the headless email.convert_ost action (which derives its advertised
-/// format enum from it).
-inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
-    switch (format) {
-    case OstOutputFormat::Eml:
-    case OstOutputFormat::Mbox:
-    case OstOutputFormat::Html:
-    case OstOutputFormat::Pdf:
-        return true;
-    case OstOutputFormat::Msg:
-        return false;
-    }
-    return false;
-}
-
-// ============================================================================
 // Recovery Mode
 // ============================================================================
 
@@ -117,11 +71,12 @@ struct OstConversionJob {
 // ============================================================================
 
 /// @brief Global conversion configuration
+///
+/// There is no output format here. The converter has exactly one job -- turn an OST
+/// or PST store into an MBOX mailbox another mail client can import. Per-message
+/// output (EML, HTML, Text, PDF, CSV) is the Email Inspector's job, whole-store or
+/// per-folder, so the two do not overlap.
 struct OstConversionConfig {
-    // Output. Defaults to EML: it is the widest-compatibility format with a
-    // spec-conformant writer, so a convert launched without changing the format
-    // produces readable output.
-    OstOutputFormat format = OstOutputFormat::Eml;
     QString output_directory;
 
     // Threading
@@ -139,15 +94,11 @@ struct OstConversionConfig {
     RecoveryMode recovery_mode = RecoveryMode::Normal;
     bool recover_deleted_items = false;
 
-    // EML/MSG options
-    bool prefix_filename_with_date = true;
-    bool preserve_folder_structure = true;
-
-    // MBOX options
+    // MBOX options. One .mbox per source folder keeps the folder tree legible to the
+    // importing client; the alternative is a single mailbox.mbox holding everything.
     bool one_mbox_per_folder = true;
 
     // Reporting
-    bool generate_properties_manifest = false;
     bool generate_html_report = true;
     bool include_source_checksums = true;
 };
@@ -160,7 +111,6 @@ struct OstConversionConfig {
 struct OstConversionResult {
     QString source_path;
     QString output_path;
-    OstOutputFormat format = OstOutputFormat::Eml;
     int items_converted = 0;
     int items_failed = 0;
     int items_recovered = 0;  ///< Deleted items recovered

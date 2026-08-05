@@ -72,7 +72,6 @@ private Q_SLOTS:
     void onErrorOccurred(int file_index, QString message);
 
     // Format change
-    void onFormatChanged(int index);
 
     // Report
     void onViewReportClicked();
@@ -86,7 +85,6 @@ private:
     QWidget* createFileQueueSection();
     QWidget* createOutputSettingsSection();
     void addOutputFormatRow(QVBoxLayout* layout, QWidget* group);
-    void markUnsupportedFormats();
     void addOutputOptionsRow(QVBoxLayout* layout, QWidget* group);
     QWidget* createFilterSection();
     void addFilterDateRow(QVBoxLayout* layout);
@@ -113,11 +111,9 @@ private:
     QPushButton* m_clear_button{nullptr};
 
     // -- Output Settings Section ------------------------------------------
-    QComboBox* m_format_combo{nullptr};
     QLineEdit* m_output_dir_edit{nullptr};
     QPushButton* m_browse_button{nullptr};
-    QCheckBox* m_preserve_folders_check{nullptr};
-    QCheckBox* m_prefix_date_check{nullptr};
+    QCheckBox* m_mbox_per_folder_check{nullptr};
     QSpinBox* m_threads_spin{nullptr};
 
     // -- Filter Section ---------------------------------------------------

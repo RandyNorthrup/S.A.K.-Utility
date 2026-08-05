@@ -216,29 +216,9 @@ QWidget* OstConverterWidget::createFileQueueSection() {
 }
 
 void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group) {
-    auto* format_row = new QHBoxLayout();
-    format_row->setSpacing(ui::kSpacingSmall);
-    format_row->addWidget(new QLabel(tr("Format:"), group));
-
-    m_format_combo = new QComboBox(group);
-    m_format_combo->setAccessibleName(tr("Output format"));
-    m_format_combo->addItem(tr("EML (RFC 5322)"), static_cast<int>(OstOutputFormat::Eml));
-    m_format_combo->addItem(tr("MSG (MAPI Properties)"), static_cast<int>(OstOutputFormat::Msg));
-    m_format_combo->addItem(tr("MBOX (Unix Mailbox)"), static_cast<int>(OstOutputFormat::Mbox));
-    m_format_combo->addItem(tr("HTML (Web Pages)"), static_cast<int>(OstOutputFormat::Html));
-    m_format_combo->addItem(tr("PDF (Documents)"), static_cast<int>(OstOutputFormat::Pdf));
-    // The MSG writer is not spec-conformant yet (see isOutputFormatSupported): grey it out
-    // so a user cannot pick a format whose conversion is guaranteed to fail, and default to
-    // EML, which has a working writer.
-    markUnsupportedFormats();
-    m_format_combo->setCurrentIndex(
-        m_format_combo->findData(static_cast<int>(OstOutputFormat::Eml)));
-    m_format_combo->setToolTip(tr("Output format for converted emails"));
-    format_row->addWidget(m_format_combo);
-    format_row->addStretch(1);
-    layout->addLayout(format_row);
-
-    // Destination row
+    // No format picker. This tab converts a store to MBOX, the mailbox format other mail
+    // clients import; per-message output (EML, HTML, Text, PDF, CSV) is the Email Tools
+    // inspector's job, from its folder tree.
     auto* destination_row = new QHBoxLayout();
     destination_row->setSpacing(ui::kSpacingSmall);
     destination_row->addWidget(new QLabel(tr("Destination:"), group));
@@ -263,43 +243,22 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
     destination_row->addWidget(m_browse_button);
 
     layout->addLayout(destination_row);
-
-    connect(m_format_combo,
-            &QComboBox::currentIndexChanged,
-            this,
-            &OstConverterWidget::onFormatChanged);
-}
-
-void OstConverterWidget::markUnsupportedFormats() {
-    auto* model = qobject_cast<QStandardItemModel*>(m_format_combo->model());
-    if (model == nullptr) {
-        return;
-    }
-    for (int i = 0; i < m_format_combo->count(); ++i) {
-        const auto format = static_cast<OstOutputFormat>(m_format_combo->itemData(i).toInt());
-        if (isOutputFormatSupported(format)) {
-            continue;
-        }
-        m_format_combo->setItemText(i, m_format_combo->itemText(i) + tr(" - not supported"));
-        if (QStandardItem* item = model->item(i)) {
-            item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-        }
-    }
 }
 
 void OstConverterWidget::addOutputOptionsRow(QVBoxLayout* layout, QWidget* group) {
     auto* options_row = new QHBoxLayout();
     options_row->setSpacing(ui::kSpacingMedium);
 
-    m_preserve_folders_check = new QCheckBox(tr("Preserve folder structure"), group);
-    m_preserve_folders_check->setAccessibleName(tr("Preserve folder structure"));
-    m_preserve_folders_check->setChecked(true);
-    options_row->addWidget(m_preserve_folders_check);
-
-    m_prefix_date_check = new QCheckBox(tr("Prefix filenames with date"), group);
-    m_prefix_date_check->setAccessibleName(tr("Prefix filenames with date"));
-    m_prefix_date_check->setChecked(true);
-    options_row->addWidget(m_prefix_date_check);
+    // The one real MBOX choice, and until now it had no control at all: the config field
+    // existed and the writer honoured it, but nothing could set it, so every conversion ran
+    // on the default.
+    m_mbox_per_folder_check = new QCheckBox(tr("One MBOX file per folder"), group);
+    m_mbox_per_folder_check->setAccessibleName(tr("One MBOX file per folder"));
+    m_mbox_per_folder_check->setChecked(true);
+    m_mbox_per_folder_check->setToolTip(
+        tr("Write one .mbox per source folder, preserving the folder tree. Unchecked, the "
+           "whole store becomes a single mailbox.mbox."));
+    options_row->addWidget(m_mbox_per_folder_check);
 
     options_row->addStretch(1);
 
@@ -525,16 +484,6 @@ void OstConverterWidget::onCancelClicked() {
     setConvertingState(false);
 }
 
-void OstConverterWidget::onFormatChanged(int /*index*/) {
-    int format_val = m_format_combo->currentData().toInt();
-    auto format = static_cast<OstOutputFormat>(format_val);
-
-    // Only the per-message formats name each output file, so the date-prefix option is
-    // meaningless for the ones that write a single file per folder.
-    bool is_per_file = (format == OstOutputFormat::Eml || format == OstOutputFormat::Msg);
-    m_prefix_date_check->setVisible(is_per_file);
-}
-
 // ============================================================================
 // Slot Implementations -- Controller Signals
 // ============================================================================
@@ -652,7 +601,6 @@ void OstConverterWidget::setConvertingState(bool converting) {
     m_clear_button->setEnabled(!converting);
     m_convert_button->setEnabled(!converting);
     m_cancel_button->setEnabled(converting);
-    m_format_combo->setEnabled(!converting);
     m_browse_button->setEnabled(!converting);
     m_threads_spin->setEnabled(!converting);
     m_filter_group->setEnabled(!converting);
@@ -688,11 +636,9 @@ void OstConverterWidget::updateFilterControlsEnabled() {
 OstConversionConfig OstConverterWidget::buildConfig() const {
     OstConversionConfig config;
 
-    config.format = static_cast<OstOutputFormat>(m_format_combo->currentData().toInt());
+    config.one_mbox_per_folder = m_mbox_per_folder_check->isChecked();
     config.output_directory = m_output_dir_edit->text();
     config.max_threads = m_threads_spin->value();
-    config.preserve_folder_structure = m_preserve_folders_check->isChecked();
-    config.prefix_filename_with_date = m_prefix_date_check->isChecked();
     config.recover_deleted_items = m_recover_deleted_check->isChecked();
 
     // Recovery mode
@@ -776,8 +722,13 @@ void OstConverterWidget::loadSettings() {
     // the old "lastFormat" key now names a DIFFERENT format -- a saved DBX (4) would come
     // back as PDF. Read a new key instead and delete the old one, so a stale value restores
     // nothing rather than silently restoring the wrong format. Same for the IMAP fields,
-    // which described a feature that no longer exists.
+    // which described features that no longer exist. Every key here named a setting for a
+    // format the converter no longer produces, so leaving them would restore state for a
+    // control that is gone.
     for (const auto& stale : {QStringLiteral("lastFormat"),
+                              QStringLiteral("outputFormat"),
+                              QStringLiteral("preserveFolders"),
+                              QStringLiteral("prefixDate"),
                               QStringLiteral("imapHost"),
                               QStringLiteral("imapPort"),
                               QStringLiteral("imapSsl"),
@@ -786,23 +737,10 @@ void OstConverterWidget::loadSettings() {
         settings.remove(stale);
     }
 
-    // Restore by enum value, not row index, and never restore a gated-off format (a stale
-    // setting pointing at the disabled MSG item falls back to EML) so the picker never comes
-    // up on an unusable selection.
-    const auto saved_format = static_cast<OstOutputFormat>(
-        settings.value(QStringLiteral("outputFormat"), static_cast<int>(OstOutputFormat::Eml))
-            .toInt());
-    int format_index = m_format_combo->findData(static_cast<int>(
-        isOutputFormatSupported(saved_format) ? saved_format : OstOutputFormat::Eml));
-    if (format_index < 0) {
-        format_index = m_format_combo->findData(static_cast<int>(OstOutputFormat::Eml));
-    }
-    m_format_combo->setCurrentIndex(format_index);
+    m_mbox_per_folder_check->setChecked(
+        settings.value(QStringLiteral("mboxPerFolder"), true).toBool());
     m_threads_spin->setValue(
         settings.value(QStringLiteral("threads"), ost::kDefaultThreads).toInt());
-    m_preserve_folders_check->setChecked(
-        settings.value(QStringLiteral("preserveFolders"), true).toBool());
-    m_prefix_date_check->setChecked(settings.value(QStringLiteral("prefixDate"), true).toBool());
     m_filters_enabled_check->setChecked(
         settings.value(QStringLiteral("filtersEnabled"), false).toBool());
     m_recover_deleted_check->setChecked(
@@ -814,7 +752,6 @@ void OstConverterWidget::loadSettings() {
     settings.endGroup();
 
     // Trigger visibility updates
-    onFormatChanged(m_format_combo->currentIndex());
     updateFilterControlsEnabled();
 }
 
@@ -825,10 +762,8 @@ void OstConverterWidget::saveSettings() {
     settings.setValue(QStringLiteral("lastOutputDir"), m_output_dir_edit->text());
     // "outputFormat", not the old "lastFormat": see loadSettings -- the enum was renumbered,
     // so the old key's stored ints no longer mean what they did.
-    settings.setValue(QStringLiteral("outputFormat"), m_format_combo->currentData().toInt());
+    settings.setValue(QStringLiteral("mboxPerFolder"), m_mbox_per_folder_check->isChecked());
     settings.setValue(QStringLiteral("threads"), m_threads_spin->value());
-    settings.setValue(QStringLiteral("preserveFolders"), m_preserve_folders_check->isChecked());
-    settings.setValue(QStringLiteral("prefixDate"), m_prefix_date_check->isChecked());
     settings.setValue(QStringLiteral("filtersEnabled"), m_filters_enabled_check->isChecked());
     settings.setValue(QStringLiteral("recoverDeleted"), m_recover_deleted_check->isChecked());
     settings.setValue(QStringLiteral("deepRecovery"), m_deep_recovery_check->isChecked());

@@ -168,7 +168,6 @@ private Q_SLOTS:
 
         sak::OstConversionConfig config;
         config.output_directory = QStringLiteral("C:/output");
-        config.format = sak::OstOutputFormat::Eml;
 
         ctrl.startConversion(config);
         QVERIFY(!ctrl.isRunning());
@@ -249,7 +248,7 @@ private Q_SLOTS:
 
         sak::OstConversionConfig config;
         config.output_directory = temp.path();
-        config.format = sak::OstOutputFormat::Eml;
+
         config.max_threads = 4;  // spin up several worker threads at once
         ctrl.startConversion(config);
 
@@ -328,7 +327,7 @@ private Q_SLOTS:
 
         sak::OstConversionConfig config;
         config.output_directory = temp.path();
-        config.format = sak::OstOutputFormat::Eml;
+
         config.max_threads = 0;  // would launch zero workers without the clamp
 
         ctrl.startConversion(config);
@@ -362,7 +361,6 @@ private Q_SLOTS:
 
         sak::OstConversionConfig config;
         config.output_directory = temp.path();
-        config.format = sak::OstOutputFormat::Eml;
 
         constexpr int kBatchWaitMs = 15'000;
 

@@ -709,7 +709,6 @@ set(CORE_SOURCES
     src/core/ost_converter_controller.cpp
     src/core/ost_conversion_worker.cpp
     src/core/eml_writer.cpp
-    src/core/msg_writer.cpp
     src/core/mbox_writer.cpp
     src/core/html_email_writer.cpp
     src/core/pdf_email_writer.cpp
@@ -720,7 +719,6 @@ set(CORE_SOURCES
     include/sak/ost_converter_controller.h
     include/sak/ost_conversion_worker.h
     include/sak/eml_writer.h
-    include/sak/msg_writer.h
     include/sak/mbox_writer.h
     include/sak/html_email_writer.h
     include/sak/pdf_email_writer.h

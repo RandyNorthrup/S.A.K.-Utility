@@ -54,11 +54,9 @@ private Q_SLOTS:
 
     void testConfigDefaults() {
         sak::OstConversionConfig config;
-        // Default must be a format with a spec-conformant writer so an untouched
-        // convert produces readable output instead of failing on the gated PST
-        // writer (B7-12).
-        QCOMPARE(config.format, sak::OstOutputFormat::Eml);
-        QVERIFY(sak::isOutputFormatSupported(config.format));
+        // There is no output format: the converter produces MBOX and nothing else. Per-message
+        // output belongs to the Email Inspector, so an untouched config already describes a
+        // complete, runnable conversion.
         QVERIFY(config.output_directory.isEmpty());
         QCOMPARE(config.max_threads, 2);
         QVERIFY(config.date_from.isNull());
@@ -67,8 +65,8 @@ private Q_SLOTS:
         QVERIFY(config.folder_exclude.isEmpty());
         QCOMPARE(config.recovery_mode, sak::RecoveryMode::Normal);
         QVERIFY(!config.recover_deleted_items);
-        QVERIFY(config.prefix_filename_with_date);
-        QVERIFY(config.preserve_folder_structure);
+        // One .mbox per source folder by default, so the folder tree survives into the
+        // importing client rather than collapsing into a single mailbox.
         QVERIFY(config.one_mbox_per_folder);
         QVERIFY(config.generate_html_report);
         QVERIFY(config.include_source_checksums);
@@ -85,34 +83,11 @@ private Q_SLOTS:
     // OstConversionResult Defaults
     // ====================================================================
 
-    // ====================================================================
-    // Output Format Support Table (B7-12)
-    // ====================================================================
-
-    void testUnsupportedFormatsGated() {
-        // MSG is the last format whose writer cannot emit a reader-openable file, so it must
-        // report unsupported: the worker rejects it up front, the GUI disables it, and the
-        // headless action leaves it out of its advertised enum. PST, DBX and IMAP upload used
-        // to sit here too; they were removed from the enum entirely rather than left in the
-        // code switched off. When the MS-OXMSG writer is conformant this test and
-        // isOutputFormatSupported both go away.
-        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Msg));
-    }
-
-    void testSupportedFormats() {
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Eml));
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Mbox));
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Html));
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Pdf));
-    }
-
-    void testAtLeastOneFileFormatSupported() {
-        // At least one on-disk (non-IMAP) format must work, or the tab is useless.
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Eml) ||
-                sak::isOutputFormatSupported(sak::OstOutputFormat::Mbox) ||
-                sak::isOutputFormatSupported(sak::OstOutputFormat::Html) ||
-                sak::isOutputFormatSupported(sak::OstOutputFormat::Pdf));
-    }
+    // There is deliberately no output-format support table any more. It existed to record
+    // which formats did not work (PST, MSG, DBX, IMAP upload) -- a list of switched-off
+    // features living in the source. Every one was either removed or is the single format the
+    // converter produces, so the table, its "not supported" GUI labelling and the tests that
+    // pinned it are all gone rather than kept as a home for half-finished formats.
 
     void testResultDefaults() {
         sak::OstConversionResult result;
@@ -156,20 +131,6 @@ private Q_SLOTS:
     // ====================================================================
     // Enum Coverage
     // ====================================================================
-
-    void testOutputFormatValues() {
-        // Verify all output formats are distinct
-        QVector<int> values;
-        values << static_cast<int>(sak::OstOutputFormat::Eml)
-               << static_cast<int>(sak::OstOutputFormat::Msg)
-               << static_cast<int>(sak::OstOutputFormat::Mbox)
-               << static_cast<int>(sak::OstOutputFormat::Html)
-               << static_cast<int>(sak::OstOutputFormat::Pdf);
-
-        // All values should be unique
-        QSet<int> unique(values.begin(), values.end());
-        QCOMPARE(unique.size(), values.size());
-    }
 
     void testRecoveryModeValues() {
         QVERIFY(static_cast<int>(sak::RecoveryMode::Normal) !=

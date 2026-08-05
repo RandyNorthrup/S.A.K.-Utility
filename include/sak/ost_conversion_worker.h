@@ -21,13 +21,9 @@ class PstParser;
 
 namespace sak {
 
-class EmlWriter;
-class HtmlEmailWriter;
 class MboxWriter;
-class MsgWriter;
-class PdfEmailWriter;
 
-/// @brief Worker that converts a single OST/PST file to the target format.
+/// @brief Worker that converts a single OST/PST store into an MBOX mailbox.
 ///
 /// Designed to be moved to a QThread. Communicates via signals only.
 class OstConversionWorker : public QObject {
@@ -84,13 +80,12 @@ private:
                        const OstConversionConfig& config,
                        OstConversionResult& result);
 
-    /// Initialize format-specific writers based on config
-    [[nodiscard]] bool initializeFormatWriters(const OstConversionConfig& config,
-                                               const QString& source_path,
-                                               OstConversionResult& result);
-    /// Create the persistent per-item writer for the configured format. @p source_path
-    /// discriminates per-source output (e.g. a unique MBOX subdirectory).
-    void createPerItemWriter(const OstConversionConfig& config, const QString& source_path);
+    /// Open the MBOX writer for this run, or refuse. @p source_path discriminates the
+    /// per-source output subdirectory so two jobs sharing an output folder cannot
+    /// truncate each other's mailbox.
+    [[nodiscard]] bool initializeMboxWriter(const OstConversionConfig& config,
+                                            const QString& source_path,
+                                            OstConversionResult& result);
 
     /// Compute the source SHA-256 when the config requests provenance checksums.
     /// Returns true when not requested or the digest was computed over the whole
@@ -104,9 +99,8 @@ private:
     [[nodiscard]] std::unique_ptr<PstParser> openSourceParser(const QString& source_path,
                                                               OstConversionResult& result);
 
-    /// Finalize all active writers. Takes no result: the surviving writers' finalize()
-    /// return void, so there is nothing to record -- the PST arms that reported failures
-    /// here went with the gated PST writer.
+    /// Finalize the MBOX writer. Takes no result: MboxWriter::finalize returns void, so
+    /// there is nothing to record.
     void finalizeWriters();
 
     /// Check if a folder passes the include/exclude filter
@@ -117,20 +111,6 @@ private:
     [[nodiscard]] bool itemPassesDateFilter(const PstItemDetail& item,
                                             const OstConversionConfig& config) const;
 
-    /// Write an item using the EML writer. Returns true on success.
-    [[nodiscard]] bool writeItemEml(const PstItemDetail& item,
-                                    PstParser* parser,
-                                    const QString& folder_path,
-                                    const OstConversionConfig& config,
-                                    OstConversionResult& result);
-
-    /// Write an item as MSG (OLE2 compound file). Returns true on success.
-    [[nodiscard]] bool writeItemMsg(const PstItemDetail& item,
-                                    PstParser* parser,
-                                    const QString& folder_path,
-                                    const OstConversionConfig& config,
-                                    OstConversionResult& result);
-
     /// Write an item to MBOX. Returns true on success.
     [[nodiscard]] bool writeItemMbox(const PstItemDetail& item,
                                      PstParser* parser,
@@ -138,19 +118,6 @@ private:
                                      const OstConversionConfig& config,
                                      OstConversionResult& result);
 
-    /// Write an item as HTML. Returns true on success.
-    [[nodiscard]] bool writeItemHtml(const PstItemDetail& item,
-                                     PstParser* parser,
-                                     const QString& folder_path,
-                                     const OstConversionConfig& config,
-                                     OstConversionResult& result);
-
-    /// Write an item as PDF. Returns true on success.
-    [[nodiscard]] bool writeItemPdf(const PstItemDetail& item,
-                                    PstParser* parser,
-                                    const QString& folder_path,
-                                    const OstConversionConfig& config,
-                                    OstConversionResult& result);
 
     /// Collect attachment data for an item into @p out. Records an error for every
     /// attachment whose bytes could not be read and returns false so the caller
@@ -164,13 +131,6 @@ private:
     [[nodiscard]] bool itemPassesSenderFilter(const PstItemDetail& item,
                                               const OstConversionConfig& config) const;
 
-    /// Dispatch an item to the correct format-specific writer. Returns true when
-    /// the item was written successfully (or the format is not per-item).
-    [[nodiscard]] bool writeItemByFormat(const PstItemDetail& item,
-                                         PstParser* parser,
-                                         const QString& folder_path,
-                                         const OstConversionConfig& config,
-                                         OstConversionResult& result);
 
     /// Process a single item: read detail, filter, and write
     void processItemInFolder(const PstItemSummary& item_summary,
@@ -200,10 +160,6 @@ private:
     // collision counters persist -- otherwise every duplicate subject overwrote
     // the previous export.
     std::unique_ptr<MboxWriter> m_mbox_writer;
-    std::unique_ptr<EmlWriter> m_eml_writer;
-    std::unique_ptr<MsgWriter> m_msg_writer;
-    std::unique_ptr<HtmlEmailWriter> m_html_writer;
-    std::unique_ptr<PdfEmailWriter> m_pdf_writer;
 };
 
 // Compile-Time Invariants

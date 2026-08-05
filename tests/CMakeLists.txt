@@ -1861,7 +1861,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/wifi_setup_script.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ost_conversion_worker.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/ost_conversion_worker.h
-        ${CMAKE_SOURCE_DIR}/src/core/msg_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/mbox_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
@@ -6986,7 +6985,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ../src/core/ost_converter_controller.cpp
         ../src/core/ost_conversion_worker.cpp
         ../src/core/eml_writer.cpp
-        ../src/core/msg_writer.cpp
         ../src/core/mbox_writer.cpp
         ../src/core/html_email_writer.cpp
         ../src/core/email_attachment_saver.cpp
@@ -7015,31 +7013,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
              -o "${TEST_OUTPUT_DIR}/test_ost_converter_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ost_converter_controller")
-endif()
-
-# test_msg_writer - OLE2 compound file, MAPI properties, magic bytes
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
-    add_executable(test_msg_writer
-        unit/test_msg_writer.cpp
-        ../src/core/msg_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/msg_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_msg_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_msg_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_msg_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_msg_writer COMMAND test_msg_writer
-             -o "${TEST_OUTPUT_DIR}/test_msg_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_msg_writer")
 endif()
 
 # test_mbox_writer - Unix mbox format, From_ escaping, per-folder
