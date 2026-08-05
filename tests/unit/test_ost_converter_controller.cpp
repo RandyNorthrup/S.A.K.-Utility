@@ -344,6 +344,51 @@ private Q_SLOTS:
         QVERIFY(!ctrl.isRunning());
     }
 
+    // R5-G20-2: re-running a queue that already finished used to report a bogus empty
+    // batch. startConversion reset the index, the batch result and the worker list, but not
+    // the per-job statuses -- every job was still Complete/Failed from the previous run, so
+    // startNextFile found nothing Queued, saw no active workers, and finalized immediately.
+    // The controller emitted conversionStarted(N) and then "0/N files succeeded" for files
+    // it had converted perfectly moments earlier.
+    void testRerunningFinishedQueueConvertsAgain() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString path = createTempFile(temp, "email.ost");
+
+        sak::OstConverterController ctrl;
+        ctrl.addFile(path);
+
+        QSignalSpy complete_spy(&ctrl, &sak::OstConverterController::allConversionsComplete);
+
+        sak::OstConversionConfig config;
+        config.output_directory = temp.path();
+        config.format = sak::OstOutputFormat::Eml;
+
+        constexpr int kBatchWaitMs = 15'000;
+
+        ctrl.startConversion(config);
+        QTRY_COMPARE_WITH_TIMEOUT(complete_spy.count(), 1, kBatchWaitMs);
+        const auto first = complete_spy.at(0).at(0).value<sak::OstConversionBatchResult>();
+        QCOMPARE(first.files_total, 1);
+
+        // Second run over the same queue must attempt the file again, not report an empty
+        // batch. Every job is back to Queued, so the totals must match the first run.
+        ctrl.startConversion(config);
+        QTRY_COMPARE_WITH_TIMEOUT(complete_spy.count(), 2, kBatchWaitMs);
+        const auto second = complete_spy.at(1).at(0).value<sak::OstConversionBatchResult>();
+
+        QCOMPARE(second.files_total, first.files_total);
+        QCOMPARE(second.files_succeeded, first.files_succeeded);
+        QCOMPARE(second.files_failed, first.files_failed);
+        QVERIFY(!ctrl.isRunning());
+
+        // Every file is accounted for exactly once, whichever way it went. This is the
+        // invariant that a cancelled run used to break: cancelled jobs were flipped to
+        // Cancelled and counted nowhere, so the sum came out short of the total.
+        QCOMPARE(second.files_succeeded + second.files_failed + second.files_cancelled,
+                 second.files_total);
+    }
+
     // ====================================================================
     // Deleted-item recovery honesty
     // ====================================================================

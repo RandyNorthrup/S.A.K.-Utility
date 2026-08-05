@@ -101,12 +101,25 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     m_active_workers.clear();
     m_report_path.clear();
 
+    // Re-queue every job. The per-job statuses survive a finished run, so without this a
+    // second startConversion() found nothing still Queued: startNextFile() walked the whole
+    // queue, saw no active workers, and called finalizeBatch() immediately - emitting
+    // conversionStarted(N) and then "0/N files succeeded" for a queue that had converted
+    // perfectly the first time. Progress counters are reset with it so the new run does not
+    // inherit the previous one's totals.
+    for (auto& job : m_queue) {
+        job.status = OstConversionJob::Status::Queued;
+        job.items_processed = 0;
+        job.items_recovered = 0;
+        job.items_failed = 0;
+    }
+
     // Initialize batch result
     m_batch_result = OstConversionBatchResult();
     m_batch_result.files_total = m_queue.size();
     m_batch_result.batch_started = QDateTime::currentDateTime();
 
-    logInfo("OST Converter: starting batch conversion — {} files, {} threads",
+    logInfo("OST Converter: starting batch conversion - {} files, {} threads",
             std::to_string(m_queue.size()),
             std::to_string(config.max_threads));
 
@@ -140,11 +153,16 @@ void OstConverterController::cancelAll() {
 
     if (m_running) {
         m_running = false;
-        // Mark remaining queued files as cancelled
+        // Mark remaining queued files as cancelled, and COUNT them. They used to be flipped
+        // to Cancelled and then never accounted for anywhere, so files_succeeded +
+        // files_failed came out short of files_total and the completion line reported
+        // "X/N files succeeded" with the difference unexplained - indistinguishable from
+        // files that had failed silently.
         for (auto& job : m_queue) {
             if (job.status == OstConversionJob::Status::Queued ||
                 job.status == OstConversionJob::Status::Converting) {
                 job.status = OstConversionJob::Status::Cancelled;
+                ++m_batch_result.files_cancelled;
             }
         }
         finalizeBatch();
@@ -253,8 +271,10 @@ void OstConverterController::finalizeBatch() {
                                                                       m_config.output_directory);
     }
 
-    logInfo("OST Converter: batch complete — {}/{} files succeeded",
+    logInfo("OST Converter: batch complete - {} succeeded, {} failed, {} cancelled of {}",
             std::to_string(m_batch_result.files_succeeded),
+            std::to_string(m_batch_result.files_failed),
+            std::to_string(m_batch_result.files_cancelled),
             std::to_string(m_batch_result.files_total));
 
     Q_EMIT allConversionsComplete(m_batch_result);
@@ -397,7 +417,7 @@ void OstConverterController::onWorkerError(QString message) {
         }
     }
 
-    logError("OST Converter: worker error — {}", message.toStdString());
+    logError("OST Converter: worker error - {}", message.toStdString());
     Q_EMIT errorOccurred(file_index, message);
 }
 

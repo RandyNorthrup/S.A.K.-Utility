@@ -8,13 +8,13 @@
 
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
-// For ValidationMode and validationModeFromSetting. flash_coordinator.h only forward
-// declares the enum so it does not drag <windows.h> into every GUI header; a translation
-// unit that has to name the enumerators includes the real header here instead.
 #include "sak/drive_scanner.h"
 #include "sak/elevation_banner.h"
 #include "sak/elevation_gate.h"
 #include "sak/flash_coordinator.h"
+// flash_worker.h, for ValidationMode and validationModeFromSetting. flash_coordinator.h
+// only forward declares that enum so it does not drag <windows.h> into every GUI header;
+// a translation unit that has to name the enumerators includes the real header itself.
 #include "sak/flash_worker.h"
 #include "sak/format_utils.h"
 #include "sak/image_flasher_settings_dialog.h"

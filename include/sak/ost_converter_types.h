@@ -242,6 +242,10 @@ struct OstConversionBatchResult {
     int files_total = 0;
     int files_succeeded = 0;
     int files_failed = 0;
+    /// Files the batch never attempted or abandoned because the user cancelled.
+    /// Without this, succeeded + failed silently fell short of total after a cancel and the
+    /// "X/N files succeeded" line left the shortfall unexplained.
+    int files_cancelled = 0;
     int total_items_converted = 0;
     int total_items_recovered = 0;
     qint64 total_bytes_written = 0;
