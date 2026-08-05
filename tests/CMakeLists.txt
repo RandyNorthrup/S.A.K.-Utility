@@ -6930,6 +6930,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
     message(STATUS "Added unit test: test_ost_converter_types")
 endif()
 
+# test_email_folder_selection - which folders are MAIL folders, shared by the Email
+# Inspector tree and its "Export ALL Mail Folders" whole-store export.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_folder_selection.cpp")
+    add_executable(test_email_folder_selection
+        unit/test_email_folder_selection.cpp
+        ../src/core/email_folder_selection.cpp
+        ../include/sak/email_folder_selection.h
+    )
+    set_target_properties(test_email_folder_selection PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_email_folder_selection PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_folder_selection PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_folder_selection COMMAND test_email_folder_selection
+             -o "${TEST_OUTPUT_DIR}/test_email_folder_selection.txt,txt" -o -,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_folder_selection")
+endif()
+
 # test_eml_writer - RFC 5322 output, filename sanitization, collision handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
     add_executable(test_eml_writer

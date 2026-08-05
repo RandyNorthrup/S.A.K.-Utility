@@ -688,6 +688,7 @@ set(CORE_SOURCES
     src/core/mbox_parser.cpp
     src/core/email_search_worker.cpp
     src/core/email_export_worker.cpp
+    src/core/email_folder_selection.cpp
     src/core/email_attachment_saver.cpp
     src/core/email_profile_manager.cpp
     src/core/email_report_generator.cpp
@@ -698,6 +699,7 @@ set(CORE_SOURCES
     include/sak/mbox_parser.h
     include/sak/email_search_worker.h
     include/sak/email_export_worker.h
+    include/sak/email_folder_selection.h
     include/sak/email_attachment_saver.h
     include/sak/email_view_ids.h
     include/sak/email_profile_manager.h

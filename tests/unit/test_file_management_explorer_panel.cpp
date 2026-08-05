@@ -242,6 +242,25 @@ int selectLocalTargetRowForDrive(QListWidget* targetList,
     return -1;
 }
 
+// Wait until @p file can be opened AND is @p expected_size bytes.
+//
+// exists() is NOT the postcondition for an asynchronous copy: the entry appears the moment
+// the copier creates it, while that handle is still open -- Windows can refuse a second
+// reader outright -- and before every byte has landed. Waiting on existence alone made the
+// paste round-trip fail intermittently in full-suite runs, on the open() that followed.
+bool waitForCompleteFile(QFile& file, qint64 expected_size, int timeout_ms = 5000) {
+    return QTest::qWaitFor(
+        [&file, expected_size]() {
+            if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
+                return false;
+            }
+            const qint64 size = file.size();
+            file.close();
+            return size == expected_size;
+        },
+        timeout_ms);
+}
+
 // Navigate the omnibar to @p directory and wait for a listed row whose name contains
 // @p name_fragment (listing is asynchronous); returns the row or -1 on timeout.
 int navigateAndFindRow(QLineEdit* pathEdit,
@@ -4163,8 +4182,8 @@ private Q_SLOTS:
         QApplication::processEvents();
 
         QFile copied(QDir(destination_dir.path()).filePath(QStringLiteral("note.bin")));
-        QVERIFY2(QTest::qWaitFor([&copied]() { return copied.exists(); }, 5000),
-                 "paste did not create the destination file");
+        QVERIFY2(waitForCompleteFile(copied, payload.size()),
+                 "paste did not produce a complete, readable destination file");
         QVERIFY(copied.open(QIODevice::ReadOnly));
         QCOMPARE(copied.readAll(), payload);
     }

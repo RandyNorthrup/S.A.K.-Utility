@@ -13,6 +13,7 @@
 #include "sak/email_constants.h"
 #include "sak/email_contacts_dialog.h"
 #include "sak/email_file_scanner_dialog.h"
+#include "sak/email_folder_selection.h"
 #include "sak/email_html_sanitizer.h"
 #include "sak/email_safe_text_browser.h"
 #include "sak/email_view_ids.h"
@@ -1080,6 +1081,24 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
         exportFolderAs(sak::ExportFormat::CsvEmails, folder_id);
     });
     menu.addSeparator();
+    // Whole-store export. The OST Converter produces full mailbox files (MBOX); turning an
+    // entire store into per-message files belongs here, next to the per-folder exports.
+    QMenu* all_menu = menu.addMenu(tr("Export ALL Mail Folders as"));
+    struct AllExportChoice {
+        QString label;
+        sak::ExportFormat format;
+    };
+    const QVector<AllExportChoice> all_choices{{tr("EML..."), sak::ExportFormat::Eml},
+                                               {tr("HTML..."), sak::ExportFormat::Html},
+                                               {tr("Text..."), sak::ExportFormat::Text},
+                                               {tr("PDF..."), sak::ExportFormat::Pdf},
+                                               {tr("CSV..."), sak::ExportFormat::CsvEmails}};
+    for (const AllExportChoice& choice : all_choices) {
+        all_menu->addAction(choice.label, this, [this, format = choice.format] {
+            exportAllMailFoldersAs(format);
+        });
+    }
+    menu.addSeparator();
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Search in This Folder..."), this, [this] { m_search_edit->setFocus(); });
@@ -1249,6 +1268,38 @@ void EmailInspectorPanel::onExportClicked() {
     }
     config.output_path = dir_path;
     config.item_ids = checked_ids;
+    config.save_attachments_with_messages = true;
+    m_controller->exportItems(config);
+}
+
+void EmailInspectorPanel::exportAllMailFoldersAs(sak::ExportFormat format) {
+    if (!m_controller->isFileOpen()) {
+        return;
+    }
+    // The same function populateFolderTree filters with, so "all mail folders" is exactly
+    // the set the technician can see in the tree.
+    const QVector<uint64_t> folder_ids = sak::mailFolderNodeIds(m_cached_folder_tree);
+    if (folder_ids.isEmpty()) {
+        // Refuse rather than launch an export that can only produce an empty directory the
+        // technician would read as "this store has no mail".
+        sak::showWarningLogged(this,
+                               tr("No Mail Folders"),
+                               tr("This store has no mail folders to export. Contacts, calendar "
+                                  "and task folders are exported from their own windows."));
+        return;
+    }
+    const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
+    if (dir_path.isEmpty()) {
+        return;
+    }
+
+    sak::EmailExportConfig config;
+    config.format = format;
+    config.output_path = dir_path;
+    // Every folder is listed explicitly rather than relying on recurse_subfolders, because
+    // the list is already filtered: recursing from the roots would pull the non-mail
+    // subfolders back in.
+    config.folder_ids = folder_ids;
     config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }
@@ -1490,7 +1541,7 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     if (m_dialog_active) {
         return;
     }
-    // New item — the per-message inline-image cache is invalid.
+    // New item -- the per-message inline-image cache is invalid.
     m_inline_images.clear();
     m_remote_images.clear();
     m_redraw_timer->stop();
@@ -1577,7 +1628,7 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t message_id,
             // Cache by Content-Id so the HTML builder can inline as data URI.
             m_inline_images.insert(att.content_id, attachment_data);
             // Coalesce: multiple inline images commonly arrive in rapid
-            // succession — debounce the full-HTML repaint so we only
+            // succession -- debounce the full-HTML repaint so we only
             // re-parse once per burst.
             m_redraw_timer->start();
             return;
@@ -1824,30 +1875,7 @@ void EmailInspectorPanel::addFolderToTree(QTreeWidgetItem* parent, const sak::Ps
 
 // static
 const sak::PstFolder* EmailInspectorPanel::findIpmSubtree(const QVector<sak::PstFolder>& folders) {
-    // OST files have two IPM_SUBTREE nodes — one under Root - Public
-    // (empty) and one under Root - Mailbox (with all user folders).
-    // We want the one that actually has children.
-    const sak::PstFolder* best = nullptr;
-
-    for (const auto& folder : folders) {
-        if (folder.display_name == QLatin1String("IPM_SUBTREE") ||
-            folder.display_name == QLatin1String("Top of Information Store")) {
-            if (!folder.children.isEmpty()) {
-                return &folder;
-            }
-            if (best == nullptr) {
-                best = &folder;
-            }
-        }
-        const sak::PstFolder* found = findIpmSubtree(folder.children);
-        if (found != nullptr && !found->children.isEmpty()) {
-            return found;
-        }
-        if (found != nullptr && best == nullptr) {
-            best = found;
-        }
-    }
-    return best;
+    return sak::findIpmSubtree(folders);
 }
 
 // static
@@ -1907,52 +1935,10 @@ int EmailInspectorPanel::folderSortOrder(const QString& name, const QString& /*c
 
 // static
 bool EmailInspectorPanel::isHiddenFolder(const QString& name, const QString& container_class) {
-    // Contact and calendar folders are shown in their own modals
-    if (container_class.startsWith(QLatin1String("IPF.Contact"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.Appointment"))) {
-        return true;
-    }
-
-    // Task, Note, and Journal folders are not email — hide them
-    if (container_class.startsWith(QLatin1String("IPF.Task"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.StickyNote"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.Journal"))) {
-        return true;
-    }
-
-    // System/configuration folders that clutter the tree
-    if (container_class == QLatin1String("IPF.Configuration")) {
-        return true;
-    }
-
-    // Known system folder names to hide
-    static const QStringList kHiddenNames = {
-        QStringLiteral("PersonMetadata"),
-        QStringLiteral("MeContact"),
-        QStringLiteral("ExternalContacts"),
-        QStringLiteral("Quick Step Settings"),
-        QStringLiteral("Conversation Action Settings"),
-        QStringLiteral("Yammer Root"),
-        QStringLiteral("Social Activity Notifications"),
-        QStringLiteral("Conversation History"),
-        QStringLiteral("Files"),
-        QStringLiteral("Sync Issues"),
-        QStringLiteral("Conflicts"),
-        QStringLiteral("Local Failures"),
-        QStringLiteral("Server Failures"),
-    };
-    for (const auto& hidden : kHiddenNames) {
-        if (name.compare(hidden, Qt::CaseInsensitive) == 0) {
-            return true;
-        }
-    }
-    return false;
+    // One definition, shared with the "Export ALL Mail Folders" walk: if the tree hid a
+    // folder the export still visited, the technician would get calendar entries written
+    // out as .eml files.
+    return !sak::isMailFolder(name, container_class);
 }
 
 void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) {
@@ -2132,7 +2118,7 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
         const QString lower = src.toLower();
 
         if (lower.startsWith(QStringLiteral("data:"))) {
-            // Already self-contained — pass through unchanged.
+            // Already self-contained -- pass through unchanged.
             out.append(m.captured(0));
             continue;
         }

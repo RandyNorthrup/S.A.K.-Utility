@@ -178,6 +178,11 @@ private:
     /// selection. A nullopt id fails visibly instead of exporting the previously
     /// selected folder.
     void exportFolderAs(sak::ExportFormat format, std::optional<uint64_t> folder_id);
+    /// Export EVERY mail folder in the open store in a single pass. This is the
+    /// whole-store export: the OST Converter writes full mailbox files (MBOX), and
+    /// per-message formats belong here, so this is where a technician turns an entire
+    /// store into EML/HTML/Text/PDF/CSV without walking the tree folder by folder.
+    void exportAllMailFoldersAs(sak::ExportFormat format);
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
@@ -303,7 +308,7 @@ private:
 
     // Remote (http/https) image cache keyed by absolute URL for the current
     // message.  Only populated when the Images toggle is on; consumed the
-    // same way as `m_inline_images` — inlined as `data:` URIs so that
+    // same way as `m_inline_images` -- inlined as `data:` URIs so that
     // `QTextBrowser` (which has no network stack) can render them.
     QHash<QString, QByteArray> m_remote_images;
     class QNetworkAccessManager* m_remote_image_nam{nullptr};
@@ -314,7 +319,7 @@ private:
     // N remote images triggers N full `QTextBrowser::setHtml` parses.
     QTimer* m_redraw_timer{nullptr};
 
-    // Save state — shared batch saver
+    // Save state -- shared batch saver
     sak::AttachmentBatchSave m_batch_save;
 
     // Cached folder IDs for modals
