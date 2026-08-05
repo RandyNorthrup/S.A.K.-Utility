@@ -18,7 +18,6 @@ namespace sak::ui {
 namespace {
 
 void applyShadow(QWidget* widget) {
-    Q_ASSERT(widget);
     if (!widget || widget->graphicsEffect()) {
         return;
     }
@@ -46,7 +45,6 @@ public:
     using QObject::QObject;
 
     bool eventFilter(QObject* watched, QEvent* event) override {
-        Q_ASSERT(watched);
         if (!watched || !event) {
             return QObject::eventFilter(watched, event);
         }

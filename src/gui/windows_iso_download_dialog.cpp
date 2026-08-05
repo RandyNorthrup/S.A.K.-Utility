@@ -646,7 +646,6 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
 
 void WindowsISODownloadDialog::onStatusMessage(const QString& message) {
     Q_ASSERT(m_statusLabel);
-    Q_ASSERT(!message.isEmpty());
     m_statusLabel->setText(message);
 }
 

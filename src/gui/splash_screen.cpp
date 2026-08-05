@@ -42,7 +42,6 @@ QPixmap createRoundedPixmap(const QPixmap& source, int radius) {
 }
 
 QPixmap scaledSplashPixmap(const QPixmap& source) {
-    Q_ASSERT(!source.isNull());
     if (source.isNull()) {
         return {};
     }
@@ -66,7 +65,6 @@ QPixmap scaledSplashPixmap(const QPixmap& source) {
 }  // namespace
 
 SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(parent) {
-    Q_ASSERT(!pixmap.isNull());
     m_pixmap = scaledSplashPixmap(pixmap);
 
     m_rounded_pixmap = createRoundedPixmap(m_pixmap, m_corner_radius);

@@ -1419,7 +1419,6 @@ static void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& c
 }
 
 static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
-    Q_ASSERT(!output.isEmpty());
     QVector<EthernetConfigInfo> configs;
     EthernetConfigInfo current;
     bool inAdapter = false;

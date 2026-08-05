@@ -1107,13 +1107,23 @@ void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
 void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction* action,
                                                      const QString& message,
                                                      int progress) {
-    Q_ASSERT(action);
+    // `action` is part of QuickActionController::actionExecutionProgress's signature
+    // and is not needed here; this slot reports the message and the bar only. It is
+    // never dereferenced, so there is nothing to guard.
+    Q_UNUSED(action);
     Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(progress);
 }
 
 void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
-    Q_ASSERT(action);
+    // Queued connection from QuickActionController, which owns this pointer's
+    // lifetime; this panel cannot vouch for it and dereferences it on the next
+    // line. Refuse rather than crash Release (Debug would have aborted here and
+    // Release would not have checked at all).
+    if (!action) {
+        logMessage("Quick action completion arrived with no action; ignoring");
+        return;
+    }
     const auto& result = action->lastExecutionResult();
     const QString status = result.success
                                ? QString("Completed: %1").arg(action->name())
@@ -1125,7 +1135,14 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
 
 void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
                                                   const QString& error_message) {
-    Q_ASSERT(action);
+    // Same boundary as onQuickActionComplete, and the next line dereferences it.
+    // Losing the action's name must not lose the error itself.
+    if (!action) {
+        logMessage(QString("Quick action error with no action: %1").arg(error_message));
+        Q_EMIT statusMessage(QString("Quick action error: %1").arg(error_message),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
     const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
     m_qa_progress_bar->setVisible(false);
     logMessage(status);

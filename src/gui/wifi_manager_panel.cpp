@@ -2090,7 +2090,6 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
 
 // static
 QImage WifiManagerPanel::generateQrImage(const QString& payload) {
-    Q_ASSERT(!payload.isEmpty());
     constexpr int IMAGE_SIZE = 640;
 
     QImage out(IMAGE_SIZE, IMAGE_SIZE, QImage::Format_RGB32);
@@ -2119,7 +2118,6 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
                                              const QString& password,
                                              const QString& security,
                                              bool hidden) {
-    Q_ASSERT(!ssid.isEmpty());
     // Delegates to the shared, injection-hardened core builder (sak::buildWifiSetupScriptWindows),
     // which also backs the headless network.generate_wifi_setup_script tool. Returns empty for an
     // empty/unsafe SSID; callers treat empty as an error.
@@ -2128,7 +2126,6 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
 
 // static
 QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
-    Q_ASSERT(!networks.isEmpty());
     const QString profileUuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
     const QString payloadId = "com.sak.wifi." + profileUuid.left(8).toLower();
     const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);

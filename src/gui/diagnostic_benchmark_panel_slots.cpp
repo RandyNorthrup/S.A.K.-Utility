@@ -441,7 +441,15 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
 void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
                                                   double cpu_temp,
                                                   int errors) {
-    Q_ASSERT(elapsed_seconds >= 0);
+    // Delivered across a queued cross-thread connection from StressTestWorker via
+    // DiagnosticController's signal-to-signal forward. Nothing on that path bounds
+    // it, and a negative elapsed would render "Elapsed: -1:-30" and a negative
+    // progress percentage. Refuse the update and name the value.
+    if (elapsed_seconds < 0) {
+        logMessage(QString("Ignoring stress status with a negative elapsed time: %1 s")
+                       .arg(elapsed_seconds));
+        return;
+    }
     const int duration_sec = m_stress_duration_spin->value() * sak::kSecondsPerMinute;
     const int percent = duration_sec > 0 ? (elapsed_seconds * sak::kPercentMax / duration_sec) : 0;
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
@@ -557,7 +565,13 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
 }
 
 void DiagnosticBenchmarkPanel::onSuiteProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    // percent is produced by DiagnosticController from worker counts; the range
+    // holds only because its eight emit sites happen to pass in-range constants
+    // today, which is a caller list rather than an invariant.
+    if (percent < 0 || percent > sak::kPercentMax) {
+        logMessage(QString("Ignoring out-of-range suite progress: %1%").arg(percent));
+        return;
+    }
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
     m_suite_status_label->setText(message);
 }
@@ -669,7 +683,20 @@ void DiagnosticBenchmarkPanel::onGenerateReportClicked() {
 }
 
 void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
-    Q_ASSERT(!output_dir.isEmpty());
+    // DiagnosticController::generateReport validates its formats argument but not
+    // output_dir, and forwards it verbatim into this signal. Reporting "saved to:"
+    // with nothing after it would tell the technician the reports are somewhere
+    // when nobody knows where.
+    if (output_dir.isEmpty()) {
+        logMessage("Reports were reported generated but no output directory was given");
+        Q_EMIT statusMessage("Report generation reported no output location",
+                             sak::kTimerStatusDefaultMs);
+        sak::showWarningLogged(this,
+                               "Reports Generated",
+                               "The diagnostic reports were generated, but no output location "
+                               "was reported. Check the log for the destination.");
+        return;
+    }
     logMessage(QString("Reports generated in %1").arg(output_dir));
     Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
@@ -683,7 +710,12 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
 // ============================================================================
 
 void DiagnosticBenchmarkPanel::onOperationProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    // Computed in DiagnosticController as current * 100 / total from worker-thread
+    // counters. Nothing on that path clamps it.
+    if (percent < 0 || percent > sak::kPercentMax) {
+        logMessage(QString("Ignoring out-of-range operation progress: %1%").arg(percent));
+        return;
+    }
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
     Q_EMIT statusMessage(message, 0);
 }

@@ -1070,7 +1070,6 @@ void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
 
 void MainWindow::createAboutPanel() {
     Q_ASSERT(m_tab_widget);
-    Q_ASSERT(!QCoreApplication::applicationVersion().isEmpty());
     auto* aboutPanel = new QWidget(this);
     auto* aboutLayout = new QVBoxLayout(aboutPanel);
     aboutLayout->setSpacing(ui::kSpacingLarge);
@@ -1600,7 +1599,6 @@ void MainWindow::setDarkThemeEnabled(bool enabled) {
 }
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
-    Q_ASSERT(m_status_label);
     if (m_status_label) {
         if (timeout_ms > 0) {
             statusBar()->showMessage(message, timeout_ms);
@@ -1611,9 +1609,17 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms) {
 }
 
 void MainWindow::updateProgress(int current, int maximum) {
-    Q_ASSERT(maximum >= 0);
-    Q_ASSERT(current >= 0);
-    Q_ASSERT(m_progress_bar);
+    // Public slot, connected to ten panel signals whose counts come from parsed
+    // files (a PST content count is a signed int32 read straight off disk). A
+    // negative bound is not a display problem to smooth over -- it means the
+    // producer's count is wrong, so say so and leave the bar showing the last
+    // value it was actually given rather than a fabricated one.
+    if (current < 0 || maximum < 0) {
+        logError("MainWindow::updateProgress refused a negative range: current={} maximum={}",
+                 current,
+                 maximum);
+        return;
+    }
     if (!m_progress_bar) {
         return;
     }
@@ -1807,8 +1813,6 @@ void MainWindow::showEvent(QShowEvent* event) {
 }
 
 void MainWindow::applyTabBarChevrons() {
-    Q_ASSERT(m_tab_widget);
-    Q_ASSERT(m_tab_widget->tabBar());
     if (!m_tab_widget) {
         return;
     }

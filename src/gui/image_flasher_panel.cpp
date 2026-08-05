@@ -606,7 +606,6 @@ void ImageFlasherPanel::createCompletionPage() {
 }
 
 bool ImageFlasherPanel::loadImageFile(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
     // Validation (existence, regular file, non-empty, format) lives in onImageSelected, which
     // returns false and makes no selection when the image is invalid.
     return onImageSelected(filePath);
@@ -632,7 +631,13 @@ void ImageFlasherPanel::onDownloadWindowsClicked() {
             &WindowsISODownloadDialog::downloadCompleted,
             this,
             [this](const QString& filePath) {
-                onImageSelected(filePath);
+                // onImageSelected returns false when the downloaded file fails
+                // validation, and has already said why. Offering to flash it then
+                // -- and navigating to drive selection -- advertised an image that
+                // was never selected, and left Flash reachable with no image at all.
+                if (!onImageSelected(filePath)) {
+                    return;
+                }
 
                 auto reply = sak::showQuestionLogged(
                     this,
@@ -643,7 +648,7 @@ void ImageFlasherPanel::onDownloadWindowsClicked() {
                     QMessageBox::Yes | QMessageBox::No);
 
                 if (reply == QMessageBox::Yes) {
-                    m_stackedWidget->setCurrentIndex(1);
+                    m_stackedWidget->setCurrentIndex(kDriveSelectionPageIndex);
                     updateNavigationButtons();
                 }
             });
@@ -670,7 +675,11 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
 
     connect(
         dialog, &LinuxISODownloadDialog::downloadCompleted, this, [this](const QString& filePath) {
-            onImageSelected(filePath);
+            // Same as the Windows download flow: a downloaded image that fails
+            // validation is not a selected image, so do not offer to flash it.
+            if (!onImageSelected(filePath)) {
+                return;
+            }
 
             auto reply = sak::showQuestionLogged(
                 this,
@@ -681,7 +690,7 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
                 QMessageBox::Yes | QMessageBox::No);
 
             if (reply == QMessageBox::Yes) {
-                m_stackedWidget->setCurrentIndex(1);
+                m_stackedWidget->setCurrentIndex(kDriveSelectionPageIndex);
                 updateNavigationButtons();
             }
         });
@@ -692,7 +701,6 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
 
 bool ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     Q_ASSERT(m_imagePathLabel);
-    Q_ASSERT(!imagePath.isEmpty());
     // Fail closed: never select (or enable navigation for) an image that fails validation.
     if (!validateImageFile(imagePath)) {
         return false;
@@ -721,7 +729,6 @@ bool ImageFlasherPanel::onImageSelected(const QString& imagePath) {
 }
 
 void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
-    Q_ASSERT(!isoPath.isEmpty());
     // Do not report a successful download when the downloaded image fails validation
     // (validateImageFile has already surfaced the specific reason).
     if (!onImageSelected(isoPath)) {
@@ -797,7 +804,13 @@ void ImageFlasherPanel::onFlashClicked() {
 }
 
 void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
-    Q_ASSERT(progress.percentage >= 0);
+    // percentage is computed inside FlashCoordinator from worker-thread byte counts
+    // against a totalBytes it derives itself. A bad total yields a nonsense
+    // percentage; showing it would be a fabricated number on a destructive write.
+    if (progress.percentage < 0.0 || progress.percentage > kPercentMaxF) {
+        logError("Image flasher: ignoring out-of-range flash progress {}%", progress.percentage);
+        return;
+    }
     Q_EMIT progressUpdate(static_cast<int>(progress.percentage), kPercentMax);
     m_flashDetailsLabel->setText(QString("Written: %1 / %2")
                                      .arg(formatFileSize(progress.bytesWritten))
@@ -899,23 +912,28 @@ void ImageFlasherPanel::notifyFlashFinished(const FlashResult& result) {
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
     Q_ASSERT(m_stackedWidget);
-    Q_ASSERT(!error.isEmpty());
     m_isFlashing = false;
     m_settingsButton->setEnabled(true);
 
-    logError(("Flash Error: " + error).toStdString());
+    // The message crosses a boundary from FlashCoordinator or from the Windows USB
+    // creator's lastError(), which is default-empty. An empty reason must not turn
+    // into a dialog with a blank gap where the cause should be -- name the missing
+    // reason instead, the way FlashCoordinator::onWorkerFailed already does.
+    const QString reported = error.isEmpty() ? tr("The writer reported no reason.") : error;
+
+    logError(("Flash Error: " + reported).toStdString());
     sak::showCriticalLogged(this,
                             "Flash Error",
                             QString("The flash operation failed:\n\n%1\n\n"
                                     "The target drive(s) may be in an unusable state. "
                                     "You may need to reformat them before they can be used again.")
-                                .arg(error));
+                                .arg(reported));
 
     // Return to drive selection so the user can see the state
     m_stackedWidget->setCurrentIndex(1);
     updateNavigationButtons();
 
-    Q_EMIT flashFailed(error);
+    Q_EMIT flashFailed(reported);
     Q_EMIT statusMessage("Image Flasher: Flash operation failed", sak::kTimerStatusDefaultMs);
 }
 
@@ -1002,7 +1020,10 @@ void ImageFlasherPanel::updateNavigationButtons() {
 
     // Flash button: only visible and enabled on drive selection page when not flashing
     m_flashButton->setVisible(currentIndex == kDriveSelectionPageIndex && !m_isFlashing);
-    m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_isFlashing);
+    // An image is as necessary as a target. This used to gate on the drive list
+    // alone, so a download whose image failed validation still left Flash enabled.
+    m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_selectedImagePath.isEmpty() &&
+                              !m_isFlashing);
 
     // Cancel button: visible during flashing
     m_cancelButton->setVisible(currentIndex == kFlashProgressPageIndex);
@@ -1010,7 +1031,6 @@ void ImageFlasherPanel::updateNavigationButtons() {
 }
 
 bool ImageFlasherPanel::validateImageFile(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
     const QFileInfo fileInfo(filePath);
 
     // A directory or a missing path is not a flashable image (fail closed).
@@ -1206,7 +1226,20 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
 
 void ImageFlasherPanel::showConfirmationDialog() {
     Q_ASSERT(m_flashButton);
-    Q_ASSERT(!m_selectedImagePath.isEmpty());
+    // Reaching here with no image selected is a real state, not an impossible one:
+    // the Flash button's enabled state is derived from the drive list, and the two
+    // download flows navigate to drive selection after offering "flash this now?".
+    // Refuse with the accurate reason rather than continuing into
+    // confirmSelectionStillValid(), which would report the image as CHANGED when in
+    // fact none was ever selected.
+    if (m_selectedImagePath.isEmpty()) {
+        sak::showWarningLogged(this,
+                               "No Image Selected",
+                               "No image is selected. Go back to step 1 and choose an image "
+                               "before flashing.");
+        return;
+    }
+
     // Check if this is a Windows ISO
     bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
 
@@ -1284,7 +1317,6 @@ void ImageFlasherPanel::beginConfirmedFlash(bool isWindowsISO) {
 }
 
 bool ImageFlasherPanel::isWindowsInstallISO(const QString& isoPath) const {
-    Q_ASSERT(!isoPath.isEmpty());
     // Classify from the image's own metadata (volume label / application ID via
     // IsoAnalyzer), not the filename. The old filename heuristic matched
     // "server" and routed Linux server ISOs into the Windows-installer path.

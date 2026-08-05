@@ -98,7 +98,6 @@ void LogViewer::setupUi() {
 }
 
 void LogViewer::appendLog(const QString& message, LogLevel level) {
-    Q_ASSERT(!message.isEmpty());
     Q_ASSERT(m_search_edit);
     Q_ASSERT(m_text_browser);
     QString formatted_msg = formatLogMessage(message, level);
@@ -119,7 +118,6 @@ void LogViewer::appendLog(const QString& message, LogLevel level) {
 }
 
 bool LogViewer::loadLogFile(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logError("Failed to open log file: {}", file_path.toStdString());
