@@ -104,7 +104,6 @@ private:
     OstConversionConfig m_config;
     std::atomic<bool> m_cancelled{false};
     bool m_running = false;
-    int m_current_file_index = -1;
 
     // Worker threads (supports N concurrent workers)
     struct ActiveWorker {

@@ -54,13 +54,6 @@ public:
     bool setStandardUserPermissions(const QString& path, const QString& userSID);
 
     /**
-     * @brief Check if we have permission to modify file/folder
-     * @param path Path to check
-     * @return true if we can modify permissions
-     */
-    static bool canModifyPermissions(const QString& path);
-
-    /**
      * @brief Get current file owner
      * @param path File or folder path
      * @return Owner SID or empty string

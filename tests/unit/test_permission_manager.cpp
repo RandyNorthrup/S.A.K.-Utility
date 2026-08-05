@@ -20,10 +20,6 @@ class PermissionManagerTests : public QObject {
 private Q_SLOTS:
     void initTestCase();
 
-    // canModifyPermissions
-    void canModifyPermissions_existingFile();
-    void canModifyPermissions_nonExistentFile();
-
     // getOwner
     void getOwner_existingFile();
     void getOwner_nonExistentFile();
@@ -43,8 +39,6 @@ private Q_SLOTS:
 
     // SDDL round-trip must not silently drop the primary group
     void setSddl_appliesGroup();
-
-    // applyPermissionStrategy
 
     // isRunningAsAdmin
     void isRunningAsAdmin_returnsBoolean();
@@ -72,24 +66,10 @@ void PermissionManagerTests::initTestCase() {
 // already asserts is empty. Every other test in this file constructs a manager too, so the
 // "does not crash on construction" claim is not lost.
 
-// ============================================================================
-// canModifyPermissions
-// ============================================================================
-
-void PermissionManagerTests::canModifyPermissions_existingFile() {
-    sak::PermissionManager mgr;
-    // canModifyPermissions is exists() && isWritable() -- it does NOT consult elevation, so a
-    // file this process just created in its own temp dir must come back true. The old comment
-    // claimed the answer depended on elevation and the body asserted nothing at all, which made
-    // the negative case (canModifyPermissions_nonExistentFile) the only real coverage.
-    QVERIFY2(mgr.canModifyPermissions(m_testFile), qPrintable(m_testFile));
-}
-
-void PermissionManagerTests::canModifyPermissions_nonExistentFile() {
-    sak::PermissionManager mgr;
-    bool canModify = mgr.canModifyPermissions(m_tempDir.filePath("nonexistent.txt"));
-    QVERIFY(!canModify);
-}
+// canModifyPermissions and its two tests were removed together. The function had no production
+// caller, so these tests were the only thing keeping it compiled, and both merely restated
+// QFileInfo::exists() && isWritable() back to itself on a file the test had just created (or
+// just not created) -- they exercised Qt, not the permission manager.
 
 // ============================================================================
 // getOwner

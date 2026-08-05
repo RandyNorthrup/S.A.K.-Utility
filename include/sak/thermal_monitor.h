@@ -86,21 +86,10 @@ public:
     /// overload discards this signal (existing callers, e.g. the poll timer / StressTestWorker).
     [[nodiscard]] static QVector<ThermalReading> pollOnce(bool& queryOk);
 
-    /// @brief Get the history of all readings since monitoring started
-    /// @return All accumulated thermal readings
-    [[nodiscard]] const QVector<ThermalReading>& history() const { return m_history; }
-
-    /// @brief Clear the reading history
-    void clearHistory();
-
     /// @brief Query CPU thermal zone temperature from WMI
     /// @return Temperature in Celsius, or -1.0 if unavailable
     /// @note Shared utility -- also used by StressTestWorker
     [[nodiscard]] static double queryCpuTemperature();
-
-    /// @brief Check if the last poll included CPU temperature data
-    /// @return true if the most recent readings contain a CPU sensor
-    [[nodiscard]] bool hasCpuTemperature() const;
 
 Q_SIGNALS:
     /// @brief Emitted at each poll interval with current readings
@@ -129,7 +118,12 @@ private:
     /// @return Parsed thermal readings
     [[nodiscard]] static QVector<ThermalReading> parseThermalOutput(const QString& output);
 
-    /// @brief Process completed readings: history, thresholds, signals
+    /// @brief Process completed readings: thresholds, signals
+    /// @note Readings are NOT retained. This monitor is a pure emitter. It previously kept
+    ///       a capped history that no production code ever read - DiagnosticController
+    ///       forwards readingsUpdated straight to the panel, which overwrites its labels
+    ///       each poll - so a running monitor accumulated up to 1800 readings for nobody.
+    ///       A consumer that needs history must keep its own.
     void processReadings(const QVector<ThermalReading>& readings);
 
     QTimer m_timer;
@@ -137,13 +131,11 @@ private:
     int m_interval_ms{sak::kTimerBroadcastMs};  ///< Configured poll interval
     bool m_active{
         false};  ///< true between start() and stop(); gates timer re-arm in onPollComplete
-    QVector<ThermalReading> m_history;
 
     /// Warning thresholds (Celsius)
     static constexpr double kCpuWarningThreshold = 85.0;
     static constexpr double kGpuWarningThreshold = 90.0;
     static constexpr double kDiskWarningThreshold = 55.0;
-    static constexpr int kMaxHistoryEntries = 1800;
 };
 
 }  // namespace sak

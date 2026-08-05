@@ -17,7 +17,6 @@ private Q_SLOTS:
     void initialState();
     void startStop();
     void pollOnceReadingsAreWellFormed();
-    void clearHistory();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
 };
@@ -25,7 +24,6 @@ private Q_SLOTS:
 void ThermalMonitorTests::initialState() {
     ThermalMonitor monitor;
     QVERIFY(!monitor.isRunning());
-    QVERIFY(monitor.history().isEmpty());
 }
 
 void ThermalMonitorTests::startStop() {
@@ -78,22 +76,6 @@ void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
     }
 }
 
-void ThermalMonitorTests::clearHistory() {
-    ThermalMonitor monitor;
-    // Start briefly to accumulate some history
-    monitor.start(100);
-    QTest::qWait(250);
-    monitor.stop();
-
-    // NOTE ON STRENGTH: only a poll that produced at least one reading appends to the
-    // history, and every sensor this monitor reads needs administrator rights, so on an
-    // unprivileged run the history is still empty when clearHistory() is called and the
-    // assertion below would also hold if clearHistory() did nothing. Populating it needs
-    // either a live elevated sensor or an injection seam on m_history; neither exists.
-    monitor.clearHistory();
-    QVERIFY(monitor.history().isEmpty());
-}
-
 void ThermalMonitorTests::singleShotTimerBehavior() {
     // Verify the timer doesn't accumulate concurrent polls.
     // With async polling, each cycle takes several seconds (PS startup + WMI),
@@ -108,8 +90,7 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
 
     // processReadings emits readingsUpdated for EVERY completed cycle -- with an empty
     // reading vector on a box whose sensors need admin -- so this counts poll CYCLES on
-    // any machine, unlike history(), which stays empty there and makes a size bound
-    // vacuous. Bounded by the sensor-query timeout, so it always arrives.
+    // any machine. Bounded by the sensor-query timeout, so it always arrives.
     QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 30'000);
 
     const int cycles_before_window = cycles;
@@ -123,11 +104,6 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     const int window_cycles = cycles - cycles_before_window;
     QVERIFY2(window_cycles <= 12,
              qPrintable(QString("Runaway poll cycles: %1").arg(window_cycles)));
-
-    // History may be empty if WMI is unavailable (also valid).
-    const int history_size = monitor.history().size();
-    QVERIFY2(history_size <= 30,
-             qPrintable(QString("History too large: %1 entries").arg(history_size)));
 }
 
 // B5 tail: a non-positive poll interval must never arm the timer (0 busy-spins,

@@ -96,7 +96,6 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     m_config = config;
     m_cancelled.store(false);
     m_running = true;
-    m_current_file_index = -1;
     m_next_queued_index = 0;
     m_active_workers.clear();
     m_report_path.clear();

@@ -7,12 +7,10 @@
 ///  - PermissionManager std::expected overloads
 ///  - UserProfileBackupWorker path-access detection
 ///  - New task handler registrations in elevated helper dispatcher
-///  - ThermalMonitor hasCpuTemperature() check
 
 #include "sak/elevated_task_dispatcher.h"
 #include "sak/error_codes.h"
 #include "sak/permission_manager.h"
-#include "sak/thermal_monitor.h"
 #include "sak/user_profile_backup_worker.h"
 
 #include <QJsonObject>
@@ -378,29 +376,6 @@ private Q_SLOTS:
         QVERIFY(result->success);
         QCOMPARE(last_pct, 100);
         QVERIFY(QFile::exists(dest_path));
-    }
-
-    // ======================================================================
-    // ThermalMonitor -- hasCpuTemperature
-    // ======================================================================
-
-    void testThermalMonitorHasCpuTemperatureInitiallyFalse() {
-        sak::ThermalMonitor monitor;
-        // No poll has run, so the backing history must be empty and the derived flag false.
-        // Asserting the history too pins WHY the flag is false.
-        QVERIFY(monitor.history().isEmpty());
-        QVERIFY(!monitor.hasCpuTemperature());
-    }
-
-    void testThermalMonitorHasCpuTemperatureAfterClear() {
-        // CRASH-REGRESSION TEST. The history starts empty and only the async poll can fill it
-        // (m_history and processReadings are both private), so nothing here distinguishes a
-        // working clearHistory() from a no-op, and neither assertion below can fail on its
-        // own. What this catches is clearHistory() faulting on an empty history.
-        sak::ThermalMonitor monitor;
-        monitor.clearHistory();
-        QVERIFY(monitor.history().isEmpty());
-        QVERIFY(!monitor.hasCpuTemperature());
     }
 };
 

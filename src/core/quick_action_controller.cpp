@@ -396,15 +396,6 @@ void QuickActionController::onExecutionComplete() {
     }
 }
 
-void QuickActionController::onWorkerError(const QString& error) {
-    QuickAction* action = m_current_execution_action ? m_current_execution_action
-                                                     : m_current_scan_action;
-    if (action) {
-        Q_EMIT actionError(action, error);
-        logOperation(action, QString("ERROR: %1").arg(error));
-    }
-}
-
 void QuickActionController::startScanWorker(QuickAction* action) {
     // scanAction is the only caller and returns early on an unknown action name.
     Q_ASSERT(action);

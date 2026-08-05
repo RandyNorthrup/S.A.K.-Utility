@@ -176,11 +176,6 @@ private Q_SLOTS:
      */
     void onExecutionComplete();
 
-    /**
-     * @brief Handle worker error
-     */
-    void onWorkerError(const QString& error);
-
 private:
     /**
      * @brief Execute an action via admin elevation

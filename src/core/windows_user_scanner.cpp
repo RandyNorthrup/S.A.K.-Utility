@@ -11,18 +11,13 @@
 #ifdef Q_OS_WIN
 #include "sak/logger.h"
 
-#include <algorithm>
-#include <numeric>
-
 #include <windows.h>
 
 #include <lm.h>
 #include <sddl.h>
 #include <userenv.h>
-#include <wtsapi32.h>
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
-#pragma comment(lib, "wtsapi32.lib")
 #endif
 
 namespace sak {
@@ -255,61 +250,6 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
 #endif
 }
 
-bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
-    if (username.isEmpty()) {
-        // Fail closed: an empty name is no account, and the loop below compares session names
-        // directly -- a session reporting an empty WTSUserName would match it. false is already
-        // this function's answer when the session enumeration cannot be read.
-        return false;
-    }
-#ifdef Q_OS_WIN
-    // Enumerate active sessions using WTS API
-    PWTS_SESSION_INFOW pSessionInfo = nullptr;
-    DWORD sessionCount = 0;
-
-    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &pSessionInfo, &sessionCount)) {
-        // Failed to enumerate sessions
-        return false;
-    }
-
-    bool isLoggedIn = false;
-
-    for (DWORD i = 0; i < sessionCount; i++) {
-        // Skip disconnected and idle sessions
-        if (pSessionInfo[i].State != WTSActive) {
-            continue;
-        }
-
-        // Get username for this session
-        LPWSTR pUserName = nullptr;
-        DWORD bytesReturned = 0;
-
-        if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,
-                                         pSessionInfo[i].SessionId,
-                                         WTSUserName,
-                                         &pUserName,
-                                         &bytesReturned)) {
-            continue;
-        }
-
-        QString sessionUser = QString::fromWCharArray(pUserName);
-        WTSFreeMemory(pUserName);
-
-        // Compare usernames (case-insensitive)
-        if (sessionUser.compare(username, Qt::CaseInsensitive) == 0) {
-            isLoggedIn = true;
-            break;
-        }
-    }
-
-    WTSFreeMemory(pSessionInfo);
-    return isLoggedIn;
-#else
-    (void)username;
-    return false;
-#endif
-}
-
 qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fileLimit) {
     qint64 total = 0;
     int count = 0;
@@ -413,42 +353,6 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
     createSelection(FolderType::AppData_Local, "AppData (Local)", "AppData\\Local", false);
 
     return selections;
-}
-
-qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) {
-    if (path.isEmpty()) {
-        // Fail closed: an empty path must size NOTHING. QDir("") resolves to the current working
-        // directory, so an empty path would silently size the CWD tree -- the same reason
-        // ProgramEnumerator::calculateDirSize rejects one.
-        return 0;
-    }
-    if (maxDepth <= 0) {
-        return 0;
-    }
-
-    qint64 size_bytes = 0;
-    QDir dir(path);
-
-    if (!dir.exists()) {
-        return 0;
-    }
-
-    // Get files in current directory
-    QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-    size_bytes += std::accumulate(
-        files.begin(), files.end(), qint64{0}, [](qint64 sum, const QFileInfo& file) {
-            return sum + file.size();
-        });
-
-    // Recurse into subdirectories (limited depth)
-    if (maxDepth > 1) {
-        QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-        std::for_each(dirs.begin(), dirs.end(), [&](const QFileInfo& subdir) {
-            size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
-        });
-    }
-
-    return size_bytes;
 }
 
 }  // namespace sak

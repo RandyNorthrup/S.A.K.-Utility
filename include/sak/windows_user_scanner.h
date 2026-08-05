@@ -9,8 +9,6 @@
 
 namespace sak {
 
-inline constexpr int kDefaultQuickSizeEstimateDepth = 2;
-
 /**
  * @brief Scans Windows system for user profiles
  *
@@ -57,12 +55,8 @@ public:
      */
     static QString getProfilePath(const QString& username);
 
-    /**
-     * @brief Check if user is currently logged in
-     * @param username Windows username
-     * @return true if user has active session
-     */
-    static bool isUserLoggedIn(const QString& username);
+    // No session-state accessor here: isUserLoggedIn() was removed with its WTS dependency
+    // because nothing in the product ever asked whether a profile's owner was signed in.
 
     /**
      * @brief Estimate size of user profile
@@ -92,7 +86,6 @@ Q_SIGNALS:
 private:
     bool enumerateWindowsUsers(QVector<UserProfile>& profiles);
     static void populateFolderSelections(UserProfile& profile);
-    qint64 quickSizeEstimate(const QString& path, int maxDepth = kDefaultQuickSizeEstimateDepth);
 };
 
 }  // namespace sak

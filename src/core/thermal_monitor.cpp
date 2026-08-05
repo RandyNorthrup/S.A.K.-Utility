@@ -108,26 +108,6 @@ QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
     return parseThermalOutput(result.std_out);
 }
 
-void ThermalMonitor::clearHistory() {
-    m_history.clear();
-}
-
-bool ThermalMonitor::hasCpuTemperature() const {
-    if (m_history.isEmpty()) {
-        return false;
-    }
-    // Readings from a single poll share one timestamp and sit contiguously at the
-    // tail of the history. Inspect only that most-recent poll so a stale CPU entry
-    // from an earlier cycle never reports a currently-present CPU sensor.
-    const QDateTime latest = m_history.back().timestamp;
-    for (auto it = m_history.crbegin(); it != m_history.crend() && it->timestamp == latest; ++it) {
-        if (it->component == QLatin1String("CPU Package")) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // ============================================================================
 // Timer Callback (main thread)
 // ============================================================================
@@ -138,7 +118,7 @@ void ThermalMonitor::onTimerTick() {
         return;
     }
 
-    // Run pollOnce() on the thread pool — no UI blocking
+    // Run pollOnce() on the thread pool -- no UI blocking
     // Lambda (not &pollOnce) to disambiguate the overload set: pollOnce() vs pollOnce(bool&).
     m_poll_watcher.setFuture(QtConcurrent::run([] { return ThermalMonitor::pollOnce(); }));
 }
@@ -233,15 +213,10 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
 }
 
 // ============================================================================
-// Process Readings (history, thresholds, signals)
+// Process Readings (thresholds, signals)
 // ============================================================================
 
 void ThermalMonitor::processReadings(const QVector<ThermalReading>& readings) {
-    m_history.append(readings);
-    if (m_history.size() > kMaxHistoryEntries) {
-        m_history.remove(0, m_history.size() - kMaxHistoryEntries);
-    }
-
     for (const auto& reading : readings) {
         const double temp = reading.temperature_celsius;
         if (reading.component == "CPU Package" && temp >= kCpuWarningThreshold) {

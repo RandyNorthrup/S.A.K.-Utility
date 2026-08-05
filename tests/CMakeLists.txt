@@ -3460,7 +3460,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
     message(STATUS "Added unit test: test_drive_scanner")
 endif()
 
-# test_permission_manager - canModifyPermissions, getOwner, SDDL, stripPermissions
+# test_permission_manager - getOwner, SDDL, stripPermissions, elevation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     add_executable(test_permission_manager
         unit/test_permission_manager.cpp
@@ -3575,12 +3575,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
 endif()
 
 # test_mixed_tier_operations - Phase 3 mixed-tier elevation: PermissionManager
-# expected overloads, canReadPath, backup worker signal, task handlers, thermal
+# expected overloads, canReadPath, backup worker signal, task handlers
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
     add_executable(test_mixed_tier_operations
         unit/test_mixed_tier_operations.cpp
         ../src/core/elevated_task_dispatcher.cpp
-        ../src/core/thermal_monitor.cpp
         ../src/core/permission_manager.cpp
         ../src/core/elevation_manager.cpp
         ../src/core/user_profile_backup_worker.cpp
@@ -3590,7 +3589,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/elevated_task_dispatcher.h
-        ../include/sak/thermal_monitor.h
         ../include/sak/permission_manager.h
         ../include/sak/user_profile_backup_worker.h
         ../include/sak/user_profile_types.h

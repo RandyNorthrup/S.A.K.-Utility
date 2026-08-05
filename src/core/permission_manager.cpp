@@ -294,10 +294,11 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
     return trySetStandardUserPermissions(path, userSID).has_value();
 }
 
-bool PermissionManager::canModifyPermissions(const QString& path) {
-    QFileInfo fileInfo(path);
-    return fileInfo.exists() && fileInfo.isWritable();
-}
+// canModifyPermissions was removed here, together with its two tests. It was a public static
+// with no caller anywhere in the tree, and it did not actually answer the question its name
+// asked: it returned QFileInfo::exists() && isWritable(), i.e. write access to the file's DATA,
+// which says nothing about WRITE_DAC/WRITE_OWNER or the elevation the ACL operations need. Every
+// live entry point instead attempts the operation and fails closed with a real Win32 error.
 
 // applyPermissionStrategy was removed here. It had zero callers anywhere in the tree - the
 // backup and restore workers each dispatch on PermissionMode themselves - and it carried a
