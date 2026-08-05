@@ -1796,7 +1796,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       entire purpose is making an unknown exception survivable. The rethrow is
       removed; logging plus failed(internal_error) is the fail-closed contract.
 
-      NOT YET DIAGNOSED - 9 tests die instantly with exit 0xC0000409 and produce no
+      DIAGNOSED AND FIXED - all nine. 9 tests died instantly with exit 0xC0000409 and
       output at all: not a QtTest line, not an ASan report, not even with
       ASAN_OPTIONS=log_path set. They are test_file_hash, test_secure_memory,
       test_ethernet_config_manager, test_file_management_explorer_panel,
@@ -1806,15 +1806,10 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       This is deliberately NOT recorded as nine memory bugs, and it turns out not
       to be an ASan problem at all.
 
-      DECISIVE EXPERIMENT: test_secure_memory and test_file_hash were rebuilt in
+      DECISIVE EXPERIMENT 1: test_secure_memory and test_file_hash were rebuilt in
       Debug with ENABLE_ASAN=OFF and both still die with exactly 0xC0000409. The
       sanitizer is therefore not involved. THE DEBUG CONFIGURATION IS BROKEN
       INDEPENDENTLY, and these nine tests cannot run in Debug at all.
-
-      That finding is more serious than the one being looked for, because it means
-      the Debug build has never been usable for these subsystems, which is why
-      nothing in the Debug configuration - assertions, sanitizers, debug-only
-      preconditions - has ever been exercised against them.
 
       Ruled out by measurement, not assumption:
         * Mixed instrumentation. The 20 projects without /fsanitize are all CMake
@@ -1823,33 +1818,301 @@ the elevation boundary, or the AI tool policy those tests actually execute.
           SDK libraries - crypt32, dxgi, pdh, iphlpapi, ws2_32, dnsapi, wlanapi,
           netapi32 - and no vcpkg library at all.
 
-      Still open and genuinely suspicious: the build DOES carry a CRT mismatch.
-      VCPKG_TARGET_TRIPLET is x64-windows-static, which builds its libraries against
-      the STATIC CRT, while CMAKE_MSVC_RUNTIME_LIBRARY resolves to
-      MultiThreaded$<$<CONFIG:Debug>:Debug>DLL, the DYNAMIC CRT. That fallback is
-      taken because cmake/SAK_BuildConfig.cmake is absent, and the root CMakeLists
-      comment states the static runtime is supposed to be set there. So the
-      as-configured build contradicts its own documented intent.
+      A WRONG READING, CORRECTED. This document previously concluded that the
+      failure was in static initialization, before main, because the process
+      produced no output whatsoever. That was an artifact, not evidence. stdout is
+      BLOCK-buffered when it is redirected to a file, and abort() terminates without
+      flushing it, so everything the test had already printed was discarded. Run
+      with a console attached, every one of the nine prints its full QtTest log and
+      dies at the END, on one specific test function. The lesson is worth keeping:
+      absence of output was treated as a location, and it was only a buffering mode.
 
-      The failure produces no output whatsoever before dying, which places it in
-      static initialization, before main. That needs a debugger, not another guess.
+      DECISIVE EXPERIMENT 2 - a real debugger. cdbX64.exe from WinDbg
+      (winget install Microsoft.WinDbg; the Windows SDK Debugging Tools were not
+      installed on this machine) run as:
 
-- [ ] R5-G14-2a THE DEBUG BUILD IS BROKEN FOR NINE TESTS, INDEPENDENT OF ASan.
-      Attach a debugger and find what fails during static initialization. Do not
-      suppress, exclude, or declare it expected: an unexplained mass failure is not
-      a baseline, and until it is understood no Debug or sanitizer result from those
-      subsystems is evidence of anything
-- [ ] R5-G14-2b Resolve the CRT contradiction: the vcpkg triplet x64-windows-static
-      builds against the static CRT while the project resolves to the dynamic CRT,
-      and the root CMakeLists says the static runtime is meant to be set in a file
-      that does not exist. Decide which is correct, make the build say so, and make
-      the configure FAIL if the two ever disagree again rather than silently
-      producing a mixed build
-- [ ] R5-G14-2c Add a gate that BOTH configurations build and pass, so a Debug
-      configuration can never again rot unnoticed while Release stays green. This is
-      the specific hole that hid the dead ASan gate
-- [ ] R5-G14-2d Once Debug is healthy, re-run to a clean 222 of 222 under ASan
-- [ ] R5-G14-3 Add a CI job that builds with ASan and runs ctest, so the sanitizer
+        cdbX64.exe -c "g; .lastevent; .exr -1; kn 40; q" -o <test>.exe
+
+      The very first run answered it outright:
+
+        QFATAL : SecureMemoryTests::secureRandom_nullBuffer() ASSERT: "buffer" in
+                 src/core/secure_memory.cpp, line 50
+
+      0xC0000409 is not a memory bug here. Q_ASSERT -> qt_assert -> qFatal ->
+      abort(), and the MSVC CRT implements abort() as
+      __fastfail(FAST_FAIL_FATAL_APP_EXIT), which the OS reports as
+      STATUS_STACK_BUFFER_OVERRUN, 0xC0000409, with no message of its own. The
+      exception subcode confirms it: Parameter[0] = 7 = FAST_FAIL_FATAL_APP_EXIT,
+      not FAST_FAIL_STACK_COOKIE_CHECK_FAILURE.
+
+      EIGHT OF THE NINE ARE ONE DEFECT CLASS: a Q_ASSERT guarding a value that the
+      same function ALSO validates at runtime. Release drops the assert, so the
+      runtime rejection is the real contract - and it is exactly what each of these
+      tests pins down. Debug keeps the assert and aborts the process on input that
+      Release handles cleanly. So the function has TWO DIFFERENT BEHAVIOURS in the
+      two configurations, and the subsystem's own test suite cannot run in Debug.
+      This is the identical mistake as the worker_base rethrow above, in eight more
+      places.
+
+      Site                                        Assert            Runtime contract
+      ------------------------------------------  ----------------  ----------------
+      core/secure_memory.cpp:50                    buffer            returns false
+      core/file_hash.cpp:51 (+58)                  chunk_size > 0    coerced to default
+      core/ethernet_config_manager.cpp:54          !obj.isEmpty()    snapshot !isValid()
+      core/user_profile_types.cpp:499              !str.isEmpty()    FolderType::Custom
+      core/user_profile_restore_worker.cpp:230-1   backup+mappings   handled downstream
+      core/user_profile_restore_worker.cpp:339     source_username   reported not found
+      core/windows_usb_creator.cpp:49-50 (+117-8)  iso+diskNumber    validateUSBInputs
+      core/quick_action_result_io.cpp:34           !status.isEmpty() ActionStatus::Idle
+      core/image_source.cpp:167                    !filePath.isEmpty ImageFormat::Unknown
+
+      FIXING BY REPORTED LINE NUMBER WAS NOT ENOUGH. The first pass removed exactly
+      the asserts the failures named, rebuilt, and 221 of 222 passed - with
+      test_user_profile_restore_worker still dying, on a THIRD assert in the same
+      file (run(), line 271) that no failure had yet reached. Sweeping the eight
+      files properly then found 24 more sites of the same shape. The lesson is the
+      one this whole campaign keeps re-learning: a reported instance is not the
+      defect, it is one reachable member of it.
+
+      AND THE SAME SWEEP AGAIN, ONE FILE OVER. user_profile_backup_worker.cpp is the
+      mirror image of the restore worker and carries 16 sites of the identical
+      class - startBackup, run, backupAllUsers, backupUser, backupFolder,
+      copyDirectory, copyFileWithFiltering and applyPermissions. None of them was
+      reachable by the current tests, so nothing failed and nothing pointed at it;
+      it was found only by looking at the sibling of a file that HAD failed. Fixed
+      to the same rule. This is the third time in this one item that the reported
+      failure was a strictly smaller set than the actual defect.
+
+      Removing the compression-level assert also orphaned
+      kBackupWorkerMaxCompressionLevel, whose only use it was. The constant is
+      deleted rather than left as dead code: range-checking a value the worker
+      deliberately ignores - it copies files verbatim and says so at run() - was
+      validating nothing.
+
+      Of those, the ones on values that cross an API boundary were removed, and two
+      were upgraded from an assert to a real fail-closed rejection because the
+      function is security-relevant and 'abort in Debug, proceed in Release' is the
+      wrong pair of behaviours for it:
+        * buildSafePath() - the containment guard for every restore path. An empty
+          base or relative path is now REFUSED; previously the assert vanished in
+          Release and QDir("").filePath("") produced an empty path for the
+          containment check to judge.
+        * EthernetConfigManager::runNetsh() - launches netsh elevated. Empty
+          arguments are now refused rather than asserted.
+
+      DELIBERATELY KEPT, with the reason recorded, because they are invariants the
+      code itself guarantees rather than inputs:
+        * file_hasher m_chunk_size > 0 - the constructor coerces any non-positive
+          value, so a zero here would mean the object is corrupt
+        * MD5/SHA-256 digest and hex length asserts - fixed by the algorithm
+        * copyFileWithConflictResolution size >= 0 / updateProgress bytesAdded >= 0
+          - sourced from QFileInfo::size(), which reports 0, never negative
+        * FileImageSource::read data - an internal caller contract with no runtime
+          handling; a null buffer is undefined behaviour inside QIODevice::read
+        * windows_usb_creator's private helpers - these run DOWNSTREAM of
+          validateUSBInputs, so they assert an already-validated value. They are
+          internal invariants, not boundary checks, and are not reachable with bad
+          input through any public path
+
+      Every other one of those asserts was REMOVED and replaced by a comment stating why
+      the runtime rejection is the contract. NO test was changed, weakened, skipped
+      or blacklisted: the tests were right and the asserts were wrong.
+      tests/unit/test_user_profile_types.cpp even carries the comment 'Previously
+      each of these asserted !json.isEmpty() and aborted in debug' - so an earlier
+      campaign found this class, fixed three members of it, and left the rest. That
+      is precisely what R5-G14-2c exists to stop.
+
+      THE STANDING RULE THIS PRODUCES: Q_ASSERT is for invariants the code itself
+      guarantees. It must NEVER guard a value that crosses an API boundary - a
+      function parameter, parsed JSON, file content, registry data - because those
+      get a runtime check that fails closed in EVERY configuration. Never both: a
+      runtime check plus an assert means the same input is rejected in Release and
+      aborts the process in Debug. The tree currently holds 1040 Q_ASSERT sites
+      (516 on m_ members, 524 other); the reachable ones are found empirically by
+      the Debug suite now that it runs, which is why R5-G14-2c is the durable fix
+      rather than an audit of all 1040.
+
+      THE NINTH IS A REAL BUG IN SHIPPING GUI CODE, and it was only ever reachable
+      because making Debug runnable turned Qt's own assertions back on:
+
+        ASSERT failure in QPersistentModelIndex::~QPersistentModelIndex:
+        "persistent model indexes corrupted"
+
+      sak::FileExplorerGroupProxyModel::onSourceLayoutAboutToBeChanged() captured
+      persistentIndexList() BEFORE emitting layoutAboutToBeChanged(). Views and
+      selection models create THEIR persistent indexes inside their own
+      layoutAboutToBeChanged slots, so everything they create is missing from a
+      snapshot taken first. Instrumented trace of the failing run:
+
+        snap proxy=(0,0) -> src=(0,0)
+        after emit layoutAboutToBeChanged persistent=8      <- was 1 at snapshot
+        remap from=(0,0) -> to=(1,0)                        <- only 1 of 8 remapped
+
+      Seven of eight persistent indexes therefore kept their pre-change rows. Two
+      then resolved to the same position, and changePersistentIndex() inserts into
+      a QHash keyed by index, so the second silently displaced the first. Destroying
+      the orphaned one found its key already gone and tripped the assert. Qt's own
+      QSortFilterProxyModel emits first and snapshots second for this exact reason.
+      Fixed by emitting layoutAboutToBeChanged() before taking the snapshot.
+
+      A second, smaller defect was fixed in the same function: group HEADER rows have
+      no source index, so every layout change mapped them to an invalid index and
+      permanently detached the header the user had selected or made current. Headers
+      are now tracked by section text and follow their section to its new row.
+
+      In Release this bug is silent - Q_ASSERT compiles away and the corrupted hash
+      is simply wrong rather than fatal - which is the whole argument for the Debug
+      gate: a shipping GUI defect sat behind a configuration nobody could run.
+
+- [x] R5-G14-2a DIAGNOSED AND FIXED - see above. Not static initialization (that
+      earlier reading was an artifact of block-buffered stdout), not a memory bug,
+      not ASan. Eight Q_ASSERT/runtime-check contradictions plus one real
+      persistent-model-index corruption in FileExplorerGroupProxyModel
+- [x] R5-G14-2b CRT contradiction resolved and made unrepeatable. The mismatch was
+      real and is confirmed by the linker: LNK4098 'defaultlib LIBCMTD conflicts
+      with use of other libs'. Root cause: cmake/SAK_BuildConfig.cmake, the file the
+      root CMakeLists says selects the static runtime, is GITIGNORED and absent from
+      every checkout including CI - so the documented 'CI fallback' to the dynamic
+      CRT was in fact the only path anyone ever took, while vcpkg stayed pinned to
+      x64-windows-static. Qt settles which side is correct: the msvc2022_64 Qt
+      binaries are built against the dynamic CRT, so a Qt application must use it
+      too. The original justification for a static CRT no longer holds either - the
+      build already ships msvcp140.dll and vcruntime140.dll because Qt needs them.
+      Configure now FAILS on any disagreement between the app CRT, the vcpkg triplet
+      CRT, and shared Qt, rather than hiding it behind /NODEFAULTLIB.
+
+      WHAT THIS MEANS FOR EVERY LOCAL CERTIFICATION RUN TO DATE: CI installs
+      zlib/bzip2/liblzma:x64-windows (dynamic, coherent) and was fine. The LOCAL
+      tree was pinned to x64-windows-static. So the binary that local ctest runs
+      certified was configured differently from the binary CI builds and ships. The
+      local tree is now on x64-windows, matching CI exactly, and the triplet is
+      DECLARED in the workflow (VCPKG_TRIPLET) instead of being left to vcpkg's
+      default, which is how the drift went unnoticed.
+
+      The five /NODEFAULTLIB suppression blocks are DELETED - sak_utility,
+      sak_apfs_writer_cli, sak_hfs_writer_cli, sak_elevated_helper and
+      test_ai_assistant_panel_tool_dispatch. They existed only to silence the
+      LNK4098 the coherence check now refuses to configure, and telling the linker
+      to drop a CRT it needs is not something a build should do quietly.
+
+      GATE VERIFIED, not assumed. Configuring a throwaway tree with the old
+      x64-windows-static triplet now fails with:
+        CRT mismatch: this project compiles against the dynamic CRT ... while vcpkg
+        triplet 'x64-windows-static' supplies libraries built against the static
+        CRT. Two C runtimes in one image is a heap-corruption hazard, not a warning
+        to silence.
+      and the healthy configuration reports: CRT: dynamic (app), dynamic (vcpkg
+      x64-windows)
+
+      THE FIRST VERSION OF THIS GATE WAS ITSELF A GATE THAT LIED, and it was caught
+      within minutes of writing it. After switching VCPKG_TARGET_TRIPLET to
+      x64-windows, configure reported 'CRT: dynamic (app), dynamic (vcpkg
+      x64-windows)' - and the very next build still emitted LNK4098 on eight
+      targets. Cause: CMake caches resolved dependency paths as absolute FILEPATHs
+      (ZLIB_LIBRARY_RELEASE and friends), and changing the triplet does NOT
+      re-resolve them, so the link was still pulling
+      C:/vcpkg/installed/x64-windows-static/lib/zlib.lib and its static CRT. The
+      check was validating what was ASKED FOR instead of what would be LINKED.
+
+      It now also verifies every resolved dependency path actually lives under the
+      selected triplet, and fails with an instruction to delete the build directory
+      if it does not. The build tree was then deleted and rebuilt clean, because a
+      certification run on a half-reconfigured tree is worth nothing.
+
+      KNOCK-ON THE SWITCH REQUIRED: on the dynamic triplet zlib1, bz2 and liblzma
+      are DLLs rather than static libraries. sak_utility already had a POST_BUILD
+      step staging them beside it, but test executables build into a different
+      directory and had no such step, so every test would have died with
+      STATUS_DLL_NOT_FOUND. The vcpkg bin directory is now prepended to each
+      registered test's PATH alongside the Qt bin directory, in the same
+      whole-directory loop, so a new test target inherits it and cannot regress.
+
+      Recording this deliberately: the mistake is the campaign's own thesis in
+      miniature. A gate reported healthy while the thing it guards was broken, and
+      the only reason it was caught was that a build was run and its output read,
+      rather than trusting the gate's own green message.
+- [x] R5-G14-2c GATE ADDED - .github/workflows/build-release.yml now carries a
+      debug-asan-suite job: configure with ENABLE_ASAN=ON, build --config Debug, run
+      the full ctest suite headless (QT_QPA_PLATFORM=offscreen). Until now the
+      repository built exactly ONE configuration, and that single hole hid the dead
+      ASan gate, nine unrunnable test executables, and a live GUI defect
+      simultaneously. A configuration nobody builds is a configuration that rots.
+      REMAINING MANUAL STEP: mark debug-asan-suite a required check in the GitHub
+      branch protection rules - CI presence alone does not block a merge
+- [x] R5-G14-2d Debug suite green under ASan - see the run recorded above.
+
+      AND IT IMMEDIATELY PAID FOR ITSELF: the first genuinely-green Debug run
+      surfaced a TENTH failure that was not one of the original nine and is a REAL
+      DATA RACE IN SHIPPING CODE - AppInstallationWorker::processQueue dequeuing
+      from an EMPTY queue.
+
+        ASSERT: "!isEmpty()" in QtCore/qlist.h line 636
+        ...
+        QList<int>::takeFirst
+        QQueue<int>::dequeue
+        sak::AppInstallationWorker::processQueue
+
+      checkQueueState() confirms the queue is non-empty, then RELEASES the mutex
+      before returning Proceed. processQueue re-acquires the mutex and dequeues.
+      Between those two acquisitions cancel() can drain m_jobQueue under the same
+      mutex, so the dequeue reaches QList::takeFirst() on an empty list. The
+      check and the dequeue were never atomic with respect to each other.
+
+      Debug asserts. RELEASE COMPILES THE ASSERT AWAY AND READS OFF THE FRONT OF AN
+      EMPTY LIST - undefined behaviour, silently, in the shipped binary. This is
+      the strongest single argument in this document for the both-configuration
+      gate: the Release suite passed 222/222 over this bug, twice, because Release
+      cannot detect it by construction.
+
+      Fixed by re-checking emptiness under the SAME lock that performs the
+      dequeue. Measured before: 4 of 8 Debug runs aborted. After: 0 of 20 Debug
+      and 0 of 20 Release runs.
+
+      HOW IT WAS FLUSHED OUT, recorded because the sequence matters. The failing
+      test, pauseResumeToggles, was ALSO racy in its own right: it queued 2 jobs
+      that fail instantly (the ChocolateyManager is not initialised), so the worker
+      usually finished before pause() took the mutex, pause() correctly no-opped on
+      a stopped worker, and isPaused() was false. It passed in Release and failed
+      about half the time in Debug - it had been passing on timing, not behaviour.
+      Widening it to 2000 jobs to make the pause window deterministic ALSO widened
+      the product race from rare to reproducible, which is what exposed the real
+      bug underneath. The test now also asserts its own precondition with QVERIFY2
+      (the worker must still be running when pause() is called), so if the timing
+      ever shifts again the test fails loudly instead of quietly checking the wrong
+      state.
+
+      AND UNDERNEATH THAT, A THIRD BUG - THIS ONE A WHOLE CLASS. With the product
+      race fixed, the same binary still failed about 2 runs in 300. The failure
+      produced no stdout at all, so it took the QtTest FILE logger (-o file,txt,
+      which flushes per line) to see it. It was not pauseResumeToggles at all:
+
+        FAIL! : dryRunFinishesWithoutCancel() 'doneSpy.wait(3000)' returned FALSE
+
+      QSignalSpy connects with Qt::DirectConnection, so the WORKER thread records
+      the signal the instant it is emitted, and QSignalSpy::wait() returns
+      'size() > origCount' - it waits for a signal it has not ALREADY seen. A dry
+      run finishes almost immediately, so whenever the worker thread beat the main
+      thread to the wait() call, the spy already held the signal and wait() blocked
+      for a second one that never comes. The code under test was working perfectly
+      every single time; the test was reporting a defect that did not exist.
+      Replaced with QTRY_COMPARE(doneSpy.count(), 1), which succeeds immediately if
+      the signal already arrived and polls an event loop if it has not.
+
+      Measured for that one binary: 4 of 8 Debug runs aborted (product race), then
+      about 2 in 300 failed (spy misuse), then 0 of 300 in Debug AND 0 of 300 in
+      Release.
+
+      THE CLASS: this is not one test. Measured across the suite there are 62
+      <spy>.wait() call sites in 12 files, 52 of them in the risky
+      QVERIFY(<spy>.wait(...)) form. Every one is a potential false failure -
+      or, worse, a false PASS - wherever the emitting code can finish before the
+      main thread reaches wait(). Not all 52 are broken: a signal that can only be
+      emitted in response to a later explicit action cannot arrive early. Each one
+      needs checking against whether its emitter runs on another thread and can
+      complete first. Tracked as R5-G18-9 rather than mass-rewritten blind, because
+      converting them without reading each one would be exactly the kind of
+      unverified sweep this campaign exists to stop.
+- [x] R5-G14-3 Covered by the same debug-asan-suite job: ASan is applied in CI, so it
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
 - [ ] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
       implement UBSan or TSan); run the suite under UBSan
@@ -2072,6 +2335,35 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [ ] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
       test_active_connections_monitor asserting a live system has TCP connections is the
       known instance
+- [ ] R5-G18-6 Measure and publish SKIPPED counts. ctest reports a binary that skipped
+      every one of its test functions as Passed, because QSKIP leaves the exit code
+      at 0. There are 145 QSKIP sites, and many are environment-conditional
+      (qgetenv, adapter present, drive mounted), so the skip set differs per machine
+      and '222 of 222 passed' does NOT mean 222 ran - it means 222 did not fail.
+      This directly undercuts the flat-100% coverage target: coverage measured on a
+      run where N tests skipped is coverage of a smaller program than intended.
+      Publish per-run skip counts and fail the gate on any skip without a recorded
+      reason
+- [ ] R5-G18-7 Audit tests whose stdout is lost on failure. Several failures in this
+      campaign produced NO output at all, because stdout is block-buffered when
+      redirected and abort() never flushes it. That turned a one-line assertion
+      message into a multi-hour investigation, twice. The QtTest FILE logger
+      (-o file,txt) flushes per line and does not have this problem; consider making
+      it the default for CI runs so a failure is always legible
+- [ ] R5-G18-8 Ban the assumption that a test binary's functions are independent.
+      pauseResumeToggles passed in isolation 40 times in a row and failed inside the
+      full binary, because ordering and load changed the timing. Any flake hunt that
+      only runs the single failing function will conclude, wrongly, that nothing is
+      broken
+- [ ] R5-G18-9 QSignalSpy::wait() misuse, MEASURED: 62 <spy>.wait() call sites across
+      12 test files, 52 in the risky QVERIFY(<spy>.wait(...)) form. QSignalSpy
+      connects with Qt::DirectConnection and wait() returns 'size() > origCount', so
+      any signal emitted by another thread BEFORE the main thread reaches wait() is
+      already recorded and wait() then blocks for a second one that never arrives.
+      One confirmed instance (dryRunFinishesWithoutCancel) failed about 2 runs in
+      300 while the code under test was correct every time. Each site must be
+      checked against whether its emitter can complete first, and converted to
+      QTRY_COMPARE on the spy count where it can. Do NOT mass-rewrite unread
 
 ### G19 - implementation completeness: nothing half-wired
 
@@ -2123,7 +2415,87 @@ gate teaches people to disable both.
       whole toolchain is present before anything runs
 - [ ] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
       return even if the gate that would catch its class is later weakened
-- [ ] R5-G21-6 Branch protection: the gates are required checks, not advisory
+- [ ] R5-G21-6 Branch protection: the gates are required checks, not advisory.
+      Measured 2026-08-04: main had NO branch protection at all - no required checks,
+      no force-push protection, no deletion protection. A configuration was prepared
+      requiring all four CI checks (the two existing suites, the new
+      debug-asan-suite, Gitleaks and TruffleHog). It is deliberately written with
+      enforce_admins=false so the sole owner can still push directly; setting it to
+      true makes the checks bind the owner too and forces a branch-and-PR workflow.
+      That is a workflow decision, not a code decision, so it is left explicit
+      rather than applied silently. DO NOT set enforce_admins=true until R5-G21-7
+      below is closed, or the first push will be blocked by checks that are
+      currently red.
+
+- [ ] R5-G21-7 CI HAS NOT RUN FOR 776 COMMITS - BY DESIGN, NOT BY NEGLECT.
+      Measured 2026-08-04: origin/main is at 58c6726, dated 2026-06-29; local main
+      is 776 commits ahead. GitHub Actions minutes cost real money, and the
+      deliberate policy is to push once the project is production ready rather than
+      pay for a run per commit. That is a legitimate cost decision and this item
+      does NOT ask for it to be reversed.
+
+      What it does record is the consequence, which is unchanged by the intent:
+      the ENTIRE R2, R3, R4 and R5 remediation has only ever been seen by local
+      pre-commit hooks and local ctest. Deferring CI does not remove the
+      clean-environment risk, it CONCENTRATES it - every fresh-clone, ambient-
+      dependency and packaging problem accumulated across 776 commits arrives in
+      one run. And because each run costs money, a long red-fix-red-fix cycle at
+      the end is the single most expensive way to discover them.
+
+      The cost-correct answer is therefore NOT to push more often. It is to
+      rehearse the CI-only checks LOCALLY, where they are free, so the paid run has
+      the best possible chance of passing first time. Three of the four things CI
+      covers that local runs do not can be reproduced at zero cost:
+        * FRESH CLONE - git clone the repo into a scratch directory and build that,
+          so only COMMITTED files exist. This is the class that already bit us:
+          cmake/SAK_BuildConfig.cmake is gitignored and absent, so the static
+          runtime the root CMakeLists documents never applied to anyone.
+        * PACKAGED ARTIFACT - the failing CI step runs
+          scripts/check_release_readiness.ps1 -PackageRoot <freshly extracted zip>.
+          That script is in the repo and runs locally against a locally built
+          package. Missing DLLs, missing resources and wrong relative paths are
+          invisible to in-tree ctest by construction.
+        * FULL-HISTORY SECRET SCAN - gitleaks scans all history; the pre-commit
+          hook only sees staged files, so a secret committed months ago is
+          invisible locally forever.
+      Only the fourth - a genuinely clean Windows runner image with no Qt, no
+      vcpkg, no LLVM, no Python and no bundled tools preinstalled - cannot be
+      reproduced on a developer machine. That is the stated residual risk.
+
+      DONE: scripts/rehearse_ci_locally.ps1 runs all three reproducible phases in
+      one go, fail-closed. It drives the SAME repo scripts the workflow calls -
+      stage_portable_release, create_release_archive,
+      verify_portable_release_smoke, run_portable_e2e_smoke and
+      check_release_readiness - against a freshly EXTRACTED zip, plus an optional
+      -FreshClone phase that clones HEAD to a scratch directory and builds only
+      committed files. A missing tool is recorded as a FAILURE rather than a skip,
+      because 'the rehearsal passed' has to mean the checks actually ran.
+      gitleaks is currently NOT installed on this machine, so that phase reports
+      failure until it is - which is correct, since it is one of the two gates
+      already red in CI.
+
+      COST NOTE, recorded because it was introduced by this campaign: the new
+      debug-asan-suite job roughly doubles the billable minutes of any push, since
+      Windows runners bill at 2x and an ASan Debug build is slower than Release.
+      For a deliberate, infrequent, production-ready push that is the right spend.
+      The expensive case is a red-fix-push-red iteration cycle, so the workflow now
+      carries a concurrency group that cancels superseded runs on non-main refs
+      while never cancelling a release run on main.
+
+      Worse, the LAST run that did happen was RED, on two gates:
+        * 'Release readiness gate from clean extracted package' (build-release.yml)
+        * 'Run Gitleaks' (secret-scan.yml)
+      and the final pushed commit is titled 'Fix release readiness gates: GUI +
+      magic-number literals', so the work stopped mid-fix and was never resumed.
+      Whether the 776 local commits already fix both is UNKNOWN and cannot be known
+      without pushing.
+
+      Required sequence, in this order:
+        1. Push the backlog to a branch and let CI run on it.
+        2. Fix whatever CI reports - expecting clean-environment failures that no
+           local run can produce.
+        3. Only then make the checks required with enforce_admins=true.
+      Doing 3 before 2 blocks every push against checks that are already failing.
 
 ### G17 - defects found while FIXING, that the review never reported
 

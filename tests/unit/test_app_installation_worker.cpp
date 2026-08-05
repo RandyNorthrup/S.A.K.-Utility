@@ -163,8 +163,29 @@ private Q_SLOTS:
         QSignalSpy pauseSpy(&worker, &sak::AppInstallationWorker::migrationPaused);
         QSignalSpy resumeSpy(&worker, &sak::AppInstallationWorker::migrationResumed);
 
-        auto report = createTestReport(2, 0, 0, 0);
-        worker.startMigration(report, 0);
+        // Enough queued work that processQueue cannot drain it before pause() is
+        // reached. With the previous two jobs this test RACED: the
+        // ChocolateyManager is not initialised, so every job fails instantly, and
+        // the worker frequently finished before pause() took the mutex. pause()
+        // then correctly no-opped on a stopped worker and isPaused() was false.
+        // It passed in Release and failed about half the time in Debug, which
+        // means it had been passing on timing rather than on behaviour.
+        // Concurrency 1 keeps the queue serial so the window stays open. 200 jobs
+        // is roughly a 20ms window against the microseconds it takes to reach
+        // pause() - a margin of about a thousand - while keeping the test fast.
+        // An earlier attempt used 2000, which bought no extra safety and made the
+        // binary noticeably slower for nothing.
+        auto report = createTestReport(200, 0, 0, 0);
+        worker.startMigration(report, 1);
+
+        // The precondition this test depends on, stated explicitly rather than
+        // assumed: pause() only means anything while the worker is running. If
+        // this ever fails the test is racing again and says so, instead of
+        // quietly asserting a state that no longer exists.
+        QVERIFY2(worker.isRunning(),
+                 "worker finished before pause() was called; the queued job set is no longer "
+                 "large enough to hold the window open, so this test would be checking the "
+                 "wrong state");
 
         worker.pause();
         QVERIFY(worker.isPaused());
@@ -247,7 +268,17 @@ private Q_SLOTS:
         worker.startMigration(report, 0);  // dry-run: queue jobs, launch none
 
         // No cancel() here: the loop must reach migrationCompleted on its own.
-        QVERIFY(doneSpy.wait(3000));
+        //
+        // QTRY_COMPARE, not doneSpy.wait(). QSignalSpy connects with
+        // Qt::DirectConnection, so the WORKER thread records the signal the moment
+        // it is emitted, and wait() returns size() > origCount - it waits for a
+        // signal it has not already seen. A dry run finishes almost instantly, so
+        // whenever the worker beat the main thread to wait(), the spy already held
+        // the signal and wait() blocked for a second one that never comes. That
+        // made this test fail about 2 times in 300 while the code under test was
+        // working perfectly. QTRY_COMPARE succeeds immediately if the signal has
+        // already arrived, and polls with an event loop if it has not.
+        QTRY_COMPARE(doneSpy.count(), 1);
     }
 
     /// migrationSkipReason (CODEX REVIEW 3 #6): a SELECTED entry that cannot be

@@ -176,29 +176,69 @@ bool FileExplorerGroupProxyModel::dataChangeAffectsGrouping(const QList<int>& ro
 }
 
 void FileExplorerGroupProxyModel::onSourceLayoutAboutToBeChanged() {
-    // Snapshot the proxy->source mapping NOW, while m_rows still matches the
-    // source's pre-sort order. Wrapping each source index in a persistent index
-    // lets the source track it across its own re-sort; doing this in
-    // layoutChanged instead would read stale rows and remap to wrong items.
-    m_layout_proxy_indexes = persistentIndexList();
-    m_layout_source_indexes.clear();
-    m_layout_source_indexes.reserve(m_layout_proxy_indexes.size());
-    for (const QModelIndex& proxy_index : m_layout_proxy_indexes) {
-        m_layout_source_indexes.append(QPersistentModelIndex(mapToSource(proxy_index)));
-    }
+    // Announce FIRST, then snapshot. This is Qt's contract and the order
+    // QSortFilterProxyModel uses, and the order matters: views and selection
+    // models create THEIR persistent indexes inside their own
+    // layoutAboutToBeChanged slots, so anything captured before this signal
+    // misses them.
+    //
+    // Snapshotting first was a real defect. In the hidden-file toggle the
+    // proxy held ONE persistent index before the signal and EIGHT after it, so
+    // seven were never remapped and kept their pre-change rows. Two of those
+    // then resolved to the same position; changePersistentIndex inserts into a
+    // QHash keyed by index, so the second silently displaced the first, and
+    // destroying the orphaned one tripped Qt's
+    // "persistent model indexes corrupted" assert -- a Debug-only abort
+    // (exit 0xC0000409) that made this panel's test suite unrunnable in Debug.
     Q_EMIT layoutAboutToBeChanged();
+
+    // With m_rows still matching the source's pre-sort order, record what each
+    // held proxy index points at. Wrapping the source index in a persistent one
+    // lets the source track it across its own re-sort; reading this in
+    // layoutChanged instead would see stale rows and remap to the wrong items.
+    m_layout_proxy_indexes = persistentIndexList();
+    m_layout_anchors.clear();
+    m_layout_anchors.reserve(m_layout_proxy_indexes.size());
+    for (const QModelIndex& proxy_index : m_layout_proxy_indexes) {
+        LayoutAnchor anchor;
+        // A group header has no source row, so it is tracked by its section
+        // text. Without this every layout change mapped headers to an invalid
+        // index, which permanently detached the header the user had selected or
+        // made current.
+        anchor.is_header = isHeaderRow(proxy_index.row());
+        if (anchor.is_header) {
+            anchor.header_text = m_rows.at(proxy_index.row()).header_text;
+        } else {
+            anchor.source_index = QPersistentModelIndex(mapToSource(proxy_index));
+        }
+        m_layout_anchors.append(anchor);
+    }
+}
+
+QModelIndex FileExplorerGroupProxyModel::remappedLayoutIndex(const int slot) const {
+    const LayoutAnchor& anchor = m_layout_anchors.at(slot);
+    if (!anchor.is_header) {
+        return mapFromSource(anchor.source_index);
+    }
+    // Header rows follow their section to its new position; a section that no
+    // longer exists resolves to an invalid index, which detaches it cleanly.
+    for (int row = 0; row < m_rows.size(); ++row) {
+        if (m_rows.at(row).source_row < 0 && m_rows.at(row).header_text == anchor.header_text) {
+            return createIndex(row, m_layout_proxy_indexes.at(slot).column());
+        }
+    }
+    return {};
 }
 
 void FileExplorerGroupProxyModel::onSourceLayoutChanged() {
-    // The sort proxy re-sorted: regroup, then remap each held persistent index
-    // (selection, current) through its now-updated source index.
+    // The sort proxy re-sorted: regroup, then remap every held persistent index
+    // (selection, current, open editors) to where its item now lives.
     rebuildGroups();
-    for (int i = 0; i < m_layout_proxy_indexes.size(); ++i) {
-        changePersistentIndex(m_layout_proxy_indexes.at(i),
-                              mapFromSource(m_layout_source_indexes.at(i)));
+    for (int slot = 0; slot < m_layout_proxy_indexes.size(); ++slot) {
+        changePersistentIndex(m_layout_proxy_indexes.at(slot), remappedLayoutIndex(slot));
     }
     m_layout_proxy_indexes.clear();
-    m_layout_source_indexes.clear();
+    m_layout_anchors.clear();
     Q_EMIT layoutChanged();
 }
 

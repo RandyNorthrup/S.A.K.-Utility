@@ -315,6 +315,20 @@ void AppInstallationWorker::processQueue() {
         int jobIndex;
         {
             QMutexLocker locker(&m_mutex);
+            // checkQueueState() confirmed the queue was non-empty, but it RELEASED
+            // the mutex before returning Proceed, so the queue can be drained in
+            // between: cancel() empties m_jobQueue under this same mutex. The
+            // emptiness check and the dequeue must therefore both happen under
+            // THIS lock.
+            //
+            // Without this re-check, dequeue() reaches QList::takeFirst() on an
+            // empty list. That asserts in a Debug build and is UNDEFINED BEHAVIOUR
+            // in Release, where the assert compiles away and the read runs off the
+            // front of the list. Found by the Debug/ASan suite as an intermittent
+            // abort in test_app_installation_worker (about 1 run in 4).
+            if (m_jobQueue.isEmpty()) {
+                continue;
+            }
             jobIndex = m_jobQueue.dequeue();
             m_activeJobs++;
         }

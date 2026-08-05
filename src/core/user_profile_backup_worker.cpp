@@ -23,7 +23,9 @@
 namespace sak {
 
 namespace {
-constexpr int kBackupWorkerMaxCompressionLevel = 9;
+// kBackupWorkerMaxCompressionLevel was removed with the assert that was its only
+// use. Range-checking a value this worker deliberately ignores (it copies files
+// verbatim and says so at run()) validated nothing.
 constexpr int kBackupSizeDisplayPrecision = 2;
 constexpr int kProgressEmitFileInterval = 100;
 constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
@@ -64,12 +66,12 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const QString& destinationPath,
                                           const SmartFilter& smartFilter,
                                           const BackupOptions& options) {
-    Q_ASSERT_X(!users.isEmpty(), "startBackup", "users must not be empty");
-    Q_ASSERT_X(!destinationPath.isEmpty(), "startBackup", "destinationPath must not be empty");
-    Q_ASSERT_X(options.compression_level >= 0 &&
-                   options.compression_level <= kBackupWorkerMaxCompressionLevel,
-               "startBackup",
-               "compressionLevel must be 0-9");
+    // No asserts on these. An empty user list is a backup of nothing, which
+    // completes with an empty manifest; an empty destination fails the path
+    // validation below; and compression_level is inert because this worker copies
+    // verbatim and says so at run(). Asserting any of them would abort a Debug
+    // build on input that Release accepts, which is what made the mirror-image
+    // restore worker unable to run its own tests in Debug.
     if (isRunning()) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
@@ -119,8 +121,7 @@ void UserProfileBackupWorker::cancel() {
 }
 
 void UserProfileBackupWorker::run() {
-    Q_ASSERT(!m_users.isEmpty());
-
+    // See startBackup: an empty user list backs up nothing and is not an abort.
     Q_EMIT logMessage(tr("=== Backup Started ==="), false);
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
     Q_EMIT logMessage(tr("Users to backup: %1").arg(m_users.size()), false);
@@ -183,7 +184,7 @@ void UserProfileBackupWorker::run() {
 }
 
 void UserProfileBackupWorker::backupAllUsers() {
-    Q_ASSERT(!m_users.isEmpty());
+    // An empty list simply iterates zero times; see startBackup.
     int userIndex = 0;
     for (const auto& user : m_users) {
         if (m_cancelled) {
@@ -248,7 +249,7 @@ void UserProfileBackupWorker::emitBackupSummary() {
 }
 
 bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString& userBackupPath) {
-    Q_ASSERT(!userBackupPath.isEmpty());
+    // An empty userBackupPath fails the directory creation below and is reported.
     // Filter exclusion rules are keyed on THIS user's profile path (B7-34).
     m_currentUserProfile = user.profile_path;
     // Create user backup directory
@@ -298,8 +299,7 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
 bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
                                            const QString& sourcePath,
                                            const QString& destPath) {
-    Q_ASSERT_X(!sourcePath.isEmpty(), "backupFolder", "sourcePath must not be empty");
-    Q_ASSERT_X(!destPath.isEmpty(), "backupFolder", "destPath must not be empty");
+    // An empty sourcePath fails the exists() check below; see startBackup.
     QFileInfo sourceInfo(sourcePath);
 
     if (!sourceInfo.exists()) {
@@ -336,8 +336,7 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
 bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
                                             const QString& destDir,
                                             const FolderSelection& folderConfig) {
-    Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
-    Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
+    // Empty directories fail the checks below; see startBackup.
     // Check if folder should be excluded
     QFileInfo sourceDirInfo(sourceDir);
     const QString& currentUserProfile = m_currentUserProfile;
@@ -408,8 +407,10 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
 bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
                                                     const QString& destPath,
                                                     qint64 fileSize) {
-    Q_ASSERT_X(!sourcePath.isEmpty(), "copyFileWithFiltering", "sourcePath must not be empty");
-    Q_ASSERT_X(!destPath.isEmpty(), "copyFileWithFiltering", "destPath must not be empty");
+    // Empty paths fail the file operations below; see startBackup. fileSize stays
+    // asserted because it is an invariant this class guarantees: it comes from
+    // QFileInfo::size(), which reports 0 - never a negative - for a file it
+    // cannot stat.
     Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
     QFileInfo sourceInfo(sourcePath);
     const QString& currentUserProfile = m_currentUserProfile;
@@ -475,8 +476,11 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
 }
 
 bool UserProfileBackupWorker::applyPermissions(const QString& filePath) {
+    // m_permissionManager stays asserted: it is owned and constructed by this
+    // class, so a null there means the object is corrupt. filePath is not
+    // asserted - an empty one fails inside the permission manager and is
+    // reported.
     Q_ASSERT(m_permissionManager);
-    Q_ASSERT(!filePath.isEmpty());
     switch (m_permissionMode) {
     case PermissionMode::StripAll:
         return m_permissionManager->stripPermissions(filePath);

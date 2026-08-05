@@ -646,6 +646,103 @@ private Q_SLOTS:
         model.refreshTags();
         QCOMPARE(sectionOf(QStringLiteral("a.txt")), QStringLiteral("green"));
     }
+
+    // R5-G14-2a: persistent indexes created by a VIEW, inside its own
+    // layoutAboutToBeChanged slot, must also be remapped.
+    //
+    // The proxy used to call persistentIndexList() BEFORE emitting
+    // layoutAboutToBeChanged(). Qt views and selection models create their
+    // persistent indexes in response to that signal, so everything they created
+    // was missing from the snapshot and kept its pre-change row. In the real
+    // failure the proxy held 1 index at snapshot time and 8 after the signal;
+    // two of the seven unremapped ones then resolved to the same position, and
+    // changePersistentIndex() inserts into a QHash keyed by index, so one was
+    // silently displaced and destroying it tripped Qt's "persistent model
+    // indexes corrupted" assert.
+    //
+    // The assert only fires in a Debug build. This test instead checks the
+    // consequence that is visible in EVERY configuration: an index that is not
+    // remapped silently retargets to whatever item lands on its old row.
+    void groupProxyRemapsIndexesCreatedDuringLayoutChange() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("a.bin"), 20),
+                          fileEntry(QStringLiteral("b.bin"), 30),
+                          fileEntry(QStringLiteral("c.bin"), 40)});
+        sak::FileExplorerSortFilterModel sort_proxy;
+        sort_proxy.setSourceModel(&model);
+        sort_proxy.sort(Model::NameColumn, Qt::AscendingOrder);  // a, b, c
+        sak::FileExplorerGroupProxyModel group_proxy;
+        group_proxy.setSourceModel(&sort_proxy);
+        // Grouping stays off, matching the case that actually failed (a plain
+        // file listing with a selection held across a hidden-items toggle).
+
+        // Held BEFORE the layout change begins, the way an existing selection is.
+        const QPersistentModelIndex before(group_proxy.index(0, Model::NameColumn));
+        QCOMPARE(before.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+
+        // Created DURING layoutAboutToBeChanged, the way QAbstractItemView and
+        // QItemSelectionModel create theirs.
+        QPersistentModelIndex during;
+        QObject::connect(&group_proxy,
+                         &QAbstractItemModel::layoutAboutToBeChanged,
+                         &group_proxy,
+                         [&group_proxy, &during]() {
+                             if (during.isValid()) {
+                                 return;  // only the first bracket
+                             }
+                             during =
+                                 QPersistentModelIndex(group_proxy.index(2, Model::NameColumn));
+                         });
+
+        sort_proxy.sort(Model::NameColumn, Qt::DescendingOrder);  // c, b, a
+
+        // Both must still name the item they were pinned to, not the item that
+        // now occupies their old row.
+        QVERIFY(before.isValid());
+        QCOMPARE(before.data(Model::EntryNameRole).toString(), QStringLiteral("a.bin"));
+        QCOMPARE(before.row(), 2);
+        QVERIFY(during.isValid());
+        QCOMPARE(during.data(Model::EntryNameRole).toString(), QStringLiteral("c.bin"));
+        QCOMPARE(during.row(), 0);
+    }
+
+    // R5-G14-2a: a group HEADER row has no source index, so mapToSource returns
+    // an invalid index for it. The remap used to push that invalid index straight
+    // into changePersistentIndex, which detached the header permanently -- the
+    // header the user had selected or made current went invalid on every single
+    // layout change. Headers are now tracked by section text instead.
+    void groupProxyKeepsHeaderPersistentIndexAcrossResort() {
+        using Model = sak::FileExplorerItemModel;
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("a.bin"), 20),
+                          fileEntry(QStringLiteral("b.bin"), 30),
+                          fileEntry(QStringLiteral("c.bin"), 40)});
+        sak::FileExplorerSortFilterModel sort_proxy;
+        sort_proxy.setSourceModel(&model);
+        sort_proxy.sort(Model::NameColumn, Qt::AscendingOrder);
+        sak::FileExplorerGroupProxyModel group_proxy;
+        group_proxy.setSourceModel(&sort_proxy);
+        // Group by Name: each file gets its own single-letter section.
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::Name,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::AscendingOrder);
+
+        const QVector<int> headers = group_proxy.headerRows();
+        QVERIFY(!headers.isEmpty());
+        const int header_row = headers.first();
+        const QString section = group_proxy.index(header_row, 0).data().toString();
+        QVERIFY(!section.isEmpty());
+        const QPersistentModelIndex header_pin(group_proxy.index(header_row, 0));
+        QVERIFY(header_pin.data(sak::FileExplorerGroupProxyModel::IsGroupHeaderRole).toBool());
+
+        sort_proxy.sort(Model::NameColumn, Qt::DescendingOrder);
+
+        // Survives the layout change and still names the same section.
+        QVERIFY(header_pin.isValid());
+        QCOMPARE(header_pin.data().toString(), section);
+        QVERIFY(header_pin.data(sak::FileExplorerGroupProxyModel::IsGroupHeaderRole).toBool());
+    }
 };
 
 QTEST_MAIN(FileExplorerItemModelTests)

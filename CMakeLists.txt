@@ -286,6 +286,94 @@ find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
 find_package(LibLZMA REQUIRED)
 
+# ----------------------------------------------------------------------------
+# C runtime coherence - fail configure, never suppress.
+#
+# Linking static-CRT (/MT) libraries into a dynamic-CRT (/MD) image puts two C
+# runtimes in one process: two heaps, two copies of stdio, locale and errno
+# state. Freeing in one what the other allocated corrupts the heap. MSVC reports
+# it as LNK4098 and then resolves duplicate CRT symbols to whichever library the
+# linker saw first, so the behaviour is not determined by anything in the source.
+#
+# This project shipped that mismatch. vcpkg was pinned to x64-windows-static
+# (static CRT) while CMAKE_MSVC_RUNTIME_LIBRARY resolved to the dynamic CRT,
+# because the file that selected a static runtime, cmake/SAK_BuildConfig.cmake,
+# is gitignored and absent from every checkout including CI - so the "fallback"
+# was in fact the only path anyone ever took. The conflict was then hidden by
+# /NODEFAULTLIB suppressions rather than resolved.
+#
+# Qt fixes which side is correct: the msvc2022_64 Qt binaries are built against
+# the dynamic CRT, so a Qt application must use the dynamic CRT too. That makes
+# x64-windows-static-md (static libraries, dynamic CRT) the coherent triplet: it
+# keeps the single-file linking of static libs without a second runtime.
+# ----------------------------------------------------------------------------
+if(MSVC)
+    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_app_crt_dll)
+    if(_sak_app_crt_dll EQUAL -1)
+        set(_sak_app_crt "static")
+    else()
+        set(_sak_app_crt "dynamic")
+    endif()
+
+    get_target_property(_sak_qt_core_type Qt6::Core TYPE)
+    if(_sak_qt_core_type STREQUAL "SHARED_LIBRARY" AND NOT _sak_app_crt STREQUAL "dynamic")
+        message(FATAL_ERROR
+            "CRT mismatch: Qt6::Core is a shared library built against the dynamic CRT, "
+            "but CMAKE_MSVC_RUNTIME_LIBRARY is '${CMAKE_MSVC_RUNTIME_LIBRARY}' (static CRT). "
+            "A Qt application must use the same runtime as the Qt binaries it loads. "
+            "Set CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreaded$<$<CONFIG:Debug>:Debug>DLL, or "
+            "build against a static Qt.")
+    endif()
+
+    set(_sak_vcpkg_crt "not-used")
+    if(DEFINED VCPKG_TARGET_TRIPLET)
+        # Triplet CRT: a name ending in -static uses the static CRT. Plain
+        # dynamic triplets and -static-md (static libs, dynamic CRT) do not.
+        if("${VCPKG_TARGET_TRIPLET}" MATCHES "-static$")
+            set(_sak_vcpkg_crt "static")
+        else()
+            set(_sak_vcpkg_crt "dynamic")
+        endif()
+        if(NOT _sak_app_crt STREQUAL _sak_vcpkg_crt)
+            message(FATAL_ERROR
+                "CRT mismatch: this project compiles against the ${_sak_app_crt} CRT "
+                "(CMAKE_MSVC_RUNTIME_LIBRARY='${CMAKE_MSVC_RUNTIME_LIBRARY}') while vcpkg "
+                "triplet '${VCPKG_TARGET_TRIPLET}' supplies libraries built against the "
+                "${_sak_vcpkg_crt} CRT. Two C runtimes in one image is a heap-corruption "
+                "hazard, not a warning to silence. Use -DVCPKG_TARGET_TRIPLET=x64-windows-static-md "
+                "so the static vcpkg libraries use the same dynamic CRT as this project and Qt. "
+                "Do NOT resolve this with /NODEFAULTLIB.")
+        endif()
+    endif()
+    # Checking the triplet VARIABLE is not enough, and that was proven the hard
+    # way: after switching VCPKG_TARGET_TRIPLET to x64-windows the check above
+    # reported "dynamic / dynamic" while the linker still emitted LNK4098. CMake
+    # caches the resolved library paths (ZLIB_LIBRARY_RELEASE and friends) as
+    # absolute FILEPATHs, and changing the triplet does not re-resolve them, so
+    # the build was still linking C:/vcpkg/installed/x64-windows-static/...
+    #
+    # A gate that reports healthy while the thing it guards is broken is the
+    # exact failure this whole section exists to stop, so verify what is actually
+    # going to be LINKED, not what was asked for.
+    if(DEFINED VCPKG_TARGET_TRIPLET)
+        foreach(_sak_lib_var
+                ZLIB_LIBRARY_RELEASE ZLIB_LIBRARY_DEBUG
+                BZIP2_LIBRARY_RELEASE BZIP2_LIBRARY_DEBUG
+                LIBLZMA_LIBRARY_RELEASE LIBLZMA_LIBRARY_DEBUG)
+            if(${_sak_lib_var} AND NOT "${${_sak_lib_var}}" MATCHES "/${VCPKG_TARGET_TRIPLET}/")
+                message(FATAL_ERROR
+                    "Stale resolved dependency: ${_sak_lib_var} is '${${_sak_lib_var}}', which is "
+                    "not under the selected triplet '${VCPKG_TARGET_TRIPLET}'. CMake caches these "
+                    "as absolute paths, so changing the triplet alone does NOT re-resolve them and "
+                    "the build would keep linking the old libraries - including their CRT. Delete "
+                    "the build directory (or at least CMakeCache.txt) and configure again.")
+            endif()
+        endforeach()
+    endif()
+
+    message(STATUS "CRT: ${_sak_app_crt} (app), ${_sak_vcpkg_crt} (vcpkg ${VCPKG_TARGET_TRIPLET})")
+endif()
+
 # Platform-specific libraries
 if(PLATFORM_WINDOWS)
     # Windows-specific: Registry access, WMI, DXGI, performance counters,
@@ -1070,23 +1158,14 @@ target_link_libraries(sak_utility PRIVATE
     ${PLATFORM_LIBS}
 )
 
-# Suppress CRT defaultlib conflicts from mixed static/dynamic CRT libraries
-if(MSVC)
-    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_crt_dll_pos)
-    if(_sak_crt_dll_pos EQUAL -1)
-        # Static CRT (/MT): suppress conflicting dynamic CRT default libs
-        target_link_options(sak_utility PRIVATE
-            /NODEFAULTLIB:MSVCRT
-            /NODEFAULTLIB:MSVCRTD
-        )
-    else()
-        # Dynamic CRT (/MD): suppress conflicting static CRT default libs
-        target_link_options(sak_utility PRIVATE
-            /NODEFAULTLIB:LIBCMT
-            /NODEFAULTLIB:LIBCMTD
-        )
-    endif()
-endif()
+# The /NODEFAULTLIB CRT-conflict suppressions that used to sit here (and on
+# sak_apfs_writer_cli, sak_hfs_writer_cli, sak_elevated_helper and
+# test_ai_assistant_panel_tool_dispatch) are GONE. They existed to silence
+# LNK4098 from mixing a static-CRT vcpkg triplet with the dynamic CRT - that is,
+# to hide the very hazard the CRT coherence check above now refuses to configure.
+# With the app CRT, the vcpkg triplet CRT and Qt all required to agree, there is
+# no conflict left to suppress, and telling the linker to drop a CRT it needs is
+# not something this build should be doing silently.
 
 # Include directories
 target_include_directories(sak_utility PRIVATE
@@ -1137,16 +1216,6 @@ target_compile_definitions(sak_apfs_writer_cli PRIVATE
     QT_DISABLE_DEPRECATED_BEFORE=0x060000
 )
 
-if(MSVC)
-    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_apfs_cli_crt_pos)
-    if(_sak_apfs_cli_crt_pos EQUAL -1)
-        target_link_options(sak_apfs_writer_cli PRIVATE
-            /NODEFAULTLIB:MSVCRT
-            /NODEFAULTLIB:MSVCRTD
-        )
-    endif()
-endif()
-
 add_dependencies(sak_utility sak_apfs_writer_cli)
 
 # ============================================================================
@@ -1184,16 +1253,6 @@ target_compile_definitions(sak_hfs_writer_cli PRIVATE
     QT_DEPRECATED_WARNINGS
     QT_DISABLE_DEPRECATED_BEFORE=0x060000
 )
-
-if(MSVC)
-    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_hfs_cli_crt_pos)
-    if(_sak_hfs_cli_crt_pos EQUAL -1)
-        target_link_options(sak_hfs_writer_cli PRIVATE
-            /NODEFAULTLIB:MSVCRT
-            /NODEFAULTLIB:MSVCRTD
-        )
-    endif()
-endif()
 
 add_dependencies(sak_utility sak_hfs_writer_cli)
 
@@ -1282,13 +1341,6 @@ if(PLATFORM_WINDOWS)
         set_target_properties(sak_elevated_helper PROPERTIES
             LINK_FLAGS "/MANIFEST:NO"
         )
-        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_helper_crt_pos)
-        if(_sak_helper_crt_pos EQUAL -1)
-            target_link_options(sak_elevated_helper PRIVATE
-                /NODEFAULTLIB:MSVCRT
-                /NODEFAULTLIB:MSVCRTD
-            )
-        endif()
     endif()
 
     # Copy helper to main output directory so they sit side-by-side

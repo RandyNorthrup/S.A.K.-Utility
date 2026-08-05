@@ -79,8 +79,14 @@ std::optional<bool> adapterDhcpEnabled(const QString& adapterName) {
 }
 
 bool buildSafePath(const QString& basePath, const QString& relativePath, QString& outPath) {
-    Q_ASSERT(!basePath.isEmpty());
-    Q_ASSERT(!relativePath.isEmpty());
+    // This is the containment guard for every restore path, so an empty input is
+    // REJECTED rather than asserted. An assert would abort a Debug build and
+    // vanish entirely in Release, leaving QDir("").filePath("") to produce an
+    // empty path that the containment check could accept. Refusing here fails
+    // closed in every configuration.
+    if (basePath.isEmpty() || relativePath.isEmpty()) {
+        return false;
+    }
     QString combined = QDir(basePath).filePath(relativePath);
     auto nativeCombined = QDir::toNativeSeparators(combined);
     auto nativeBase = QDir::toNativeSeparators(basePath);
@@ -227,8 +233,12 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             const QVector<UserMapping>& mappings,
                                             const RestoreConfig& config,
                                             const RestoreSelections& selections) {
-    Q_ASSERT_X(!backupPath.isEmpty(), "startRestore", "backupPath must not be empty");
-    Q_ASSERT_X(!mappings.isEmpty(), "startRestore", "mappings must not be empty");
+    // No asserts on backupPath or mappings. An empty backupPath is rejected
+    // downstream (buildSafePath fails, and the manifest read reports the missing
+    // file), and an empty mapping set is a restore of nothing, which completes
+    // with a zero-file summary. Asserting either turned input that Release
+    // handles into a Debug-only process abort, which is what made this worker's
+    // own test suite impossible to run in Debug.
     if (isRunning()) {
         Q_EMIT logMessage(tr("Restore already in progress"), true);
         return;
@@ -264,8 +274,8 @@ void UserProfileRestoreWorker::cancel() {
 }
 
 void UserProfileRestoreWorker::run() {
-    Q_ASSERT(!m_mappings.isEmpty());
-
+    // No assert on m_mappings: restoring an empty selection is a restore of
+    // nothing, which completes with a zero-file summary (see startRestore).
     Q_EMIT logMessage(tr("=== Restore Started ==="), false);
     Q_EMIT logMessage(tr("Backup: %1").arg(m_backupPath), false);
     Q_EMIT logMessage(tr("Users to restore: %1").arg(m_mappings.size()), false);
@@ -335,8 +345,9 @@ void UserProfileRestoreWorker::run() {
 }
 
 bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
-    Q_ASSERT(!mapping.source_username.isEmpty());
-    Q_ASSERT(!m_backupPath.isEmpty());
+    // An empty source_username finds no manifest entry and is reported below; an
+    // empty m_backupPath fails buildSafePath. Both are handled, so neither is
+    // asserted (see startRestore).
 
     // Find source user data in manifest
     const BackupUserData* sourceUser = findManifestUser(mapping.source_username);
@@ -501,8 +512,8 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(const UserMapping& 
 bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
                                              const QString& sourcePath,
                                              const QString& destPath) {
-    Q_ASSERT_X(!sourcePath.isEmpty(), "restoreFolder", "sourcePath must not be empty");
-    Q_ASSERT_X(!destPath.isEmpty(), "restoreFolder", "destPath must not be empty");
+    // An empty sourcePath fails the exists() check below and is reported; no
+    // assert, which would abort Debug on input Release handles.
     QFileInfo sourceInfo(sourcePath);
 
     if (!sourceInfo.exists()) {
@@ -528,8 +539,7 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
                                              const QString& destDir,
                                              const FolderSelection& folderConfig,
                                              const QString& profileRelativeDir) {
-    Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
-    Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
+    // An empty sourceDir fails the exists() check below; see restoreFolder.
     QDir dir(sourceDir);
     if (!dir.exists()) {
         return false;
@@ -618,8 +628,10 @@ void UserProfileRestoreWorker::copyDirectoryEntry(const QFileInfo& entry,
 bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& source,
                                                               const QString& dest,
                                                               qint64 size) {
-    Q_ASSERT_X(!source.isEmpty(), "copyFileWithConflictResolution", "source must not be empty");
-    Q_ASSERT_X(!dest.isEmpty(), "copyFileWithConflictResolution", "dest must not be empty");
+    // source/dest emptiness is handled by the file operations below; see
+    // restoreFolder. size stays asserted because it is an internal invariant
+    // this class guarantees: it comes from QFileInfo::size(), which reports 0 -
+    // never a negative - for a file it cannot stat.
     Q_ASSERT_X(size >= 0, "copyFileWithConflictResolution", "size must be non-negative");
     QFileInfo destInfo(dest);
     QString finalDestPath = dest;
@@ -963,8 +975,7 @@ bool UserProfileRestoreWorker::hashFile(const QString& filePath, QByteArray& out
 }
 
 bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath, const QString& filePath) {
-    Q_ASSERT(!sourcePath.isEmpty());
-    Q_ASSERT(!filePath.isEmpty());
+    // Empty paths fail the exists()/isReadable() check below; see restoreFolder.
     QFileInfo fileInfo(filePath);
 
     if (!fileInfo.exists() || !fileInfo.isReadable()) {

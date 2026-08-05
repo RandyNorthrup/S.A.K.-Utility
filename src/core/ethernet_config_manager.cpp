@@ -51,7 +51,10 @@ QJsonObject EthernetConfigSnapshot::toJson() const {
 }
 
 EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) {
-    Q_ASSERT(!obj.isEmpty());
+    // Deserializes whatever is on disk, including an empty or truncated object;
+    // the caller decides with isValid(). No assert on obj: a corrupt or missing
+    // backup file is DATA, not a programming error, and must never abort the
+    // process in a Debug build when Release handles it.
     EthernetConfigSnapshot snap;
     snap.adapterName = obj["adapterName"].toString();
     snap.description = obj["description"].toString();
@@ -98,7 +101,8 @@ QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName) {
 }
 
 EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {
-    Q_ASSERT(!adapterName.isEmpty());
+    // An unknown or empty adapter name produces no netsh output and is reported
+    // below as a failed capture. No assert: see fromJson.
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
 
     QString output =
@@ -163,7 +167,7 @@ bool EthernetConfigManager::saveToFile(const EthernetConfigSnapshot& snapshot,
 }
 
 EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // An empty path fails the open below and is reported. No assert.
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Cannot read file: %1").arg(filePath));
@@ -409,7 +413,15 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 // -- Private -----------------------------------------------------------------
 
 QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
-    Q_ASSERT(!args.isEmpty());
+    // Empty arguments are REFUSED, not asserted. This launches netsh elevated,
+    // so "abort in Debug, run netsh with no arguments in Release" is the wrong
+    // pair of behaviours; failing closed is the same answer in both.
+    if (args.isEmpty()) {
+        if (ok != nullptr) {
+            *ok = false;
+        }
+        return {};
+    }
 
     // System32-qualified netsh, never the bare name: adapter configuration runs elevated,
     // and CreateProcess searches the current directory ahead of System32. Fail closed when

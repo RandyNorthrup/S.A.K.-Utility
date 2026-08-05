@@ -367,7 +367,7 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
 }
 
 bool BackupManifest::saveToFile(const QString& path) const {
-    Q_ASSERT(!path.isEmpty());
+    // An empty path fails the open below and returns false. No assert.
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -496,7 +496,10 @@ QString folderTypeToString(FolderType type) {
 }
 
 FolderType stringToFolderType(const QString& str) {
-    Q_ASSERT(!str.isEmpty());
+    // Parses a name out of persisted JSON, so an empty or unrecognised value is
+    // data and maps to Custom. The BackupManifest, FolderSelection and
+    // BackupUserData fromJson asserts were removed for exactly this reason; this
+    // one was missed and still aborted every Debug run.
     auto it = std::find_if(std::begin(kFolderTypes),
                            std::end(kFolderTypes),
                            [&str](const auto& entry) { return str == QLatin1String(entry.name); });

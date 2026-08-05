@@ -74,7 +74,9 @@ bool FileImageSource::isOpen() const {
 }
 
 qint64 FileImageSource::read(char* data, qint64 maxSize) {
-    Q_ASSERT(m_device);
+    // m_device is covered by the isOpen() check below. data stays asserted: it
+    // is an internal caller contract with no runtime handling, and a null buffer
+    // would be undefined behaviour inside QIODevice::read either way.
     Q_ASSERT(data);
     if (!isOpen()) {
         return -1;
@@ -164,7 +166,8 @@ QString FileImageSource::calculateChecksum() {
 }
 
 sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // A total function over any path: an empty or unrecognised extension is
+    // ImageFormat::Unknown, which callers must handle anyway. No assert.
     QString ext = QFileInfo(filePath).suffix().toLower();
 
     struct FormatEntry {

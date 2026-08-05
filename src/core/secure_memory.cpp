@@ -47,7 +47,11 @@ bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
 namespace sak {
 
 bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
-    Q_ASSERT(buffer);
+    // There is deliberately no Q_ASSERT(buffer) here. The runtime rejection below
+    // IS the contract -- it is what every caller and test relies on. An assert
+    // would make the SAME input abort the process in a Debug build (qt_assert ->
+    // qFatal -> abort -> __fastfail, exit 0xC0000409) while being handled cleanly
+    // in Release, so the function would have two different behaviours.
     if (buffer == nullptr || size == 0) {
         return false;
     }
@@ -82,7 +86,8 @@ bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
 }
 
 bool lockMemory(void* ptr, std::size_t size) noexcept {
-    Q_ASSERT(ptr);
+    // No assert on ptr; the rejection below is the contract (see
+    // generateSecureRandom).
     if (ptr == nullptr || size == 0) {
         return false;
     }
@@ -98,7 +103,7 @@ bool lockMemory(void* ptr, std::size_t size) noexcept {
 }
 
 bool unlockMemory(void* ptr, std::size_t size) noexcept {
-    Q_ASSERT(ptr);
+    // No assert on ptr; see lockMemory.
     if (ptr == nullptr || size == 0) {
         return false;
     }

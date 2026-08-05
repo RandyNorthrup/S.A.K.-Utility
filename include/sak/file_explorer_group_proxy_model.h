@@ -78,6 +78,11 @@ private:
     void onSourceLayoutAboutToBeChanged();
     void onSourceLayoutChanged();
 
+    // Where the persistent index recorded in the given layout slot now lives:
+    // through its source index for an item row, or by section text for a header
+    // row (which has no source index of its own).
+    [[nodiscard]] QModelIndex remappedLayoutIndex(int slot) const;
+
     // True when an in-place source dataChanged touched the role feeding the
     // current grouping key, so the affected rows may need to move sections.
     [[nodiscard]] bool dataChangeAffectsGrouping(const QList<int>& roles) const;
@@ -89,6 +94,18 @@ private:
         QString header_text;
     };
 
+    // What one held persistent index pointed at when a layout change began. An
+    // item row is tracked by its source index (which the source keeps current
+    // across its own re-sort); a group header has no source index, so it is
+    // tracked by its section text instead. is_header is an explicit flag rather
+    // than an empty-text sentinel because a section text can legitimately be
+    // empty (a file with neither an extension nor a type string).
+    struct LayoutAnchor {
+        QPersistentModelIndex source_index;
+        QString header_text;
+        bool is_header{false};
+    };
+
     FileExplorerGroupOption m_option{FileExplorerGroupOption::None};
     FileExplorerGroupDateUnit m_date_unit{FileExplorerGroupDateUnit::Year};
     Qt::SortOrder m_direction{Qt::AscendingOrder};
@@ -98,9 +115,11 @@ private:
     // Carried from the source's layoutAboutToBeChanged to its layoutChanged so
     // the proxy->source mapping is captured BEFORE the source re-sorts (the
     // group rebuild afterwards would otherwise read stale rows and remap every
-    // held selection/current index to the wrong item).
+    // held selection/current index to the wrong item). The three vectors are
+    // parallel and always the same length: the proxy index, and what it anchors
+    // to.
     QModelIndexList m_layout_proxy_indexes;
-    QVector<QPersistentModelIndex> m_layout_source_indexes;
+    QVector<LayoutAnchor> m_layout_anchors;
 
     // Depth of nested source reset brackets; only the outermost drives the proxy
     // reset (see beginSourceReset / endSourceReset).

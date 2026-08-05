@@ -46,8 +46,9 @@ WindowsUSBCreator::WindowsUSBCreator(QObject* parent) : QObject(parent) {}
 WindowsUSBCreator::~WindowsUSBCreator() {}
 
 bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString& diskNumber) {
-    Q_ASSERT(!isoPath.isEmpty());
-    Q_ASSERT(!diskNumber.isEmpty());
+    // Both arguments are validated by validateUSBInputs below, which reports the
+    // failure through setError/failed(). They are not asserted: an assert would
+    // abort a Debug build on input that Release rejects cleanly.
     m_cancelled = false;
     setError({});
     m_diskNumber = diskNumber;
@@ -114,8 +115,9 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
 }
 
 bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString& diskNumber) {
-    Q_ASSERT(!isoPath.isEmpty());
-    Q_ASSERT(!diskNumber.isEmpty());
+    // This IS the validation, so it asserts nothing: an empty diskNumber fails the
+    // integer regex below and an empty isoPath fails the existence check, both
+    // fail-closed with an error the caller can see.
     // Validate diskNumber is a pure integer to prevent command injection.
     static const QRegularExpression diskNumRegex(QStringLiteral("^\\d{1,3}$"));
     if (!diskNumRegex.match(diskNumber).hasMatch()) {

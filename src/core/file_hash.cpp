@@ -47,15 +47,18 @@ file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexc
     // reach file.read(0), which returns an empty buffer, so hashing would stop at
     // once and report the EMPTY-input digest as the file's hash. Coerce it to the
     // default so release builds never hash with a zero chunk (B8-23).
-    : m_algorithm(algorithm), m_chunk_size(chunk_size > 0 ? chunk_size : DEFAULT_CHUNK_SIZE) {
-    Q_ASSERT_X(chunk_size > 0, "file_hasher", "chunk_size must be positive");
-}
+    //
+    // There is deliberately no assert alongside the coercion. The coercion is the
+    // contract in every configuration; an assert would abort a Debug build on the
+    // exact input Release accepts, which is the behaviour the test pins down.
+    : m_algorithm(algorithm), m_chunk_size(chunk_size > 0 ? chunk_size : DEFAULT_CHUNK_SIZE) {}
 
 auto file_hasher::calculateHash(const std::filesystem::path& file_path,
                                 hash_progress_callback progress,
                                 std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateHash", "file_path must not be empty");
+    // An empty path is rejected by the exists() check below and reported as
+    // file_not_found. No assert, for the reason given on the constructor.
 
     // Validate file exists
     if (!std::filesystem::exists(file_path)) {
@@ -95,9 +98,9 @@ auto file_hasher::calculateHash(std::span<const std::byte> data) const
 auto file_hasher::verifyHash(const std::filesystem::path& file_path,
                              std::string_view expected_hash,
                              std::stop_token stop_token) const -> std::expected<bool, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "verifyHash", "file_path must not be empty");
-    Q_ASSERT_X(!expected_hash.empty(), "verifyHash", "expected_hash must not be empty");
-
+    // An empty file_path is reported as file_not_found by calculateHash, and an
+    // empty expected_hash simply does not match. No asserts: both are handled
+    // identically in Release, and asserting would abort a Debug build instead.
     auto calculated = calculateHash(file_path, nullptr, stop_token);
     if (!calculated) {
         return std::unexpected(calculated.error());
@@ -123,7 +126,10 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
                                hash_progress_callback& progress,
                                std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateMd5", "file_path must not be empty");
+    // file_path is not asserted: an empty path fails the QFile open below and is
+    // reported. m_chunk_size stays asserted because it is an invariant this
+    // class guarantees - the constructor coerces any non-positive value to
+    // DEFAULT_CHUNK_SIZE, so a zero here would mean the object is corrupt.
     Q_ASSERT_X(m_chunk_size > 0, "calculateMd5", "chunk_size must be positive");
 
     try {
@@ -162,7 +168,8 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
                                   hash_progress_callback& progress,
                                   std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateSha256", "file_path must not be empty");
+    // See calculateMd5: file_path is handled at the open, m_chunk_size is a
+    // constructor-guaranteed invariant.
     Q_ASSERT_X(m_chunk_size > 0, "calculateSha256", "chunk_size must be positive");
 
     try {

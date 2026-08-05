@@ -1985,16 +1985,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse
         ${PLATFORM_LIBS}
     )
-    if(MSVC)
-        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _panel_test_crt_dll_pos)
-        if(_panel_test_crt_dll_pos EQUAL -1)
-            target_link_options(test_ai_assistant_panel_tool_dispatch PRIVATE
-                /NODEFAULTLIB:MSVCRT /NODEFAULTLIB:MSVCRTD)
-        else()
-            target_link_options(test_ai_assistant_panel_tool_dispatch PRIVATE
-                /NODEFAULTLIB:LIBCMT /NODEFAULTLIB:LIBCMTD)
-        endif()
-    endif()
+    # No /NODEFAULTLIB CRT suppression here either; see the note in the root
+    # CMakeLists. The CRT coherence check makes the conflict impossible to
+    # configure rather than something to silence per target.
     target_include_directories(test_ai_assistant_panel_tool_dispatch PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/include
@@ -6963,13 +6956,31 @@ if(WIN32)
     get_target_property(_sak_qt_core_location Qt6::Core LOCATION)
     if(_sak_qt_core_location)
         get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_location}" DIRECTORY)
+
+        # The vcpkg bin directory is needed for the SAME reason, and only became
+        # needed when the build moved to the dynamic x64-windows triplet: zlib1,
+        # bz2 and liblzma are now DLLs rather than static libraries. sak_utility
+        # gets them staged beside it by a POST_BUILD step, but test executables
+        # live in a different directory and had no such step, so every test would
+        # have died with STATUS_DLL_NOT_FOUND. Staged here so the fix covers all
+        # tests at once instead of per target.
+        set(_sak_test_path_dirs "${_sak_qt_bin_dir}")
+        if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+            set(_sak_vcpkg_bin_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+            if(EXISTS "${_sak_vcpkg_bin_dir}")
+                list(APPEND _sak_test_path_dirs "${_sak_vcpkg_bin_dir}")
+            endif()
+        endif()
+
         get_property(_sak_registered_tests DIRECTORY PROPERTY TESTS)
         foreach(_sak_test IN LISTS _sak_registered_tests)
-            set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
-                         "PATH=path_list_prepend:${_sak_qt_bin_dir}")
+            foreach(_sak_path_dir IN LISTS _sak_test_path_dirs)
+                set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                             "PATH=path_list_prepend:${_sak_path_dir}")
+            endforeach()
         endforeach()
         list(LENGTH _sak_registered_tests _sak_test_count)
-        message(STATUS "Test PATH staging: ${_sak_test_count} tests get ${_sak_qt_bin_dir}")
+        message(STATUS "Test PATH staging: ${_sak_test_count} tests get ${_sak_test_path_dirs}")
     else()
         message(FATAL_ERROR
                 "Could not resolve the Qt6::Core location, so test binaries would "

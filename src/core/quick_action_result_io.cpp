@@ -31,7 +31,9 @@ QString actionStatusToString(QuickAction::ActionStatus status) {
 }
 
 QuickAction::ActionStatus actionStatusFromString(const QString& status) {
-    Q_ASSERT(!status.isEmpty());
+    // Reads a status out of a persisted result file. An empty or unrecognised
+    // value maps to Idle, which is the conservative answer: it never claims an
+    // action succeeded. No assert -- a damaged result file is data.
     const QString normalized = status.trimmed().toLower();
     if (normalized == "scanning") {
         return QuickAction::ActionStatus::Scanning;
