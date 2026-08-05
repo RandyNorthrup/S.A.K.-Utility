@@ -24,7 +24,11 @@ constexpr int kPstPartNumberFieldWidth = 2;
 
 PstSplitter::PstSplitter(const QString& base_path, qint64 max_size_bytes)
     : m_base_path(base_path), m_max_size(max_size_bytes) {
-    Q_ASSERT(max_size_bytes > 0);
+    // max_size_bytes crosses a public API boundary and this constructor has no error
+    // channel, so the assert cannot be turned into a rejection here without changing the
+    // type's construction contract. Guard it where there IS a channel instead: create()
+    // refuses a non-positive volume size, so no volume is ever opened with one.
+    Q_UNUSED(max_size_bytes)
 }
 
 PstSplitter::~PstSplitter() = default;
@@ -34,6 +38,16 @@ PstSplitter::~PstSplitter() = default;
 // ============================================================================
 
 std::expected<void, error_code> PstSplitter::create() {
+    // The volume size arrives through the constructor, which has no way to reject it.
+    // This is the first point with an error channel, so refuse here: a non-positive
+    // maximum would make every writeMessage believe the volume is already over budget
+    // and rotate on each message, producing an unbounded run of empty volumes.
+    if (m_max_size <= 0) {
+        logError("PstSplitter: refusing a non-positive volume size ({} bytes) for {}",
+                 m_max_size,
+                 m_base_path.toStdString());
+        return std::unexpected(error_code::invalid_argument);
+    }
     m_volume_index = 1;
     m_current_writer = std::make_unique<PstWriter>(volumePath(m_volume_index));
     return m_current_writer->create();
@@ -42,7 +56,13 @@ std::expected<void, error_code> PstSplitter::create() {
 std::expected<uint64_t, error_code> PstSplitter::createFolder(uint64_t parent_nid,
                                                               const QString& name,
                                                               const QString& container_class) {
-    Q_ASSERT(m_current_writer);
+    // No current volume means create() never succeeded or finalizeAll() already
+    // ran. Refuse instead of dereferencing a null writer.
+    if (!m_current_writer) {
+        logError("PstSplitter: createFolder called with no open volume ({})",
+                 m_base_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
 
     auto result = m_current_writer->createFolder(parent_nid, name, container_class);
     if (result.has_value()) {
@@ -59,7 +79,12 @@ std::expected<void, error_code> PstSplitter::writeMessage(
     uint64_t folder_nid,
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data) {
-    Q_ASSERT(m_current_writer);
+    // Same volume-lifetime contract as createFolder().
+    if (!m_current_writer) {
+        logError("PstSplitter: writeMessage called with no open volume ({})",
+                 m_base_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
 
     // Check if we need to rotate
     if (m_current_writer->currentSize() >= m_max_size) {

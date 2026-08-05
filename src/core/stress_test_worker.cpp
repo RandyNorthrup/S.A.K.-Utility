@@ -328,6 +328,9 @@ void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futur
 }
 
 void StressTestWorker::monitorStressLoop(int total_seconds) {
+    // Invariant: execute() is this private helper's only caller, and validateStressConfig
+    // already rejected duration_minutes <= 0 (and anything above kMaxStressDurationMinutes)
+    // before the multiply that produces total_seconds.
     Q_ASSERT(total_seconds >= 0);
     m_elapsed_timer.start();
     int last_status_sec = 0;
@@ -364,6 +367,9 @@ void StressTestWorker::updateMaxTemperature(double temp) noexcept {
 }
 
 bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
+    // Invariant: monitorStressLoop is this private helper's only caller. elapsed_sec comes
+    // from QElapsedTimer::elapsed() on a started timer (monotonic, never negative), and
+    // total_seconds is passed straight through from the validated config (see above).
     Q_ASSERT(elapsed_sec >= 0);
     Q_ASSERT(total_seconds >= 0);
     const double temp = ThermalMonitor::queryCpuTemperature();

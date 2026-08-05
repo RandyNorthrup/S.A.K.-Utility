@@ -64,6 +64,11 @@ private slots:
     void diskpartOutputIsError_ignoresSuccessChatter();
     void diskpartOutputIsError_detectsSelectionAndArgumentFailures();
 
+    // ---- critical-file recognition for extraction integrity (R5-G14-3) ----
+    void isCriticalWindowsFile_matchesBackslashPathsFrom7z();
+    void isCriticalWindowsFile_matchesForwardSlashPaths();
+    void isCriticalWindowsFile_rejectsNonCriticalPaths();
+
     // ---- bundled-executable trust check (CR3-6) ----
     void isSafeBundledExecutable_acceptsRegularFileUnderAppDir();
     void isSafeBundledExecutable_rejectsMissingFile();
@@ -398,6 +403,41 @@ void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsSiblingPrefixDir() {
     f.write("MZ");
     f.close();
     QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(exe, appDir));
+}
+
+// R5-G14-3. This helper was private and had no test at all, and it shipped with
+// "sources\\\\boot.wim" -- four backslashes in the source, so the runtime string held two
+// and could never match a real path. 7z lists ISO members with backslashes, so the three
+// largest and most important payloads were silently excluded from the extraction integrity
+// check while it went on reporting success over whatever it did match.
+void WindowsUSBCreatorTests::isCriticalWindowsFile_matchesBackslashPathsFrom7z() {
+    // Exactly the shape `7z l` prints on Windows. Each of these failed before the fix.
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources\\boot.wim")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources\\install.wim")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources\\install.esd")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("SOURCES\\BOOT.WIM")));
+
+    // The doubled form the buggy literal actually looked for must NOT be what decides it.
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources\\\\notboot.txt")));
+}
+
+void WindowsUSBCreatorTests::isCriticalWindowsFile_matchesForwardSlashPaths() {
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources/boot.wim")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources/install.wim")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources/install.esd")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("setup.exe")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("bootmgr")));
+    QVERIFY(WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("efi/microsoft/boot/bootmgr")));
+}
+
+void WindowsUSBCreatorTests::isCriticalWindowsFile_rejectsNonCriticalPaths() {
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QString()));
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("sources/lang.ini")));
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("boot/bcd")));
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("autorun.inf")));
+    // boot.wim only counts under sources/: a same-named file elsewhere is not the payload
+    // whose size the integrity check is pinning.
+    QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("other/boot.wim")));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

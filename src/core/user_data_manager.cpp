@@ -433,7 +433,14 @@ bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,
 }
 
 QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const {
-    Q_ASSERT_X(!app_name.isEmpty(), "discoverAppDataPaths", "app_name must not be empty");
+    // Fail closed on an empty name: every name variant would then be "", and
+    // QDir(base).filePath("") is the BASE directory itself -- which exists -- so the standard
+    // data roots would be reported as this app's data. A const method has no signal to emit,
+    // so the refusal is logged.
+    if (app_name.isEmpty()) {
+        sak::logWarning("[UserDataManager] discoverAppDataPaths refused: empty app name");
+        return {};
+    }
     QStringList paths;
     QStringList base_dirs = getStandardDataPaths();
 
@@ -483,7 +490,12 @@ std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocatio
 }
 
 QStringList UserDataManager::scanForAppData(const QString& app_name) const {
-    Q_ASSERT_X(!app_name.isEmpty(), "scanForAppData", "app_name must not be empty");
+    // Fail closed on an empty name: QString::contains("") is true for every path, so the scan
+    // would report EVERY directory under the standard data roots as this app's data.
+    if (app_name.isEmpty()) {
+        sak::logWarning("[UserDataManager] scanForAppData refused: empty app name");
+        return {};
+    }
     QStringList found_paths;
     QStringList search_dirs = getStandardDataPaths();
 
@@ -502,7 +514,12 @@ QStringList UserDataManager::scanForAppData(const QString& app_name) const {
 
 std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
     const QString& backup_dir) const {
-    Q_ASSERT_X(!backup_dir.isEmpty(), "listBackups", "backup_dir must not be empty");
+    // Fail closed on an empty directory: QDir("") is the process working directory, so the
+    // listing would advertise whatever happens to sit next to the running executable as backups.
+    if (backup_dir.isEmpty()) {
+        sak::logWarning("[UserDataManager] listBackups refused: empty backup directory");
+        return {};
+    }
     std::vector<BackupEntry> backups;
 
     QDir dir(backup_dir);
@@ -528,7 +545,12 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
 }
 
 UserDataManager::BackupEntry UserDataManager::getBackupInfo(const QString& backup_path) const {
-    Q_ASSERT_X(!backup_path.isEmpty(), "getBackupInfo", "backup_path must not be empty");
+    // Fail closed on an empty path: the sidecar lookup would otherwise read a bare ".json"
+    // relative to the working directory. An empty entry is this method's "not found" value.
+    if (backup_path.isEmpty()) {
+        sak::logWarning("[UserDataManager] getBackupInfo refused: empty backup path");
+        return BackupEntry{};
+    }
     auto entry = readMetadata(backup_path + ".json");
     return entry.value_or(BackupEntry{});
 }
@@ -556,8 +578,6 @@ QString UserDataManager::backupDeletionRefusal(const QString& backup_path,
 }
 
 bool UserDataManager::deleteBackup(const QString& backup_path) {
-    Q_ASSERT_X(!backup_path.isEmpty(), "deleteBackup", "backup_path must not be empty");
-
     const QString metadata = backup_path + ".json";
     std::optional<QString> recorded;
     // Only read the sidecar once the raw string clears the screens: reading it is a stat/open on
@@ -595,7 +615,6 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
 }
 
 bool UserDataManager::verifyBackup(const QString& backup_path) {
-    Q_ASSERT_X(!backup_path.isEmpty(), "verifyBackup", "backup_path must not be empty");
     auto entry = readMetadata(backup_path + ".json");
     if (!entry.has_value()) {
         return false;
@@ -616,7 +635,6 @@ bool UserDataManager::verifyBackup(const QString& backup_path) {
 }
 
 qint64 UserDataManager::calculateSize(const QStringList& paths) const {
-    Q_ASSERT(!paths.isEmpty());
     qint64 total = 0;
 
     for (const auto& path : paths) {
@@ -636,13 +654,10 @@ qint64 UserDataManager::calculateSize(const QStringList& paths) const {
 }
 
 QString UserDataManager::generateChecksum(const QString& file_path) const {
-    Q_ASSERT_X(!file_path.isEmpty(), "generateChecksum", "file_path must not be empty");
     return calculateSHA256(file_path);
 }
 
 bool UserDataManager::compareChecksums(const QString& file1, const QString& file2) const {
-    Q_ASSERT_X(!file1.isEmpty(), "compareChecksums", "file1 must not be empty");
-    Q_ASSERT_X(!file2.isEmpty(), "compareChecksums", "file2 must not be empty");
     const QString hash1 = generateChecksum(file1);
     const QString hash2 = generateChecksum(file2);
     // Two UNREADABLE files both hash to "" -- that must NOT be reported as "equal". Require a real
@@ -784,6 +799,9 @@ bool UserDataManager::buildArchivePayload(const QStringList& source_paths,
 bool UserDataManager::createArchive(const QStringList& source_paths,
                                     const QString& archive_path,
                                     const BackupConfig& config) {
+    // Invariants of the single call path (writeBackupPayload, from backupAppData):
+    // validateBackupRequest already rejected an empty source_paths list, and archive_path is a
+    // uniqueBackupPath() result -- a QDir::filePath() join, which is never empty.
     Q_ASSERT_X(!source_paths.isEmpty(), "createArchive", "source_paths must not be empty");
     Q_ASSERT_X(!archive_path.isEmpty(), "createArchive", "archive_path must not be empty");
 
@@ -899,6 +917,7 @@ bool UserDataManager::archiveWithinLimits(const QString& archive_path) {
 bool UserDataManager::extractArchive(const QString& archive_path,
                                      const QString& destination,
                                      const RestoreConfig& config) {
+    // Invariants (sole caller restorePayload): a ".zip" path; restore_dir passed allPathsPresent.
     Q_ASSERT_X(!archive_path.isEmpty(), "extractArchive", "archive_path must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "extractArchive", "destination must not be empty");
     // System32-qualified interpreter only; refuse before any plaintext temp is written.
@@ -1007,6 +1026,13 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
                                         const QString& dest_dir,
                                         const QStringList& exclude_patterns) {
     return std::all_of(source_paths.begin(), source_paths.end(), [&](const auto& source) {
+        // Individual ENTRIES arrive unvalidated (validateBackupRequest only rejects an empty
+        // LIST), and QDir("") is the process working directory -- an empty entry would copy
+        // the CWD into the backup. Refuse here, before copyDirectory relies on it.
+        if (!allPathsPresent({source, dest_dir})) {
+            sak::logWarning("[UserDataManager] copySourcesToDest refused: empty source or dest");
+            return false;
+        }
         return copyDirectory(source, dest_dir, exclude_patterns);
     });
 }
@@ -1091,6 +1117,11 @@ bool UserDataManager::copyDirectory(const QString& source,
                                     const QString& destination,
                                     const QStringList& exclude_patterns,
                                     ExistingFilePolicy policy) {
+    // Invariants of every call site: copySourcesToDest rejects an empty source_paths ENTRY;
+    // restoreAppData/restorePayload pass dirs that allPathsPresent already accepted, EXCEPT
+    // the backup_existing destination at restoreAppData, which allPathsPresent never sees -
+    // that one is a QDir::filePath() join and so is non-empty for the same reason as the
+    // recursive call below.
     Q_ASSERT_X(!source.isEmpty(), "copyDirectory", "source must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "copyDirectory", "destination must not be empty");
     QDir source_dir(source);
@@ -1145,7 +1176,6 @@ bool UserDataManager::copyDirectory(const QString& source,
 }
 
 QString UserDataManager::calculateSHA256(const QString& file_path) const {
-    Q_ASSERT_X(!file_path.isEmpty(), "calculateSHA256", "file_path must not be empty");
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         return QString();
@@ -1174,7 +1204,8 @@ QString UserDataManager::calculateSHA256(const QString& file_path) const {
 }
 
 bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& metadata_path) {
-    Q_ASSERT_X(!metadata_path.isEmpty(), "writeMetadata", "metadata_path must not be empty");
+    // Invariant of the single call path (backupAppData): buildBackupResult copies app_name
+    // straight from the request that validateBackupRequest already rejected when empty.
     Q_ASSERT_X(!entry.app_name.isEmpty(), "writeMetadata", "app_name must not be empty");
     QJsonObject json;
     json["app_name"] = entry.app_name;
@@ -1215,7 +1246,6 @@ bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& met
 
 std::optional<UserDataManager::BackupEntry> UserDataManager::readMetadata(
     const QString& metadata_path) const {
-    Q_ASSERT_X(!metadata_path.isEmpty(), "readMetadata", "metadata_path must not be empty");
     QFile file(metadata_path);
     if (!file.open(QIODevice::ReadOnly)) {
         return std::nullopt;

@@ -151,6 +151,10 @@ private:
     ///         minimum (offset-math underflow) or above the maximum (size_t wrap).
     auto validateTestFileSize() const -> std::expected<void, sak::error_code>;
 
+    /// @brief Reject a queue depth the random-I/O phases cannot use. setConfig is public and
+    ///        copies the config verbatim, so these are caller-supplied, not invariants.
+    auto validateQueueDepths() const -> std::expected<void, sak::error_code>;
+
     /// @brief Resolve drive info and fail closed on an unusable target or when the
     ///        drive lacks room for the test file. Records drive_capacity_bytes.
     /// @return Success, invalid_path (drive not valid/ready), or

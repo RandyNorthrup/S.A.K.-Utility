@@ -60,6 +60,7 @@ QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {
 
 #ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
+    // scanUsers(bool&) is the only caller and declares profiles as a fresh local.
     Q_ASSERT(profiles.isEmpty());
     const QString currentUserLower = getCurrentUsername().toLower();
     DWORD resumeHandle = 0;
@@ -116,7 +117,12 @@ QString WindowsUserScanner::getCurrentUsername() {
 }
 
 QString WindowsUserScanner::getUserSID(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
+    if (username.isEmpty()) {
+        // Fail closed: an empty name is no account. LookupAccountNameW does not reliably fail on
+        // one -- it can resolve to the local domain -- and callers use the returned SID to take
+        // ownership and set permissions, so a non-user SID must never leave here.
+        return {};
+    }
 #ifdef Q_OS_WIN
     // Try to lookup SID using LookupAccountName
     const auto* usernameW = reinterpret_cast<const wchar_t*>(username.utf16());
@@ -164,6 +170,7 @@ namespace {
 
 /// @brief Expand a registry path value, handling REG_EXPAND_SZ environment variables
 QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
+    // lookupRegistryProfilePath is the only caller and passes its own stack buffer.
     Q_ASSERT(profileDir);
     if (valueType != REG_EXPAND_SZ) {
         return QString::fromWCharArray(profileDir);
@@ -178,6 +185,7 @@ QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
 
 /// @brief Look up a user's profile path from the registry using their SID
 QString lookupRegistryProfilePath(const QString& sid) {
+    // getProfilePath is the only caller and returns early on an empty SID.
     Q_ASSERT(!sid.isEmpty());
     QString regPath =
         QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
@@ -219,7 +227,12 @@ QString lookupRegistryProfilePath(const QString& sid) {
 }  // anonymous namespace
 
 QString WindowsUserScanner::getProfilePath(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
+    if (username.isEmpty()) {
+        // Fail closed: with no name the standard-location path built below collapses to the
+        // profiles root itself, which exists -- so an empty name would resolve to the parent
+        // of every user's profile instead of reporting "not found".
+        return {};
+    }
     // First try standard location using SystemDrive environment variable
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) {
@@ -243,7 +256,12 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
 }
 
 bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
+    if (username.isEmpty()) {
+        // Fail closed: an empty name is no account, and the loop below compares session names
+        // directly -- a session reporting an empty WTSUserName would match it. false is already
+        // this function's answer when the session enumeration cannot be read.
+        return false;
+    }
 #ifdef Q_OS_WIN
     // Enumerate active sessions using WTS API
     PWTS_SESSION_INFOW pSessionInfo = nullptr;
@@ -305,7 +323,15 @@ qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fil
 }
 
 qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
-    Q_ASSERT(!profilePath.isEmpty());
+    // Public static, so profilePath arrives from another translation unit. An empty one
+    // would build "/Documents", "/Desktop" and so on, which QDir resolves against the
+    // current drive root -- the function would happily size an unrelated tree and report
+    // it as a user's profile. 0 is already this function's answer for a profile with
+    // nothing in it.
+    if (profilePath.isEmpty()) {
+        return 0;
+    }
+
     qint64 totalSize = 0;
 
     // Quick estimate by scanning main folders (non-recursive)
@@ -390,8 +416,12 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
 }
 
 qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(maxDepth >= 0);
+    if (path.isEmpty()) {
+        // Fail closed: an empty path must size NOTHING. QDir("") resolves to the current working
+        // directory, so an empty path would silently size the CWD tree -- the same reason
+        // ProgramEnumerator::calculateDirSize rejects one.
+        return 0;
+    }
     if (maxDepth <= 0) {
         return 0;
     }

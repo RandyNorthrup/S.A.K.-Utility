@@ -38,6 +38,7 @@ constexpr int kVolumeProbeFailed = -2;  // opened but the device-number IOCTL
 /// @param volumePath Volume GUID path (with or without trailing backslash)
 /// @return Drive number (>=0), kVolumeUnopenable, or kVolumeProbeFailed
 int queryVolumeDriveNumber(const wchar_t* volumePath) {
+    // Both callers pass the stack volume-name buffer FindFirstVolumeW/FindNextVolumeW filled in.
     Q_ASSERT(volumePath);
     HANDLE hVolume = CreateFileW(
         volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -96,6 +97,14 @@ bool classifyEnumeratedVolume(wchar_t* volumeName,
     return keepScanning;
 }
 
+/// @brief Write the optional enumeration-authority out-param (no-op when the caller did not
+/// ask for it). Keeps getVolumesOnDrive within the complexity gate.
+void setEnumerationOk(bool* enumerationOk, bool value) {
+    if (enumerationOk != nullptr) {
+        *enumerationOk = value;
+    }
+}
+
 }  // anonymous namespace
 
 DriveUnmounter::DriveUnmounter(QObject* parent) : QObject(parent) {}
@@ -111,7 +120,6 @@ DriveUnmounter::~DriveUnmounter() {
 }
 
 bool DriveUnmounter::unmountDrive(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
     sak::logInfo(QString("Unmounting drive %1").arg(driveNumber).toStdString());
     Q_EMIT statusMessage(QString("Preparing drive %1...").arg(driveNumber));
 
@@ -191,7 +199,6 @@ void DriveUnmounter::advisoryCloseHandles(int driveNumber) {
 }
 
 bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
-    Q_ASSERT(!volumePath.isEmpty());
     // Delete mount points first
     if (!deleteMountPoints(volumePath)) {
         sak::logWarning(
@@ -228,10 +235,18 @@ bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
 }
 
 QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumerationOk) const {
-    Q_ASSERT(driveNumber >= 0);
     QStringList volumes;
-    if (enumerationOk != nullptr) {
-        *enumerationOk = true;
+    setEnumerationOk(enumerationOk, true);
+
+    if (driveNumber < 0) {
+        // Not a physical-drive number. Refuse instead of reporting an authoritative empty
+        // list, which a caller reads as "nothing mounted here, safe to raw-write"; a negative
+        // value would also alias the kVolumeUnopenable/kVolumeProbeFailed sentinels.
+        sak::logError(QString("Refusing volume enumeration for invalid drive number %1")
+                          .arg(driveNumber)
+                          .toStdString());
+        setEnumerationOk(enumerationOk, false);
+        return volumes;
     }
 
     // Enumerate all volumes using FindFirstVolume/FindNextVolume
@@ -240,17 +255,15 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
     if (hFind == INVALID_HANDLE_VALUE) {
         // Distinguish an enumeration failure from a genuinely empty result so the
         // caller can fail closed instead of proceeding to raw-write a mounted disk.
-        if (enumerationOk != nullptr) {
-            *enumerationOk = false;
-        }
+        setEnumerationOk(enumerationOk, false);
         return volumes;
     }
 
     do {
         bool fatal = false;
         if (!classifyEnumeratedVolume(volumeName, driveNumber, volumes, &fatal)) {
-            if (fatal && enumerationOk != nullptr) {
-                *enumerationOk = false;
+            if (fatal) {
+                setEnumerationOk(enumerationOk, false);
             }
             FindVolumeClose(hFind);
             return volumes;
@@ -259,8 +272,8 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
 
     // FindNextVolumeW returns FALSE at the end of enumeration; only ERROR_NO_MORE_FILES
     // is a clean end. Any other error means the list may be incomplete -> fail closed.
-    if (GetLastError() != ERROR_NO_MORE_FILES && enumerationOk != nullptr) {
-        *enumerationOk = false;
+    if (GetLastError() != ERROR_NO_MORE_FILES) {
+        setEnumerationOk(enumerationOk, false);
     }
 
     FindVolumeClose(hFind);
@@ -268,7 +281,6 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
 }
 
 HANDLE DriveUnmounter::lockVolume(const QString& volumePath) {
-    Q_ASSERT(!volumePath.isEmpty());
     std::wstring wVolumePath = volumePath.toStdWString();
 
     // Open the volume
@@ -315,7 +327,6 @@ bool DriveUnmounter::dismountVolume(HANDLE volumeHandle) {
 }
 
 bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
-    Q_ASSERT(!volumePath.isEmpty());
     // Remove the TARGET volume's OWN mount points (drive letters / mounted
     // folders). GetVolumePathNamesForVolumeNameW returns the paths that resolve TO
     // this volume; FindFirstVolumeMountPointW would instead enumerate volumes
@@ -360,6 +371,8 @@ bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
 }
 
 bool DriveUnmounter::deleteVolumePathNames(const wchar_t* multiSz, size_t count) {
+    // deleteMountPoints is the only caller; it passes names.data() of a vector sized to the
+    // charCount GetVolumePathNamesForVolumeNameW reported, having already rejected charCount 0.
     Q_ASSERT(multiSz != nullptr);
     // multiSz is a double-null-terminated list of path names, each already ending
     // in a trailing backslash as required by DeleteVolumeMountPointW.
@@ -378,7 +391,6 @@ bool DriveUnmounter::deleteVolumePathNames(const wchar_t* multiSz, size_t count)
 }
 
 bool DriveUnmounter::preventAutoMount(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
     // Open the physical drive
     QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     std::wstring wDrivePath = drivePath.toStdWString();
@@ -423,7 +435,6 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
 }
 
 bool DriveUnmounter::allowAutoMount(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
     // Inverse of preventAutoMount: clear the persistent OFFLINE attribute so a
     // drive taken offline during a failed unmount is brought back online.
     QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
@@ -490,6 +501,8 @@ bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAt
 }
 
 bool DriveUnmounter::closeAllHandles(int driveNumber) {
+    // Reached only from unmountDrive (via advisoryCloseHandles), which has already returned
+    // false for a negative drive number -- getVolumesOnDrive rejects one.
     Q_ASSERT(driveNumber >= 0);
     // Releasing the exclusive volume locks here (before the raw write) is BY DESIGN:
     // the authoritative, persistent concurrent-access guard is the DISK_ATTRIBUTE_OFFLINE
@@ -522,6 +535,8 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
 }
 
 QStringList DriveUnmounter::findVolumesForDrive(int driveNumber) const {
+    // closeAllHandles is the only caller and passes the number unmountDrive validated. The
+    // comparison below must never see a negative one: it would alias kVolumeUnopenable (-1).
     Q_ASSERT(driveNumber >= 0);
     QStringList mountPoints;
     wchar_t volumeName[MAX_PATH];

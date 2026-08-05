@@ -41,7 +41,12 @@ UupDumpApi::~UupDumpApi() {
 // --- Public API Methods -----------------------------------------------------
 
 void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channel) {
-    Q_ASSERT(!arch.isEmpty());
+    if (arch.isEmpty()) {
+        const QString errorMsg = "Cannot fetch builds: no architecture was specified.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching available builds for arch=%1, channel=%2")
                      .arg(arch, channelToDisplayName(channel))
                      .toStdString());
@@ -60,7 +65,12 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
 }
 
 void UupDumpApi::listLanguages(const QString& updateId) {
-    Q_ASSERT(!updateId.isEmpty());
+    if (updateId.isEmpty()) {
+        const QString errorMsg = "Cannot list languages: no build id was specified.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching languages for build %1").arg(updateId).toStdString());
 
     QMap<QString, QString> params;
@@ -73,8 +83,12 @@ void UupDumpApi::listLanguages(const QString& updateId) {
 }
 
 void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
-    Q_ASSERT(!updateId.isEmpty());
-    Q_ASSERT(!lang.isEmpty());
+    if (updateId.isEmpty() || lang.isEmpty()) {
+        const QString errorMsg = "Cannot list editions: a build id and a language are required.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(
         QString("Fetching editions for build %1, lang=%2").arg(updateId, lang).toStdString());
 
@@ -89,8 +103,13 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
 }
 
 void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QString& edition) {
-    Q_ASSERT(!updateId.isEmpty());
-    Q_ASSERT(!lang.isEmpty());
+    if (updateId.isEmpty() || lang.isEmpty()) {
+        const QString errorMsg =
+            "Cannot fetch download files: a build id and a language are required.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching download files for build %1, lang=%2, edition=%3")
                      .arg(updateId, lang, edition)
                      .toStdString());
@@ -579,6 +598,7 @@ bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& conte
 }
 
 QString UupDumpApi::buildSearchQuery(const QString& arch, ReleaseChannel channel) const {
+    // fetchAvailableBuilds, the only caller, rejects an empty arch before reaching here.
     Q_ASSERT(!arch.isEmpty());
     // Build a search query that filters builds by architecture and channel
     // The listid.php endpoint does text search on build titles

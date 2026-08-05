@@ -28,7 +28,6 @@ namespace {
 #ifdef _WIN32
 /// @brief Generate cryptographic random bytes
 QByteArray generate_random_bytes(int size) {
-    Q_ASSERT(size >= 0);
     if (size <= 0) {
         sak::logWarning("generate_random_bytes called with non-positive size {}", size);
         return {};

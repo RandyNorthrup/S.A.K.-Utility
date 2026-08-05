@@ -97,6 +97,8 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistry() {
 }
 
 std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const QString& subkey) {
+    // scanRegistry is the only caller; it passes a predefined HKEY root and one of the
+    // REGISTRY_UNINSTALL_* string constants.
     Q_ASSERT(hive);
     Q_ASSERT(!subkey.isEmpty());
     std::vector<AppInfo> apps;
@@ -167,6 +169,8 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 
 QString AppScanner::readRegistryValue(void* key,
                                       const QString& valueName) {  // NOLINT - static member
+    // scanRegistryHive is the only caller; it passes a key from a RegOpenKeyExW that returned
+    // ERROR_SUCCESS and a literal value name.
     Q_ASSERT(key);
     Q_ASSERT(!valueName.isEmpty());
     HKEY hKey = static_cast<HKEY>(key);
@@ -205,6 +209,7 @@ QString AppScanner::registryStringFromBuffer(const wchar_t* data,
 }
 
 bool AppScanner::isSystemComponent(const QString& name) {
+    // The only call site short-circuits on !app.name.isEmpty() before calling.
     Q_ASSERT(!name.isEmpty());
     static constexpr const char* kPrefixes[] = {
         "KB",

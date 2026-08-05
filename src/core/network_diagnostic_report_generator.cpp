@@ -637,6 +637,8 @@ void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) con
 }
 
 void NetworkDiagnosticReportGenerator::appendAdapterConfigJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray adapters;
     for (const auto& a : m_adapters) {
@@ -671,6 +673,8 @@ void NetworkDiagnosticReportGenerator::appendPingResultsJson(QJsonObject& root) 
 }
 
 void NetworkDiagnosticReportGenerator::appendTracerouteResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonObject trace;
     trace[QStringLiteral("target")] = m_tracerouteResult.target;
@@ -691,6 +695,8 @@ void NetworkDiagnosticReportGenerator::appendTracerouteResultsJson(QJsonObject& 
 }
 
 void NetworkDiagnosticReportGenerator::appendDnsResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray dnsArr;
     for (const auto& r : m_dnsResults) {
@@ -712,6 +718,8 @@ void NetworkDiagnosticReportGenerator::appendDnsResultsJson(QJsonObject& root) c
 }
 
 void NetworkDiagnosticReportGenerator::appendPortScanResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray portArr;
     for (const auto& r : m_portScanResults) {

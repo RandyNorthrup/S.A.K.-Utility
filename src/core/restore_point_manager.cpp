@@ -90,7 +90,13 @@ QString buildCheckpointScript(const QString& safe_desc) {
 }  // namespace
 
 bool RestorePointManager::createRestorePoint(const QString& description) {
-    Q_ASSERT(!description.isEmpty());
+    // Public entry point: reject an empty description at runtime rather than assert it. An
+    // empty -Description is not a checkpoint Windows will label usefully, and the caller gets
+    // the same honest failure in both build configurations.
+    if (description.isEmpty()) {
+        Q_EMIT restorePointFailed("A restore point description is required.");
+        return false;
+    }
     if (!isElevated()) {
         Q_EMIT restorePointFailed("Creating restore points requires administrator privileges.");
         return false;

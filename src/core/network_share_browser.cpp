@@ -251,6 +251,8 @@ void NetworkShareBrowser::appendSharesFromBuffer(const void* shareInfoBuffer,
 }
 
 QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPath) {
+    // Both callers guarantee it: testAccess() rejects an empty uncPath before calling, and
+    // appendSharesFromBuffer() passes makeShareInfo()'s uncPath, always "\\\\host\\share".
     Q_ASSERT(!uncPath.isEmpty());
     bool canRead = false;
     bool canWrite = false;

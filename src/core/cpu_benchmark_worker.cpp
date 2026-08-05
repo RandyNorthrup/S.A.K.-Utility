@@ -213,6 +213,9 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
 // ============================================================================
 
 double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
+    // Invariant: this private helper has exactly two callers, both in this file, and both
+    // pass a compile-time constant -- runSingleThreadBenchmarks takes the
+    // kDefaultPrimeSieveLimit default and runMultiThreaded passes kMultiThreadPrimeLimit.
     Q_ASSERT_X(limit >= kSmallestPrime, "runPrimeSieve", "limit must be >= 2");
     // Sieve of Eratosthenes -- stresses integer arithmetic + memory
     QElapsedTimer timer;
@@ -241,6 +244,9 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
 }
 
 double CpuBenchmarkWorker::runMatrixMultiply(int size) {
+    // Invariant: this private helper has exactly two callers, both in this file, and both
+    // pass a compile-time constant -- runSingleThreadBenchmarks takes the kDefaultMatrixSize
+    // default and runMultiThreaded passes kMultiThreadMatrixSize.
     Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
     // Dense matrix multiply C = A x B -- stresses FP pipeline + cache
     const int element_count = size;
@@ -285,6 +291,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
 }
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
+    // Invariant: runSingleThreadBenchmarks is this private helper's only caller and takes
+    // the kDefaultZlibDataSizeMb default.
     Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
     // Reset the throughput channel so a failed compression cannot leave a stale,
     // positive value behind: runSingleThreadBenchmarks reads it back as the
@@ -340,6 +348,8 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
+    // Invariant: runSingleThreadBenchmarks is this private helper's only caller and takes
+    // the kDefaultAesDataSizeMb default.
     Q_ASSERT_X(data_size_mb > 0, "runAesEncryption", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
@@ -399,7 +409,8 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
-    Q_ASSERT(thread_count >= 0);
+    // Invariant: runMultiThreadBenchmark is this private helper's only caller and clamps with
+    // std::max(1, hardware_concurrency()) before calling.
     Q_ASSERT_X(thread_count > 0, "runMultiThreaded", "thread_count must be positive");
     // Run all four benchmarks in parallel across thread_count threads.
     // Each thread executes the full benchmark suite; the total wall time is measured.

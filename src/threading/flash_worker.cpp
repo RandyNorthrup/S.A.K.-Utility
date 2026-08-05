@@ -164,6 +164,9 @@ bool physicalDriveBacksWindows(int driveNumber) {
 }
 }  // namespace
 
+// Neither constructor input is asserted: both are caller-supplied, and both are rejected at
+// runtime instead -- execute() refuses a null image source, and openDevice() fails the run on a
+// device path it cannot open (an empty one included).
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
                          const QString& targetDevice,
                          QObject* parent)
@@ -182,10 +185,7 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
     , m_lastProgressUpdate(0)
     , m_lastSpeedUpdate(0)
     , m_lastSpeedBytes(0)
-    , m_lastVerifyUpdate(0) {
-    Q_ASSERT_X(m_imageSource != nullptr, "FlashWorker", "imageSource must not be null");
-    Q_ASSERT_X(!m_targetDevice.isEmpty(), "FlashWorker", "targetDevice must not be empty");
-}
+    , m_lastVerifyUpdate(0) {}
 
 FlashWorker::~FlashWorker() {
     // Join the flash thread BEFORE closing the device or freeing the image source.
@@ -213,6 +213,13 @@ void FlashWorker::setBufferSize(qint64 sizeBytes) {
 }
 
 auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
+    // Fail closed: the caller-supplied source is dereferenced by every stage below.
+    if (!m_imageSource) {
+        sak::logError("Refusing to flash: no image source");
+        Q_EMIT error("No image source to flash");
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
     sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Flashing disk image");
     sak::logInfo(QString("Starting flash to %1").arg(m_targetDevice).toStdString());
 
@@ -503,7 +510,7 @@ bool FlashWorker::dismountVolume() {
 }
 
 bool FlashWorker::prepareSourceChecksum() {
-    Q_ASSERT(m_imageSource);
+    Q_ASSERT(m_imageSource);  // execute() refuses a null source before writeImage() runs.
     if (!m_verificationEnabled || !m_sourceChecksum.isEmpty()) {
         return true;
     }
@@ -526,6 +533,8 @@ bool FlashWorker::prepareSourceChecksum() {
 }
 
 bool FlashWorker::padAlignedBuffer(char* data, qint64& bytesRead, qint64 capacity) const {
+    // Sole caller writeImage() returns early when AlignedBuffer::allocate() fails, so data() is
+    // never null here.
     Q_ASSERT(data != nullptr);
     const qint64 padded = alignUpToSectorSize(bytesRead, m_sectorSize);
     if (padded < 0 || padded > capacity) {
@@ -544,7 +553,6 @@ bool FlashWorker::padAlignedBuffer(char* data, qint64& bytesRead, qint64 capacit
 }
 
 bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 sectorSize) {
-    Q_ASSERT(!buffer.isEmpty());
     // Fail closed on bogus geometry rather than dividing by zero / under-padding.
     if (sectorSize <= 0) {
         sak::logError(QString("Invalid sector size for padding: %1").arg(sectorSize).toStdString());
@@ -595,7 +603,7 @@ bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 
 }
 
 bool FlashWorker::writeImage() {
-    Q_ASSERT(m_imageSource);
+    Q_ASSERT(m_imageSource);  // execute() refuses a null source before reaching this stage.
     sak::logInfo("Writing image");
 
     if (!prepareSourceChecksum()) {
@@ -678,6 +686,7 @@ bool FlashWorker::finalizeWrite() {
 }
 
 bool FlashWorker::writeChunk(const char* buffer, qint64 bytesRead) {
+    // Sole caller writeImage() passes its AlignedBuffer, allocated (non-null) or it returned.
     Q_ASSERT(buffer != nullptr);
     // Guard against qint64 -> DWORD truncation
     if (bytesRead > static_cast<qint64>(MAXDWORD)) {
@@ -775,7 +784,7 @@ sak::ValidationResult FlashWorker::verifyFull() {
 }
 
 sak::ValidationResult FlashWorker::verifySample() {
-    Q_ASSERT(m_imageSource);
+    Q_ASSERT(m_imageSource);  // execute() refuses a null source before the verify stage runs.
     sak::logInfo("Starting sample verification");
 
     sak::ValidationResult result;
@@ -847,6 +856,8 @@ bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
                                      qint64 compareLen,
                                      const char* sourceData,
                                      char* targetData) {
+    // Both buffers come from verifySample() via verifySampleBlocks(): a sized QByteArray and an
+    // AlignedBuffer whose failed allocation returns before either is passed on.
     Q_ASSERT(sourceData != nullptr);
     Q_ASSERT(targetData != nullptr);
     LARGE_INTEGER li;
@@ -891,6 +902,8 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
                                     const VerifyBlocksConfig& config,
                                     char* sourceData,
                                     char* targetData) {
+    // Sole caller verifySample() passes its sized source QByteArray and an AlignedBuffer it
+    // returned early on if the allocation failed.
     Q_ASSERT(sourceData != nullptr);
     Q_ASSERT(targetData != nullptr);
     int samplesVerified = 0;
@@ -925,7 +938,7 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
 }
 
 void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
-    Q_ASSERT(m_imageSource);
+    Q_ASSERT(m_imageSource);  // execute() refuses a null source before the verify stage runs.
     const qint64 len = m_totalBytes;
     if (len <= 0) {
         result.passed = false;
@@ -988,6 +1001,8 @@ void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
 }
 
 QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
+    // Sole caller verifyFull() passes m_contentBytesWritten, which writeImage() zeroes and then
+    // only ever adds positive read counts to.
     Q_ASSERT(size >= 0);
     sak::logInfo("Calculating device checksum");
 
@@ -1051,6 +1066,9 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
 }
 
 void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalBytes) {
+    // Both callers (verifySampleBlocks, calculateChecksum) pass non-negative running counters and
+    // a total derived from m_totalBytes, which ensureImageFitsTarget() refuses to flash unless
+    // it is positive.
     Q_ASSERT(bytesVerified >= 0);
     Q_ASSERT(totalBytes >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -1071,6 +1089,8 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
 }
 
 void FlashWorker::updateProgress(qint64 bytesWritten) {
+    // Sole caller writeImage() passes m_bytesWritten, which it zeroes and then only ever
+    // increases by a successful WriteFile count.
     Q_ASSERT(bytesWritten >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
@@ -1090,6 +1110,7 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 }
 
 void FlashWorker::updateSpeed(qint64 bytesWritten) {
+    // Same m_bytesWritten counter updateProgress() is given, from the same call site.
     Q_ASSERT(bytesWritten >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 

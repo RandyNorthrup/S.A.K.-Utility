@@ -58,8 +58,9 @@ bool WindowsUSBCreator::isSafeBundledExecutable(const QString& path, const QStri
 }
 
 bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString& destPath) {
-    Q_ASSERT(!sourcePath.isEmpty());
-    Q_ASSERT(!destPath.isEmpty());
+    // Neither path is asserted: an empty sourcePath fails the QFile::exists check below
+    // and an empty destPath fails copyISO_normalizeDestination, both reporting through
+    // m_lastError rather than aborting a Debug build.
     sak::logInfo(
         QString("Extracting ISO contents: %1 -> %2").arg(sourcePath, destPath).toStdString());
 
@@ -179,8 +180,8 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
 }
 
 bool WindowsUSBCreator::copyISO_normalizeDestination(const QString& destPath, QString& cleanDest) {
-    Q_ASSERT(!destPath.isEmpty());
-    // cleanDest is a write-only out-param (empty on entry); do not assert it.
+    // destPath is not asserted: an empty or malformed value is rejected by the
+    // single-letter check below. cleanDest is a write-only out-param (empty on entry).
     // Normalize drive letter to full path format (e.g., "E" -> "E:\")
     cleanDest = destPath.trimmed();
 
@@ -399,6 +400,7 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(const sak::ProcessResult& re
 }
 
 bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
+    // copyISOContents only calls this with the "X:\" path copyISO_normalizeDestination built.
     Q_ASSERT(!cleanDest.isEmpty());
     // Wait a moment for filesystem to settle after extraction
     sak::logInfo("Waiting for filesystem to settle after extraction...");
@@ -437,6 +439,7 @@ bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
+    // copyISOContents only calls this with the "X:\" path copyISO_normalizeDestination built.
     Q_ASSERT(!cleanDest.isEmpty());
     QDir checkDest(cleanDest);
     QString setupPath = checkDest.absoluteFilePath("setup.exe");
@@ -473,6 +476,7 @@ bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
+    // copyISOContents only calls this with the "X:\" path copyISO_normalizeDestination built.
     Q_ASSERT(!cleanDest.isEmpty());
     // Verify other critical Windows boot files - REQUIRED for bootable USB
     QStringList criticalFiles = {"sources/boot.wim", "bootmgr"};
@@ -525,8 +529,8 @@ bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
 }
 
 void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
-    Q_ASSERT(!m_volumeLabel.isEmpty());
-    Q_ASSERT(!cleanDest.isEmpty());
+    // No asserts: an empty label returns below, and an empty cleanDest is caught by the
+    // drive-letter check further down.
     if (m_volumeLabel.isEmpty()) {
         return;
     }
@@ -568,7 +572,6 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
-    Q_ASSERT(!driveLetter.isEmpty());
     sak::logInfo(QString("Configuring boot files on %1").arg(driveLetter).toStdString());
 
     // Normalize drive letter to single character
@@ -620,6 +623,8 @@ bool WindowsUSBCreator::bcdbootReportsSuccess(bool timedOut, bool cancelled, int
 }
 
 bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
+    // makeBootable is the only caller: it returns false when resolveBcdbootPath() is empty
+    // and rejects any cleanDrive that is not a single letter before reaching this call.
     Q_ASSERT(!bcdbootPath.isEmpty());
     Q_ASSERT(!cleanDrive.isEmpty());
     // KNOWN LIMITATIONS (tracked; see Codex-review-3 findings 4 and 5 -- fixing
@@ -666,7 +671,6 @@ bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cl
 }
 
 bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
-    Q_ASSERT(!diskNumber.isEmpty());
     // Integer-validate before interpolating into the diskpart script (same class of
     // value as createBootableUSB validates), so no stray tokens can be injected.
     static const QRegularExpression diskNumRe(QStringLiteral("^\\d{1,3}$"));
@@ -707,7 +711,6 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
-    Q_ASSERT(!driveLetter.isEmpty());
     Q_EMIT statusChanged("Verifying bootable flag...");
     sak::logInfo(QString("Verifying bootable flag on drive %1").arg(driveLetter).toStdString());
 
@@ -811,18 +814,27 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath,
     return verifyCriticalFilesOnDisk(criticalFiles, destPath);
 }
 
-bool WindowsUSBCreator::isCriticalWindowsFile(const QString& path) const {
-    Q_ASSERT(!path.isEmpty());
-    QString lowerPath = path.toLower();
-    return lowerPath.contains("setup.exe") || lowerPath.contains("bootmgr") ||
-           lowerPath.contains("sources/boot.wim") || lowerPath.contains("sources\\\\boot.wim") ||
-           lowerPath.contains("sources/install.wim") ||
-           lowerPath.contains("sources\\\\install.wim") ||
-           lowerPath.contains("sources/install.esd") ||
-           lowerPath.contains("sources\\\\install.esd");
+bool WindowsUSBCreator::isCriticalWindowsFile(const QString& path) {
+    // The backslash arms of this test used to read "sources\\\\boot.wim". That is four
+    // backslash characters in the source, so the compiler produced a runtime string
+    // containing TWO backslashes, and a real Windows path has one. 7z reports ISO members
+    // with backslashes, so boot.wim, install.wim and install.esd were never recognised and
+    // silently dropped out of the integrity check while it still reported success over the
+    // files it did match.
+    //
+    // Normalising the separator once removes the whole class: there is now a single
+    // forward-slash form of each name to keep correct.
+    const QString normalized = QDir::fromNativeSeparators(path).toLower();
+    return normalized.contains(QStringLiteral("setup.exe")) ||
+           normalized.contains(QStringLiteral("bootmgr")) ||
+           normalized.contains(QStringLiteral("sources/boot.wim")) ||
+           normalized.contains(QStringLiteral("sources/install.wim")) ||
+           normalized.contains(QStringLiteral("sources/install.esd"));
 }
 
 QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QStringList& lines) {
+    // verifyExtractionIntegrity passes QString::split output, which always yields at
+    // least one element even for empty input.
     Q_ASSERT(!lines.isEmpty());
     QList<QPair<QString, qint64>> criticalFiles;
     QString currentPath;
@@ -938,6 +950,8 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
 }
 
 bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
+    // finalVerification, the only caller, rejects anything that is not a single drive
+    // letter and passes the normalized "X:\" form it builds from it.
     Q_ASSERT(!cleanDrive.isEmpty());
     // Verification 1: Check that critical boot files exist
     QStringList requiredFiles = {"setup.exe", "sources/boot.wim", "bootmgr"};
@@ -978,6 +992,8 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
 }
 
 void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
+    // finalVerification counts up from 0 with a QDirIterator and returns early below the
+    // 10-item minimum, so the count reaching here is always positive.
     Q_ASSERT(fileCount >= 0);
     sak::logInfo("========================================");
     sak::logInfo("SUCCESS: ALL FINAL VERIFICATIONS PASSED");
@@ -995,8 +1011,6 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
 }
 
 bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
-    Q_ASSERT(!driveLetter.isEmpty());
-    Q_ASSERT(driveLetter.length() >= 1);
     sak::logInfo("========================================");
     sak::logInfo("FINAL VERIFICATION - This is the ONLY path to success");
     sak::logInfo("========================================");

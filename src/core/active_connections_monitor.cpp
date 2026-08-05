@@ -287,6 +287,8 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
 }
 
 QString ActiveConnectionsMonitor::resolveHostname(const QString& ip) {
+    // Sole caller passes ipv4ToString(), whose inet_ntop into an INET_ADDRSTRLEN buffer always
+    // yields a dotted quad for AF_INET.
     Q_ASSERT(!ip.isEmpty());
     sockaddr_in addr{};
     addr.sin_family = AF_INET;

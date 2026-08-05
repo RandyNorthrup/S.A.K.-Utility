@@ -3314,9 +3314,8 @@ QVector<uint64_t> PstParser::allNodeIds() const {
 }
 
 std::expected<QByteArray, error_code> PstParser::readBytes(qint64 offset, qint64 count) {
-    Q_ASSERT(m_file.isOpen());
-    Q_ASSERT(count > 0);
-
+    // A closed file makes seek() fail, and a count of zero or less makes read()
+    // return an empty buffer; both are rejected below, so no assert is needed.
     if (!m_file.seek(offset)) {
         return std::unexpected(error_code::seek_error);
     }

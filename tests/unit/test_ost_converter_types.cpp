@@ -99,12 +99,21 @@ private Q_SLOTS:
         QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Dbx));
     }
 
+    void testImapUploadGatedUntilItIsWired() {
+        // This used to assert the opposite, which made the support table disagree with
+        // the worker: OstConversionWorker has always refused ImapUpload at run time
+        // because nothing connects ImapUploader to the conversion pipeline. Reporting it
+        // as supported left the format selectable in the GUI, so the user picked it,
+        // started a conversion, and only then learned that no message would be uploaded.
+        // Flip this back only together with the wiring that makes it true.
+        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::ImapUpload));
+    }
+
     void testSupportedFormats() {
         QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Eml));
         QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Mbox));
         QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Html));
         QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::Pdf));
-        QVERIFY(sak::isOutputFormatSupported(sak::OstOutputFormat::ImapUpload));
     }
 
     void testAtLeastOneFileFormatSupported() {

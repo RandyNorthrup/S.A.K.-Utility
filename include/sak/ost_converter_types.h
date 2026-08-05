@@ -46,21 +46,29 @@ enum class OstOutputFormat {
 /// PST (no ROOT/BREF pointers, no page/block trailers, no CRCs), MSG (broken
 /// CFB directory tree, no mini-stream allocation) and DBX (no OE5/6 B-tree
 /// index) writers cannot produce output Outlook / MAPI / Outlook Express can
-/// mount, so they are gated off until spec-conformant writers exist. EML, MBOX,
-/// HTML, PDF and IMAP upload are fully supported. Single source of truth shared
-/// by the worker (which rejects unsupported formats before touching the source)
-/// and the GUI (which disables them in the format picker).
+/// mount, so they are gated off until spec-conformant writers exist.
+///
+/// IMAP upload is gated off for a different reason: ImapUploader itself works,
+/// but nothing wires it to the conversion pipeline, so the run would report
+/// every message as converted while uploading none. OstConversionWorker has
+/// always refused it at run time - this entry used to say true, which meant the
+/// GUI left it selectable and the user only discovered it did nothing after
+/// starting a conversion.
+///
+/// EML, MBOX, HTML and PDF are fully supported. Single source of truth shared by
+/// the worker (which rejects unsupported formats before touching the source) and
+/// the GUI (which disables them in the format picker).
 inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
     switch (format) {
     case OstOutputFormat::Eml:
     case OstOutputFormat::Mbox:
     case OstOutputFormat::Html:
     case OstOutputFormat::Pdf:
-    case OstOutputFormat::ImapUpload:
         return true;
     case OstOutputFormat::Pst:
     case OstOutputFormat::Msg:
     case OstOutputFormat::Dbx:
+    case OstOutputFormat::ImapUpload:
         return false;
     }
     return false;
@@ -72,7 +80,7 @@ inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
 
 /// @brief Recovery mode for damaged files
 enum class RecoveryMode {
-    Normal,       ///< Standard parsing — stop on critical errors
+    Normal,       ///< Standard parsing - stop on critical errors
     SkipCorrupt,  ///< Skip corrupt blocks, log errors, continue
     DeepRecovery  ///< Scan all NBT nodes including orphaned ones
 };

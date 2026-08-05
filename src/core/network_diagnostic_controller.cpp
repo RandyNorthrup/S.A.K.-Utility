@@ -284,6 +284,7 @@ void NetworkDiagnosticController::connectWorkerSignals() {
 }
 
 void NetworkDiagnosticController::connectAdapterInspectorSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_adapterInspector);
     connect(
         m_adapterInspector.get(),
@@ -303,6 +304,7 @@ void NetworkDiagnosticController::connectAdapterInspectorSignals() {
 }
 
 void NetworkDiagnosticController::connectConnectivityTesterSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_connectivityTester);
     connect(m_connectivityTester.get(),
             &ConnectivityTester::pingReply,
@@ -359,6 +361,7 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
 }
 
 void NetworkDiagnosticController::connectDnsToolSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_dnsTool);
     connect(
         m_dnsTool.get(), &DnsDiagnosticTool::queryComplete, this, [this](DnsQueryResult result) {
@@ -397,6 +400,7 @@ void NetworkDiagnosticController::connectDnsToolSignals() {
 }
 
 void NetworkDiagnosticController::connectPortScannerSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_portScanner);
     connect(m_portScanner.get(),
             &PortScanner::portScanned,
@@ -430,6 +434,7 @@ void NetworkDiagnosticController::connectPortScannerSignals() {
 }
 
 void NetworkDiagnosticController::connectBandwidthTesterSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_bandwidthTester);
     connect(m_bandwidthTester.get(),
             &BandwidthTester::serverStarted,
@@ -459,11 +464,17 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
             this,
             [this](double dl, double ul, double latency) {
                 Q_EMIT httpSpeedComplete(dl, ul, latency);
+                // A negative latency means the probe could not measure one. Say so rather
+                // than printing it as a number: it used to arrive here coerced to 0.0 and
+                // was logged as "latency 0.0 ms", which reads as an ideal connection.
+                const QString latencyText = latency < 0.0
+                                                ? QStringLiteral("unknown")
+                                                : QStringLiteral("%1 ms").arg(latency, 0, 'f', 1);
                 Q_EMIT logOutput(QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, "
-                                                "latency %3 ms")
+                                                "latency %3")
                                      .arg(dl, 0, 'f', kNetworkMetricPrecision)
                                      .arg(ul, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(latency, 0, 'f', 1));
+                                     .arg(latencyText));
                 removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
@@ -473,6 +484,7 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
 }
 
 void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_wifiAnalyzer);
     connect(m_wifiAnalyzer.get(),
             &WiFiAnalyzer::scanComplete,
@@ -509,6 +521,7 @@ void NetworkDiagnosticController::connectConnectionMonitorSignals() {
 }
 
 void NetworkDiagnosticController::connectFirewallAuditorSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_firewallAuditor);
     connect(m_firewallAuditor.get(),
             &FirewallRuleAuditor::auditComplete,
@@ -533,6 +546,7 @@ void NetworkDiagnosticController::connectFirewallAuditorSignals() {
 }
 
 void NetworkDiagnosticController::connectShareBrowserSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_shareBrowser);
     connect(m_shareBrowser.get(),
             &NetworkShareBrowser::discoveryComplete,
@@ -844,6 +858,7 @@ void NetworkDiagnosticController::auditFirewall() {
 }
 
 void NetworkDiagnosticController::discoverShares(const QString& hostname) {
+    // The constructor make_unique's m_shareBrowser and nothing ever resets it.
     Q_ASSERT(m_shareBrowser);
     if (hostname.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Share discovery hostname cannot be empty"));
@@ -896,6 +911,7 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
 }
 
 void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) {
+    // The sole caller (the newConnection lambda above) returns early on a null socket.
     Q_ASSERT(socket);
     Q_EMIT logOutput(QStringLiteral("LAN transfer: peer connected from %1")
                          .arg(socket->peerAddress().toString()));
@@ -947,6 +963,8 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
 
 void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket,
                                                               LanClientContext* ctx) {
+    // Both come from handleLanClientConnection(): the socket it was handed was already
+    // null-checked by its caller, and ctx is its own `new` (which throws, never returns null).
     Q_ASSERT(socket);
     Q_ASSERT(ctx);
 
@@ -1189,6 +1207,9 @@ LanUploadOutcome runLanUpload(const QString& targetAddr,
 }
 
 void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& data) {
+    // Both are guaranteed by the sole caller, runLanTransferTest(): it rejects an empty
+    // targetAddr before starting the upload, and LanUploadWorker::pump() only ever adds
+    // non-negative write() returns to the total it reports back.
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
 
@@ -1433,6 +1454,8 @@ QStringList NetworkDiagnosticController::listEthernetAdapters() const {
 }
 
 void NetworkDiagnosticController::cancel() {
+    // Both are make_unique'd by the constructor and are never reset, so they outlive every
+    // call to cancel() (including the one in the destructor body).
     Q_ASSERT(m_connectivityTester);
     Q_ASSERT(m_dnsTool);
     m_connectivityTester->cancel();

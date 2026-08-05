@@ -55,6 +55,13 @@ public:
     ///        bundled tool. Fails closed. Pure/testable.
     [[nodiscard]] static bool isSafeBundledExecutable(const QString& path, const QString& appDir);
 
+    /// @brief True iff @p path names a file whose presence and size decide whether
+    ///        an extracted Windows install medium is usable. Accepts either
+    ///        separator: 7z reports ISO paths with backslashes on Windows.
+    ///        Pure/testable - it was private and untested, and shipped with an
+    ///        over-escaped literal that made the backslash forms unmatchable.
+    [[nodiscard]] static bool isCriticalWindowsFile(const QString& path);
+
     /**
      * @brief Create a bootable Windows USB drive from an ISO
      * @param isoPath Path to the Windows ISO file
@@ -297,9 +304,6 @@ private:
     bool verifyExtractionIntegrity(const QString& isoPath,
                                    const QString& destPath,
                                    const QString& sevenZipPath);
-
-    /// @brief Check if a file path matches a critical Windows installation file
-    bool isCriticalWindowsFile(const QString& path) const;
 
     /// @brief Parse ISO listing output and return critical Windows file paths with sizes
     QList<QPair<QString, qint64>> parseIsoCriticalFiles(const QStringList& lines);

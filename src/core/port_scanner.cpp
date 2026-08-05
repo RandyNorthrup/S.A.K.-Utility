@@ -419,20 +419,6 @@ PortScanResult PortScanner::scanPort(const QString& target,
     return result;
 }
 
-QString PortScanner::grabBannerData(const QString& target, uint16_t port, int timeoutMs) {
-    Q_ASSERT(!target.isEmpty());
-    Q_ASSERT(timeoutMs >= 0);
-    const TcpProbeResult probe = runTcpProbe(target, port, timeoutMs, true, timeoutMs);
-    if (probe.banner.isEmpty()) {
-        return {};
-    }
-
-    // Clean up non-printable characters
-    QString banner = QString::fromUtf8(probe.banner).trimmed();
-    banner.remove(QLatin1Char('\0'));
-    return banner;
-}
-
 QVector<PortPreset> PortScanner::getPresets() {
     return kPortPresets;
 }

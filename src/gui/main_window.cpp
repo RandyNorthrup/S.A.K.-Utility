@@ -202,7 +202,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
         <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
         <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
-        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, and cloud upload</li>
+        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to EML, MBOX, HTML, and PDF with deleted item recovery</li>
     </ul>
 </div>
 

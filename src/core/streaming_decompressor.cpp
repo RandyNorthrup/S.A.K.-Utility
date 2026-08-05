@@ -17,7 +17,7 @@ StreamingDecompressor::~StreamingDecompressor() {
 }
 
 bool StreamingDecompressor::open(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // An empty path makes QFile::open() below fail, which is the rejection.
     close();
 
     m_file.setFileName(filePath);
@@ -58,8 +58,14 @@ bool StreamingDecompressor::isOpen() const {
 }
 
 qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
-    Q_ASSERT(data);
-    Q_ASSERT(maxSize >= 0);
+    // setOutput() hands the buffer straight to the decoder, so a null buffer or a
+    // negative size (which would widen to an enormous size_t) has to be refused
+    // here; there is no later check between this point and the decoder writing.
+    if (data == nullptr || maxSize < 0) {
+        m_lastError = QStringLiteral("Invalid read buffer");
+        logError(m_lastError.toStdString());
+        return -1;
+    }
     if (!isOpen()) {
         m_lastError = "Decompressor not open";
         return -1;

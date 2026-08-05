@@ -160,6 +160,9 @@ AttachmentSaveResult AttachmentBatchSave::recordOne(const AttachmentRef& ref,
 }
 
 void AttachmentBatchSave::recordError() {
+    // Every call site establishes the active batch first: the panel and the
+    // attachments browser test isActive(), and runPstAttachmentSaves() only
+    // reaches this after begin() returned true.
     Q_ASSERT(isActive());
     ++m_failed;
 }

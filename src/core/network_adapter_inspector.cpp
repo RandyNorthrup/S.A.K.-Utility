@@ -128,6 +128,7 @@ void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
 }
 
 void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
+    // Sole caller is buildAdapterInfo(), which is itself only reached with a non-null addr.
     Q_ASSERT(addr);
     for (auto* ua = addr->FirstUnicastAddress; ua != nullptr; ua = ua->Next) {
         const auto* sa = ua->Address.lpSockaddr;
@@ -195,6 +196,7 @@ void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info) {
 }
 
 sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
+    // Sole caller is enumerateAdapters(), whose loop condition is addr != nullptr.
     Q_ASSERT(addr);
     sak::NetworkAdapterInfo info;
 

@@ -144,7 +144,9 @@ bool SmartFileFilter::matchesPattern(const QString& fileName) const {
 }
 
 bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
-    Q_ASSERT(!relativePath.isEmpty());
+    // relativePath is whatever QDir::relativeFilePath() returned for a caller's
+    // QFileInfo, so it can legitimately be empty; an empty path simply has no
+    // components and is not in an excluded folder.
     // Split path into components
     QStringList components = relativePath.split('/', Qt::SkipEmptyParts);
     components.append(relativePath.split('\\', Qt::SkipEmptyParts));
@@ -155,7 +157,8 @@ bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
 }
 
 bool SmartFileFilter::isInCacheDirectory(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
+    // Public entry point: path comes from the caller and an empty one contains no
+    // cache pattern, which the search below already reports correctly.
     QString lowerPath = path.toLower();
 
     // Common cache directory patterns

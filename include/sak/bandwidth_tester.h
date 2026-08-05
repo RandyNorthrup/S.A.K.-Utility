@@ -96,6 +96,11 @@ Q_SIGNALS:
     void testProgress(double currentMbps, double elapsedSec, double totalSec);
     void testComplete(sak::BandwidthTestResult result);
     void httpSpeedTestProgress(double downloadMbps, double uploadMbps);
+    /// @brief HTTP speed test finished.
+    /// @param latencyMs Round-trip latency, or a NEGATIVE value when it could not be
+    ///        measured. Receivers must test for that and report it as unknown; it was
+    ///        previously coerced to 0.0, which displayed a failed measurement as a
+    ///        perfect one.
     void httpSpeedTestComplete(double downloadMbps, double uploadMbps, double latencyMs);
     void errorOccurred(QString error);
 

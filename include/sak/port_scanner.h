@@ -70,10 +70,6 @@ private:
     ///        emitting portScanned/scanProgress per port from the calling thread.
     [[nodiscard]] QVector<PortScanResult> scanPortsConcurrently(const ScanConfig& config,
                                                                 const QVector<uint16_t>& ports);
-    [[nodiscard]] static QString grabBannerData(const QString& target,
-                                                uint16_t port,
-                                                int timeoutMs);
-
     /// @brief Well-known port -> service name map
     [[nodiscard]] static const QHash<uint16_t, QString>& serviceDatabase();
 };

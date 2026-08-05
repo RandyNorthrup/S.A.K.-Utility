@@ -116,6 +116,7 @@ DriveScanner::~DriveScanner() {
 }
 
 void DriveScanner::start() {
+    // The constructor creates m_refreshTimer (new QTimer(this)) and nothing ever reassigns it.
     Q_ASSERT(m_refreshTimer);
     sak::logInfo("Starting drive scanner");
 
@@ -293,9 +294,18 @@ bool DriveScanner::driveInfoChanged(const sak::DriveInfo& a, const sak::DriveInf
 }
 
 sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
-    Q_ASSERT_X(driveNumber >= 0, "queryDriveInfo", "driveNumber must be non-negative");
     sak::DriveInfo info;
+
+    // getDriveName, isDriveRemovable, getMountPoints and containsWindowsInstallation all
+    // assert a non-negative drive number and name this function as what guarantees it, so
+    // make that true here rather than relying on CreateFileW happening to fail on a device
+    // path like "\\.\PhysicalDrive-1". A default DriveInfo is what every other failure
+    // path in this function returns.
+    if (driveNumber < 0) {
+        sak::logError("queryDriveInfo refused a negative drive number: {}", driveNumber);
+        return info;
+    }
+
     info.devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
 
     // Try to open drive
@@ -354,7 +364,7 @@ QString DriveScanner::descriptorString(const BYTE* buffer,
 }
 
 QString DriveScanner::getDriveName(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
+    // Only queryDriveInfo calls this, with a number enumeratePhysicalDriveNumbers accepted (>= 0).
     Q_ASSERT_X(driveNumber >= 0, "getDriveName", "driveNumber must be non-negative");
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
@@ -412,6 +422,7 @@ QString DriveScanner::getDriveName(int driveNumber) {
 }
 
 qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
+    // queryDriveInfo, the only caller, returns early when CreateFileW fails -- hDrive is open here.
     Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getDriveSize", "hDrive must be a valid handle");
     DISK_GEOMETRY_EX geometry = {};
     DWORD bytesReturned = 0;
@@ -431,6 +442,7 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
 }
 
 quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
+    // queryDriveInfo, the only caller, returns early when CreateFileW fails -- hDrive is open here.
     Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBlockSize", "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
@@ -453,6 +465,7 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
 }
 
 QString DriveScanner::getBusType(HANDLE hDrive) {
+    // queryDriveInfo, the only caller, returns early when CreateFileW fails -- hDrive is open here.
     Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBusType", "hDrive must be a valid handle");
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
@@ -493,7 +506,8 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
 }
 
 bool DriveScanner::isDriveRemovable(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
+    // Callers pass a number enumeratePhysicalDriveNumbers accepted (>= 0); physicalDriveBootProbe
+    // rejects a negative one before it can reach here.
     Q_ASSERT_X(driveNumber >= 0, "isDriveRemovable", "driveNumber must be non-negative");
     // Use IOCTL_STORAGE_QUERY_PROPERTY to check both RemovableMedia flag and BusType
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
@@ -570,6 +584,7 @@ bool DriveScanner::driveReadOnlyFromProbe(bool is_writable_ioctl_ok,
 }
 
 bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
+    // queryDriveInfo, the only caller, returns early when CreateFileW fails -- hDrive is open here.
     Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "isDriveReadOnly", "hDrive must be a valid handle");
     DWORD bytesReturned = 0;
 
@@ -594,7 +609,7 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
 }
 
 QStringList DriveScanner::getMountPoints(int driveNumber, bool* enumerationOk) {
-    Q_ASSERT(driveNumber >= 0);
+    // queryDriveInfo passes a number enumeratePhysicalDriveNumbers accepted (>= 0).
     Q_ASSERT_X(driveNumber >= 0, "getMountPoints", "driveNumber must be non-negative");
     QStringList mountPoints;
     bool ok = true;
@@ -678,7 +693,8 @@ bool DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStrin
 }
 
 QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerationOk) {
-    Q_ASSERT(driveNumber >= 0);
+    // containsWindowsInstallation passes an enumerated number; physicalDriveBootProbe returns
+    // Undetermined for a negative one before reaching here.
     Q_ASSERT_X(driveNumber >= 0, "getVolumeRootsForDrive", "driveNumber must be non-negative");
     QStringList roots;
     bool ok = true;
@@ -764,7 +780,8 @@ bool DriveScanner::collectMountPaths(wchar_t* volumeName,
 }
 
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
-    Q_ASSERT(!mountPoint.isEmpty());
+    // queryDriveInfo calls this only with mountPoints.first(), and collectMountPaths appends
+    // only non-empty NUL-terminated mount paths.
     Q_ASSERT_X(!mountPoint.isEmpty(), "getVolumeLabel", "mountPoint must not be empty");
     wchar_t volumeLabel[MAX_PATH + 1] = {};
 
@@ -829,7 +846,7 @@ bool DriveScanner::hasBootManagerIndicators(const QString& root) {
 }
 
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
-    Q_ASSERT(driveNumber >= 0);
+    // queryDriveInfo passes a number enumeratePhysicalDriveNumbers accepted (>= 0).
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     // Inspect EVERY volume on the drive -- including unmounted ones (GUID path) -- so a Windows
     // partition without a drive letter is still classified as a system drive.

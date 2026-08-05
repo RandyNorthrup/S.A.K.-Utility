@@ -154,7 +154,14 @@ void PstWriter::setDisplayName(const QString& name) {
 std::expected<uint64_t, error_code> PstWriter::createFolder(uint64_t parent_nid,
                                                             const QString& name,
                                                             const QString& container_class) {
-    Q_ASSERT(m_is_open);
+    // Fail closed on out-of-sequence use (no successful create(), or already
+    // finalized): writeFolderNode would otherwise write into a closed QFile and
+    // silently record B-Tree entries for bytes that never reached disk.
+    if (!m_is_open) {
+        logError("PstWriter: createFolder called on a writer that is not open ({})",
+                 m_output_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
 
     uint64_t folder_nid = makeNid(kNidTypeFolder, m_next_nid++);
     writeFolderNode(folder_nid, name, container_class);
@@ -167,7 +174,13 @@ std::expected<void, error_code> PstWriter::writeMessage(
     uint64_t folder_nid,
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data) {
-    Q_ASSERT(m_is_open);
+    // Same sequencing contract as createFolder(): refuse rather than write a
+    // message node into a file that was never opened.
+    if (!m_is_open) {
+        logError("PstWriter: writeMessage called on a writer that is not open ({})",
+                 m_output_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
 
     writeMessageNode(folder_nid, item, attachment_data);
     return {};

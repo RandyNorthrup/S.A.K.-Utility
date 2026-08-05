@@ -47,13 +47,20 @@ void accumulateFileEntry(const std::filesystem::directory_entry& entry,
 
 auto path_utils::normalize(const std::filesystem::path& path)
     -> std::expected<std::filesystem::path, error_code> {
+    // isSafePath() is the only caller and rejects an empty path and an empty
+    // base_dir before either normalize() call below it.
     Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
 
     try {
         auto normalized = std::filesystem::weakly_canonical(path);
-        Q_ASSERT_X(normalized.is_absolute(),
-                   "path_utils::normalize",
-                   "normalized path must be absolute");
+        if (!normalized.is_absolute()) {
+            // weakly_canonical leaves a path it cannot anchor to an existing
+            // prefix relative. isSafePath's containment comparison only means
+            // anything between two absolute paths, so fail closed rather than
+            // answer a security question from a half-resolved path.
+            logError("Normalized path is not absolute: {}", normalized.string());
+            return std::unexpected(error_code::invalid_path);
+        }
         return normalized;
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to normalize path: {}", e.what());
@@ -66,9 +73,15 @@ auto path_utils::normalize(const std::filesystem::path& path)
 
 auto path_utils::makeRelative(const std::filesystem::path& path, const std::filesystem::path& base)
     -> std::expected<std::filesystem::path, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::makeRelative", "path must not be empty");
-    Q_ASSERT_X(!base.empty(), "path_utils::makeRelative", "base must not be empty");
-
+    // Reject the empty inputs explicitly. std::filesystem::relative is specified as
+    // weakly_canonical(path).lexically_relative(weakly_canonical(base)), and
+    // lexically_relative on two equal paths yields "." rather than an empty path -- so
+    // makeRelative("", "") used to succeed and hand back ".", a path that resolves to the
+    // caller's working directory. The empty check below never covered that.
+    if (path.empty() || base.empty()) {
+        logError("makeRelative requires a non-empty path and base");
+        return std::unexpected(error_code::invalid_path);
+    }
     try {
         auto rel = std::filesystem::relative(path, base);
         if (rel.empty()) {
@@ -87,8 +100,12 @@ auto path_utils::makeRelative(const std::filesystem::path& path, const std::file
 auto path_utils::isSafePath(const std::filesystem::path& path,
                             const std::filesystem::path& base_dir)
     -> std::expected<bool, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::isSafePath", "path must not be empty");
-    Q_ASSERT_X(!base_dir.empty(), "path_utils::isSafePath", "base_dir must not be empty");
+    // Containment has no meaning without both operands, and this answer gates
+    // path-traversal decisions, so refuse instead of returning a guessed bool.
+    if (path.empty() || base_dir.empty()) {
+        logError("isSafePath requires a non-empty path and base directory");
+        return std::unexpected(error_code::invalid_path);
+    }
 
     try {
         // Normalize both paths
@@ -144,10 +161,8 @@ bool path_utils::matchesPattern(const std::filesystem::path& path,
 
 auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     -> std::expected<DirectorySizeInfo, error_code> {
-    Q_ASSERT_X(!dir_path.empty(),
-               "path_utils::getDirectorySizeAndCount",
-               "dir_path must not be empty");
-
+    // An empty dir_path fails the exists() check below and is reported as
+    // file_not_found.
     std::error_code ec;
     if (!std::filesystem::exists(dir_path, ec) || ec) {
         return std::unexpected(error_code::file_not_found);
@@ -177,8 +192,8 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
 
 auto path_utils::getAvailableSpace(const std::filesystem::path& path)
     -> std::expected<std::uintmax_t, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::getAvailableSpace", "path must not be empty");
-
+    // An empty path makes std::filesystem::space() fail; the handler below turns
+    // that into read_error.
     try {
         auto space_info = std::filesystem::space(path);
         return space_info.available;
@@ -192,8 +207,9 @@ auto path_utils::getAvailableSpace(const std::filesystem::path& path)
 }
 
 bool path_utils::wildcardMatch(std::string_view str, std::string_view pattern) noexcept {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(!pattern.empty());
+    // Empty inputs need no precondition: the loops below already answer them (an
+    // empty pattern matches only an empty string). The caller's pattern list and
+    // the filename it derives are both outside this function's control.
     std::size_t s = 0, p = 0;
     std::size_t star_idx = std::string_view::npos;
     std::size_t match_idx = 0;

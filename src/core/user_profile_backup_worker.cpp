@@ -595,6 +595,8 @@ void UserProfileBackupWorker::countSelectedUsers(int& currentUser, int& totalUse
 }
 
 void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
+    // Invariant: the sole caller (copyFileWithFiltering) forwards its fileSize, which both of
+    // its call sites take from QFileInfo::size() -- 0, never negative, for an unstattable file.
     Q_ASSERT(bytesAdded >= 0);
     m_bytesCopied += bytesAdded;
 

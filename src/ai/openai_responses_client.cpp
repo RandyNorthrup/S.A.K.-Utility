@@ -1048,6 +1048,8 @@ QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseReque
 }
 
 void OpenAIResponsesClient::setCurrentReply(QNetworkReply* reply) {
+    // Both callers pass a reply straight from QNetworkAccessManager::post/get, which always
+    // returns a live object (errors arrive on the reply, never as a null pointer).
     Q_ASSERT(reply);
     m_current_reply = reply;
 }

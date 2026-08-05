@@ -949,6 +949,8 @@ const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& 
 }
 
 void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
+    // Invariant: the sole caller (copyFileWithConflictResolution) forwards its size, which
+    // copyDirectoryEntry takes from QFileInfo::size() -- 0, never negative, when it cannot stat.
     Q_ASSERT(bytesAdded >= 0);
     m_bytesRestored += bytesAdded;
 

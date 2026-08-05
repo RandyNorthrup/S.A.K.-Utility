@@ -409,9 +409,6 @@ namespace sak {
 // ============================================================================
 
 IsoInfo IsoAnalyzer::analyze(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
-    Q_ASSERT(QFileInfo::exists(file_path));
-
     IsoInfo info;
     info.file_size = QFileInfo(file_path).size();
 
@@ -458,6 +455,8 @@ IsoInfo IsoAnalyzer::analyze(const QString& file_path) {
 // ============================================================================
 
 void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() is the only caller and reaches it only after its own
+    // QFile::open(QIODevice::ReadOnly) succeeded.
     Q_ASSERT(device.isOpen());
     Q_ASSERT(device.isReadable());
 
@@ -513,6 +512,7 @@ void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) 
 // ============================================================================
 
 void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() only calls this after its QFile::open() succeeded.
     Q_ASSERT(device.isOpen());
 
     // The Boot Record volume descriptor is NOT always at LBA 17: it lives
@@ -561,6 +561,8 @@ void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
 // ============================================================================
 
 QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba) {
+    // Private helper: the device came open from analyze(), and the sole caller
+    // (readElToritoBootRecord) routes catalog_lba == 0 to "Legacy BIOS" without calling here.
     Q_ASSERT(device.isOpen());
     Q_ASSERT(catalog_lba > 0);
 
@@ -581,6 +583,7 @@ QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba
 // ============================================================================
 
 void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() only calls this after its QFile::open() succeeded.
     Q_ASSERT(device.isOpen());
 
     // UDF uses Extended Area Descriptor at sector 16+n
@@ -625,6 +628,8 @@ bool IsoAnalyzer::isWindowsInstallMedia(const IsoInfo& info) {
 }
 
 void IsoAnalyzer::identifyWindows(IsoInfo& info) {
+    // Private helper: analyze() default-constructs the IsoInfo, and the three readers that run
+    // before this one (PVD, El Torito, UDF) never write os_family or os_name.
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.os_name.isEmpty());
 
@@ -645,6 +650,8 @@ void IsoAnalyzer::identifyWindows(IsoInfo& info) {
 // ============================================================================
 
 void IsoAnalyzer::identifyLinux(IsoInfo& info) {
+    // Private helper: analyze() calls this only inside if (info.os_family.isEmpty()), and
+    // distro_name is written nowhere but this function's own helpers.
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.distro_name.isEmpty());
 
@@ -671,6 +678,8 @@ void IsoAnalyzer::identifyLinux(IsoInfo& info) {
 // ============================================================================
 
 QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
+    // Private helper: the sole caller passes an interior pointer into its own
+    // std::array<char, kSectorSize> sector buffer, which is never null.
     Q_ASSERT(raw);
 
     // ISO 9660 date format: 17 bytes
@@ -709,6 +718,8 @@ QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
 }
 
 QString IsoAnalyzer::readFixedAscii(const char* data, int length) {
+    // Private helper: every caller (readPrimaryVolumeDescriptor, parseIsoDateTime) passes an
+    // interior pointer into a fixed sector buffer plus a positive compile-time field length.
     Q_ASSERT(data);
     Q_ASSERT(length > 0);
 

@@ -74,6 +74,9 @@ constexpr uint64_t kMaxTestFileSizeMb = 1024ULL * 1024;  // 1 TiB
 // bogus 0 MB/s "success"; an unbounded duration would overflow duration_sec * 1000.
 constexpr int kMaxSequentialPasses = 1000;
 constexpr int kMaxRandomDurationSec = 3600;  // 1 hour; * 1000 stays within int range
+// Upper bound for both configured queue depths. The random-I/O paths allocate an aligned
+// buffer of block_bytes * queue_depth, so an unbounded depth is an unbounded allocation.
+constexpr int kMaxQueueDepth = 1024;
 constexpr double kSeqReadScoreWeight = 0.20;
 constexpr double kSeqWriteScoreWeight = 0.20;
 constexpr double kRandReadScoreWeight = 0.30;
@@ -359,6 +362,28 @@ auto DiskBenchmarkWorker::validateTestFileSize() const -> std::expected<void, sa
         logError("Disk benchmark: random_duration_sec {} out of range (1..{})",
                  m_config.random_duration_sec,
                  kMaxRandomDurationSec);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return validateQueueDepths();
+}
+
+// The queue depths reach runRandom4KRead/runRandom4KWrite, which size an aligned buffer as
+// block_bytes * queue_depth and then loop queue_depth times. setConfig is public and assigns
+// the whole struct verbatim, so neither field is an invariant of this class: a caller can
+// hand over 0 and get a zero-length buffer and a benchmark that measures nothing while still
+// reporting a figure. Validating here, where there is an error channel, is what lets those
+// two helpers assert instead.
+auto DiskBenchmarkWorker::validateQueueDepths() const -> std::expected<void, sak::error_code> {
+    if (m_config.queue_depth_low <= 0 || m_config.queue_depth_low > kMaxQueueDepth) {
+        logError("Disk benchmark: queue_depth_low {} out of range (1..{})",
+                 m_config.queue_depth_low,
+                 kMaxQueueDepth);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.queue_depth_high <= 0 || m_config.queue_depth_high > kMaxQueueDepth) {
+        logError("Disk benchmark: queue_depth_high {} out of range (1..{})",
+                 m_config.queue_depth_high,
+                 kMaxQueueDepth);
         return std::unexpected(sak::error_code::invalid_argument);
     }
     return {};
@@ -761,6 +786,7 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
                                           double& avg_latency_us,
                                           std::vector<double>* latencies_out)
     -> std::expected<void, sak::error_code> {
+    // Guaranteed by validateQueueDepths(), which runs before any benchmark phase.
     Q_ASSERT_X(queue_depth > 0, "runRandom4KRead", "queue_depth must be positive");
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
@@ -965,13 +991,13 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
 }
 #endif
 
+// See runRandom4KRead: validateTestFileSize() guarantees the depth before execute() runs.
 auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
                                            double& write_mbps,
                                            double& iops,
                                            double& avg_latency_us,
                                            std::vector<double>* latencies_out)
     -> std::expected<void, sak::error_code> {
-    Q_ASSERT_X(queue_depth > 0, "runRandom4KWrite", "queue_depth must be positive");
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 

@@ -118,6 +118,8 @@ bool isValidFourByteLeadPair(unsigned char lead, unsigned char second) noexcept 
 }
 
 int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
+    // isValidUtf8() is the only caller and reaches this from inside its
+    // `while (i < str.length())` loop, so str is non-empty and pos is in range.
     Q_ASSERT(!str.empty());
     Q_ASSERT(pos < str.size());
     const unsigned char lead = static_cast<unsigned char>(str[pos]);
@@ -674,9 +676,7 @@ std::string input_validator::sanitizeString(std::string_view str, bool allow_uni
 validation_result input_validator::validateBufferSize(std::size_t buffer_size,
                                                       std::size_t max_size,
                                                       std::size_t required_size) {
-    Q_ASSERT_X(max_size > 0, "validateBufferSize", "max_size must be positive");
-    // Q_ASSERT_X is a no-op in release, so guard the invalid limit at runtime too:
-    // a zero maximum is a misconfiguration, not a validation that trivially passes.
+    // A zero maximum is a misconfiguration, not a validation that trivially passes.
     if (max_size == 0) {
         return failure(error_code::validation_failed, "Maximum buffer size must be positive");
     }
@@ -698,10 +698,8 @@ validation_result input_validator::validateBufferSize(std::size_t buffer_size,
 
 validation_result input_validator::validate_disk_space(const std::filesystem::path& path,
                                                        std::uintmax_t required_bytes) {
-    Q_ASSERT_X(!path.empty(), "validate_disk_space", "path must not be empty");
-    Q_ASSERT_X(required_bytes > 0, "validate_disk_space", "required_bytes must be positive");
-    // Asserts are elided in release; fail closed on an empty path or a zero byte
-    // requirement rather than run a trivially-true check.
+    // Fail closed on an empty path or a zero byte requirement rather than run a
+    // trivially-true check.
     if (path.empty() || required_bytes == 0) {
         return failure(error_code::validation_failed,
                        "Disk space check needs a path and a positive byte count");
@@ -729,8 +727,7 @@ validation_result input_validator::validate_disk_space(const std::filesystem::pa
 }
 
 validation_result input_validator::validate_available_memory(std::size_t required_bytes) {
-    Q_ASSERT_X(required_bytes > 0, "validate_available_memory", "required_bytes must be positive");
-    // Asserts are elided in release; a zero requirement is a misconfiguration.
+    // A zero requirement is a misconfiguration.
     if (required_bytes == 0) {
         return failure(error_code::validation_failed, "Required memory must be positive");
     }
@@ -771,11 +768,7 @@ validation_result input_validator::validate_file_descriptor_limit() {
 }
 
 validation_result input_validator::validate_thread_count(std::size_t requested_threads) {
-    Q_ASSERT_X(requested_threads > 0,
-               "validate_thread_count",
-               "requested_threads must be positive");
-    // Asserts are elided in release; a zero thread request is invalid, not a
-    // trivially-satisfied validation.
+    // A zero thread request is invalid, not a trivially-satisfied validation.
     if (requested_threads == 0) {
         return failure(error_code::validation_failed, "Requested thread count must be positive");
     }

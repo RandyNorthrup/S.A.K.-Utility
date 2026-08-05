@@ -387,6 +387,8 @@ bool WindowsUSBCreator::runDiskpartScript(const QString& script,
 }
 
 QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
+    // createBootableUSB only reaches this step after validateUSBInputs matched diskNumber
+    // against ^\d{1,3}$.
     Q_ASSERT(!diskNumber.isEmpty());
     Q_EMIT progressUpdated(0);
     Q_EMIT statusChanged("Step 1/5: Formatting drive as NTFS...");
@@ -437,6 +439,8 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
+    // formatAndVerifyDrive returns before this call when the letter is empty, and
+    // validateDriveLetter (its only producer) enforces exactly one A-Z character.
     Q_ASSERT(!driveLetter.isEmpty());
     Q_ASSERT(driveLetter.length() == 1);
 
@@ -471,8 +475,8 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
 }
 
 bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter) {
-    Q_ASSERT(!isoPath.isEmpty());
-    Q_ASSERT(!driveLetter.isEmpty());
+    // Not asserted: copyISOContents below rejects a missing ISO (QFile::exists) and an
+    // invalid drive letter (copyISO_normalizeDestination), both via m_lastError.
     // ==================== STEP 2: EXTRACT ====================
     Q_EMIT statusChanged("Step 2/5: Extracting Windows installation files...");
     sak::logInfo("STEP 2: Extracting ISO contents...");
@@ -590,6 +594,8 @@ QString WindowsUSBCreator::lastError() const {
 }
 
 bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
+    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
+    // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
     // Re-pin the target's identity immediately before the destructive clean so a
     // hot-plug that reassigned disk numbers cannot redirect the wipe (TOCTOU).
@@ -617,6 +623,8 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
+    // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
+    // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
     sak::logInfo("Waiting for Windows to recognize partition...");
     Q_EMIT statusChanged("Formatting partition as NTFS...");
@@ -645,6 +653,8 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
+    // formatAndVerifyDrive, the only caller, is reached only after validateUSBInputs
+    // matched diskNumber against ^\d{1,3}$.
     Q_ASSERT(!diskNumber.isEmpty());
     // Use the official Microsoft method: diskpart clean, then format command
     // Based on Windows Server USB creation documentation and Rufus implementation
@@ -667,7 +677,6 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
 }
 
 QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
-    Q_ASSERT(!m_diskNumber.isEmpty());
     if (m_diskNumber.isEmpty()) {
         setError("Cannot query drive letter: No disk number set");
         sak::logError(lastError().toStdString());
@@ -718,7 +727,9 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
 }
 
 QString WindowsUSBCreator::validateDriveLetter(const QString& rawLetter) {
-    Q_ASSERT(!rawLetter.isEmpty());
+    // rawLetter is not asserted: an empty value is rejected below. m_diskNumber is an
+    // invariant here -- getDriveLetterFromDiskNumber, the only caller, returns early when
+    // it is empty, and createBootableUSB pins it before validateUSBInputs accepts it.
     Q_ASSERT(!m_diskNumber.isEmpty());
 
     if (rawLetter.isEmpty()) {

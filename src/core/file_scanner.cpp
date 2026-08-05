@@ -27,9 +27,8 @@ namespace sak {
 auto file_scanner::scan(const std::filesystem::path& root_path,
                         const scan_options& options,
                         std::stop_token stop_token) -> std::expected<scan_statistics, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::scan", "root_path must not be empty");
-
-    // Validate root path
+    // Validate root path. An empty root_path never exists, so it is reported
+    // here as file_not_found.
     if (!std::filesystem::exists(root_path)) {
         logError("Scan root path does not exist: {}", root_path.string());
         return std::unexpected(error_code::file_not_found);
@@ -76,7 +75,9 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
             stats.directories_found,
             stats.errors_encountered);
 
-    // Postcondition: stats counters must be consistent
+    // Postcondition: stats counters must be consistent. Every counter is an
+    // unsigned member of the local scan_statistics that this scan only ever
+    // increments, so a zero sum implies files_found == 0.
     Q_ASSERT_X(stats.files_found + stats.directories_found + stats.skipped_by_filter +
                            stats.errors_encountered >
                        0 ||
@@ -119,8 +120,8 @@ auto file_scanner::scanAndCollect(const std::filesystem::path& root_path,
 
 auto file_scanner::listFiles(const std::filesystem::path& root_path, bool recursive)
     -> std::expected<std::vector<std::filesystem::path>, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::listFiles", "root_path must not be empty");
-
+    // An empty root_path is rejected by scan(), which scanAndCollect() reaches
+    // unconditionally, and reported as file_not_found.
     scan_options options;
     options.recursive = recursive;
     options.type_filter = file_type_filter::files_only;
@@ -133,8 +134,14 @@ auto file_scanner::findFiles(const std::filesystem::path& root_path,
                              const std::vector<std::string>& patterns,
                              bool recursive)
     -> std::expected<std::vector<std::filesystem::path>, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::findFiles", "root_path must not be empty");
-    Q_ASSERT_X(!patterns.empty(), "file_scanner::findFiles", "patterns must not be empty");
+    // An empty root_path is rejected by scan() as file_not_found. An empty
+    // pattern list is not: it would leave include_patterns empty, which the scan
+    // reads as "no filter" and answers a filtered query with every file. Fail
+    // closed instead.
+    if (patterns.empty()) {
+        logError("findFiles requires at least one pattern");
+        return std::unexpected(error_code::invalid_argument);
+    }
 
     scan_options options;
     options.recursive = recursive;
@@ -275,6 +282,9 @@ bool file_scanner::shouldIncludeFile(const std::filesystem::directory_entry& ent
 }
 
 bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
+    // Reached only through passesDepthAndVisibility(), whose two callers
+    // (shouldProcessEntry, canDescendInto) both pass directory_entry::path(),
+    // which is never empty.
     Q_ASSERT(!path.empty());
     try {
         auto filename = path.filename().string();
@@ -458,6 +468,8 @@ auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_p
                                           std::size_t current_depth,
                                           std::stop_token stop_token)
     -> std::expected<void, error_code> {
+    // scan() rejects a root that does not exist (an empty path never does) before
+    // the first call, and recurseIntoDirectory() passes directory_entry::path().
     Q_ASSERT_X(!current_path.empty(), "scanDirectoryRecursive", "current_path must not be empty");
 
     if (stop_token.stop_requested()) {

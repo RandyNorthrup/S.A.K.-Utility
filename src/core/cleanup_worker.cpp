@@ -476,6 +476,8 @@ CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
 }
 
 bool CleanupWorker::deleteFile(const QString& path) {
+    // cleanItemIfAllowed screens every item through filePathDeletionRefusal, which rejects an empty
+    // path, before cleanSingleItem/cleanStartupEntry can dispatch here.
     Q_ASSERT(!path.isEmpty());
     // Ancestor reparse guard FIRST, before any stat that FOLLOWS the path: an ancestor swapped to a
     // (UNC) symlink would otherwise make exists() trigger a remote handshake. pathHasReparsePoint
@@ -553,6 +555,9 @@ bool CleanupWorker::removeFilePermanentWithRetry(const QString& path, bool recyc
 }
 
 bool CleanupWorker::deleteFolder(const QString& path) {
+    // Same guarantor as deleteFile: filePathDeletionRefusal rejects an empty path in
+    // cleanItemIfAllowed. The recursive caller (removeForcedEntry) passes an entryInfoList
+    // absoluteFilePath, which is never empty either.
     Q_ASSERT(!path.isEmpty());
     // Ancestor reparse guard FIRST, before dir.exists() (which FOLLOWS the path -- a UNC-symlink
     // ancestor would trigger a remote handshake). Also catches a leaf junction with a swapped
@@ -790,7 +795,7 @@ bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
 }
 
 bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
-    Q_ASSERT(!fullKeyPath.isEmpty());
+    // An empty path matches no hive prefix and is rejected by the else branch below.
 #ifdef Q_OS_WIN
     QString path = fullKeyPath;
     HKEY hive = nullptr;
@@ -839,7 +844,9 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
 }
 
 bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& valueName) {
-    Q_ASSERT(!keyPath.isEmpty());
+    // An empty keyPath matches no hive prefix and is rejected by the else branch below. An empty
+    // valueName (which would delete the key's DEFAULT value) is rejected earlier, by
+    // registryValueDeletionRefusal in cleanItemIfAllowed/startupEntryCleanupRefusal.
     Q_ASSERT(!valueName.isEmpty());
 #ifdef Q_OS_WIN
     QString path = keyPath;
@@ -893,6 +900,8 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
 }
 
 bool CleanupWorker::removeService(const QString& serviceName) {
+    // serviceDeletionRefusal, run by cleanItemIfAllowed before this dispatch, rejects an empty
+    // service name.
     Q_ASSERT(!serviceName.isEmpty());
     // Launch sc.exe by its absolute System32 path so a same-named binary in the app dir/CWD/PATH
     // cannot run in our stead. Fail closed when SystemRoot is unknown.

@@ -201,6 +201,7 @@ QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
 }
 
 QString ConnectivityTester::resolveHostname(const QString& hostname) {
+    // Sole caller resolveTargetIpOrEmitError() returns early when the trimmed target is empty.
     Q_ASSERT(!hostname.isEmpty());
     // -- Normalise user input -------------------------------------------
     // Users often paste full URLs ("https://example.com/path") or include

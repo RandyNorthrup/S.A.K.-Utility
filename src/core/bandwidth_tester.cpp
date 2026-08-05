@@ -130,6 +130,8 @@ IperfProcessResult runIperfClientProcess(const QString& program,
 }
 
 HttpSample downloadHttpSample(const QString& url, qint64 maxResponseBytes) {
+    // Sole caller runHttpSpeedTest() passes a literal URL and the compile-time
+    // kDownloadResponseCap (kDownloadBytes + 1 MiB).
     Q_ASSERT(!url.isEmpty());
     Q_ASSERT(maxResponseBytes > 0);
     HttpSample sample;
@@ -149,6 +151,7 @@ HttpSample downloadHttpSample(const QString& url, qint64 maxResponseBytes) {
 }
 
 HttpSample uploadHttpSample(const QString& url, int payloadBytes) {
+    // Sole caller runHttpSpeedTest() passes a literal URL and the compile-time kUploadBytes.
     Q_ASSERT(!url.isEmpty());
     Q_ASSERT(payloadBytes >= 0);
 
@@ -171,6 +174,8 @@ HttpSample uploadHttpSample(const QString& url, int payloadBytes) {
 }
 
 double measureHttpHeadLatencyMs(const QString& url, int timeoutMs) {
+    // Sole caller runHttpSpeedTest() passes a literal URL and the compile-time
+    // kCloudflareLatencyTimeoutMs.
     Q_ASSERT(!url.isEmpty());
     Q_ASSERT(timeoutMs >= 0);
     NetworkTransferRequest request;
@@ -513,11 +518,12 @@ void BandwidthTester::runHttpSpeedTest() {
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
     const QString uploadUrl = QStringLiteral("https://speed.cloudflare.com/__up");
 
-    double latencyMs = measureHttpHeadLatencyMs(
+    // measureHttpHeadLatencyMs returns a negative value when it could not measure at all.
+    // That sentinel is passed through unchanged: it used to be coerced to 0.0, which the
+    // controller then logged as "latency 0.0 ms" -- presenting a measurement that failed
+    // as a perfect one. Consumers must test for a negative value and say "unknown".
+    const double latencyMs = measureHttpHeadLatencyMs(
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), kCloudflareLatencyTimeoutMs);
-    if (latencyMs < 0.0) {
-        latencyMs = 0.0;  // unknown latency: report 0 rather than a bogus timeout value
-    }
 
     if (m_cancelled.load()) {
         Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);

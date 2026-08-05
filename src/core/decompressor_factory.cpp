@@ -21,7 +21,7 @@ constexpr int kMaxMagicSignatureBytes = 6;
 }  // namespace
 
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // An empty path detects as no format, which is rejected with a nullptr below.
     QString format = detectFormat(filePath);
 
     if (format.isEmpty()) {
@@ -60,7 +60,8 @@ QString DecompressorFactory::detectFormat(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByExtension(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // An empty path has no suffix and matches no entry, so it returns the empty
+    // "unknown format" result like any other unrecognised name.
     QFileInfo fileInfo(filePath);
     QString suffix = fileInfo.suffix().toLower();
 
@@ -110,7 +111,8 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // readMagicNumber() cannot open an empty path, so it returns the empty
+    // "unknown format" result.
     unsigned char magic[kMagicHeaderProbeBytes];
     if (!readMagicNumber(filePath, magic, sizeof(magic))) {
         return QString();

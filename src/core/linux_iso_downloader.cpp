@@ -105,8 +105,9 @@ LinuxISODownloader::~LinuxISODownloader() {
 // ============================================================================
 
 void LinuxISODownloader::startDownload(const QString& distroId, const QString& savePath) {
+    // The constructor creates m_catalog and nothing reassigns it. An empty or unknown distroId
+    // is rejected below by the distroById lookup.
     Q_ASSERT(m_catalog);
-    Q_ASSERT(!distroId.isEmpty());
     if (isDownloading()) {
         Q_EMIT downloadError("A download is already in progress");
         return;
@@ -217,6 +218,8 @@ void LinuxISODownloader::onVersionCheckCompleted(const QString& distroId,
 }
 
 void LinuxISODownloader::onVersionCheckFailed(const QString& distroId, const QString& error) {
+    // m_catalog is created by the constructor and never reassigned; it echoes back the id
+    // startDownload handed to checkLatestVersion, and that id had already resolved to a distro.
     Q_ASSERT(m_catalog);
     Q_ASSERT(!distroId.isEmpty());
     if (distroId != m_currentDistroId || m_cancelled) {
@@ -394,7 +397,6 @@ static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
 }  // namespace
 
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
-    Q_ASSERT(exit_code >= 0);
     auto it = std::find_if(std::begin(kAria2cExitCodes),
                            std::end(kAria2cExitCodes),
                            [exit_code](const auto& e) { return e.code == exit_code; });
@@ -405,8 +407,9 @@ QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
 }
 
 void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    // The constructor creates m_progressTimer; m_aria2cProcess is null-checked below because it
+    // is created lazily per download.
     Q_ASSERT(m_progressTimer);
-    Q_ASSERT(m_aria2cProcess);
     m_progressTimer->stop();
 
     // Read any remaining output
@@ -471,7 +474,6 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
 // ============================================================================
 
 void LinuxISODownloader::onProgressPollTimer() {
-    Q_ASSERT(m_aria2cProcess);
     if (m_phase != Phase::Downloading) {
         return;
     }
@@ -635,6 +637,8 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
 }
 
 void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam) {
+    // Only verifyChecksum reaches here, with the manager it just allocated and the reply
+    // QNetworkAccessManager::get returned for it; neither can be null.
     Q_ASSERT(reply);
     Q_ASSERT(nam);
     reply->deleteLater();
@@ -784,6 +788,7 @@ void LinuxISODownloader::onChecksumVerified(bool match,
 // ============================================================================
 
 void LinuxISODownloader::cancel() {
+    // The constructor creates m_progressTimer and m_catalog, and nothing reassigns them.
     // m_aria2cProcess is created lazily by startDownload; it is legitimately null when cancel()
     // runs from the dtor of a never-started downloader. The null-guarded kill below handles it.
     Q_ASSERT(m_progressTimer);

@@ -399,6 +399,8 @@ bool AdvancedSearchWorker::isExcluded(const QString& path) const {
 }
 
 bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const {
+    // Every path reaching here names an enumerated file: the walk feeds it QDirIterator::next()
+    // or a listing entry, and the single-file path is gated by QFileInfo(root_path).isFile().
     Q_ASSERT(!filePath.isEmpty());
     if (m_config.file_extensions.isEmpty()) {
         return true;  // No filter = accept all

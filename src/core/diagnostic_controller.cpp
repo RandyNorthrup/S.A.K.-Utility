@@ -317,6 +317,8 @@ void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
 }
 
 void DiagnosticController::cancelCurrent() {
+    // Invariant: both workers are make_unique'd in the constructor's member-init list and
+    // never reset or released, so they are non-null for this object's whole lifetime.
     Q_ASSERT(m_hardware_scanner);
     Q_ASSERT(m_smart_analyzer);
     logInfo("Cancelling current diagnostic operation");
@@ -354,6 +356,8 @@ void DiagnosticController::stopStressTest() {
 }
 
 void DiagnosticController::skipCurrentStep() {
+    // Invariant: both workers are make_unique'd in the constructor's member-init list and
+    // never reset or released, so they are non-null for this object's whole lifetime.
     Q_ASSERT(m_hardware_scanner);
     Q_ASSERT(m_smart_analyzer);
     if (!m_running_suite || m_skipping_step) {

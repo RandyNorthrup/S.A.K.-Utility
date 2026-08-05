@@ -148,7 +148,7 @@ FlashCoordinator::~FlashCoordinator() {
 
 bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& targetDrives) {
     // m_imageSource is null on entry and created by prepareImageSource() below; do not assert it.
-    Q_ASSERT(!imagePath.isEmpty());
+    // An empty imagePath is likewise not asserted: validateImagePath() below rejects it.
     if (targetDrives.isEmpty()) {
         sak::logError("No target drives specified");
         Q_EMIT flashError("No target drives specified");
@@ -214,7 +214,6 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
 }
 
 bool FlashCoordinator::validateImagePath(const QString& imagePath) {
-    Q_ASSERT(!imagePath.isEmpty());
     sak::path_validation_config img_cfg;
     img_cfg.must_exist = true;
     img_cfg.must_be_file = true;
@@ -245,6 +244,8 @@ bool FlashCoordinator::validateImagePath(const QString& imagePath) {
 
 bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
     // m_imageSource is created here; asserting it non-null on entry is inverted (it is null).
+    // Sole caller startFlash() runs validateImagePath() (must_exist + must_be_file) first, so an
+    // empty path cannot reach this.
     Q_ASSERT(!imagePath.isEmpty());
     if (CompressedImageSource::isCompressed(imagePath)) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
@@ -269,6 +270,8 @@ bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
 }
 
 bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringList& targetDrives) {
+    // Sole caller startFlash() rejects an empty drive list up front and has already run
+    // validateImagePath() on the image, which no empty path survives.
     Q_ASSERT(!imagePath.isEmpty());
     Q_ASSERT(!targetDrives.isEmpty());
     m_state = sak::FlashState::Unmounting;
@@ -424,6 +427,8 @@ QString FlashCoordinator::recordDriveCompletion(const QString& devicePath,
 }
 
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
+    // m_targetDrives is assigned only in startFlash(), after its empty-list rejection, and is
+    // never cleared; no worker exists to signal this slot before that assignment.
     Q_ASSERT(!m_targetDrives.isEmpty());
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
@@ -483,16 +488,24 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
 }
 
 void FlashCoordinator::onWorkerFailed(const QString& error) {
+    // See onWorkerCompleted: m_targetDrives is set before any worker can signal, never cleared.
     Q_ASSERT(!m_targetDrives.isEmpty());
-    Q_ASSERT(!error.isEmpty());
+    // `error` crosses a signal/slot boundary from FlashWorker, so it is not an invariant of
+    // this class and must not abort the process in Debug while Release carries on. An empty
+    // message is not a reason to drop the failure - the drive still failed - so substitute a
+    // usable one and keep going.
+    const QString reportedError =
+        error.isEmpty() ? tr("Flash failed (the worker reported no reason)") : error;
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
         return;
     }
-    onWorkerFailedFor(worker, error);
+    onWorkerFailedFor(worker, reportedError);
 }
 
 void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QString& error) {
+    // Reached only from a worker signal, and workers are created after startFlash() assigns the
+    // (non-empty) target list.
     Q_ASSERT(!m_targetDrives.isEmpty());
     if (!worker) {
         return;
@@ -606,6 +619,7 @@ QString FlashCoordinator::firstDuplicateTarget(const QStringList& targetDrives) 
 }
 
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
+    // Sole caller startFlash() returns false on an empty drive list before reaching here.
     Q_ASSERT(!targetDrives.isEmpty());
 
     // Reject duplicate target paths: two workers writing the SAME physical disk
@@ -756,6 +770,7 @@ bool FlashCoordinator::passesBootDiskGuard(const QString& devicePath, int driveN
 }
 
 bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
+    // Sole caller unmountAndFlash() forwards startFlash()'s list, already rejected if empty.
     Q_ASSERT(!targetDrives.isEmpty());
     DriveUnmounter unmounter;
     // Track drives we successfully took offline so we can roll them back online if a

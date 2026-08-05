@@ -151,7 +151,9 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        // Get final hash as hex string
+        // Get final hash as hex string. QCryptographicHash::result() for Md5
+        // always yields hashLength(Md5) == 16 bytes and toHex() emits exactly two
+        // chars per byte, so both sizes below are guaranteed by the Qt crypto API.
         QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kMd5DigestBytes, "calculateMd5", "MD5 digest must be 16 bytes");
         auto hex = result.toHex().toStdString();
@@ -191,7 +193,9 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        // Get final hash as hex string
+        // Get final hash as hex string. QCryptographicHash::result() for Sha256
+        // always yields hashLength(Sha256) == 32 bytes and toHex() emits exactly
+        // two chars per byte, so both sizes below are Qt-guaranteed.
         QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kSha256DigestBytes,
                    "calculateSha256",

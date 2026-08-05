@@ -152,7 +152,8 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
 }
 
 void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
-    Q_ASSERT(!key.isEmpty());
+    // No pattern carries an empty key, so an empty key takes the unknown-key path
+    // below: both lookups miss and nothing is toggled.
     // Check built-in patterns first
     auto builtin_it = std::find_if(m_builtin_patterns.begin(),
                                    m_builtin_patterns.end(),

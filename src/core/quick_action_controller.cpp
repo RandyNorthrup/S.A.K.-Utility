@@ -132,7 +132,6 @@ void QuickActionController::setBackupLocation(const QString& backup_location) {
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
-    Q_ASSERT(action);
     if (!action) {
         return QString();
     }
@@ -204,7 +203,6 @@ bool QuickActionController::hasAdminPrivileges() {
 }
 
 void QuickActionController::scanAction(const QString& action_name) {
-    Q_ASSERT(!action_name.isEmpty());
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
@@ -229,7 +227,6 @@ void QuickActionController::scanAction(const QString& action_name) {
 }
 
 void QuickActionController::executeAction(const QString& action_name, bool require_confirmation) {
-    Q_ASSERT(!action_name.isEmpty());
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
@@ -257,8 +254,9 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 }
 
 void QuickActionController::executeElevatedAction(QuickAction* action, const QString& action_name) {
+    // executeAction is the only caller and returns early when getAction() found no
+    // action for this name.
     Q_ASSERT(action);
-    Q_ASSERT(!action_name.isEmpty());
     if (m_current_execution_action) {
         m_action_queue.enqueue(action_name);
         Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
@@ -339,7 +337,6 @@ void QuickActionController::cancelCurrentAction() {
 }
 
 void QuickActionController::onScanComplete() {
-    Q_ASSERT(m_scan_thread);
     if (!m_current_scan_action) {
         return;
     }
@@ -366,7 +363,6 @@ void QuickActionController::onScanComplete() {
 }
 
 void QuickActionController::onExecutionComplete() {
-    Q_ASSERT(m_execution_thread);
     if (!m_current_execution_action) {
         return;
     }
@@ -410,6 +406,7 @@ void QuickActionController::onWorkerError(const QString& error) {
 }
 
 void QuickActionController::startScanWorker(QuickAction* action) {
+    // scanAction is the only caller and returns early on an unknown action name.
     Q_ASSERT(action);
     m_current_scan_action = action;
     action->clearCancellation();  // a stale cancel flag would abort this fresh run immediately
@@ -440,6 +437,7 @@ void QuickActionController::startScanWorker(QuickAction* action) {
 }
 
 void QuickActionController::startExecutionWorker(QuickAction* action) {
+    // executeAction is the only caller and returns early on an unknown action name.
     Q_ASSERT(action);
     m_current_execution_action = action;
     action->clearCancellation();  // a stale cancel flag would abort this fresh run immediately
@@ -471,6 +469,9 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
 }
 
 void QuickActionController::logOperation(QuickAction* action, const QString& message) {
+    // Private helper: every call site in this file sits behind a null check on the
+    // action (or holds a just-registered pointer) and passes a literal-prefixed
+    // message, so both hold by construction.
     Q_ASSERT(action);
     Q_ASSERT(!message.isEmpty());
     if (!m_logging_enabled) {

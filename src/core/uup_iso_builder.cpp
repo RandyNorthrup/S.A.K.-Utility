@@ -88,7 +88,9 @@ static bool isSafeAria2Field(const QString& value) {
 }
 
 static bool isSafeAria2OutName(const QString& name) {
-    if (!isSafeAria2Field(name) || name.startsWith(QLatin1Char('/')) ||
+    // The name is a JSON object key from the API, so it can legitimately arrive empty;
+    // an empty out= value names no file at all, so refuse it like any other unsafe name.
+    if (name.isEmpty() || !isSafeAria2Field(name) || name.startsWith(QLatin1Char('/')) ||
         name.startsWith(QLatin1Char('\\'))) {
         return false;
     }
@@ -170,6 +172,17 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
         Q_EMIT buildError("No UUP files were provided; cannot start a build");
         return;
     }
+    // The ISO destination and the converter's -l argument are both required: an empty
+    // path would promote the finished image onto a meaningless location and an empty
+    // language would hand the converter a blank -l value. Refuse both up front.
+    if (outputIsoPath.isEmpty()) {
+        Q_EMIT buildError("No output ISO path was provided; cannot start a build");
+        return;
+    }
+    if (lang.isEmpty()) {
+        Q_EMIT buildError("No language was provided; cannot start a build");
+        return;
+    }
 
     m_cancelled = false;
     m_files = files;
@@ -202,6 +215,7 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
 }
 
 void UupIsoBuilder::cancel() {
+    // The constructor creates m_progressPollTimer and nothing ever resets it.
     Q_ASSERT(m_progressPollTimer);
     // m_updateId is empty until startBuild(); cancel() runs from the dtor of a never-started
     // builder, so asserting it non-empty is wrong. The rest of cancel() does not use m_updateId.
@@ -227,9 +241,6 @@ void UupIsoBuilder::cancel() {
 
 QString UupIsoBuilder::findAria2Path() const {
     auto& tools = sak::BundledToolsManager::instance();
-    Q_ASSERT(!tools.toolsPath().isEmpty());
-    Q_ASSERT(QDir(tools.toolsPath()).exists());
-
     const QString path = tools.toolPath("uup", "aria2c.exe");
     if (isTrustedBundledExe(path, tools.toolsPath())) {
         return path;
@@ -241,9 +252,6 @@ QString UupIsoBuilder::findAria2Path() const {
 
 QString UupIsoBuilder::findUupMediaConverterPath() const {
     auto& tools = sak::BundledToolsManager::instance();
-    Q_ASSERT(!tools.toolsPath().isEmpty());
-    Q_ASSERT(QDir(tools.toolsPath()).exists());
-
     const QString path = tools.toolPath("uup/uupmc", "UUPMediaConverter.exe");
     if (isTrustedBundledExe(path, tools.toolsPath())) {
         return path;
@@ -261,8 +269,8 @@ QString UupIsoBuilder::findUupMediaConverterPath() const {
 // ============================================================================
 
 void UupIsoBuilder::executePreparation() {
+    // startBuild rejects an empty file list before assigning m_files and calling here.
     Q_ASSERT(!m_files.isEmpty());
-    Q_ASSERT(!m_updateId.isEmpty());
     m_phase = Phase::PreparingDownload;
     Q_EMIT phaseChanged(Phase::PreparingDownload, "Preparing download environment...");
     Q_EMIT progressUpdated(0, "Validating bundled tools...");
@@ -285,8 +293,6 @@ void UupIsoBuilder::executePreparation() {
 }
 
 void UupIsoBuilder::prepareWorkspace() {
-    Q_ASSERT(!m_updateId.isEmpty());
-    Q_ASSERT(!m_lang.isEmpty());
     // ---- Validate required tools ----
     QString aria2Path = findAria2Path();
     if (aria2Path.isEmpty()) {
@@ -346,8 +352,8 @@ void UupIsoBuilder::prepareWorkspace() {
 }
 
 void UupIsoBuilder::checkResumedDownloads() {
+    // prepareWorkspace assigns m_workDir and only calls here once mkpath has succeeded.
     Q_ASSERT(!m_workDir.isEmpty());
-    Q_ASSERT(QDir(m_workDir).exists());
     QDir workDir(m_workDir);
     QString downloadDir = workDir.filePath("UUPs");
     QDir dlDir(downloadDir);
@@ -437,8 +443,8 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
 }
 
 bool UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo) {
+    // generateAria2InputFile skips any entry with an empty URL before calling here.
     Q_ASSERT(!fileInfo.url.isEmpty());
-    Q_ASSERT(!fileInfo.fileName.isEmpty());
     if (!isSafeAria2Field(fileInfo.url) || !isSafeAria2Field(fileInfo.sha1) ||
         !isSafeAria2OutName(fileInfo.fileName)) {
         sak::logError("Rejected UUP file entry with unsafe aria2 url/out/checksum field");
@@ -462,7 +468,7 @@ bool UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileI
 }
 
 bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
-    Q_ASSERT(!outputPath.isEmpty());
+    // prepareWorkspace assigned m_workDir before the pipeline reached downloadPackages.
     Q_ASSERT(!m_workDir.isEmpty());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -508,6 +514,8 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
 }
 
 void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) {
+    // Both are accumulators the only caller starts at 0 and only increments, and
+    // startBuild already rejected negative file sizes via computeTotalDownloadBytes.
     Q_ASSERT(skippedFiles >= 0);
     Q_ASSERT(skippedBytes >= 0);
     if (skippedFiles <= 0) {
@@ -530,6 +538,7 @@ void UupIsoBuilder::executeDownload() {
     if (m_cancelled) {
         return;
     }
+    // prepareWorkspace assigned m_workDir; the constructor created the poll timer.
     Q_ASSERT(!m_workDir.isEmpty());
     Q_ASSERT(m_progressPollTimer);
 
@@ -637,8 +646,6 @@ void UupIsoBuilder::onAria2ReadyRead() {
 }
 
 void UupIsoBuilder::parseAria2Progress(const QString& line) {
-    Q_ASSERT(!line.isEmpty());
-    Q_ASSERT(m_phase == Phase::DownloadingFiles);
     if (line.isEmpty()) {
         return;
     }
@@ -685,6 +692,8 @@ void UupIsoBuilder::onProgressPollTimer() {
 }
 
 void UupIsoBuilder::pollDownloadProgress() {
+    // onProgressPollTimer routes here only while m_totalDownloadBytes > 0 (the divisor
+    // below), and prepareWorkspace assigned m_workDir before this phase began.
     Q_ASSERT(!m_workDir.isEmpty());
     Q_ASSERT(m_totalDownloadBytes > 0);
     // Scan download directory to compute actual overall progress
@@ -729,7 +738,7 @@ void UupIsoBuilder::pollDownloadProgress() {
 }
 
 void UupIsoBuilder::pollConversionProgress() {
-    Q_ASSERT(m_converterProcess);
+    // onProgressPollTimer only reaches here through its ConvertingToISO branch.
     Q_ASSERT(m_phase == Phase::ConvertingToISO);
     // Watchdog: if converter has already exited but finished() was not
     // observed yet, finalize through the normal completion handler.
@@ -765,8 +774,8 @@ void UupIsoBuilder::pollConversionProgress() {
 }
 
 void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatus) {
+    // The constructor creates m_progressPollTimer and nothing ever resets it.
     Q_ASSERT(m_progressPollTimer);
-    Q_ASSERT(m_aria2Process);
     m_progressPollTimer->stop();
 
     if (m_cancelled) {
@@ -917,6 +926,8 @@ bool UupIsoBuilder::clearStalePartialIso(const QString& partialIso) {
 }
 
 void UupIsoBuilder::connectConverterSignals() {
+    // executeConversion make_unique's m_converterProcess on the line before this call;
+    // m_progressPollTimer comes from the constructor.
     Q_ASSERT(m_converterProcess);
     Q_ASSERT(m_progressPollTimer);
     connect(m_converterProcess.get(),
@@ -980,8 +991,8 @@ void UupIsoBuilder::executeConversion() {
     if (m_cancelled) {
         return;
     }
+    // prepareWorkspace assigned m_workDir before the pipeline reached this phase.
     Q_ASSERT(!m_workDir.isEmpty());
-    Q_ASSERT(!m_outputIsoPath.isEmpty());
 
     m_phase = Phase::ConvertingToISO;
     Q_EMIT phaseChanged(Phase::ConvertingToISO, "Converting UUP files to bootable ISO...");
@@ -1021,8 +1032,6 @@ void UupIsoBuilder::executeConversion() {
 }
 
 void UupIsoBuilder::onConverterReadyRead() {
-    Q_ASSERT(m_converterProcess);
-    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     if (!m_converterProcess) {
         return;
     }
@@ -1045,8 +1054,6 @@ void UupIsoBuilder::onConverterReadyRead() {
 }
 
 void UupIsoBuilder::parseConverterProgress(const QString& line) {
-    Q_ASSERT(!line.isEmpty());
-    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     if (line.isEmpty()) {
         return;
     }
@@ -1083,8 +1090,8 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
 }
 
 void UupIsoBuilder::collectConverterError(const QString& line) {
+    // parseConverterProgress, the only caller, returns early on an empty line.
     Q_ASSERT(!line.isEmpty());
-    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     constexpr int kMaxTrackedErrors = 50;
 
     if (line.contains("error", Qt::CaseInsensitive) &&
@@ -1232,8 +1239,8 @@ bool UupIsoBuilder::hasIso9660Signature(const QString& isoPath) {
 }
 
 void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    // The constructor creates m_progressPollTimer and nothing ever resets it.
     Q_ASSERT(m_progressPollTimer);
-    Q_ASSERT(m_converterProcess);
     m_progressPollTimer->stop();
 
     if (m_cancelled) {
@@ -1322,7 +1329,7 @@ bool UupIsoBuilder::isRunningAsAdmin() {
 }
 
 void UupIsoBuilder::cleanupWorkDir() {
-    Q_ASSERT(!m_workDir.isEmpty());
+    // finalizeSuccessfulConversion, the only caller, runs while m_phase is ConvertingToISO.
     Q_ASSERT(m_phase != Phase::Idle);
     if (m_workDir.isEmpty()) {
         return;
@@ -1349,8 +1356,8 @@ void UupIsoBuilder::cleanupWorkDir() {
 }
 
 QString UupIsoBuilder::classifyConverterFailure() const {
+    // The only caller sets m_phase = Phase::Failed on the line before this call.
     Q_ASSERT(m_phase == Phase::Failed);
-    Q_ASSERT(!m_outputIsoPath.isEmpty());
     const QString joined = m_converterErrors.join('\n').toLower();
 
     if (joined.contains("appx") || joined.contains("msixbundle") ||

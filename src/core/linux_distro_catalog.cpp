@@ -524,7 +524,8 @@ QString LinuxDistroCatalog::substituteVersion(const QString& pattern,
 // ============================================================================
 
 void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
-    Q_ASSERT(!distroId.isEmpty());
+    // The constructor creates m_networkManager and nothing reassigns it. An empty or unknown
+    // distroId is rejected below by the index lookup.
     Q_ASSERT(m_networkManager);
     auto it = m_distroIndex.find(distroId);
     if (it == m_distroIndex.end()) {
@@ -590,8 +591,6 @@ void LinuxDistroCatalog::onGitHubReleaseReply() {
 }
 
 void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJsonObject& release) {
-    Q_ASSERT(!distroId.isEmpty());
-    Q_ASSERT(!release.isEmpty());
     auto it = m_distroIndex.find(distroId);
     if (it == m_distroIndex.end()) {
         return;

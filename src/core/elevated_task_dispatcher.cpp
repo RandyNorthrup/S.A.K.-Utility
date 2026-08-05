@@ -26,8 +26,6 @@ auto ElevatedTaskDispatcher::dispatch(const QString& task_id,
                                       ProgressCallback progress,
                                       CancelCheck is_cancelled)
     -> std::expected<TaskHandlerResult, sak::error_code> {
-    Q_ASSERT(!task_id.isEmpty());
-
     auto it = m_handlers.find(task_id.toStdString());
     if (it == m_handlers.end()) {
         sak::logError("ElevatedTaskDispatcher: task '{}' not in allowlist", task_id.toStdString());

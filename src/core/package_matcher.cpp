@@ -327,8 +327,6 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::mergeMatchResults(
 }
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QString& app_name) {
-    Q_ASSERT(!m_exact_mappings.empty());
-    Q_ASSERT(!app_name.isEmpty());
     QString normalized = normalizeAppName(app_name);
 
     // Check direct mapping
@@ -354,6 +352,8 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QStr
 }
 
 QString PackageMatcher::fetchSearchOutput(const QString& keyword, ChocolateyManager* choco_mgr) {
+    // Private helper. Both callers of fuzzyMatch (tryFuzzyMatch, matchSingleApp) return early
+    // on a null choco_mgr, and fuzzyMatch skips keywords shorter than kMinimumKeywordLength.
     Q_ASSERT(choco_mgr);
     Q_ASSERT(!keyword.isEmpty());
     QString cached = getCachedSearch(keyword);
@@ -465,7 +465,6 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
 }
 
 QString PackageMatcher::normalizeAppName(const QString& app_name) {
-    Q_ASSERT(!app_name.isEmpty());
     QString normalized = app_name;
 
     // Remove common suffixes
@@ -494,7 +493,6 @@ QString PackageMatcher::normalizeAppName(const QString& app_name) {
 }
 
 QString PackageMatcher::extractBaseAppName(const QString& app_name) {
-    Q_ASSERT(!app_name.isEmpty());
     QString base = normalizeAppName(app_name);
 
     // Extract just the main app name (before first space or hyphen)
@@ -514,7 +512,6 @@ QString PackageMatcher::extractBaseAppName(const QString& app_name) {
 }
 
 QStringList PackageMatcher::extractKeywords(const QString& app_name) {
-    Q_ASSERT(!app_name.isEmpty());
     QString normalized = normalizeAppName(app_name);
 
     // Split into words
@@ -535,8 +532,6 @@ QStringList PackageMatcher::extractKeywords(const QString& app_name) {
 }
 
 double PackageMatcher::calculateSimilarity(const QString& str1, const QString& str2) const {
-    Q_ASSERT(!str1.isEmpty());
-    Q_ASSERT(!str2.isEmpty());
     QString s1 = str1.toLower();
     QString s2 = str2.toLower();
 
@@ -566,8 +561,6 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
 }
 
 int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) const {
-    Q_ASSERT(!s1.isEmpty());
-    Q_ASSERT(!s2.isEmpty());
     const int len1 = s1.length();
     const int len2 = s2.length();
 
@@ -642,8 +635,6 @@ int countCommonPrefix(const QString& str1, const QString& str2) {
 }  // namespace
 
 double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s2) {
-    Q_ASSERT(!s1.isEmpty());
-    Q_ASSERT(!s2.isEmpty());
     if (s1 == s2) {
         return 1.0;
     }
@@ -725,8 +716,6 @@ int PackageMatcher::getSearchMatchCount() const {
 }
 
 bool PackageMatcher::exportMappings(const QString& file_path) const {
-    Q_ASSERT(!m_exact_mappings.empty());
-    Q_ASSERT(!file_path.isEmpty());
     QJsonObject root;
     QJsonArray mappings;
 
@@ -758,7 +747,6 @@ bool PackageMatcher::exportMappings(const QString& file_path) const {
 }
 
 bool PackageMatcher::importMappings(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         sak::logWarning("[PackageMatcher] Failed to open mappings file: {}",

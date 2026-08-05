@@ -319,27 +319,26 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
     m_pdf_writer.reset();
     m_pst_folder_nids.clear();
 
-    // Reject formats whose writers are not spec-conformant, upfront and once,
-    // instead of writing per-message garbage: MSG (broken CFB directory tree, no
-    // mini-stream) and DBX (no OE5/6 B-tree index) can only produce files no
-    // reader can open, and have no partial output worth attempting. PST is the
-    // one unsupported format still routed to create() below so its in-progress
-    // NDB/LTP writer path stays exercised; create() fails closed there.
-    if (!isOutputFormatSupported(config.format) && config.format != OstOutputFormat::Pst) {
-        const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
-                                .arg(unsupportedFormatLabel(config.format));
+    // IMAP upload is checked first so the message names the real reason: nothing wires
+    // ImapUploader to this pipeline, so the per-item path would count every message as
+    // converted while uploading none. It is now reported unsupported as well (which greys
+    // it out in the picker), but the generic message below blames a missing spec-conformant
+    // writer, which is not what is wrong here.
+    if (config.format == OstOutputFormat::ImapUpload) {
+        const QString msg =
+            QStringLiteral("IMAP upload is not implemented (no messages are uploaded)");
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
         return false;
     }
 
-    // Fail closed on IMAP upload: there is no per-item writer and no controller-side
-    // upload wired, so the per-item path would count every message as converted
-    // while nothing is actually uploaded. Reject upfront until a real ImapUploader
-    // drive exists, rather than silently reporting a zero-upload run as success.
-    if (config.format == OstOutputFormat::ImapUpload) {
-        const QString msg =
-            QStringLiteral("IMAP upload is not implemented (no messages are uploaded)");
+    // MSG (broken CFB directory tree) and DBX (no OE5/6 B-tree index) can only produce files
+    // no reader can open, so reject once here rather than writing per-message garbage. PST is
+    // the one unsupported format still routed to create() below, to keep its in-progress
+    // NDB/LTP writer path exercised; create() fails closed there.
+    if (!isOutputFormatSupported(config.format) && config.format != OstOutputFormat::Pst) {
+        const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
+                                .arg(unsupportedFormatLabel(config.format));
         result.errors.append(msg);
         Q_EMIT errorOccurred(msg);
         return false;

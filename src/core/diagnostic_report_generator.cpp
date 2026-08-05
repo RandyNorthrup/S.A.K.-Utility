@@ -131,8 +131,6 @@ DiagnosticReportGenerator::DiagnosticReportGenerator(QObject* parent) : QObject(
 // ============================================================================
 
 bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
-    Q_ASSERT(!output_path.isEmpty());
-    Q_ASSERT_X(!output_path.isEmpty(), "generateHtml", "output_path must not be empty");
     const QString html = renderHtml();
     if (html.isEmpty()) {
         Q_EMIT errorOccurred("Failed to render HTML report");
@@ -170,8 +168,6 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
 }
 
 bool DiagnosticReportGenerator::generateJson(const QString& output_path) {
-    Q_ASSERT(!output_path.isEmpty());
-    Q_ASSERT_X(!output_path.isEmpty(), "generateJson", "output_path must not be empty");
     QJsonObject root;
 
     root["metadata"] = serializeMetadataSection();
@@ -362,8 +358,6 @@ QJsonObject DiagnosticReportGenerator::serializeBenchmarkSection() const {
 }
 
 bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
-    Q_ASSERT(!output_path.isEmpty());
-    Q_ASSERT_X(!output_path.isEmpty(), "generateCsv", "output_path must not be empty");
     const QString csv_dir = QFileInfo(output_path).absolutePath();
     if (!QDir().mkpath(csv_dir)) {
         logWarning("Failed to create directory: {}", csv_dir.toStdString());

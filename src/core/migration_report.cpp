@@ -175,7 +175,7 @@ void MigrationReport::selectByConfidence(double min_confidence) {
 }
 
 bool MigrationReport::exportToJson(const QString& file_path) const {
-    Q_ASSERT(!file_path.isEmpty());
+    // An empty path cannot be opened, so the QFile::open check below rejects it.
     QJsonObject root;
 
     // Metadata
@@ -246,7 +246,7 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
 }
 
 bool MigrationReport::exportToCsv(const QString& file_path) const {
-    Q_ASSERT(!file_path.isEmpty());
+    // An empty path cannot be opened, so the QFile::open check below rejects it.
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for writing: {}",
@@ -286,7 +286,7 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
 }
 
 bool MigrationReport::exportToHtml(const QString& file_path) const {
-    Q_ASSERT(!file_path.isEmpty());
+    // An empty path cannot be opened, so the QFile::open check below rejects it.
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for writing: {}",
@@ -308,7 +308,7 @@ bool MigrationReport::exportToHtml(const QString& file_path) const {
 }
 
 bool MigrationReport::importFromJson(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
+    // An empty path cannot be opened, so the QFile::open check below rejects it.
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for reading: {}",

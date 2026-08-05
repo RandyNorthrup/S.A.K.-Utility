@@ -19,12 +19,10 @@ namespace {
 constexpr qsizetype kInitialFileReserveCount = 256;
 }
 
+// An empty target_directory is not asserted here: execute() validates the path (must_exist +
+// must_be_directory) and fails the run with invalid_path, which is the contract.
 OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
-    : WorkerBase(parent), m_config(config) {
-    Q_ASSERT_X(!config.target_directory.isEmpty(),
-               "OrganizerWorker",
-               "target_directory must not be empty");
-}
+    : WorkerBase(parent), m_config(config) {}
 
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());

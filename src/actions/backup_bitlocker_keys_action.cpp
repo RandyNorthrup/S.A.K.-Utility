@@ -1059,6 +1059,8 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentHeader(QTextStream& out) co
 }
 
 void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) const {
+    // executeDiscoverVolumes fails the run closed when m_volumes is empty, and it runs before
+    // executeSaveKeyFiles reaches the document writer.
     Q_ASSERT(!m_volumes.isEmpty());
     // Per-volume sections
     for (int volume_index = 0; volume_index < m_volumes.size(); ++volume_index) {
@@ -1134,6 +1136,9 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentFooter(QTextStream& out) {
 
 bool BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir,
                                                        int& files_written) {
+    // backup_dir is the path createBackupDirectory produced; that runs first in
+    // executeSaveKeyFiles and fails closed unless screenBackupLocation returned an absolute,
+    // screened location whose directory was actually created.
     Q_ASSERT(!backup_dir.isEmpty());
     files_written = 0;
 
@@ -1212,6 +1217,8 @@ bool BackupBitlockerKeysAction::writeOneVolumeKeyFile(const QString& backup_dir,
 // ============================================================================
 
 bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
+    // Both callers pass the backup_dir_path built by createBackupDirectory from the screened,
+    // absolute location, so it is never empty.
     Q_ASSERT(!path.isEmpty());
     const QString script =
         QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));

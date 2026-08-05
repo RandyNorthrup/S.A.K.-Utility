@@ -122,8 +122,6 @@ bool EmailInspectorController::isBusyWithBackgroundOp() const {
 // ============================================================================
 
 void EmailInspectorController::openFile(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
-
     if (m_state != State::Idle) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot open file: another operation in progress"));
         return;
@@ -147,6 +145,8 @@ void EmailInspectorController::openFile(const QString& file_path) {
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_mbox_parser->open(file_path);
     } else {
+        // Also the rejection for an empty path: it has no suffix, so it can never
+        // match a supported format.
         m_file_type = FileType::None;
         setState(State::Idle);
         Q_EMIT errorOccurred(QStringLiteral("Unsupported file format: %1").arg(suffix));
@@ -214,7 +214,13 @@ void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
         setState(State::LoadingItemDetail);
         m_pst_parser->loadItemDetail(item_node_id);
     } else if (m_file_type == FileType::Mbox) {
-        Q_ASSERT(item_node_id <= static_cast<uint64_t>(INT_MAX));
+        // MBOX item ids are message indices. Narrowing an id above INT_MAX would
+        // wrap to a different, in-range index and silently load the wrong
+        // message, so reject it here instead of casting.
+        if (item_node_id > static_cast<uint64_t>(INT_MAX)) {
+            Q_EMIT errorOccurred(QStringLiteral("Invalid MBOX message id: %1").arg(item_node_id));
+            return;
+        }
         setState(State::LoadingItemDetail);
         m_mbox_parser->loadMessageDetail(static_cast<int>(item_node_id));
     }

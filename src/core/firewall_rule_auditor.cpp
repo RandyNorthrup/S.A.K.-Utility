@@ -139,6 +139,8 @@ FirewallRule::Protocol protocolFromNumber(long proto) {
 }
 
 void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rule) {
+    // tryExtractFirewallRuleFromVariant is the only caller and returns before this
+    // when QueryInterface fails or yields a null INetFwRule.
     Q_ASSERT(pRule);
     // Any getter that fails leaves a DEFAULT (Allow/Inbound/Any) that would
     // misrepresent the rule's posture in a security audit, so flag the rule as
@@ -175,6 +177,8 @@ void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rul
 }
 
 void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule) {
+    // Same guarantor as populateRuleDirectionActionAndProtocol: the sole caller
+    // rejects a null INetFwRule first.
     Q_ASSERT(pRule);
     // Ports and addresses define the rule's scope; a failed getter leaves it
     // empty, which the conflict/gap logic would read as a different scope, so a
@@ -213,6 +217,8 @@ void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule) {
 }
 
 void populateRuleAppAndProfileInfo(INetFwRule* pRule, FirewallRule& rule) {
+    // Same guarantor as populateRuleDirectionActionAndProtocol: the sole caller
+    // rejects a null INetFwRule first.
     Q_ASSERT(pRule);
     // Application, service, and profile scope which program/service/network the
     // rule applies to; a failed getter leaves the scope unknown, so flag the rule
@@ -279,6 +285,8 @@ bool tryParsePortValue(const QString& s, uint16_t& port) {
 }
 
 bool tryParsePortRange(const QString& s, int& start, int& end) {
+    // Both callers (parsePorts, portExprHasUnknownToken) split on ',' with
+    // SkipEmptyParts and `continue` on an empty trimmed token before calling.
     Q_ASSERT(!s.isEmpty());
     if (!s.contains(QLatin1Char('-'))) {
         return false;

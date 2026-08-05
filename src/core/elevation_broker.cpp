@@ -74,8 +74,14 @@ auto ElevationBroker::executeTask(const QString& task_id,
                                   const QString& reason,
                                   const QJsonObject& payload)
     -> std::expected<ElevatedTaskResult, sak::error_code> {
-    Q_ASSERT(!task_id.isEmpty());
     (void)reason;  // Reserved for future UAC context display
+
+    // Fail closed on a nameless task: no helper handler can ever match it, so
+    // launching the helper (and its UAC prompt) would only end in a rejection.
+    if (task_id.isEmpty()) {
+        sak::logError("ElevationBroker: refusing to execute a task with an empty id");
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
 
     sak::logInfo("ElevationBroker: executing task '{}'", task_id.toStdString());
 

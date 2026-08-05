@@ -332,7 +332,6 @@ bool PermissionManager::applyPermissionStrategy(const QString& path,
 }
 
 QString PermissionManager::getOwner(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
 #ifdef Q_OS_WIN
     PSID pOwnerSid = nullptr;
     PSECURITY_DESCRIPTOR pSD = nullptr;
@@ -365,7 +364,6 @@ QString PermissionManager::getOwner(const QString& path) {
 }
 
 QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
 #ifdef Q_OS_WIN
     PSECURITY_DESCRIPTOR pSD = nullptr;
     DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
@@ -406,8 +404,6 @@ QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
 }
 
 bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QString& sddl) {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!sddl.isEmpty());
 #ifdef Q_OS_WIN
     if (sddl.isEmpty()) {
         m_lastError = "Empty SDDL";
@@ -457,7 +453,6 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
 
 auto PermissionManager::tryStripPermissions(const QString& path)
     -> std::expected<void, sak::error_code> {
-    Q_ASSERT(!path.isEmpty());
 #ifdef Q_OS_WIN
     QFileInfo fileInfo(path);
     if (!fileInfo.exists()) {
@@ -489,8 +484,6 @@ auto PermissionManager::tryStripPermissions(const QString& path)
 
 auto PermissionManager::tryTakeOwnership(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!userSID.isEmpty());
 #ifdef Q_OS_WIN
     if (!isRunningAsAdmin()) {
         m_lastError = "Administrator privileges required to take ownership";
@@ -515,8 +508,6 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
 
 auto PermissionManager::trySetStandardUserPermissions(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!userSID.isEmpty());
 #ifdef Q_OS_WIN
     PSID pSid = nullptr;
     if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
@@ -552,6 +543,8 @@ bool PermissionManager::isRunningAsAdmin() {
 
 #ifdef Q_OS_WIN
 bool PermissionManager::enablePrivilege(const wchar_t* privilegeName) {
+    // Private static; the constructor is the only caller and passes the
+    // SE_BACKUP_NAME / SE_RESTORE_NAME / SE_TAKE_OWNERSHIP_NAME literals.
     Q_ASSERT(privilegeName);
     HANDLE hToken = nullptr;
 

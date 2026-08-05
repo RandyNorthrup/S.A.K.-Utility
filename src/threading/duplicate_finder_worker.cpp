@@ -36,11 +36,7 @@ constexpr int kHashCancelPollMs = 50;
 }  // namespace
 
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
-    : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {
-    Q_ASSERT_X(config.use_file_system_target || !config.scanDirectories.isEmpty(),
-               "DuplicateFinderWorker",
-               "scanDirectories must not be empty unless a file-system target is used");
-}
+    : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {}
 
 DuplicateFinderWorker::~DuplicateFinderWorker() {
     // Join the worker thread HERE, while m_hash_stop / m_hasher / m_config are still alive.
@@ -58,6 +54,14 @@ DuplicateFinderWorker::~DuplicateFinderWorker() {
 auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
     if (m_config.use_file_system_target) {
         return executeFileSystemTarget();
+    }
+
+    // No directory to scan -> REFUSE, the same way scanFileSystemTarget() refuses a target with
+    // no usable root. Reporting "no files found" for a mis-specified request would hide the
+    // caller's error behind a clean success.
+    if (m_config.scanDirectories.isEmpty()) {
+        sak::logError("Duplicate scan refused: no directory to scan");
+        return std::unexpected(sak::error_code::invalid_argument);
     }
 
     sak::logInfo("Starting duplicate file scan");

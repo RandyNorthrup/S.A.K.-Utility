@@ -29,6 +29,10 @@ constexpr int kScanBatchSize = 200;
 
 DeletedItemScanner::DeletedItemScanner(PstParser* parser, QObject* parent)
     : QObject(parent), m_parser(parser) {
+    // A list of today's callers is not an invariant - any new translation unit can pass
+    // null tomorrow, and a constructor has no channel to refuse it. The assert stays as a
+    // development signal only; the guarantee that matters is the null check on each scan
+    // entry point, which reports an unreliable result instead of dereferencing.
     Q_ASSERT(parser != nullptr);
 }
 
@@ -40,7 +44,21 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
     QVector<PstItemDetail> recovered;
     m_recoverable_reliable = true;
 
+    // m_parser is non-owning and arrives through a public constructor, so a null is a
+    // caller error the constructor has no channel to reject. cancel() already guards it;
+    // do the same on the scan entry points so a mistake is a reported unreliable result
+    // rather than a null dereference in Release.
+    if (m_parser == nullptr) {
+        logError("DeletedItemScanner: constructed with a null parser; no scan performed");
+        m_recoverable_reliable = false;
+        return recovered;
+    }
+
     if (!m_parser->isOpen()) {
+        // No scan ran at all, so the empty result is an absence of data rather than an
+        // absence of recoverable items. scanOrphanedNodes already reported this correctly;
+        // this path used to return empty while still claiming to be reliable.
+        m_recoverable_reliable = false;
         return recovered;
     }
 
@@ -132,6 +150,12 @@ bool DeletedItemScanner::appendRecoverableBatch(const QVector<PstItemSummary>& i
 QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
     QVector<PstItemDetail> recovered;
     m_orphan_reliable = true;
+
+    if (m_parser == nullptr) {
+        logError("DeletedItemScanner: constructed with a null parser; no scan performed");
+        m_orphan_reliable = false;
+        return recovered;
+    }
 
     if (!m_parser->isOpen()) {
         // No scan ran at all: the empty result is an absence of data, not an absence of orphans.

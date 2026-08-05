@@ -469,6 +469,7 @@ void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
 }
 
 QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
+    // Every caller (parseRegistryEntry) passes a wide string literal.
     Q_ASSERT(valueName);
     DWORD type = 0;
     DWORD size = 0;
@@ -490,6 +491,7 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
 }
 
 DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
+    // Every caller (parseRegistryEntry, isSystemComponent) passes a wide string literal.
     Q_ASSERT(valueName);
     DWORD value = 0;
     DWORD size = sizeof(DWORD);
@@ -628,7 +630,6 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
 }
 
 QImage ProgramEnumerator::extractIcon(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
     if (path.isEmpty()) {
         return {};
     }
