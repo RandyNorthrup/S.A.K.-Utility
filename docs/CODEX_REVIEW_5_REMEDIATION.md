@@ -1803,21 +1803,52 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       test_user_profile_types, test_user_profile_restore_worker,
       test_windows_usb_creator, test_quick_action_result_io and test_image_source.
 
-      This is deliberately NOT recorded as nine memory bugs. Nine unrelated
-      subsystems failing with an identical instant fail-fast signature, before main
-      and before ASan can report, points to one toolchain integration problem rather
-      than nine independent defects. The leading hypothesis is a CRT or allocator
-      mismatch: no cmake/SAK_BuildConfig.cmake is present, so the runtime falls back
-      to the DYNAMIC CRT, while the vcpkg triplet in use is x64-windows-static.
-      Mixed instrumentation was checked and ruled out - the 20 projects without
-      /fsanitize are all CMake utility targets (ALL_BUILD, ZERO_CHECK, INSTALL,
-      RUN_TESTS), not libraries.
+      This is deliberately NOT recorded as nine memory bugs, and it turns out not
+      to be an ASan problem at all.
 
-- [ ] R5-G14-2a Diagnose the 0xC0000409 class before trusting or wiring the ASan
-      gate. An unexplained mass failure must not be suppressed, excluded, or
-      declared expected; until it is understood, the ASan result is not evidence
-- [ ] R5-G14-2b Once understood, fix whatever it turns out to be and re-run to a
-      clean 222 of 222 under ASan
+      DECISIVE EXPERIMENT: test_secure_memory and test_file_hash were rebuilt in
+      Debug with ENABLE_ASAN=OFF and both still die with exactly 0xC0000409. The
+      sanitizer is therefore not involved. THE DEBUG CONFIGURATION IS BROKEN
+      INDEPENDENTLY, and these nine tests cannot run in Debug at all.
+
+      That finding is more serious than the one being looked for, because it means
+      the Debug build has never been usable for these subsystems, which is why
+      nothing in the Debug configuration - assertions, sanitizers, debug-only
+      preconditions - has ever been exercised against them.
+
+      Ruled out by measurement, not assumption:
+        * Mixed instrumentation. The 20 projects without /fsanitize are all CMake
+          utility targets (ALL_BUILD, ZERO_CHECK, INSTALL, RUN_TESTS), not libraries.
+        * vcpkg libraries as the direct cause. The failing test links only Windows
+          SDK libraries - crypt32, dxgi, pdh, iphlpapi, ws2_32, dnsapi, wlanapi,
+          netapi32 - and no vcpkg library at all.
+
+      Still open and genuinely suspicious: the build DOES carry a CRT mismatch.
+      VCPKG_TARGET_TRIPLET is x64-windows-static, which builds its libraries against
+      the STATIC CRT, while CMAKE_MSVC_RUNTIME_LIBRARY resolves to
+      MultiThreaded$<$<CONFIG:Debug>:Debug>DLL, the DYNAMIC CRT. That fallback is
+      taken because cmake/SAK_BuildConfig.cmake is absent, and the root CMakeLists
+      comment states the static runtime is supposed to be set there. So the
+      as-configured build contradicts its own documented intent.
+
+      The failure produces no output whatsoever before dying, which places it in
+      static initialization, before main. That needs a debugger, not another guess.
+
+- [ ] R5-G14-2a THE DEBUG BUILD IS BROKEN FOR NINE TESTS, INDEPENDENT OF ASan.
+      Attach a debugger and find what fails during static initialization. Do not
+      suppress, exclude, or declare it expected: an unexplained mass failure is not
+      a baseline, and until it is understood no Debug or sanitizer result from those
+      subsystems is evidence of anything
+- [ ] R5-G14-2b Resolve the CRT contradiction: the vcpkg triplet x64-windows-static
+      builds against the static CRT while the project resolves to the dynamic CRT,
+      and the root CMakeLists says the static runtime is meant to be set in a file
+      that does not exist. Decide which is correct, make the build say so, and make
+      the configure FAIL if the two ever disagree again rather than silently
+      producing a mixed build
+- [ ] R5-G14-2c Add a gate that BOTH configurations build and pass, so a Debug
+      configuration can never again rot unnoticed while Release stays green. This is
+      the specific hole that hid the dead ASan gate
+- [ ] R5-G14-2d Once Debug is healthy, re-run to a clean 222 of 222 under ASan
 - [ ] R5-G14-3 Add a CI job that builds with ASan and runs ctest, so the sanitizer
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
 - [ ] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
