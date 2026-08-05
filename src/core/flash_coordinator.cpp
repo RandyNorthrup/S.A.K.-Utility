@@ -128,6 +128,9 @@ FlashCoordinator::FlashCoordinator(QObject* parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
     , m_bufferSize(kDefaultFlashBufferSizeMb * sak::kBytesPerMB)
+    // Most thorough by default. A caller that never calls setValidationMode gets the same
+    // behaviour FlashWorker had on its own, so this wiring cannot weaken an existing run.
+    , m_validationMode(sak::ValidationMode::Full)
     , m_isCancelled(false) {
     m_progress.state = sak::FlashState::Idle;
     m_progress.percentage = 0.0;
@@ -298,6 +301,7 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
         auto worker = std::make_unique<FlashWorker>(std::move(workerSource), drive);
         worker->setVerificationEnabled(m_verificationEnabled);
         worker->setBufferSize(m_bufferSize);
+        worker->setValidationMode(m_validationMode);
         connectWorkerSignals(worker.get());
         worker->start();
         m_workers.push_back(std::move(worker));
@@ -363,6 +367,10 @@ bool FlashCoordinator::isVerificationEnabled() const {
 
 void FlashCoordinator::setBufferSize(qint64 sizeBytes) {
     m_bufferSize = sizeBytes;
+}
+
+void FlashCoordinator::setValidationMode(sak::ValidationMode mode) {
+    m_validationMode = mode;
 }
 
 void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) {

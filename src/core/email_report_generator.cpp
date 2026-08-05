@@ -59,8 +59,17 @@ QString tableRow(const QString& label, const QString& value) {
         .arg(label.toHtmlEscaped(), value.toHtmlEscaped());
 }
 
-/// Recursively render folder tree as HTML
-void renderFolderTree(const QVector<sak::PstFolder>& folders, QString& html, int indent_level) {
+/// Recursively render folder tree as HTML.
+///
+/// Takes the QTextStream, like every other render* helper. It used to take the underlying
+/// QString by reference and append to it directly while generateHtml held a QTextStream
+/// bound to that same string. QTextStream buffers, so those direct appends landed at
+/// whatever offset the string happened to have at that moment rather than after the
+/// stream's pending output: the folder structure could be emitted ahead of the section
+/// heading that introduces it, and any later flush wrote past it.
+void renderFolderTree(QTextStream& stream,
+                      const QVector<sak::PstFolder>& folders,
+                      int indent_level) {
     constexpr int kMaxIndent = 20;
     if (indent_level > kMaxIndent) {
         return;
@@ -68,16 +77,16 @@ void renderFolderTree(const QVector<sak::PstFolder>& folders, QString& html, int
 
     for (const auto& folder : folders) {
         QString indent(indent_level * kFolderTreeIndentSpacesPerLevel, QLatin1Char(' '));
-        html += QStringLiteral("<li>%1 <b>%2</b> (%3 items)")
-                    .arg(indent,
-                         folder.display_name.toHtmlEscaped(),
-                         QString::number(folder.content_count));
+        stream << QStringLiteral("<li>%1 <b>%2</b> (%3 items)")
+                      .arg(indent,
+                           folder.display_name.toHtmlEscaped(),
+                           QString::number(folder.content_count));
         if (!folder.children.isEmpty()) {
-            html += QStringLiteral("<ul>\n");
-            renderFolderTree(folder.children, html, indent_level + 1);
-            html += QStringLiteral("</ul>\n");
+            stream << QStringLiteral("<ul>\n");
+            renderFolderTree(stream, folder.children, indent_level + 1);
+            stream << QStringLiteral("</ul>\n");
         }
-        html += QStringLiteral("</li>\n");
+        stream << QStringLiteral("</li>\n");
     }
 }
 
@@ -199,7 +208,7 @@ QString EmailReportGenerator::generateHtml(const ReportData& data) {
     // Folder Tree
     if (!data.folder_tree.isEmpty()) {
         stream << QStringLiteral("<h2>Folder Structure</h2>\n<ul>\n");
-        renderFolderTree(data.folder_tree, html, 0);
+        renderFolderTree(stream, data.folder_tree, 0);
         stream << QStringLiteral("</ul>\n");
     }
 

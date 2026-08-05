@@ -6,11 +6,16 @@
 
 #include "sak/image_flasher_panel.h"
 
+#include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
+// For ValidationMode and validationModeFromSetting. flash_coordinator.h only forward
+// declares the enum so it does not drag <windows.h> into every GUI header; a translation
+// unit that has to name the enumerators includes the real header here instead.
 #include "sak/drive_scanner.h"
 #include "sak/elevation_banner.h"
 #include "sak/elevation_gate.h"
 #include "sak/flash_coordinator.h"
+#include "sak/flash_worker.h"
 #include "sak/format_utils.h"
 #include "sak/image_flasher_settings_dialog.h"
 #include "sak/iso_analyzer.h"
@@ -1125,6 +1130,12 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
+    // Apply the persisted Image Flasher settings before starting. Nothing read them back
+    // before this: the settings dialog wrote validation mode and buffer size to
+    // ConfigManager and no code ever asked for them, so every flash ran with the worker's
+    // built-in defaults and the user's choice was silently discarded.
+    applyFlasherSettings();
+
     // Use raw disk imaging for other ISOs
     if (!m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives)) {
         m_isFlashing = false;
@@ -1253,6 +1264,35 @@ void ImageFlasherPanel::createWindowsUSB() {
         creator->createBootableUSB(isoPath, diskNumber);
     });
     thread->start();
+}
+
+void ImageFlasherPanel::applyFlasherSettings() {
+    const auto& config = sak::ConfigManager::instance();
+
+    const QString modeSetting = config.getImageFlasherValidationMode();
+    const auto mode = sak::validationModeFromSetting(modeSetting);
+    if (mode.has_value()) {
+        m_flashCoordinator->setValidationMode(*mode);
+    } else {
+        // Do not quietly pick one. Name the unrecognized value, then use the most thorough
+        // mode rather than the least: a corrupted setting must not silently downgrade
+        // verification on a destructive write.
+        sak::logError("Image flasher: unrecognized validation mode '{}'; using full verification",
+                      modeSetting.toStdString());
+        m_flashCoordinator->setValidationMode(sak::ValidationMode::Full);
+    }
+
+    const int bufferSizeMb = config.getImageFlasherBufferSize();
+    if (bufferSizeMb > 0) {
+        m_flashCoordinator->setBufferSize(static_cast<qint64>(bufferSizeMb) * sak::kBytesPerMB);
+    } else {
+        sak::logError("Image flasher: non-positive buffer size {} MB in settings; keeping default",
+                      bufferSizeMb);
+    }
+
+    sak::logInfo("Image flasher settings applied: validation='{}', buffer={} MB",
+                 modeSetting.toStdString(),
+                 bufferSizeMb);
 }
 
 bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {

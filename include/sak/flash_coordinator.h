@@ -24,8 +24,12 @@ class DriveUnmounter;
 
 namespace sak {
 
-// Forward declarations
+// Forward declarations. ValidationMode is declared rather than included: it lives in
+// flash_worker.h, which pulls in <windows.h>, and this header is included by GUI
+// translation units that must not inherit that. A scoped enum has a known underlying type
+// (int), so an opaque declaration is sufficient to hold one by value.
 struct ValidationResult;
+enum class ValidationMode;
 
 /**
  * @brief Flash operation state
@@ -200,6 +204,16 @@ public:
      */
     void setBufferSize(qint64 sizeBytes);
 
+    /**
+     * @brief Set the post-write verification depth applied to every worker.
+     * @param mode Full, Sample or Skip.
+     *
+     * Every worker this coordinator starts is given this mode. Without it the workers
+     * silently kept their own Full default, so the Image Flasher settings dialog's
+     * validation choice was collected, stored and then ignored.
+     */
+    void setValidationMode(sak::ValidationMode mode);
+
 
 Q_SIGNALS:
     /**
@@ -311,6 +325,9 @@ private:
 
     bool m_verificationEnabled;
     qint64 m_bufferSize;
+    // Initialized in the constructor, not here: ValidationMode is only forward-declared in
+    // this header, so its enumerators are not nameable at this point.
+    sak::ValidationMode m_validationMode;
     std::atomic<bool> m_isCancelled;
 
     QStringList m_targetDrives;

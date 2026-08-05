@@ -44,9 +44,21 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
         auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
         m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
 
-        // Open log file
+        // Close any stream from a previous initialize() BEFORE reopening. std::ofstream::open
+        // on an already-open stream fails and leaves the stream attached to the old file, so
+        // the is_open() check below would still be true: initialize() would report success,
+        // and the "Logger initialized: <path>" line would name the NEW file while every
+        // subsequent write went to the OLD one. Closing first makes a re-initialize actually
+        // move the log, and makes a genuine open failure reachable by the check.
+        if (m_file_stream.is_open()) {
+            m_file_stream.flush();
+            m_file_stream.close();
+        }
+        m_file_stream.clear();  // drop any failbit from a previous close
+
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         if (!m_file_stream.is_open()) {
+            m_initialized.store(false, std::memory_order_release);
             return std::unexpected(error_code::write_error);
         }
 

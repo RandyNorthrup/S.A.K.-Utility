@@ -179,6 +179,11 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
     auto messages = parser->readMessages(0, total_items);
     if (!messages) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to read MBOX messages"));
+        // searchComplete must be emitted on EVERY termination path. The null-parser guard
+        // above already does it; this one did not, so a caller that gates on completion
+        // (the panel re-enables its Search button there) waited forever after a read
+        // failure it had already been told about.
+        Q_EMIT searchComplete(0, 0);
         return;
     }
 

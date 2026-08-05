@@ -11,6 +11,7 @@
 #include <QString>
 
 #include <atomic>
+#include <optional>
 
 #include <windows.h>
 
@@ -24,6 +25,26 @@ enum class ValidationMode {
     Sample,  ///< Verify random samples (faster, less thorough)
     Skip     ///< No verification (fastest)
 };
+
+/// @brief Maps the persisted image-flasher validation setting to a ValidationMode.
+///
+/// The settings dialog stores "full" / "quick" / "none";
+/// ConfigManager::getImageFlasherValidationMode documents "full" as the default. Returns
+/// nullopt for anything else so the caller can report the unrecognized value instead of
+/// silently choosing for the user. Pure and unit-testable.
+[[nodiscard]] inline std::optional<ValidationMode> validationModeFromSetting(
+    const QString& setting) {
+    if (setting == QLatin1String("full")) {
+        return ValidationMode::Full;
+    }
+    if (setting == QLatin1String("quick")) {
+        return ValidationMode::Sample;
+    }
+    if (setting == QLatin1String("none")) {
+        return ValidationMode::Skip;
+    }
+    return std::nullopt;
+}
 
 /**
  * @brief Result of verification operation

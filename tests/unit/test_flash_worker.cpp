@@ -83,6 +83,10 @@ private slots:
     // ---- ValidationMode enum ----
     void validationModeEnumValues();
 
+    // ---- persisted setting -> ValidationMode (R5-G20-1) ----
+    void validationModeFromSetting_mapsEveryDialogValue();
+    void validationModeFromSetting_rejectsUnknown();
+
     // ---- ImageMetadata::isValid() ----
     void imageMetadataEmptyPathInvalid();
     void imageMetadataZeroSizeInvalid();
@@ -461,6 +465,35 @@ void FlashWorkerTests::imageFitsDeviceRejectsUnknownImageSize() {
     // size the gate cannot bound the write, so it must refuse.
     QVERIFY(!FlashWorker::imageFitsDevice(-1, 1LL << 40));
     QVERIFY(!FlashWorker::imageFitsDevice(-1, 0));
+}
+
+// ===========================================================================
+// R5-G20-1: the Image Flasher settings dialog persists "full" / "quick" / "none" and the
+// worker takes a ValidationMode. Nothing mapped between them, and nothing read the setting
+// at all, so the user's verification choice was collected and discarded on every flash.
+// These pin the mapping for all three dialog values, which is what makes the wiring
+// verifiable without driving the GUI.
+// ===========================================================================
+
+void FlashWorkerTests::validationModeFromSetting_mapsEveryDialogValue() {
+    // The literals must match image_flasher_settings_dialog.cpp's combo userData exactly.
+    QCOMPARE(sak::validationModeFromSetting(QStringLiteral("full")).value(),
+             sak::ValidationMode::Full);
+    QCOMPARE(sak::validationModeFromSetting(QStringLiteral("quick")).value(),
+             sak::ValidationMode::Sample);
+    QCOMPARE(sak::validationModeFromSetting(QStringLiteral("none")).value(),
+             sak::ValidationMode::Skip);
+}
+
+void FlashWorkerTests::validationModeFromSetting_rejectsUnknown() {
+    // Unknown input must be reported, not silently resolved: the caller logs the offending
+    // value and falls back to the MOST thorough mode, so a corrupted setting can never
+    // quietly downgrade verification on a destructive write.
+    QVERIFY(!sak::validationModeFromSetting(QString()).has_value());
+    QVERIFY(!sak::validationModeFromSetting(QStringLiteral("Full")).has_value());  // case
+    QVERIFY(!sak::validationModeFromSetting(QStringLiteral("sample")).has_value());
+    QVERIFY(!sak::validationModeFromSetting(QStringLiteral("skip")).has_value());
+    QVERIFY(!sak::validationModeFromSetting(QStringLiteral("garbage")).has_value());
 }
 
 // ===========================================================================

@@ -184,6 +184,10 @@ private:
 
     /** @brief Return true if the device path belongs to the OS drive */
     bool isSystemDrive(const QString& devicePath) const;
+
+    /// @brief Push the persisted Image Flasher settings into the flash coordinator.
+    ///        Called immediately before each raw-image flash starts.
+    void applyFlasherSettings();
     /** @brief Return true if the ISO is a Windows installer (needs special handling) */
     bool isWindowsInstallISO(const QString& isoPath) const;
     /** @brief Create a bootable Windows USB instead of raw flash */
