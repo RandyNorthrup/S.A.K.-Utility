@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_quick_action.cpp
@@ -20,6 +20,10 @@ public:
     using StubAction::formatFileSize;
     using StubAction::formatLogBox;
     using StubAction::sanitizePathForBackup;
+
+    // Expose the protected cancellation flag so cancel() can be asserted on
+    // instead of merely called.
+    using QuickAction::isCancelled;
 
     QString name() const override { return QStringLiteral("Stub"); }
     QString description() const override { return QStringLiteral("Test stub"); }
@@ -55,30 +59,32 @@ private Q_SLOTS:
         QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 bytes"));
     }
 
+    // The unit suffix alone would still pass with a wrong magnitude or a
+    // silently changed precision, so pin the whole rendered string. QString::arg
+    // formats "%1" through the C locale, so the decimal point is not
+    // machine-dependent.
+
     void formatFileSizeBytes() {
-        QString result = StubAction::formatFileSize(512);
-        QVERIFY(result.contains("512"));
-        QVERIFY(result.contains("bytes"));
+        QCOMPARE(StubAction::formatFileSize(512), QStringLiteral("512 bytes"));
     }
 
     void formatFileSizeKilobytes() {
-        QString result = StubAction::formatFileSize(1536);  // 1.5 KB
-        QVERIFY(result.contains("KB") || result.contains("kB"));
+        QCOMPARE(StubAction::formatFileSize(1536), QStringLiteral("1.5 KB"));
     }
 
     void formatFileSizeMegabytes() {
-        QString result = StubAction::formatFileSize(5 * 1024 * 1024);
-        QVERIFY(result.contains("MB"));
+        QCOMPARE(StubAction::formatFileSize(5 * 1024 * 1024), QStringLiteral("5.0 MB"));
     }
 
     void formatFileSizeGigabytes() {
-        QString result = StubAction::formatFileSize(Q_INT64_C(2'500'000'000));
-        QVERIFY(result.contains("GB"));
+        // 2'500'000'000 / 1024^3 = 2.3283..., rendered with two decimals.
+        QCOMPARE(StubAction::formatFileSize(Q_INT64_C(2'500'000'000)), QStringLiteral("2.33 GB"));
     }
 
     void formatFileSizeTerabytes() {
-        QString result = StubAction::formatFileSize(Q_INT64_C(1'500'000'000'000));
-        QVERIFY(result.contains("TB"));
+        // 1'500'000'000'000 / 1024^4 = 1.3642..., rendered with two decimals.
+        QCOMPARE(StubAction::formatFileSize(Q_INT64_C(1'500'000'000'000)),
+                 QStringLiteral("1.36 TB"));
     }
 
     // --- sanitizePathForBackup ---
@@ -117,14 +123,17 @@ private Q_SLOTS:
         QString result = StubAction::formatLogBox("TEST", lines, 1500);
         QVERIFY(result.contains("TEST"));
         QVERIFY(result.contains("Result: OK"));
-        // Duration should be present somewhere
-        QVERIFY(result.contains("1.5") || result.contains("1500") || result.contains("1 s"));
+        // 1500 ms is rendered as a seconds footer with two decimals. The old
+        // three-way disjunction matched "1.5" inside any nearby number.
+        QVERIFY(result.contains(QStringLiteral("Completed in: 1.50 seconds")));
     }
 
     void formatLogBoxEmptyLines() {
         QStringList lines;
         QString result = StubAction::formatLogBox("EMPTY", lines);
         QVERIFY(result.contains("EMPTY"));
+        // No duration was supplied, so no footer may be invented for it.
+        QVERIFY(!result.contains(QStringLiteral("Completed in")));
     }
 
     // --- Base class state management ---
@@ -151,10 +160,18 @@ private Q_SLOTS:
 
     void cancelSetsFlag() {
         StubAction action;
+        QVERIFY(!action.isCancelled());
+
         action.cancel();
-        // Can't directly test isCancelled() since it's protected,
-        // but we can verify status didn't break
-        QVERIFY(true);
+        // cancel() raises the flag unconditionally, but from Idle it must not
+        // fabricate a Cancelled status for an action that never ran.
+        QVERIFY(action.isCancelled());
+        QCOMPARE(action.status(), QuickAction::ActionStatus::Idle);
+
+        // clearCancellation() is what lets a later run start un-cancelled; a
+        // stale flag would make every future run cancel immediately.
+        action.clearCancellation();
+        QVERIFY(!action.isCancelled());
     }
 
     void applyExecutionResult() {

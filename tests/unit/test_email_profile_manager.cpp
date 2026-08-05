@@ -33,7 +33,7 @@ private Q_SLOTS:
     void linkedFilesEmptyByDefault();
 
     // -- Cancel ----------------------------------------------------------
-    void cancelBeforeDiscoveryDoesNotCrash();
+    void cancelBeforeDiscoveryDoesNotBlockNextRun();
 
     // -- Discovery (smoke test) ------------------------------------------
     void discoverProfilesEmitsSignal();
@@ -139,15 +139,28 @@ void TestEmailProfileManager::linkedFilesEmptyByDefault() {
 // Cancel
 // ============================================================================
 
-void TestEmailProfileManager::cancelBeforeDiscoveryDoesNotCrash() {
+// A cancel raised while nothing is running must leave the manager fully usable: it
+// must not latch the single-flight guard (a cancel built on top of m_operation_active
+// would make every later discover/backup/restore refuse with "already in progress"),
+// and discoverProfiles() clears the stale cancel flag on entry.
+void TestEmailProfileManager::cancelBeforeDiscoveryDoesNotBlockNextRun() {
     EmailProfileManager manager;
     manager.cancel();
-    manager.cancel();
-    QVERIFY(true);
+    manager.cancel();  // idempotent: a repeated cancel must not wedge the manager
+
+    QSignalSpy discovered_spy(&manager, &EmailProfileManager::profilesDiscovered);
+    QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    manager.discoverProfiles();
+
+    QCOMPARE(discovered_spy.count(), 1);
+    for (const auto& call : error_spy) {
+        QVERIFY2(!call.at(0).toString().contains(QStringLiteral("already in progress")),
+                 qPrintable(call.at(0).toString()));
+    }
 }
 
 // ============================================================================
-// Discovery (smoke test — depends on system state)
+// Discovery (smoke test - depends on system state)
 // ============================================================================
 
 void TestEmailProfileManager::discoverProfilesEmitsSignal() {
@@ -155,13 +168,24 @@ void TestEmailProfileManager::discoverProfilesEmitsSignal() {
     QSignalSpy spy(&manager, &EmailProfileManager::profilesDiscovered);
     manager.discoverProfiles();
 
-    // Discovery may find 0+ profiles depending on the machine,
-    // but the signal should always be emitted
-    QVERIFY(spy.count() > 0);
+    // Discovery may find 0+ profiles depending on the machine, but the signal is
+    // emitted exactly once per run.
+    QCOMPARE(spy.count(), 1);
 
-    auto profiles = spy.at(0).at(0).value<QVector<sak::EmailClientProfile>>();
-    // Just verify we got a valid vector (empty is fine)
-    QVERIFY(profiles.size() >= 0);
+    const auto profiles = spy.at(0).at(0).value<QVector<sak::EmailClientProfile>>();
+    // Machine-independent invariants every discoverer must uphold for what it emits:
+    // an identified client, a path to reach it, and a total that really is the sum of
+    // that profile's data files (each discoverer accumulates the total itself).
+    for (const auto& profile : profiles) {
+        QVERIFY(!profile.client_name.isEmpty());
+        QVERIFY(!profile.profile_path.isEmpty());
+        QVERIFY(profile.client_type != sak::EmailClientType::Other);
+        qint64 sum_bytes = 0;
+        for (const auto& data_file : profile.data_files) {
+            sum_bytes += data_file.size_bytes;
+        }
+        QCOMPARE(profile.total_size_bytes, sum_bytes);
+    }
 }
 
 // ============================================================================
@@ -169,25 +193,37 @@ void TestEmailProfileManager::discoverProfilesEmitsSignal() {
 // ============================================================================
 
 void TestEmailProfileManager::backupWithEmptyIndices() {
+    // Nothing selected is not an error: the run completes having copied nothing and
+    // still writes the manifest a restore would need (with an empty profiles array).
+    QTemporaryDir backup_dir;
+    QVERIFY(backup_dir.isValid());
+
     EmailProfileManager manager;
     QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
     QSignalSpy complete_spy(&manager, &EmailProfileManager::backupComplete);
 
-    manager.backupProfiles({}, QStringLiteral("C:/backup"));
+    manager.backupProfiles({}, backup_dir.path());
 
-    // Empty indices — should either emit an error or complete with 0
-    QVERIFY(error_spy.count() > 0 || complete_spy.count() > 0);
+    QCOMPARE(error_spy.count(), 0);
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().at(1).toInt(), 0);         // files backed up
+    QCOMPARE(complete_spy.first().at(2).toLongLong(), 0LL);  // bytes copied
+    QVERIFY(QFile::exists(backup_dir.path() + QStringLiteral("/backup_manifest.json")));
 }
 
 void TestEmailProfileManager::backupWithInvalidPath() {
     EmailProfileManager manager;
     QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::backupComplete);
 
     QVector<int> indices = {0};
     manager.backupProfiles(indices, QString());
 
-    // Empty path should produce an error or be handled gracefully
-    QVERIFY(error_spy.count() > 0 || true);
+    // An empty destination fails closed: the reason is surfaced and NO backup is
+    // reported complete (it must never fall back to the working directory).
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("Backup path is empty")));
+    QCOMPARE(complete_spy.count(), 0);
 }
 
 void TestEmailProfileManager::backupWithNoDiscoveredProfiles() {
@@ -195,15 +231,21 @@ void TestEmailProfileManager::backupWithNoDiscoveredProfiles() {
     QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
     QSignalSpy complete_spy(&manager, &EmailProfileManager::backupComplete);
 
-    // No discovery done — indices won't map to anything
+    // No discovery done - indices won't map to anything
     QVector<int> indices = {0, 1, 2};
     QTemporaryDir temp_dir;
     QVERIFY(temp_dir.isValid());
 
     manager.backupProfiles(indices, temp_dir.path());
 
-    // Should handle gracefully
-    QVERIFY(error_spy.count() > 0 || complete_spy.count() > 0);
+    // Out-of-range indices are skipped rather than treated as profiles: zero files are
+    // copied, no error is raised, and the manifest is the ONLY file written (a stray
+    // .reg or copy here would mean an unmapped index reached the copy path).
+    QCOMPARE(error_spy.count(), 0);
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().at(1).toInt(), 0);
+    QCOMPARE(QDir(temp_dir.path()).entryList(QDir::Files),
+             QStringList{QStringLiteral("backup_manifest.json")});
 }
 
 // ============================================================================
@@ -213,20 +255,30 @@ void TestEmailProfileManager::backupWithNoDiscoveredProfiles() {
 void TestEmailProfileManager::restoreFromNonExistentManifest() {
     EmailProfileManager manager;
     QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
 
     manager.restoreProfiles(QStringLiteral("C:/nonexistent/manifest.json"));
 
-    QVERIFY(error_spy.count() > 0);
+    // Fail closed: the specific reason is surfaced and no restore is reported as
+    // complete (a restoreComplete(0) here would read as "nothing needed restoring").
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY(error_spy.first().at(0).toString().contains(
+        QStringLiteral("Failed to open backup manifest")));
+    QCOMPARE(complete_spy.count(), 0);
 }
 
 void TestEmailProfileManager::restoreFromEmptyPath() {
     EmailProfileManager manager;
     QSignalSpy error_spy(&manager, &EmailProfileManager::errorOccurred);
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
 
     manager.restoreProfiles(QString());
 
-    // Empty path should produce an error
-    QVERIFY(error_spy.count() > 0 || true);
+    // An empty path is refused at the manifest open, exactly like a missing file.
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY(error_spy.first().at(0).toString().contains(
+        QStringLiteral("Failed to open backup manifest")));
+    QCOMPARE(complete_spy.count(), 0);
 }
 
 void TestEmailProfileManager::restoreRejectsPathTraversal() {
@@ -268,10 +320,15 @@ void TestEmailProfileManager::restoreRejectsPathTraversal() {
     }
 
     EmailProfileManager manager;
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
     manager.restoreProfiles(manifest);
 
     // The confinement must have blocked the write: no file created outside backup.
     QVERIFY(!QFile::exists(pwned_dest));
+    // And the restore really RAN and rejected this profile (rather than bailing out
+    // earlier for an unrelated reason, which would make the check above vacuous).
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().first().toInt(), 0);
 }
 
 // ============================================================================
@@ -613,11 +670,15 @@ void TestEmailProfileManager::restoreRejectsNonEmailExtensionInHome() {
     }
 
     EmailProfileManager manager;
+    QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
     manager.restoreProfiles(manifest);
 
     const bool created = QFile::exists(dest);
     QDir(dest_dir).removeRecursively();  // never pollute the real home tree
     QVERIFY2(!created, "a non-email extension under home must not be restorable");
+    // The restore reached this entry and refused it: the profile is not counted.
+    QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().first().toInt(), 0);
 }
 
 void TestEmailProfileManager::registryBackupDestination_dedupesCollision() {

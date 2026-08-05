@@ -18,9 +18,6 @@ class TestEmailSearchWorker : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // -- Construction ----------------------------------------------------
-    void defaultConstruction();
-
     // -- Criteria Defaults -----------------------------------------------
     void criteriaDefaults();
     void criteriaFieldFlags();
@@ -29,12 +26,11 @@ private Q_SLOTS:
     void criteriaMapiProperty();
 
     // -- Cancel ----------------------------------------------------------
-    void cancelBeforeSearchDoesNotCrash();
-    void cancelDuringIdle();
+    void cancelBeforeSearchDoesNotPoisonNextSearch();
 
     // -- Search With Null Parser -----------------------------------------
-    void searchWithNullPstParserDoesNotCrash();
-    void searchWithNullMboxParserDoesNotCrash();
+    void searchWithNullPstParserFailsClosed();
+    void searchWithNullMboxParserFailsClosed();
 
     // -- Search Hit Structure --------------------------------------------
     void searchHitDefaults();
@@ -47,16 +43,6 @@ private Q_SLOTS:
     void mboxRecipientSearchMatchesToField();
     void mboxAttachmentNameSearchMatches();
 };
-
-// ============================================================================
-// Construction
-// ============================================================================
-
-void TestEmailSearchWorker::defaultConstruction() {
-    EmailSearchWorker worker;
-    // Should construct without crash
-    QVERIFY(true);
-}
 
 // ============================================================================
 // Criteria Defaults
@@ -127,53 +113,84 @@ void TestEmailSearchWorker::criteriaMapiProperty() {
 // Cancel
 // ============================================================================
 
-void TestEmailSearchWorker::cancelBeforeSearchDoesNotCrash() {
-    EmailSearchWorker worker;
-    worker.cancel();
-    QVERIFY(true);
-}
+// A cancel raised while nothing is running must be a harmless no-op that does NOT
+// poison the NEXT search: searchMbox() clears the flag on entry. Without that reset
+// the search below would break out on the first message and report zero hits (the
+// same stale-cancel bug MboxParser had in B7-24).
+void TestEmailSearchWorker::cancelBeforeSearchDoesNotPoisonNextSearch() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "Subject: ZEBRASUBJECT\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Ordinary body text.\r\n";
+    mbox.write(content);
+    mbox.close();
 
-void TestEmailSearchWorker::cancelDuringIdle() {
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("ZEBRASUBJECT");
+    criteria.search_body = false;
+    criteria.search_sender = false;
+
     EmailSearchWorker worker;
     worker.cancel();
-    worker.cancel();
-    QVERIFY(true);
+    worker.cancel();  // idempotent: a repeated cancel must not wedge the worker either
+
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(hit_spy.count(), 1);
+    QCOMPARE(done_spy.first().at(0).toInt(), 1);  // the run was not cut short
+    parser.close();
 }
 
 // ============================================================================
 // Search With Null Parser
 // ============================================================================
 
-void TestEmailSearchWorker::searchWithNullPstParserDoesNotCrash() {
+// A null parser is a caller error that must fail CLOSED in both configurations:
+// search() asserts nothing, it surfaces the reason and still completes the run with
+// zero hits so a caller waiting on searchComplete is never left hanging.
+void TestEmailSearchWorker::searchWithNullPstParserFailsClosed() {
     EmailSearchWorker worker;
     QSignalSpy error_spy(&worker, &EmailSearchWorker::errorOccurred);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
 
     sak::EmailSearchCriteria criteria;
     criteria.query_text = QStringLiteral("test");
 
-    // Null parser — should assert in debug or handle gracefully
-    // In release builds, this tests that we don't segfault
-#ifdef QT_NO_DEBUG
     worker.search(nullptr, criteria);
-    QVERIFY(error_spy.count() > 0 || true);
-#else
-    QVERIFY(true);
-#endif
+
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("No PST/OST file open")));
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(done_spy.first().at(0).toInt(), 0);
 }
 
-void TestEmailSearchWorker::searchWithNullMboxParserDoesNotCrash() {
+void TestEmailSearchWorker::searchWithNullMboxParserFailsClosed() {
     EmailSearchWorker worker;
     QSignalSpy error_spy(&worker, &EmailSearchWorker::errorOccurred);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
 
     sak::EmailSearchCriteria criteria;
     criteria.query_text = QStringLiteral("test");
 
-#ifdef QT_NO_DEBUG
     worker.searchMbox(nullptr, criteria);
-    QVERIFY(error_spy.count() > 0 || true);
-#else
-    QVERIFY(true);
-#endif
+
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("No MBOX file open")));
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(done_spy.first().at(0).toInt(), 0);
 }
 
 // ============================================================================

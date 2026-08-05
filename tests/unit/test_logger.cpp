@@ -51,9 +51,6 @@ private Q_SLOTS:
     // getLogFile
     void getLogFile_afterInit();
 
-    // isInitialized
-    void isInitialized_afterInit();
-
     // Thread safety
     void concurrentWrites_noCorruption();
 
@@ -69,6 +66,9 @@ private Q_SLOTS:
 private:
     /// @brief Reads all content from the singleton log file
     std::string readLogContent();
+
+    /// @brief Counts non-overlapping occurrences of a marker in log content
+    static int countOccurrences(const std::string& haystack, const std::string& needle);
 
     QTemporaryDir m_logDir;
     std::filesystem::path m_logSubDir;
@@ -100,6 +100,16 @@ std::string LoggerTests::readLogContent() {
     return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
+int LoggerTests::countOccurrences(const std::string& haystack, const std::string& needle) {
+    int count = 0;
+    std::string::size_type pos = 0;
+    while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -107,6 +117,13 @@ std::string LoggerTests::readLogContent() {
 void LoggerTests::initialize_validDir() {
     auto& log = sak::logger::instance();
     QVERIFY(log.isInitialized());
+
+    // The flag alone proves nothing: a successful initialize() must also have
+    // opened a real file inside the directory it was handed.
+    const auto logFile = log.getLogFile();
+    QVERIFY2(logFile.parent_path() == m_logSubDir,
+             "initialize() must place the log file in the directory it was given");
+    QVERIFY(std::filesystem::exists(logFile));
 }
 
 void LoggerTests::initialize_createsDir() {
@@ -118,10 +135,14 @@ void LoggerTests::initialize_createsDir() {
 void LoggerTests::initialize_reInitFails() {
     // Re-initializing a singleton logger should fail gracefully
     auto& log = sak::logger::instance();
+    const auto originalFile = log.getLogFile();
     auto result = log.initialize(std::filesystem::path("Z:\\InvalidDrive\\NoDir"), "reinit");
     QVERIFY(!result.has_value());
     // Original initialization should still be active
     QVERIFY(log.isInitialized());
+    // Fail closed: a rejected initialize() must leave the sink where it was,
+    // not repoint getLogFile() at a file it never opened.
+    QVERIFY2(log.getLogFile() == originalFile, "a failed re-init must not repoint the log sink");
 }
 
 // ============================================================================
@@ -204,9 +225,19 @@ void LoggerTests::log_multipleMessages() {
 
 void LoggerTests::consoleOutput_toggle() {
     auto& log = sak::logger::instance();
+
+    // The console flag has no getter, so the file is the only observable from
+    // here. What that does pin down is that console output is a SEPARATE sink:
+    // enabling it must not duplicate the entry into the file, and disabling it
+    // must not suppress the file write.
     log.setConsoleOutput(true);
+    log.log(sak::log_level::info, "CONSOLE_ON_MARKER_7731");
     log.setConsoleOutput(false);
-    QVERIFY(true);  // No crash
+    log.log(sak::log_level::info, "CONSOLE_OFF_MARKER_7731");
+
+    const std::string content = readLogContent();
+    QCOMPARE(countOccurrences(content, "CONSOLE_ON_MARKER_7731"), 1);
+    QCOMPARE(countOccurrences(content, "CONSOLE_OFF_MARKER_7731"), 1);
 }
 
 // ============================================================================
@@ -218,8 +249,14 @@ void LoggerTests::flush_writesData() {
     log.log(sak::log_level::info, "FLUSH_VERIFY_MARKER");
     log.flush();
 
-    auto logFile = log.getLogFile();
-    QVERIFY(std::filesystem::file_size(logFile) > 0);
+    // Read through an independent handle instead of readLogContent(), which
+    // flushes again: the claim is that flush() itself made the buffered info
+    // entry visible to another reader. A non-empty file proves nothing here --
+    // earlier tests already filled it.
+    std::ifstream file(log.getLogFile());
+    const std::string content((std::istreambuf_iterator<char>(file)),
+                              std::istreambuf_iterator<char>());
+    QVERIFY(content.find("FLUSH_VERIFY_MARKER") != std::string::npos);
 }
 
 // ============================================================================
@@ -231,15 +268,6 @@ void LoggerTests::getLogFile_afterInit() {
     auto logFile = log.getLogFile();
     QVERIFY(!logFile.empty());
     QVERIFY(logFile.filename().string().find("test_logger") != std::string::npos);
-}
-
-// ============================================================================
-// isInitialized
-// ============================================================================
-
-void LoggerTests::isInitialized_afterInit() {
-    auto& log = sak::logger::instance();
-    QVERIFY(log.isInitialized());
 }
 
 // ============================================================================

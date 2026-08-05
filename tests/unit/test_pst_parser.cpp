@@ -400,7 +400,11 @@ void TestPstParser::rejectsEmptyFile() {
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
 
-    QVERIFY(error_spy.count() > 0 || !parser.isOpen());
+    // Fail closed: there is no header to read, so the open is refused and reported.
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
 }
 
 void TestPstParser::rejectsTooSmallFile() {
@@ -413,17 +417,25 @@ void TestPstParser::rejectsTooSmallFile() {
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
 
-    QVERIFY(error_spy.count() > 0 || !parser.isOpen());
+    // A file shorter than the fixed 580-byte header prefix is rejected before any
+    // field is parsed out of it.
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
 }
 
 void TestPstParser::rejectsInvalidMagic() {
     QTemporaryFile temp_file;
-    QVERIFY(temp_file.open());
-    QByteArray bad_header(564, '\0');
+    // Full-length header (580 bytes) so the read succeeds and the rejection really
+    // comes from the magic check -- a short buffer would fail the size gate first
+    // and never exercise dwMagic at all.
+    QByteArray bad_header(580, '\0');
     bad_header[0] = 'X';
     bad_header[1] = 'Y';
     bad_header[2] = 'Z';
     bad_header[3] = 'W';
+    QVERIFY(temp_file.open());
     temp_file.write(bad_header);
     temp_file.close();
 
@@ -431,7 +443,10 @@ void TestPstParser::rejectsInvalidMagic() {
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
 
-    QVERIFY(error_spy.count() > 0 || !parser.isOpen());
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
 }
 
 void TestPstParser::parsesValidPstMagic() {
@@ -443,25 +458,55 @@ void TestPstParser::parsesValidPstMagic() {
     temp_file.close();
 
     PstParser parser;
-    // May fail on deeper parsing (no valid BTrees), but shouldn't
-    // crash and should at least recognize the magic bytes.
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
+
+    // A header-only file has no BTree pages, so the open still fails closed -- but
+    // it must fail LATER than the header: the magic, content type, version and CRCs
+    // are all valid here, so "Invalid PST header" would mean the preamble parse
+    // rejected a well-formed header.
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(!error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
     parser.close();
 }
 
 void TestPstParser::detectsUnicodeVersion() {
-    QByteArray header = buildMinimalPstHeader(true);
-    // Verify the version bytes are correctly set
-    auto* data = reinterpret_cast<const uint8_t*>(header.constData());
-    uint16_t version = static_cast<uint16_t>(data[10]) | (static_cast<uint16_t>(data[11]) << 8);
-    QCOMPARE(version, sak::email::kUnicodeVersion);
+    // The PARSER's version detection, not the fixture's bytes: a wVer 23 store must
+    // open as Unicode (which is also what makes it read the ROOT BREFs at the
+    // 64-bit Unicode offsets rather than the ANSI ones).
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildCompressibleEncryptedRootPst());
+    temp_file.close();
+
+    PstParser parser;
+    parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
+    QCOMPARE(parser.fileInfo().is_unicode, true);
+    parser.close();
 }
 
 void TestPstParser::detectsAnsiVersion() {
+    // wVer 14 is a KNOWN (ANSI) layout, so the parse gets past the header and fails
+    // later on the missing BTrees. Contrast rejectsUnknownDataVersion, where an
+    // unrecognized wVer is rejected as "Invalid PST header".
     QByteArray header = buildMinimalPstHeader(false);
-    auto* data = reinterpret_cast<const uint8_t*>(header.constData());
-    uint16_t version = static_cast<uint16_t>(data[10]) | (static_cast<uint16_t>(data[11]) << 8);
-    QCOMPARE(version, sak::email::kAnsiVersion);
+    finalizeHeaderCrcForTest(header, false);
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(header);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(!error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
 }
 
 void TestPstParser::legacyUnicodePstReads512ByteBTreePages() {
@@ -526,6 +571,10 @@ void TestPstParser::rejectsUnknownDataVersion() {
     constexpr uint16_t kUnknownVersion = 0x0063;
     QByteArray header = buildMinimalPstHeader(
         true, sak::email::kEncryptNone, sak::email::kPstContentType, kUnknownVersion);
+    // Stamp valid CRCs so wVer is the ONLY defect: without this the header would be
+    // rejected for its integrity check instead, and the test would still pass with
+    // the version gate deleted.
+    finalizeHeaderCrcForTest(header, true);
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
     temp_file.write(header);
@@ -645,14 +694,50 @@ void TestPstParser::rejectsBlockCrcMismatch() {
 // Encryption Detection
 // ============================================================================
 
+// Mirror of ansiHeaderReadsEncryptionFromOffset461: for a Unicode header the
+// parser must read bCryptMethod at 513. None at 513 with a High DECOY at the ANSI
+// offset 461 has to be accepted -- reading 461 here would reject the file as
+// "Unsupported encryption".
 void TestPstParser::detectsNoEncryption() {
     QByteArray header = buildMinimalPstHeader(true, sak::email::kEncryptNone);
-    QCOMPARE(static_cast<uint8_t>(header[513]), sak::email::kEncryptNone);
+    header[461] = static_cast<char>(sak::email::kEncryptHigh);  // decoy at the ANSI offset
+    finalizeHeaderCrcForTest(header, true);
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(header);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());  // still no BTrees in a header-only file
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(!error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
 }
 
+// Compressible is the other accepted bCryptMethod, and it too is read from 513 in
+// a Unicode header (same High decoy at the ANSI offset 461).
 void TestPstParser::detectsCompressibleEncryption() {
     QByteArray header = buildMinimalPstHeader(true, sak::email::kEncryptCompressible);
-    QCOMPARE(static_cast<uint8_t>(header[513]), sak::email::kEncryptCompressible);
+    header[461] = static_cast<char>(sak::email::kEncryptHigh);  // decoy at the ANSI offset
+    finalizeHeaderCrcForTest(header, true);
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(header);
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(!error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
 }
 
 // P05-44: the ANSI bCryptMethod byte is at offset 461, not 465. Put High
@@ -736,10 +821,13 @@ void TestPstParser::realEmailFilesParseSafely() {
             QVERIFY(neg.has_value());
             auto negmin = parser.readFolderItems(fid, std::numeric_limits<int>::min(), kPageLimit);
             QVERIFY(negmin.has_value());
-            // Reading the first item's detail exercises data-tree expansion.
-            if (normal.has_value() && !normal->isEmpty()) {
-                auto detail = parser.readItemDetail(normal->first().node_id);
-                QVERIFY(detail.has_value() || true);  // must not crash; error is acceptable
+            // Reading the first item's detail exercises data-tree expansion. The
+            // claim here is crash-safety only: on real-world data an unreadable
+            // item is a legitimate (fail-closed) outcome, so there is no value to
+            // compare -- what would fail is a crash, an out-of-bounds read under
+            // ASAN, or a hang inside the data-tree walk.
+            if (!normal->isEmpty()) {
+                [[maybe_unused]] const auto detail = parser.readItemDetail(normal->first().node_id);
             }
         }
         parser.close();
@@ -754,21 +842,27 @@ void TestPstParser::openNonExistentFile() {
     PstParser parser;
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(QStringLiteral("C:/nonexistent_file_xyz.pst"));
-    QVERIFY(error_spy.count() > 0);
+
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    const QString error = error_spy.takeFirst().at(0).toString();
+    QVERIFY2(error.contains(QStringLiteral("Cannot open file")), qPrintable(error));
 }
 
 void TestPstParser::openAndClose() {
     PstParser parser;
     QVERIFY(!parser.isOpen());
 
-    QByteArray header = buildMinimalPstHeader(true);
-    finalizeHeaderCrcForTest(header, true);
+    // Use a store that parses end to end, so close() is observed making a real
+    // open -> closed transition (a header-only fixture never opens, which would
+    // make the final check pass no matter what close() did).
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
-    temp_file.write(header);
+    temp_file.write(buildCompressibleEncryptedRootPst());
     temp_file.close();
 
     parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
     parser.close();
     QVERIFY(!parser.isOpen());
 }
@@ -776,14 +870,36 @@ void TestPstParser::openAndClose() {
 void TestPstParser::doubleCloseIsHarmless() {
     PstParser parser;
     parser.close();
+    QVERIFY(!parser.isOpen());
+
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildCompressibleEncryptedRootPst());
+    temp_file.close();
+    parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
+    QCOMPARE(parser.folderTree().size(), 1);
+    QVERIFY(!parser.allNodeIds().isEmpty());
+
+    // Closing an OPEN parser twice must not close the QFile twice, and both closes
+    // must drop the caches -- serving the previous store's folder tree or NBT nodes
+    // after close() would let a caller read a file that is no longer open.
+    parser.close();
     parser.close();
     QVERIFY(!parser.isOpen());
+    QVERIFY(parser.folderTree().isEmpty());
+    QVERIFY(parser.allNodeIds().isEmpty());
 }
 
 void TestPstParser::cancelDoesNotCrash() {
+    // cancel() only raises the atomic flag, so on a parser that never opened a file
+    // it must be inert: the parser stays closed and its synchronous reads still
+    // refuse cleanly instead of touching the unopened QFile.
     PstParser parser;
     parser.cancel();
-    QVERIFY(true);
+    QVERIFY(!parser.isOpen());
+    QVERIFY(!parser.readItemDetail(sak::email::kNidRootFolder).has_value());
+    QVERIFY(!parser.readFolderItems(sak::email::kNidRootFolder, 0, 10).has_value());
 }
 
 // ============================================================================
@@ -793,6 +909,30 @@ void TestPstParser::cancelDoesNotCrash() {
 void TestPstParser::fileInfoEmptyWhenClosed() {
     PstParser parser;
     QVERIFY(!parser.isOpen());
+
+    // A parser that never opened anything reports a default-constructed info block.
+    const sak::PstFileInfo empty = parser.fileInfo();
+    QVERIFY(empty.file_path.isEmpty());
+    QCOMPARE(empty.file_size_bytes, qint64{0});
+    QCOMPARE(empty.is_unicode, false);
+    QCOMPARE(empty.total_folders, 0);
+    QCOMPARE(empty.total_items, 0);
+
+    // close() must WIPE a populated block too: leaving the previous store's path and
+    // folder count behind would let a view report a closed file as still loaded.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildCompressibleEncryptedRootPst());
+    temp_file.close();
+    parser.open(temp_file.fileName());
+    QVERIFY(parser.isOpen());
+    QCOMPARE(parser.fileInfo().file_path, temp_file.fileName());
+    QCOMPARE(parser.fileInfo().total_folders, 1);
+
+    parser.close();
+    QVERIFY(!parser.isOpen());
+    QVERIFY(parser.fileInfo().file_path.isEmpty());
+    QCOMPARE(parser.fileInfo().total_folders, 0);
 }
 
 QTEST_MAIN(TestPstParser)

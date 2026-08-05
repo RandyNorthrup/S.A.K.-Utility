@@ -4,6 +4,7 @@
 /// @file test_permission_manager.cpp
 /// @brief Unit tests for ACL/permission management
 
+#include "sak/elevation_manager.h"
 #include "sak/permission_manager.h"
 #include "sak/user_profile_types.h"
 
@@ -19,9 +20,6 @@ class PermissionManagerTests : public QObject {
 private Q_SLOTS:
     void initTestCase();
 
-    // Constructor
-    void constructor_defaults();
-
     // canModifyPermissions
     void canModifyPermissions_existingFile();
     void canModifyPermissions_nonExistentFile();
@@ -33,9 +31,6 @@ private Q_SLOTS:
     // Security descriptor
     void getSecurityDescriptorSddl_existingFile();
     void getSecurityDescriptorSddl_nonExistentFile();
-
-    // stripPermissions
-    void stripPermissions_existingFile();
 
     // B5 security regressions (ACL round-trips on a user-owned temp file)
     void stripPermissions_doesNotProduceNullDacl();
@@ -72,14 +67,10 @@ void PermissionManagerTests::initTestCase() {
     f.close();
 }
 
-// ============================================================================
-// Constructor
-// ============================================================================
-
-void PermissionManagerTests::constructor_defaults() {
-    sak::PermissionManager mgr;
-    QVERIFY(true);  // No crash
-}
+// constructor_defaults was removed here. Its body was "construct, QVERIFY(true)", and the only
+// state a freshly constructed manager exposes is getLastError(), which getLastError_initiallyEmpty
+// already asserts is empty. Every other test in this file constructs a manager too, so the
+// "does not crash on construction" claim is not lost.
 
 // ============================================================================
 // canModifyPermissions
@@ -87,10 +78,11 @@ void PermissionManagerTests::constructor_defaults() {
 
 void PermissionManagerTests::canModifyPermissions_existingFile() {
     sak::PermissionManager mgr;
-    // May or may not return true depending on elevation status
-    bool canModify = mgr.canModifyPermissions(m_testFile);
-    Q_UNUSED(canModify);  // Just verify no crash
-    QVERIFY(true);
+    // canModifyPermissions is exists() && isWritable() -- it does NOT consult elevation, so a
+    // file this process just created in its own temp dir must come back true. The old comment
+    // claimed the answer depended on elevation and the body asserted nothing at all, which made
+    // the negative case (canModifyPermissions_nonExistentFile) the only real coverage.
+    QVERIFY2(mgr.canModifyPermissions(m_testFile), qPrintable(m_testFile));
 }
 
 void PermissionManagerTests::canModifyPermissions_nonExistentFile() {
@@ -105,9 +97,11 @@ void PermissionManagerTests::canModifyPermissions_nonExistentFile() {
 
 void PermissionManagerTests::getOwner_existingFile() {
     sak::PermissionManager mgr;
-    QString owner = mgr.getOwner(m_testFile);
-    // Should return a SID or username string
-    QVERIFY(!owner.isEmpty());
+    const QString owner = mgr.getOwner(m_testFile);
+    // getOwner runs the owner SID through ConvertSidToStringSidW, so the result is always the
+    // textual SID form "S-1-...". Asserting only "non-empty" accepted any junk string, e.g. an
+    // error message accidentally returned in place of the SID.
+    QVERIFY2(owner.startsWith(QLatin1String("S-1-")), qPrintable(owner));
 }
 
 void PermissionManagerTests::getOwner_nonExistentFile() {
@@ -122,11 +116,13 @@ void PermissionManagerTests::getOwner_nonExistentFile() {
 
 void PermissionManagerTests::getSecurityDescriptorSddl_existingFile() {
     sak::PermissionManager mgr;
-    QString sddl = mgr.getSecurityDescriptorSddl(m_testFile);
-    // SDDL string should be non-empty for a file we own
+    const QString sddl = mgr.getSecurityDescriptorSddl(m_testFile);
+    // The call requests OWNER | GROUP | DACL, and every file on a security-aware volume has an
+    // owner and a DACL, so BOTH fields must be present and the owner must come first (SDDL field
+    // order is O: G: D: S:). The old disjunction passed when either half went missing.
     QVERIFY(!sddl.isEmpty());
-    // SDDL strings typically start with D: or O:
-    QVERIFY(sddl.contains("D:") || sddl.contains("O:"));
+    QVERIFY2(sddl.startsWith(QLatin1String("O:")), qPrintable(sddl));
+    QVERIFY2(sddl.contains(QLatin1String("D:")), qPrintable(sddl));
 }
 
 void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile() {
@@ -139,20 +135,10 @@ void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile() {
 // stripPermissions
 // ============================================================================
 
-void PermissionManagerTests::stripPermissions_existingFile() {
-    sak::PermissionManager mgr;
-    // Create a separate file for this test to avoid affecting other tests
-    QString stripFile = m_tempDir.filePath("strip_test.txt");
-    QFile f(stripFile);
-    QVERIFY(f.open(QIODevice::WriteOnly));
-    f.write("strip test");
-    f.close();
-
-    bool result = mgr.stripPermissions(stripFile);
-    // May require elevation; just verify no crash
-    Q_UNUSED(result);
-    QVERIFY(true);
-}
+// stripPermissions_existingFile was removed here. It created a temp file, called
+// stripPermissions, Q_UNUSED'd the result and ended in QVERIFY(true) -- a strictly weaker
+// duplicate of stripPermissions_doesNotProduceNullDacl below, which performs the same call on
+// the same kind of user-owned temp file but asserts the return value AND the resulting SDDL.
 
 // ============================================================================
 // B5 security regressions
@@ -343,9 +329,16 @@ void PermissionManagerTests::setSddl_appliesGroup() {
 // ============================================================================
 
 void PermissionManagerTests::isRunningAsAdmin_returnsBoolean() {
-    bool isAdmin = sak::PermissionManager::isRunningAsAdmin();
-    Q_UNUSED(isAdmin);
-    QVERIFY(true);  // Just verify it returns without crashing
+    // The whole contract of isRunningAsAdmin is that it reports the SAME elevation state as the
+    // canonical token check, ElevationManager::isElevated(); every elevation gate in the manager
+    // (tryTakeOwnership) branches on it. The old body discarded the result and asserted
+    // QVERIFY(true), which a hardcoded "return false" would have passed -- silently turning
+    // every elevated operation into elevation_required.
+#ifdef Q_OS_WIN
+    QCOMPARE(sak::PermissionManager::isRunningAsAdmin(), sak::ElevationManager::isElevated());
+#else
+    QSKIP("Elevation state is a Windows token property");
+#endif
 }
 
 // ============================================================================

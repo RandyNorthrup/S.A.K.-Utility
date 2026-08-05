@@ -8,6 +8,7 @@
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/mbox_parser.h"
+#include "sak/pst_parser.h"
 
 #include <QDir>
 #include <QSignalSpy>
@@ -19,9 +20,6 @@ class TestEmailExportWorker : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // -- Construction ----------------------------------------------------
-    void defaultConstruction();
-
     // -- Config Defaults -------------------------------------------------
     void configDefaults();
     void configCsvOptions();
@@ -33,18 +31,17 @@ private Q_SLOTS:
     void resultPopulation();
 
     // -- Cancel ----------------------------------------------------------
-    void cancelBeforeExportDoesNotCrash();
+    void cancelBeforeExportDoesNotPoisonNextExport();
 
     // -- Export With Null Parser -----------------------------------------
-    void exportWithNullPstParser();
-    void exportWithNullMboxParser();
+    void exportWithNullPstParserFailsClosed();
+    void exportWithNullMboxParserFailsClosed();
 
     // -- Export With Empty Config ----------------------------------------
-    void exportWithEmptyOutputPath();
-    void exportWithNoItems();
+    void exportWithEmptyOutputPathFailsClosed();
 
     // -- Format Coverage -------------------------------------------------
-    void allExportFormatsHaveNames();
+    void allExportFormatValuesAreDistinct();
 
     // -- B7-25/27: real MBOX export with a readable attachment -----------
     void mboxExportWithAttachmentSucceeds();
@@ -55,15 +52,6 @@ private Q_SLOTS:
     // -- B7: MBOX must reject non-per-message formats, not coerce to EML --
     void mboxRejectsNonMessageFormat();
 };
-
-// ============================================================================
-// Construction
-// ============================================================================
-
-void TestEmailExportWorker::defaultConstruction() {
-    EmailExportWorker worker;
-    QVERIFY(true);
-}
 
 // ============================================================================
 // Config Defaults
@@ -161,70 +149,126 @@ void TestEmailExportWorker::resultPopulation() {
 // Cancel
 // ============================================================================
 
-void TestEmailExportWorker::cancelBeforeExportDoesNotCrash() {
+// A cancel raised while nothing is running must be a harmless no-op that does NOT
+// poison the NEXT export: exportMboxItems() clears the flag on entry. Without that
+// reset the loop would break before writing anything and noteIfCancelled would stamp
+// the result with the "cancelled ... output is partial" error.
+void TestEmailExportWorker::cancelBeforeExportDoesNotPoisonNextExport() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "Subject: Plain\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Body text.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    QTemporaryDir out_dir;
+    QVERIFY(out_dir.isValid());
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::Eml;
+    config.output_path = out_dir.path();
+
     EmailExportWorker worker;
     worker.cancel();
-    worker.cancel();
-    QVERIFY(true);
+    worker.cancel();  // idempotent: a repeated cancel must not wedge the worker either
+
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+    worker.exportMboxItems(&parser, config);
+
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 1);
+    const QString error_text = result.errors.join(QLatin1Char('|'));
+    QVERIFY2(result.errors.isEmpty(), qPrintable(error_text));
+    parser.close();
 }
 
 // ============================================================================
 // Export With Null Parser
 // ============================================================================
 
-void TestEmailExportWorker::exportWithNullPstParser() {
+// A null parser is a caller error that must fail CLOSED in both configurations: the
+// worker asserts nothing, it emits ONE exportComplete carrying the reason so a caller
+// waiting on that signal is never left hanging, and exports nothing.
+void TestEmailExportWorker::exportWithNullPstParserFailsClosed() {
     EmailExportWorker worker;
     sak::EmailExportConfig config;
     config.output_path = QStringLiteral("C:/output");
     config.item_ids = {1, 2, 3};
 
-    // In debug builds, Q_ASSERT will fire; in release, verify no crash
-#ifdef QT_NO_DEBUG
     QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
     worker.exportItems(nullptr, config);
-    QVERIFY(complete_spy.count() > 0 || true);
-#else
-    QVERIFY(true);
-#endif
+
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);
+    QCOMPARE(result.errors.size(), 1);
+    QVERIFY(result.errors.first().contains(QStringLiteral("No PST/OST file open")));
 }
 
-void TestEmailExportWorker::exportWithNullMboxParser() {
+void TestEmailExportWorker::exportWithNullMboxParserFailsClosed() {
     EmailExportWorker worker;
     sak::EmailExportConfig config;
     config.output_path = QStringLiteral("C:/output");
 
-#ifdef QT_NO_DEBUG
     QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
     worker.exportMboxItems(nullptr, config);
-    QVERIFY(complete_spy.count() > 0 || true);
-#else
-    QVERIFY(true);
-#endif
+
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);
+    QCOMPARE(result.errors.size(), 1);
+    QVERIFY(result.errors.first().contains(QStringLiteral("No MBOX file open")));
 }
 
 // ============================================================================
 // Export With Empty/Invalid Config
 // ============================================================================
 
-void TestEmailExportWorker::exportWithEmptyOutputPath() {
-    sak::EmailExportConfig config;
-    // output_path is empty — an assertion is expected in debug mode
+// An empty output path is refused before any parser work: the guard runs on both the
+// PST and the MBOX entry point, and each surfaces the reason through exportComplete
+// rather than writing into the process working directory.
+void TestEmailExportWorker::exportWithEmptyOutputPathFailsClosed() {
+    sak::EmailExportConfig config;  // default output_path is empty
     QVERIFY(config.output_path.isEmpty());
-}
 
-void TestEmailExportWorker::exportWithNoItems() {
-    sak::EmailExportConfig config;
-    config.output_path = QStringLiteral("C:/output");
-    // No items and no folder — export should complete with zero items
-    QVERIFY(config.item_ids.isEmpty());
-    QCOMPARE(config.folder_id, static_cast<uint64_t>(0));
+    PstParser pst_parser;  // never touched: the path check runs before any parser use
+    EmailExportWorker pst_worker;
+    QSignalSpy pst_spy(&pst_worker, &EmailExportWorker::exportComplete);
+    pst_worker.exportItems(&pst_parser, config);
+
+    QCOMPARE(pst_spy.count(), 1);
+    const auto pst_result = pst_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(pst_result.items_exported, 0);
+    QCOMPARE(pst_result.errors.size(), 1);
+    QVERIFY(pst_result.errors.first().contains(QStringLiteral("output path is empty")));
+
+    MboxParser mbox_parser;
+    EmailExportWorker mbox_worker;
+    QSignalSpy mbox_spy(&mbox_worker, &EmailExportWorker::exportComplete);
+    mbox_worker.exportMboxItems(&mbox_parser, config);
+
+    QCOMPARE(mbox_spy.count(), 1);
+    const auto mbox_result = mbox_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(mbox_result.items_exported, 0);
+    QCOMPARE(mbox_result.errors.size(), 1);
+    QVERIFY(mbox_result.errors.first().contains(QStringLiteral("output path is empty")));
 }
 
 // ============================================================================
 // Format Coverage
 // ============================================================================
 
-void TestEmailExportWorker::allExportFormatsHaveNames() {
+void TestEmailExportWorker::allExportFormatValuesAreDistinct() {
     // Verify all ExportFormat enum values are distinct
     QVector<int> format_values;
     format_values.append(static_cast<int>(sak::ExportFormat::Eml));

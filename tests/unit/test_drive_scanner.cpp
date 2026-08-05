@@ -32,7 +32,7 @@ private Q_SLOTS:
     void isSystemDrive_systemDriveDetected();
 
     // Refresh
-    void refresh_doesNotCrash();
+    void refresh_doubleCallStillCompletes();
 
     // Start/Stop
     void startStop_lifecycle();
@@ -94,8 +94,10 @@ sak::DriveInfo makeDrive(const QString& path) {
 
 void DriveScannerTests::constructor_defaults() {
     DriveScanner scanner;
-    // Initially may have no drives until refresh is called
-    QVERIFY(true);  // No crash
+    // Construction performs NO enumeration -- the cache stays empty until start()/refresh()
+    // kicks a scan. A constructor that scanned inline would block the GUI thread on Win32
+    // IOCTLs, so "empty until asked" is the contract, not an incidental detail.
+    QVERIFY(scanner.getDrives().isEmpty());
 }
 
 // ============================================================================
@@ -138,6 +140,19 @@ void DriveScannerTests::getRemovableDrives_subset() {
 
     // Removable count should be <= total count
     QVERIFY(removable.size() <= all.size());
+
+    // ...and it is a genuine FILTER of the cached list, not a separate enumeration: every
+    // entry is flagged removable and is present in getDrives() under the same device path.
+    // A size comparison alone would still pass if the filter returned the wrong drives.
+    for (const auto& drive : removable) {
+        QVERIFY2(drive.isRemovable, qPrintable(drive.devicePath));
+        QVERIFY2(std::any_of(all.begin(),
+                             all.end(),
+                             [&drive](const sak::DriveInfo& d) {
+                                 return d.devicePath == drive.devicePath;
+                             }),
+                 qPrintable(drive.devicePath));
+    }
 }
 
 void DriveScannerTests::isSystemDrive_systemDriveDetected() {
@@ -160,11 +175,16 @@ void DriveScannerTests::isSystemDrive_systemDriveDetected() {
 // Refresh
 // ============================================================================
 
-void DriveScannerTests::refresh_doesNotCrash() {
+void DriveScannerTests::refresh_doubleCallStillCompletes() {
     DriveScanner scanner;
     scanner.refresh();
-    scanner.refresh();  // Double refresh should be safe
-    QVERIFY(true);
+    scanner.refresh();  // Lands while the first scan is still in flight.
+
+    // The second call is swallowed by the m_isScanning in-flight guard. The point is that
+    // the guard is RELEASED again when the scan lands: if it were left set (or the second
+    // call replaced the running future), the cache would stay empty forever and the
+    // scanner would be permanently wedged -- which a bare "did not crash" never noticed.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
 }
 
 // ============================================================================
@@ -174,9 +194,14 @@ void DriveScannerTests::refresh_doesNotCrash() {
 void DriveScannerTests::startStop_lifecycle() {
     DriveScanner scanner;
     scanner.start();
-    QTest::qWait(100);  // Let it run briefly
+    // start() kicks an initial scan before arming the refresh timer, so monitoring really
+    // is live once this lands.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+
     scanner.stop();
-    QVERIFY(true);      // No crash
+    // stop() joins the in-flight worker scan and DROPS the cache: a stopped scanner must
+    // never keep handing out a drive list it is no longer refreshing.
+    QVERIFY(scanner.getDrives().isEmpty());
 }
 
 // ============================================================================

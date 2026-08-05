@@ -93,12 +93,16 @@ void TestMboxParser::openEmptyFile() {
     temp_file.close();
 
     MboxParser parser;
+    QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
     parser.open(temp_file.fileName());
-    // Empty file should open but have no messages
-    if (parser.isOpen()) {
-        QCOMPARE(parser.messageCount(), 0);
-        parser.close();
-    }
+
+    // An empty file has no "From " separator, so open() fails closed: it reports the
+    // reason and leaves the parser shut instead of accepting an "empty mailbox".
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY2(error_spy.first().at(0).toString().contains(QStringLiteral("Not a valid MBOX file")),
+             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(parser.messageCount(), 0);
 }
 
 void TestMboxParser::openAndClose() {
@@ -107,8 +111,9 @@ void TestMboxParser::openAndClose() {
     MboxParser parser;
     parser.open(temp_file->fileName());
 
-    // May or may not succeed depending on open behavior,
-    // but close should always be safe
+    // The sample file starts with a well-formed "From " separator, so the open
+    // succeeds; close() must then put the parser back in the closed state.
+    QVERIFY(parser.isOpen());
     parser.close();
     QVERIFY(!parser.isOpen());
     delete temp_file;
@@ -117,14 +122,35 @@ void TestMboxParser::openAndClose() {
 void TestMboxParser::doubleCloseIsHarmless() {
     MboxParser parser;
     parser.close();
+    QVERIFY(!parser.isOpen());
+
+    // Closing an OPEN parser twice must not double-close the QFile, and each close
+    // must drop the index rather than leave a count that no longer has a file
+    // behind it.
+    auto* temp_file = createSampleMboxFile();
+    QVERIFY(temp_file);
+    parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 2);
+
+    parser.close();
     parser.close();
     QVERIFY(!parser.isOpen());
+    QCOMPARE(parser.messageCount(), 0);
+    delete temp_file;
 }
 
 void TestMboxParser::cancelDoesNotCrash() {
+    // cancel() only raises the atomic flag (it deliberately does not take the file
+    // mutex), so on a parser that never opened anything it must be inert: the
+    // parser stays closed, empty, and its synchronous reads still refuse cleanly.
     MboxParser parser;
     parser.cancel();
-    QVERIFY(true);
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(parser.messageCount(), 0);
+    QVERIFY(!parser.readMessages(0, 10).has_value());
+    QVERIFY(!parser.readMessageDetail(0).has_value());
 }
 
 // ============================================================================
@@ -139,14 +165,19 @@ void TestMboxParser::indexSingleMessage() {
     QSignalSpy opened_spy(&parser, &MboxParser::fileOpened);
     parser.open(temp_file->fileName());
 
-    if (parser.isOpen()) {
-        QSignalSpy index_spy(&parser, &MboxParser::indexingComplete);
-        parser.indexMessages();
-        // If indexing completes synchronously
-        if (index_spy.count() > 0) {
-            QVERIFY(parser.messageCount() >= 1);
-        }
-    }
+    QVERIFY(parser.isOpen());
+    QCOMPARE(opened_spy.count(), 1);
+    QCOMPARE(opened_spy.first().at(0).toString(), temp_file->fileName());
+
+    // indexMessages() runs synchronously, so indexingComplete has already fired by
+    // the time it returns, and it carries the same count messageCount() reports --
+    // exactly the two messages createSampleMboxFile() writes.
+    QSignalSpy index_spy(&parser, &MboxParser::indexingComplete);
+    parser.indexMessages();
+    QCOMPARE(index_spy.count(), 1);
+    QCOMPARE(index_spy.first().at(0).toInt(), 2);
+    QCOMPARE(parser.messageCount(), 2);
+
     parser.close();
     delete temp_file;
 }
@@ -173,11 +204,11 @@ void TestMboxParser::indexMultipleMessages() {
     MboxParser parser;
     parser.open(temp_file.fileName());
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        // We wrote 3 messages, check we find them
-        QVERIFY(parser.messageCount() >= 1);
-    }
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    // Exactly the 3 messages written above: the "From: " header lines inside each
+    // message must not be counted as extra separators.
+    QCOMPARE(parser.messageCount(), 3);
     parser.close();
 }
 
@@ -188,11 +219,15 @@ void TestMboxParser::emptyFileReturnsZeroMessages() {
 
     MboxParser parser;
     parser.open(temp_file.fileName());
+    QVERIFY(!parser.isOpen());  // an empty file is rejected at open (no "From " line)
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        QCOMPARE(parser.messageCount(), 0);
-    }
+    // Indexing without an open file must say so and leave the count at zero, rather
+    // than quietly indexing nothing and passing for an empty mailbox.
+    QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
+    parser.indexMessages();
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("No file is open"));
+    QCOMPARE(parser.messageCount(), 0);
     parser.close();
 }
 
@@ -207,16 +242,20 @@ void TestMboxParser::loadMessagesFromValidFile() {
     MboxParser parser;
     parser.open(temp_file->fileName());
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        QSignalSpy msg_spy(&parser, &MboxParser::messagesLoaded);
-        parser.loadMessages(0, 10);
-        // Check that messagesLoaded was emitted
-        if (msg_spy.count() > 0) {
-            auto messages = msg_spy.at(0).at(0).value<QVector<sak::MboxMessage>>();
-            QVERIFY(messages.size() >= 1);
-        }
-    }
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QSignalSpy msg_spy(&parser, &MboxParser::messagesLoaded);
+    parser.loadMessages(0, 10);
+
+    // Both sample messages come back, in file order, with their headers parsed --
+    // and the emitted total matches what messageCount() indexed.
+    QCOMPARE(msg_spy.count(), 1);
+    const auto messages = msg_spy.at(0).at(0).value<QVector<sak::MboxMessage>>();
+    QCOMPARE(messages.size(), 2);
+    QCOMPARE(messages.at(0).subject, QStringLiteral("Hello World"));
+    QCOMPARE(messages.at(1).subject, QStringLiteral("Second Message"));
+    QCOMPARE(msg_spy.at(0).at(1).toInt(), 2);
+
     parser.close();
     delete temp_file;
 }
@@ -228,17 +267,20 @@ void TestMboxParser::loadMessageDetailFromValidFile() {
     MboxParser parser;
     parser.open(temp_file->fileName());
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        if (parser.messageCount() > 0) {
-            QSignalSpy detail_spy(&parser, &MboxParser::messageDetailLoaded);
-            parser.loadMessageDetail(0);
-            if (detail_spy.count() > 0) {
-                auto detail = detail_spy.at(0).at(0).value<sak::MboxMessageDetail>();
-                QVERIFY(!detail.subject.isEmpty() || !detail.from.isEmpty());
-            }
-        }
-    }
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QSignalSpy detail_spy(&parser, &MboxParser::messageDetailLoaded);
+    parser.loadMessageDetail(0);
+
+    // The detail carries message 0's own headers and body -- not the next message's
+    // (the raw slice ends at the following "From " separator).
+    QCOMPARE(detail_spy.count(), 1);
+    const auto detail = detail_spy.at(0).at(0).value<sak::MboxMessageDetail>();
+    QCOMPARE(detail.subject, QStringLiteral("Hello World"));
+    QCOMPARE(detail.from, QStringLiteral("Test Sender <sender@example.com>"));
+    QVERIFY(detail.body_plain.contains(QStringLiteral("This is the body of the test email.")));
+    QVERIFY(!detail.body_plain.contains(QStringLiteral("Body of the second email message.")));
+
     parser.close();
     delete temp_file;
 }
@@ -250,13 +292,17 @@ void TestMboxParser::readMessagesSync() {
     MboxParser parser;
     parser.open(temp_file->fileName());
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        auto result = parser.readMessages(0, 10);
-        if (result.has_value()) {
-            QVERIFY(result.value().size() >= 1);
-        }
-    }
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    const auto result = parser.readMessages(0, 10);
+    QVERIFY(result.has_value());
+    QCOMPARE(result->size(), 2);
+    QCOMPARE(result->at(0).message_index, 0);
+    QCOMPARE(result->at(0).subject, QStringLiteral("Hello World"));
+    QCOMPARE(result->at(1).message_index, 1);
+    QCOMPARE(result->at(1).subject, QStringLiteral("Second Message"));
+    // text/plain with no attachment disposition: the summary flag must stay false.
+    QVERIFY(!result->at(0).has_attachments);
     parser.close();
     delete temp_file;
 }
@@ -268,15 +314,15 @@ void TestMboxParser::readMessageDetailSync() {
     MboxParser parser;
     parser.open(temp_file->fileName());
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        if (parser.messageCount() > 0) {
-            auto result = parser.readMessageDetail(0);
-            if (result.has_value()) {
-                QVERIFY(!result.value().from.isEmpty() || !result.value().subject.isEmpty());
-            }
-        }
-    }
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    const auto result = parser.readMessageDetail(1);
+    QVERIFY(result.has_value());
+    QCOMPARE(result->message_index, 1);
+    QCOMPARE(result->subject, QStringLiteral("Second Message"));
+    QCOMPARE(result->from, QStringLiteral("Another Sender <another@example.com>"));
+    QCOMPARE(result->message_id, QStringLiteral("<test-002@example.com>"));
+    QVERIFY(result->body_plain.contains(QStringLiteral("Body of the second email message.")));
     parser.close();
     delete temp_file;
 }
@@ -463,27 +509,39 @@ void TestMboxParser::concurrentReadsDoNotRace() {
 // ============================================================================
 
 void TestMboxParser::fromLineDetectsValidSeparator() {
-    // "From " followed by email and date is a valid MBOX separator
-    QByteArray valid_line = "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
-    QByteArray invalid_line = "From: sender@example.com\r\n";
-    QByteArray empty_line;
+    // "From " followed by a sender and an asctime date is a valid MBOX separator;
+    // the RFC 5322 "From:" header is not. isFromLine() is private and static, so
+    // both cases are driven through open()/indexMessages().
+    const QByteArray valid_line = "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    const QByteArray invalid_line = "From: sender@example.com\r\n";
 
-    // We can't directly call the static private isFromLine(),
-    // so we test indirectly via indexing: a file starting with
-    // "From " should produce at least one indexed message.
-    QTemporaryFile temp_file;
-    QVERIFY(temp_file.open());
-    temp_file.write(valid_line);
-    temp_file.write("Subject: Test\r\n\r\nBody text\r\n");
-    temp_file.close();
+    QTemporaryFile valid_file;
+    QVERIFY(valid_file.open());
+    valid_file.write(valid_line);
+    valid_file.write("Subject: Test\r\n\r\nBody text\r\n");
+    valid_file.close();
 
     MboxParser parser;
-    parser.open(temp_file.fileName());
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        QVERIFY(parser.messageCount() >= 1);
-    }
+    parser.open(valid_file.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 1);
     parser.close();
+
+    // A file whose first line is a "From:" HEADER is not an MBOX: the separator
+    // check must reject it at open rather than treat the header as message one.
+    QTemporaryFile invalid_first_line;
+    QVERIFY(invalid_first_line.open());
+    invalid_first_line.write(invalid_line);
+    invalid_first_line.write("Subject: Test\r\n\r\nBody text\r\n");
+    invalid_first_line.close();
+
+    MboxParser rejecting_parser;
+    QSignalSpy error_spy(&rejecting_parser, &MboxParser::errorOccurred);
+    rejecting_parser.open(invalid_first_line.fileName());
+    QVERIFY(!rejecting_parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(rejecting_parser.messageCount(), 0);
 }
 
 // ============================================================================
@@ -493,11 +551,16 @@ void TestMboxParser::fromLineDetectsValidSeparator() {
 void TestMboxParser::loadMessagesWhenClosed() {
     MboxParser parser;
     QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
+    QSignalSpy loaded_spy(&parser, &MboxParser::messagesLoaded);
 
-    // Loading messages without opening should either emit an error
-    // or simply do nothing
+    // Loading without an open file must fail closed: report the failure and emit no
+    // messagesLoaded, so a view never renders an empty list as a successful load.
     parser.loadMessages(0, 10);
-    QVERIFY(error_spy.count() > 0 || !parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY2(error_spy.first().at(0).toString().startsWith(
+                 QStringLiteral("Failed to load messages")),
+             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(loaded_spy.count(), 0);
 }
 
 void TestMboxParser::loadDetailOutOfRange() {
@@ -506,15 +569,20 @@ void TestMboxParser::loadDetailOutOfRange() {
 
     MboxParser parser;
     parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
 
-    if (parser.isOpen()) {
-        parser.indexMessages();
-        QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
-        // Request an out-of-range index
-        parser.loadMessageDetail(99'999);
-        // Should produce an error or simply not crash
-        QVERIFY(error_spy.count() > 0 || true);
-    }
+    QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
+    QSignalSpy detail_spy(&parser, &MboxParser::messageDetailLoaded);
+    // Request an out-of-range index: the read is rejected, so the failure is
+    // reported and no (stale or empty) detail is emitted.
+    parser.loadMessageDetail(99'999);
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY2(error_spy.first().at(0).toString().startsWith(
+                 QStringLiteral("Failed to load message detail")),
+             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(detail_spy.count(), 0);
+
     parser.close();
     delete temp_file;
 }
@@ -575,11 +643,12 @@ void TestMboxParser::cancelDoesNotBlockLaterReads() {
     auto messages = parser.readMessages(0, 10);
     QVERIFY2(messages.has_value(),
              "read after a stale cancel must not fail with operation_cancelled");
-    QVERIFY(messages.value().size() >= 1);
+    QCOMPARE(messages->size(), 2);
 
     parser.cancel();
     auto detail = parser.readMessageDetail(0);
     QVERIFY2(detail.has_value(), "detail read after a stale cancel must not fail");
+    QCOMPARE(detail->subject, QStringLiteral("Hello World"));
 
     parser.close();
     delete temp_file;

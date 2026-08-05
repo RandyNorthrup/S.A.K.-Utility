@@ -3,7 +3,7 @@
 
 /**
  * @file test_user_profile_restore_worker.cpp
- * @brief TST-06 — Unit tests for UserProfileRestoreWorker.
+ * @brief TST-06 - Unit tests for UserProfileRestoreWorker.
  *
  * Tests: backup validation, conflict resolution modes, cancellation,
  * signal emission, directory creation, and progress tracking.
@@ -208,13 +208,13 @@ void UserProfileRestoreWorkerTests::createBackupTree(QTemporaryDir& backupDir,
 }
 
 // ===========================================================================
-// Tests — Validation
+// Tests - Validation
 // ===========================================================================
 
 void UserProfileRestoreWorkerTests::invalidBackupNoManifest() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    // No manifest.json ⇒ should fail immediately.
+    // No manifest.json => should fail immediately.
 
     QTemporaryDir destDir;
     QVERIFY(destDir.isValid());
@@ -236,6 +236,9 @@ void UserProfileRestoreWorkerTests::invalidBackupNoManifest() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // failure
+    // Failed AS a validation failure ("Invalid backup"), not by running and erroring out
+    // later: the summary string is what tells those two apart.
+    QCOMPARE(completeSpy.first().at(1).toString(), QStringLiteral("Invalid backup"));
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +253,7 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
     sak::BackupManifest manifest = buildManifest(QStringLiteral("User1"), {});
-    // No mappings → immediate success.
+    // No mappings -> immediate success.
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -265,6 +268,10 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // success
+    // A restore of nothing: the summary must report zero files, not just "true". This is
+    // what separates "no mappings, nothing to do" from "restored something unasked-for".
+    QVERIFY2(completeSpy.first().at(1).toString().contains(QStringLiteral("Files restored: 0")),
+             qPrintable(completeSpy.first().at(1).toString()));
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +306,9 @@ void UserProfileRestoreWorkerTests::manifestChecksumMismatchFailsValidation() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // integrity failure -> refuse
+    // "before any file is touched" is the actual claim: validateBackup runs ahead of the
+    // user loop, so the destination profile root is never even created.
+    QVERIFY(!QDir(destDir.path() + "/Users").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +472,7 @@ void UserProfileRestoreWorkerTests::effectiveDestUserPrefersDestination() {
 }
 
 // ===========================================================================
-// Tests — Core restore flow
+// Tests - Core restore flow
 // ===========================================================================
 
 void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds() {
@@ -642,7 +652,7 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
 }
 
 // ===========================================================================
-// Tests — Conflict resolution
+// Tests - Conflict resolution
 // ===========================================================================
 
 void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
@@ -759,8 +769,9 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     QFile df(destFile);
     QVERIFY(df.open(QIODevice::ReadWrite));
     df.close();
-    QFileInfo destInfo(destFile);
-    QDateTime pastTime = QDateTime::currentDateTime().addDays(-30);
+    // Backdate the destination so the backup copy is unambiguously newer. (A QFileInfo
+    // and a "30 days ago" QDateTime used to be built here and never read; the SetFileTime
+    // call below is what actually decides this test.)
 #ifdef Q_OS_WIN
     {
         HANDLE hFile = CreateFileW(reinterpret_cast<LPCWSTR>(destFile.utf16()),
@@ -906,7 +917,7 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
 }
 
 // ===========================================================================
-// Tests — Cancellation
+// Tests - Cancellation
 // ===========================================================================
 
 void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
@@ -936,7 +947,9 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
     QVERIFY(completeSpy.isValid());
+    QVERIFY(logSpy.isValid());
 
     worker.startRestore(
         backupDir.path(),
@@ -950,16 +963,35 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
 
-    // The restore should report failure (cancelled) or partial completion.
-    // Either outcome is acceptable as long as we didn't crash.
-    // The implementation emits restoreComplete(true, summary) if cancellation
-    // was processed between user iterations, or restoreComplete(false, "cancelled")
-    // if processed at the top of the user loop. Both are valid.
-    QVERIFY(completeSpy.count() >= 1);
+    // Join before touching logSpy. QSignalSpy connects with Qt::DirectConnection, so the
+    // worker thread appends to the spy's list itself, and in Qt 6.5.3 that append is not
+    // locked (the mutex only arrives in 6.10.3). Observing restoreComplete is a logical
+    // ordering, not a synchronisation edge; wait() is one, and it also pins the claim that
+    // a cancelled run actually terminates rather than merely reporting that it did.
+    QVERIFY2(worker.wait(5000), "restore worker did not finish after cancel");
+
+    // The "EmitsCancel" half of the name: cancel() announces the cancellation.
+    bool announced = false;
+    for (const auto& args : logSpy) {
+        if (args.at(0).toString().contains(QStringLiteral("Canceling restore"))) {
+            announced = true;
+            break;
+        }
+    }
+    QVERIFY2(announced, "cancel() did not announce the cancellation");
+
+    // Fail closed: run() computes success as (no errors AND not cancelled), so a run
+    // whose cancel flag was set before it finished can never report a clean success --
+    // whether it stopped at the top of the user loop, mid-copy, or ran the whole tree.
+    // (The flag is stored on the very next statement after start() with nothing spinning
+    // the event loop in between, so the run cannot have retired first.) The old body
+    // asserted only "count() >= 1" right after QCOMPARE(count(), 1), which is unfailable.
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
+    QVERIFY(!completeSpy.first().at(1).toString().isEmpty());
 }
 
 // ===========================================================================
-// Tests — Signals
+// Tests - Signals
 // ===========================================================================
 
 void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
@@ -997,7 +1029,14 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
 
     auto args = completeSpy.first();
     QCOMPARE(args.at(0).toBool(), true);
-    QVERIFY(!args.at(1).toString().isEmpty());  // summary message
+
+    // The summary carries the run's real counters, not just "some text": exactly the one
+    // planted file was restored, and nothing was skipped or errored. A non-empty check
+    // alone passed even when the counters were wrong.
+    const QString summary = args.at(1).toString();
+    QVERIFY2(summary.contains(QStringLiteral("Files restored: 1")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("Files skipped: 0")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("Errors: 0")), qPrintable(summary));
 
     // statusUpdate should have been emitted at least once.
     QVERIFY(statusSpy.count() >= 1);
@@ -1093,7 +1132,11 @@ void UserProfileRestoreWorkerTests::startThenImmediateDestroyIsSafe() {
             {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
         // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
     }
-    QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
+    // Reaching this line IS the assertion. A regressed lifetime does not return a wrong
+    // value, it kills the process inside the loop above: QThread's destructor calls
+    // qFatal("QThread: Destroyed while thread is still running"), which aborts before any
+    // QCOMPARE could run. There is no observable to compare.
+    QVERIFY(true);
 }
 
 // ===========================================================================
@@ -1188,6 +1231,12 @@ void UserProfileRestoreWorkerTests::unknownMergeModeFailsClosed() {
 
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
+
+    // Closed BEFORE anything was touched: the mode is rejected in
+    // resolveDestinationProfilePath, which runs before the profile directory is created,
+    // so no destination tree exists at all. A failure reported after a half-built profile
+    // would satisfy the flag check above but not this one.
+    QVERIFY(!QDir(destDir.path() + "/Users/UmmUser").exists());
 }
 
 // ===========================================================================
@@ -1212,7 +1261,9 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
     QVERIFY(completeSpy.isValid());
+    QVERIFY(logSpy.isValid());
 
     worker.startRestore(
         backupDir.path(),
@@ -1222,6 +1273,20 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
 
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
+
+    // ...and it failed for THIS reason: the missing source folder is reported as a
+    // warning, and the destination folder is never created (restoreFolder bails before
+    // its mkpath). Without these, any unrelated failure would satisfy the flag check.
+    bool reported = false;
+    for (const auto& args : logSpy) {
+        if (args.at(0).toString().contains(QStringLiteral("Source folder does not exist")) &&
+            args.at(1).toBool()) {
+            reported = true;
+            break;
+        }
+    }
+    QVERIFY2(reported, "Expected a warning naming the missing source folder");
+    QVERIFY(!QDir(destDir.path() + "/Users/MfsUser/Documents").exists());
 }
 
 // ===========================================================================
@@ -1263,12 +1328,17 @@ void UserProfileRestoreWorkerTests::verifyGoodCopySucceeds() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
+    // Verification passing is only meaningful if the bytes are actually there: assert the
+    // content, not just existence (an empty file exists too).
     const QString destFile = destDir.path() + "/Users/VUser/Documents/verify.txt";
-    QVERIFY(QFile::exists(destFile));
+    QVERIFY2(QFile::exists(destFile), qPrintable("Missing: " + destFile));
+    QFile restored(destFile);
+    QVERIFY(restored.open(QIODevice::ReadOnly));
+    QCOMPARE(restored.readAll(), QByteArray("verify-this-content"));
 }
 
 // ===========================================================================
-// Tests — AppData source filtering (honoring the restore AppData page)
+// Tests - AppData source filtering (honoring the restore AppData page)
 // ===========================================================================
 
 namespace {

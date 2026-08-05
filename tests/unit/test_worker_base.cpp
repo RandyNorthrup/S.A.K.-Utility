@@ -172,7 +172,10 @@ void WorkerBaseTests::exceptionSafety_badAlloc() {
     QCOMPARE(failed_spy.count(), 1);
     const auto args = failed_spy.first();
     QCOMPARE(args[0].toInt(), static_cast<int>(sak::error_code::internal_error));
-    QVERIFY(args[1].toString().contains("exception"));
+    // "exception" also appears in the catch-all message ("Unhandled unknown
+    // exception"), so pin the std::exception path instead: bad_alloc must be
+    // reported through what(), not fall through to the catch-all.
+    QVERIFY(args[1].toString().startsWith(QStringLiteral("Unhandled exception:")));
 }
 
 void WorkerBaseTests::exceptionSafety_unknownException() {
@@ -231,15 +234,22 @@ void WorkerBaseTests::isExecutingFlag() {
 }
 
 void WorkerBaseTests::destructorStopsThread() {
-    // Test that destructor properly cleans up
+    // Crash-regression test: the only failure mode is the process dying or
+    // hanging, so there is nothing to QCOMPARE afterwards -- the worker is gone.
+    // What would fail if ~WorkerBase regressed:
+    //   * drop the join, and ~QThread hits qFatal "QThread: Destroyed while
+    //     thread is still running", aborting the process;
+    //   * join but never stop the worker, and stopAndJoin() falls through to
+    //     terminate() and then std::abort();
+    //   * lose the requestStop()/checkStop() handshake, and the worker loops
+    //     forever so this test never returns.
     {
         CancellableWorker worker;
         worker.start();
         QThread::msleep(50);
         QVERIFY(worker.isRunning());
     }
-    // If we get here without hanging, the destructor worked
-    QVERIFY(true);
+    QVERIFY(true);  // reaching this line at all is the assertion
 }
 
 QTEST_MAIN(WorkerBaseTests)

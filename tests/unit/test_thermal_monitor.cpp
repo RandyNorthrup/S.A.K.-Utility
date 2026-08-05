@@ -16,7 +16,7 @@ class ThermalMonitorTests : public QObject {
 private Q_SLOTS:
     void initialState();
     void startStop();
-    void pollOnceReturnsReadings();
+    void pollOnceReadingsAreWellFormed();
     void clearHistory();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
@@ -29,24 +29,53 @@ void ThermalMonitorTests::initialState() {
 }
 
 void ThermalMonitorTests::startStop() {
+    // Counter declared before the monitor so it outlives the connection.
+    int updates = 0;
     ThermalMonitor monitor;
+    QObject::connect(&monitor,
+                     &ThermalMonitor::readingsUpdated,
+                     &monitor,
+                     [&updates](const QVector<sak::ThermalReading>&) { ++updates; });
+
     monitor.start(500);  // 500ms interval
 
     // After start(), the initial async poll launches immediately
     QVERIFY(monitor.isRunning());
 
+    // Stop while that first poll is still in flight. During a poll the timer is NOT
+    // active, so the stop intent survives only through m_active; and nothing spins the
+    // event loop between start() and stop(), so the watcher's finished callout (and
+    // therefore onPollComplete) cannot have run yet.
     monitor.stop();
-    // Timer is stopped; async poll may still be finishing
-    QTest::qWait(200);
+
+    // The in-flight poll drains and NOTHING re-arms the timer: without the m_active
+    // guard in onPollComplete the stale result would be processed and the timer
+    // restarted, leaving isRunning() true forever and readings arriving after stop().
+    QTRY_VERIFY_WITH_TIMEOUT(!monitor.isRunning(), 30'000);
+    QTest::qWait(250);     // let any queued watcher callout be delivered
+    QVERIFY(!monitor.isRunning());
+    QCOMPARE(updates, 0);  // the result of a poll that outlived stop() is dropped
 }
 
-void ThermalMonitorTests::pollOnceReturnsReadings() {
-    // pollOnce should return without crashing even if WMI is unavailable
-    // (returns -1.0 for unavailable sensors, which are filtered out)
-    const auto readings = ThermalMonitor::pollOnce();
-    // We can't guarantee readings are available (requires admin + WMI),
-    // but the call must not crash
-    QVERIFY(true);
+void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
+    // A live sensor query: MSAcpi_ThermalZoneTemperature and StorageReliabilityCounter
+    // both need admin, so an EMPTY result is legitimate and the reading COUNT cannot be
+    // asserted here. Two things are invariant on any box: a query that FAILED
+    // (unresolvable interpreter, non-zero exit, timeout) must report no readings at all,
+    // and every reading that IS returned must have survived parseThermalOutput's filters.
+    bool queryOk = false;
+    const auto readings = ThermalMonitor::pollOnce(queryOk);
+    QVERIFY2(queryOk || readings.isEmpty(), "a failed sensor query must not yield readings");
+
+    for (const auto& reading : readings) {
+        const bool known_component = reading.component == QStringLiteral("CPU Package") ||
+                                     reading.component == QStringLiteral("GPU") ||
+                                     reading.component.startsWith(QStringLiteral("Disk "));
+        QVERIFY2(known_component, qPrintable("Unexpected component: " + reading.component));
+        QVERIFY2(reading.temperature_celsius > 0.0,
+                 qPrintable(QString("Non-positive temperature for %1").arg(reading.component)));
+        QVERIFY2(reading.timestamp.isValid(), qPrintable("No timestamp on " + reading.component));
+    }
 }
 
 void ThermalMonitorTests::clearHistory() {
@@ -56,7 +85,11 @@ void ThermalMonitorTests::clearHistory() {
     QTest::qWait(250);
     monitor.stop();
 
-    // History may or may not have entries depending on WMI availability
+    // NOTE ON STRENGTH: only a poll that produced at least one reading appends to the
+    // history, and every sensor this monitor reads needs administrator rights, so on an
+    // unprivileged run the history is still empty when clearHistory() is called and the
+    // assertion below would also hold if clearHistory() did nothing. Populating it needs
+    // either a live elevated sensor or an injection seam on m_history; neither exists.
     monitor.clearHistory();
     QVERIFY(monitor.history().isEmpty());
 }
@@ -65,13 +98,32 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // Verify the timer doesn't accumulate concurrent polls.
     // With async polling, each cycle takes several seconds (PS startup + WMI),
     // so we allow generous time and just verify no runaway accumulation.
+    int cycles = 0;
     ThermalMonitor monitor;
+    QObject::connect(&monitor,
+                     &ThermalMonitor::readingsUpdated,
+                     &monitor,
+                     [&cycles](const QVector<sak::ThermalReading>&) { ++cycles; });
     monitor.start(500);
 
+    // processReadings emits readingsUpdated for EVERY completed cycle -- with an empty
+    // reading vector on a box whose sensors need admin -- so this counts poll CYCLES on
+    // any machine, unlike history(), which stays empty there and makes a size bound
+    // vacuous. Bounded by the sensor-query timeout, so it always arrives.
+    QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 30'000);
+
+    const int cycles_before_window = cycles;
     QTest::qWait(3000);
     monitor.stop();
 
-    // Async polls take 1-3 seconds each, so expect at most a few.
+    // Polls are strictly serialized: the timer is single-shot and re-armed only after a
+    // poll completes, and onTimerTick defers while one is in flight. A 3s window at a
+    // 500ms interval can therefore retire only a handful of cycles even if every poll
+    // returned instantly; a timer that stacked a poll per tick would blow past this.
+    const int window_cycles = cycles - cycles_before_window;
+    QVERIFY2(window_cycles <= 12,
+             qPrintable(QString("Runaway poll cycles: %1").arg(window_cycles)));
+
     // History may be empty if WMI is unavailable (also valid).
     const int history_size = monitor.history().size();
     QVERIFY2(history_size <= 30,

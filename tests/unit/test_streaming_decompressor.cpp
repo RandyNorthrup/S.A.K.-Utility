@@ -112,39 +112,38 @@ QString StreamingDecompressorTests::filePath(const QString& name) const {
 // Factory + Open/Close Lifecycle
 // ============================================================================
 
+// open() only opens the file and initialises the library stream -- it never looks
+// at the compressed payload -- so these fixtures (correct magic, junk content) must
+// open, report themselves open, and be closed again. A decoder that validated the
+// payload at open time, or that left isOpen() true after close(), fails here.
 void StreamingDecompressorTests::gzipDecompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     QVERIFY(decomp != nullptr);
 
-    // Open may fail with invalid compressed data, but should not crash
-    bool opened = decomp->open(filePath("test.gz"));
-    if (opened) {
-        QVERIFY(decomp->isOpen());
-        decomp->close();
-        QVERIFY(!decomp->isOpen());
-    }
+    QVERIFY(decomp->open(filePath("test.gz")));
+    QVERIFY(decomp->isOpen());
+    decomp->close();
+    QVERIFY(!decomp->isOpen());
 }
 
 void StreamingDecompressorTests::bzip2Decompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.bz2"));
     QVERIFY(decomp != nullptr);
 
-    bool opened = decomp->open(filePath("test.bz2"));
-    if (opened) {
-        QVERIFY(decomp->isOpen());
-        decomp->close();
-    }
+    QVERIFY(decomp->open(filePath("test.bz2")));
+    QVERIFY(decomp->isOpen());
+    decomp->close();
+    QVERIFY(!decomp->isOpen());
 }
 
 void StreamingDecompressorTests::xzDecompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.xz"));
     QVERIFY(decomp != nullptr);
 
-    bool opened = decomp->open(filePath("test.xz"));
-    if (opened) {
-        QVERIFY(decomp->isOpen());
-        decomp->close();
-    }
+    QVERIFY(decomp->open(filePath("test.xz")));
+    QVERIFY(decomp->isOpen());
+    decomp->close();
+    QVERIFY(!decomp->isOpen());
 }
 
 // ============================================================================
@@ -153,10 +152,13 @@ void StreamingDecompressorTests::xzDecompressor_openClose() {
 
 void StreamingDecompressorTests::open_nonExistentFile() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
-    if (decomp) {
-        bool opened = decomp->open(filePath("nonexistent_file.gz"));
-        QVERIFY(!opened);
-    }
+    QVERIFY(decomp != nullptr);
+
+    // Fail closed: a missing file leaves the decompressor shut with the reason
+    // recorded, never half-open with an initialised stream and no file behind it.
+    QVERIFY(!decomp->open(filePath("nonexistent_file.gz")));
+    QVERIFY(!decomp->isOpen());
+    QVERIFY(!decomp->lastError().isEmpty());
 }
 
 // ============================================================================
@@ -165,11 +167,14 @@ void StreamingDecompressorTests::open_nonExistentFile() {
 
 void StreamingDecompressorTests::read_beforeOpen() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
-    if (decomp) {
-        char buffer[64];
-        qint64 bytesRead = decomp->read(buffer, sizeof(buffer));
-        QVERIFY(bytesRead <= 0);
-    }
+    QVERIFY(decomp != nullptr);
+
+    // Reading before open must be an ERROR (-1), not a 0 that a caller would read
+    // as a clean end-of-stream and treat as "the image was empty".
+    char buffer[64];
+    const qint64 bytesRead = decomp->read(buffer, sizeof(buffer));
+    QCOMPARE(bytesRead, static_cast<qint64>(-1));
+    QVERIFY(!decomp->lastError().isEmpty());
 }
 
 // ============================================================================
@@ -200,10 +205,10 @@ void StreamingDecompressorTests::xz_formatName() {
 
 void StreamingDecompressorTests::compressedBytesRead_initiallyZero() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
-    if (decomp) {
-        QCOMPARE(decomp->compressedBytesRead(), qint64{0});
-        QCOMPARE(decomp->decompressedBytesProduced(), qint64{0});
-    }
+    QVERIFY(decomp != nullptr);
+
+    QCOMPARE(decomp->compressedBytesRead(), qint64{0});
+    QCOMPARE(decomp->decompressedBytesProduced(), qint64{0});
 }
 
 // ============================================================================
@@ -212,12 +217,12 @@ void StreamingDecompressorTests::compressedBytesRead_initiallyZero() {
 
 void StreamingDecompressorTests::atEnd_beforeOpen() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
-    if (decomp) {
-        // Before open, behavior is implementation-dependent
-        // Just verify no crash
-        [[maybe_unused]] bool ended = decomp->atEnd();
-        QVERIFY(true);
-    }
+    QVERIFY(decomp != nullptr);
+
+    // atEnd() means "the decoder reported end-of-stream", so a fresh decompressor
+    // must answer false: a true here would make a `while (!atEnd()) read()` caller
+    // skip the file entirely and produce nothing.
+    QVERIFY(!decomp->atEnd());
 }
 
 // ============================================================================
@@ -276,6 +281,10 @@ void StreamingDecompressorTests::completeGzip_readsAllBytes() {
     QVERIFY(decomp != nullptr);
     QVERIFY(decomp->open(filePath("complete.gz")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(payload.size()));
+    // readFully() stopped on a 0-byte read, which only happens once the decoder has
+    // reported end-of-stream; the running counter must agree with what was handed out.
+    QVERIFY(decomp->atEnd());
+    QCOMPARE(decomp->decompressedBytesProduced(), static_cast<qint64>(payload.size()));
 }
 
 void StreamingDecompressorTests::truncatedGzip_reportsError() {
@@ -292,8 +301,11 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
     QVERIFY(decomp != nullptr);
     QVERIFY(decomp->open(filePath("truncated.gz")));
     // A truncated stream must fail closed (return -1), not report a clean EOF
-    // over the partial output.
+    // over the partial output, and it must say why (the message differs depending
+    // on whether zlib or the truncation check catches it first).
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
+    QVERIFY(!decomp->atEnd());
+    QVERIFY(!decomp->lastError().isEmpty());
 }
 
 // Encode @p input as a real .xz stream (default preset -> 8 MiB dictionary).
@@ -398,6 +410,10 @@ void StreamingDecompressorTests::trailingGarbageAfterMemberFailsClosed() {
     QVERIFY(decomp != nullptr);
     QVERIFY(decomp->open(filePath("garbage.gz")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));  // fail closed
+    // The trailing bytes are not a member, so the stream never reaches a legitimate
+    // end: reporting atEnd() here would mean the garbage had been accepted as one.
+    QVERIFY(!decomp->atEnd());
+    QVERIFY(!decomp->lastError().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(StreamingDecompressorTests)

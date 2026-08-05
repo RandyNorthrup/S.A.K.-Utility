@@ -4,6 +4,7 @@
 #include "sak/win32mcp/browser_bridge_pipe.h"
 #include "sak/win32mcp/native_messaging.h"
 
+#include <QFile>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -286,12 +287,23 @@ void BrowserBridgePipeTests::reconnect_secondClientServedWithNewGeneration() {
 
 void BrowserBridgePipeTests::doubleStop_isSafe() {
     QTemporaryDir dir;
-    BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
+    const QString rendezvous = dir.filePath(QStringLiteral("r.json"));
+    BrowserBridgePipeServer server(testOptions(rendezvous, 30'000));
     QString error;
     QVERIFY2(server.start(&error), qPrintable(error));
+    QVERIFY(QFile::exists(rendezvous));  // start() published the discovery record
     server.stop();
     server.stop();  // second stop (and the destructor's) must be a safe no-op, not a crash
-    QVERIFY(true);
+
+    // Idempotence is OBSERVABLE, not just "it did not crash": the first stop tore the cycle
+    // down -- rendezvous record removed, sender fails closed -- and the second left that
+    // teardown exactly as it found it rather than re-closing a handle or re-joining a thread.
+    QVERIFY(!QFile::exists(rendezvous));
+    const auto exchange = server.sendCommandAwaitReply(
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
+                    {QStringLiteral("id"), QStringLiteral("b-1")}});
+    QVERIFY(!exchange.ok);
+    QVERIFY(exchange.error.contains(QStringLiteral("not connected")));
 }
 
 void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
@@ -299,7 +311,8 @@ void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
     // every stop() after the first), and a second start() while running must be refused rather
     // than move-assign onto a joinable std::thread (which would std::terminate).
     QTemporaryDir dir;
-    BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
+    const QString rendezvous = dir.filePath(QStringLiteral("r.json"));
+    BrowserBridgePipeServer server(testOptions(rendezvous, 30'000));
     QString error;
     QVERIFY2(server.start(&error), qPrintable(error));
 
@@ -309,10 +322,20 @@ void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
     QVERIFY(busy.contains(QStringLiteral("already running")));
 
     server.stop();
+    QVERIFY(!QFile::exists(rendezvous));  // cycle 1 really tore down
     // A fresh cycle starts and tears down cleanly (the once_flag would have blocked this stop()).
     QVERIFY2(server.start(&error), qPrintable(error));
+    QVERIFY(QFile::exists(rendezvous));  // cycle 2 re-published the record
     server.stop();
-    QVERIFY(true);  // no terminate, no deadlock, no leaked thread across the destructor
+    // The SECOND stop is the whole point: under the retired std::once_flag it silently did
+    // nothing, leaving cycle 2's pipe handle, I/O thread and rendezvous record alive. The
+    // record being gone -- and the sender failing closed -- is the observable proof that this
+    // teardown ran, which the old terminal QVERIFY(true) never established.
+    QVERIFY(!QFile::exists(rendezvous));
+    const auto exchange = server.sendCommandAwaitReply(
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
+                    {QStringLiteral("id"), QStringLiteral("b-1")}});
+    QVERIFY(!exchange.ok);
 }
 
 QTEST_MAIN(BrowserBridgePipeTests)

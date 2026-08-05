@@ -3,7 +3,7 @@
 
 /**
  * @file test_flash_worker.cpp
- * @brief TST-09 — Unit tests for FlashWorker validation, structs, and early‐exit paths.
+ * @brief TST-09 -- Unit tests for FlashWorker validation, structs, and early-exit paths.
  *
  * Tests:
  *  - ValidationResult / ValidationMode / ImageMetadata defaults & logic
@@ -11,7 +11,7 @@
  *  - Early failure when ImageSource::open() fails (mock)
  *  - Cancellation flag propagation
  *
- * No admin privileges or physical drives required — all tests exercise
+ * No admin privileges or physical drives required -- all tests exercise
  * logic that fires before raw disk writes.
  */
 
@@ -26,7 +26,7 @@
 #include <memory>
 
 // ===========================================================================
-// Mock Image Source — always‐failing or configurable
+// Mock Image Source -- always-failing or configurable
 // ===========================================================================
 
 class MockImageSource : public ImageSource {
@@ -96,9 +96,6 @@ private slots:
     void constructorDefaultSpeed();
 
     // ---- Setters ----
-    void setValidationModeFull();
-    void setValidationModeSample();
-    void setValidationModeSkip();
     void setVerificationEnabledToggle();
     void setBufferSizeCustom();
 
@@ -249,27 +246,17 @@ void FlashWorkerTests::constructorDefaultSpeed() {
 // Setters
 // ===========================================================================
 
-void FlashWorkerTests::setValidationModeFull() {
-    auto src = std::make_unique<MockImageSource>(false);
-    FlashWorker worker(std::move(src), QStringLiteral("X"));
-    worker.setValidationMode(sak::ValidationMode::Full);
-    // No crash — setter accepted.
-    QVERIFY(true);
-}
-
-void FlashWorkerTests::setValidationModeSample() {
-    auto src = std::make_unique<MockImageSource>(false);
-    FlashWorker worker(std::move(src), QStringLiteral("X"));
-    worker.setValidationMode(sak::ValidationMode::Sample);
-    QVERIFY(true);
-}
-
-void FlashWorkerTests::setValidationModeSkip() {
-    auto src = std::make_unique<MockImageSource>(false);
-    FlashWorker worker(std::move(src), QStringLiteral("X"));
-    worker.setValidationMode(sak::ValidationMode::Skip);
-    QVERIFY(true);
-}
+// NOTE: setValidationModeFull/Sample/Skip used to live here. All three were
+// `worker.setValidationMode(<enum>); QVERIFY(true);` -- FlashWorker exposes no getter for
+// m_validationMode, so they would have passed against an empty setter body, and they were
+// the only callers of setValidationMode() in the unit suite. The one remaining caller is
+// tests/certification/flash_live_certifier.cpp:265 -- also a test. FlashCoordinator forwards
+// verification and buffer size but never the validation mode, so the user-facing setting is
+// not wired to the worker at all; that is a product defect tracked separately, not a reason
+// to keep a test that cannot fail.
+//
+// The two setters below are still exercised because FlashCoordinator DOES call them; they
+// remain unassertable for the same "no getter" reason, which is tracked separately.
 
 void FlashWorkerTests::setVerificationEnabledToggle() {
     auto src = std::make_unique<MockImageSource>(false);
@@ -326,9 +313,15 @@ void FlashWorkerTests::executeFailsWhenImageOpenFails() {
     bool stopped = worker.wait(5000);
     QVERIFY2(stopped, "Worker thread did not stop within 5 seconds");
 
-    // Should have emitted failed() with an error code.
-    QVERIFY2(failedSpy.count() >= 1,
-             "Expected failed() signal when ImageSource::open() returns false");
+    // Exactly one failure report, carrying the code the caller switches on. A count-only
+    // check would still pass if execute() bailed for some entirely different reason.
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy.first().at(0).toInt(), static_cast<int>(sak::error_code::file_not_found));
+
+    // ...and exactly one human-readable error naming the stage that failed. Nothing must be
+    // emitted twice: the coordinator counts a drive as failed once per signal.
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.first().at(0).toString(), QStringLiteral("Failed to open image source"));
 }
 
 void FlashWorkerTests::executeFailsWhenDeviceInvalid() {
@@ -345,8 +338,13 @@ void FlashWorkerTests::executeFailsWhenDeviceInvalid() {
     bool stopped = worker.wait(5000);
     QVERIFY2(stopped, "Worker thread did not stop within 5 seconds");
 
-    // DeviceIoControl / CreateFileW should fail → failed() emitted.
-    QVERIFY2(failedSpy.count() >= 1, "Expected failed() signal when device path is invalid");
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy.first().at(0).toInt(), static_cast<int>(sak::error_code::file_not_found));
+
+    // The image opened fine, so the failure MUST be attributed to the device stage -- this is
+    // what distinguishes this test from executeFailsWhenImageOpenFails, which shares the code.
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.first().at(0).toString(), QStringLiteral("Failed to open target device"));
 }
 
 // ===========================================================================

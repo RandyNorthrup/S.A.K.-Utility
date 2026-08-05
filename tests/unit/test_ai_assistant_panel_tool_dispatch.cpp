@@ -236,7 +236,12 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
         QVERIFY(panel->m_asyncToolRunner->isRunning());
 
-        // Destroy mid-flight; must return without hanging or crashing.
+        // Destroy mid-flight. The only failure mode here is a CRASH or a HANG, so there is
+        // nothing to compare: ~AiAssistantPanel must DRAIN the in-flight pool task (which
+        // captured `this`) before the members it touches are torn down. Without that drain,
+        // reset() either blocks forever, or the task's completion dereferences a freed panel
+        // (access violation / heap corruption), or Qt aborts with "QThread: Destroyed while
+        // thread is running". Reaching the line after reset() at all is the assertion.
         panel.reset();
         QVERIFY(true);
     }
@@ -1243,11 +1248,23 @@ private Q_SLOTS:
         QVERIFY(data.value(QStringLiteral("reported_count")).toInt() >= 1);
         QVERIFY(data.value(QStringLiteral("enumeration_complete")).isBool());
         QCOMPARE(data.value(QStringLiteral("filtered_removable_only")).toBool(), false);
-        const int removable = data.value(QStringLiteral("removable_count")).toInt();
-        QVERIFY(removable >= 0);
+        const int removable = data.value(QStringLiteral("removable_count")).toInt(-1);
         QVERIFY(removable <= data.value(QStringLiteral("drive_count")).toInt());
         const QJsonArray drives = data.value(QStringLiteral("drives")).toArray();
         QVERIFY(!drives.isEmpty());
+        QCOMPARE(drives.size(), data.value(QStringLiteral("reported_count")).toInt(-1));
+        // removable_count really tallies the removable drives in the set that was returned:
+        // this listing is unfiltered and (like the sibling filter cert) well under the 64-drive
+        // ceiling, so counting the is_removable flags must reproduce it exactly. The retired
+        // `removable >= 0` held for every int -- including the 0 that toInt() hands back when
+        // removable_count is missing entirely -- so it asserted nothing.
+        int removable_in_list = 0;
+        for (const QJsonValue& value : drives) {
+            if (value.toObject().value(QStringLiteral("is_removable")).toBool()) {
+                ++removable_in_list;
+            }
+        }
+        QCOMPARE(removable_in_list, removable);
         const QJsonObject first = drives.at(0).toObject();
         QVERIFY(first.value(QStringLiteral("device_path"))
                     .toString()
@@ -1786,6 +1803,10 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = runReadPst(panel, QJsonObject{{QStringLiteral("path"), path}});
+        // Every runAppActionTool "run" path answers with a success field, so this pins that the
+        // op ACTUALLY RAN. Without it the whole test was the absence of a key, which a silently
+        // empty result would satisfy just as well.
+        QVERIFY(result.contains(QStringLiteral("success")));
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -1888,6 +1909,7 @@ private Q_SLOTS:
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = runRecoverDeleted(panel,
                                                      QJsonObject{{QStringLiteral("path"), path}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6086,7 +6108,13 @@ private Q_SLOTS:
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("networks")));
-            QVERIFY(data.value(QStringLiteral("network_count")).toInt() >= 0);
+            // The surfaced array is reported EXACTLY and never exceeds the scanned total
+            // (network_count is the whole scan; the array is capped). The retired
+            // `network_count >= 0` held for every int, including the 0 that toInt() returns
+            // for a missing field, so it could not detect a dropped count either.
+            const int reported = data.value(QStringLiteral("reported_count")).toInt(-1);
+            QCOMPARE(data.value(QStringLiteral("networks")).toArray().size(), reported);
+            QVERIFY(data.value(QStringLiteral("network_count")).toInt(-1) >= reported);
             QVERIFY(data.contains(QStringLiteral("channels")));
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
@@ -6107,6 +6135,7 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6127,8 +6156,13 @@ private Q_SLOTS:
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("profiles")));
-            QVERIFY(data.value(QStringLiteral("profile_count")).toInt() >= 0);
-            for (const auto& entry : data.value(QStringLiteral("profiles")).toArray()) {
+            // The surfaced array is reported EXACTLY and never exceeds the enumerated total.
+            // The retired `profile_count >= 0` held for every int, including the 0 that
+            // toInt() returns when profile_count is missing altogether.
+            const QJsonArray profiles = data.value(QStringLiteral("profiles")).toArray();
+            QCOMPARE(profiles.size(), data.value(QStringLiteral("reported_count")).toInt(-1));
+            QVERIFY(data.value(QStringLiteral("profile_count")).toInt(-1) >= profiles.size());
+            for (const auto& entry : profiles) {
                 const QJsonObject profile = entry.toObject();
                 QVERIFY(profile.contains(QStringLiteral("profile_name")));
                 QVERIFY(profile.contains(QStringLiteral("security_type")));
@@ -6155,6 +6189,7 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_wifi_profiles")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6178,8 +6213,13 @@ private Q_SLOTS:
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("system_restore_enabled")));
             QVERIFY(data.contains(QStringLiteral("elevated")));
-            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
             QVERIFY(data.contains(QStringLiteral("restore_points")));
+            // The surfaced array is reported EXACTLY and never exceeds the queried total.
+            // The retired `count >= 0` held for every int, including the 0 that toInt()
+            // returns for a missing count -- so a dropped count read as an honest zero.
+            const QJsonArray points = data.value(QStringLiteral("restore_points")).toArray();
+            QCOMPARE(points.size(), data.value(QStringLiteral("reported_count")).toInt(-1));
+            QVERIFY(data.value(QStringLiteral("count")).toInt(-1) >= points.size());
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
@@ -6199,6 +6239,7 @@ private Q_SLOTS:
             {QStringLiteral("operation"), QStringLiteral("run")},
             {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
             {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6219,7 +6260,12 @@ private Q_SLOTS:
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("sensors")));
-            QVERIFY(data.value(QStringLiteral("sensor_count")).toInt() >= 0);
+            // The header comment already claims "sensor_count == reported when under the cap";
+            // assert it. The retired `sensor_count >= 0` held for every int, including the 0
+            // that toInt() returns for a missing field, so it never checked anything.
+            const QJsonArray sensors = data.value(QStringLiteral("sensors")).toArray();
+            QCOMPARE(sensors.size(), data.value(QStringLiteral("reported_count")).toInt(-1));
+            QVERIFY(data.value(QStringLiteral("sensor_count")).toInt(-1) >= sensors.size());
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
@@ -6238,6 +6284,7 @@ private Q_SLOTS:
             {QStringLiteral("operation"), QStringLiteral("run")},
             {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
             {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6257,9 +6304,12 @@ private Q_SLOTS:
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("users")));
-            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
-            QCOMPARE(data.value(QStringLiteral("users")).toArray().size(),
-                     data.value(QStringLiteral("reported_count")).toInt());
+            const int reported = data.value(QStringLiteral("reported_count")).toInt(-1);
+            QCOMPARE(data.value(QStringLiteral("users")).toArray().size(), reported);
+            // count is the ENUMERATED total; the surfaced array is capped, never larger. The
+            // retired `count >= 0` held for every int, including the 0 that toInt() returns
+            // for a missing count -- exactly the fail-open shape this test exists to close.
+            QVERIFY(data.value(QStringLiteral("count")).toInt(-1) >= reported);
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
@@ -6278,6 +6328,7 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 
@@ -6297,10 +6348,13 @@ private Q_SLOTS:
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
             QVERIFY(data.contains(QStringLiteral("shares")));
-            QVERIFY(data.value(QStringLiteral("count")).toInt() >= 0);
             QCOMPARE(data.value(QStringLiteral("access_tested")).toBool(), false);
-            QCOMPARE(data.value(QStringLiteral("shares")).toArray().size(),
-                     data.value(QStringLiteral("reported_count")).toInt());
+            const int reported = data.value(QStringLiteral("reported_count")).toInt(-1);
+            QCOMPARE(data.value(QStringLiteral("shares")).toArray().size(), reported);
+            // count is the ENUMERATED total; the surfaced array is capped, never larger. The
+            // retired `count >= 0` held for every int, including the 0 that toInt() returns
+            // for a missing count -- the very "fake 0 shares" shape this test guards against.
+            QVERIFY(data.value(QStringLiteral("count")).toInt(-1) >= reported);
         } else {
             QVERIFY(result.value(QStringLiteral("message"))
                         .toString()
@@ -6342,6 +6396,7 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
 

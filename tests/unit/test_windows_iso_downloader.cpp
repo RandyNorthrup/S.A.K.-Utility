@@ -82,11 +82,18 @@ void WindowsISODownloaderTests::testAvailableArchitectures() {
 
 /**
  * Test availableChannels()
- * Should return 5 channels.
+ * Should return exactly the five UUP dump release rings.
  */
 void WindowsISODownloaderTests::testAvailableChannels() {
     auto channels = WindowsISODownloader::availableChannels();
     QCOMPARE(channels.size(), 5);
+    // Which five, not just how many: dropping Canary while duplicating Dev keeps the count at
+    // 5 and silently changes what the wizard can offer, which the bare size check accepted.
+    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Retail));
+    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::ReleasePreview));
+    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Beta));
+    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Dev));
+    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Canary));
 }
 
 /**
@@ -124,13 +131,29 @@ void WindowsISODownloaderTests::testFetchBuilds() {
 }
 
 /**
- * Test cancel() does not crash.
+ * Test cancel() aborts an in-flight API fetch.
+ *
+ * The primary claim is a CRASH regression: cancelAll() aborts every pending QNetworkReply, and
+ * abort() delivers finished() SYNCHRONOUSLY, whose slot removes the reply from the very list
+ * being walked. Iterating that list directly is use-after-free / iterator invalidation, so
+ * "the process is still alive after this line" is the assertion QVERIFY(true) stands for.
+ * The spy makes the functional half non-vacuous: once aborted, the fetch must never deliver
+ * results. (It can be latched before the cancel if the network was fast, hence the baseline.)
  */
 void WindowsISODownloaderTests::testCancel() {
+    QSignalSpy buildsSpy(downloader, &WindowsISODownloader::buildsFetched);
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
     QTest::qWait(500);
+
+    const auto delivered_before_cancel = buildsSpy.count();
     downloader->cancel();
-    // No crash is success
+    QTest::qWait(500);
+
+    // An aborted fetch reports an apiError, never a buildsFetched: the count cannot grow.
+    // (isDownloading() is deliberately NOT asserted here -- fetchBuilds never sets the
+    // downloading flag, so it reads false with or without the cancel.)
+    QCOMPARE(buildsSpy.count(), delivered_before_cancel);
+    // Surviving the abort/teardown above (no crash, no hang) is the rest of the claim.
     QVERIFY(true);
 }
 

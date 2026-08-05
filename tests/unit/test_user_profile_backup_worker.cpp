@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -23,42 +24,48 @@ class TestUserProfileBackupWorker : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ────────────────────────────────────────
-    void testConstruction();
+    // -- Construction ----------------------------------------
     void testNotRunningInitially();
 
-    // ── Cancel ──────────────────────────────────────────────
+    // -- Cancel ----------------------------------------------
     void testCancelWhenNotRunning();
 
-    // ── Encryption not supported (P06-25) ───────────────────
-
-    // ── B7-01: lifetime uses QThread state, not a late member flag ──
+    // -- B7-01: lifetime uses QThread state, not a late member flag --
     void testStartThenImmediateDestroyIsSafe();
 
-    // ── B7-08: username / relative-path traversal validation ──
+    // -- B7-08: username / relative-path traversal validation --
     void isSafePathSegment_acceptsNamesRejectsTraversal();
     void isSafeRelativePath_acceptsRelativeRejectsEscapes();
 
-    // ── B7-20: incomplete backups must not report a clean success ──
+    // -- B7-20: incomplete backups must not report a clean success --
     void backupMissingSelectedFolderReportsFailure();
     void backupExistingFolderReportsSuccess();
 
 private:
     struct BackupOutcome {
         std::atomic<bool> done{false};
-        bool success{true};
+        bool success{false};
     };
-    // Run a one-user backup to completion and return whether it reported success.
-    static bool runBackup(const QString& profilePath,
-                          const sak::FolderSelection& folder,
-                          const QString& destPath);
+    // What a helper-driven backup reported. `completed` is kept separate from `success`
+    // so a run that never emits backupComplete fails its test instead of defaulting into
+    // whichever outcome that test expected.
+    struct BackupRun {
+        bool completed{false};
+        bool success{false};
+    };
+    // Run a one-user backup on @p worker to completion. The worker is caller-owned so a
+    // test can put it in a specific state (e.g. a stale cancel) before the run.
+    static BackupRun runBackup(UserProfileBackupWorker& worker,
+                               const QString& profilePath,
+                               const sak::FolderSelection& folder,
+                               const QString& destPath);
 };
 
-bool TestUserProfileBackupWorker::runBackup(const QString& profilePath,
-                                            const sak::FolderSelection& folder,
-                                            const QString& destPath) {
-    UserProfileBackupWorker worker;
-
+TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
+    UserProfileBackupWorker& worker,
+    const QString& profilePath,
+    const sak::FolderSelection& folder,
+    const QString& destPath) {
     UserProfile user;
     user.username = QStringLiteral("tester");
     user.profile_path = profilePath;
@@ -89,7 +96,7 @@ bool TestUserProfileBackupWorker::runBackup(const QString& profilePath,
         QTest::qWait(10);
     }
     worker.wait();
-    return outcome.success;
+    return {outcome.done.load(), outcome.success};
 }
 
 void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
@@ -105,7 +112,11 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
 
     // A selected folder that does not exist means the backup omitted requested data;
     // it must NOT report a clean success (B7-20).
-    QVERIFY(!runBackup(srcDir.path(), folder, destParent.filePath(QStringLiteral("dest"))));
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(!run.success);
 }
 
 void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
@@ -127,20 +138,29 @@ void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
     folder.selected = true;
 
     // A real, readable folder backs up cleanly -> success (no false failure).
-    QVERIFY(runBackup(srcDir.path(), folder, destParent.filePath(QStringLiteral("dest"))));
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    // The copy really landed. Success alone does not prove it: a filtered-out file is
+    // "skipped, not an error", so a filter regression that dropped every file would
+    // still report success. Layout is <dest>/<username>/<relative_path>/<file>.
+    const QString copied = destParent.filePath(QStringLiteral("dest/tester/Documents/hello.txt"));
+    QVERIFY2(QFile::exists(copied), qPrintable("Missing: " + copied));
+    QFile copiedFile(copied);
+    QVERIFY(copiedFile.open(QIODevice::ReadOnly));
+    QCOMPARE(copiedFile.readAll(), QByteArray("hello"));
 }
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-void TestUserProfileBackupWorker::testConstruction() {
-    UserProfileBackupWorker worker;
-    // Should not crash; worker created with internal
-    // SmartFileFilter and PermissionManager
-    QVERIFY(!worker.isRunning());
-}
-
+// A duplicate testConstruction() -- same two lines, same single assertion -- used to sit
+// here. Construction (and the internal SmartFileFilter / PermissionManager it wires up)
+// is exercised by every test in this file, so only the named claim is kept.
 void TestUserProfileBackupWorker::testNotRunningInitially() {
     UserProfileBackupWorker worker;
     QVERIFY(!worker.isRunning());
@@ -152,9 +172,42 @@ void TestUserProfileBackupWorker::testNotRunningInitially() {
 
 void TestUserProfileBackupWorker::testCancelWhenNotRunning() {
     UserProfileBackupWorker worker;
-    // Cancel when not running should not crash
-    worker.cancel();
-    QVERIFY(!worker.isRunning());
+    {
+        QSignalSpy logSpy(&worker, &UserProfileBackupWorker::logMessage);
+        QVERIFY(logSpy.isValid());
+        // Cancel with no thread to cancel: must not crash, must not start anything, and
+        // must still announce itself (cancel() emits on the calling thread, so the spy
+        // has the message by the time it returns).
+        worker.cancel();
+        QVERIFY(!worker.isRunning());
+        QCOMPARE(logSpy.count(), 1);
+        QVERIFY(logSpy.first().at(0).toString().contains(QStringLiteral("Canceling backup")));
+    }
+
+    // ...and the cancel flag it set must not poison the NEXT run: startBackup clears it,
+    // so a real backup on this same worker still completes successfully. Without that
+    // reset every backup after an idle cancel would report "Backup cancelled".
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(QDir(srcDir.path()).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(srcDir.filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+        f.close();
+    }
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(run.success, "a cancel with nothing to cancel poisoned the next backup");
 }
 
 // ============================================================================
@@ -177,7 +230,11 @@ void TestUserProfileBackupWorker::testStartThenImmediateDestroyIsSafe() {
             BackupManifest{}, {}, QDir::tempPath() + "/sak_up_b7_01_dest", SmartFilter{}, options);
         // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
     }
-    QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.
+    // Reaching this line IS the assertion. A regressed lifetime does not return a wrong
+    // value, it kills the process inside the loop above: QThread's destructor calls
+    // qFatal("QThread: Destroyed while thread is still running"), which aborts before any
+    // QCOMPARE could run. There is no observable to compare.
+    QVERIFY(true);
 }
 
 // ============================================================================

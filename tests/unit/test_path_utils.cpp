@@ -103,18 +103,18 @@ void PathUtilsTests::isSafePath_exactBase() {
 void PathUtilsTests::isSafePath_traversalDotDot() {
     auto maliciousPath = m_basePath / "subdir" / ".." / ".." / "etc" / "passwd";
     auto result = sak::path_utils::isSafePath(maliciousPath, m_basePath);
-    if (result.has_value()) {
-        QVERIFY2(!result.value(), "Path traversal via .. should be rejected");
-    }
-    // error_code is also acceptable
+    // <base>/subdir exists, so weakly_canonical always anchors this path and
+    // isSafePath must give a real answer -- accepting an error here would let a
+    // regression that stopped answering pass silently.
+    QVERIFY(result.has_value());
+    QVERIFY2(!result.value(), "Path traversal via .. should be rejected");
 }
 
 void PathUtilsTests::isSafePath_embeddedTraversal() {
     auto path = m_basePath / "subdir" / ".." / ".." / "Windows" / "System32";
     auto result = sak::path_utils::isSafePath(path, m_basePath);
-    if (result.has_value()) {
-        QVERIFY(!result.value());
-    }
+    QVERIFY(result.has_value());
+    QVERIFY(!result.value());
 }
 
 void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
@@ -134,9 +134,9 @@ void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
 void PathUtilsTests::isSafePath_outsideBase() {
     auto outsidePath = std::filesystem::path("C:\\Windows\\System32\\cmd.exe");
     auto result = sak::path_utils::isSafePath(outsidePath, m_basePath);
-    if (result.has_value()) {
-        QVERIFY(!result.value());
-    }
+    // Both operands exist, so canonicalization cannot fail: demand the answer.
+    QVERIFY(result.has_value());
+    QVERIFY(!result.value());
 }
 
 void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
@@ -145,8 +145,15 @@ void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
     auto baseDriveC = std::filesystem::path("C:\\TestBase");
     auto pathDriveD = std::filesystem::path("D:\\SomeFile.txt");
     auto result = sak::path_utils::isSafePath(pathDriveD, baseDriveC);
+    // Unlike the cases above, whether D: is reachable is a property of the
+    // running machine (an empty optical drive answers ERROR_NOT_READY, which
+    // weakly_canonical turns into a hard error). Both outcomes are legitimate,
+    // so assert on both: a real answer must be "not contained", and a refusal
+    // must be the fail-closed invalid_path -- never a silent pass.
     if (result.has_value()) {
-        QVERIFY(!result.value());
+        QVERIFY2(!result.value(), "A D: path must not be contained by a C: base");
+    } else {
+        QCOMPARE(result.error(), sak::error_code::invalid_path);
     }
 #else
     QSKIP("Drive letter test is Windows-only");
@@ -240,10 +247,11 @@ void PathUtilsTests::availableSpace_validPath() {
 void PathUtilsTests::availableSpace_invalidPath() {
     auto result =
         sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
-    // May fail with error on most systems (Z: doesn't exist)
-    if (!result.has_value()) {
-        QVERIFY(true);  // Expected failure
-    }
+    // GetDiskFreeSpaceEx cannot answer for a path that does not exist, and every
+    // filesystem_error out of space() maps to read_error. Fail closed: no
+    // fabricated byte count, and no quietly-successful query either.
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::read_error);
 }
 
 // ============================================================================

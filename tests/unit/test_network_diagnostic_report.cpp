@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -530,10 +531,31 @@ void NetworkDiagnosticReportTests::generateHtml_writesCompleteFileAndEmitsSignal
     // (a flush/truncation bug would drop the tail).
     QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>"), Qt::CaseInsensitive));
     QVERIFY(html.trimmed().endsWith(QStringLiteral("</html>")));
-    // Byte-identical after normalizing the Text-mode CRLF the writer inserts.
+    // Byte-identical after normalizing the Text-mode CRLF the writer inserts AND the
+    // generation timestamp.
+    //
+    // The document embeds QDateTime::currentDateTime().toString(Qt::ISODate), which has
+    // one-second resolution, and this comparison regenerates the document a second time.
+    // Any run that straddles a second boundary between generateHtml() and toHtml() sees
+    // two different "Generated:" lines and fails on correct code. Release is usually quick
+    // enough to land inside one second; a Debug build is not, which is how this surfaced.
+    // Blanking the stamp on BOTH sides keeps the real claim - the file holds the COMPLETE
+    // document, so a flush or truncation bug that dropped the tail still fails this.
+    static const QRegularExpression generatedStamp(
+        QStringLiteral(R"(<p><b>Generated:</b> [^<]*</p>)"));
+    const QString placeholder = QStringLiteral("<p><b>Generated:</b> STAMP</p>");
+
     QString htmlNormalized = html;
     htmlNormalized.remove(QLatin1Char('\r'));
-    QCOMPARE(htmlNormalized, gen.toHtml());
+    htmlNormalized.replace(generatedStamp, placeholder);
+
+    QString expected = gen.toHtml();
+    expected.replace(generatedStamp, placeholder);
+
+    // The stamp must actually be present, or the normalization above would be silently
+    // hiding a missing header rather than a moving timestamp.
+    QVERIFY2(htmlNormalized.contains(placeholder), "written report has no Generated: line");
+    QCOMPARE(htmlNormalized, expected);
 }
 
 void NetworkDiagnosticReportTests::generateJson_writesValidJsonAndEmitsSignal() {
