@@ -86,9 +86,30 @@ if ($RepoRoot) {
     }
 }
 
-$runtimeVerifier = if ($RepoRoot) { Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path 'scripts/verify_windows_runtime_dependencies.ps1' } else { '' }
-if ($runtimeVerifier -and (Test-Path -LiteralPath $runtimeVerifier)) {
-    & $runtimeVerifier -RootDir $root -PrimaryExe 'sak_utility.exe'
+# Runtime dependency verification. This used to invoke the verifier and DISCARD its exit
+# code, then print "smoke passed" regardless - so a package missing a required DLL, i.e.
+# one that cannot start on a clean machine, passed the very check that exists to catch
+# that. It also treated an absent verifier as success. Both are fail-open, and both are
+# refused here: a check that did not run is not a check that passed.
+if (-not $RepoRoot) {
+    Write-Host "FAIL: -RepoRoot is required to locate the runtime dependency verifier." -ForegroundColor Red
+    exit 1
+}
+$runtimeVerifier = Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path `
+    'scripts/verify_windows_runtime_dependencies.ps1'
+if (-not (Test-Path -LiteralPath $runtimeVerifier)) {
+    Write-Host "FAIL: runtime dependency verifier not found at $runtimeVerifier" -ForegroundColor Red
+    exit 1
+}
+
+# Child process: a .ps1 invoked with the call operator only sets $LASTEXITCODE when it
+# calls exit, so an in-process call cannot distinguish "returned normally" from "left the
+# last native tool's code lying around".
+& pwsh -NoProfile -File $runtimeVerifier -RootDir $root -PrimaryExe 'sak_utility.exe'
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL: runtime dependency verification failed (exit $LASTEXITCODE)." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "Portable release smoke passed: $root"
+exit 0

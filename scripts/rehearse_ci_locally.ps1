@@ -51,6 +51,15 @@ Set-StrictMode -Version Latest
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $failures = New-Object System.Collections.Generic.List[string]
+
+# Rebuild PATH from the registry before anything runs. A CI runner starts from a fresh
+# login environment; a long-lived local shell does not, so a tool installed after that
+# shell started (ripgrep is the recurring one) is absent here and present on CI. The
+# gates fail closed on a missing tool - correctly - so without this the rehearsal
+# reports a tool problem that CI would never see, and hides whatever came after it.
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:PATH = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
 $phases = New-Object System.Collections.Generic.List[string]
 
 function Start-Phase([string]$name) {
@@ -63,6 +72,42 @@ function Assert-LastExit([string]$what) {
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("$what (exit $LASTEXITCODE)")
         Write-Host "FAILED: $what (exit $LASTEXITCODE)" -ForegroundColor Red
+    }
+}
+
+<#
+.SYNOPSIS
+    Run a repo .ps1 in a CHILD pwsh and return its real exit code.
+
+.DESCRIPTION
+    Do not call these scripts with the call operator. `& script.ps1` runs the script
+    in THIS process, and PowerShell does not set $LASTEXITCODE for a script that
+    returns without calling exit - the variable keeps whatever the last NATIVE
+    command left behind. Several of these scripts shell out to dumpbin, 7z and git,
+    so a script that printed "created successfully" was reported here as
+    "FAILED (exit 1)" purely because some tool inside it had returned non-zero on a
+    probe it handled.
+
+    A child process has an unambiguous exit code, and it is also how the workflow
+    invokes them, so the rehearsal matches CI rather than approximating it.
+#>
+function Invoke-RepoScript {
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$ScriptArgs = @()
+    )
+    # Out-Host, not a bare call. A PowerShell function returns EVERYTHING that reaches the
+    # pipeline, so without this the child's stdout is prepended to the exit code and the
+    # caller receives an Object[] instead of an int. Out-Host writes the child's output
+    # where a reader expects it while keeping it out of the return value.
+    & pwsh -NoProfile -File $ScriptPath @ScriptArgs | Out-Host
+    return $LASTEXITCODE
+}
+
+function Assert-ScriptExit([string]$what, [int]$code) {
+    if ($code -ne 0) {
+        $failures.Add("$what (exit $code)")
+        Write-Host "FAILED: $what (exit $code)" -ForegroundColor Red
     }
 }
 
@@ -129,12 +174,10 @@ if (-not $SkipPackaging) {
     }
 
     Start-Phase 'Stage portable release'
-    & (Join-Path $RepoRoot 'scripts/stage_portable_release.ps1') -BuildDir $buildDir -PackageName $pkgName
-    Assert-LastExit 'stage_portable_release.ps1'
+    Assert-ScriptExit 'stage_portable_release.ps1' (Invoke-RepoScript (Join-Path $RepoRoot 'scripts/stage_portable_release.ps1') @('-BuildDir', $buildDir, '-PackageName', $pkgName))
 
     Start-Phase 'Create release archive'
-    & (Join-Path $RepoRoot 'scripts/create_release_archive.ps1') -BuildDir $buildDir -PackageName $pkgName
-    Assert-LastExit 'create_release_archive.ps1'
+    Assert-ScriptExit 'create_release_archive.ps1' (Invoke-RepoScript (Join-Path $RepoRoot 'scripts/create_release_archive.ps1') @('-BuildDir', $buildDir, '-PackageName', $pkgName))
 
     $zipPath = Join-Path $buildDir "$pkgName-Windows-x64.zip"
     if (-not (Test-Path $zipPath)) {
@@ -148,17 +191,13 @@ if (-not $SkipPackaging) {
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
 
         Start-Phase 'Smoke test clean portable package'
-        & (Join-Path $RepoRoot 'scripts/verify_portable_release_smoke.ps1') `
-            -PackageRoot $extract -RepoRoot $RepoRoot
-        Assert-LastExit 'verify_portable_release_smoke.ps1'
+        Assert-ScriptExit 'verify_portable_release_smoke.ps1' (Invoke-RepoScript (Join-Path $RepoRoot 'scripts/verify_portable_release_smoke.ps1') @('-PackageRoot', $extract, '-RepoRoot', $RepoRoot))
 
         Start-Phase 'Startup E2E smoke from clean extracted package'
-        & (Join-Path $RepoRoot 'scripts/run_portable_e2e_smoke.ps1') -PackageRoot $extract
-        Assert-LastExit 'run_portable_e2e_smoke.ps1'
+        Assert-ScriptExit 'run_portable_e2e_smoke.ps1' (Invoke-RepoScript (Join-Path $RepoRoot 'scripts/run_portable_e2e_smoke.ps1') @('-PackageRoot', $extract))
 
         Start-Phase 'Release readiness gate from clean extracted package'
-        & (Join-Path $RepoRoot 'scripts/check_release_readiness.ps1') -PackageRoot $extract
-        Assert-LastExit 'check_release_readiness.ps1'
+        Assert-ScriptExit 'check_release_readiness.ps1' (Invoke-RepoScript (Join-Path $RepoRoot 'scripts/check_release_readiness.ps1') @('-PackageRoot', $extract))
     }
 }
 

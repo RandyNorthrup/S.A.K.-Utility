@@ -30,11 +30,14 @@ function Find-Dumpbin {
         ${env:ProgramFiles(x86)}
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
-    $matches = @()
+    # NOT $matches: that is a PowerShell automatic variable, rewritten by every -match
+    # and every switch -regex in scope. Anything added here could be silently discarded
+    # by an unrelated regex, and the search would then report dumpbin as not found.
+    $dumpbinCandidates = @()
     foreach ($root in $roots) {
         $vsRoot = Join-Path $root "Microsoft Visual Studio\2022"
         if (Test-Path -LiteralPath $vsRoot -PathType Container) {
-            $matches += Get-ChildItem -LiteralPath $vsRoot `
+            $dumpbinCandidates += Get-ChildItem -LiteralPath $vsRoot `
                 -Filter dumpbin.exe `
                 -Recurse `
                 -ErrorAction SilentlyContinue |
@@ -42,8 +45,8 @@ function Find-Dumpbin {
         }
     }
 
-    if ($matches.Count -gt 0) {
-        return ($matches | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+    if ($dumpbinCandidates.Count -gt 0) {
+        return ($dumpbinCandidates | Sort-Object FullName -Descending | Select-Object -First 1).FullName
     }
 
     throw "dumpbin.exe was not found. Install Visual Studio Build Tools or run from a Developer PowerShell."
@@ -86,6 +89,10 @@ function Test-IsSystemDll {
         "version.dll",
         "winhttp.dll",
         "winmm.dll",
+        # Windows Trust Verification API, System32 only and never redistributable.
+        # ChocolateyManager calls WinVerifyTrust to Authenticode-check the installer it
+        # is about to run, which is what put this in the import table.
+        "wintrust.dll",
         "wlanapi.dll",
         "ws2_32.dll"
     )
