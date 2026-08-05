@@ -210,7 +210,10 @@ $gitleaks = (Get-Command gitleaks -ErrorAction SilentlyContinue)
 if ($null -eq $gitleaks) {
     # Fail rather than skip: this is one of the two gates currently red in CI, so
     # "not checked" must not read as "passed".
-    $failures.Add('gitleaks is not installed, so the full-history secret scan did NOT run. Install it (winget install gitleaks) - this is one of the two gates currently failing in CI.')
+    # Not a CI failure: .github/workflows/secret-scan.yml downloads and installs gitleaks
+    # itself, so the hosted job always has it. This is purely a LOCAL rehearsal gap - the
+    # scan cannot be rehearsed here without the tool, and an unrun check is not a pass.
+    $failures.Add('gitleaks is not installed, so the full-history secret scan did NOT run locally. Install it (winget install gitleaks) to rehearse this gate; CI installs its own copy, so this is a rehearsal gap rather than a CI failure.')
     Write-Host 'FAILED: gitleaks not installed; full-history scan did not run.' -ForegroundColor Red
 } else {
     & $gitleaks.Source detect --source $RepoRoot --redact --no-banner
