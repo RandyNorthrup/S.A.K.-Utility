@@ -1854,6 +1854,72 @@ The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
 - [ ] R5-G15-4 CI has no clang-tidy, no cppcheck, no dead-code, and no sanitizer job;
       every gate that exists only in pre-commit can be bypassed by a direct push
 
+### G22 - wave 5 follow-ups: uncited issues surfaced while fixing
+
+Each of these was found by a fix agent while working a different finding, correctly left
+out of that agent's scope, and is tracked here for closure. None was reported by the
+review.
+
+- [ ] R5-G22-1 email_inspector_panel.cpp context menu does
+      data(Qt::UserRole).toULongLong() with no ok check, so a missing or wrong-typed role
+      silently becomes 0 -- and 0 is a VALID MBOX message index. Latent today because
+      rows always carry a uint64 role. Fix with sak::decodeEmailViewId or itemIdForRow
+- [ ] R5-G22-2 EmailExportConfig::folder_id uses 0 as 'not set', but the MBOX root folder
+      id IS 0, so 'Export Folder' on an MBOX resolves to 'no folder'. Use std::optional
+- [ ] R5-G22-3 cleanup_worker.cpp volumeSupportsRecycleBin is now a near-duplicate of the
+      shared sak::pathVolumeHasRecycleBin, and the shared one is strictly stronger
+      (GetVolumePathNameW resolves mount points; the old one slices left(3)). Two
+      authorities on one question is the same shape as the busy-flag defect. Collapse it
+- [ ] R5-G22-4 The recycle-bin predicate uses DRIVE_FIXED plus a UNC refusal as its proxy,
+      so a fixed volume whose bin is disabled by policy still reads as recyclable. Close
+      it with one SHQueryRecycleBinW per volume, cached for the run
+- [ ] R5-G22-5 file_management_file_system.cpp exportDirectoryToHost drops special and
+      unsafe-named entries with a warning and no counter, so 'complete' can be true while
+      entries were skipped. This is upstream of the transfer-worker completeness fix, so
+      the worker can still be told 'complete' about a partial export
+- [ ] R5-G22-6 A new inline cppcheck suppression was added at duplicate_finder_worker.cpp
+      for the RAII std::jthread unreadVariable false positive. Comment-only and
+      consistent with the G4-15 doctrine, but it must be entered in the G5 suppression
+      audit rather than left implicit. Inline suppression count is now 159
+- [ ] R5-G22-7 Audit every elevated task handler in elevated_helper_main.cpp for the
+      defect pattern fixed in backup_location: an absent or wrong-typed payload field
+      coerced to a default instead of refused
+- [ ] R5-G22-8 ApfsTreeCollect is built with positional aggregate initializers at two
+      call sites while the struct is gaining members. Safe today because the new guard
+      fails closed, but fragile. Use designated initializers
+- [ ] R5-G22-9 The attachment panel's onErrorOccurred counts ANY controller error against
+      an in-flight batch, because errorOccurred(QString) carries no attachment identity.
+      Chosen as the lesser evil against a permanently latched save control. The real fix
+      is to give the error signal an identity
+- [ ] R5-G22-10 Kali and Debian ISO catalog entries are already stale: the catalog pins
+      2026.1 and 13.5.0 while upstream now serves 2026.2 and 13.6.0. Both 404 and fail
+      closed, so nothing unsafe ships, but both features are broken. The cause is
+      structural, not a stale constant: a rolling current/ directory combined with the
+      version hardcoded into the filename, so they desynchronise on EVERY upstream
+      release. Fix by pinning versioned archive paths, or by deriving the version from
+      the release directory. Audit every other entry for the same shape
+- [ ] R5-G22-11 download.fedoraproject.org is a mirror redirector. It served HTTPS when
+      probed, but if it ever returns an HTTP mirror the NoLessSafeRedirectPolicy will
+      refuse it and the download fails closed. Correct, but it means a Fedora download
+      can fail for a reason that is not the user's fault and does not explain itself
+- [ ] R5-G22-12 ost_conversion_worker recovery reliability was wired this wave, but check
+      whether any other worker ignores a reliability flag its scanner already publishes
+
+ACCEPTED AS INHERENT, with the reasoning recorded so it is not re-litigated:
+
+- [x] R5-G22-A1 SMB DIRECTORY ENUMERATION cannot be bounded. Per-file READS over SMB now
+      are: overlapped ReadFile with an event, a clamped wait, then CancelIoEx and a
+      draining GetOverlappedResult; a timeout discards the whole buffer and a short read
+      is never presented as the file. Enumeration and stat cannot follow, because
+      FindFirstFileW, FindNextFileW and GetFileAttributesExW take NO OVERLAPPED
+      parameter -- there is no pending I/O for CancelIoEx to act on and nothing for a
+      wait to bound. A watchdog thread per directory was rejected because it does not
+      cancel the blocked call, only abandons it, leaking a thread per hostile directory;
+      an NtQueryDirectoryFile rewrite was rejected as an undocumented-API rewrite of the
+      walk that adds more risk than it removes. Residual: a share that answers the
+      bounded UNC probe and then stalls mid-enumeration can still hang the search worker
+      thread. The probe narrows the window; it does not close it
+
 ### G18 - test QUALITY: a test that cannot fail is not a test
 
 Coverage proves a line executed. It does not prove the test would notice if the line
@@ -2056,6 +2122,28 @@ The campaign is complete only when ALL of the following are simultaneously true:
 - [ ] R5-G10-9 Every security-critical path has an e2e test proving it fails closed
 - [ ] R5-G10-10 Coverage ledger committed and refreshed by CI, so future campaigns
       measure coverage instead of asserting it
+- [ ] R5-G10-11 100 percent line AND branch coverage on all testable code, with every
+      exclusion named in an inventory alongside the live-cert evidence covering it
+- [ ] R5-G10-12 Mutation testing green: no surviving mutant anywhere in first-party code
+- [ ] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
+      code; every AI tool and app action dispatches to a real implementation end to end
+- [ ] R5-G10-14 Zero dead or orphaned code, in the source AND in the build system
+- [ ] R5-G10-15 GUI and UX complete: accessible names and tab order everywhere, every
+      long action cancellable with cancel that actually stops the work, actionable error
+      messages, no GUI-thread blocking, all styling through tokens, keyboard operable,
+      and empty/loading/partial/error states designed for every panel
+- [ ] R5-G10-16 Every gate strict, mutually consistent, running in BOTH pre-commit and
+      CI, failing closed on a missing tool, and enforced as a required check
+
+SCOPE, as directed 2026-08-04: find and fix every bug; verify everything is fully
+implemented and correctly wired; complete test coverage where every test genuinely
+exercises the code rather than passing by construction; no dead or orphaned code; GUI
+and UX fully polished; every gate strict, coherent with the others, and impossible to
+regress past. The operating definition of done is not 'no bugs remain', which is not a
+provable state. It is: every defect found is fixed, AND every defect class has a
+mechanical check that prevents its return. Progress is therefore measured by two numbers
+that must both reach zero and stay there -- open findings, and findings in a class that
+a wired gate should already have caught.
 
 ## NO-CHANGE ITEMS (verified not defects)
 
