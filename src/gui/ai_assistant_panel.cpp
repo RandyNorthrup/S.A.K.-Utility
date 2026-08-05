@@ -5234,6 +5234,30 @@ QString AiAssistantPanel::builtInToolStatus(const ai::AiToolDispatcher::Dispatch
                : QStringLiteral("failed");
 }
 
+QJsonObject AiAssistantPanel::buildThrownToolBundle(QJsonObject bundle,
+                                                    const QJsonObject& base_metadata,
+                                                    const QString& what) {
+    const QString message = QStringLiteral("Tool handler threw an exception: %1").arg(what);
+    sak::logError("AI tool '{}' threw: {}",
+                  bundle.value(QStringLiteral("name")).toString().toStdString(),
+                  what.toStdString());
+
+    QJsonObject result;
+    result[QStringLiteral("success")] = false;
+    result[QStringLiteral("error")] = message;
+
+    QJsonObject metadata = base_metadata;
+    metadata[QStringLiteral("threw")] = true;
+    metadata[QStringLiteral("error")] = message;
+
+    bundle[QStringLiteral("output")] =
+        QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
+    bundle[QStringLiteral("result")] = result;
+    bundle[QStringLiteral("status")] = QStringLiteral("failed");
+    bundle[QStringLiteral("metadata")] = metadata;
+    return bundle;
+}
+
 QJsonObject AiAssistantPanel::buildBuiltInToolMetadata(
     QJsonObject base, const ai::AiToolDispatcher::DispatchOutcome& outcome) {
     const QJsonObject& result = outcome.result;
@@ -5318,17 +5342,33 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
     const QString call_id = context.call->call_id;
     const QString name = context.call->name;
 
+    // This runs on a pool thread and its return value is read back with
+    // QFutureWatcher::result(), which RETHROWS anything the callable threw - and it does so
+    // inside a slot during Qt event delivery, where an escaping exception terminates the
+    // process. Tool handlers here run downloads, package operations and provider calls, so a
+    // throw is entirely possible. Convert it into the ordinary failed-tool-call shape the
+    // panel already understands, at the one place that knows the call_id and name.
     auto work = [this, policy, policy_request, args, base_metadata, call_id, name]() {
-        const auto outcome = m_toolDispatcher->dispatch(policy, policy_request, args);
         QJsonObject bundle;
         bundle[QStringLiteral("call_id")] = call_id;
         bundle[QStringLiteral("name")] = name;
-        bundle[QStringLiteral("output")] =
-            QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
-        bundle[QStringLiteral("result")] = outcome.result;
-        bundle[QStringLiteral("status")] = builtInToolStatus(outcome);
-        bundle[QStringLiteral("metadata")] = buildBuiltInToolMetadata(base_metadata, outcome);
-        return bundle;
+        try {
+            const auto outcome = m_toolDispatcher->dispatch(policy, policy_request, args);
+            bundle[QStringLiteral("output")] =
+                QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
+            bundle[QStringLiteral("result")] = outcome.result;
+            bundle[QStringLiteral("status")] = builtInToolStatus(outcome);
+            bundle[QStringLiteral("metadata")] = buildBuiltInToolMetadata(base_metadata, outcome);
+            return bundle;
+        } catch (const std::exception& e) {
+            return buildThrownToolBundle(std::move(bundle),
+                                         base_metadata,
+                                         QString::fromUtf8(e.what()));
+        } catch (...) {
+            return buildThrownToolBundle(std::move(bundle),
+                                         base_metadata,
+                                         QStringLiteral("unknown exception"));
+        }
     };
 
     if (!m_asyncToolRunner || !m_asyncToolRunner->start(std::move(work))) {

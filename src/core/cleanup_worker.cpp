@@ -479,6 +479,13 @@ bool CleanupWorker::deleteFile(const QString& path) {
     // cleanItemIfAllowed screens every item through filePathDeletionRefusal, which rejects an empty
     // path, before cleanSingleItem/cleanStartupEntry can dispatch here.
     Q_ASSERT(!path.isEmpty());
+    // Belt and braces on a permanent delete: an empty path reaches QFileInfo("").exists()
+    // == false and is currently reported as "already gone", i.e. a SUCCESSFUL deletion of
+    // something that was never named. Refuse it explicitly instead.
+    if (path.isEmpty()) {
+        sak::logError("CleanupWorker: refusing to delete a file with an empty path");
+        return false;
+    }
     // Ancestor reparse guard FIRST, before any stat that FOLLOWS the path: an ancestor swapped to a
     // (UNC) symlink would otherwise make exists() trigger a remote handshake. pathHasReparsePoint
     // Ancestor reads each ancestor's own attributes WITHOUT following, so it is safe to call first.
@@ -559,6 +566,14 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     // cleanItemIfAllowed. The recursive caller (removeForcedEntry) passes an entryInfoList
     // absoluteFilePath, which is never empty either.
     Q_ASSERT(!path.isEmpty());
+    // The assert is not enough on its own for a function that recursively removes a tree.
+    // QDir("") resolves to the process working directory and reports exists() == true, so
+    // if the upstream screen were ever bypassed the forced-removal path below would target
+    // that tree. Two lines to make the guarantor irrelevant.
+    if (path.isEmpty()) {
+        sak::logError("CleanupWorker: refusing to delete a folder with an empty path");
+        return false;
+    }
     // Ancestor reparse guard FIRST, before dir.exists() (which FOLLOWS the path -- a UNC-symlink
     // ancestor would trigger a remote handshake). Also catches a leaf junction with a swapped
     // ancestor before the leaf-reparse branch below.

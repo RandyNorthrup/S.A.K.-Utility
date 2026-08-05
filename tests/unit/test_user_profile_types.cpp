@@ -152,6 +152,33 @@ private Q_SLOTS:
         QCOMPARE(permissionModeToString(PermissionMode::StripAll), QStringLiteral("StripAll"));
         QCOMPARE(permissionModeToString(PermissionMode::PreserveOriginal),
                  QStringLiteral("PreserveOriginal"));
+        QCOMPARE(permissionModeToString(PermissionMode::AssignToDestination),
+                 QStringLiteral("AssignToDestination"));
+    }
+
+    /// A manifest written before PermissionMode::Hybrid was removed must still load, and it
+    /// must load as StripAll - that is what a Hybrid backup actually did on both the backup
+    /// and the restore side, whatever the four different descriptions of it claimed.
+    void legacyHybridPermissionModeReadsAsStripAll() {
+        QJsonObject json;
+        json[QStringLiteral("username")] = QStringLiteral("John");
+        json[QStringLiteral("permissions_mode")] = QStringLiteral("Hybrid");
+
+        const BackupUserData restored = BackupUserData::fromJson(json);
+        QCOMPARE(restored.permissions_mode, PermissionMode::StripAll);
+    }
+
+    /// An unknown or absent mode must also land on the safest option rather than whatever
+    /// the enum's first value happens to be at the time.
+    void unknownPermissionModeReadsAsStripAll() {
+        QJsonObject json;
+        json[QStringLiteral("username")] = QStringLiteral("John");
+        json[QStringLiteral("permissions_mode")] = QStringLiteral("NotAMode");
+        QCOMPARE(BackupUserData::fromJson(json).permissions_mode, PermissionMode::StripAll);
+
+        QJsonObject empty;
+        empty[QStringLiteral("username")] = QStringLiteral("John");
+        QCOMPARE(BackupUserData::fromJson(empty).permissions_mode, PermissionMode::StripAll);
     }
 
     // --- BackupUserData round-trip ---

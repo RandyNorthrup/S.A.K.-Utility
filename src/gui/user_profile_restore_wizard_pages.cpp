@@ -1405,8 +1405,6 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
                                    static_cast<int>(PermissionMode::AssignToDestination));
     m_permissionModeCombo->addItem(tr("Preserve Original"),
                                    static_cast<int>(PermissionMode::PreserveOriginal));
-    m_permissionModeCombo->addItem(tr("Hybrid (Safe + Assign)"),
-                                   static_cast<int>(PermissionMode::Hybrid));
     permLayout->addWidget(m_permissionModeCombo, 0, 1);
 
     layout->addWidget(permGroup);

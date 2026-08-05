@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_async_tool_runner.h"
 
+#include "sak/logger.h"
+
 #include <QtConcurrent>
 
 #include <utility>
@@ -41,8 +43,25 @@ void AiAsyncToolRunner::onWatcherFinished() {
     m_running = false;
     const bool attached = m_attached;
     m_attached = true;
-    const QJsonObject result = m_watcher.result();
-    if (attached) {
+
+    // QFuture::result() rethrows whatever the Work callable threw, and this is a slot
+    // invoked during Qt event delivery, so an escaping exception would terminate the
+    // process rather than fail the tool call. Callers are expected to shape their own
+    // failure result (they know the call id and tool name); this is the backstop that
+    // keeps a caller that does not from taking the application down with it. drained()
+    // must still fire either way or anything gating on isRunning() waits forever.
+    QJsonObject result;
+    bool have_result = false;
+    try {
+        result = m_watcher.result();
+        have_result = true;
+    } catch (const std::exception& e) {
+        sak::logError("AiAsyncToolRunner: work threw and produced no result: {}", e.what());
+    } catch (...) {
+        sak::logError("AiAsyncToolRunner: work threw a non-std exception and produced no result");
+    }
+
+    if (attached && have_result) {
         Q_EMIT finished(result);
     }
     // Always announce that the pool task left, even when its result was dropped: a

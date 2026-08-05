@@ -380,6 +380,12 @@ private:
         QJsonObject base, const ai::AiToolDispatcher::DispatchOutcome& outcome);
     [[nodiscard]] static QString builtInToolStatus(
         const ai::AiToolDispatcher::DispatchOutcome& outcome);
+    /// @brief Shapes a failed-tool-call bundle for a handler that threw. The async path
+    ///        reads its result through QFutureWatcher::result(), which rethrows inside a
+    ///        slot and would otherwise terminate the process. Also off-GUI-thread safe.
+    [[nodiscard]] static QJsonObject buildThrownToolBundle(QJsonObject bundle,
+                                                           const QJsonObject& base_metadata,
+                                                           const QString& what);
     // Marshals @p func onto the GUI thread and returns its result. A no-op
     // detour when already on the GUI thread; otherwise a blocking queued call
     // (used by tool handlers that run on a worker thread but must touch widgets

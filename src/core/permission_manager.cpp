@@ -299,37 +299,11 @@ bool PermissionManager::canModifyPermissions(const QString& path) {
     return fileInfo.exists() && fileInfo.isWritable();
 }
 
-bool PermissionManager::applyPermissionStrategy(const QString& path,
-                                                PermissionMode mode,
-                                                const QString& destinationUserSID) {
-    switch (mode) {
-    case PermissionMode::StripAll:
-        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
-        return stripPermissions(path);
-
-    case PermissionMode::AssignToDestination:
-        if (destinationUserSID.isEmpty()) {
-            m_lastError = "Destination user SID required";
-            return false;
-        }
-        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
-        return takeOwnership(path, destinationUserSID) &&
-               setStandardUserPermissions(path, destinationUserSID);
-
-    case PermissionMode::PreserveOriginal:
-        // Don't modify permissions
-        return true;
-
-    case PermissionMode::Hybrid:
-        // Strip, then assign to destination user
-        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
-        return stripPermissions(path) && setStandardUserPermissions(path, destinationUserSID);
-
-    default:
-        sak::logWarning("Unknown PermissionMode value: {}", static_cast<int>(mode));
-        return false;
-    }
-}
+// applyPermissionStrategy was removed here. It had zero callers anywhere in the tree - the
+// backup and restore workers each dispatch on PermissionMode themselves - and it carried a
+// fourth, contradictory definition of the Hybrid mode ("strip, then assign to the
+// destination user") that also forgot the empty-SID guard its AssignToDestination branch
+// had, so a Hybrid call with no SID stripped the file and then reported failure.
 
 QString PermissionManager::getOwner(const QString& path) {
 #ifdef Q_OS_WIN

@@ -36,11 +36,18 @@ enum class FolderType {
 /**
  * @brief Permission handling modes during backup/restore
  */
+// A "Hybrid" mode was removed here. It was offered in both wizards and described four
+// different ways - "Strip dangerous, keep safe" on this enum, "Try Preserve, Fallback
+// Strip" in the backup picker, "Safe + Assign" in the restore picker, and "strip then
+// assign to the destination user" in PermissionManager - while every path that actually
+// consumed it just stripped, exactly like StripAll. A permission control that claims to
+// preserve anything and does not is worse than no control. Manifests written with it
+// still load: permissionModeFromString maps the legacy "Hybrid" string to StripAll,
+// which is what those backups actually got.
 enum class PermissionMode {
-    StripAll,             // Remove all ACLs, inherit from parent (SAFEST)
-    PreserveOriginal,     // Keep source ACLs (requires admin, risky)
-    AssignToDestination,  // Replace owner SID with dest user
-    Hybrid                // Strip dangerous, keep safe
+    StripAll,            // Remove all ACLs, inherit from parent (SAFEST)
+    PreserveOriginal,    // Keep source ACLs (requires admin, risky)
+    AssignToDestination  // Replace owner SID with dest user
 };
 
 /**

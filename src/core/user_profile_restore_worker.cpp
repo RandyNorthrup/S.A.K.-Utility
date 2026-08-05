@@ -782,7 +782,6 @@ UserProfileRestoreWorker::PermissionAction UserProfileRestoreWorker::resolvePerm
         return destinationUser.isEmpty() ? PermissionAction::StripPermissions
                                          : PermissionAction::AssignOwnership;
     case PermissionMode::StripAll:
-    case PermissionMode::Hybrid:
         return PermissionAction::StripPermissions;
     }
     return PermissionAction::StripPermissions;

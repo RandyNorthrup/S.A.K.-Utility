@@ -268,9 +268,10 @@ BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
         data.permissions_mode = PermissionMode::PreserveOriginal;
     } else if (permMode == "AssignToDestination") {
         data.permissions_mode = PermissionMode::AssignToDestination;
-    } else if (permMode == "Hybrid") {
-        data.permissions_mode = PermissionMode::Hybrid;
     } else {
+        // Legacy manifests can carry "Hybrid". That mode stripped, so read it as StripAll
+        // rather than dropping to the same default silently by accident - the mapping is
+        // deliberate and matches what those backups actually did.
         data.permissions_mode = PermissionMode::StripAll;
     }
 
@@ -517,8 +518,6 @@ QString permissionModeToString(PermissionMode mode) {
         return "PreserveOriginal";
     case PermissionMode::AssignToDestination:
         return "AssignToDestination";
-    case PermissionMode::Hybrid:
-        return "Hybrid";
     }
     return "StripAll";
 }

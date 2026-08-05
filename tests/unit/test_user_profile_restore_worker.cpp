@@ -438,8 +438,10 @@ void UserProfileRestoreWorkerTests::assignToDestinationUsesUsername() {
              RW::PermissionAction::StripPermissions);
     QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::PreserveOriginal, QString()),
              RW::PermissionAction::PreserveOriginal);
-    QCOMPARE(RW::resolvePermissionAction(sak::PermissionMode::Hybrid, QStringLiteral("Bob")),
-             RW::PermissionAction::StripPermissions);
+    // PermissionMode::Hybrid used to be asserted here. It was removed because every path
+    // that consumed it simply stripped, while four different places described it as doing
+    // something else. Legacy manifests naming it now read back as StripAll, which is
+    // covered by permissionModeRoundTrip in test_user_profile_types.
 }
 
 void UserProfileRestoreWorkerTests::effectiveDestUserPrefersDestination() {

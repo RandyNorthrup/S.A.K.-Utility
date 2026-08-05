@@ -840,13 +840,14 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
             avg_latency_us);
     return {};
 #else
-    logWarning("Random 4K read benchmark requires Windows platform");
+    // Fail closed: returning {} here scored a benchmark that performed no I/O.
+    logError("Random 4K read benchmark requires Windows platform");
     (void)queue_depth;
     (void)read_mbps;
     (void)iops;
     (void)avg_latency_us;
     (void)latencies_out;
-    return {};
+    return std::unexpected(sak::error_code::platform_not_supported);
 #endif
 }
 
@@ -1051,13 +1052,14 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
             avg_latency_us);
     return {};
 #else
-    logWarning("Random 4K write benchmark requires Windows platform");
+    // Fail closed, for the same reason as runRandom4KRead above.
+    logError("Random 4K write benchmark requires Windows platform");
     (void)queue_depth;
     (void)write_mbps;
     (void)iops;
     (void)avg_latency_us;
     (void)latencies_out;
-    return {};
+    return std::unexpected(sak::error_code::platform_not_supported);
 #endif
 }
 

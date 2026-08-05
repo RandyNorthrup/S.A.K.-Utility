@@ -96,8 +96,6 @@ PermissionMode UserProfileBackupWizard::getPermissionMode() const {
         return PermissionMode::PreserveOriginal;
     case 2:
         return PermissionMode::AssignToDestination;
-    case 3:
-        return PermissionMode::Hybrid;
     default:
         return PermissionMode::StripAll;
     }

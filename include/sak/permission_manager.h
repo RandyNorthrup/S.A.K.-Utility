@@ -61,17 +61,6 @@ public:
     static bool canModifyPermissions(const QString& path);
 
     /**
-     * @brief Apply permission strategy to file/folder
-     * @param path File or folder path
-     * @param mode Permission mode to apply
-     * @param destinationUserSID SID for destination user (if applicable)
-     * @return true if successful
-     */
-    bool applyPermissionStrategy(const QString& path,
-                                 PermissionMode mode,
-                                 const QString& destinationUserSID = QString());
-
-    /**
      * @brief Get current file owner
      * @param path File or folder path
      * @return Owner SID or empty string

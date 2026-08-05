@@ -2045,6 +2045,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_async_tool_runner.cpp")
         unit/test_ai_async_tool_runner.cpp
         ../src/ai/ai_async_tool_runner.cpp
         ../include/sak/ai/ai_async_tool_runner.h
+        # The runner logs the exception it swallows so a thrown-away tool failure is not
+        # silent; that pulls in the logger.
+        ../src/core/logger.cpp
     )
     set_target_properties(test_ai_async_tool_runner PROPERTIES
         AUTOMOC ON

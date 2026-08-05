@@ -225,10 +225,16 @@ void UupDumpApi::onBuildsFetchReply() {
     for (auto it = buildsObj.begin(); it != buildsObj.end(); ++it) {
         QJsonObject buildObj = it.value().toObject();
         BuildInfo info;
-        // The uuid is inside the build object, not the key (key is a numeric index)
+        // The uuid is inside the build object; the key is only a numeric array index. This
+        // used to fall back to the key when the uuid was missing, which handed callers a
+        // build id that identifies nothing - every later get.php request built from it asks
+        // the API for an index. Skip the entry instead: a build we cannot address is not a
+        // build we can offer.
         info.uuid = buildObj["uuid"].toString();
         if (info.uuid.isEmpty()) {
-            info.uuid = it.key();  // fallback
+            sak::logWarning("UUP dump: skipping build entry '{}' with no uuid",
+                            it.key().toStdString());
+            continue;
         }
         info.title = buildObj["title"].toString();
         info.build = buildObj["build"].toString();

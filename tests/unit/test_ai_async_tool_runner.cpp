@@ -14,6 +14,7 @@
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <stdexcept>
 
 class TestAiAsyncToolRunner : public QObject {
     Q_OBJECT
@@ -145,6 +146,44 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(drained_spy.count(), 1, 5000);
         QCOMPARE(drained_spy.count(), 1);
         QCOMPARE(finished_spy.count(), 1);
+        QVERIFY(!runner.isRunning());
+    }
+
+    // A throwing job must not take the process down. QFutureWatcher::result() rethrows
+    // whatever the callable threw, and onWatcherFinished is a slot invoked during Qt event
+    // delivery, so before the guard an escaping exception terminated the application. The
+    // runner has no way to invent a result, so finished() is correctly NOT emitted -- but
+    // drained() must still fire or anything gating on isRunning() waits forever, and the
+    // runner has to be reusable afterwards.
+    void throwingJobDoesNotTerminateAndStillDrains() {
+        sak::ai::AiAsyncToolRunner runner;
+        QSignalSpy drained_spy(&runner, &sak::ai::AiAsyncToolRunner::drained);
+        QSignalSpy finished_spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
+
+        QVERIFY(runner.start(
+            []() -> QJsonObject { throw std::runtime_error("deliberate tool handler failure"); }));
+
+        QTRY_COMPARE_WITH_TIMEOUT(drained_spy.count(), 1, 5000);
+        QCOMPARE(finished_spy.count(), 0);
+        QVERIFY(!runner.isRunning());
+
+        // Still usable: the failed job must not wedge the one-at-a-time slot.
+        QVERIFY(runner.start([]() { return QJsonObject{{QStringLiteral("after"), true}}; }));
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 5000);
+        QCOMPARE(drained_spy.count(), 2);
+        QVERIFY(finished_spy.at(0).at(0).toJsonObject().value(QStringLiteral("after")).toBool());
+    }
+
+    // A non-std exception must be caught by the catch-all arm, not escape as terminate().
+    void throwingNonStdExceptionAlsoDrains() {
+        sak::ai::AiAsyncToolRunner runner;
+        QSignalSpy drained_spy(&runner, &sak::ai::AiAsyncToolRunner::drained);
+        QSignalSpy finished_spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
+
+        QVERIFY(runner.start([]() -> QJsonObject { throw 42; }));
+
+        QTRY_COMPARE_WITH_TIMEOUT(drained_spy.count(), 1, 5000);
+        QCOMPARE(finished_spy.count(), 0);
         QVERIFY(!runner.isRunning());
     }
 };

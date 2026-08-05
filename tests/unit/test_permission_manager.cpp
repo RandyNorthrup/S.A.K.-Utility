@@ -50,7 +50,6 @@ private Q_SLOTS:
     void setSddl_appliesGroup();
 
     // applyPermissionStrategy
-    void applyStrategy_stripAll();
 
     // isRunningAsAdmin
     void isRunningAsAdmin_returnsBoolean();
@@ -332,23 +331,12 @@ void PermissionManagerTests::setSddl_appliesGroup() {
 #endif
 }
 
-// ============================================================================
-// applyPermissionStrategy
-// ============================================================================
-
-void PermissionManagerTests::applyStrategy_stripAll() {
-    sak::PermissionManager mgr;
-    QString stratFile = m_tempDir.filePath("strategy_test.txt");
-    QFile f(stratFile);
-    QVERIFY(f.open(QIODevice::WriteOnly));
-    f.write("strategy test");
-    f.close();
-
-    bool result = mgr.applyPermissionStrategy(stratFile, sak::PermissionMode::StripAll);
-    // Result depends on privileges
-    Q_UNUSED(result);
-    QVERIFY(true);
-}
+// applyPermissionStrategy and its applyStrategy_stripAll test were removed together. The
+// function had no production caller anywhere in the tree - both the backup and the restore
+// worker dispatch on PermissionMode themselves - so this test was the only thing keeping it
+// compiled, and it asserted nothing: it called the function, discarded the result with
+// Q_UNUSED because "result depends on privileges", and ended in QVERIFY(true). A test that
+// cannot fail does not make dead code live.
 
 // ============================================================================
 // isRunningAsAdmin

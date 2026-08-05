@@ -492,13 +492,6 @@ bool UserProfileBackupWorker::applyPermissions(const QString& filePath) {
     case PermissionMode::AssignToDestination:
         // This would be done during restore, not backup
         return true;
-
-    case PermissionMode::Hybrid:
-        // Try to preserve, fall back to strip on error
-        if (!m_permissionManager->stripPermissions(filePath)) {
-            return m_permissionManager->stripPermissions(filePath);
-        }
-        return true;
     }
 
     return true;

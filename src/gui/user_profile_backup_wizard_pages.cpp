@@ -652,8 +652,6 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
                                    static_cast<int>(PermissionMode::PreserveOriginal));
     m_permissionModeCombo->addItem(tr("Assign to Destination"),
                                    static_cast<int>(PermissionMode::AssignToDestination));
-    m_permissionModeCombo->addItem(tr("Hybrid (Try Preserve, Fallback Strip)"),
-                                   static_cast<int>(PermissionMode::Hybrid));
     m_permissionModeCombo->setCurrentIndex(0);  // StripAll by default
     connect(m_permissionModeCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -853,8 +851,6 @@ void UserProfileBackupSettingsPage::updateSummary() {
         permMode = tr("Preserve");
     } else if (currentMode == PermissionMode::AssignToDestination) {
         permMode = tr("Assign Destination");
-    } else if (currentMode == PermissionMode::Hybrid) {
-        permMode = tr("Hybrid");
     }
 
     m_summaryLabel->setText(tr("[save] Destination: %1 | Permissions: %2 | Verify: %3")
