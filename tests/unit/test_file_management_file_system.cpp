@@ -601,6 +601,117 @@ private Q_SLOTS:
         QVERIFY(QFileInfo(QDir(source.path()).filePath(QStringLiteral("root"))).isDir());
     }
 
+    void listLocalDirectoryUnreadableDirectoryFailsClosed() {
+#ifdef Q_OS_WIN
+        // QDirIterator surfaces no error, so a directory that EXISTS but cannot be opened used
+        // to produce ok=true with zero entries: the caller was told the folder is empty. An
+        // enumeration that FAILED must never be reported as one that found nothing.
+        //
+        // The unreadable state needs no privilege: holding the directory open with dwShareMode
+        // 0 makes every later open fail with ERROR_SHARING_VIOLATION, while the attribute query
+        // behind QDir::exists() still succeeds.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString lockedPath = QDir(temp.path()).filePath(QStringLiteral("locked"));
+        QVERIFY(QDir().mkpath(lockedPath));
+        {
+            QFile file(QDir(lockedPath).filePath(QStringLiteral("inside.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("payload"), qint64(7));
+        }
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(lockedPath);
+
+        // Control: while readable the entry is listed, so the failure below is the lock alone.
+        const auto readable =
+            sak::FileManagementFileSystemBridge::listDirectory(target, lockedPath, 100);
+        QVERIFY2(readable.ok, qPrintable(readable.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(readable.entries.size(), qsizetype(1));
+
+        const std::wstring native = QDir::toNativeSeparators(lockedPath).toStdWString();
+        const HANDLE exclusive = CreateFileW(native.c_str(),
+                                             GENERIC_READ,
+                                             0,  // no sharing: every subsequent open is refused
+                                             nullptr,
+                                             OPEN_EXISTING,
+                                             FILE_FLAG_BACKUP_SEMANTICS,
+                                             nullptr);
+        QVERIFY(exclusive != INVALID_HANDLE_VALUE);
+        const auto release = qScopeGuard([exclusive]() { CloseHandle(exclusive); });
+
+        const auto blocked =
+            sak::FileManagementFileSystemBridge::listDirectory(target, lockedPath, 100);
+        QVERIFY(!blocked.ok);
+        QVERIFY(blocked.entries.isEmpty());
+        QVERIFY2(!blocked.blockers.isEmpty(),
+                 "an unreadable directory must report a blocker, not an empty success");
+#else
+        QSKIP("Exclusive directory handles are a Windows-only concept");
+#endif
+    }
+
+    void listLocalDirectoryEmptyDirectoryIsAnHonestSuccess() {
+        // The counterpart to the test above: a genuinely empty directory is NOT a failure. The
+        // two outcomes must stay distinguishable in the result, not by convention.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
+        const auto listing =
+            sak::FileManagementFileSystemBridge::listDirectory(target, temp.path(), 100);
+        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+        QVERIFY(listing.entries.isEmpty());
+        QVERIFY(listing.blockers.isEmpty());
+    }
+
+    void importFailsClosedWhenASourceLevelCannotBeRead() {
+#ifdef Q_OS_WIN
+        // QDir::entryInfoList on an unreadable directory returns an EMPTY list with no error, so
+        // the import walked right past the level, copied nothing out of it, and still reported
+        // ok/complete -- a partial copy presented as a whole one (and the move path deletes the
+        // source of a copy it believes complete). The bounded collector surfaces the read
+        // failure as a blocker instead.
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        const QDir src(source.path());
+        QVERIFY(src.mkpath(QStringLiteral("root/sub")));
+        const auto writeOne = [](const QString& path) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("payload"), qint64(7));
+        };
+        writeOne(src.filePath(QStringLiteral("root/top.txt")));
+        writeOne(src.filePath(QStringLiteral("root/sub/buried.txt")));
+
+        const std::wstring native =
+            QDir::toNativeSeparators(src.filePath(QStringLiteral("root/sub"))).toStdWString();
+        const HANDLE exclusive = CreateFileW(native.c_str(),
+                                             GENERIC_READ,
+                                             0,  // no sharing: every subsequent open is refused
+                                             nullptr,
+                                             OPEN_EXISTING,
+                                             FILE_FLAG_BACKUP_SEMANTICS,
+                                             nullptr);
+        QVERIFY(exclusive != INVALID_HANDLE_VALUE);
+        const auto release = qScopeGuard([exclusive]() { CloseHandle(exclusive); });
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(destination.path());
+        const auto imported = sak::FileManagementFileSystemBridge::importDirectoryFromHost(
+            target,
+            src.filePath(QStringLiteral("root")),
+            QDir(destination.path()).filePath(QStringLiteral("copy")));
+        QVERIFY(!imported.ok);
+        QVERIFY(!imported.complete);
+        QVERIFY2(!imported.blockers.isEmpty(),
+                 "an unreadable source level must be a blocker, not a silently empty level");
+        // The readable part still copied: the failure is reported, not swallowed, and not
+        // inflated into a claim that nothing transferred.
+        QCOMPARE(imported.files_imported, 1);
+#else
+        QSKIP("Exclusive directory handles are a Windows-only concept");
+#endif
+    }
+
     void listLocalDirectoryEnumeratesHiddenEntries() {
         // A host-hidden file must reach the listing so the view's show-hidden
         // toggle can act on it. Before B8-20 the source listing dropped hidden

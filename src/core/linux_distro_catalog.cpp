@@ -192,6 +192,23 @@ DistroInfo archLinuxDistro() {
             /*.githubAssetPattern =*/{}};
 }
 
+// An entry with an empty checksumUrl/checksumType publishes no per-release checksum this
+// catalog can pin. LinuxISODownloader::requirePinnedChecksum refuses to download such an
+// entry: the SourceForge download URL redirects onto mirrors that may serve the ISO over
+// plain HTTP, and without a checksum fetched over HTTPS there is nothing to verify the ISO
+// against before it is written to bootable media. Adding a verified per-release checksum URL
+// re-enables the entry; guessing one would defeat the check it is supposed to provide.
+//
+// Clonezilla Live is the one entry with no pinnable checksum. Verified against upstream:
+//   - the SourceForge release directory that serves the ISO
+//     (clonezilla_live_stable/{version}/) contains ONLY the .iso and .zip; CHECKSUMS.TXT and
+//     SHA256SUMS both 404 there;
+//   - the project's own mirror publishes CHECKSUMS.TXT/SHA256SUMS, but the path is not stable
+//     across a release's lifetime: the current release sits in clonezilla-live/stable/ (whose
+//     SHA256SUMS lists only that one version) and moves to clonezilla-live/old/{version}/ once
+//     superseded, and older per-version directories are pruned empty.
+// No single {version}-templated URL therefore addresses a given release for its whole life, so
+// this entry stays refused rather than carrying a URL that resolves for a while and then rots.
 DistroInfo clonezillaDistro() {
     return {/*.id =*/"clonezilla",
             /*.name =*/"Clonezilla Live",
@@ -207,7 +224,7 @@ DistroInfo clonezillaDistro() {
             "https://sourceforge.net/projects/clonezilla/files/"
             "clonezilla_live_stable/{version}/"
             "clonezilla-live-{version}-amd64.iso/download",
-            /*.checksumUrl =*/{},
+            /*.checksumUrl =*/{},  // See the note above: no lifetime-stable per-release URL
             /*.checksumType =*/{},
             /*.fileName =*/"clonezilla-live-{version}-amd64.iso",
             /*.approximateSize =*/sizeFromMiB(kClonezillaSizeMiB),
@@ -232,8 +249,15 @@ DistroInfo gpartedDistro() {
             "https://sourceforge.net/projects/gparted/files/"
             "gparted-live-stable/{version}/"
             "gparted-live-{version}-amd64.iso/download",
-            /*.checksumUrl =*/{},
-            /*.checksumType =*/{},
+            // GParted ships no .sha256 sidecar in the release directory; it publishes the
+            // per-release digests inside the release note that sits in that SAME directory,
+            // as standard "<sha256>  <filename>" lines. That file is {version}-templated like
+            // the ISO beside it, so it addresses one specific release for good and never
+            // rots. parseExpectedHash reads the digest out of it by filename.
+            /*.checksumUrl =*/
+            "https://downloads.sourceforge.net/project/gparted/gparted-live-stable/"
+            "{version}/gparted-live-{version}-README.md",
+            /*.checksumType =*/"sha256",
             /*.fileName =*/"gparted-live-{version}-amd64.iso",
             /*.approximateSize =*/sizeFromMiB(kGpartedSizeMiB),
             /*.homepage =*/"https://gparted.org",
@@ -254,6 +278,8 @@ DistroInfo shredOsDistro() {
             /*.category =*/DistroCategory::DiskTools,
             /*.sourceType =*/DistroSourceType::GitHubRelease,
             /*.downloadUrl =*/{},
+            // Resolved from the release's .sha1 sidecar asset by cacheChecksumSidecar; a
+            // release that ships no sidecar has nothing to pin and the download is refused.
             /*.checksumUrl =*/{},
             /*.checksumType =*/"sha1",
             /*.fileName =*/{},
@@ -345,8 +371,16 @@ void LinuxDistroCatalog::addSystemRecoveryDistros() {
                "systemrescuecd/files/sysresccd-x86/"
                "{version}/systemrescue-{version}-"
                "amd64.iso/download",
-               /*.checksumUrl =*/{},  // SourceForge provides checksums on download page
-               /*.checksumType =*/{},
+               // SystemRescue keeps a per-release .sha256 on its OWN site under
+               // /releases/{version}/, retained for superseded releases as well as the current
+               // one. Deliberately preferred over the sidecar in the SourceForge release
+               // directory: the ISO arrives through the SourceForge mirror network, so taking
+               // the digest from the project's own host makes the two legs independent instead
+               // of trusting one mirror to attest to itself.
+               /*.checksumUrl =*/
+               "https://www.system-rescue.org/releases/{version}/"
+               "systemrescue-{version}-amd64.iso.sha256",
+               /*.checksumType =*/"sha256",
                /*.fileName =*/"systemrescue-{version}-amd64.iso",
                /*.approximateSize =*/sizeFromGiB(kSystemRescueSizeGiB),
                /*.homepage =*/"https://www.system-rescue.org",
@@ -374,7 +408,9 @@ void LinuxDistroCatalog::addUtilityDistros() {
                /*.category =*/Category::Utilities,
                /*.sourceType =*/SourceType::GitHubRelease,
                /*.downloadUrl =*/{},  // Resolved via GitHub Releases API
-               /*.checksumUrl =*/{},  // SHA256 in release body
+               // Resolved from the release's .sha256 sidecar asset by cacheChecksumSidecar; a
+               // release that ships no sidecar has nothing to pin and the download is refused.
+               /*.checksumUrl =*/{},
                /*.checksumType =*/"sha256",
                /*.fileName =*/"ventoy-{version}-livecd.iso",
                /*.approximateSize =*/sizeFromMiB(kVentoySizeMiB),  // ~196 MB

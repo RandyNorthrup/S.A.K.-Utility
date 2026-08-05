@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -820,12 +821,31 @@ public:
         const QVector<QByteArray>& node_blocks, uint32_t block_size);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
     /// @brief True when a free-queue run {paddr, length} sits entirely inside a container of
-    ///        @p block_count blocks. A corrupt on-disk record would otherwise expand into a
-    ///        multi-exabyte block list (OOM) and wrap paddr+offset past 2^64. Pure seam for the
-    ///        fail-closed bounds guard in the free-queue leaf parser.
+    ///        @p block_count blocks AND is no longer than one commit can legitimately free
+    ///        contiguously. A corrupt on-disk record would otherwise expand into a
+    ///        multi-exabyte block list (OOM) and wrap paddr+offset past 2^64, and a merely
+    ///        container-sized run is still a multi-GB expansion on large media. Pure seam for
+    ///        the fail-closed bounds guard in the free-queue leaf parser.
     [[nodiscard]] static bool freeQueueRunInBoundsForTesting(quint64 paddr,
                                                              quint64 length,
                                                              quint64 block_count);
+    /// @brief True when a run of @p run_length blocks still fits the free-queue reclaim
+    ///        expansion budget after @p accumulated_blocks have been counted. The budget is a
+    ///        fixed ceiling on the whole queue, not per run and not a function of the container
+    ///        size, because expanding the runs materializes one address per block. Pure seam for
+    ///        the fail-closed budget guard shared by the parser and the reclaim expander.
+    [[nodiscard]] static bool freeQueueExpansionWithinBudgetForTesting(quint64 accumulated_blocks,
+                                                                       quint64 run_length);
+    /// @brief True when the in-place commit's subtree collector may descend into directory
+    ///        @p directory_id at nesting @p depth. False once the depth cap is exceeded or
+    ///        the id was already collected: a drec-level directory cycle in an untrusted
+    ///        source image (A lists B, B lists A) is invisible to the reader's node-level
+    ///        guards and would otherwise recurse until the stack is exhausted. @p visited
+    ///        carries the ids collected so far and gains @p directory_id when admitted.
+    ///        Pure seam for the recursive collector's fail-closed guard.
+    [[nodiscard]] static bool treeCollectAdmitsDirectoryForTesting(quint64 directory_id,
+                                                                   int depth,
+                                                                   QSet<quint64>* visited);
     /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
     ///        crash-safe in-place commit writes next, given the live cib block of
     ///        a generated single-chunk container. Round-robins the three IP slots

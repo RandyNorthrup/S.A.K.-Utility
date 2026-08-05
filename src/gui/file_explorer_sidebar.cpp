@@ -5,6 +5,7 @@
 
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/layout_constants.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 
 #include <QHBoxLayout>
@@ -95,7 +96,9 @@ void FileExplorerSidebar::refreshCompactPresentation() {
         if (m_compact && !item->text().isEmpty()) {
             item->setData(kSidebarCompactTextRole, item->text());
             if (item->toolTip().isEmpty()) {
-                item->setToolTip(item->text());
+                // Entry text is a target/volume label read off the medium; a tooltip has no
+                // plain-text mode, so wrap it to be shown literally.
+                item->setToolTip(ui::asLiteralRichText(item->text()));
             }
             item->setText(QString());
         } else if (!m_compact && item->text().isEmpty()) {

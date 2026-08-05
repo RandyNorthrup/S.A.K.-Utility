@@ -244,13 +244,16 @@ QString LogViewer::formatLogMessage(const QString& message, LogLevel level) cons
     QString level_text = getLevelText(level);
     QString color = getLevelColor(level);
 
+    // kHtmlLogMessage is an HTML template and the result is handed to QTextBrowser::append(), so
+    // the log text -- file paths, program names, command output, AI text -- is escaped before it
+    // is spliced in. Every other argument is a palette token, a timestamp, or an enum label.
     return QString::fromLatin1(sak::ui::kHtmlLogMessage)
         .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted),
              timestamp,
              color,
              QString::number(sak::ui::kFontWeightBold),
              level_text,
-             message);
+             message.toHtmlEscaped());
 }
 
 QString LogViewer::getLevelColor(LogLevel level) const {

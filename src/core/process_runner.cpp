@@ -7,6 +7,7 @@
 
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QProcess>
 
 #ifdef Q_OS_WIN
@@ -72,7 +73,14 @@ bool dispatchDetachedTreeKill(qint64 pid) {
     if (pid <= 0) {
         return false;
     }
-    return QProcess::startDetached(QStringLiteral("cmd.exe"),
+    // System32-qualified shell, never a bare "cmd.exe": the tree kill can be dispatched
+    // from an elevated worker, so a PATH/CWD-planted cmd.exe must not be able to satisfy
+    // it. Unresolvable -> return false so the caller kills the direct child instead.
+    const QString shell = system32Path(QStringLiteral("cmd.exe"));
+    if (shell.isEmpty()) {
+        return false;
+    }
+    return QProcess::startDetached(shell,
                                    {QStringLiteral("/C"),
                                     QStringLiteral("taskkill /PID %1 /T /F >NUL 2>NUL").arg(pid)});
 #else
@@ -221,8 +229,7 @@ ProcessResult runPowerShell(const QString& script,
 
     // Launch the System32-qualified interpreter, never a bare "powershell.exe": an
     // elevated caller must not be redirected to a PATH/CWD-planted powershell.
-    const QString powershell =
-        system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
+    const QString powershell = systemPowerShellPath();
     if (powershell.isEmpty()) {
         ProcessResult result;
         result.exit_code = -1;
@@ -245,6 +252,48 @@ QString system32Path(const QString& relativeExe) {
                            QLatin1Char('/') + relativeExe);
 #else
     return relativeExe;
+#endif
+}
+
+QString windowsDirPath(const QString& relativeExe) {
+#ifdef Q_OS_WIN
+    wchar_t buffer[MAX_PATH];
+    const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return {};  // fail closed: cannot trust an unresolved Windows directory
+    }
+    return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
+                           QLatin1Char('/') + relativeExe);
+#else
+    return relativeExe;
+#endif
+}
+
+bool startDetachedSystem32Tool(const QString& relativeExe, const QStringList& args) {
+    const QString program = system32Path(relativeExe);
+    if (program.isEmpty()) {
+        return false;  // fail closed: never retry with the bare, search-order-resolved name
+    }
+    return QProcess::startDetached(program, args);
+}
+
+bool startDetachedWindowsTool(const QString& relativeExe, const QStringList& args) {
+    const QString program = windowsDirPath(relativeExe);
+    if (program.isEmpty()) {
+        return false;  // fail closed: never retry with the bare, search-order-resolved name
+    }
+    return QProcess::startDetached(program, args);
+}
+
+QString systemPowerShellPath() {
+#ifdef Q_OS_WIN
+    const QString path = system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
+    // Fail closed on a missing interpreter rather than hand a non-existent path to
+    // CreateProcess: the caller must surface "cannot resolve PowerShell", never retry
+    // with the bare name.
+    return QFile::exists(path) ? path : QString();
+#else
+    return QStringLiteral("powershell.exe");
 #endif
 }
 

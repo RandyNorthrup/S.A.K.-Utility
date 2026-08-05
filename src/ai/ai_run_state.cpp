@@ -58,6 +58,16 @@ bool isTerminalRunStatus(AiRunStatus status) noexcept {
            status == AiRunStatus::Failed;
 }
 
+bool aiPanelIsBusy(const AiPanelActivity& activity) noexcept {
+    return activity.client_busy || activity.tool_turn_active || activity.workflow_run_active ||
+           activity.execution_broker_running || activity.offline_worker_running ||
+           activity.async_tool_runner_running;
+}
+
+AiRunStatus aiStopRunStatus(const AiPanelActivity& activity) noexcept {
+    return aiPanelIsBusy(activity) ? AiRunStatus::Cancelling : AiRunStatus::Cancelled;
+}
+
 bool AiRunState::isTerminal() const noexcept {
     return isTerminalRunStatus(status);
 }

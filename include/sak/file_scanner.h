@@ -20,6 +20,8 @@
 #include <unordered_set>
 #include <vector>
 
+class FileScannerTests;
+
 namespace sak {
 
 /// @brief File type filter options
@@ -86,6 +88,12 @@ struct scan_options {
 ///          The counters are std::atomic only so a DIFFERENT thread may read live
 ///          progress while a single scan runs -- not to permit concurrent scans.
 class file_scanner {
+    // Unit-test seam: exercise the traversal-gate decision (canDescendInto) directly, so the
+    // fail-closed refusal to descend into a directory whose canonical identity cannot be
+    // resolved is provable without a full scan. The test class lives in the global namespace,
+    // so befriend ::FileScannerTests (not sak::FileScannerTests).
+    friend class ::FileScannerTests;
+
 public:
     /// @brief Default constructor
     file_scanner() = default;
@@ -189,8 +197,13 @@ private:
     ///          recurses). Enforces depth/visibility, directory exclusions, the
     ///          follow-symlinks policy (a symlinked directory is not traversed
     ///          unless enabled), and cycle detection when following symlinks.
+    ///          When following is enabled and the entry's canonical identity cannot
+    ///          be resolved, the descent is REFUSED and stats.errors_encountered is
+    ///          incremented -- descending without a cycle identity would drop the
+    ///          confinement/loop guard entirely.
     [[nodiscard]] bool canDescendInto(const std::filesystem::directory_entry& entry,
                                       const scan_options& options,
+                                      scan_statistics& stats,
                                       std::size_t current_depth);
 
     /// @brief Process a single entry with exception handling (nesting reduction)

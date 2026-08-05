@@ -23,10 +23,12 @@
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_mutating_actions.h"
+#include "sak/deleted_item_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/leftover_scan_provenance.h"
 #include "sak/partition_apply_worker.h"
 #include "sak/partition_operation_planner.h"
+#include "sak/pst_parser.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
 
@@ -156,14 +158,14 @@ private Q_SLOTS:
         // enters on a different thread.
         QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
         QVERIFY(handler_thread.load() != QThread::currentThreadId());
-        QVERIFY(panel.m_asyncToolInFlight);
         QVERIFY(panel.m_asyncToolRunner->isRunning());
+        QVERIFY(panel.isAiBusy());
         QVERIFY(panel.m_toolTurn.active());
 
-        // Let the handler finish: completion marshals back to the GUI thread,
-        // clears the in-flight flag and records the completed tool.
+        // Let the handler finish: completion marshals back to the GUI thread, releases
+        // the runner and records the completed tool.
         gate.release();
-        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_asyncToolInFlight, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_asyncToolRunner->isRunning(), 5000);
         QCOMPARE(finished_spy.count(), 1);
         QCOMPARE(panel.m_runState.completed_tools, 1);
     }
@@ -187,15 +189,28 @@ private Q_SLOTS:
         panel.onStopClicked();
         QVERIFY(panel.m_activeToolRunToken.isValid());
         QVERIFY(panel.m_activeToolRunToken.isCancellationRequested());
-        QVERIFY(!panel.m_asyncToolInFlight);
         QVERIFY(!panel.m_toolTurn.active());
+
+        // R5 p11_gui-5: detaching only DROPS the result -- the pool task is still executing
+        // the blocking mutation. The panel must therefore still report busy and park the run
+        // in Cancelling; the retired m_asyncToolInFlight mirror flag went false right here,
+        // so Stop reported "Cancelled" and the UI accepted new work over a live mutation.
+        QVERIFY(panel.m_asyncToolRunner->isRunning());
+        QVERIFY(panel.isAiBusy());
+        QCOMPARE(panel.m_runState.status, ai::AiRunStatus::Cancelling);
 
         // Release the (now detached) handler and confirm the stale result is
         // dropped: finished() is never delivered and no tool is recorded.
         gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_asyncToolRunner->isRunning(), 5000);
         QTest::qWait(300);
         QCOMPARE(finished_spy.count(), 0);
         QCOMPARE(panel.m_runState.completed_tools, 0);
+
+        // Only once the detached job has actually drained does the panel go idle and the
+        // stop complete -- drained() is the sole notification a detached job produces.
+        QVERIFY(!panel.isAiBusy());
+        QCOMPARE(panel.m_runState.status, ai::AiRunStatus::Cancelled);
     }
 
     // Destroying the panel while an async built-in tool is still running must not
@@ -219,7 +234,7 @@ private Q_SLOTS:
         allowLocalToolsAndValidRun(*panel);
         panel->beginToolTurn(downloadResponse());
         QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
-        QVERIFY(panel->m_asyncToolInFlight);
+        QVERIFY(panel->m_asyncToolRunner->isRunning());
 
         // Destroy mid-flight; must return without hanging or crashing.
         panel.reset();
@@ -1826,6 +1841,34 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
                     .contains(QStringLiteral("PST"), Qt::CaseInsensitive));
+    }
+
+    // DeletedItemScanner: an orphan scan that never enumerated anything must say so. Without an
+    // orphan-reliable flag the empty vector is indistinguishable from "this store holds no
+    // orphans", and reachableReliable() cannot cover it (the reachability build never ran), so a
+    // skipped or truncated orphan set is reported to the model as a complete one.
+    void orphanScanReportsUnreliableWhenItNeverRan() {
+        PstParser parser;  // never opened
+        QVERIFY(!parser.isOpen());
+        DeletedItemScanner scanner(&parser);
+        QVERIFY(scanner.orphanReliable());  // nothing has run yet
+
+        const QVector<sak::PstItemDetail> orphans = scanner.scanOrphanedNodes();
+        QVERIFY(orphans.isEmpty());
+        QVERIFY(!scanner.orphanReliable());
+        // The old channel stays true here, which is exactly why it could not carry this case.
+        QVERIFY(scanner.reachableReliable());
+    }
+
+    // DeletedItemScanner: recoverAll() must not leave the orphan verdict at its optimistic
+    // default when the orphan pass did not run -- a combined scan that only did the recoverable
+    // half must never advertise a reliable (empty) orphan set.
+    void recoverAllReportsOrphansUnreliableWhenOrphanPassSkipped() {
+        PstParser parser;  // never opened: both passes return empty
+        DeletedItemScanner scanner(&parser);
+        const QVector<sak::PstItemDetail> all = scanner.recoverAll();
+        QVERIFY(all.isEmpty());
+        QVERIFY(!scanner.orphanReliable());
     }
 
     // email.recover_deleted: read-only -> UNGATED in a Chat & Research session (never

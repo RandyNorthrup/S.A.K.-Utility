@@ -32,7 +32,11 @@ struct DriveInfo {
 
     // Volume information (if mounted)
     QStringList mountPoints;  // e.g., ["E:\\", "F:\\"]
-    QString volumeLabel;      // Volume label if any
+    /// False when the volume enumeration for this drive ended abnormally or a volume's
+    /// mount-path query failed: mountPoints may then be incomplete, and an empty list must NOT
+    /// be read as "this drive is not mounted".
+    bool mountPointsComplete{true};
+    QString volumeLabel;  // Volume label if any
 
     bool isValid() const { return !devicePath.isEmpty() && size > 0; }
 };
@@ -59,6 +63,19 @@ enum class DiskProbe {
     No,
     Yes,
     Undetermined
+};
+
+/**
+ * @brief Outcome of one GetVolumePathNamesForVolumeNameW attempt.
+ *
+ * Retry means the buffer was too small and the API reported the size it needs, so the query must
+ * be repeated with a grown buffer instead of dropping that volume's mount paths. Failed means the
+ * mount-path list could NOT be read and must never be presented as "this volume is not mounted".
+ */
+enum class VolumePathQuery {
+    Complete,
+    Retry,
+    Failed
 };
 
 }  // namespace sak
@@ -255,10 +272,25 @@ private:
     static QString getBusType(HANDLE hDrive);
     static bool isDriveRemovable(int driveNumber);
     static bool isDriveReadOnly(HANDLE hDrive);
-    static QStringList getMountPoints(int driveNumber);
+    /// @brief Mount path(s) of every volume on @p driveNumber.
+    /// @param enumerationOk Optional out-param set to false when the volume enumeration ended
+    ///        abnormally (FindFirstVolume/FindNextVolume error) or a volume's mount-path query
+    ///        failed, so a caller never reads a silently partial list as the complete truth.
+    static QStringList getMountPoints(int driveNumber, bool* enumerationOk = nullptr);
     static QString getVolumeLabel(const QString& mountPoint);
     static bool containsWindowsInstallation(int driveNumber);
-    static void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
+    /// @brief Append one volume's mount path(s) to @p mountPoints.
+    /// @return False when the mount-path query failed (nothing is appended in that case), so the
+    ///         caller reports a non-authoritative result instead of an "unmounted" volume.
+    static bool collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
+    /// @brief Fail-closed decision for one GetVolumePathNamesForVolumeNameW attempt: Complete on
+    ///        success, Retry when ERROR_MORE_DATA asks for a strictly larger buffer, Failed for
+    ///        every other error -- including an ERROR_MORE_DATA that would not grow the buffer,
+    ///        which would otherwise spin forever.
+    static sak::VolumePathQuery volumePathQueryOutcome(bool query_ok,
+                                                       DWORD query_error,
+                                                       DWORD required_chars,
+                                                       size_t buffer_chars);
     /// @brief True if the volume (opened by its \\?\Volume{GUID} path, no trailing backslash)
     ///        lives on physical drive @p driveNumber.
     static bool volumeMatchesDrive(const wchar_t* volumeName, int driveNumber);
@@ -271,7 +303,9 @@ private:
     static QStringList getVolumeRootsForDrive(int driveNumber, bool* enumerationOk = nullptr);
     /// @brief Append the inspectable root(s) of one enumerated volume to @p roots when it
     ///        lives on @p driveNumber (mount path(s) if mounted, else its GUID path).
-    static void appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots);
+    /// @return False when the volume's mount-path query failed; the GUID path is still appended
+    ///         (so the volume is still inspected) but the result is not authoritative.
+    static bool appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots);
 
     /// @brief True when two DriveInfo records for the same device differ in a user-visible
     ///        property (size, block size, name, read-only, system, removable, mount points,

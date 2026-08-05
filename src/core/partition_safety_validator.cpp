@@ -6,6 +6,8 @@
 
 #include "sak/partition_safety_validator.h"
 
+#include "sak/partition_raw_device_io.h"
+
 #include <QSet>
 #include <QStringList>
 
@@ -29,6 +31,10 @@ constexpr uint64_t kAllocationUnit16KbBytes = 16 * 1024;
 constexpr uint64_t kAllocationUnit32KbBytes = 32 * 1024;
 constexpr uint64_t kAllocationUnit64KbBytes = 64 * 1024;
 constexpr uint64_t kAllocateFreeSpaceMinimumRemainderBytes = 64ULL * 1024ULL * 1024ULL;
+// Windows aligns the first partition at 1 MiB, which covers the protective MBR, the GPT
+// header and the GPT entry array; the same span at the tail of the disk holds the backup GPT.
+// A raw region write inside either span destroys the target disk's partition table.
+constexpr uint64_t kPartitionTableReserveBytes = 1024ULL * 1024ULL;
 constexpr auto kApfsRootFileNamePayload = "apfs_root_file_name";
 constexpr auto kApfsRootDirectoryNamePayload = "apfs_root_directory_name";
 constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
@@ -491,45 +497,17 @@ QString normalizedBackupDirectory(const PartitionOperation& operation) {
     return path;
 }
 
-// Extended-length raw-device spellings the \\.\ prefix misses, mirroring the canonical
-// executor classifier (isWindowsRawDevicePath in partition_raw_device_io.cpp): a
-// \\?\PhysicalDriveN handle, the \\?\GLOBALROOT\ device namespace, and a BARE
-// \\?\Volume{GUID} device handle. A \\?\Volume{GUID}\path\file form has a separator
-// after the closing brace and is an ordinary extended-length FILE path, not a device;
-// the generic \\?\ long-path prefix is deliberately NOT matched here.
-bool isExtendedRawDevicePath(const QString& path) {
-    if (path.startsWith(QStringLiteral("\\\\?\\PhysicalDrive"), Qt::CaseInsensitive) ||
-        path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive)) {
-        return true;
-    }
-    if (path.startsWith(QStringLiteral("\\\\?\\Volume{"), Qt::CaseInsensitive)) {
-        const int closing = path.indexOf(QLatin1Char('}'));
-        return closing >= 0 && path.indexOf(QLatin1Char('\\'), closing) < 0;
-    }
-    return false;
-}
-
+// Raw-device classification is ONE authority (sak::isWindowsRawDevicePath in
+// partition_raw_device_io.cpp) shared by the plan-time validator, the raw I/O layer and the
+// clone/image script builder. Accepting a \\?\ device spelling here while the executor
+// recognized only \\.\ is what let a validator-approved target skip the executor's
+// take-offline / IsBoot re-check, so no caller re-derives the rule locally.
 bool targetPathIsRawDevice(const PartitionOperation& operation) {
-    const QString path = normalizedTargetPath(operation);
-    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
-           isExtendedRawDevicePath(path);
+    return isWindowsRawDevicePath(normalizedTargetPath(operation));
 }
 
 std::optional<uint32_t> physicalDriveNumberFromPath(const QString& targetPath) {
-    QString path = targetPath.trimmed();
-    path.replace('/', '\\');
-    // Accept both the \\.\ device namespace and the \\?\ extended-length spelling; the
-    // executor's raw writer opens either as a physical drive, so the validator must too.
-    for (const auto& prefix :
-         {QStringLiteral("\\\\.\\PhysicalDrive"), QStringLiteral("\\\\?\\PhysicalDrive")}) {
-        if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
-            continue;
-        }
-        bool ok = false;
-        const uint value = path.mid(prefix.size()).toUInt(&ok);
-        return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
-    }
-    return std::nullopt;
+    return rawDevicePhysicalDriveNumber(targetPath);
 }
 
 std::optional<uint32_t> targetPhysicalDriveNumber(const PartitionOperation& operation) {
@@ -1081,15 +1059,82 @@ bool clonePartitionRegionMissingFields(const PartitionOperation& operation) {
     if (!clonePartitionTargetsRegion(operation)) {
         return false;
     }
-    const QString targetPath =
-        operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
-    // target_offset_bytes must be supplied explicitly: the builder defaults an
-    // absent offset to 0, which would write the source over the target disk's
-    // partition table (GPT/MBR) at sector 0 instead of into the intended region.
+    // target_offset_bytes must be supplied explicitly AND be non-zero: an absent offset
+    // defaults to 0 in the builder and an explicit 0 seeks the target device to sector 0,
+    // either of which writes the source over the target disk's partition table (GPT/MBR)
+    // instead of into the intended region. The target must also resolve to a physical drive
+    // through the shared classifier -- the same set of spellings the builder normalizes -- so
+    // the disk-number match and region-bounds proofs below always have a disk to check.
     return !operation.payload.contains(QStringLiteral("target_disk_number")) ||
-           !operation.payload.contains(QStringLiteral("target_offset_bytes")) ||
-           !targetPath.startsWith(QStringLiteral("\\\\.\\PhysicalDrive"), Qt::CaseInsensitive) ||
+           payloadUInt64(operation, QStringLiteral("target_offset_bytes")) == 0 ||
+           !targetPathIsPhysicalDrive(operation) ||
            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0;
+}
+
+// A partition clone copies source_size_bytes bytes into the target region. With an unknown
+// (zero) source size the executor derives the byte count from the source stream at run time,
+// so the too-small-target guard below has nothing to compare against and the write is
+// unbounded. An unknown size is not a size: refuse rather than discover it mid-copy.
+bool clonePartitionMissingKnownSourceSize(const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::ClonePartition &&
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) == 0;
+}
+
+// Byte span a partition-clone region occupies on the target disk. The declared region size and
+// the source size are both authoritative (the too-small guard keeps source <= target), so the
+// larger of the two is the span that must be proven to fit.
+uint64_t clonePartitionRegionSpan(const PartitionOperation& operation) {
+    return std::max(payloadUInt64(operation, QStringLiteral("source_size_bytes")),
+                    payloadUInt64(operation, QStringLiteral("target_size_bytes")));
+}
+
+// Unallocated regions are derived from the live partition table, so containment in one is a
+// positive proof that the span holds no existing partition -- not merely an absence of a
+// known overlap.
+bool clonePartitionRegionIsUnallocated(const PartitionDiskInfo& targetDisk,
+                                       uint64_t offset,
+                                       uint64_t span) {
+    const uint64_t end = offset + span;
+    return std::any_of(targetDisk.unallocated_regions.cbegin(),
+                       targetDisk.unallocated_regions.cend(),
+                       [offset, end](const auto& region) {
+                           return offset >= region.offset_bytes &&
+                                  end <= region.offset_bytes + region.size_bytes;
+                       });
+}
+
+// The region a partition clone writes is proven against the LIVE target disk before any byte
+// leaves the source: it must fit inside the disk, clear the partition-table reserve at both
+// ends (the protective MBR/GPT header and entry array at the head, the backup GPT at the
+// tail), and land in space the inventory reports as unallocated. A region that cannot be
+// proven free is refused -- never clamped or trimmed to fit.
+void validateClonePartitionRegionBounds(const PartitionDiskInfo& targetDisk,
+                                        const PartitionOperation& operation,
+                                        PartitionValidationResult* result) {
+    if (!clonePartitionTargetsRegion(operation)) {
+        return;
+    }
+    const uint64_t offset = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
+    const uint64_t span = clonePartitionRegionSpan(operation);
+    if (offset == 0 || span == 0) {
+        return;  // Already refused by the region payload-shape blockers.
+    }
+    if (offset >= targetDisk.size_bytes || span > targetDisk.size_bytes - offset) {
+        result->blockers.append(
+            QStringLiteral("Partition clone target region does not fit within the target disk"));
+        return;
+    }
+    const uint64_t tailReserveStart = targetDisk.size_bytes > kPartitionTableReserveBytes
+                                          ? targetDisk.size_bytes - kPartitionTableReserveBytes
+                                          : 0;
+    addBlockerIf(result,
+                 offset < kPartitionTableReserveBytes || offset + span > tailReserveStart,
+                 QStringLiteral("Partition clone target region overlaps the target disk's "
+                                "partition-table reserve"));
+    addBlockerIf(result,
+                 !clonePartitionRegionIsUnallocated(targetDisk, offset, span),
+                 QStringLiteral("Partition clone target region must be free unallocated space "
+                                "on the target disk"));
 }
 
 bool clonePartitionPhysicalTargetMissingRegion(const PartitionOperation& operation) {
@@ -1424,6 +1469,45 @@ bool dynamicToBasicUnsupportedDisk(const PartitionDiskInfo& disk,
            (!disk.is_dynamic || disk.partitions.size() != 1);
 }
 
+// Drive letter of the single live volume a whole-disk backup/recreate destroys and rebuilds.
+QString singleVolumeDriveLetter(const PartitionDiskInfo& disk) {
+    if (disk.partitions.size() != 1 || !disk.partitions.first().volume) {
+        return {};
+    }
+    return disk.partitions.first().volume->drive_letter.left(1).toUpper();
+}
+
+// The recreate size and drive letter arrive in the payload, but the volume being wiped and
+// rebuilt is the live one the validator approved. A declared size that does not match the live
+// volume recreates the wrong geometry -- and a size too small to hold the backup is only
+// discovered after the source has already been destroyed -- so both are bound to inventory
+// here and any mismatch fails closed rather than being trusted.
+bool dynamicToBasicSourceIdentityMismatch(const PartitionDiskInfo& disk,
+                                          const PartitionOperation& operation) {
+    if (operation.type != PartitionOperationType::ConvertDynamicDiskToBasic ||
+        disk.partitions.size() != 1) {
+        return false;  // Disk shape is already refused by dynamicToBasicUnsupportedDisk.
+    }
+    const QString letter = operation.payload.value(QStringLiteral("drive_letter"))
+                               .toString()
+                               .trimmed()
+                               .left(1)
+                               .toUpper();
+    const QString liveLetter = singleVolumeDriveLetter(disk);
+    return liveLetter.isEmpty() || letter != liveLetter ||
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) !=
+               disk.partitions.first().size_bytes;
+}
+
+// Same binding for the primary/logical rebuild: the partition the validator approved is the
+// one diskpart deletes and recreates, so the declared source size must be that partition's
+// live size and never a caller-declared value.
+bool primaryLogicalSourceSizeMismatch(const PartitionInfoEx& partition,
+                                      const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::ConvertPrimaryLogical &&
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) != partition.size_bytes;
+}
+
 void validatePartitionTargetState(const PartitionDiskInfo& disk,
                                   const PartitionInfoEx& partition,
                                   const PartitionOperation& operation,
@@ -1510,6 +1594,10 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  primaryLogicalTargetLayoutInvalid(operation),
                  QStringLiteral(
                      "Primary/logical conversion requires primary or logical target layout"));
+    addBlockerIf(result,
+                 primaryLogicalSourceSizeMismatch(partition, operation),
+                 QStringLiteral(
+                     "Primary/logical source size must match the live selected partition"));
 }
 
 void validateImageRestoreContentBlockers(const PartitionInfoEx& partition,
@@ -1724,6 +1812,9 @@ void validatePartitionCloneRegionBlockers(const PartitionOperation& operation,
                  QStringLiteral("Partition clone raw physical disk targets require an explicit "
                                 "target disk and offset"));
     addBlockerIf(result,
+                 clonePartitionMissingKnownSourceSize(operation),
+                 QStringLiteral("Partition clone requires a known source partition size"));
+    addBlockerIf(result,
                  blocksTooSmallPartitionCloneTarget(operation),
                  QStringLiteral("Target partition region is smaller than the source partition"));
     addBlockerIf(
@@ -1861,6 +1952,18 @@ PartitionValidationResult PartitionSafetyValidator::validate(
         result.blockers.append(QStringLiteral("Target disk was not found in current inventory"));
         return result;
     }
+    if (disk->partition_enumeration_failed) {
+        // The disk's partition table could not be read, so NOTHING about it can be validated:
+        // an "empty" partition list, an absent system/boot partition and an apparently free
+        // region are all unknowns, not facts. Refuse every operation on it rather than let a
+        // destructive one run against a layout we never saw.
+        result.blockers.append(
+            QStringLiteral("Partition enumeration failed for disk %1, so its layout is unknown "
+                           "and no operation can be validated against it; refresh the inventory "
+                           "first")
+                .arg(disk->disk_number));
+        return result;
+    }
 
     addCommonDiskWarnings(*disk, &result);
 
@@ -1927,6 +2030,10 @@ void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
         dynamicToBasicMissingPayload(operation),
         QStringLiteral(
             "Dynamic-to-basic conversion requires source volume, size, file system, and backup"));
+    addBlockerIf(result,
+                 dynamicToBasicSourceIdentityMismatch(disk, operation),
+                 QStringLiteral("Dynamic-to-basic source volume and size must match the live "
+                                "volume on the selected disk"));
     addBlockerIf(result,
                  dynamicToBasicUnsupportedFileSystem(operation),
                  QStringLiteral(
@@ -2079,6 +2186,7 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(
                      QStringLiteral(
                          "Partition clone target disk number must match the physical target path"));
     }
+    validateClonePartitionRegionBounds(*targetDisk, operation, result);
 }
 
 void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(

@@ -398,7 +398,11 @@ private:
     void setupUi_destinationAndCompression(QVBoxLayout* layout);
     void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
+    /// @brief Screen the typed destination and store the accepted form in m_destinationPath
+    /// @return false (with a refusal dialog) for blank, relative, or source-overlapping paths
     bool validateDestination();
+    /// @brief Ask before reusing an existing folder; true when the run may proceed
+    bool confirmExistingDestination(const QString& destination);
     bool validateEncryptionSettings();
     void installExecutePage();
 
@@ -441,9 +445,13 @@ private:
     void setupUi();
     void appendLog(const QString& message);
 
-    /// @brief Ensure the backup destination directory exists (create if needed)
+    /// @brief Re-screen the destination this page was constructed with
+    /// @return an empty string when the destination may be used, else the refusal reason
+    QString screenRunDestination() const;
+    /// @brief Screen, then ensure the backup destination directory exists (create if needed)
+    /// @param error Set to a user-facing reason when the destination is refused or cannot be made
     /// @return true if the directory exists or was created, false otherwise
-    bool ensureDestinationDirectory();
+    bool ensureDestinationDirectory(QString& error);
     /// @brief Report a pre-start failure, re-enable retry, leave page incomplete
     void failBackupPreflight(const QString& message);
     /// @brief Write every metadata sidecar; false if any write fails

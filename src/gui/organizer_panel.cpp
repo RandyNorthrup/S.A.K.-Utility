@@ -447,7 +447,9 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     path_row->addWidget(m_browse_button);
     group_layout->addLayout(path_row);
 
-    m_dir_summary_label = new QLabel(tr("No directory selected"), this);
+    // Later filled with target blockers, which embed paths and device/volume names read off the
+    // medium, so the summary is shown verbatim rather than auto-detected as markup.
+    m_dir_summary_label = plainTextLabel(tr("No directory selected"), this);
     m_dir_summary_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     m_dir_summary_label->setAccessibleName(QStringLiteral("Directory Summary"));
@@ -658,7 +660,8 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     btn_row->addStretch();
     group_layout->addLayout(btn_row);
 
-    m_dedup_summary_label = new QLabel(tr("No directories added"), this);
+    // Later filled with a mounted device/volume label; shown verbatim for the same reason.
+    m_dedup_summary_label = plainTextLabel(tr("No directories added"), this);
     m_dedup_summary_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     m_dedup_summary_label->setAccessibleName(QStringLiteral("Scan Directories Summary"));

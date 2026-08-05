@@ -8,10 +8,14 @@
 
 #include "sak/layout_constants.h"
 #include "sak/leftover_scanner.h"
+#include "sak/logger.h"
 #include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/restore_point_manager.h"
+#include "sak/windows_path_policy.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QThread>
 
@@ -87,6 +91,40 @@ struct ParsedCommand {
 
     parsed.exe = cmd;
     return parsed;
+}
+
+/// @brief Resolve a screened uninstall program token to the ABSOLUTE native path handed
+/// to CreateProcess, or an empty string to REFUSE the launch. The token must already be
+/// a fully-qualified local .exe that exists as a regular file; the canonical form
+/// (junction/symlink resolved) is re-screened so a reparse point cannot redirect an
+/// elevated launch to a UNC or otherwise untrusted target. No PATH/CWD resolution ever
+/// takes place.
+[[nodiscard]] QString resolveUninstallProgram(const QString& exe) {
+    if (!UninstallWorker::uninstallProgramPathTrusted(exe)) {
+        return {};
+    }
+    const QFileInfo info(exe.trimmed());
+    if (!info.exists() || !info.isFile()) {
+        return {};
+    }
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !UninstallWorker::uninstallProgramPathTrusted(canonical)) {
+        return {};
+    }
+    return QDir::toNativeSeparators(canonical);
+}
+
+/// @brief Build an MSI removal command for @p guid with @p tail appended (e.g.
+/// "/qn /norestart"). msiexec is named by its ABSOLUTE System32 path (quoted): a bare
+/// "msiexec.exe" would be resolved by the CreateProcess search order -- which includes
+/// the current directory -- for an ELEVATED removal. Returns an empty string when the
+/// system directory cannot be resolved, so the caller REFUSES rather than falls back.
+[[nodiscard]] QString buildMsiexecCommand(const QString& guid, const QString& tail) {
+    const QString msiexec = sak::system32Path(QStringLiteral("msiexec.exe"));
+    if (msiexec.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("\"%1\" /x %2 %3").arg(QDir::toNativeSeparators(msiexec), guid, tail);
 }
 
 }  // namespace
@@ -276,8 +314,10 @@ bool UninstallWorker::buildSilentUninstallCommand(const ProgramInfo& program, QS
         static const QRegularExpression guid_re(QStringLiteral(R"(\{[0-9A-Fa-f\-]{36}\})"));
         const auto match = guid_re.match(program.uninstallString);
         if (match.hasMatch()) {
-            cmdOut = QStringLiteral("msiexec.exe /x %1 /qn /norestart").arg(match.captured(0));
-            return true;
+            // Absolute System32 msiexec, never the bare name; an unresolvable system
+            // directory REFUSES the silent path rather than emitting a hijackable command.
+            cmdOut = buildMsiexecCommand(match.captured(0), QStringLiteral("/qn /norestart"));
+            return !cmdOut.isEmpty();
         }
     }
     // No reliable silent path: a bare interactive uninstallString would hang a headless run.
@@ -286,6 +326,19 @@ bool UninstallWorker::buildSilentUninstallCommand(const ProgramInfo& program, QS
 
 bool UninstallWorker::nativeUninstallSucceeded(int exitStatus, int exitCode, bool cancelled) {
     return !cancelled && exitStatus == 0 && (exitCode == 0 || exitCode == kMsiRebootRequiredCode);
+}
+
+bool UninstallWorker::uninstallProgramPathTrusted(const QString& exe) {
+    // Only a real executable image. A ".bat"/".cmd"/".msi"/extensionless token would be
+    // handed to a shell or an associated handler, widening what an untrusted registry
+    // value can start under an elevated token.
+    if (!exe.trimmed().endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    // The shared screen (windows_path_policy.h) carries the rest: no unexpanded "%VAR%",
+    // literal segments only (no UNC, no "."/".."), and a drive-qualified local root. The
+    // leftover scanner screens the sibling InstallLocation value through the SAME dialect.
+    return literalLocalPathTrusted(exe);
 }
 
 bool UninstallWorker::runNativeUninstaller(int& exitCode) {
@@ -307,13 +360,21 @@ bool UninstallWorker::runNativeUninstaller(int& exitCode) {
         }
     }
 
+    // The command originates in the registry Uninstall subtree, which ANY user can write
+    // (HKCU), and it names a program this worker starts with an elevated token. Screen and
+    // resolve it to an absolute, existing image first: an empty result REFUSES the run
+    // rather than letting CreateProcess resolve the name via PATH/CWD.
     const auto parsed = parseUninstallCommand(cmd);
-    if (parsed.exe.isEmpty()) {
+    const QString program = resolveUninstallProgram(parsed.exe);
+    if (program.isEmpty()) {
+        sak::logWarning("Refusing uninstall of '{}': untrusted program path '{}'",
+                        m_program.displayName.toStdString(),
+                        parsed.exe.toStdString());
         return false;
     }
 
     const auto result =
-        sak::runProcess(parsed.exe, parsed.args, timeout_ms, [this]() { return stopRequested(); });
+        sak::runProcess(program, parsed.args, timeout_ms, [this]() { return stopRequested(); });
 
     exitCode = result.exit_code;
     return nativeUninstallSucceeded(result.exit_status, result.exit_code, result.cancelled);
@@ -394,12 +455,14 @@ bool UninstallWorker::isMsiInstaller() const {
 }
 
 QString UninstallWorker::buildMsiUninstallCommand() const {
-    QString guid = extractGuidFromUninstallString();
+    const QString guid = extractGuidFromUninstallString();
     if (guid.isEmpty()) {
-        return m_program.uninstallString;  // fallback to original
+        // No product GUID to rebuild from: keep the publisher's own registered command,
+        // which the trust screen in runNativeUninstaller vets like any other value.
+        return m_program.uninstallString;
     }
-
-    return QString("msiexec.exe /x %1 /norestart").arg(guid);
+    // Empty when System32 cannot be resolved -- runNativeUninstaller then refuses.
+    return buildMsiexecCommand(guid, QStringLiteral("/norestart"));
 }
 
 QString UninstallWorker::extractGuidFromUninstallString() const {

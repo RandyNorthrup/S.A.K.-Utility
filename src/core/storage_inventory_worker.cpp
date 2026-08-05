@@ -471,14 +471,40 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
                                                     Qt::CaseInsensitive);
     disk.size_bytes = jsonUInt64(object, QStringLiteral("Size"));
 
+    disk.partition_enumeration_failed = jsonBool(object, QStringLiteral("PartitionQueryFailed"));
+    disk.partition_enumeration_error =
+        object.value(QStringLiteral("PartitionQueryError")).toString();
+
     const auto parts = object.value(QStringLiteral("Partitions")).toArray();
     for (const auto& entry : parts) {
         if (entry.isObject()) {
             disk.partitions.append(parsePartition(disk.disk_number, entry.toObject()));
         }
     }
+    if (disk.partition_enumeration_failed) {
+        // The partition list is NOT authoritative here: deriving unallocated regions from it
+        // would paint a populated disk as entirely free space (and invite a destructive
+        // "create in free space"). Leave the layout unknown and let the caller fail closed.
+        return disk;
+    }
     appendUnallocatedRegions(&disk);
     return disk;
+}
+
+void appendPartitionEnumerationWarnings(PartitionInventory* inventory) {
+    for (const auto& disk : inventory->disks) {
+        if (!disk.partition_enumeration_failed) {
+            continue;
+        }
+        const QString reason = disk.partition_enumeration_error.trimmed().isEmpty()
+                                   ? QStringLiteral("no error text reported")
+                                   : disk.partition_enumeration_error.trimmed();
+        inventory->warnings.append(
+            QStringLiteral("Partition enumeration failed for disk %1 (%2): %3; the layout of "
+                           "this disk is unknown and is NOT reported as unallocated")
+                .arg(disk.disk_number)
+                .arg(disk.device_path, reason));
+    }
 }
 
 }  // namespace
@@ -487,7 +513,9 @@ StorageInventoryWorker::StorageInventoryWorker(QObject* parent) : QObject(parent
 
 PartitionInventory StorageInventoryWorker::scan() {
     auto inventory = scanCurrentSystem();
-    if (inventory.isEmpty()) {
+    // Fail closed: an empty inventory OR a disk whose partition enumeration failed is not a
+    // faithful picture of the machine's storage, so it is never published as a ready inventory.
+    if (inventory.isEmpty() || inventory.hasPartitionEnumerationFailure()) {
         const QString message = inventory.warnings.isEmpty()
                                     ? QStringLiteral("Inventory scan failed")
                                     : inventory.warnings.join(QStringLiteral("; "));
@@ -533,6 +561,7 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
             inventory.disks.append(parseDisk(entry.toObject()));
         }
     }
+    appendPartitionEnumerationWarnings(&inventory);
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }
@@ -582,6 +611,7 @@ $disks = Get-Disk | ForEach-Object {
   } else {
     $null
   }
+  $partitionQuery = Get-SakPartitionsForDisk -DiskNumber $disk.Number
   [pscustomobject]@{
     Number = $disk.Number
     FriendlyName = $disk.FriendlyName
@@ -607,7 +637,9 @@ $disks = Get-Disk | ForEach-Object {
 
 QString inventoryPowerShellPartitionScript() {
     return QStringLiteral(R"PS(
-    Partitions = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue | ForEach-Object {
+    PartitionQueryFailed = [bool]$partitionQuery.Failed
+    PartitionQueryError = "$($partitionQuery.Error)"
+    Partitions = @($partitionQuery.Items | ForEach-Object {
       $partition = $_
       $volume = Get-SakVolumeForPartition -Partition $partition
       $bitlocker = if ($hasBitLocker -and $volume -and $volume.DriveLetter) {
@@ -657,10 +689,37 @@ $disks | ConvertTo-Json -Depth 8 -Compress
 )PS");
 }
 
+// Partition enumeration for ONE disk, reported honestly. A disk with no partition table
+// legitimately yields no objects (CmdletizationQuery_NotFound); EVERY other failure (access
+// denied, WMI/RPC error) is carried out as Failed/Error instead of being swallowed into an
+// empty partition list, which the parser would otherwise render as a fully unallocated disk.
+QString inventoryPowerShellPartitionQueryScript() {
+    return QStringLiteral(R"PS(
+function Get-SakPartitionsForDisk {
+  param([Parameter(Mandatory = $true)]$DiskNumber)
+
+  $failed = $false
+  $message = ''
+  $items = @()
+  try {
+    $items = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
+  } catch {
+    if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
+      $failed = $true
+      $message = "$($_.Exception.Message)"
+    }
+  }
+
+  [pscustomobject]@{ Failed = $failed; Error = $message; Items = $items }
+}
+)PS");
+}
+
 QString StorageInventoryWorker::inventoryPowerShellScript() {
+    // Both helper functions must be defined BEFORE the Get-Disk pipeline that calls them.
     return inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
-           inventoryPowerShellDiskPrefixScript() + inventoryPowerShellPartitionScript() +
-           inventoryPowerShellFooterScript();
+           inventoryPowerShellPartitionQueryScript() + inventoryPowerShellDiskPrefixScript() +
+           inventoryPowerShellPartitionScript() + inventoryPowerShellFooterScript();
 }
 
 }  // namespace sak

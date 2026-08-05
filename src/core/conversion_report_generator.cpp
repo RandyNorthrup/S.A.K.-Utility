@@ -201,7 +201,9 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
         QString status_class;
         if (result.items_failed > 0 && result.items_converted == 0) {
             status_class = QStringLiteral("error");
-        } else if (result.items_failed > 0) {
+            // A truncated deleted-item scan left items OUT of this output, so the row must not
+            // read as a clean run just because nothing that WAS enumerated failed to write.
+        } else if (result.items_failed > 0 || !result.recovery_complete) {
             status_class = QStringLiteral("warn");
         } else {
             status_class = QStringLiteral("success");

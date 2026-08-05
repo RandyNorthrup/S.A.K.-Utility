@@ -153,6 +153,11 @@ enum class PartitionManagerState {
     Verifying,
     Failed,
     Cancelled,
+    /// The scan completed but at least one disk's partition enumeration FAILED, so the
+    /// inventory is usable yet NOT authoritative. Reported instead of Ready so a partial
+    /// picture is never presented as a complete one; operations targeting an unreadable
+    /// disk are refused by the safety validator.
+    ReadyPartial,
 };
 
 struct PartitionVolumeInfo {
@@ -223,6 +228,12 @@ struct PartitionDiskInfo {
     bool is_storage_spaces{false};
     QVector<PartitionInfoEx> partitions;
     QVector<UnallocatedRegion> unallocated_regions;
+    /// True when the OS partition enumeration for this disk FAILED. The partition list is then
+    /// not authoritative, so no unallocated region is synthesized for it: a populated disk whose
+    /// query failed must never be presented as entirely free space.
+    bool partition_enumeration_failed{false};
+    /// The reported reason the partition enumeration failed (empty when it succeeded).
+    QString partition_enumeration_error;
 };
 
 struct PartitionInventory {
@@ -232,6 +243,17 @@ struct PartitionInventory {
     QStringList warnings;
 
     [[nodiscard]] bool isEmpty() const noexcept { return disks.isEmpty(); }
+
+    /// True when ANY disk's partition enumeration failed. The inventory is then not a faithful
+    /// picture of the machine's layout and must not be published as a completed scan.
+    [[nodiscard]] bool hasPartitionEnumerationFailure() const noexcept {
+        for (const auto& disk : disks) {
+            if (disk.partition_enumeration_failed) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 struct PartitionTarget {

@@ -70,6 +70,13 @@ private Q_SLOTS:
     // --- C3-30: an in-place property change still reports a change ---
     void driveInfoChanged_detectsSizeChange();
     void driveInfoChanged_identicalIsUnchanged();
+
+    // --- R5-P9-36: mount-path reads grow the buffer and never drop paths silently ---
+    void volumePathQuery_completeOnSuccess();
+    void volumePathQuery_retriesWhenBufferTooSmall();
+    void volumePathQuery_failsClosedOnOtherError();
+    void volumePathQuery_failsWhenRetryWouldNotGrowBuffer();
+    void getMountPoints_reportsAuthoritativeEnumeration();
 };
 
 namespace {
@@ -367,6 +374,50 @@ void DriveScannerTests::driveInfoChanged_identicalIsUnchanged() {
     sak::DriveInfo a = makeDrive("\\\\.\\PhysicalDrive0");
     sak::DriveInfo b = a;
     QVERIFY(!DriveScanner::driveInfoChanged(a, b));
+}
+
+// ============================================================================
+// R5-P9-36: a volume's mount paths are read completely or reported as unread
+// ============================================================================
+
+void DriveScannerTests::volumePathQuery_completeOnSuccess() {
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(true, ERROR_SUCCESS, 0u, 1024u),
+             sak::VolumePathQuery::Complete);
+}
+
+void DriveScannerTests::volumePathQuery_retriesWhenBufferTooSmall() {
+    // ERROR_MORE_DATA reports the size the API needs: grow the buffer and ask again instead of
+    // dropping every mount path of that volume (which would read as "not mounted").
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(false, ERROR_MORE_DATA, 4096u, 1024u),
+             sak::VolumePathQuery::Retry);
+}
+
+void DriveScannerTests::volumePathQuery_failsClosedOnOtherError() {
+    // Any non-growable failure is reported, never silently swallowed into an empty list.
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(false, ERROR_ACCESS_DENIED, 0u, 1024u),
+             sak::VolumePathQuery::Failed);
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(false, ERROR_NOT_READY, 8192u, 1024u),
+             sak::VolumePathQuery::Failed);
+}
+
+void DriveScannerTests::volumePathQuery_failsWhenRetryWouldNotGrowBuffer() {
+    // A "required" size that does not exceed the current buffer would retry forever.
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(false, ERROR_MORE_DATA, 1024u, 1024u),
+             sak::VolumePathQuery::Failed);
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(false, ERROR_MORE_DATA, 0u, 1024u),
+             sak::VolumePathQuery::Failed);
+}
+
+void DriveScannerTests::getMountPoints_reportsAuthoritativeEnumeration() {
+    // Every Windows machine can enumerate its volumes, so the out-param must report the scan as
+    // authoritative -- the caller can then trust an empty list to mean "no mount points" rather
+    // than "the enumeration died halfway through".
+    bool enumerationOk = false;
+    const QStringList mounts = DriveScanner::getMountPoints(0, &enumerationOk);
+    QVERIFY(enumerationOk);
+    for (const QString& mount : mounts) {
+        QVERIFY(!mount.isEmpty());
+    }
 }
 
 QTEST_GUILESS_MAIN(DriveScannerTests)

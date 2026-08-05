@@ -1034,8 +1034,16 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverWindowsMailProfile
 // ============================================================================
 
 bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QString& output_file) {
+    // System32-qualified reg.exe, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, so a planted reg.exe would run with our token. Fail
+    // closed when it cannot be resolved rather than export via a PATH-found binary.
+    const QString reg_exe = sak::system32Path(QStringLiteral("reg.exe"));
+    if (reg_exe.isEmpty()) {
+        sak::logWarning("Registry export: cannot resolve the System32 reg.exe path");
+        return false;
+    }
     const auto result =
-        sak::runProcess(QStringLiteral("reg.exe"),
+        sak::runProcess(reg_exe,
                         {QStringLiteral("export"), key_path, output_file, QStringLiteral("/y")},
                         kRegExportTimeoutMs);
     return result.succeeded();
@@ -1122,6 +1130,13 @@ bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
 }
 
 bool EmailProfileManager::importValidatedBytes(const QByteArray& bytes) {
+    // Same System32 qualification as the export side: a registry IMPORT is the more
+    // dangerous direction, so refuse outright when reg.exe cannot be resolved.
+    const QString reg_exe = sak::system32Path(QStringLiteral("reg.exe"));
+    if (reg_exe.isEmpty()) {
+        sak::logWarning("Registry import: cannot resolve the System32 reg.exe path");
+        return false;
+    }
     QTemporaryDir staging;
     if (!staging.isValid()) {
         sak::logWarning("Registry import: could not create a private staging directory");
@@ -1139,9 +1154,8 @@ bool EmailProfileManager::importValidatedBytes(const QByteArray& bytes) {
         return false;
     }
     out.close();
-    const auto result = sak::runProcess(QStringLiteral("reg.exe"),
-                                        {QStringLiteral("import"), staged},
-                                        kRegImportTimeoutMs);
+    const auto result =
+        sak::runProcess(reg_exe, {QStringLiteral("import"), staged}, kRegImportTimeoutMs);
     return result.succeeded();
 }
 

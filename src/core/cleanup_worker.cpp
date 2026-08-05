@@ -202,7 +202,14 @@ QString CleanupWorker::systemToolPath(const QString& systemRoot, const QString& 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                              bool useRecycleBin,
                              QObject* parent)
-    : WorkerBase(parent), m_items(selectedItems), m_useRecycleBin(useRecycleBin) {}
+    // Choosing the Recycle Bin IS a choice for recoverability, so recoverable-only defaults ON
+    // with it: a caller that never calls setRequireRecoverable can no longer end up permanently
+    // destroying an item whose recycle failed. A caller that has a reviewed-by-a-human contract
+    // (the GUI manual clean) opts back out explicitly via setRequireRecoverable(false).
+    : WorkerBase(parent)
+    , m_items(selectedItems)
+    , m_useRecycleBin(useRecycleBin)
+    , m_requireRecoverable(useRecycleBin) {}
 
 auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
     int succeeded = 0;
@@ -220,7 +227,10 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
         }
 
         const auto& item = m_items[idx];
-        if (!item.selected) {
+        // Hard backstop at the deleting worker: a report-only item (one whose path the
+        // scanner could not tie to the program -- e.g. an unverifiable registry
+        // InstallLocation) is refused here too, so no caller can route it to a delete.
+        if (!item.selected || !item.deletable) {
             continue;
         }
 

@@ -102,12 +102,37 @@ void NetworkShareBrowser::cancel() {
     m_cancelled.store(true);
 }
 
+void NetworkShareBrowser::emitDiscoveryOutcome(const QVector<NetworkShareInfo>& shares,
+                                               bool ok,
+                                               const QString& displayHost) {
+    if (ok) {
+        Q_EMIT discoveryComplete(shares);
+        return;
+    }
+    // Fail closed: enumerateShares reports ok=false for a hard NetShareEnum error, for a cancel
+    // that broke the resume-handle loop, and for a buffer truncated mid-append. Reporting any of
+    // those through discoveryComplete would hand a caller a partial list carrying a wholeness
+    // claim it cannot support -- and a CANCEL emits no errorOccurred of its own, so it would look
+    // like a clean discovery that simply found fewer shares.
+    const QString reason =
+        m_cancelled.load() ? QStringLiteral(
+                                 "Share discovery on %1 was cancelled; the partial list is not "
+                                 "a complete enumeration")
+                                 .arg(displayHost)
+                           : QStringLiteral(
+                                 "Share discovery on %1 did not complete; the partial list is not "
+                                 "a complete enumeration")
+                                 .arg(displayHost);
+    Q_EMIT discoveryFailed(shares, reason);
+}
+
 void NetworkShareBrowser::discoverShares(const QString& hostname) {
     m_cancelled.store(false);
 
     if (hostname.isEmpty()) {
+        // No enumeration was attempted, so there is no "complete" discovery to report.
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
-        Q_EMIT discoveryComplete({});
+        Q_EMIT discoveryFailed({}, QStringLiteral("Hostname cannot be empty"));
         return;
     }
 
@@ -121,7 +146,7 @@ void NetworkShareBrowser::discoverShares(const QString& hostname) {
         Q_EMIT shareDiscovered(share);
     }
 
-    Q_EMIT discoveryComplete(shares);
+    emitDiscoveryOutcome(shares, ok, resolveShareServer(hostname).displayHost);
 }
 
 QVector<NetworkShareInfo> NetworkShareBrowser::listSharesReadOnly(const QString& hostname,

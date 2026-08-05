@@ -48,6 +48,17 @@ public:
     /// is a fail-open honesty hole. Meaningful only after scanOrphanedNodes()/recoverAll() has run.
     [[nodiscard]] bool reachableReliable() const { return m_reachable_reliable; }
 
+    /// @brief Whether the last orphan scan enumerated every orphan candidate it classified.
+    ///
+    /// False when scanOrphanedNodes() could not run at all (parser not open, or the reachability
+    /// set was incomplete so classification was skipped) or when a per-node readItemDetail failed
+    /// for a NON-cancel reason -- a crafted PST/OST with unreadable orphan nodes otherwise yields
+    /// a silently truncated orphan set reported as a complete one. Mirrors recoverableReliable()
+    /// for the orphan side (cancellation is reported through the caller's timeout channel, not as
+    /// unreliability). Read it together with reachableReliable(), which says WHICH of the two
+    /// skip reasons applied. Meaningful only after scanOrphanedNodes()/recoverAll() has run.
+    [[nodiscard]] bool orphanReliable() const { return m_orphan_reliable; }
+
     /// @brief Whether the last recoverable-items scan completed without a read failure.
     ///
     /// scanRecoverableItems() stops a folder's item enumeration on any read error; a NON-cancelled
@@ -82,7 +93,8 @@ private:
     [[nodiscard]] bool appendRecoverableBatch(const QVector<PstItemSummary>& items,
                                               QVector<PstItemDetail>& recovered);
 
-    /// Attempt to read an orphaned NID as a message
+    /// Attempt to read an orphaned NID as a message. Clears m_orphan_reliable when the read
+    /// fails for a NON-cancel reason, so the dropped node cannot pass as "no orphan here".
     [[nodiscard]] std::optional<PstItemDetail> tryReadOrphanedNode(uint64_t nid);
 
     PstParser* m_parser;  ///< Non-owning
@@ -94,6 +106,10 @@ private:
     /// False when a NON-cancelled folder read failed during scanRecoverableItems, meaning the
     /// recovered set is incomplete (a failed read must not masquerade as "nothing to recover").
     bool m_recoverable_reliable = true;
+    /// False when the last scanOrphanedNodes could not enumerate every orphan candidate:
+    /// the scan was skipped (parser closed / reachability set incomplete) or a NON-cancelled
+    /// per-node detail read failed. An empty orphan set is only authoritative when this is true.
+    bool m_orphan_reliable = true;
     std::atomic<bool> m_cancelled{false};
 };
 

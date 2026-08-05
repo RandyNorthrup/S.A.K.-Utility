@@ -609,38 +609,70 @@ void markFileSparse(int fileDescriptor) {
 #endif
 }
 
-#ifdef Q_OS_WIN
 namespace {
-// Raw-device spellings the \\.\ and GLOBALROOT prefixes miss: \\?\PhysicalDriveN
-// and a BARE \\?\Volume{GUID} device handle. A \\?\Volume{GUID}\path\file form is
-// an extended-length FILE path (it has a separator after the closing brace), not a
-// raw device, and must stay classified as a file so it is not routed through the
-// aligned raw-device writer. The generic \\?\ prefix is deliberately NOT matched
-// (it is also the long-path prefix for ordinary files, e.g. \\?\C:\dir\x.img).
-[[nodiscard]] bool isExtendedWindowsRawDevice(const QString& path) {
-    if (path.startsWith(QStringLiteral("\\\\?\\PhysicalDrive"), Qt::CaseInsensitive)) {
-        return true;
-    }
-    if (path.startsWith(QStringLiteral("\\\\?\\Volume{"), Qt::CaseInsensitive)) {
-        const int closing = path.indexOf(QLatin1Char('}'));
-        return closing >= 0 && path.indexOf(QLatin1Char('\\'), closing) < 0;
-    }
-    return false;
+// Every raw-device rule below tests the same normalized text, so a target spelled with
+// forward slashes or surrounding whitespace cannot be classified differently by two callers.
+[[nodiscard]] QString normalizedDevicePath(const QString& path) {
+    QString normalized = path.trimmed();
+    normalized.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    return normalized;
 }
+
+// A BARE \\?\Volume{GUID} is a device handle. A \\?\Volume{GUID}\path\file form is an
+// extended-length FILE path (it has a separator after the closing brace), not a raw device,
+// and must stay classified as a file so it is not routed through the aligned raw writer.
+[[nodiscard]] bool isBareVolumeGuidDevice(const QString& path) {
+    if (!path.startsWith(QStringLiteral("\\\\?\\Volume{"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    const qsizetype closing = path.indexOf(QLatin1Char('}'));
+    return closing >= 0 && path.indexOf(QLatin1Char('\\'), closing) < 0;
+}
+
+// Raw-device spellings the \\.\ prefix misses: \\?\PhysicalDriveN, the \\?\GLOBALROOT\
+// device namespace, and a bare \\?\Volume{GUID} handle. The generic \\?\ prefix is
+// deliberately NOT matched (it is also the long-path prefix for ordinary files, e.g.
+// \\?\C:\dir\x.img).
+[[nodiscard]] bool isExtendedWindowsRawDevice(const QString& path) {
+    return path.startsWith(QStringLiteral("\\\\?\\PhysicalDrive"), Qt::CaseInsensitive) ||
+           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive) ||
+           isBareVolumeGuidDevice(path);
+}
+
+constexpr qsizetype kExtendedDevicePrefixLength = 4;  // "\\?\"
 }  // namespace
-#endif
 
 bool isWindowsRawDevicePath(const QString& path) {
-#ifdef Q_OS_WIN
-    // Device paths are case-insensitive on Windows (e.g. lowercase "globalroot").
-    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
-           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive) ||
-           isExtendedWindowsRawDevice(path);
-#else
-    // POSIX device nodes (Linux/macOS) are raw targets too; classify them so the
-    // image-only gate refuses them rather than opening a read-write QFile.
-    return path.startsWith(QStringLiteral("/dev/"));
-#endif
+    // Device paths are case-insensitive on Windows (e.g. lowercase "globalroot"). The Windows
+    // device spellings are recognized on every build host so the plan-time validator and the
+    // executor cannot disagree about whether a target is a raw device. POSIX device nodes are
+    // classified too, so the image-only gate refuses them rather than opening a QFile.
+    const QString normalized = normalizedDevicePath(path);
+    return normalized.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
+           isExtendedWindowsRawDevice(normalized) || path.startsWith(QStringLiteral("/dev/"));
+}
+
+QString canonicalRawDevicePath(const QString& path) {
+    const QString normalized = normalizedDevicePath(path);
+    if (normalized.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive)) {
+        return normalized;
+    }
+    if (isExtendedWindowsRawDevice(normalized)) {
+        // The same device object addressed through the \\.\ namespace the executor guards test.
+        return QStringLiteral("\\\\.\\") + normalized.mid(kExtendedDevicePrefixLength);
+    }
+    return {};
+}
+
+std::optional<uint32_t> rawDevicePhysicalDriveNumber(const QString& path) {
+    const QString canonical = canonicalRawDevicePath(path);
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    if (!canonical.startsWith(prefix, Qt::CaseInsensitive)) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    const uint value = canonical.mid(prefix.size()).toUInt(&ok);
+    return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
 }
 
 bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {

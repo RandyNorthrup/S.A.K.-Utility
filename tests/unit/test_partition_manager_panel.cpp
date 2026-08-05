@@ -26,6 +26,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -87,6 +88,8 @@ private Q_SLOTS:
     void createDialogExposesSynchronizedHandleControls();
     void wipeActionLetsUserChooseScope();
     void quickPartitionSizesFailClosedOnMalformedCustomAndOverflow();
+    void wizardEntryPointsRespectRunningOperationGuard();
+    void inventoryStateIsHonestAboutFailedPartitionEnumeration();
 };
 
 namespace {
@@ -2440,6 +2443,94 @@ void PartitionManagerPanelTests::quickPartitionSizesFailClosedOnMalformedCustomA
     const auto overflow = sak::partitionQuickSizesForOptionsForTest(overflowOpts, usable);
     QCOMPARE(overflow.size(), 2);
     QVERIFY(!sak::partitionQuickSizesAreValidForTest(overflow, usable));
+}
+
+namespace {
+
+// Dismisses whatever modal is up and reports whether it was a WIZARD (a message box is a
+// modal too, and an action that only warns has not opened its wizard).
+void dismissModalAndRecordWizard(bool* wizard_opened) {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (dialog == nullptr) {
+        return;
+    }
+    if (qobject_cast<QMessageBox*>(dialog) == nullptr) {
+        *wizard_opened = true;
+    }
+    dialog->reject();
+}
+
+bool invokeWizardSlot(sak::PartitionManagerPanel* panel, const char* slot) {
+    bool wizard_opened = false;
+    QTimer::singleShot(0, [&wizard_opened]() { dismissModalAndRecordWizard(&wizard_opened); });
+    const bool invoked = QMetaObject::invokeMethod(panel, slot, Qt::DirectConnection);
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    return invoked && wizard_opened;
+}
+
+// A wizard entry point must refuse while the executor is consuming the queue, and must still
+// work from an idle controller (so the refusal came from the guard, not an unqualified
+// fixture). Toolbar/context-menu enablement is deliberately not relied on: the context menu
+// stays live during an Apply.
+void verifyWizardGuardedWhileApplying(const char* slot,
+                                      const sak::PartitionInventory& inventory,
+                                      int select_row) {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(select_row);
+    QApplication::processEvents();
+
+    panel.setTestApplyStateForReview(sak::PartitionManagerState::Applying);
+    QVERIFY2(!invokeWizardSlot(&panel, slot), slot);
+    auto* queue = panel.findChild<QListWidget*>();
+    QVERIFY2(queue != nullptr, "Pending operation queue should exist");
+    QCOMPARE(queue->count(), 0);
+
+    panel.setTestApplyStateForReview(sak::PartitionManagerState::Ready);
+    QVERIFY2(invokeWizardSlot(&panel, slot), slot);
+}
+
+}  // namespace
+
+// R5 p11_gui-3: onQuickPartition / onAllocateFreeSpace / onConvertDynamicDiskToBasic called
+// the controller's queueOperation directly, bypassing queueMutationBlockedByRunningOperation.
+// The controller queues unconditionally (PlanningOperation -> QueueDirty), so a wizard run
+// during an Apply corrupted the state machine mid-apply and mutated the queue the executor
+// was consuming. Every entry point now goes through the one central guard.
+void PartitionManagerPanelTests::wizardEntryPointsRespectRunningOperationGuard() {
+    verifyWizardGuardedWhileApplying("onQuickPartition", unallocatedAllocateInventoryFixture(), 0);
+    verifyWizardGuardedWhileApplying("onAllocateFreeSpace", allocateFreeSpaceInventoryFixture(), 1);
+    verifyWizardGuardedWhileApplying("onConvertDynamicDiskToBasic",
+                                     metadataRebuildInventoryFixture(true),
+                                     0);
+}
+
+// The scan-completion report is a pure function of the inventory, so the honesty rule is
+// asserted without a live PowerShell scan: a disk whose partition enumeration failed can never
+// be announced as a plain "inventory ready".
+void PartitionManagerPanelTests::inventoryStateIsHonestAboutFailedPartitionEnumeration() {
+    sak::PartitionInventory healthy = applyReviewInventoryFixture();
+    QVERIFY(!healthy.hasPartitionEnumerationFailure());
+    QCOMPARE(sak::PartitionManagerController::inventoryReadyState(healthy),
+             sak::PartitionManagerState::Ready);
+    QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(healthy),
+             QStringLiteral("Partition Manager: inventory ready"));
+
+    sak::PartitionInventory degraded = healthy;
+    degraded.disks[0].partition_enumeration_failed = true;
+    degraded.disks[0].partition_enumeration_error = QStringLiteral("Access is denied.");
+    QVERIFY(degraded.hasPartitionEnumerationFailure());
+    QCOMPARE(sak::PartitionManagerController::inventoryReadyState(degraded),
+             sak::PartitionManagerState::ReadyPartial);
+
+    const QString message = sak::PartitionManagerController::inventoryStatusMessage(degraded);
+    QVERIFY2(message.contains(QStringLiteral("INCOMPLETE")), qPrintable(message));
+    const QString failedDisk = QStringLiteral("disk(s) %1").arg(degraded.disks[0].disk_number);
+    QVERIFY2(message.contains(failedDisk), qPrintable(message));
+    QVERIFY2(!message.contains(QStringLiteral("inventory ready")), qPrintable(message));
 }
 
 QTEST_MAIN(PartitionManagerPanelTests)

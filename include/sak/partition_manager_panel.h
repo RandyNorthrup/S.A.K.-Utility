@@ -46,6 +46,9 @@ public:
     void setTestInventoryForReview(const PartitionInventory& inventory);
     void queueTestOperationForReview(PartitionOperationType type, const PartitionTarget& target);
     [[nodiscard]] bool showApplyReviewDialogForTest();
+    // Puts the controller into a running-operation state so a test can assert that the
+    // wizard entry points refuse to mutate the queue an executor is consuming.
+    void setTestApplyStateForReview(PartitionManagerState state);
 #endif
 
 Q_SIGNALS:
@@ -209,6 +212,8 @@ private:
                                       const std::optional<PartitionTarget>& selected);
     QWidget* createDiskTile(const PartitionDiskInfo& disk);
     void selectTargetInTable(const PartitionTarget& target);
+    /// @brief Health/operational/temperature/wear/error fragments shown in a disk row tooltip
+    static QStringList diskStatusParts(const PartitionDiskInfo& disk);
     void addDiskRow(const PartitionDiskInfo& disk);
     void addPartitionRow(const PartitionDiskInfo& disk, const PartitionInfoEx& partition);
     void addUnallocatedRow(const UnallocatedRegion& region);

@@ -8,6 +8,7 @@
 
 #include "sak/recycle_bin.h"
 
+#include <QDir>
 #include <QString>
 #include <QtTest/QtTest>
 
@@ -37,6 +38,34 @@ private Q_SLOTS:
         withNul.append(QChar(QChar::Null));
         withNul.append(QStringLiteral("X:/scratch/b.txt"));
         QVERIFY(!sak::sendPathToRecycleBin(withNul));
+    }
+
+    void refusesVolumesWithoutARecycleBin() {
+        // R5 p9_filemgmt-7: SHFileOperationW with FOF_ALLOWUNDO deletes PERMANENTLY on
+        // a volume with no Recycle Bin, so a "recycle" there silently becomes an
+        // unrecoverable delete while the caller reports a recoverable one. A UNC share
+        // is the canonical case and is refused on the path string alone -- before any
+        // volume or network call -- so this test contacts no host.
+        const QString unc = QStringLiteral("\\\\sak-no-such-host\\share\\payload.txt");
+        QVERIFY(!sak::pathVolumeHasRecycleBin(unc));
+        QVERIFY(!sak::sendPathToRecycleBin(unc));
+        // The forward-slash spelling normalizes to the same UNC path.
+        QVERIFY(
+            !sak::pathVolumeHasRecycleBin(QStringLiteral("//sak-no-such-host/share/payload.txt")));
+        QVERIFY(!sak::pathVolumeHasRecycleBin(QString()));
+    }
+
+    void acceptsFixedVolumeWithARecycleBin() {
+        // The volume guard must be a real discriminator, not a blanket refusal: the
+        // fixed volume this test runs from does have a Recycle Bin, so an ordinary
+        // local recycle still reaches the shell call. (The slot itself stays
+        // unconditional so moc registers it on every platform; only the expected
+        // verdict is platform-specific -- there is no bin to reach off Windows.)
+#ifdef Q_OS_WIN
+        QVERIFY(sak::pathVolumeHasRecycleBin(QDir::currentPath()));
+#else
+        QVERIFY(!sak::pathVolumeHasRecycleBin(QDir::currentPath()));
+#endif
     }
 };
 

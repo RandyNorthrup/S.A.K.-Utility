@@ -14,6 +14,8 @@
 #include <atomic>
 #include <type_traits>
 
+class TestNetworkShareBrowser;
+
 namespace sak {
 
 /// @brief Network share discovery and access tester
@@ -22,6 +24,12 @@ namespace sak {
 /// on a target host and tests read/write access.
 class NetworkShareBrowser : public QObject {
     Q_OBJECT
+
+    // Unit-test seam: exercise the terminal-signal decision (emitDiscoveryOutcome) directly, so
+    // the fail-closed split between a COMPLETE enumeration and a partial/failed one is provable
+    // without a live SMB host. The test class lives in the global namespace, so befriend
+    // ::TestNetworkShareBrowser (not sak::TestNetworkShareBrowser).
+    friend class ::TestNetworkShareBrowser;
 
 public:
     explicit NetworkShareBrowser(QObject* parent = nullptr);
@@ -33,6 +41,11 @@ public:
     NetworkShareBrowser& operator=(NetworkShareBrowser&&) = delete;
 
     /// @brief Discover shares on a host (blocking)
+    ///
+    /// Emits shareDiscovered per share, then EXACTLY ONE terminal signal: discoveryComplete
+    /// when the enumeration was authoritative, discoveryFailed when it was not (bad request,
+    /// NetShareEnum error, or a cancel that truncated the resume-handle loop). A partial list
+    /// is never delivered through discoveryComplete.
     void discoverShares(const QString& hostname);
 
     /// @brief Enumerate shares on a host read-only (blocking): performs NO write-access probe,
@@ -52,7 +65,12 @@ public:
 
 Q_SIGNALS:
     void shareDiscovered(sak::NetworkShareInfo share);
+    /// The enumeration was AUTHORITATIVE: every share the host reported is in @p shares.
     void discoveryComplete(QVector<sak::NetworkShareInfo> shares);
+    /// The enumeration did NOT complete, so @p partialShares is whatever was read before the
+    /// failure/cancel and carries no wholeness claim. Emitted INSTEAD of discoveryComplete so a
+    /// truncated read can never be consumed as a finished discovery.
+    void discoveryFailed(QVector<sak::NetworkShareInfo> partialShares, QString reason);
     void accessTestComplete(QString uncPath, bool canRead, bool canWrite);
     void errorOccurred(QString error);
 
@@ -62,6 +80,12 @@ private:
     [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(const QString& hostname,
                                                             bool testAccess,
                                                             bool& ok);
+    /// Emit the single terminal signal for one discovery run: discoveryComplete when @p ok,
+    /// discoveryFailed (with the partial list and a reason naming cancel vs enumeration error)
+    /// otherwise. Never emits both.
+    void emitDiscoveryOutcome(const QVector<NetworkShareInfo>& shares,
+                              bool ok,
+                              const QString& displayHost);
     /// Append one NetShareEnum result buffer to @p shares (probing access when asked).
     /// @p shareInfoBuffer is a PSHARE_INFO_1 passed as void* to keep the Windows LAN
     /// Manager headers out of this public header.

@@ -349,19 +349,21 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
     connect(m_cancelButton, &QPushButton::clicked, this, &AppInstallationPanel::onCancelInstall);
 
     // Queue selection
+    // Selection-driven enablement reads the single in-flight authority, so a running
+    // offline deployment operation keeps these online controls disabled too.
     connect(m_queueList, &QListWidget::itemSelectionChanged, this, [this]() {
         m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() &&
-                                            !m_install_in_progress);
+                                            !packageOperationInFlight());
     });
 
-    // Results selection — enable Add button when a row is selected
+    // Results selection - enable Add button when a row is selected
     connect(m_onlineResultsTable->selectionModel(),
             &QItemSelectionModel::selectionChanged,
             this,
             [this]() {
                 m_addToQueueButton->setEnabled(
                     m_onlineResultsTable->selectionModel()->hasSelection() &&
-                    !m_install_in_progress);
+                    !packageOperationInFlight());
             });
 
     // Double-click a search result to add it directly
@@ -410,11 +412,9 @@ void AppInstallationPanel::setupWorkerLifecycleConnections() {
                 Q_EMIT statusMessage(tr("Installation complete"), sak::kTimerStatusDefaultMs);
                 m_progressBar->setVisible(false);
                 m_progressLabel->setVisible(false);
-                m_install_in_progress = false;
-                m_cancelButton->setVisible(false);
-                m_cancelButton->setEnabled(false);
-                m_installButton->setVisible(true);
-                enableControls(true);
+                // Releases the online claim and refreshes BOTH control groups from the
+                // single in-flight authority (so the offline group comes back too).
+                setInstallInProgressUi(false);
 
                 // Show summary modal with per-package results
                 auto jobs = m_worker->getJobs();
@@ -741,9 +741,10 @@ void AppInstallationPanel::setupOfflineInputConnections() {
             this,
             &AppInstallationPanel::onLoadOfflineList);
 
+    // Same single in-flight authority as the online side (see setupQueueConnections).
     connect(m_offlineListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
         m_offlineRemoveButton->setEnabled(!m_offlineListWidget->selectedItems().isEmpty() &&
-                                          !m_offline_in_progress);
+                                          !packageOperationInFlight());
     });
 }
 
@@ -804,8 +805,7 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
                     tr("Complete: %1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed));
                 m_offlineStatusLabel->setVisible(true);
 
-                m_offline_in_progress = false;
-                enableOfflineControls(true);
+                setOfflineInProgressUi(false);
 
                 Q_EMIT statusMessage(tr("Offline operation complete: %1 succeeded, %2 failed")
                                          .arg(stats.completed)
@@ -819,8 +819,7 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
             [this](const QString& error) {
                 sak::logError("[AppInstallationPanel] Offline error: {}", error.toStdString());
                 Q_EMIT logOutput(QString("ERROR: %1").arg(error));
-                m_offline_in_progress = false;
-                enableOfflineControls(true);
+                setOfflineInProgressUi(false);
             });
 
     connect(m_offline_worker.get(),

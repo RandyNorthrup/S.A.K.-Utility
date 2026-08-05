@@ -308,6 +308,7 @@ set(CORE_SOURCES
     src/core/package_matcher.cpp
     src/core/migration_report.cpp
     src/core/app_installation_worker.cpp
+    src/core/app_installation_busy.cpp
     src/core/user_data_manager.cpp
     src/core/user_profile_types.cpp
     src/core/smart_file_filter.cpp
@@ -566,6 +567,7 @@ set(CORE_SOURCES
     include/sak/email_search_worker.h
     include/sak/email_export_worker.h
     include/sak/email_attachment_saver.h
+    include/sak/email_view_ids.h
     include/sak/email_profile_manager.h
     include/sak/email_report_generator.h
     include/sak/email_inspector_controller.h

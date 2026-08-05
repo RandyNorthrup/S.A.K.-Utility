@@ -211,6 +211,22 @@ private:
                              QString& backup_dir_path,
                              int& key_files_written,
                              bool& permissions_set);
+    /// @brief Screen and canonicalize a caller-supplied backup destination.
+    ///
+    /// The location arrives in the elevated helper's task payload (client-supplied, and the
+    /// client image check is a separate boundary from the PAYLOAD), and the directory is
+    /// about to hold PLAINTEXT BitLocker recovery keys. So it is validated here rather than
+    /// trusted: a UNC/device root, a relative path, a leaf-or-ancestor symlink/junction
+    /// redirect, and a mapped network drive are all refused, and what survives is returned
+    /// lexically canonicalized.
+    ///
+    /// @param raw_location Destination as supplied by the caller.
+    /// @param refusal      Out: the human-readable reason when the location is refused.
+    /// @return The canonical absolute location, or an EMPTY string when refused (fail
+    ///         closed -- the caller must not create or write anything).
+    [[nodiscard]] static QString screenBackupLocation(const QString& raw_location,
+                                                      QString& refusal);
+
     /// @brief Create a fresh, uniquely named backup directory (fail closed on
     /// any collision so a prior backup is never reopened and truncated).
     bool createBackupDirectory(const QDateTime& start_time, QString& backup_dir_path);

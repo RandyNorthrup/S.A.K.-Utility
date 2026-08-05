@@ -931,16 +931,44 @@ bool OstConversionWorker::itemPassesSenderFilter(const PstItemDetail& item,
 // Deleted Item Recovery
 // ============================================================================
 
+void OstConversionWorker::recordRecoveryReliability(bool recoverable_reliable,
+                                                    bool orphan_reliable,
+                                                    bool orphans_scanned,
+                                                    OstConversionResult& result) {
+    if (!recoverable_reliable) {
+        result.recovery_complete = false;
+        result.errors.append(
+            QStringLiteral("Deleted-item recovery is INCOMPLETE: a read error truncated the "
+                           "Recoverable Items scan, so recoverable items are missing from the "
+                           "output. The recovered count is a floor, not a total."));
+    }
+    if (orphans_scanned && !orphan_reliable) {
+        result.recovery_complete = false;
+        result.errors.append(
+            QStringLiteral("Deleted-item recovery is INCOMPLETE: the orphaned-node scan could "
+                           "not enumerate every candidate, so orphaned items are missing from "
+                           "the output. The recovered count is a floor, not a total."));
+    }
+}
+
 void OstConversionWorker::processRecoveredItems(PstParser* parser,
                                                 const OstConversionConfig& config,
                                                 OstConversionResult& result) {
     DeletedItemScanner scanner(parser);
 
     QVector<PstItemDetail> recovered_items;
-    if (config.recovery_mode == RecoveryMode::DeepRecovery) {
+    const bool deep_recovery = config.recovery_mode == RecoveryMode::DeepRecovery;
+    if (deep_recovery) {
         recovered_items = scanner.recoverAll();
     } else {
         recovered_items = scanner.scanRecoverableItems();
+    }
+    // Cancellation is reported through its own channel, not as unreliability (the scanner's
+    // flags already exclude it); everything else must reach the result before a single item is
+    // written, so a truncated scan can never be presented as a clean recovery.
+    if (!m_cancelled.load()) {
+        recordRecoveryReliability(
+            scanner.recoverableReliable(), scanner.orphanReliable(), deep_recovery, result);
     }
 
     QString recovery_folder = QStringLiteral("Recovered Items");

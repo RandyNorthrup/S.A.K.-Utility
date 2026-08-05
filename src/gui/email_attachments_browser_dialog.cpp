@@ -313,7 +313,7 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
         m_progress_bar->hide();
         rebuildTable();
         updateStatusLabel();
-        m_save_all_button->setEnabled(!m_all_attachments.isEmpty());
+        updateSaveControls();
         return;
     }
     m_controller->loadItemDetail(m_pending_detail_ids[m_details_loaded]);
@@ -442,8 +442,7 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
 
     m_table->setSortingEnabled(true);
     m_table->setUpdatesEnabled(true);
-    m_save_all_button->setEnabled(m_table->rowCount() > 0);
-    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
+    updateSaveControls();
 }
 
 bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry) const {
@@ -504,7 +503,7 @@ void EmailAttachmentsBrowserDialog::onTypeFilterChanged(int /*index*/) {
 }
 
 void EmailAttachmentsBrowserDialog::onSelectionChanged() {
-    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
+    updateSaveControls();
     if (m_scan_complete) {
         updateStatusLabel();
     }
@@ -546,18 +545,42 @@ void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
 // Save actions
 // ============================================================================
 
+void EmailAttachmentsBrowserDialog::startBatch(const QString& dir,
+                                               const QVector<AttachmentRef>& refs) {
+    if (!m_batch_save.begin(dir, refs)) {
+        m_status_label->setText(tr("Could not start the save. Nothing was written."));
+        return;
+    }
+    // Lock the save controls for the duration: arrivals from a second batch begun
+    // now would interleave with this one's and land in each other's slots.
+    updateSaveControls();
+    m_status_label->setText(tr("Saving %1 attachment(s)...").arg(refs.size()));
+    for (const auto& ref : refs) {
+        m_controller->loadAttachmentContent(ref.message_id, ref.index);
+    }
+}
+
+void EmailAttachmentsBrowserDialog::updateSaveControls() {
+    const bool idle = !m_batch_save.isActive();
+    m_save_selected_button->setEnabled(idle && !m_checked_attachment_keys.isEmpty());
+    m_save_all_button->setEnabled(idle && m_table->rowCount() > 0);
+}
+
 void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& entry) {
+    if (m_batch_save.isActive()) {
+        m_status_label->setText(tr("A save is already running. Wait for it to finish."));
+        return;
+    }
     QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
     if (dir.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, 1);
-    m_status_label->setText(tr("Saving attachment..."));
-    m_controller->loadAttachmentContent(entry.message_node_id, entry.attachment_index);
+    const QVector<AttachmentRef> refs{AttachmentRef{entry.message_node_id, entry.attachment_index}};
+    startBatch(dir, refs);
 }
 
 void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
-    if (m_checked_attachment_keys.isEmpty()) {
+    if (m_batch_save.isActive() || m_checked_attachment_keys.isEmpty()) {
         return;
     }
 
@@ -566,27 +589,22 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
         return;
     }
 
-    int count = 0;
-    QVector<std::pair<uint64_t, int>> to_save;
+    QVector<AttachmentRef> refs;
+    refs.reserve(m_all_attachments.size());
     for (const auto& entry : m_all_attachments) {
         if (!m_checked_attachment_keys.contains(attachmentKey(entry))) {
             continue;
         }
-        to_save.append({entry.message_node_id, entry.attachment_index});
-        ++count;
+        refs.append(AttachmentRef{entry.message_node_id, entry.attachment_index});
     }
-    if (count == 0) {
+    if (refs.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, count);
-    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
-    for (const auto& [node_id, att_index] : to_save) {
-        m_controller->loadAttachmentContent(node_id, att_index);
-    }
+    startBatch(dir, refs);
 }
 
 void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
-    if (m_table->rowCount() == 0) {
+    if (m_batch_save.isActive() || m_table->rowCount() == 0) {
         return;
     }
 
@@ -595,8 +613,8 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
         return;
     }
 
-    int count = 0;
-    QVector<std::pair<uint64_t, int>> to_save;
+    QVector<AttachmentRef> refs;
+    refs.reserve(m_table->rowCount());
     for (int row = 0; row < m_table->rowCount(); ++row) {
         auto* item = m_table->item(row, ColFilename);
         if (item == nullptr) {
@@ -607,31 +625,34 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
             continue;
         }
         const auto& entry = m_all_attachments[att_idx];
-        to_save.append({entry.message_node_id, entry.attachment_index});
-        ++count;
+        refs.append(AttachmentRef{entry.message_node_id, entry.attachment_index});
     }
-    if (count == 0) {
+    if (refs.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, count);
-    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
-    for (const auto& [node_id, att_index] : to_save) {
-        m_controller->loadAttachmentContent(node_id, att_index);
-    }
+    startBatch(dir, refs);
 }
 
-void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t /*message_id*/,
-                                                             int /*index*/,
+void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id,
+                                                             int index,
                                                              QByteArray content,
                                                              QString filename) {
-    if (!m_batch_save.isActive()) {
+    // Record only what this batch asked for. A stray arrival -- a leftover from a
+    // previous batch, or one requested by another view -- would otherwise be
+    // written into one of this batch's slots and counted as that slot's save.
+    const AttachmentRef ref{message_id, index};
+    if (!m_batch_save.expects(ref)) {
         return;
     }
 
-    m_batch_save.recordOne(filename, content);
+    const auto result = m_batch_save.recordOne(ref, filename, content);
+    if (!result.success) {
+        sak::logWarning("Attachment save failed: {}", result.error_message.toStdString());
+    }
     if (m_batch_save.isComplete()) {
         m_status_label->setText(m_batch_save.summaryText());
         m_batch_save.reset();
+        updateSaveControls();
     }
 }
 
@@ -658,6 +679,7 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
         if (m_batch_save.isComplete()) {
             m_status_label->setText(m_batch_save.summaryText());
             m_batch_save.reset();
+            updateSaveControls();
         }
     }
 }

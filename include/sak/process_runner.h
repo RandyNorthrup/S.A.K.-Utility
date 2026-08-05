@@ -88,4 +88,37 @@ struct ProcessStreamingRequest {
 ///        returns @p relativeExe unchanged.
 [[nodiscard]] QString system32Path(const QString& relativeExe);
 
+/// @brief Absolute path to the Windows-shipped powershell.exe
+///        (System32\\WindowsPowerShell\\v1.0). Launching the unqualified
+///        "powershell.exe" resolves through the CreateProcess search order -- which
+///        includes the current directory ahead of System32 -- so an attacker who
+///        plants a powershell.exe on that search path gets it run, worse still by an
+///        elevated caller. Returns an empty string when the system directory cannot
+///        be resolved or the interpreter is not present there; every caller MUST fail
+///        closed on empty instead of falling back to the bare name. On non-Windows
+///        returns "powershell.exe".
+[[nodiscard]] QString systemPowerShellPath();
+
+/// @brief Same as system32Path but rooted at the Windows directory itself
+///        (GetWindowsDirectoryW) rather than System32, for the tools that live there --
+///        explorer.exe most notably, which is NOT a System32 binary. Returns an empty
+///        string (the caller MUST fail closed) if the Windows directory cannot be
+///        resolved. On non-Windows returns @p relativeExe unchanged.
+[[nodiscard]] QString windowsDirPath(const QString& relativeExe);
+
+/// @brief Launch a Windows-shipped System32 tool DETACHED, naming it by its absolute path.
+///
+/// A shell-open ("explorer.exe <uri>", "control.exe /name ...") is resolved through the
+/// same CreateProcess search order as any other launch -- current directory and PATH ahead
+/// of the system directories -- so a bare name is a hijack vector whether or not the target
+/// is an interpreter. Returns false WITHOUT launching anything when the path cannot be
+/// resolved; there is deliberately no fall back to the bare name.
+[[nodiscard]] bool startDetachedSystem32Tool(const QString& relativeExe,
+                                             const QStringList& args = {});
+
+/// @brief startDetachedSystem32Tool for a tool that lives directly in the Windows
+///        directory (explorer.exe) instead of System32.
+[[nodiscard]] bool startDetachedWindowsTool(const QString& relativeExe,
+                                            const QStringList& args = {});
+
 }  // namespace sak

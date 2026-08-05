@@ -24,7 +24,6 @@ namespace sak {
 namespace {
 constexpr int kImapDefaultTimeoutMs = 30'000;
 constexpr qint64 kImapMaxTimeoutMs = 24LL * 60 * 60 * 1000;  // 24h ceiling
-constexpr int kImapReadBufferSize = 8192;
 constexpr int kImapMaxMessageSize = 25 * static_cast<int>(kBytesPerMB);
 constexpr int kImapDateTimeFieldWidth = kTimeFieldWidth;
 constexpr int kImapDateTimeBase = kDecimalBase;
@@ -376,7 +375,20 @@ private:
     }
 
     void handleReadable() {
-        m_buffer += QString::fromUtf8(m_socket->readAll());
+        const QByteArray chunk = m_socket->readAll();
+        // The server is an UNTRUSTED network peer and every reader below waits for a
+        // complete CRLF line, so a peer that streams bytes with no line terminator would
+        // grow m_buffer without bound (memory exhaustion). Refuse the session once the
+        // ceiling would be crossed -- the buffer is never truncated and parsed on, which
+        // would decide a command's outcome from a half-read response.
+        if (ImapUploader::responseBufferWouldOverflow(m_buffer.size(), chunk.size())) {
+            failConnection(
+                QStringLiteral("Server response exceeded the %1-character limit without a "
+                               "complete line")
+                    .arg(static_cast<qlonglong>(ImapUploader::kMaxResponseBufferChars)));
+            return;
+        }
+        m_buffer += QString::fromUtf8(chunk);
         if (handleGreeting()) {
             return;
         }
@@ -773,6 +785,15 @@ bool ImapUploader::taggedLineIsOk(const QString& buf, const QString& tag) {
 bool ImapUploader::isValidImapGreeting(const QString& buf) {
     return hasCompleteLineWithPrefix(buf, QStringLiteral("* OK")) ||
            hasCompleteLineWithPrefix(buf, QStringLiteral("* PREAUTH"));
+}
+
+bool ImapUploader::responseBufferWouldOverflow(qsizetype buffered_chars, qsizetype incoming_bytes) {
+    if (buffered_chars < 0 || incoming_bytes < 0) {
+        return true;  // a nonsensical size fails closed
+    }
+    // incoming_bytes counts BYTES and buffered_chars counts decoded characters; UTF-8 never
+    // decodes to more characters than it has bytes, so comparing the sum is conservative.
+    return buffered_chars + incoming_bytes > kMaxResponseBufferChars;
 }
 
 bool ImapUploader::isValidImapFlag(const QString& flag) {

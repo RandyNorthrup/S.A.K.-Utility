@@ -95,6 +95,9 @@ QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
 
     m_preview_caption = new QLabel(container);
     m_preview_caption->setObjectName(QStringLiteral("fileExplorerPreviewCaption"));
+    // The caption embeds the entry name, which is bytes parsed straight out of a raw ext2/3/4,
+    // HFS+ or APFS image -- fully author-controlled -- so it is never interpreted as markup.
+    m_preview_caption->setTextFormat(Qt::PlainText);
     m_preview_caption->setWordWrap(true);
     m_preview_caption->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_preview_caption->setAccessibleName(tr("Explorer preview caption"));

@@ -40,6 +40,8 @@ constexpr int kAria2cTotalCaptureGroup = 2;
 constexpr int kAria2cPercentCaptureGroup = 3;
 constexpr int kAria2cSpeedCaptureGroup = 4;
 constexpr int kChecksumRecordMinimumParts = 2;
+constexpr qsizetype kSha256HexLength = 64;
+constexpr qsizetype kSha1HexLength = 40;
 constexpr int kChecksumComputingProgress = 97;
 constexpr int kChecksumVerifyingProgress = 95;
 constexpr qint64 kChecksumReadBufferSize = 8 * sak::kBytesPerMB;
@@ -142,9 +144,40 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
             Q_EMIT downloadError("Could not resolve download URL for " + distro.name);
             return;
         }
+        if (!requirePinnedChecksum(distro.name)) {
+            return;
+        }
 
         startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
     }
+}
+
+bool LinuxISODownloader::requirePinnedChecksum(const QString& distroName) {
+    // A downloaded ISO is written to bootable media, so an unverifiable one is refused up
+    // front rather than downloaded and handed on with a warning. SourceForge downloads in
+    // particular redirect from the initial HTTPS URL onto plain-HTTP mirrors where no TLS
+    // certificate applies; the pinned checksum, fetched over HTTPS, is what makes that leg
+    // safe. Without it there is nothing to verify against.
+    if (m_checksumUrl.isEmpty() || m_checksumType.isEmpty()) {
+        const QString error =
+            "No pinned checksum is published for " + distroName +
+            "; refusing to download an ISO whose integrity cannot be verified before it is "
+            "written to removable media.";
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "No pinned checksum available");
+        Q_EMIT downloadError(error);
+        return false;
+    }
+    const QUrl checksumUrl(m_checksumUrl);
+    if (!checksumUrl.isValid() || checksumUrl.scheme().toLower() != "https") {
+        const QString error = "Rejected non-HTTPS checksum URL for " + distroName + ": " +
+                              m_checksumUrl;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "Checksum URL is not HTTPS");
+        Q_EMIT downloadError(error);
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -173,6 +206,9 @@ void LinuxISODownloader::onVersionCheckCompleted(const QString& distroId,
         setPhase(Phase::Failed, "Download URL not available");
         Q_EMIT downloadError("Could not resolve download URL for " + distro.name +
                              ". The GitHub release may not contain an ISO asset.");
+        return;
+    }
+    if (!requirePinnedChecksum(distro.name)) {
         return;
     }
 
@@ -413,19 +449,21 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     sak::logInfo("Download complete: " + m_savePath.toStdString() + " (" +
                  std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
 
-    // Proceed to checksum verification if available
-    if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
-        verifyChecksum();
-    } else {
-        // No checksum available -- complete WITHOUT integrity verification. This is
-        // an unverified download (the transport may have been redirected to an HTTP
-        // mirror), so surface it explicitly rather than presenting it as verified.
-        sak::logWarning("Linux ISO downloaded WITHOUT checksum verification: " +
-                        m_savePath.toStdString());
-        setPhase(Phase::Completed, "Download complete (no checksum verification available)");
-        Q_EMIT statusMessage("Download complete -- no checksum available; integrity NOT verified");
-        Q_EMIT downloadComplete(m_savePath, downloadedFile.size());
+    // An ISO that cannot be checked against a pinned checksum is never handed on as a
+    // completed download: the transport may have been redirected onto a plain-HTTP mirror and
+    // the file goes on to be written to bootable media. requirePinnedChecksum already refused
+    // the start, so reaching here without one means the state was lost -- fail closed.
+    if (m_checksumUrl.isEmpty() || m_checksumType.isEmpty()) {
+        const QString error =
+            "Downloaded ISO has no pinned checksum to verify against; refusing to report it as "
+            "complete. The file was left at " +
+            m_savePath;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "No pinned checksum available");
+        Q_EMIT downloadError(error);
+        return;
     }
+    verifyChecksum();
 }
 
 // ============================================================================
@@ -486,33 +524,110 @@ void LinuxISODownloader::onProgressPollTimer() {
 // Checksum Verification
 // ============================================================================
 
+qsizetype LinuxISODownloader::expectedHashHexLength() const {
+    return m_checksumType == "sha1" ? kSha1HexLength : kSha256HexLength;
+}
+
+bool LinuxISODownloader::isHexDigestOfLength(const QString& token, qsizetype hex_length) {
+    if (token.size() != hex_length) {
+        return false;
+    }
+    return std::all_of(token.cbegin(), token.cend(), [](QChar ch) {
+        const QChar lower = ch.toLower();
+        return (lower >= QLatin1Char('0') && lower <= QLatin1Char('9')) ||
+               (lower >= QLatin1Char('a') && lower <= QLatin1Char('f'));
+    });
+}
+
+QString LinuxISODownloader::checksumSectionAlgorithm(const QString& line) {
+    // Matches a per-algorithm heading such as "### SHA256SUMS:", "SHA1SUMS" or "# B3SUMS:".
+    static const QRegularExpression headingRe(QStringLiteral("^#*\\s*([A-Za-z0-9]+)SUMS:?$"));
+    const auto match = headingRe.match(line.trimmed());
+    return match.hasMatch() ? match.captured(1).toUpper() : QString();
+}
+
+QString LinuxISODownloader::bsdRecordDigest(const QString& line,
+                                            const QString& expectedFileName,
+                                            const QString& algorithm,
+                                            qsizetype hex_length) {
+    // BSD-style record: "SHA256 (Fedora-Workstation-Live-44-1.7.x86_64.iso) = <hash>".
+    static const QRegularExpression bsdRe(
+        QStringLiteral("^([A-Za-z0-9-]+)\\s*\\(([^)]+)\\)\\s*=\\s*(\\S+)$"));
+    const auto match = bsdRe.match(line.trimmed());
+    if (!match.hasMatch()) {
+        return {};
+    }
+    // The algorithm is named on the line itself, so follow that label exactly as a section
+    // heading is followed: a SHA256 record must never satisfy a SHA-512 configuration.
+    // "SHA-256" and "SHA256" are the same algorithm spelled two ways.
+    QString lineAlgorithm = match.captured(1).toUpper();
+    QString wantedAlgorithm = algorithm.toUpper();
+    lineAlgorithm.remove(QLatin1Char('-'));
+    wantedAlgorithm.remove(QLatin1Char('-'));
+    if (lineAlgorithm != wantedAlgorithm || match.captured(2) != expectedFileName) {
+        return {};
+    }
+    const QString digest = match.captured(3);
+    return isHexDigestOfLength(digest, hex_length) ? digest.toLower() : QString();
+}
+
+QString LinuxISODownloader::hashFromRecordLine(const QString& line,
+                                               const QString& expectedFileName) const {
+    // Split on whitespace (hash  filename OR hash *filename)
+    const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    if (parts.size() == 1) {
+        // A bare sidecar holding only the digest. It must still LOOK like a digest of the
+        // configured algorithm; a lone prose word is not a hash and must not be returned.
+        const QString only = parts.first();
+        return isHexDigestOfLength(only, expectedHashHexLength()) ? only.toLower() : QString();
+    }
+    for (qsizetype i = 0; i + 1 < parts.size(); i += kChecksumRecordMinimumParts) {
+        QString filename = parts.at(i + 1);
+        if (filename.startsWith('*')) {
+            filename = filename.mid(1);
+        }
+        if (filename == expectedFileName &&
+            isHexDigestOfLength(parts.at(i), expectedHashHexLength())) {
+            return parts.at(i).toLower();
+        }
+    }
+    return {};
+}
+
 QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
                                               const QString& expectedFileName) const {
-    QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
+    const QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
+    // Empty until a per-algorithm heading is seen. A plain sums file (one algorithm, no
+    // headings) never sets it and is read exactly as before. A release note that groups
+    // several algorithms DOES set it, and that is the only thing that can tell a SHA-256
+    // digest from a BLAKE3 one: both are 64 hex characters and both name the same ISO, so
+    // matching on shape alone would return whichever block happened to come first.
+    QString section;
 
     for (const QString& line : checksumLines) {
-        QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) {
             continue;
         }
-
-        // Split on whitespace (hash  filename OR hash *filename)
-        QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-        if (parts.size() == 1) {
-            return parts.first().toLower();
-        }
-        if (parts.size() < kChecksumRecordMinimumParts) {
+        if (const QString heading = checksumSectionAlgorithm(trimmed); !heading.isEmpty()) {
+            section = heading;
             continue;
         }
-
-        for (qsizetype i = 0; i + 1 < parts.size(); i += kChecksumRecordMinimumParts) {
-            QString filename = parts.at(i + 1);
-            if (filename.startsWith('*')) {
-                filename = filename.mid(1);
-            }
-            if (filename == expectedFileName) {
-                return parts.at(i).toLower();
-            }
+        if (trimmed.startsWith('#')) {
+            continue;
+        }
+        // A BSD-style record carries its own algorithm label, so it is self-describing and is
+        // read regardless of any surrounding section.
+        const QString bsd =
+            bsdRecordDigest(trimmed, expectedFileName, m_checksumType, expectedHashHexLength());
+        if (!bsd.isEmpty()) {
+            return bsd;
+        }
+        if (!section.isEmpty() && section != m_checksumType.toUpper()) {
+            continue;  // A digest for an algorithm we are not verifying with.
+        }
+        if (const QString hash = hashFromRecordLine(trimmed, expectedFileName); !hash.isEmpty()) {
+            return hash;
         }
     }
 
@@ -612,6 +727,12 @@ void LinuxISODownloader::verifyChecksum() {
     QUrl checksumUrl(m_checksumUrl);
     QNetworkRequest request(checksumUrl);
     request.setRawHeader("User-Agent", "SAK-Utility/1.0");
+    // The checksum is the only thing standing between a mirror-served ISO and the disk it is
+    // written to, so its own transport must not be downgraded. Pinned explicitly rather than
+    // left to the framework default: an HTTPS request that redirects onto a plain-HTTP mirror
+    // is refused outright instead of silently followed.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
 
     auto* reply = nam->get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {

@@ -31,6 +31,8 @@ private Q_SLOTS:
     void permanentMode_deletesAndEmitsNoRecycleFallback();
     void permanentMode_deletesNestedFolderTree();
     void requireRecoverable_neverPermanentlyDeletes();
+    // R5 p8_appaction-3: recycle mode implies recoverable-only unless opted out
+    void recycleMode_defaultsToRecoverableOnly();
 
     // Cancellation is not success (B10-30)
     void cancelledBeforeStart_emitsCancelledNotComplete();
@@ -199,6 +201,31 @@ void TestCleanupWorker::requireRecoverable_neverPermanentlyDeletes() {
     const auto args = completeSpy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 0);  // zero succeeded
     QCOMPARE(args.at(1).toInt(), 1);  // one failed (left for review)
+}
+
+void TestCleanupWorker::recycleMode_defaultsToRecoverableOnly() {
+    // R5 p8_appaction-3: software.clean_leftovers builds the worker with the 2-arg ctor and
+    // (before this fix) never asked for recoverable-only, so a Recycle Bin failure fell through
+    // to a PERMANENT delete even though the caller had chosen recycle. Choosing the Recycle Bin
+    // is a choice for recoverability, so the invariant now lives in the worker itself.
+    QVector<LeftoverItem> items;
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::File;
+    item.path = QStringLiteral("C:\\Vendor\\App\\leftover.txt");
+    items.append(item);
+
+    CleanupWorker recycling(items, /*useRecycleBin=*/true);
+    QVERIFY2(recycling.requireRecoverable(),
+             "recycle mode must never silently escalate to a permanent delete");
+
+    // Permanent mode is unchanged: it never claimed recoverability in the first place.
+    CleanupWorker permanent(items, /*useRecycleBin=*/false);
+    QVERIFY(!permanent.requireRecoverable());
+
+    // A caller whose contract allows permanent deletion (the GUI manual clean, where a human
+    // reviewed each item) can still opt out explicitly.
+    recycling.setRequireRecoverable(false);
+    QVERIFY(!recycling.requireRecoverable());
 }
 
 void TestCleanupWorker::cancelledBeforeStart_emitsCancelledNotComplete() {

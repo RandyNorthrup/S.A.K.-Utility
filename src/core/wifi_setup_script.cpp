@@ -283,12 +283,19 @@ WifiConnectResult connectWifiWindows(const QString& ssid,
 
     // netsh runs shell-free via an argv vector (no shell, no interpolation). Both calls need
     // administrator rights, so a non-elevated run fails HONESTLY here rather than silently.
+    // The interpreter is the System32-qualified netsh, never the bare name: CreateProcess
+    // searches the current directory ahead of System32, and these calls are elevated.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        result.error = QStringLiteral("Cannot resolve the System32 netsh.exe path");
+        return result;
+    }
     constexpr int kNetshTimeoutMs = 15'000;
     const auto netsh_error = [](const ProcessResult& r) {
         const QString err = r.std_err.trimmed();
         return err.isEmpty() ? r.std_out.trimmed() : err;
     };
-    const ProcessResult add = runProcess(QStringLiteral("netsh.exe"),
+    const ProcessResult add = runProcess(netsh_exe,
                                          {QStringLiteral("wlan"),
                                           QStringLiteral("add"),
                                           QStringLiteral("profile"),
@@ -307,7 +314,7 @@ WifiConnectResult connectWifiWindows(const QString& ssid,
     result.profile_added = true;
 
     const ProcessResult conn = runProcess(
-        QStringLiteral("netsh.exe"),
+        netsh_exe,
         {QStringLiteral("wlan"), QStringLiteral("connect"), QStringLiteral("name=") + ssid},
         kNetshTimeoutMs);
     result.connect_issued = conn.succeeded();

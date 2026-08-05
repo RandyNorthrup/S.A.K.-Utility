@@ -191,7 +191,33 @@ void AdvancedSearchController::onWorkerStarted() {
 }
 
 void AdvancedSearchController::onWorkerFinished() {
-    Q_EMIT searchFinished(m_total_matches, m_total_files);
+    if (!m_worker) {
+        // Unreachable in practice: finished() is only connected to the live worker
+        // and cleanupWorker disconnects before resetting it. If it ever happens we
+        // have no completeness information, and "cannot tell" must never be
+        // announced as complete -- fail closed and say so.
+        logError("AdvancedSearchController: finished with no worker; reporting INCOMPLETE");
+    }
+    // The worker records every file/directory it could not fully search (and any
+    // result cap it hit). The completeness travels WITH the counts so no consumer
+    // can announce "complete" over a partial run; the status bar would otherwise
+    // contradict the panel's own log, and it would also overwrite the worker's own
+    // INCOMPLETE progress message, which lands first.
+    const bool complete = m_worker && !m_worker->scanIncomplete();
+    Q_EMIT searchFinished(m_total_matches, m_total_files, complete);
+    if (!complete) {
+        if (m_worker) {
+            logWarning("AdvancedSearchController: search incomplete -- {}",
+                       m_worker->incompleteReasons().join(QStringLiteral("; ")).toStdString());
+        }
+        Q_EMIT statusMessage(tr("Search INCOMPLETE: %1 matches in %2 files; some files could not "
+                                "be searched, results may be missing matches")
+                                 .arg(m_total_matches)
+                                 .arg(m_total_files),
+                             kSearchStatusMessageMs);
+        setState(State::Idle);
+        return;
+    }
     Q_EMIT statusMessage(
         tr("Search complete: %1 matches in %2 files").arg(m_total_matches).arg(m_total_files),
         kSearchStatusMessageMs);

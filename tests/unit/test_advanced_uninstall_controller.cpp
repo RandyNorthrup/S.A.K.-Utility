@@ -9,6 +9,7 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/config_manager.h"
 #include "sak/restore_point_manager.h"
+#include "sak/uninstall_worker.h"
 
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -74,6 +75,12 @@ private Q_SLOTS:
 
     // ── Cancel When Idle ──
     void cancelOperation_whenIdle_noOp();
+
+    // R5-P7-9: registry-derived uninstall program trust policy
+    void uninstallProgramPathTrusted_refusesSearchOrderResolvableForms();
+    void uninstallProgramPathTrusted_refusesUncAndTraversalAndNonExe();
+    void uninstallProgramPathTrusted_acceptsQualifiedLocalExe();
+    void silentMsiCommand_namesMsiexecByAbsoluteSystem32Path();
 };
 
 // ── Initial State ───────────────────────────────────────────────────────────
@@ -664,6 +671,107 @@ void AdvancedUninstallControllerTests::cancelOperation_whenIdle_noOp() {
     // Should not crash or change state
     ctrl.cancelOperation();
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+}
+
+// R5-P7-9: an uninstall string comes from the registry Uninstall subtree, which ANY user
+// can write (HKCU), and it names the program the worker launches with an ELEVATED token.
+// A bare or relative image name is resolved by the CreateProcess search order -- current
+// directory and PATH ahead of the real install location -- so a non-admin who registers
+// `UninstallString = "setup.exe"` and drops a setup.exe on that search path gets it run as
+// administrator. Every form CreateProcess would resolve by searching must be REFUSED.
+
+void AdvancedUninstallControllerTests::
+    uninstallProgramPathTrusted_refusesSearchOrderResolvableForms() {
+    using sak::UninstallWorker;
+
+    // The finding itself: a bare image name.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("setup.exe")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("msiexec.exe")));
+    // Plain relative and explicitly-relative forms.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("tools\\setup.exe")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral(".\\setup.exe")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("./setup.exe")));
+    // Drive-relative: resolved against that drive's CURRENT directory, not its root.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:setup.exe")));
+    // Root-relative: resolved against the CURRENT drive.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("\\App\\setup.exe")));
+    // Nothing at all, or whitespace only.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QString()));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("   ")));
+    // An unexpanded environment reference does not name the image its author meant, and
+    // CreateProcess will not expand it either.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("%ProgramFiles%\\App\\unins000.exe")));
+}
+
+void AdvancedUninstallControllerTests::
+    uninstallProgramPathTrusted_refusesUncAndTraversalAndNonExe() {
+    using sak::UninstallWorker;
+
+    // A remote share is an untrusted origin for an elevated launch.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("\\\\server\\share\\unins000.exe")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("//server/share/unins000.exe")));
+    // A traversal segment moves the image out of the directory the string names.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("C:\\App\\..\\..\\Windows\\System32\\cmd.exe")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\.\\unins.exe")));
+    // An alternate-data-stream suffix would otherwise satisfy the ".exe" tail check while
+    // the real image is a stream hanging off an innocuous file.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("C:\\App\\readme.txt:payload.exe")));
+    // Only a real executable image: a script or an installer package would be handed to a
+    // shell or an associated handler under the elevated token.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\unins.bat")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\unins.cmd")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\product.msi")));
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\unins")));
+    // A bare drive root names no image at all.
+    QVERIFY(!UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\")));
+}
+
+void AdvancedUninstallControllerTests::uninstallProgramPathTrusted_acceptsQualifiedLocalExe() {
+    using sak::UninstallWorker;
+
+    // The legitimate shape: a fully-qualified local .exe, separators either way, extension
+    // case-insensitive, surrounding whitespace tolerated (the registry value is often padded).
+    QVERIFY(UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:\\App\\unins000.exe")));
+    QVERIFY(UninstallWorker::uninstallProgramPathTrusted(QStringLiteral("C:/App/unins000.exe")));
+    QVERIFY(UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("D:\\Program Files\\Vendor App\\Uninstall.EXE")));
+    QVERIFY(UninstallWorker::uninstallProgramPathTrusted(
+        QStringLiteral("  C:\\Windows\\System32\\msiexec.exe  ")));
+}
+
+// R5-P7-9 / R5-P7-22: the MSI removal command this app BUILDS must itself name msiexec by
+// its absolute System32 path -- emitting a bare "msiexec.exe" would both re-open the
+// search-order hijack and be refused by the trust screen above, breaking MSI uninstalls.
+void AdvancedUninstallControllerTests::silentMsiCommand_namesMsiexecByAbsoluteSystem32Path() {
+#ifndef Q_OS_WIN
+    QSKIP("System32 resolution is Windows-specific");
+#else
+    sak::ProgramInfo msi;
+    msi.uninstallString = QStringLiteral("MsiExec.exe /X{12345678-90AB-CDEF-1234-567890ABCDEF}");
+
+    QString cmd;
+    QVERIFY(sak::UninstallWorker::buildSilentUninstallCommand(msi, cmd));
+    QVERIFY2(!cmd.startsWith(QStringLiteral("msiexec.exe")), qPrintable(cmd));
+    QVERIFY2(cmd.startsWith(QLatin1Char('"')), qPrintable(cmd));
+    QVERIFY2(cmd.contains(QStringLiteral("\\System32\\msiexec.exe"), Qt::CaseInsensitive),
+             qPrintable(cmd));
+    // The silent switches and the product GUID must survive the requalification.
+    QVERIFY2(cmd.contains(QStringLiteral("/qn")), qPrintable(cmd));
+    QVERIFY2(cmd.contains(QStringLiteral("/norestart")), qPrintable(cmd));
+    QVERIFY2(cmd.contains(QStringLiteral("{12345678-90AB-CDEF-1234-567890ABCDEF}")),
+             qPrintable(cmd));
+
+    // And the program token that command parses down to passes the trust screen, so the
+    // hardened launch path accepts our own generated MSI command.
+    const int end_quote = cmd.indexOf(QLatin1Char('"'), 1);
+    QVERIFY(end_quote > 1);
+    QVERIFY(sak::UninstallWorker::uninstallProgramPathTrusted(cmd.mid(1, end_quote - 1)));
+#endif
 }
 
 QTEST_GUILESS_MAIN(AdvancedUninstallControllerTests)

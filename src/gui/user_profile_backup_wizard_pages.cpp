@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_scanner.h"
+#include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -9,6 +10,7 @@
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
+#include "sak/widget_helpers.h"
 #include "sak/wifi_profile_scanner.h"
 
 #include <QCoreApplication>
@@ -65,6 +67,25 @@ constexpr int kEthernetColumnSubnet = 4;
 constexpr int kEthernetColumnGateway = 5;
 constexpr int kEthernetColumnDns = 6;
 constexpr int kEthernetColumnCount = 7;
+
+/// The source trees a backup run will read, paired with the subfolder name each one is written to
+/// under the destination ("<destination>/<username>"). Only selected users are copied, so only
+/// those constrain where the destination may live.
+struct SelectedProfileRoots {
+    QStringList paths;
+    QStringList folderNames;
+};
+
+SelectedProfileRoots selectedProfileRoots(const QVector<UserProfile>& users) {
+    SelectedProfileRoots roots;
+    for (const auto& user : users) {
+        if (user.is_selected && !user.profile_path.trimmed().isEmpty()) {
+            roots.paths.append(user.profile_path);
+            roots.folderNames.append(user.username);
+        }
+    }
+    return roots;
+}
 
 }  // namespace
 
@@ -696,26 +717,50 @@ void UserProfileBackupSettingsPage::initializePage() {
     updateSummary();
 }
 
+bool UserProfileBackupSettingsPage::confirmExistingDestination(const QString& destination) {
+    QDir destDir(destination);
+    if (!destDir.exists()) {
+        return true;
+    }
+    auto reply =
+        sak::showQuestionLogged(this,
+                                tr("Folder Exists"),
+                                tr("The destination folder already exists. Continue anyway?"),
+                                QMessageBox::Yes | QMessageBox::No);
+    return reply == QMessageBox::Yes;
+}
+
 bool UserProfileBackupSettingsPage::validateDestination() {
-    if (m_destinationEdit->text().isEmpty()) {
-        sak::logWarning("User profile backup: no destination folder selected");
+    // The destination is screened before anything is written: whitespace-only text, a relative
+    // path (which QDir would resolve against the process working directory), and a folder that
+    // overlaps a profile being backed up (the run would recurse into its own output) are all
+    // refused outright -- never corrected to something "close enough".
+    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
+    if (!wiz) {
+        sak::logWarning("User profile backup: settings page has no owning wizard");
         sak::showWarningLogged(this,
-                               tr("No Destination"),
-                               tr("Please select a backup destination folder."));
+                               tr("Backup Unavailable"),
+                               tr("The backup wizard is not available. Close the wizard and "
+                                  "start the backup again."));
         return false;
     }
 
-    QDir destDir(m_destinationEdit->text());
-    if (destDir.exists()) {
-        auto reply =
-            sak::showQuestionLogged(this,
-                                    tr("Folder Exists"),
-                                    tr("The destination folder already exists. Continue anyway?"),
-                                    QMessageBox::Yes | QMessageBox::No);
-        if (reply != QMessageBox::Yes) {
-            return false;
-        }
+    const SelectedProfileRoots roots = selectedProfileRoots(wiz->scannedUsers());
+    const BackupDestinationCheck check =
+        screenBackupDestination(m_destinationEdit->text(), roots.paths, roots.folderNames);
+    if (!check.accepted) {
+        sak::logWarning("User profile backup: destination refused: {}",
+                        check.refusal.toStdString());
+        sak::showWarningLogged(this, tr("Invalid Destination"), check.refusal);
+        m_destinationEdit->setFocus();
+        return false;
     }
+
+    if (!confirmExistingDestination(check.path)) {
+        return false;
+    }
+    // Store the screened form so the value that was checked is the value the run uses.
+    m_destinationPath = check.path;
     return true;
 }
 
@@ -769,11 +814,11 @@ void UserProfileBackupSettingsPage::installExecutePage() {
 bool UserProfileBackupSettingsPage::validatePage() {
     Q_ASSERT(m_destinationEdit);
     Q_ASSERT(m_encryptionCheck);
+    // validateDestination() stores the screened destination in m_destinationPath.
     if (!validateDestination() || !validateEncryptionSettings()) {
         return false;
     }
 
-    m_destinationPath = m_destinationEdit->text();
     m_manifest.version = "1.0";
     m_manifest.created = QDateTime::currentDateTime();
     m_manifest.source_machine = QSysInfo::machineHostName();
@@ -2057,7 +2102,9 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
             this,
             &UserProfileBackupEthernetSettingsPage::onScanEthernet);
     scanLayout->addWidget(m_scanButton);
-    m_statusLabel = new QLabel(tr("Click Scan Ethernet to begin"), this);
+    // On a failed scan this label shows raw netsh output (adapter names and error text), so it
+    // renders verbatim rather than letting QLabel auto-detect markup inside it.
+    m_statusLabel = plainTextLabel(tr("Click Scan Ethernet to begin"), this);
     scanLayout->addWidget(m_statusLabel, 1);
     layout->addLayout(scanLayout);
 
@@ -2165,7 +2212,15 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
     });
 
     watcher->setFuture(QtConcurrent::run([]() -> QPair<bool, QString> {
-        const auto process = runProcess(QStringLiteral("netsh"),
+        // System32-qualified netsh, never the bare name: CreateProcess searches the current
+        // directory ahead of System32, so a planted netsh could fabricate the adapter list
+        // that a restore later applies. Unresolvable -> FAILED scan (fail closed).
+        const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+        if (netsh_exe.isEmpty()) {
+            sak::logError("Cannot resolve the System32 netsh.exe path; ethernet scan aborted");
+            return {false, QStringLiteral("Cannot resolve the System32 netsh.exe path")};
+        }
+        const auto process = runProcess(netsh_exe,
                                         {QStringLiteral("interface"),
                                          QStringLiteral("ipv4"),
                                          QStringLiteral("show"),

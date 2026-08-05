@@ -8,6 +8,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QDir>
 #include <QFileDialog>
@@ -67,11 +68,14 @@ void PerUserCustomizationDialog::setupUi() {
     mainLayout->setContentsMargins(
         sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
 
-    // User info header (compact)
-    m_usernameLabel = new QLabel(QString("<b>User: %1</b>").arg(m_profile.username));
+    // User info header (compact). username/profile_path are enumerated off disk, so the name is
+    // escaped into the bold template and the path label carries no markup of its own.
+    m_usernameLabel =
+        new QLabel(QString("<b>User: %1</b>").arg(m_profile.username.toHtmlEscaped()));
     mainLayout->addWidget(m_usernameLabel);
 
-    m_profilePathLabel = new QLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
+    m_profilePathLabel =
+        sak::plainTextLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
     m_profilePathLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     mainLayout->addWidget(m_profilePathLabel);
 
@@ -149,7 +153,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
 }
 
 void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout) {
-    // Warning about AppData — selection is handled on the wizard's App Data page
+    // Warning about AppData -- selection is handled on the wizard's App Data page
     auto* warningLabel = new QLabel(
         "(!) Warning: Full AppData backup is NOT recommended. "
         "It contains machine-specific files that can corrupt profiles. "

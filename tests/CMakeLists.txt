@@ -2153,6 +2153,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_app_action_planner.cpp")
         ../src/ai/ai_command_guard.cpp
         ../src/ai/ai_command_tool_planner.cpp
         ../src/ai/ai_execution_broker.cpp
+        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/ai/ai_tool_policy.cpp
         ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
@@ -2425,6 +2427,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_tool_planner.cpp")
         ../src/ai/ai_command_tool_planner.cpp
         ../src/ai/ai_command_guard.cpp
         ../src/ai/ai_execution_broker.cpp
+        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/ai/ai_tool_policy.cpp
         ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
@@ -2674,6 +2678,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
         ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/secure_memory.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../include/sak/ai/ai_execution_broker.h
         ../include/sak/app_paths.h
         ../include/sak/ai/ai_credential_store.h
@@ -3021,6 +3026,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_run
         ../src/ai/ai_workflow_placeholders.cpp
         ../src/ai/ai_command_guard.cpp
         ../src/ai/ai_execution_broker.cpp
+        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/ai/ai_credential_store.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/app_paths.cpp
@@ -4499,6 +4506,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
     message(STATUS "Added unit test: test_app_installation_worker")
 endif()
 
+# test_app_installation_busy - pure predicate seam for the App Installation panel's single
+# in-flight authority: the online Chocolatey install path and the offline deployment path are
+# mutually exclusive, so one predicate answers for both entry points and both control groups.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_busy.cpp")
+    add_executable(test_app_installation_busy
+        unit/test_app_installation_busy.cpp
+        ../src/core/app_installation_busy.cpp
+        ../include/sak/app_installation_busy.h
+    )
+    set_target_properties(test_app_installation_busy PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_app_installation_busy PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_app_installation_busy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_app_installation_busy COMMAND test_app_installation_busy
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_app_installation_busy")
+endif()
+
 # test_user_profile_restore_worker ??? Restore flow, conflict resolution, signals (TST-06)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp")
     add_executable(test_user_profile_restore_worker
@@ -5094,6 +5125,76 @@ endif()
 # Unit Tests - Advanced Uninstall Panel
 # ============================================================================
 
+# test_email_html_sanitizer --- the two policies that make an attacker-authored message body safe
+# to render in-process: the active-content sanitizer shared with the HTML/PDF export writers, and
+# the data:-only resource whitelist the message viewers enforce via loadResource(). Asserted
+# against a realistic hostile newsletter, including a control that ordinary formatting (bold,
+# lists, tables, inline colors) survives. Pure string/QUrl logic, no display.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_html_sanitizer.cpp")
+    add_executable(test_email_html_sanitizer
+        unit/test_email_html_sanitizer.cpp
+    )
+    set_target_properties(test_email_html_sanitizer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_email_html_sanitizer PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_email_html_sanitizer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_html_sanitizer COMMAND test_email_html_sanitizer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_html_sanitizer")
+endif()
+
+# test_rich_text_safety --- the shared seam that neutralizes untrusted text before it reaches a Qt
+# rich-text sink (tooltips and QTextEdit::append have no plain-text mode). Pure string logic:
+# markup in a registry program name, a file name off a raw image, or AI output must come out as
+# literal characters, and the wrapper -- not the value -- must be what selects rich text.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_rich_text_safety.cpp")
+    add_executable(test_rich_text_safety
+        unit/test_rich_text_safety.cpp
+    )
+    set_target_properties(test_rich_text_safety PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_rich_text_safety PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_rich_text_safety PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_rich_text_safety COMMAND test_rich_text_safety
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_rich_text_safety")
+endif()
+
+# test_backup_destination_guard --- fail-closed screen for the user-profile backup destination:
+# whitespace-only text, relative paths, and folders that overlap a selected source profile are
+# refused outright (header-only guard; pure string/path logic, no filesystem access). Windows-only
+# because absoluteness and case-insensitive path comparison are platform behavior.
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_destination_guard.cpp")
+    add_executable(test_backup_destination_guard
+        unit/test_backup_destination_guard.cpp
+    )
+    set_target_properties(test_backup_destination_guard PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_backup_destination_guard PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_backup_destination_guard PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_backup_destination_guard COMMAND test_backup_destination_guard
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_backup_destination_guard")
+endif()
+
 # test_leftover_cleanup_guard --- fail-closed target screens behind software.clean_leftovers
 # (header-only guard; pure, no filesystem/registry mutation).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_cleanup_guard.cpp")
@@ -5643,6 +5744,275 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     message(STATUS "Added unit test: test_network_diagnostic_utils")
 endif()
 
+# test_network_share_browser -- SMB share discovery: value shape plus the fail-closed split
+# between an authoritative discoveryComplete and a partial/failed discoveryFailed.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_share_browser.cpp")
+    add_executable(test_network_share_browser
+        unit/test_network_share_browser.cpp
+        ../src/core/network_share_browser.cpp
+        ../include/sak/network_share_browser.h
+    )
+    set_target_properties(test_network_share_browser PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_network_share_browser PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_share_browser PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_share_browser COMMAND test_network_share_browser
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_share_browser")
+endif()
+
+# ============================================================================
+# Previously unwired unit tests
+#
+# The suites below existed under unit/ and were listed in tests/README.md, but
+# had no target in this file, so they never built and never ran. They are wired
+# with the same per-target idiom as the rest of the file. Grouped here (rather
+# than scattered by subject) so the set stays auditable: a test file with no
+# target is invisible, and this block is the record of the ones that were.
+# ============================================================================
+
+# test_active_connections_monitor -- MonitorConfig/ConnectionInfo defaults, start/stop
+# lifecycle, and the live TCP/UDP table snapshot (iphlpapi, no network traffic).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_connections_monitor.cpp")
+    add_executable(test_active_connections_monitor
+        unit/test_active_connections_monitor.cpp
+        ../src/core/active_connections_monitor.cpp
+        ../include/sak/active_connections_monitor.h
+    )
+    set_target_properties(test_active_connections_monitor PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_active_connections_monitor PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_active_connections_monitor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_active_connections_monitor COMMAND test_active_connections_monitor
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_active_connections_monitor")
+endif()
+
+# test_bundled_tools_manager -- singleton identity, bundled tool/script/module path
+# composition, and existence probes for absent entries.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bundled_tools_manager.cpp")
+    add_executable(test_bundled_tools_manager
+        unit/test_bundled_tools_manager.cpp
+        ../src/core/bundled_tools_manager.cpp
+        ../include/sak/bundled_tools_manager.h
+    )
+    set_target_properties(test_bundled_tools_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_bundled_tools_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_bundled_tools_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_bundled_tools_manager COMMAND test_bundled_tools_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_bundled_tools_manager")
+endif()
+
+# test_drive_unmounter -- construction, error channel, and the read-only volume query
+# for a physical drive number that cannot exist (no unmount is ever attempted).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_unmounter.cpp")
+    add_executable(test_drive_unmounter
+        unit/test_drive_unmounter.cpp
+        ../src/core/drive_unmounter.cpp
+        ../src/core/logger.cpp
+        ../include/sak/drive_unmounter.h
+    )
+    set_target_properties(test_drive_unmounter PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_drive_unmounter PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_drive_unmounter PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_drive_unmounter COMMAND test_drive_unmounter
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_drive_unmounter")
+endif()
+
+# test_image_source -- ImageMetadata validity, extension format detection, and the
+# DecompressorFactory-backed isCompressed classification (streamable vs not).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_image_source.cpp")
+    add_executable(test_image_source
+        unit/test_image_source.cpp
+        ../src/core/image_source.cpp
+        ../src/core/decompressor_factory.cpp
+        ../src/core/streaming_decompressor.cpp
+        ../src/core/gzip_decompressor.cpp
+        ../src/core/bzip2_decompressor.cpp
+        ../src/core/xz_decompressor.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/logger.cpp
+        ../include/sak/image_source.h
+        ../include/sak/streaming_decompressor.h
+        ../include/sak/gzip_decompressor.h
+        ../include/sak/bzip2_decompressor.h
+        ../include/sak/xz_decompressor.h
+    )
+    set_target_properties(test_image_source PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_image_source PRIVATE
+        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_image_source PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_image_source COMMAND test_image_source
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_image_source")
+endif()
+
+# test_network_adapter_inspector -- the pure formatting seams (link speed, MAC bytes),
+# which are the parts that need no adapter present.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_adapter_inspector.cpp")
+    add_executable(test_network_adapter_inspector
+        unit/test_network_adapter_inspector.cpp
+        ../src/core/network_adapter_inspector.cpp
+        ../include/sak/network_adapter_inspector.h
+    )
+    set_target_properties(test_network_adapter_inspector PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_network_adapter_inspector PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_adapter_inspector PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_adapter_inspector COMMAND test_network_adapter_inspector
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_adapter_inspector")
+endif()
+
+# test_network_diagnostic_controller -- idle state, operation bookkeeping, and the
+# fail-closed input guards (unknown report format, out-of-range LAN transfer bounds).
+# Links the whole tool set the controller owns; none of the tests start a tool.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_controller.cpp")
+    add_executable(test_network_diagnostic_controller
+        unit/test_network_diagnostic_controller.cpp
+        ../src/core/network_diagnostic_controller.cpp
+        ../src/core/active_connections_monitor.cpp
+        ../src/core/bandwidth_tester.cpp
+        ../src/core/connectivity_tester.cpp
+        ../src/core/dns_diagnostic_tool.cpp
+        ../src/core/ethernet_config_manager.cpp
+        ../src/core/firewall_rule_auditor.cpp
+        ../src/core/network_adapter_inspector.cpp
+        ../src/core/network_diagnostic_report_generator.cpp
+        ../src/core/network_share_browser.cpp
+        ../src/core/port_scanner.cpp
+        ../src/core/wifi_analyzer.cpp
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/network_diagnostic_controller.h
+        ../include/sak/active_connections_monitor.h
+        ../include/sak/bandwidth_tester.h
+        ../include/sak/connectivity_tester.h
+        ../include/sak/dns_diagnostic_tool.h
+        ../include/sak/ethernet_config_manager.h
+        ../include/sak/firewall_rule_auditor.h
+        ../include/sak/network_adapter_inspector.h
+        ../include/sak/network_diagnostic_report_generator.h
+        ../include/sak/network_share_browser.h
+        ../include/sak/port_scanner.h
+        ../include/sak/wifi_analyzer.h
+    )
+    set_target_properties(test_network_diagnostic_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_network_diagnostic_controller PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_diagnostic_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_diagnostic_controller COMMAND test_network_diagnostic_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_diagnostic_controller")
+endif()
+
+# test_port_scanner -- well-known service naming, the scan presets, and ScanConfig
+# defaults. No socket is opened by any of these.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_port_scanner.cpp")
+    add_executable(test_port_scanner
+        unit/test_port_scanner.cpp
+        ../src/core/port_scanner.cpp
+        ../include/sak/port_scanner.h
+    )
+    set_target_properties(test_port_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_port_scanner PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_port_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_port_scanner COMMAND test_port_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_port_scanner")
+endif()
+
+# test_uninstall_worker -- construction, report/value defaults, enum ordering, and the
+# native-uninstall exit-code classifier (3010 reboot-required is a success).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uninstall_worker.cpp")
+    add_executable(test_uninstall_worker
+        unit/test_uninstall_worker.cpp
+        ../src/core/uninstall_worker.cpp
+        ../src/core/leftover_scanner.cpp
+        ../src/core/registry_snapshot_engine.cpp
+        ../src/core/restore_point_manager.cpp
+        ../src/core/elevation_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/threading/worker_base.cpp
+        ../src/core/logger.cpp
+        ../include/sak/uninstall_worker.h
+        ../include/sak/leftover_scanner.h
+        ../include/sak/registry_snapshot_engine.h
+        ../include/sak/restore_point_manager.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(test_uninstall_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    # Qt6::Gui is REQUIRED, not incidental: advanced_uninstall_types.h includes <QImage> for the
+    # program icon, so ProgramInfo cannot compile without it. Mirrors test_advanced_uninstall_-
+    # controller, which links the same sources. QGuiApplication opens no window here.
+    target_link_libraries(test_uninstall_worker PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_uninstall_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_uninstall_worker COMMAND test_uninstall_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_uninstall_worker")
+endif()
+
 # test_wifi_analyzer -- freq/channel/band helpers, channel utilization, and the
 # B9-13 per-BSSID security seam (deriveBssSecurity: RSN/WPA IE + Privacy bit).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_analyzer.cpp")
@@ -6065,6 +6435,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_attachment_saver.cpp")
     add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_attachment_saver")
+endif()
+
+# test_email_view_ids --- fail-closed decoding of view-item folder/message ids
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_view_ids.cpp")
+    add_executable(test_email_view_ids
+        unit/test_email_view_ids.cpp
+        ../include/sak/email_view_ids.h
+    )
+    set_target_properties(test_email_view_ids PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_email_view_ids PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_view_ids PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_view_ids COMMAND test_email_view_ids
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_view_ids")
 endif()
 
 # test_email_report_generator ??? HTML, JSON, CSV output validation

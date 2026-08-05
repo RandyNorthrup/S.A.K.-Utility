@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIODevice>
+#include <QSet>
 #include <QStringView>
 #include <QtEndian>
 #include <QUuid>
@@ -114,7 +115,20 @@ constexpr uint64_t kApfsFormatStaleSignatureClearBytes = 8ULL * 1024ULL * 1024UL
 constexpr qsizetype kApfsFormatZeroChunkBytes = 1024 * 1024;
 constexpr uint64_t kApfsMaximumSeedFileBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsUuidBytes = 16;
+// A free-queue run {paddr,length} is decoded from container metadata and every block it covers
+// becomes one uint64_t address in the reclaim list, so the length sizes an allocation. "Inside
+// the container" is NOT a bound: on a 7 TB container a single in-bounds run expands to a ~14 GB
+// allocation. A run is therefore capped at what one commit can legitimately free in a single
+// contiguous stretch (2 Mi blocks = 8 GiB of 4 KiB blocks), and the whole queue's expansion is
+// capped independently of the container size (4 Mi addresses = 32 MiB). Both fail closed.
+constexpr uint64_t kApfsFreeQueueMaxRunBlocks = 2'097'152;
+constexpr uint64_t kApfsFreeQueueMaxExpandedBlocks = 4'194'304;
 constexpr int kApfsWriteRootListingMaxEntries = 1000;
+// Deepest directory nesting the subtree collector will descend, mirroring the reader's
+// kMaxFsTreeDepth. The reader's guards are node-level; a drec-level directory cycle in an
+// untrusted source image is bounded here (with the visited-id set) instead of recursing
+// until the stack is exhausted.
+constexpr int kApfsWriteTreeMaxDirectoryDepth = 16;
 constexpr int kApfsGeneratedRootRecordsPerFile = 3;
 // APFS reserves dynamically assigned object IDs below OID_RESERVED_COUNT
 // (1024); fsck_apfs rejects superblock OID fields inside the reserved range
@@ -8823,15 +8837,71 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
     return 0;
 }
 
-// A free-queue run must sit entirely inside the container. A corrupt on-disk {paddr,length}
-// would otherwise expand into a multi-exabyte block list (OOM) and wrap paddr+offset past 2^64,
-// feeding out-of-range blocks into the allocator bitmap. Overflow-safe: paddr < blockCount =>
+// A free-queue run must sit entirely inside the container AND stay within the length one commit
+// can legitimately free contiguously. A corrupt on-disk {paddr,length} would otherwise expand
+// into a multi-exabyte block list (OOM) and wrap paddr+offset past 2^64, feeding out-of-range
+// blocks into the allocator bitmap; containment alone still admits a container-sized run, which
+// on a large container is a multi-GB expansion. Overflow-safe: paddr < blockCount =>
 // blockCount - paddr >= 1.
 [[nodiscard]] bool freeQueueRunInBounds(uint64_t paddr, uint64_t length, uint64_t blockCount) {
     if (blockCount == 0 || length == 0 || paddr >= blockCount) {
         return false;
     }
+    if (length > kApfsFreeQueueMaxRunBlocks) {
+        return false;
+    }
     return length <= blockCount - paddr;
+}
+
+// True when a run of @p length blocks still fits the whole-queue expansion budget after
+// @p accumulated blocks have already been counted. The budget is a fixed ceiling, not a
+// function of the container size, so a hostile queue cannot scale the reclaim allocation with
+// the media. Overflow-safe: the subtraction is guarded by the accumulated <= budget test.
+[[nodiscard]] bool freeQueueRunFitsExpansionBudget(uint64_t accumulated, uint64_t length) {
+    return accumulated <= kApfsFreeQueueMaxExpandedBlocks &&
+           length <= kApfsFreeQueueMaxExpandedBlocks - accumulated;
+}
+
+// The number of block addresses a decoded run set expands to, or nullopt once the running total
+// passes the budget. Counting is done before anything is materialized so an over-budget set is
+// refused instead of half-allocated.
+[[nodiscard]] std::optional<uint64_t> freeQueueExpandedBlockCount(
+    const QVector<ApfsFreeQueueEntry>& entries) {
+    uint64_t total = 0;
+    for (const ApfsFreeQueueEntry& entry : entries) {
+        if (!freeQueueRunFitsExpansionBudget(total, entry.length)) {
+            return std::nullopt;
+        }
+        total += entry.length;
+    }
+    return total;
+}
+
+// True when every run is within the per-run length cap and the set as a whole is within the
+// expansion budget - the exact pair of limits the leaf parser enforces. Used on the write side
+// so a commit never publishes a queue this engine would refuse to read back.
+[[nodiscard]] bool freeQueueRunsWithinLimits(const QVector<ApfsFreeQueueEntry>& entries) {
+    const auto overLongRun = [](const ApfsFreeQueueEntry& entry) {
+        return entry.length > kApfsFreeQueueMaxRunBlocks;
+    };
+    return std::none_of(entries.cbegin(), entries.cend(), overLongRun) &&
+           freeQueueExpandedBlockCount(entries).has_value();
+}
+
+// Fail the parse closed when a decoded free-queue would expand past the reclaim budget.
+// @p sourcePaddr names the leaf (or tree root) the runs came from.
+[[nodiscard]] bool freeQueueExpansionWithinBudget(const QVector<ApfsFreeQueueEntry>& entries,
+                                                  uint64_t sourcePaddr,
+                                                  QStringList* blockers) {
+    if (freeQueueExpandedBlockCount(entries).has_value()) {
+        return true;
+    }
+    blockers->append(QStringLiteral("APFS free-queue: %1 runs at block %2 expand past the "
+                                    "%3-block reclaim budget")
+                         .arg(entries.size())
+                         .arg(sourcePaddr)
+                         .arg(kApfsFreeQueueMaxExpandedBlocks));
+    return false;
 }
 
 // Decode the {xid, paddr}->length records of a free-queue leaf (a 0xFFFF value
@@ -8872,6 +8942,9 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
         }
         entries.append({entryXid, entryPaddr, length});
     }
+    if (!freeQueueExpansionWithinBudget(entries, paddr, blockers)) {
+        return {};
+    }
     return entries;
 }
 
@@ -8907,6 +8980,11 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
             findEphemeralPaddrByOid(image, geometry, live, childOid, blockers);
         entries += parseFreeQueueEntries(image, geometry, childPaddr, blockers);
     }
+    // Each leaf was budgeted on its own; the concatenated tree must also fit, or a hostile
+    // multi-node queue would clear the per-leaf ceiling one leaf at a time.
+    if (!freeQueueExpansionWithinBudget(entries, rootPaddr, blockers)) {
+        return {};
+    }
     return entries;
 }
 
@@ -8924,15 +9002,27 @@ QVector<ApfsFreeQueueEntry> coalesceFreedRuns(QVector<uint64_t> blocks, uint64_t
     return runs;
 }
 
-// Expand free-queue runs back into their individual block addresses.
-QVector<uint64_t> expandFreeQueueEntries(const QVector<ApfsFreeQueueEntry>& entries) {
-    QVector<uint64_t> blocks;
+// Expand free-queue runs back into their individual block addresses. This is the allocation the
+// untrusted run lengths size, so it fails closed on an over-budget set instead of materializing
+// it; nothing is reserved or appended before the budget is proved.
+[[nodiscard]] bool expandFreeQueueEntries(const QVector<ApfsFreeQueueEntry>& entries,
+                                          QVector<uint64_t>* blocks,
+                                          QStringList* blockers) {
+    const auto total = freeQueueExpandedBlockCount(entries);
+    if (!total.has_value()) {
+        blockers->append(QStringLiteral("APFS free-queue: reclaim expansion of %1 runs exceeds "
+                                        "the %2-block budget")
+                             .arg(entries.size())
+                             .arg(kApfsFreeQueueMaxExpandedBlocks));
+        return false;
+    }
+    blocks->reserve(static_cast<qsizetype>(*total));
     for (const ApfsFreeQueueEntry& entry : entries) {
         for (uint64_t offset = 0; offset < entry.length; ++offset) {
-            blocks.append(entry.paddr + offset);
+            blocks->append(entry.paddr + offset);
         }
     }
-    return blocks;
+    return true;
 }
 
 // Advance the main free-queue one commit: reclaim every run older than the
@@ -8942,13 +9032,17 @@ QVector<uint64_t> expandFreeQueueEntries(const QVector<ApfsFreeQueueEntry>& entr
 struct ApfsMainFqAdvance {
     QVector<ApfsFreeQueueEntry> entries;  // the rebuilt queue (kept window + new runs)
     QVector<uint64_t> reclaimed;          // blocks freed back into the bitmap this commit
-    bool ok{true};                        // false when a live-queue read failed (blocker set)
+    // false when a live-queue read failed or its runs exceeded the reclaim budget (blocker
+    // set). Every caller must abort the commit on it: publishing the advance anyway would
+    // drop pending frees, and the reclaimed set feeds the allocation bitmap.
+    bool ok{true};
 };
 
 ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
                                        const QVector<uint64_t>& freedThisCommit,
                                        uint64_t newXid,
-                                       uint64_t window) {
+                                       uint64_t window,
+                                       QStringList* blockers) {
     ApfsMainFqAdvance out;
     const uint64_t reclaimThrough = newXid > window ? newXid - window : 0;
     QVector<ApfsFreeQueueEntry> reclaimedRuns;
@@ -8959,8 +9053,20 @@ ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
             out.entries.append(entry);
         }
     }
-    out.reclaimed = expandFreeQueueEntries(reclaimedRuns);
+    if (!expandFreeQueueEntries(reclaimedRuns, &out.reclaimed, blockers)) {
+        out.ok = false;
+        return out;
+    }
     out.entries += coalesceFreedRuns(freedThisCommit, newXid);
+    if (!freeQueueRunsWithinLimits(out.entries)) {
+        // Symmetry with the parser: publishing a queue past the limits would produce a
+        // container this engine refuses to read on the next commit, so refuse it now.
+        blockers->append(QStringLiteral("APFS free-queue: the queue rebuilt at xid %1 exceeds the "
+                                        "%2-block reclaim budget")
+                             .arg(newXid)
+                             .arg(kApfsFreeQueueMaxExpandedBlocks));
+        out.ok = false;
+    }
     return out;
 }
 
@@ -10574,7 +10680,8 @@ bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry,
 ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
                                             const QVector<ApfsFreeQueueEntry>& liveMainFq,
                                             const QVector<uint64_t>& freed,
-                                            uint64_t newXid) {
+                                            uint64_t newXid,
+                                            QStringList* blockers) {
     QVector<ApfsFreeQueueEntry> reclaimable;
     QVector<ApfsFreeQueueEntry> deferred;
     for (const ApfsFreeQueueEntry& entry : liveMainFq) {
@@ -10586,7 +10693,10 @@ ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
         }
     }
     ApfsMainFqAdvance mainFq =
-        advanceMainFreeQueue(reclaimable, freed, newXid, kMainFqRollbackWindow);
+        advanceMainFreeQueue(reclaimable, freed, newXid, kMainFqRollbackWindow, blockers);
+    if (!mainFq.ok) {
+        return mainFq;
+    }
     if (!deferred.isEmpty()) {
         mainFq.entries += deferred;
         std::sort(mainFq.entries.begin(),
@@ -10618,7 +10728,8 @@ ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f
     // advanceForeignAwareMainFq reclaims them past the rollback window through the multi-cib
     // reclaim COW while holding back the runs the apply cannot reclaim yet (cib-0 non-boundary).
     // Byte-identical on generated volumes.
-    const ApfsMainFqAdvance mainFq = advanceForeignAwareMainFq(f.ctx, liveMainFq, freed, f.newXid);
+    const ApfsMainFqAdvance mainFq =
+        advanceForeignAwareMainFq(f.ctx, liveMainFq, freed, f.newXid, blockers);
     return {mainFq, static_cast<int64_t>(freed.size())};
 }
 
@@ -11454,6 +11565,12 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     // free-pool bitmap COW just like the allocated chunks. The reclaimed set is what
     // applyFileInsertAllocation flips into the bitmaps, so plan and apply see the same freed.
     const ApfsFinalizeFreeQueue fq = advanceFinalizeMainFreeQueue(f, blockers);
+    if (!fq.mainFq.ok) {
+        // The live queue could not be read or its runs exceeded the reclaim budget. Continuing
+        // would publish a checkpoint whose queue is missing pending frees and whose bitmap was
+        // flipped from a truncated reclaim set, so the commit fails closed.
+        return false;
+    }
     // Keystone S3: single-CIB (allocChunk 0) commits COW each touched-chunk bitmap (spilled
     // into OR freed from) into a free-pool slot and mark the exact sparse IP used-set; the
     // overflow tier keeps its certified fixed-slot + prefix path (plan empty).
@@ -12569,6 +12686,16 @@ struct ApfsSnapshotCheckpointTail {
     uint64_t chunk1BitmapBlock{0};
 };
 
+// Read the live main free-queue of a commit context: resolve its tree through the live
+// checkpoint map, then parse (and budget-check) every run. An unreadable or over-budget queue
+// yields an empty set with the blocker set, which the advance turns into a refused commit.
+QVector<ApfsFreeQueueEntry> readLiveMainFreeQueue(const ApfsFsCommitContext& ctx,
+                                                  QStringList* blockers) {
+    const uint64_t mainPaddr = findEphemeralPaddrByOid(
+        ctx.image, ctx.geometry, ctx.live, ctx.chain.mainFqTreeOid, blockers);
+    return parseMainFreeQueueTree(ctx.image, ctx.geometry, ctx.live, mainPaddr, blockers);
+}
+
 // Foreign overflow snapshot checkpoint tail: the real-internal-pool analogue of the shared
 // snapshot tail. On a real Apple overflow container the snapshot's freshly written chain blocks
 // already live in the boundary chunk (allocateOverflowCommitBlocks) and its freed chain blocks
@@ -12591,15 +12718,11 @@ bool commitSnapshotCheckpointTailForeign(const ApfsSnapshotCheckpointTail& t,
     if (!computeForeignIpRotation(t.ctx, t.chunk1BitmapBlock, &rotation, blockers)) {
         return false;
     }
-    const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
-        t.ctx.image,
-        t.ctx.geometry,
-        t.ctx.live,
-        findEphemeralPaddrByOid(
-            t.ctx.image, t.ctx.geometry, t.ctx.live, t.ctx.chain.mainFqTreeOid, blockers),
-        blockers);
-    const ApfsMainFqAdvance mainFq =
-        advanceForeignAwareMainFq(t.ctx, liveMainFq, t.freed, t.newXid);
+    const ApfsMainFqAdvance mainFq = advanceForeignAwareMainFq(
+        t.ctx, readLiveMainFreeQueue(t.ctx, blockers), t.freed, t.newXid, blockers);
+    if (!mainFq.ok) {
+        return false;
+    }
     const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
                                 static_cast<int64_t>(t.freed.size());
     const int64_t netQueued = static_cast<int64_t>(t.freed.size()) -
@@ -12650,15 +12773,11 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
     const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
                                 static_cast<int64_t>(t.freed.size());
     const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
-    const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
-        ctx.image,
-        ctx.geometry,
-        ctx.live,
-        findEphemeralPaddrByOid(
-            ctx.image, ctx.geometry, ctx.live, ctx.chain.mainFqTreeOid, blockers),
-        blockers);
-    const ApfsMainFqAdvance mainFq =
-        advanceMainFreeQueue(liveMainFq, t.freed, t.newXid, kMainFqRollbackWindow);
+    const ApfsMainFqAdvance mainFq = advanceMainFreeQueue(
+        readLiveMainFreeQueue(ctx, blockers), t.freed, t.newXid, kMainFqRollbackWindow, blockers);
+    if (!mainFq.ok) {
+        return false;
+    }
     const int64_t netQueued = static_cast<int64_t>(t.freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
@@ -13488,7 +13607,8 @@ ApfsMainFqAdvance advanceMainFqWithFreed(ApfsFsCommitContext* ctx,
         ctx->image, ctx->geometry, ctx->live, ctx->chain.mainFqTreeOid, &probe);
     const QVector<ApfsFreeQueueEntry> live =
         parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &probe);
-    ApfsMainFqAdvance advance = advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow);
+    ApfsMainFqAdvance advance =
+        advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow, blockers);
     if (!probe.isEmpty()) {
         blockers->append(probe);
         advance.ok = false;
@@ -14349,8 +14469,10 @@ ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
         }
     }
     ApfsMainFqAdvance advance =
-        advanceMainFreeQueue(live, freed, plan.newXid, kMainFqRollbackWindow);
-    advance.ok = !readFailed;
+        advanceMainFreeQueue(live, freed, plan.newXid, kMainFqRollbackWindow, blockers);
+    // AND, never assign: the advance already fails closed on an over-budget reclaim expansion,
+    // and overwriting ok here would resurrect that refused advance.
+    advance.ok = advance.ok && !readFailed;
     return advance;
 }
 
@@ -17254,11 +17376,52 @@ struct ApfsTreeCollect {
     QVector<ApfsRootFilePayload>* files{nullptr};
     QVector<ApfsRootDirectoryPayload>* directories{nullptr};
     QStringList* blockers{nullptr};
+    QSet<quint64>* visitedDirectories{nullptr};  // every directory id collected so far
 };
+
+// Admit one directory into the recursive collection, or fail closed. A hostile or corrupt
+// source image can list directory A inside B while B lists A: the reader's node-level
+// cycle/depth guards are per B-tree node and do not see a drec-level directory cycle, so
+// without this the recursion never terminates and exhausts the stack. A directory id may
+// be collected exactly once (APFS directories have a single parent), and the nesting depth
+// is capped.
+bool enterCollectedDirectory(const ApfsTreeCollect& sink,
+                             const QString& dirPath,
+                             uint64_t dirObjectId,
+                             int depth) {
+    if (!sink.visitedDirectories) {
+        // A sink built without the visited set cannot detect a cycle; descending anyway would
+        // be the unguarded recursion this exists to stop.
+        sink.blockers->append(
+            QStringLiteral("APFS in-place commit: directory cycle guard is unavailable"));
+        return false;
+    }
+    if (depth > kApfsWriteTreeMaxDirectoryDepth) {
+        sink.blockers->append(
+            QStringLiteral("APFS in-place commit: directory '%1' is nested deeper than %2 levels")
+                .arg(dirPath)
+                .arg(kApfsWriteTreeMaxDirectoryDepth));
+        return false;
+    }
+    if (sink.visitedDirectories->contains(dirObjectId)) {
+        sink.blockers->append(
+            QStringLiteral("APFS in-place commit: directory id %1 ('%2') is reachable twice "
+                           "(directory cycle)")
+                .arg(dirObjectId)
+                .arg(dirPath));
+        return false;
+    }
+    sink.visitedDirectories->insert(dirObjectId);
+    return true;
+}
 
 bool collectDirectorySubtree(const ApfsTreeCollect& sink,
                              const QString& dirPath,
-                             uint64_t dirObjectId) {
+                             uint64_t dirObjectId,
+                             int depth) {
+    if (!enterCollectedDirectory(sink, dirPath, dirObjectId, depth)) {
+        return false;
+    }
     const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         sink.sourcePath, dirPath, kApfsWriteRootListingMaxEntries);
     if (!listing.ok) {
@@ -17281,7 +17444,7 @@ bool collectDirectorySubtree(const ApfsTreeCollect& sink,
                                       .parentDirectoryId = dirObjectId});
             const QString childPath = (dirPath == QStringLiteral("/") ? QString() : dirPath) +
                                       QStringLiteral("/") + entry.name;
-            if (!collectDirectorySubtree(sink, childPath, entry.object_id)) {
+            if (!collectDirectorySubtree(sink, childPath, entry.object_id, depth + 1)) {
                 return false;
             }
         } else if (entry.regular_file) {
@@ -17317,9 +17480,11 @@ bool collectFullFsTree(const QString& sourcePath,
                        QVector<ApfsRootFilePayload>* files,
                        QVector<ApfsRootDirectoryPayload>* directories,
                        QStringList* blockers) {
-    return collectDirectorySubtree({sourcePath, files, directories, blockers},
+    QSet<quint64> visitedDirectories;
+    return collectDirectorySubtree({sourcePath, files, directories, blockers, &visitedDirectories},
                                    QStringLiteral("/"),
-                                   kApfsRootDirectoryId);
+                                   kApfsRootDirectoryId,
+                                   0);
 }
 
 // A7 (A-h) clone: the shared data stream id and logical size a clone inherits from its
@@ -19035,6 +19200,19 @@ bool PartitionApfsWriter::freeQueueRunInBoundsForTesting(quint64 paddr,
                                                          quint64 length,
                                                          quint64 block_count) {
     return freeQueueRunInBounds(paddr, length, block_count);
+}
+
+bool PartitionApfsWriter::freeQueueExpansionWithinBudgetForTesting(quint64 accumulated_blocks,
+                                                                   quint64 run_length) {
+    return freeQueueRunFitsExpansionBudget(accumulated_blocks, run_length);
+}
+
+bool PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(quint64 directory_id,
+                                                               int depth,
+                                                               QSet<quint64>* visited) {
+    QStringList blockers;
+    const ApfsTreeCollect sink{.blockers = &blockers, .visitedDirectories = visited};
+    return enterCollectedDirectory(sink, QStringLiteral("/"), directory_id, depth);
 }
 
 QStringList PartitionApfsWriter::enterpriseCertificationRequirements() {

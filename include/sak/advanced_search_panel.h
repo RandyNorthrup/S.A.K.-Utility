@@ -73,7 +73,9 @@ private Q_SLOTS:
     // Controller signals
     void onSearchStarted(const QString& pattern);
     void onResultsReceived(QVector<sak::SearchMatch> matches);
-    void onSearchFinished(int totalMatches, int totalFiles);
+    /// @param complete False when the run omitted files/results; the log line must
+    ///        then say INCOMPLETE rather than claim the search covered everything.
+    void onSearchFinished(int totalMatches, int totalFiles, bool complete);
     void onSearchFailed(const QString& error);
     void onSearchCancelled();
 

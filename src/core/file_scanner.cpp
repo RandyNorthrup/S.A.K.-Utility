@@ -324,6 +324,7 @@ auto file_scanner::recurseIntoDirectory(const std::filesystem::path& dir_path,
 
 bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
                                   const scan_options& options,
+                                  scan_statistics& stats,
                                   std::size_t current_depth) {
     const auto& path = entry.path();
     if (!passesDepthAndVisibility(path, options, current_depth)) {
@@ -343,11 +344,23 @@ bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
     if (isReparsePointEntry(entry) && !options.follow_symlinks) {
         return false;
     }
-    // When following is enabled, break cycles by canonical identity.
+    // When following is enabled, break cycles by canonical identity. A canonicalization
+    // FAILURE (unreadable junction/symlink target, access denied, IO error) leaves the entry
+    // with no identity to register, so descending would silently drop the cycle/confinement
+    // guard for that subtree -- a planted link could then loop or steer the walk out of the
+    // scan root. Fail closed: refuse the descent and count it as an error rather than
+    // traversing blind (a skip that is never reported would read as "nothing was there").
     if (options.follow_symlinks) {
         std::error_code ec;
         const auto canonical = std::filesystem::canonical(path, ec);
-        if (!ec && !m_visited_dirs.insert(canonical.string()).second) {
+        if (ec) {
+            logWarning("Refusing to follow {}: canonical path unresolved ({})",
+                       path.string(),
+                       ec.message());
+            stats.errors_encountered++;
+            return false;
+        }
+        if (!m_visited_dirs.insert(canonical.string()).second) {
             return false;  // already descended into this directory this scan
         }
     }
@@ -380,7 +393,7 @@ auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& e
     }
 
     // Traversal is decided independently of the output type filter.
-    if (is_dir && options.recursive && canDescendInto(entry, options, current_depth)) {
+    if (is_dir && options.recursive && canDescendInto(entry, options, stats, current_depth)) {
         return recurseIntoDirectory(entry.path(), options, stats, current_depth, stop_token);
     }
 

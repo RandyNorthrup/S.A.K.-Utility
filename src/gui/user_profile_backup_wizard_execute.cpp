@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
@@ -159,9 +160,9 @@ void UserProfileBackupExecutePage::onStartBackup() {
     // The sidecars are written into the destination directory, so it must exist
     // and be writable before anything is saved (previously they were written
     // first and silently failed when the directory did not yet exist).
-    if (!ensureDestinationDirectory()) {
-        failBackupPreflight(
-            tr("Destination directory could not be created: %1").arg(m_destinationPath));
+    QString destinationError;
+    if (!ensureDestinationDirectory(destinationError)) {
+        failBackupPreflight(destinationError);
         return;
     }
 
@@ -211,13 +212,50 @@ void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(UserProfile
     }
 }
 
-bool UserProfileBackupExecutePage::ensureDestinationDirectory() {
+QString UserProfileBackupExecutePage::screenRunDestination() const {
+    QStringList sourceRoots;
+    QStringList folderNames;
+    for (const auto& user : m_users) {
+        if (user.is_selected && !user.profile_path.trimmed().isEmpty()) {
+            sourceRoots.append(user.profile_path);
+            folderNames.append(user.username);
+        }
+    }
+
+    const BackupDestinationCheck check =
+        screenBackupDestination(m_destinationPath, sourceRoots, folderNames);
+    if (!check.accepted) {
+        return check.refusal;
+    }
+    if (check.path != m_destinationPath) {
+        // Screening accepted only the trimmed form. Creating the untrimmed one would use a path
+        // that was never checked, so refuse rather than quietly substituting a different folder.
+        return tr(
+            "The backup destination has leading or trailing whitespace. Go back and "
+            "re-select the destination folder.");
+    }
+    return {};
+}
+
+bool UserProfileBackupExecutePage::ensureDestinationDirectory(QString& error) {
+    // Last gate before anything touches the filesystem. The settings page already refused a
+    // blank, relative, or source-overlapping destination, but this page is constructed with a
+    // path it does not own, so it re-screens instead of trusting it: a relative path would be
+    // created under the process working directory, and a destination inside a selected profile
+    // would make the copy recurse into its own growing output.
+    error = screenRunDestination();
+    if (!error.isEmpty()) {
+        sak::logError("Backup destination refused: {}", error.toStdString());
+        return false;
+    }
+
     QDir dir(m_destinationPath);
     if (dir.exists()) {
         return true;
     }
     if (!QDir().mkpath(m_destinationPath)) {
         sak::logError("Could not create backup destination: {}", m_destinationPath.toStdString());
+        error = tr("Destination directory could not be created: %1").arg(m_destinationPath);
         return false;
     }
     return true;

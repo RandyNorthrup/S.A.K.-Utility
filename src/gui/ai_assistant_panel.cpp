@@ -56,6 +56,7 @@
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
 #include "sak/report_style_constants.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -702,13 +703,16 @@ void configureApprovalDialog(QDialog* dialog, const QString& window_title) {
 }
 
 void addApprovalText(QVBoxLayout* layout, QDialog* dialog, const ApprovalPromptSpec& spec) {
-    auto* header = new QLabel(spec.heading, dialog);
+    // This is the human gate in front of a destructive tool call, and the heading embeds
+    // model-supplied text (the shell name off the tool-call JSON). Both lines are shown verbatim
+    // so a reply can never inject markup that restyles or spoofs the prompt it is asking about.
+    auto* header = sak::plainTextLabel(spec.heading, dialog);
     header->setObjectName(QStringLiteral("approvalHeading"));
     header->setWordWrap(true);
     layout->addWidget(header);
 
     if (!spec.body.trimmed().isEmpty()) {
-        auto* body_label = new QLabel(spec.body, dialog);
+        auto* body_label = sak::plainTextLabel(spec.body, dialog);
         body_label->setObjectName(QStringLiteral("approvalBody"));
         body_label->setWordWrap(true);
         layout->addWidget(body_label);
@@ -2779,10 +2783,22 @@ QString renderReportHtml(const PanelReportData& data, const QString& report_path
     return html.join(QString());
 }
 
+// Markdown feature set for every QTextDocument this panel renders into a QTextBrowser or a saved
+// report. QTextDocument::MarkdownDialectGitHub -- the setMarkdown() DEFAULT -- is
+// (0x0004|0x0008|0x0400|0x0100|0x0200|0x0800|0x4000|0x100000) and does NOT contain
+// MarkdownNoHTML (0x0020|0x0040 = FeatureNoHTMLBlocks|FeatureNoHTMLSpans), so by default raw HTML
+// blocks and spans inside the markdown are passed straight through into the document. Model
+// output and workflow-library JSON both reach these calls, so a title or a reply could otherwise
+// smuggle in an <img src=...> the document would try to load. State the features explicitly: the
+// guarantee must not depend on a Qt default that can change underneath us.
+constexpr QTextDocument::MarkdownFeatures kMarkdownNoRawHtml =
+    QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub) |
+    QTextDocument::MarkdownFeatures(QTextDocument::MarkdownNoHTML);
+
 QString markdownReportToHtml(const QString& markdown) {
     QTextDocument document;
     document.setDefaultStyleSheet(report::markdownReportStyleSheet());
-    document.setMarkdown(markdown);
+    document.setMarkdown(markdown, kMarkdownNoRawHtml);
     return document.toHtml();
 }
 
@@ -3010,7 +3026,7 @@ QString workflowDetailsMarkdown(const ai::WorkflowTemplate& workflow) {
 QString workflowDetailsHtml(const ai::WorkflowTemplate& workflow) {
     QTextDocument document;
     document.setDefaultStyleSheet(sak::ui::aiWorkflowMarkdownStyle());
-    document.setMarkdown(workflowDetailsMarkdown(workflow));
+    document.setMarkdown(workflowDetailsMarkdown(workflow), kMarkdownNoRawHtml);
     return document.toHtml();
 }
 
@@ -3142,6 +3158,12 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
             &ai::AiAsyncToolRunner::finished,
             this,
             &AiAssistantPanel::finishAsyncBuiltInToolCall);
+    // A DETACHED job emits only drained(); without this the panel would stay busy
+    // (correctly) but never learn when the abandoned mutation finally stopped.
+    connect(m_asyncToolRunner.get(),
+            &ai::AiAsyncToolRunner::drained,
+            this,
+            &AiAssistantPanel::onAsyncToolDrained);
     m_taskStatus = tr("Idle");
     if (initializeAccessibilityAuditUi()) {
         return;
@@ -3756,7 +3778,8 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     detailsLayout->setSpacing(sak::ui::kSpacingTight);
     auto* detailsHeaderRow = new QHBoxLayout();
     detailsHeaderRow->setSpacing(sak::ui::kSpacingSmall);
-    m_workflowDetailsTitle = new QLabel(tr("Workflow"), m_workflowDetailsPanel);
+    // Later filled with a workflow title from the workflow library JSON; show it verbatim.
+    m_workflowDetailsTitle = sak::plainTextLabel(tr("Workflow"), m_workflowDetailsPanel);
     m_workflowDetailsTitle->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextHeading));
     detailsHeaderRow->addWidget(m_workflowDetailsTitle, 1);
@@ -4520,10 +4543,22 @@ void AiAssistantPanel::updateTokenLabels() {
     emitStatusDetails();
 }
 
+ai::AiPanelActivity AiAssistantPanel::currentAiActivity() const {
+    ai::AiPanelActivity activity;
+    activity.client_busy = m_client && m_client->isBusy();
+    activity.tool_turn_active = m_toolTurn.active();
+    activity.workflow_run_active = m_workflowRunActive;
+    activity.execution_broker_running = m_executionBroker && m_executionBroker->isRunning();
+    activity.offline_worker_running = m_offlineWorker && m_offlineWorker->isRunning();
+    // The runner is the ONE authority on the async built-in tool: it stays running after
+    // Stop detaches the job (detach only drops the result), so a blocking install/recipe
+    // that is still mutating the machine keeps the panel busy until it actually drains.
+    activity.async_tool_runner_running = m_asyncToolRunner && m_asyncToolRunner->isRunning();
+    return activity;
+}
+
 bool AiAssistantPanel::isAiBusy() const {
-    return (m_client && m_client->isBusy()) || m_toolTurn.active() || m_workflowRunActive ||
-           (m_executionBroker && m_executionBroker->isRunning()) ||
-           (m_offlineWorker && m_offlineWorker->isRunning());
+    return ai::aiPanelIsBusy(currentAiActivity());
 }
 
 void AiAssistantPanel::setUiBusy(bool busy) {
@@ -5306,12 +5341,10 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
         appendToolOutputAndContinue(std::move(output));
         return true;
     }
-    m_asyncToolInFlight = true;
     return true;
 }
 
 void AiAssistantPanel::finishAsyncBuiltInToolCall(const QJsonObject& bundle) {
-    m_asyncToolInFlight = false;
     const QString name = bundle.value(QStringLiteral("name")).toString();
     recordToolLoopObservation(name, bundle.value(QStringLiteral("result")).toObject());
     traceAiEvent(QStringLiteral("tool_call"),
@@ -7963,7 +7996,11 @@ void AiAssistantPanel::addContextListItem(int index, int max_chip_width) {
     const int chip_width = contextChipWidth(chip_text, max_chip_width);
 
     auto* row = new QListWidgetItem(m_contextList);
-    row->setToolTip(item.path.isEmpty() ? item.text.left(kContextItemTooltipMaxChars) : item.path);
+    // The tooltip is an attached file's path or the head of its contents; a tooltip has no
+    // plain-text mode, so it is wrapped to be shown literally.
+    const QString tooltip_source = item.path.isEmpty() ? item.text.left(kContextItemTooltipMaxChars)
+                                                       : item.path;
+    row->setToolTip(sak::ui::asLiteralRichText(tooltip_source));
     row->setSizeHint(QSize(chip_width, kContextChipRowHeight));
 
     const ContextChipPalette palette = contextChipPalette(item.type);
@@ -7982,10 +8019,10 @@ void AiAssistantPanel::addContextListItem(int index, int max_chip_width) {
     const int text_width = std::max(kContextChipTextMinWidth, chip_width - kContextChipTextReserve);
     const QString display_text =
         QFontMetrics(m_contextList->font()).elidedText(chip_text, Qt::ElideMiddle, text_width);
-    auto* text = new QLabel(display_text, chip);
+    auto* text = sak::plainTextLabel(display_text, chip);
     text->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(palette.text_color, sak::ui::kFontSizeNote));
-    text->setToolTip(chip_text + QStringLiteral("\n") + row->toolTip());
+    text->setToolTip(sak::ui::asLiteralRichText(chip_text + QLatin1Char('\n') + tooltip_source));
     text->setMinimumWidth(sak::ui::kUiWidthNoMinimum);
     text->setMaximumWidth(text_width);
     text->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -9229,6 +9266,9 @@ AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatc
         !prepareWorkflowPowerShellTool(phase, &plan)) {
         return plan;
     }
+    if (phase.tool == QLatin1String("run_cmd") && !prepareWorkflowCmdTool(phase, &plan)) {
+        return plan;
+    }
     if (phase.tool == QLatin1String("sak_package_manager") &&
         !prepareWorkflowPackageTool(phase, context, &plan)) {
         return plan;
@@ -9283,6 +9323,35 @@ bool AiAssistantPanel::prepareWorkflowPowerShellTool(const ai::WorkflowPhase& ph
                 .arg(phase.id));
         return false;
     }
+    plan->request.command_preview = command;
+    plan->request.requires_admin = plan->args.value(QStringLiteral("requires_admin")).toBool(false);
+    return true;
+}
+
+bool AiAssistantPanel::prepareWorkflowCmdTool(const ai::WorkflowPhase& phase,
+                                              WorkflowToolDispatchPlan* plan) {
+    // Second gate behind the load-time validator: a run_cmd command is substituted in Raw
+    // mode and cmd.exe has no literal-quoting construct that can make an arbitrary value
+    // inert, so a template embedding ${...} is refused BEFORE the command is built. The raw
+    // (pre-substitution) template is checked, because after substitution the injected value
+    // is indistinguishable from the author's own text.
+    const QString raw_command = phase.arguments.value(QStringLiteral("command")).toString();
+    QString detail;
+    if (!ai::cmdCommandTemplateIsPlaceholderFree(raw_command, &detail)) {
+        plan->error =
+            toolError(QStringLiteral("Workflow cmd phase '%1' rejected: %2").arg(phase.id, detail));
+        return false;
+    }
+    const QString command = plan->args.value(QStringLiteral("command")).toString().trimmed();
+    if (command.isEmpty()) {
+        plan->error =
+            toolError(QStringLiteral("Workflow cmd phase '%1' has no explicit arguments.command")
+                          .arg(phase.id));
+        return false;
+    }
+    // Preview the command the broker will actually run (parity with the PowerShell phase):
+    // the policy layer classifies risky/catastrophic shapes from command_preview, so leaving
+    // it as the phase prompt would hide the real command from those classifiers.
     plan->request.command_preview = command;
     plan->request.requires_admin = plan->args.value(QStringLiteral("requires_admin")).toBool(false);
     return true;
@@ -10521,7 +10590,7 @@ QString AiAssistantPanel::runDetailsHtml() const {
     markdown.replace(QStringLiteral("````"), QStringLiteral("```"));
     QTextDocument document;
     document.setDefaultStyleSheet(sak::ui::aiRunDetailsMarkdownStyle());
-    document.setMarkdown(markdown);
+    document.setMarkdown(markdown, kMarkdownNoRawHtml);
     return document.toHtml();
 }
 void AiAssistantPanel::showRunDetails() {
@@ -11172,10 +11241,11 @@ void AiAssistantPanel::cancelLocalAiWork() {
     }
     // Drop the result of an in-flight async built-in tool call so it does not
     // resume the (now torn-down) tool turn; the inner worker is cancelled above
-    // (offline/broker) and drains in the background.
-    if (m_asyncToolRunner && m_asyncToolInFlight) {
+    // (offline/broker) and drains in the background. The runner keeps reporting
+    // isRunning() until it does, which is what keeps isAiBusy() true so the panel
+    // reports Cancelling and refuses new work while the detached job still runs.
+    if (m_asyncToolRunner && m_asyncToolRunner->isRunning()) {
         m_asyncToolRunner->detach();
-        m_asyncToolInFlight = false;
     }
     m_client->cancel();
     if (m_toolTurn.active()) {
@@ -11189,8 +11259,9 @@ void AiAssistantPanel::cancelLocalAiWork() {
 }
 
 void AiAssistantPanel::finalizeStopRequest() {
-    const bool still_busy = isAiBusy();
-    m_runState.status = still_busy ? ai::AiRunStatus::Cancelling : ai::AiRunStatus::Cancelled;
+    const ai::AiPanelActivity activity = currentAiActivity();
+    const bool still_busy = ai::aiPanelIsBusy(activity);
+    m_runState.status = ai::aiStopRunStatus(activity);
     m_taskStatus = still_busy ? tr("Cancelling") : tr("Cancelled");
     updateWorkflowProgressUi();
     emitStatusDetails();
@@ -11199,6 +11270,19 @@ void AiAssistantPanel::finalizeStopRequest() {
     if (!still_busy) {
         dispatchQueuedPromptIfIdle();
     }
+}
+
+void AiAssistantPanel::onAsyncToolDrained() {
+    // The async tool runner's pool task has left the pool. When Stop detached a blocking
+    // built-in, isAiBusy() has been true ever since (the mutation was still executing) and
+    // the run has been parked in Cancelling with no further event coming: this is that
+    // event. Re-run the stop finalization so the run reaches Cancelled and any prompt the
+    // user queued during the cancel is dispatched. An attached job needs nothing here --
+    // finishAsyncBuiltInToolCall already continued the tool turn.
+    if (m_shuttingDown || m_runState.status != ai::AiRunStatus::Cancelling) {
+        return;
+    }
+    finalizeStopRequest();
 }
 
 void AiAssistantPanel::onBrokerStarted(const QString& command_id) {

@@ -230,6 +230,23 @@ inline QString actionCardDescriptionStyle() {
     return {card, logo, titleLabel, descLabel, button};
 }
 
+// -- Untrusted Text Helpers --------------------------------------------------
+
+/// @brief QLabel that shows @p text verbatim, never as markup.
+///
+/// QLabel defaults to Qt::AutoText, so a value carrying markup (a registry program name, a file
+/// name read off a raw image, AI output) is silently rendered as rich text. Use this factory --
+/// or setTextFormat(Qt::PlainText) on a label that is filled in later -- for any label whose
+/// template contains no intended markup of its own. See sak/rich_text_safety.h.
+///
+/// @param text   The untrusted text to display.
+/// @param parent Owning widget.
+[[nodiscard]] inline QLabel* plainTextLabel(const QString& text, QWidget* parent = nullptr) {
+    auto* label = new QLabel(text, parent);
+    label->setTextFormat(Qt::PlainText);
+    return label;
+}
+
 // -- Accessibility Helpers ---------------------------------------------------
 
 /// @brief Set accessible name and optional description on any QWidget.

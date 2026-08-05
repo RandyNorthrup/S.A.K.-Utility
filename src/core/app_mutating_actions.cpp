@@ -653,11 +653,26 @@ std::optional<AppActionResult> validateMboxAttachmentSaveInputs(const QString& p
 struct AttachmentSaveRequest {
     QString id_key;
     QJsonValue id_value;
+    // The same identifier as id_value, in the form the batch saver keys arrivals by: MBOX
+    // message_index or PST node id. Kept as a plain integer because AttachmentRef pairs it with an
+    // attachment index to identify exactly one attachment.
+    uint64_t message_id = 0;
     int total = 0;
     int attempted = 0;
     bool truncated = false;
     QString output_dir;
 };
+
+// Expected set for one save run: attachment indices 0 .. attempted-1 of the request's message. The
+// batch accepts only these, so a record can never be written into a slot it does not name.
+QVector<sak::AttachmentRef> attachmentRefsFor(const AttachmentSaveRequest& req) {
+    QVector<sak::AttachmentRef> refs;
+    refs.reserve(req.attempted);
+    for (int i = 0; i < req.attempted; ++i) {
+        refs.append(sak::AttachmentRef{req.message_id, i});
+    }
+    return refs;
+}
 
 // Running tally for a save-attachments run: the saved file paths, per-item error strings, and the
 // success/failure counts. Kept separate from AttachmentBatchSave's internal counters because the
@@ -677,10 +692,14 @@ void runAttachmentSaves(const QVector<MboxAttachmentPayload>& payloads,
                         const AttachmentSaveRequest& req,
                         AttachmentSaveTally& tally) {
     sak::AttachmentBatchSave batch;
-    batch.begin(req.output_dir, req.attempted);
+    if (!batch.begin(req.output_dir, attachmentRefsFor(req))) {
+        tally.errors.append(QStringLiteral("Could not start the attachment save batch"));
+        tally.failed = req.attempted;
+        return;
+    }
     for (int i = 0; i < req.attempted; ++i) {
-        const sak::AttachmentSaveResult result = batch.recordOne(payloads[i].filename,
-                                                                 payloads[i].data);
+        const sak::AttachmentSaveResult result = batch.recordOne(
+            sak::AttachmentRef{req.message_id, i}, payloads[i].filename, payloads[i].data);
         if (result.success) {
             tally.saved_paths.append(result.saved_path);
             ++tally.saved;
@@ -755,6 +774,7 @@ AppActionResult saveMboxAttachments(const QJsonObject& args) {
     AttachmentSaveRequest req;
     req.id_key = QStringLiteral("message_index");
     req.id_value = message_index;
+    req.message_id = static_cast<uint64_t>(message_index);
     req.total = payloads->size();
     req.truncated = req.total > kMaxSavedAttachments;
     req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
@@ -816,15 +836,18 @@ quint64 parsePstNodeIdArg(const QJsonValue& value, bool& ok) {
 // attachment index, so metas[i]'s name pairs with the bytes at index i. A per-attachment read
 // failure is recorded and the run continues.
 void runPstAttachmentSaves(PstParser& parser,
-                           quint64 node_id,
                            const QVector<sak::PstAttachmentInfo>& metas,
                            const AttachmentSaveRequest& req,
                            AttachmentSaveTally& tally) {
     sak::AttachmentBatchSave batch;
-    batch.begin(req.output_dir, req.attempted);
+    if (!batch.begin(req.output_dir, attachmentRefsFor(req))) {
+        tally.errors.append(QStringLiteral("Could not start the attachment save batch"));
+        tally.failed = req.attempted;
+        return;
+    }
     for (int i = 0; i < req.attempted; ++i) {
-        const std::expected<QByteArray, sak::error_code> bytes = parser.readAttachmentData(node_id,
-                                                                                           i);
+        const std::expected<QByteArray, sak::error_code> bytes =
+            parser.readAttachmentData(req.message_id, i);
         if (!bytes) {
             batch.recordError();
             tally.errors.append(QStringLiteral("attachment %1: could not read bytes").arg(i));
@@ -833,7 +856,8 @@ void runPstAttachmentSaves(PstParser& parser,
         }
         const QString name = metas[i].long_filename.isEmpty() ? metas[i].filename
                                                               : metas[i].long_filename;
-        const sak::AttachmentSaveResult result = batch.recordOne(name, *bytes);
+        const sak::AttachmentSaveResult result =
+            batch.recordOne(sak::AttachmentRef{req.message_id, i}, name, *bytes);
         if (result.success) {
             tally.saved_paths.append(result.saved_path);
             ++tally.saved;
@@ -892,13 +916,14 @@ AppActionResult savePstAttachments(const QJsonObject& args) {
     AttachmentSaveRequest req;
     req.id_key = QStringLiteral("message_node_id");
     req.id_value = static_cast<double>(node_id);  // NID up to 0xFFFFFFFF -> exact as a double
+    req.message_id = node_id;
     req.total = metas->size();
     req.truncated = req.total > kMaxSavedAttachments;
     req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
     req.output_dir = output_dir;
 
     AttachmentSaveTally tally;
-    runPstAttachmentSaves(parser, node_id, *metas, req, tally);
+    runPstAttachmentSaves(parser, *metas, req, tally);
     return buildAttachmentSaveResult(tally, req);
 }
 
@@ -2062,6 +2087,10 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
     // worker declared BEFORE inv so it is destroyed AFTER inv: a late finished() on teardown then
     // hits an already-gone context and is dropped rather than delivered to a dangling bridge.
     CleanupWorker worker(items, use_recycle_bin);
+    // The recycle choice is a RECOVERABILITY contract and this path has no human reviewing each
+    // item, so a recycle failure must leave the item in place (reported failed) instead of
+    // escalating to a permanent delete. Stated explicitly here, not left to the worker default.
+    worker.setRequireRecoverable(use_recycle_bin);
     AsyncActionInvocation inv(kCleanupTimeoutMs);
     CleanupTally tally;
 
@@ -2235,8 +2264,10 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
             "this batch; the fail-closed OS-critical denylist is still enforced");
     }
 
-    // Default to the Recycle Bin (files/folders recoverable). Registry keys/values, services,
-    // tasks, and firewall rules have no recycle equivalent -- their deletion is always permanent.
+    // Default to the Recycle Bin (files/folders recoverable), and the worker is put in
+    // recoverable-only mode for it, so an item that cannot be recycled is LEFT IN PLACE and
+    // reported rather than permanently deleted. Registry keys/values, services, tasks, and
+    // firewall rules have no recycle equivalent -- their deletion is always permanent.
     const bool use_recycle_bin = args.value(QStringLiteral("use_recycle_bin")).toBool(true);
     return runCleanupWorker(items, use_recycle_bin);
 }

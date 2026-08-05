@@ -90,7 +90,6 @@ private Q_SLOTS:
     // -- Export ----------------------------------------------------------
     void onExportClicked();
     void onExportAttachmentsClicked();
-    void exportCurrentFolderAs(sak::ExportFormat format);
 
     // -- Modals ----------------------------------------------------------
     void onScanForFilesClicked();
@@ -173,6 +172,12 @@ private:
     /// Item id stored on a row, or nullopt when the row carries none. Not 0-as-sentinel:
     /// an MBOX message_index of 0 is a valid first message.
     [[nodiscard]] std::optional<uint64_t> itemIdForRow(int row) const;
+    /// Export the folder named by @p folder_id. The id is passed in rather than
+    /// read from the selection, because the folder context menu must export the
+    /// folder that was right-clicked and a right-click does not move the
+    /// selection. A nullopt id fails visibly instead of exporting the previously
+    /// selected folder.
+    void exportFolderAs(sak::ExportFormat format, std::optional<uint64_t> folder_id);
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
@@ -202,6 +207,21 @@ private:
     void addPreviewControlRow(QVBoxLayout* root_layout);
     [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
+
+    // -- Attachment Saving -----------------------------------------------
+    /// Both attachment save controls move together; they are locked for the
+    /// duration of a batch so a second batch cannot interleave with it.
+    void setAttachmentSaveControlsEnabled(bool enabled);
+    /// Message a new attachment save must be issued against, or nullopt with the
+    /// refusal already surfaced (a batch is running, or no message identity has
+    /// been committed).
+    [[nodiscard]] std::optional<uint64_t> attachmentSaveSource();
+    /// Begin a batch for @p refs into @p dir and issue the content requests.
+    /// Surfaces its own refusal and issues nothing when the batch cannot start.
+    void startAttachmentBatch(const QString& dir, const QVector<sak::AttachmentRef>& refs);
+    /// Show the summary, clear the batch and unlock the controls once every
+    /// expected attachment has been accounted for.
+    void finishAttachmentBatchIfComplete();
 
     // -- Controller ------------------------------------------------------
     std::unique_ptr<EmailInspectorController> m_controller;
@@ -261,8 +281,14 @@ private:
     // -- State -----------------------------------------------------------
     bool m_dialog_active{false};
     uint64_t m_current_folder_id{0};
-    uint64_t m_current_item_id{0};
-    uint64_t m_pending_item_id{0};
+    /// Identity of the message the detail view actually holds: committed from the
+    /// id the detail response itself carried, never from the most recently clicked
+    /// row. Not 0-as-sentinel -- an MBOX message_index of 0 is a valid message, so
+    /// "nothing committed" is absence, not zero.
+    std::optional<uint64_t> m_current_item_id;
+    /// Identity of the message whose MAPI properties the properties tab shows.
+    /// Kept separate because properties arrive in their own response.
+    std::optional<uint64_t> m_properties_item_id;
     int m_current_page{0};
     int m_current_total{0};
     sak::PstItemDetail m_current_detail;

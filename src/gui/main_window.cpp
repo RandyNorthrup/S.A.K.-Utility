@@ -25,6 +25,7 @@
 #include "sak/organizer_panel.h"
 #include "sak/ost_converter_widget.h"
 #include "sak/partition_manager_panel.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 #include "sak/user_migration_panel.h"
 #include "sak/version.h"
@@ -306,7 +307,7 @@ constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stre
 constexpr char kTooltipNetworkManagement[] =
     "Network diagnostics, WiFi management, and connectivity tools";
 constexpr char kTooltipEmailTool[] =
-    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles";
+    "Inspect PST, OST, and MBOX email files -- search, export, and manage profiles";
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 constexpr char kTooltipAiAssistant[] =
@@ -519,8 +520,9 @@ void MainWindow::createStatusBar() {
             font_family_count,
             font_timer.elapsed());
 
-    // Persistent status label
-    m_status_label = new QLabel("Ready", this);
+    // Persistent status label. Every panel relays status text through it, and that text embeds
+    // file paths, program names, adapter names and AI output, so it renders verbatim.
+    m_status_label = sak::plainTextLabel("Ready", this);
     m_status_label->setContentsMargins(
         sak::ui::kMarginTight, sak::ui::kMarginNone, sak::ui::kMarginTight, sak::ui::kMarginNone);
     statusBar()->addWidget(m_status_label, 1);
@@ -536,7 +538,8 @@ void MainWindow::createStatusBar() {
     m_vulnerability_summary_label->setVisible(false);
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    m_ai_status_label = new QLabel(this);
+    // Mirrors the AI panel's run details (model/tool text), so it renders verbatim too.
+    m_ai_status_label = sak::plainTextLabel(QString(), this);
     m_ai_status_label->setContentsMargins(sak::ui::kSpacingDefault,
                                           sak::ui::kMarginNone,
                                           sak::ui::kSpacingDefault,
@@ -1442,7 +1445,9 @@ void MainWindow::wireAiPanel() {
             [this](const QString& details) {
                 if (m_ai_status_label) {
                     m_ai_status_label->setText(details);
-                    m_ai_status_label->setToolTip(details);
+                    // The details embed run-supplied ids (workflow phase, tool command); a
+                    // tooltip has no plain-text mode, so wrap it to be shown literally.
+                    m_ai_status_label->setToolTip(sak::ui::asLiteralRichText(details));
                 }
                 updateAiStatusBarVisibility();
             });
@@ -1487,7 +1492,7 @@ void MainWindow::updateAiStatusBarVisibility() {
     if (active && m_ai_assistant_panel) {
         const QString details = m_ai_assistant_panel->statusDetails();
         m_ai_status_label->setText(details);
-        m_ai_status_label->setToolTip(details);
+        m_ai_status_label->setToolTip(sak::ui::asLiteralRichText(details));
     }
     m_ai_status_label->setVisible(active && !m_ai_status_label->text().isEmpty());
 }
@@ -1645,7 +1650,9 @@ void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
     Q_ASSERT(m_tab_widget);
     m_panelLogs[tabIdx].append(formatted);
     if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
-        m_logWindow->logTextEdit()->append(formatted);
+        // Panel log payloads carry paths, program names and command output; QTextEdit::append()
+        // would render markup inside them, so wrap the line to read literally.
+        m_logWindow->logTextEdit()->append(sak::ui::asLiteralRichText(formatted));
     }
 }
 
@@ -1674,7 +1681,7 @@ void MainWindow::onTabChanged(int index) {
     m_logWindow->logTextEdit()->clear();
     if (m_panelLogs.contains(index)) {
         for (const auto& line : m_panelLogs[index]) {
-            m_logWindow->logTextEdit()->append(line);
+            m_logWindow->logTextEdit()->append(sak::ui::asLiteralRichText(line));
         }
     }
 }

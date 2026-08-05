@@ -39,6 +39,10 @@ private Q_SLOTS:
     // WaveD-04: drive letters are validated before entering the PowerShell filter
     // / key filename, so a malformed value cannot inject or escape the directory.
     void buildKeyProtectorScript_rejectsInvalidDriveLetters();
+    // R5 p8_appaction-2: the backup destination crosses the elevation boundary and
+    // receives plaintext recovery keys, so it is canonicalized + policy-screened.
+    void screenBackupLocation_refusesUnsafeDestinations();
+    void screenBackupLocation_canonicalizesAcceptedLocation();
     // Recovery-password accounting used by the gate and per-volume file writer.
     void recoveryPasswordHelpers_countAndDetect();
     // Enum formatters the recovery document depends on.
@@ -172,6 +176,52 @@ void BackupBitlockerKeysActionTests::buildKeyProtectorScript_rejectsInvalidDrive
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:' ; Remove-Item C:\\ #")).isEmpty());
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:\\..\\..\\evil")).isEmpty());
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("CC")).isEmpty());
+}
+
+// ============================================================================
+// R5 p8_appaction-2 -- backup destination screen
+// ============================================================================
+
+void BackupBitlockerKeysActionTests::screenBackupLocation_refusesUnsafeDestinations() {
+    const auto refused = [](const QString& location) {
+        QString reason;
+        const QString result = Action::screenBackupLocation(location, reason);
+        // Fail closed: an empty result AND a stated reason, never a silent default.
+        return result.isEmpty() && !reason.isEmpty();
+    };
+
+    // Absent / blank destination: refused, never coerced to a built-in default.
+    QVERIFY(refused(QString()));
+    QVERIFY(refused(QStringLiteral("   ")));
+    // UNC share: plaintext recovery keys must not be pushed to a remote host.
+    QVERIFY(refused(QStringLiteral("\\\\attacker\\share\\keys")));
+    QVERIFY(refused(QStringLiteral("//attacker/share/keys")));
+    // Mixed separators still form a UNC/device root on Windows.
+    QVERIFY(refused(QStringLiteral("\\/attacker/share")));
+    // Device namespace.
+    QVERIFY(refused(QStringLiteral("\\\\?\\C:\\SAK_Backups")));
+    QVERIFY(refused(QStringLiteral("\\\\.\\PhysicalDrive0")));
+    // Relative destination: it would resolve against the ELEVATED helper's working
+    // directory, which the requesting client neither controls nor sees.
+    QVERIFY(refused(QStringLiteral("SAK_Backups")));
+    QVERIFY(refused(QStringLiteral("..\\..\\SAK_Backups")));
+}
+
+void BackupBitlockerKeysActionTests::screenBackupLocation_canonicalizesAcceptedLocation() {
+    QString reason;
+    // A plain absolute local path is accepted and returned lexically canonicalized
+    // (cleaned, forward-separator form) so the caller writes to a resolved path.
+    const QString accepted =
+        Action::screenBackupLocation(QStringLiteral("C:\\SAK_Backups\\.\\keys\\"), reason);
+    QVERIFY2(reason.isEmpty(), qPrintable(reason));
+    QCOMPARE(accepted, QStringLiteral("C:/SAK_Backups/keys"));
+
+    // A traversal-laden but still-local path is normalized rather than passed through raw.
+    reason.clear();
+    const QString collapsed =
+        Action::screenBackupLocation(QStringLiteral("C:\\SAK_Backups\\sub\\..\\keys"), reason);
+    QVERIFY2(reason.isEmpty(), qPrintable(reason));
+    QCOMPARE(collapsed, QStringLiteral("C:/SAK_Backups/keys"));
 }
 
 // ============================================================================

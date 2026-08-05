@@ -200,8 +200,12 @@ void AppInstallationPanel::updateQueueDisplay() {
     }
 
     bool hasItems = !m_installQueue.isEmpty();
-    m_clearQueueButton->setEnabled(hasItems && !m_install_in_progress);
-    m_installButton->setEnabled(hasItems && !m_install_in_progress);
+    // Gate on the single in-flight authority, not the online flag alone: an offline
+    // deployment operation drives the same Chocolatey install root, so Install must stay
+    // disabled while it runs.
+    const bool idle = !packageOperationInFlight();
+    m_clearQueueButton->setEnabled(hasItems && idle);
+    m_installButton->setEnabled(hasItems && idle);
     m_saveQueueButton->setEnabled(hasItems);
     m_removeFromQueueButton->setEnabled(false);  // Reset until selection
 }

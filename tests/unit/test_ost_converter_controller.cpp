@@ -4,6 +4,7 @@
 /// @file test_ost_converter_controller.cpp
 /// @brief Unit tests for OstConverterController queue management
 
+#include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/ost_converter_controller.h"
 #include "sak/ost_converter_types.h"
@@ -336,6 +337,74 @@ private Q_SLOTS:
         QVERIFY2(complete_spy.wait(kBatchWaitMs),
                  "batch wedged: allConversionsComplete never fired");
         QVERIFY(!ctrl.isRunning());
+    }
+
+    // ====================================================================
+    // Deleted-item recovery honesty
+    // ====================================================================
+
+    void testRecoveryReliabilityDefaultsToComplete() {
+        // A fresh result claims a complete recovery; only a scan that reported trouble may
+        // clear it. Reliable flags must therefore leave the result untouched.
+        sak::OstConversionResult result;
+        QVERIFY(result.recovery_complete);
+
+        sak::OstConversionWorker::recordRecoveryReliability(
+            /*recoverable_reliable=*/true,
+            /*orphan_reliable=*/true,
+            /*orphans_scanned=*/true,
+            result);
+        QVERIFY(result.recovery_complete);
+        QVERIFY(result.errors.isEmpty());
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Complete);
+    }
+
+    void testTruncatedRecoverableScanIsNotACleanConversion() {
+        // A read error inside the Recoverable Items hierarchy leaves recovered items OUT of the
+        // output. items_recovered alone cannot say that, so the run must not be reported clean:
+        // recovery_complete drops and an error is recorded, which demotes the job to Failed.
+        sak::OstConversionResult result;
+        result.items_converted = 12;
+        result.items_recovered = 3;
+
+        sak::OstConversionWorker::recordRecoveryReliability(
+            /*recoverable_reliable=*/false,
+            /*orphan_reliable=*/true,
+            /*orphans_scanned=*/true,
+            result);
+
+        QVERIFY(!result.recovery_complete);
+        QCOMPARE(result.errors.size(), qsizetype(1));
+        QVERIFY(result.errors.first().contains(QStringLiteral("INCOMPLETE")));
+        QCOMPARE(sak::OstConverterController::classifyOutcome(result),
+                 sak::OstConversionJob::Status::Failed);
+    }
+
+    void testUnreliableOrphanScanOnlyCountsWhenOrphansWereScanned() {
+        // Shallow recovery never runs the orphan pass, so the scanner's orphan flag says nothing
+        // about that run and must not manufacture a failure.
+        sak::OstConversionResult shallow;
+        sak::OstConversionWorker::recordRecoveryReliability(
+            /*recoverable_reliable=*/true,
+            /*orphan_reliable=*/false,
+            /*orphans_scanned=*/false,
+            shallow);
+        QVERIFY(shallow.recovery_complete);
+        QVERIFY(shallow.errors.isEmpty());
+
+        // Deep recovery DID run it, so the same flag is now a real truncation.
+        sak::OstConversionResult deep;
+        sak::OstConversionWorker::recordRecoveryReliability(
+            /*recoverable_reliable=*/true,
+            /*orphan_reliable=*/false,
+            /*orphans_scanned=*/true,
+            deep);
+        QVERIFY(!deep.recovery_complete);
+        QCOMPARE(deep.errors.size(), qsizetype(1));
+        QVERIFY(deep.errors.first().contains(QStringLiteral("orphaned-node")));
+        QCOMPARE(sak::OstConverterController::classifyOutcome(deep),
+                 sak::OstConversionJob::Status::Failed);
     }
 };
 

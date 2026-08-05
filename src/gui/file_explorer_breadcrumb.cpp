@@ -5,6 +5,7 @@
 
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/layout_constants.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 
 #include <QHBoxLayout>
@@ -144,7 +145,9 @@ void FileExplorerBreadcrumb::addSegmentButton(const Segment& segment, const bool
     auto* button = new QPushButton(segment.label, this);
     button->setObjectName(QStringLiteral("fileExplorerBreadcrumbSegment"));
     button->setAccessibleName(tr("Go to %1").arg(segment.target_path));
-    button->setToolTip(segment.target_path);
+    // A directory path can contain markup on a raw (non-Windows) medium, and a tooltip has no
+    // plain-text mode, so wrap it to be shown literally.
+    button->setToolTip(ui::asLiteralRichText(segment.target_path));
     button->setCursor(Qt::PointingHandCursor);
     if (is_last) {
         button->setProperty("breadcrumbCurrent", true);

@@ -28,6 +28,9 @@ struct NetworkTransferRequest {
     NetworkTransferMethod method{NetworkTransferMethod::Get};
     QByteArray body;
     QList<QPair<QByteArray, QByteArray>> raw_headers;
+    /// Per-transfer deadline. MUST be positive: a value <= 0 would disable Qt's transfer
+    /// timeout and leave the deadline timer unarmed, letting a stalled server block the
+    /// synchronous runNetworkTransfer() call forever. Such a request is rejected outright.
     int timeout_ms{kDefaultNetworkTransferTimeoutMs};
     /// Abort once the response body exceeds this many bytes, bounding the in-memory
     /// buffer so a hostile/oversized remote response cannot exhaust memory. 0 = no

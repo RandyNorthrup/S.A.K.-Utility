@@ -99,8 +99,17 @@ Q_SIGNALS:
     /// @brief Emitted per-file as search progresses
     void fileSearched(const QString& filePath, int matchCount);
 
-    /// @brief Emitted when search completes successfully
-    void searchFinished(int totalMatches, int totalFiles);
+    /// @brief Emitted when a search run ends without failing or being cancelled
+    /// @param totalMatches Matches delivered to the UI
+    /// @param totalFiles   Files that produced at least one match
+    /// @param complete     False when the run could not cover everything it was
+    ///                     asked to cover (an unreadable/over-cap file, a failed
+    ///                     or truncated listing, an archive whose entry chain
+    ///                     stopped early, or a hit result cap). Every consumer
+    ///                     MUST qualify what it reports on false: announcing an
+    ///                     incomplete run as "complete" anywhere turns a missed
+    ///                     match into a confident "not found".
+    void searchFinished(int totalMatches, int totalFiles, bool complete);
 
     /// @brief Emitted when search fails
     void searchFailed(const QString& error);

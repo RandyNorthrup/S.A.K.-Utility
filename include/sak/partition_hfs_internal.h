@@ -9871,25 +9871,35 @@ private:
         return true;
     }
 
+    // Where the HFS wrapper's embedded HFS+ volume starts and how many bytes of the
+    // wrapper it may occupy (embeddedExtentBlockCount allocation blocks). The length is
+    // carried, not discarded: it is the only bound that confines the inner volume to its
+    // extent instead of to the whole backing device.
+    struct HfsWrapperExtent {
+        uint64_t offset{0};
+        uint64_t length_bytes{0};
+    };
+
     [[nodiscard]] bool loadWrappedVolumeHeader() {
         const auto mdb = readAt(kHfsWrapperMdbOffset, kHfsWrapperMdbSize);
         if (!mdb.has_value()) {
             return false;
         }
 
-        const auto embeddedOffset = wrappedVolumeOffset(*mdb);
-        if (!embeddedOffset.has_value()) {
+        const auto embedded = wrappedVolumeExtent(*mdb);
+        if (!embedded.has_value()) {
             return false;
         }
-        const auto header = readVolumeHeaderAt(*embeddedOffset);
+        const auto header = readVolumeHeaderAt(embedded->offset);
         if (!header.has_value()) {
             return false;
         }
-        parseVolumeHeader(*header, *embeddedOffset, true);
+        parseVolumeHeader(*header, embedded->offset, true);
+        m_volume.embedded_extent_bytes = embedded->length_bytes;
         return true;
     }
 
-    [[nodiscard]] std::optional<uint64_t> wrappedVolumeOffset(const QByteArray& mdb) const {
+    [[nodiscard]] std::optional<HfsWrapperExtent> wrappedVolumeExtent(const QByteArray& mdb) const {
         if (!wrapperHeaderLooksLikeHfsPlus(mdb)) {
             return std::nullopt;
         }
@@ -9900,7 +9910,14 @@ private:
         if (!wrapperGeometryLooksValid(allocationBlockSize, extentBlockCount)) {
             return std::nullopt;
         }
-        return wrapperEmbeddedOffset(allocationStartSector, extentStartBlock, allocationBlockSize);
+        const auto offset =
+            wrapperEmbeddedOffset(allocationStartSector, extentStartBlock, allocationBlockSize);
+        uint64_t extentBytes = 0;
+        if (!offset.has_value() ||
+            !checkedMul(extentBlockCount, allocationBlockSize, &extentBytes)) {
+            return std::nullopt;
+        }
+        return HfsWrapperExtent{.offset = *offset, .length_bytes = extentBytes};
     }
 
     [[nodiscard]] bool wrapperHeaderLooksLikeHfsPlus(const QByteArray& mdb) const {
@@ -10001,6 +10018,11 @@ private:
         if (volumeExceedsDeviceLength()) {
             m_blockers.append(
                 QStringLiteral("HFS+ volume geometry exceeds the backing device length"));
+            return;
+        }
+        if (volumeExceedsEmbeddedExtent()) {
+            m_blockers.append(
+                QStringLiteral("HFS+ volume geometry exceeds the HFS wrapper embedded extent"));
         }
     }
 
@@ -10019,6 +10041,29 @@ private:
             return true;
         }
         return volumeEnd > static_cast<uint64_t>(deviceLength);
+    }
+
+    // Fail closed: a wrapped volume is confined to the wrapper's embedded extent, so the
+    // device length alone is NOT a bound -- a header claiming more allocation blocks than
+    // embeddedExtentBlockCount covers would read (and on the gated write path mutate)
+    // wrapper metadata or media that surrounds the embedded volume. A wrapped volume whose
+    // extent length could not be measured is refused rather than device-bounded.
+    [[nodiscard]] bool volumeExceedsEmbeddedExtent() const {
+        if (!m_volume.wrapped) {
+            return false;
+        }
+        if (m_volume.embedded_extent_bytes == 0) {
+            return true;
+        }
+        uint64_t volumeBytes = 0;
+        uint64_t volumeEnd = 0;
+        uint64_t extentEnd = 0;
+        if (!checkedMul(m_volume.total_blocks, m_volume.block_size, &volumeBytes) ||
+            !checkedAdd(m_volume.volume_offset, volumeBytes, &volumeEnd) ||
+            !checkedAdd(m_volume.volume_offset, m_volume.embedded_extent_bytes, &extentEnd)) {
+            return true;
+        }
+        return volumeEnd > extentEnd;
     }
 
     void appendCatalogForkBlockers() {

@@ -23,6 +23,7 @@ private Q_SLOTS:
     void earlierInvalidFileDoesNotRejectLaterValidOne();
     void rejectDuplicatePhaseIds();
     void rejectDuplicateRequiredInputIds();
+    void rejectCmdPhaseCommandWithPlaceholder();
 };
 
 namespace {
@@ -202,6 +203,37 @@ void AiWorkflowStoreTests::rejectDuplicateRequiredInputIds() {
         sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("dup_input"), &errors);
     QVERIFY(!workflow.isValid());
     QVERIFY(errors.join(QStringLiteral("\n")).contains(QStringLiteral("Duplicate required-input")));
+}
+
+void AiWorkflowStoreTests::rejectCmdPhaseCommandWithPlaceholder() {
+    // R5 p1_ai-2: a user-directory run_cmd template with a ${...} placeholder used to load
+    // and then substitute the value straight into a cmd.exe command line. cmd.exe has no
+    // literal-quoting construct that makes an arbitrary value inert, so the template is
+    // rejected at load; a placeholder-free run_cmd command still loads.
+    QJsonObject object = validWorkflowObject();
+    QJsonObject phase = object.value(QStringLiteral("phases")).toArray().at(0).toObject();
+    phase[QStringLiteral("type")] = QStringLiteral("tool_action");
+    phase[QStringLiteral("tool")] = QStringLiteral("run_cmd");
+    QJsonObject arguments;
+    arguments[QStringLiteral("command")] = QStringLiteral("findstr \"${user_message}\" log.txt");
+    phase[QStringLiteral("arguments")] = arguments;
+    object[QStringLiteral("phases")] = QJsonArray{phase};
+
+    QStringList errors;
+    const auto workflow =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("cmd_placeholder"), &errors);
+    QVERIFY(!workflow.isValid());
+    QVERIFY(
+        errors.join(QStringLiteral("\n")).contains(QStringLiteral("must not use placeholders")));
+
+    arguments[QStringLiteral("command")] = QStringLiteral("ipconfig /all");
+    phase[QStringLiteral("arguments")] = arguments;
+    object[QStringLiteral("phases")] = QJsonArray{phase};
+
+    QStringList clean_errors;
+    const auto clean =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("cmd_ok"), &clean_errors);
+    QVERIFY2(clean.isValid(), qPrintable(clean_errors.join(QStringLiteral("; "))));
 }
 
 QTEST_MAIN(AiWorkflowStoreTests)

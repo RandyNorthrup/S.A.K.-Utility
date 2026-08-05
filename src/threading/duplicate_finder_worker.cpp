@@ -175,6 +175,8 @@ auto DuplicateFinderWorker::hashFiles(const std::vector<std::filesystem::path>& 
     // Sequential: a cancel-only monitor gives the same mid-file cancel; progress is emitted below
     // on THIS (worker) thread, so the monitor need not report it.
     sak::logInfo("Using sequential hash calculation");
+    // cppcheck-suppress unreadVariable ; RAII guard -- the jthread's DESTRUCTOR stops+joins the
+    // cancel monitor at scope exit, so the value is used even though it is never read.
     const std::jthread cancel_monitor = startHashCancelMonitor();
     std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
     const size_t file_count = files.size();
@@ -301,36 +303,69 @@ auto DuplicateFinderWorker::scanDirectories()
     return files;
 }
 
+bool DuplicateFinderWorker::virtualWalkWithinBounds(int depth,
+                                                    int directories_visited,
+                                                    qsizetype files_collected) {
+    return depth >= 0 && depth <= kVirtualWalkMaxDepth &&
+           directories_visited < kVirtualWalkMaxDirectories &&
+           files_collected < kVirtualWalkMaxFiles;
+}
+
+QVector<QString> DuplicateFinderWorker::resolveVirtualRoots(const QVector<QString>& configured) {
+    QVector<QString> roots;
+    roots.reserve(configured.size());
+    for (const QString& root : configured) {
+        const QString trimmed = root.trimmed();
+        if (!trimmed.isEmpty()) {
+            roots.append(trimmed);
+        }
+    }
+    return roots;
+}
+
 auto DuplicateFinderWorker::scanFileSystemTarget()
     -> std::expected<QVector<VirtualFile>, sak::error_code> {
-    QVector<VirtualFile> files;
     if (!m_config.file_system_target.can_duplicate_scan) {
         sak::logError("Duplicate scan blocked for target: {}",
                       m_config.file_system_target.label.toStdString());
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
-    QVector<QString> roots = m_config.virtual_directories;
+    // No usable root -> REFUSE the scan. Defaulting to the image root would silently turn a
+    // mis-specified request into an unbounded walk of the whole untrusted image.
+    const QVector<QString> roots = resolveVirtualRoots(m_config.virtual_directories);
     if (roots.isEmpty()) {
-        roots.append(QStringLiteral("/"));
+        sak::logError("Duplicate scan refused: no directory to scan inside target {}",
+                      m_config.file_system_target.label.toStdString());
+        return std::unexpected(sak::error_code::invalid_argument);
     }
+
+    VirtualWalkState state;
     for (const auto& root : roots) {
-        auto result =
-            collectVirtualFiles(root.trimmed().isEmpty() ? QStringLiteral("/") : root, files, 0);
+        auto result = collectVirtualFiles(root, state, 0);
         if (!result) {
             return std::unexpected(result.error());
         }
     }
-    return files;
+    return state.files;
 }
 
 auto DuplicateFinderWorker::collectVirtualFiles(const QString& directory_path,
-                                                QVector<VirtualFile>& files,
+                                                VirtualWalkState& state,
                                                 int depth) -> std::expected<void, sak::error_code> {
-    Q_UNUSED(depth)
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
+    // The hierarchy comes from an UNTRUSTED image and listDirectory is single-level, so the
+    // reader's own cycle guards do not bound THIS recursion: a cyclic or extremely deep
+    // directory graph would recurse until the stack is exhausted. A bound breach refuses the
+    // scan outright -- a silently truncated file set would misreport the duplicate groups.
+    if (!virtualWalkWithinBounds(depth, state.directories_visited, state.files.size())) {
+        sak::logError("Duplicate scan refused: {} exceeds the image walk bounds",
+                      directory_path.toStdString());
+        return std::unexpected(sak::error_code::scan_failed);
+    }
+    ++state.directories_visited;
 
     const auto listing = sak::FileManagementFileSystemBridge::listDirectory(
         m_config.file_system_target, directory_path, kDuplicateVirtualBrowseMaxEntries);
@@ -344,18 +379,25 @@ auto DuplicateFinderWorker::collectVirtualFiles(const QString& directory_path,
         if (checkStop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
-        if (entry.regular_file &&
-            static_cast<qint64>(entry.size_bytes) >= m_config.minimum_file_size) {
-            files.append({entry.path, static_cast<qint64>(entry.size_bytes)});
-        }
-        if (m_config.recursive_scan && entry.directory) {
-            auto result = collectVirtualFiles(entry.path, files, depth + 1);
-            if (!result) {
-                return result;
-            }
+        auto result = collectVirtualEntry(entry, state, depth);
+        if (!result) {
+            return result;
         }
     }
     return {};
+}
+
+auto DuplicateFinderWorker::collectVirtualEntry(const sak::FileManagementEntry& entry,
+                                                VirtualWalkState& state,
+                                                int depth) -> std::expected<void, sak::error_code> {
+    const qint64 size = static_cast<qint64>(entry.size_bytes);
+    if (entry.regular_file && size >= m_config.minimum_file_size) {
+        state.files.append({entry.path, size});
+    }
+    if (!m_config.recursive_scan || !entry.directory) {
+        return {};
+    }
+    return collectVirtualFiles(entry.path, state, depth + 1);
 }
 
 auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)

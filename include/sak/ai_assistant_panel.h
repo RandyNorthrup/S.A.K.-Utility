@@ -148,6 +148,10 @@ private Q_SLOTS:
     void onInputTokenCountReady(const QString& request_id, qint64 input_tokens);
     void onInputTokenCountFailed(const QString& request_id, const QString& error_message);
     void onRequestFailed(const QString& error_message);
+    // The async built-in tool runner's pool task left the pool (attached OR detached).
+    // A job detached by Stop emits nothing else, so this is what lets a cancelled-but-
+    // still-executing mutation finish the stop instead of parking the run in Cancelling.
+    void onAsyncToolDrained();
     void onBrokerStarted(const QString& command_id);
     void onBrokerStdoutChunk(const QString& command_id, const QString& chunk);
     void onBrokerStderrChunk(const QString& command_id, const QString& chunk);
@@ -315,6 +319,10 @@ private:
     [[nodiscard]] QString workflowTitleForChatRename(const QString& workflow_id) const;
     void autoRenameDefaultChatFromFirstPrompt(const QString& message, const QString& workflow_id);
     void loadSessionTranscript(const QString& session_id);
+    // Samples every source of in-flight AI work at one instant. isAiBusy() and the Stop
+    // finalization both read this single authority, so they can never disagree about
+    // whether work is still running (notably the detached-but-executing async tool).
+    [[nodiscard]] ai::AiPanelActivity currentAiActivity() const;
     [[nodiscard]] bool isAiBusy() const;
     void setUiBusy(bool busy);
     void setActivityIndicator(const QString& text, bool active);
@@ -792,6 +800,10 @@ private:
                                     WorkflowToolDispatchPlan* plan);
     [[nodiscard]] bool prepareWorkflowPowerShellTool(const ai::WorkflowPhase& phase,
                                                      WorkflowToolDispatchPlan* plan);
+    // cmd.exe has no literal-quoting construct, so a run_cmd phase whose command template
+    // embeds a ${...} placeholder is refused here before the command is built.
+    [[nodiscard]] bool prepareWorkflowCmdTool(const ai::WorkflowPhase& phase,
+                                              WorkflowToolDispatchPlan* plan);
     void finalizeWorkflowToolPlan(const ai::WorkflowPhase& phase, WorkflowToolDispatchPlan* plan);
     [[nodiscard]] bool prepareWorkflowPackageTool(const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
@@ -935,7 +947,9 @@ private:
     // Persistent MCP stdio sessions, reused across provider-gateway win32 MCP tool
     // calls. Closed (worker threads joined) when the panel is destroyed.
     ai::AiMcpSessionPool m_mcpSessionPool;
-    bool m_asyncToolInFlight{false};
+    // NOTE: there is deliberately no separate "async tool in flight" flag. The runner
+    // itself is the single authority (isRunning()); a mirror flag went stale the moment
+    // Stop detached the job and made the panel report idle while the work still ran.
     // Copy of m_runToken taken (on the GUI thread) when an async built-in tool
     // starts, so its worker can poll cancellation lock-free (the token shares
     // state with m_runToken) without touching GUI-thread members.

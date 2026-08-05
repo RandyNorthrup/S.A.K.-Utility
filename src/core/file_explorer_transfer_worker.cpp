@@ -7,8 +7,12 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
 
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 namespace sak {
@@ -19,6 +23,12 @@ namespace {
 constexpr int kDiscoveryMaxDepth = 32;
 constexpr int kDiscoveryMaxEntriesPerDirectory = 10'000;
 
+// How much of the destination's own name a staging/backup sibling keeps. The
+// prefix and the entropy suffix are added on top, so trimming the readable part
+// keeps the whole component inside the 255-character file-name limit even for a
+// destination whose name already sits near it.
+constexpr qsizetype kSiblingTempNameChars = 64;
+
 QString transferItemName(const QString& path) {
     QString clean = path;
     clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
@@ -27,6 +37,27 @@ QString transferItemName(const QString& path) {
     }
     const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
     return slash < 0 ? clean : clean.mid(slash + 1);
+}
+
+struct SplitTargetPath {
+    QString parent;
+    QString name;
+};
+
+// Split a destination path into its parent directory and last component. Both
+// separators are accepted because a target path can be host-native or the
+// "/"-separated form the raw file-system readers use.
+SplitTargetPath splitTargetPath(const QString& path) {
+    QString clean = path;
+    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    while (clean.endsWith(QLatin1Char('/'))) {
+        clean.chop(1);
+    }
+    const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
+    if (slash < 0) {
+        return {QString(), clean};
+    }
+    return {clean.left(slash), clean.mid(slash + 1)};
 }
 
 }  // namespace
@@ -40,9 +71,17 @@ FileExplorerTransferEngine::FileExplorerTransferEngine(FileManagementTarget sour
     , m_raw_read_cap(raw_read_cap)
     , m_allow_capped_raw_reads(allow_capped_raw_reads) {}
 
+void FileExplorerTransferEngine::noteIncompleteTransfer(const bool sanctioned) {
+    m_last_transfer_incomplete = true;
+    if (!sanctioned) {
+        m_last_transfer_unrequested_loss = true;
+    }
+}
+
 bool FileExplorerTransferEngine::transferEntry(const FileExplorerTransferItem& item,
                                                const FileManagementTransferObserver& observer) {
     m_last_transfer_incomplete = false;
+    m_last_transfer_unrequested_loss = false;
     // A Replace copies into a sibling temp and swaps it in only after it lands whole,
     // so a copy failure never destroys the original (B8-06). A non-Replace writes to
     // the final path directly (the backends atomically overwrite their own temp).
@@ -66,16 +105,68 @@ bool FileExplorerTransferEngine::transferItemTo(const FileExplorerTransferItem& 
 
 QString FileExplorerTransferEngine::siblingTempPath(const QString& destination_path,
                                                     const QString& prefix) {
-    QString clean = destination_path;
-    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    while (clean.endsWith(QLatin1Char('/'))) {
-        clean.chop(1);
+    const SplitTargetPath split = splitTargetPath(destination_path);
+    // 64 bits of system entropy on top of the per-engine sequence. The bare
+    // sequence number alone made the name predictable, so a co-located writer
+    // could plant content where the staged copy merges into it, or where the
+    // cleanup then deletes it; a guessed name is now impractical.
+    const QString token =
+        QStringLiteral("%1-%2")
+            .arg(m_replace_seq++)
+            .arg(QRandomGenerator::system()->generate64(), 16, 16, QLatin1Char('0'));
+    const QString temp =
+        QStringLiteral("%1%2.%3").arg(prefix, split.name.left(kSiblingTempNameChars), token);
+    return split.parent.isEmpty() ? temp : split.parent + QLatin1Char('/') + temp;
+}
+
+bool FileExplorerTransferEngine::destinationPathVacant(const QString& path) {
+    if (m_destination_target.local_file_system) {
+        // symlink_status, not QFileInfo::exists: QFileInfo also reports "missing"
+        // when the stat itself failed (a permission-denied ancestor), and only a
+        // proven not_found may be treated as vacant (the removeExistingEntry
+        // idiom). Anything undecidable fails closed.
+        std::error_code ec;
+        const auto status =
+            std::filesystem::symlink_status(std::filesystem::path(path.toStdWString()), ec);
+        return status.type() == std::filesystem::file_type::not_found;
     }
-    const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
-    const QString parent = slash < 0 ? QString() : clean.left(slash);
-    const QString name = slash < 0 ? clean : clean.mid(slash + 1);
-    const QString temp = QStringLiteral("%1%2.%3").arg(prefix, name).arg(m_replace_seq++);
-    return parent.isEmpty() ? temp : parent + QLatin1Char('/') + temp;
+    // Raw targets expose no stat primitive; list the parent one entry past the
+    // bound so a truncated listing is detectable and refused.
+    const SplitTargetPath split = splitTargetPath(path);
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        m_destination_target, split.parent, kDiscoveryMaxEntriesPerDirectory + 1);
+    if (!listing.ok || listing.entries.size() > kDiscoveryMaxEntriesPerDirectory) {
+        return false;
+    }
+    for (const FileManagementEntry& entry : listing.entries) {
+        // Case-insensitively, as removeExistingEntry matches: a differing-case
+        // occupant may well be the same entry on the destination volume.
+        if (QString::compare(entry.name, split.name, Qt::CaseInsensitive) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool FileExplorerTransferEngine::reserveStagingPath(const QString& path, const bool directory) {
+    if (!m_destination_target.local_file_system) {
+        // The raw backends have no exclusive-create primitive; the bounded probe
+        // plus an unguessable name is the strongest claim available there.
+        return destinationPathVacant(path);
+    }
+    if (directory) {
+        // mkdir, NOT mkpath: mkpath succeeds on an existing directory, which is
+        // exactly the silent merge this reservation has to refuse.
+        return QDir().mkdir(path);
+    }
+    QFile placeholder(path);
+    // NewOnly is an exclusive create: it fails when anything already occupies the
+    // name, including a symlink planted to redirect the staged write elsewhere.
+    if (!placeholder.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        return false;
+    }
+    placeholder.close();
+    return true;
 }
 
 bool FileExplorerTransferEngine::removeDestinationEntry(const QString& path) {
@@ -94,9 +185,17 @@ bool FileExplorerTransferEngine::renameDestination(const QString& from, const QS
 
 bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferItem& item,
                                                    const FileManagementTransferObserver& observer) {
-    // 1. Stage the whole copy beside the destination. A failure here leaves the
-    //    original completely untouched.
+    // 1. Stage the whole copy beside the destination, on a name this engine
+    //    claims exclusively so the copy can never merge into (or the cleanup
+    //    delete) content that was already sitting there. A failure here leaves
+    //    the original completely untouched.
     const QString staged = siblingTempPath(item.destination_path, QStringLiteral(".sak-stage-"));
+    if (!reserveStagingPath(staged, item.directory)) {
+        m_blockers.append(QStringLiteral("Could not claim a staging name beside %1, so nothing "
+                                         "was replaced.")
+                              .arg(transferItemName(item.destination_path)));
+        return false;
+    }
     if (!transferItemTo(item, staged, observer)) {
         removeDestinationEntry(staged);  // best-effort partial cleanup
         return false;
@@ -118,6 +217,16 @@ bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferIte
     //    vanished since collision-resolve) OR the occupant is stuck -- both are handled
     //    by step 3, which only lands on a vacant final name.
     const QString backup = siblingTempPath(item.destination_path, QStringLiteral(".sak-old-"));
+    if (!destinationPathVacant(backup)) {
+        // The set-aside name cannot be pre-created (the rename needs it vacant), so
+        // it is proven vacant instead: moving the original onto occupied ground
+        // would put the rollback copy on top of someone else's data.
+        m_blockers.append(QStringLiteral("Could not claim a set-aside name beside %1, so the "
+                                         "original was left in place.")
+                              .arg(transferItemName(item.destination_path)));
+        removeDestinationEntry(staged);
+        return false;
+    }
     const bool occupant_set_aside = renameDestination(item.destination_path, backup);
     // 3. Move the staged copy into place. If it fails, restore the original (when one
     //    was set aside) so a stuck occupant never costs the original.
@@ -193,7 +302,9 @@ bool FileExplorerTransferEngine::transferFromHost(const FileExplorerTransferItem
         m_warnings.append(result.warnings);
         m_blockers.append(result.blockers);
         if (!result.complete) {
-            m_last_transfer_incomplete = true;
+            // A host source cannot be capped, so an incomplete import is always
+            // content the caller never agreed to lose.
+            noteIncompleteTransfer(false);
         }
         return result.ok;
     }
@@ -215,7 +326,11 @@ bool FileExplorerTransferEngine::transferRawDirectoryToLocal(
     m_warnings.append(result.warnings);
     m_blockers.append(result.blockers);
     if (!result.complete) {
-        m_last_transfer_incomplete = true;
+        // The only shortfall a caller can sanction up front is a capped read (Copy
+        // Out asks for one and the copy is marked capped); dropped symlinks and
+        // depth/entry-cap overflow are losses nobody asked for.
+        const bool capped_only = result.symlinks_skipped == 0 && result.entries_skipped == 0;
+        noteIncompleteTransfer(capped_only && m_allow_capped_raw_reads);
     }
     if (result.ok && result.capped_files > 0 && !m_allow_capped_raw_reads) {
         // A truncated file means the tree did not land whole: report it and
@@ -253,9 +368,10 @@ bool FileExplorerTransferEngine::transferRawToLocal(
     m_last_file_sha256 = result.sha256;
     m_last_file_hash_capped = result.capped;
     // A capped single-file read means the copy is truncated; a move must not
-    // then delete the whole source.
+    // then delete the whole source. Copy Out asked for the cap and marks it, so
+    // only a cap outside those semantics counts as unrequested loss.
     if (result.capped) {
-        m_last_transfer_incomplete = true;
+        noteIncompleteTransfer(m_allow_capped_raw_reads);
     }
     return true;
 }
@@ -282,9 +398,11 @@ bool FileExplorerTransferEngine::transferRawStaged(const FileExplorerTransferIte
     const bool ok = host_leg.transferFromHost(staged_item, destination, observer);
     m_warnings.append(host_leg.warnings());
     m_blockers.append(host_leg.blockers());
-    // Either leg dropping entries leaves the raw-to-raw copy incomplete.
+    // Either leg dropping entries leaves the raw-to-raw copy incomplete. The host
+    // leg reads an uncapped host staging tree, so anything it dropped is loss the
+    // caller never asked for.
     if (!host_leg.lastTransferComplete()) {
-        m_last_transfer_incomplete = true;
+        noteIncompleteTransfer(false);
     }
     return ok;
 }
@@ -300,6 +418,10 @@ auto FileExplorerTransferWorker::execute() -> std::expected<void, sak::error_cod
         [this](const FileExplorerStatusProgress& snapshot) { Q_EMIT statusProgress(snapshot); });
     discover(&reporter);
     if (checkStop()) {
+        // Terminal even though nothing was transferred: without an explicit status
+        // the card never leaves InProgress.
+        reporter.setStatus(FileExplorerReturnResult::Cancelled);
+        reporter.flushReport();
         return {};
     }
     reporter.setEnumerationCompleted();
@@ -321,6 +443,13 @@ auto FileExplorerTransferWorker::execute() -> std::expected<void, sak::error_cod
         reporter.setStatus(FileExplorerReturnResult::Cancelled);
     } else if (!m_blockers.isEmpty()) {
         reporter.setStatus(FileExplorerReturnResult::Failed);
+    } else {
+        // A clean run is terminal and must say so explicitly. The reporter's
+        // auto-success needs a non-zero size denominator, which the delete,
+        // recycle and rename families (and a batch of zero-byte files) never
+        // have -- without this the card spins as InProgress forever and the
+        // completed-item cleanup never reaps it.
+        reporter.setStatus(FileExplorerReturnResult::Success);
     }
     reporter.flushReport();
     return {};
@@ -440,10 +569,20 @@ bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& ite
     if (!engine->transferEntry(item, observer)) {
         return false;
     }
+    // completedItems() promises the item LANDED WHOLE, so a copy that silently
+    // dropped content (skipped symlinks, depth/entry-cap overflow, or a
+    // truncation outside the explicitly capped Copy Out semantics) is reported
+    // as failed instead of being listed as complete.
+    if (!engine->lastTransferLandedAsRequested()) {
+        m_blockers.append(QStringLiteral("%1 did not copy whole; the partial copy at %2 is not "
+                                         "reported as a completed item.")
+                              .arg(item.source_path, item.destination_path));
+        return false;
+    }
     if (m_request.move) {
-        // Never delete the source of a move whose copy did not land whole
-        // (skipped symlinks, capped raw files, or depth/entry-cap overflow):
-        // the item stays put and is reported as failed.
+        // Never delete the source of a move whose copy did not land whole -- even
+        // a cap the caller sanctioned still means the destination holds less than
+        // the source: the item stays put and is reported as failed.
         if (!engine->lastTransferComplete()) {
             m_blockers.append(
                 QStringLiteral("Kept %1: the moved copy is incomplete, so the source was not "
@@ -460,6 +599,16 @@ bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& ite
 // through the certified writers on raw targets (trees depth-first).
 bool FileExplorerTransferWorker::deleteOne(const FileExplorerTransferItem& item) {
     if (m_request.kind == FileExplorerTransferKind::Recycle) {
+        // The shell "recycles" by PERMANENTLY deleting on a volume with no bin
+        // (network shares, removable and optical media). Refuse there rather than
+        // report an unrecoverable delete as a recoverable one: the user asked for
+        // the bin, so a permanent delete has to be requested explicitly.
+        if (!pathVolumeHasRecycleBin(item.source_path)) {
+            m_blockers.append(QStringLiteral("%1 is not on a volume with a Recycle Bin, so it was "
+                                             "left in place; use Delete to remove it permanently.")
+                                  .arg(item.source_path));
+            return false;
+        }
         if (sendPathToRecycleBin(item.source_path)) {
             return true;
         }

@@ -131,8 +131,11 @@ bool DeletedItemScanner::appendRecoverableBatch(const QVector<PstItemSummary>& i
 
 QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
     QVector<PstItemDetail> recovered;
+    m_orphan_reliable = true;
 
     if (!m_parser->isOpen()) {
+        // No scan ran at all: the empty result is an absence of data, not an absence of orphans.
+        m_orphan_reliable = false;
         return recovered;
     }
 
@@ -141,6 +144,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
     if (!m_reachable_reliable) {
         // The reachability set is incomplete; classifying orphans against it would
         // mis-report live messages as deleted, so skip orphan recovery entirely.
+        m_orphan_reliable = false;
         logWarning(
             "DeletedItemScanner: reachability set incomplete (read error or cancel); "
             "skipping orphan scan");
@@ -186,6 +190,9 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
 }
 
 QVector<PstItemDetail> DeletedItemScanner::recoverAll() {
+    // The orphan pass has enumerated nothing until it actually runs; a cancel between the two
+    // passes must not leave a previous run's "orphans reliable" verdict standing.
+    m_orphan_reliable = false;
     auto recoverable = scanRecoverableItems();
     if (m_cancelled.load()) {
         return recoverable;
@@ -266,6 +273,13 @@ std::optional<PstItemDetail> DeletedItemScanner::tryReadOrphanedNode(uint64_t ni
     auto result = m_parser->readItemDetail(nid);
     if (result.has_value()) {
         return result.value();
+    }
+    // A per-node detail read that fails (corruption, or a crafted node the parser refuses)
+    // drops that orphan candidate; the orphan set is then incomplete and must not be reported
+    // as a complete scan -- mirror the recoverable path (B8-23). Cancellation is reported
+    // through the caller's timeout channel, not as unreliability.
+    if (result.error() != error_code::operation_cancelled) {
+        m_orphan_reliable = false;
     }
     return std::nullopt;
 }

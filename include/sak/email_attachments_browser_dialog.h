@@ -87,6 +87,12 @@ private:
     void collectFolderIds(const PstFolderTree& tree);
     void collectFolderIdsRecursive(const PstFolder& folder);
     void saveOneAttachment(const AttachmentEntry& entry);
+    /// Begin a batch for @p refs into @p dir and issue the content requests.
+    /// Surfaces its own refusal and issues nothing when the batch cannot start.
+    void startBatch(const QString& dir, const QVector<AttachmentRef>& refs);
+    /// Both save buttons stay locked while a batch is running, so a second batch
+    /// cannot interleave its arrivals with the first one's.
+    void updateSaveControls();
     [[nodiscard]] static QString formatBytes(qint64 bytes);
     [[nodiscard]] static QString typeCategory(const QString& mime_type, const QString& filename);
 

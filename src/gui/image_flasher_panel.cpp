@@ -292,8 +292,8 @@ void ImageFlasherPanel::createImageSelectionPage() {
 
     createDownloadCards(layout);
 
-    // Selected file indicator
-    m_imagePathLabel = new QLabel("No image selected", m_imageSelectionPage);
+    // Selected file indicator (later filled with the chosen image's file name).
+    m_imagePathLabel = sak::plainTextLabel("No image selected", m_imageSelectionPage);
     m_imagePathLabel->setWordWrap(true);
     layout->addWidget(m_imagePathLabel);
 
@@ -309,7 +309,9 @@ void ImageFlasherPanel::createImageSelectionPage() {
         auto* key = new QLabel(label_text, m_isoInfoGroup);
         key->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
                                                             sak::ui::kColorTextSecondary));
-        value_out = new QLabel("-", m_isoInfoGroup);
+        // Every value here is parsed out of the selected image (volume label, publisher, OS name,
+        // edition list), so it is author-controlled and is shown verbatim, never as markup.
+        value_out = sak::plainTextLabel("-", m_isoInfoGroup);
         value_out->setWordWrap(true);
         value_out->setTextInteractionFlags(Qt::TextSelectableByMouse);
         m_isoInfoGrid->addWidget(key, row, 0, Qt::AlignTop);

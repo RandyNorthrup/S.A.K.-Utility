@@ -714,6 +714,15 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
 bool UserDataManager::compressSourcePaths(const QStringList& source_paths,
                                           const QString& archive_path,
                                           int compression_level) {
+    // System32-qualified interpreter, never a bare "powershell.exe": a backup can be
+    // taken from an elevated session, so a PATH/CWD-planted powershell must not be able
+    // to satisfy the launch. Unresolvable -> refuse the archive (fail closed).
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        sak::logError("[UserDataManager] Cannot resolve the System32 PowerShell path");
+        return false;
+    }
+
     const QString compressionLevel = mapCompressionLevel(compression_level);
 
     // Use PowerShell's Compress-Archive for Windows.
@@ -733,7 +742,7 @@ bool UserDataManager::compressSourcePaths(const QStringList& source_paths,
                                 .arg(sources, safe_archive, compressionLevel);
     args << command;
 
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    const auto result = sak::runProcess(powershell,
                                         args,
                                         sak::kTimeoutArchiveMs);  // 5 minute timeout
     if (result.timed_out) {
@@ -846,6 +855,14 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
 }
 
 bool UserDataManager::archiveWithinLimits(const QString& archive_path) {
+    // System32-qualified interpreter only; an unresolvable path means the preflight
+    // cannot run, so the archive is REFUSED rather than extracted unchecked.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        sak::logError("[UserDataManager] Cannot resolve the System32 PowerShell path");
+        return false;
+    }
+
     // Zip-bomb guard: a hostile backup .zip can inflate to exhaust the disk. Enumerate
     // the archive first and refuse once the entry count or total DECOMPRESSED size
     // exceeds the cap, BEFORE Expand-Archive writes anything into the live destination.
@@ -866,8 +883,7 @@ bool UserDataManager::archiveWithinLimits(const QString& archive_path) {
             .arg(kMaxDecompressedBytes);
     QStringList args;
     args << "-NoProfile" << "-Command" << command;
-    const auto result =
-        sak::runProcess(QStringLiteral("powershell.exe"), args, sak::kTimeoutArchiveMs);
+    const auto result = sak::runProcess(powershell, args, sak::kTimeoutArchiveMs);
     if (result.timed_out) {
         sak::logError("[UserDataManager] Archive preflight timed out");
         return false;
@@ -885,6 +901,12 @@ bool UserDataManager::extractArchive(const QString& archive_path,
                                      const RestoreConfig& config) {
     Q_ASSERT_X(!archive_path.isEmpty(), "extractArchive", "archive_path must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "extractArchive", "destination must not be empty");
+    // System32-qualified interpreter only; refuse before any plaintext temp is written.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        sak::logError("[UserDataManager] Cannot resolve the System32 PowerShell path");
+        return false;
+    }
     QString file_to_extract = archive_path;
     QString temp_decrypted;
 
@@ -926,7 +948,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 
     args << command;
 
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    const auto result = sak::runProcess(powershell,
                                         args,
                                         sak::kTimeoutArchiveMs);  // 5 minute timeout
     if (result.timed_out) {

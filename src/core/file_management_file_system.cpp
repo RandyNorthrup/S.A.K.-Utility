@@ -342,38 +342,84 @@ bool localEntryLess(const QFileInfo& a, const QFileInfo& b) {
     return QString::compare(a.fileName(), b.fileName(), Qt::CaseInsensitive) < 0;
 }
 
+// Import order for one host directory level: a plain case-sensitive name compare, which is
+// what QDir::Name gave the import walk before it was bounded. It decides which entries survive
+// the per-directory cap, so it must not drift.
+bool hostImportEntryLess(const QFileInfo& a, const QFileInfo& b) {
+    return QString::compare(a.fileName(), b.fileName()) < 0;
+}
+
+using LocalEntryComparator = bool (*)(const QFileInfo&, const QFileInfo&);
+
+// Hidden and System entries are enumerated -- otherwise the source listing drops them before
+// the view's show-hidden filter can ever act, leaving that toggle dead and hiding files a
+// folder copy would still transfer.
+constexpr QDir::Filters kLocalListingFilters = QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot |
+                                               QDir::Hidden | QDir::System;
+
+// Outcome of one bounded directory walk. A non-empty `error` means the walk FAILED: `entries`
+// and `dropped` carry nothing and must never be presented as a (possibly empty) listing.
+struct BoundedDirectoryWalk {
+    std::vector<QFileInfo> entries;  ///< display-order-sorted, at most `cap` of them
+    int dropped = 0;                 ///< entries seen beyond the cap (exact count)
+    QString error;                   ///< non-empty => the directory could not be read
+
+    [[nodiscard]] bool failed() const { return !error.isEmpty(); }
+};
+
+// Keep `info` only while it is among the `cap` display-order-smallest entries seen so far,
+// using a bounded max-heap so memory stays O(cap). cap <= 0 keeps every entry.
+void keepBoundedEntry(std::vector<QFileInfo>& kept,
+                      QFileInfo info,
+                      int cap,
+                      LocalEntryComparator less,
+                      int& dropped) {
+    if (cap <= 0 || static_cast<int>(kept.size()) < cap) {
+        kept.push_back(std::move(info));
+        if (cap > 0) {
+            std::push_heap(kept.begin(), kept.end(), less);
+        }
+        return;
+    }
+    ++dropped;
+    if (less(info, kept.front())) {
+        std::pop_heap(kept.begin(), kept.end(), less);
+        kept.back() = std::move(info);
+        std::push_heap(kept.begin(), kept.end(), less);
+    }
+}
+
 // Stream a directory, keeping only the display-order-smallest `cap` entries in
 // O(cap) memory via a bounded max-heap, so an enormous or hostile directory can
 // never force its whole QFileInfoList (one stat per entry) into RAM before the
-// cap is applied (B8-20). cap <= 0 keeps every entry. Hidden and System entries
-// are enumerated -- otherwise the source listing drops them before the view's
-// show-hidden filter can ever act, leaving that toggle dead and hiding files a
-// folder copy would still transfer. `overflowed` is set when entries were dropped.
-std::vector<QFileInfo> collectLocalEntries(const QString& path, int cap, bool& overflowed) {
-    overflowed = false;
-    std::vector<QFileInfo> kept;
-    QDirIterator iter(path,
-                      QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
-                      QDirIterator::NoIteratorFlags);
+// cap is applied (B8-20). cap <= 0 keeps every entry.
+//
+// The walk is gated on an explicit directory OPEN first: QDirIterator (like
+// QDir::entryInfoList) surfaces no error at all, so an existing-but-unreadable
+// directory simply yields zero entries -- indistinguishable from a genuinely empty
+// one, and reported to the user as "this folder is empty" (fail open). The
+// error_code overload of std::filesystem::directory_iterator DOES report that
+// failure, so the open runs through it and a failed open is returned as an error
+// instead of an empty result.
+BoundedDirectoryWalk collectBoundedEntries(const QString& path,
+                                           QDir::Filters filters,
+                                           int cap,
+                                           LocalEntryComparator less) {
+    BoundedDirectoryWalk walk;
+    std::error_code ec;
+    const std::filesystem::directory_iterator probe(std::filesystem::path(path.toStdWString()), ec);
+    if (ec) {
+        walk.error = QStringLiteral("Could not read directory %1: %2")
+                         .arg(path, QString::fromStdString(ec.message()));
+        return walk;
+    }
+    QDirIterator iter(path, filters, QDirIterator::NoIteratorFlags);
     while (iter.hasNext()) {
         iter.next();
-        QFileInfo info = iter.fileInfo();
-        if (cap <= 0 || static_cast<int>(kept.size()) < cap) {
-            kept.push_back(std::move(info));
-            if (cap > 0) {
-                std::push_heap(kept.begin(), kept.end(), localEntryLess);
-            }
-            continue;
-        }
-        overflowed = true;
-        if (localEntryLess(info, kept.front())) {
-            std::pop_heap(kept.begin(), kept.end(), localEntryLess);
-            kept.back() = std::move(info);
-            std::push_heap(kept.begin(), kept.end(), localEntryLess);
-        }
+        keepBoundedEntry(walk.entries, iter.fileInfo(), cap, less, walk.dropped);
     }
-    std::sort(kept.begin(), kept.end(), localEntryLess);
-    return kept;
+    std::sort(walk.entries.begin(), walk.entries.end(), less);
+    return walk;
 }
 
 FileManagementListResult listLocalDirectory(const QString& path, int maxEntries) {
@@ -385,13 +431,20 @@ FileManagementListResult listLocalDirectory(const QString& path, int maxEntries)
         return result;
     }
 
-    bool overflowed = false;
-    const std::vector<QFileInfo> entries = collectLocalEntries(path, maxEntries, overflowed);
-    result.entries.reserve(static_cast<qsizetype>(entries.size()));
-    for (const QFileInfo& info : entries) {
+    const BoundedDirectoryWalk walk =
+        collectBoundedEntries(path, kLocalListingFilters, maxEntries, localEntryLess);
+    if (walk.failed()) {
+        // The directory EXISTS but could not be read (permissions, sharing, IO). Reporting
+        // ok=true with zero entries here would tell the caller the folder is empty and let a
+        // folder copy "succeed" having transferred nothing -- fail closed instead.
+        result.blockers.append(walk.error);
+        return result;
+    }
+    result.entries.reserve(static_cast<qsizetype>(walk.entries.size()));
+    for (const QFileInfo& info : walk.entries) {
         result.entries.append(fromLocalInfo(info, path));
     }
-    if (overflowed) {
+    if (walk.dropped > 0) {
         result.warnings.append(
             QStringLiteral("Listing truncated to %1 entries").arg(result.entries.size()));
     }
@@ -1437,6 +1490,12 @@ struct DirectoryImportContext {
     const FileManagementTransferObserver& observer;
 };
 
+// The import walk copies every kind of host entry it can (special entries are reported and
+// skipped by importEntryFromHost), so it enumerates AllEntries, plus Hidden/System -- a folder
+// copy that silently dropped hidden files would be a partial copy reported as a whole one.
+constexpr QDir::Filters kHostImportFilters = QDir::AllEntries | QDir::NoDotAndDotDot |
+                                             QDir::Hidden | QDir::System;
+
 void importEntryFromHost(const DirectoryImportContext& ctx,
                          const QFileInfo& info,
                          const QString& destination_dir,
@@ -1452,24 +1511,31 @@ void importDirectoryLevel(const DirectoryImportContext& ctx,
             QStringLiteral("Skipped %1: exceeds the import depth bound.").arg(host_dir));
         return;
     }
-    const QFileInfoList infos = QDir(host_dir).entryInfoList(
-        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
-    if (infos.size() > kDirectoryExportMaxEntriesPerDirectory) {
-        ctx.result.entries_skipped +=
-            static_cast<int>(infos.size() - kDirectoryExportMaxEntriesPerDirectory);
+    // Stream the level through the same bounded top-N collector the listing path uses. The
+    // former QDir::entryInfoList materialized the WHOLE directory (one stat per entry) before
+    // the cap was applied, so a hostile source directory could exhaust memory ahead of the
+    // bound that was meant to stop it (B8-20). The collector also reports an unreadable
+    // directory as an error, so a source level that could not be read is a hard blocker rather
+    // than an empty level that silently imports nothing.
+    const BoundedDirectoryWalk walk = collectBoundedEntries(
+        host_dir, kHostImportFilters, kDirectoryExportMaxEntriesPerDirectory, hostImportEntryLess);
+    if (walk.failed()) {
+        ctx.result.blockers.append(walk.error);
+        return;
+    }
+    if (walk.dropped > 0) {
+        ctx.result.entries_skipped += walk.dropped;
         ctx.result.warnings.append(
             QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
                 .arg(host_dir)
                 .arg(kDirectoryExportMaxEntriesPerDirectory));
     }
-    const qsizetype count = std::min<qsizetype>(infos.size(),
-                                                kDirectoryExportMaxEntriesPerDirectory);
-    for (qsizetype index = 0; index < count; ++index) {
+    for (const QFileInfo& info : walk.entries) {
         if (ctx.observer.isCancelled()) {
             ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
             return;
         }
-        importEntryFromHost(ctx, infos.at(index), destination_dir, depth);
+        importEntryFromHost(ctx, info, destination_dir, depth);
     }
 }
 

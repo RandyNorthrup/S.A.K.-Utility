@@ -310,6 +310,10 @@ QJsonObject serializeDisk(const PartitionDiskInfo& disk) {
                        {QStringLiteral("is_system"), disk.is_system},
                        {QStringLiteral("is_removable"), disk.is_removable},
                        {QStringLiteral("is_read_only"), disk.is_read_only},
+                       // Honesty channel: true means the partition query for this disk FAILED,
+                       // so an empty partitions array is "unknown layout", never "empty disk".
+                       {QStringLiteral("partition_enumeration_failed"),
+                        disk.partition_enumeration_failed},
                        {QStringLiteral("partitions"), partitions}};
 }
 
@@ -1133,6 +1137,9 @@ QJsonObject serializeDrive(const sak::DriveInfo& drive) {
                        {QStringLiteral("is_removable"), drive.isRemovable},
                        {QStringLiteral("is_read_only"), drive.isReadOnly},
                        {QStringLiteral("mount_points"), mounts},
+                       // Honesty channel: false means the volume enumeration for this drive
+                       // failed, so an empty mount_points is "unknown", not "not mounted".
+                       {QStringLiteral("mount_points_complete"), drive.mountPointsComplete},
                        {QStringLiteral("volume_label"), drive.volumeLabel}};
 }
 
@@ -3224,7 +3231,10 @@ struct DeletedScanOutcome {
     QVector<PstItemDetail> recoverable;
     QVector<PstItemDetail> orphaned;
     bool recoverable_reliable{true};  ///< false when a non-cancel read error truncated recoverable
-    bool orphan_reliable{true};       ///< false when the orphan scan was skipped (incomplete set)
+    /// false when the orphan set is incomplete: the scan was skipped (reachability set
+    /// incomplete) OR a non-cancel per-node detail read failed and dropped a candidate
+    bool orphan_reliable{true};
+    bool orphan_scan_skipped{false};  ///< the incompleteness is the skip, not a per-node read
     bool timed_out{false};            ///< the wall-time ceiling fired; results are partial
 };
 
@@ -3244,7 +3254,11 @@ DeletedScanOutcome runDeletedItemScan(PstParser& parser, bool include_orphans) {
     outcome.recoverable = scanner.scanRecoverableItems();
     outcome.recoverable_reliable = scanner.recoverableReliable();
     outcome.orphaned = include_orphans ? scanner.scanOrphanedNodes() : QVector<PstItemDetail>{};
-    outcome.orphan_reliable = !include_orphans || scanner.reachableReliable();
+    // orphanReliable() is the single authority: it is false both when the scan was skipped
+    // (reachability set incomplete) and when a non-cancel per-node detail read dropped a
+    // candidate. reachableReliable() only distinguishes WHICH of the two happened.
+    outcome.orphan_reliable = !include_orphans || scanner.orphanReliable();
+    outcome.orphan_scan_skipped = include_orphans && !scanner.reachableReliable();
     deadline.finish();
     outcome.timed_out = deadline.fired();
     return outcome;
@@ -3280,7 +3294,9 @@ AppActionResult buildRecoverResult(const QFileInfo& info,
         message += QStringLiteral(" (recoverable scan hit a read error; the count is incomplete)");
     }
     if (!outcome.orphan_reliable) {
-        message += QStringLiteral(" (orphan scan skipped: reachability set incomplete)");
+        message += outcome.orphan_scan_skipped
+                       ? QStringLiteral(" (orphan scan skipped: reachability set incomplete)")
+                       : QStringLiteral(" (orphan scan hit a read error; the count is incomplete)");
     }
     if (outcome.timed_out) {
         message += QStringLiteral(" (scan hit the time limit; results are partial)");
@@ -3292,8 +3308,8 @@ AppActionResult buildRecoverResult(const QFileInfo& info,
 // Recoverable Items hierarchy plus (optionally) hard-deleted orphaned NBT message nodes. Drives the
 // app's OWN DeletedItemScanner over the already-open PstParser. Synchronous scan methods run inline
 // (the read_pst pattern) under a wall-time ceiling. Honesty: isOpen() is the value channel for the
-// parse; reachableReliable() distinguishes "0 orphans" from "orphan scan skipped"; timed_out flags
-// a partial scan. Read-only: reads message metadata, never writes or restores anything.
+// parse; orphanReliable() distinguishes "0 orphans" from "the orphan set is truncated"; timed_out
+// flags a partial scan. Read-only: reads message metadata, never writes or restores anything.
 AppActionResult recoverDeleted(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     QFileInfo info;

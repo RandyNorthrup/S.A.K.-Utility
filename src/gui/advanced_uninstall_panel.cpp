@@ -14,6 +14,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/restore_point_manager.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -1031,7 +1032,7 @@ void AdvancedUninstallPanel::onSelectAllSafe() {
             continue;
         }
         int idx = originalRowIndex(typeItem);
-        if (idx >= 0 && idx < m_currentLeftovers.size() &&
+        if (idx >= 0 && idx < m_currentLeftovers.size() && m_currentLeftovers[idx].deletable &&
             m_currentLeftovers[idx].risk == LeftoverItem::RiskLevel::Safe) {
             auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
             if (checkItem) {
@@ -1317,8 +1318,12 @@ QString AdvancedUninstallPanel::leftoverTypeText(LeftoverItem::Type type) const 
 
 void AdvancedUninstallPanel::populateLeftoverRow(int row, const LeftoverItem& item) {
     auto* checkItem = new QTableWidgetItem();
-    checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
-    checkItem->setCheckState(item.selected ? Qt::Checked : Qt::Unchecked);
+    // A report-only leftover is shown but must not be checkable at all: the scanner could
+    // not tie that path to this program, so it carries no deletion authority (the
+    // controller and CleanupWorker refuse it again regardless of what the table says).
+    checkItem->setFlags(item.deletable ? (Qt::ItemIsUserCheckable | Qt::ItemIsEnabled)
+                                       : Qt::ItemIsEnabled);
+    checkItem->setCheckState(item.selected && item.deletable ? Qt::Checked : Qt::Unchecked);
     m_leftover_table->setItem(row, kLeftoverColCheck, checkItem);
 
     // Risk level
@@ -1355,7 +1360,9 @@ void AdvancedUninstallPanel::populateLeftoverRow(int row, const LeftoverItem& it
     // Path
     auto* pathItem = new QTableWidgetItem(item.path);
     pathItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-    pathItem->setToolTip(item.path);
+    // Leftover paths come from disk and from the (HKCU-writable) uninstall registry keys, and a
+    // tooltip has no plain-text mode, so wrap it to be shown literally.
+    pathItem->setToolTip(ui::asLiteralRichText(item.path));
     m_leftover_table->setItem(row, kLeftoverColPath, pathItem);
 
     // Size (uses NumericSortItem for correct numeric sorting)

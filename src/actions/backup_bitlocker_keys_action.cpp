@@ -7,6 +7,7 @@
 #include "sak/actions/backup_bitlocker_keys_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/app_action_guards.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -28,6 +29,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace sak {
 
@@ -82,6 +87,29 @@ constexpr int kEstimatedDurationPerVolumeMs = kTimeoutProcessShortMs;
 constexpr int kKeyRetrievalProgressSpan = 40;
 constexpr qsizetype kBitlockerSummaryLineReserve = 14;
 constexpr int kVolumeSizeDisplayPrecision = 2;
+
+/// GetDriveTypeW() value for a mapped network drive. Named so the classification
+/// exists on every platform; the value is checked against the Win32 macro below.
+constexpr unsigned int kWin32DriveRemote = 4;
+#ifdef Q_OS_WIN
+static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
+#endif
+
+/// @brief Win32 drive type of @p path's "X:\" root, or 0 (DRIVE_UNKNOWN) when the path
+///        has no drive-letter root or the platform has no such concept. GetDriveTypeW
+///        answers from the local mount table, so it does not itself touch the share.
+[[nodiscard]] unsigned int rootDriveType(const QString& path) {
+#ifdef Q_OS_WIN
+    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
+    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+        return 0;
+    }
+    return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
+#else
+    Q_UNUSED(path)
+    return 0;
+#endif
+}
 
 static constexpr auto kDetectEncryptedVolumesScript = R"PS(
 try {
@@ -761,19 +789,72 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     return secureBackupDirectory(start_time, backup_dir_path, permissions_set);
 }
 
+QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_location,
+                                                        QString& refusal) {
+    if (raw_location.trimmed().isEmpty()) {
+        refusal = QStringLiteral("No backup location was supplied.");
+        return {};
+    }
+    // A UNC/device root would push plaintext recovery keys to a remote host (and the first
+    // stat alone triggers an SMB/NTLM handshake). Screened on the literal string BEFORE any
+    // stat, exactly like every other model-/payload-supplied destination in the app.
+    if (isNetworkOrDevicePath(raw_location)) {
+        refusal = QStringLiteral("Refused a network/device backup location: ") + raw_location;
+        return {};
+    }
+    if (QFileInfo(raw_location).isRelative()) {
+        // A relative destination resolves against the ELEVATED helper's working directory,
+        // which the requesting client does not control or see. Require an absolute path.
+        refusal = QStringLiteral("Backup location must be an absolute path: ") + raw_location;
+        return {};
+    }
+    const QString canonical = QDir::cleanPath(QFileInfo(raw_location).absoluteFilePath());
+    if (isNetworkOrDevicePath(canonical)) {
+        refusal = QStringLiteral("Refused a network/device backup location: ") + canonical;
+        return {};
+    }
+    // A pre-planted symlink/junction on the leaf or ANY ancestor silently redirects the keys
+    // elsewhere (possibly to a UNC target); refuse rather than follow it.
+    if (pathReparseUnsafe(canonical)) {
+        refusal = QStringLiteral("Refused a backup location behind a symlink/junction: ") +
+                  canonical;
+        return {};
+    }
+    // A mapped drive letter is a network destination that the literal-string screen above
+    // cannot see. Removable media stays allowed -- a USB key is a legitimate BitLocker
+    // recovery-key medium -- but a remote share is not.
+    if (rootDriveType(canonical) == kWin32DriveRemote) {
+        refusal = QStringLiteral("Refused a mapped network drive as the backup location: ") +
+                  canonical;
+        return {};
+    }
+    return canonical;
+}
+
 bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_time,
                                                       QString& backup_dir_path) {
     Q_EMIT executionProgress("Creating backup directory...", progress::kStep60);
+
+    // The backup location arrives in the caller's task payload, crosses the elevation
+    // boundary, and is about to hold PLAINTEXT recovery keys -- so it is canonicalized and
+    // policy-screened HERE, before any directory is created under it. A refused location
+    // fails closed: nothing is created and nothing is written.
+    QString refusal;
+    const QString location = screenBackupLocation(m_backup_location, refusal);
+    if (location.isEmpty()) {
+        emitFailedResult("Refused the BitLocker backup location", refusal, start_time);
+        return false;
+    }
 
     static std::atomic<unsigned> s_dir_counter{0};
     const QString timestamp = backupTimestamp();
     const unsigned counter = s_dir_counter.fetch_add(1, std::memory_order_relaxed);
     const QString backup_dir_name = uniqueBackupDirName(timestamp, counter);
 
-    QDir parent(m_backup_location);
+    QDir parent(location);
     if (!parent.mkpath(QStringLiteral("."))) {
         emitFailedResult("Failed to create backup directory",
-                         "Could not create backup location: " + m_backup_location,
+                         "Could not create backup location: " + location,
                          start_time);
         return false;
     }

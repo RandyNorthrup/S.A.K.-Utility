@@ -7,7 +7,9 @@
 #include "sak/email_calendar_dialog.h"
 
 #include "sak/email_constants.h"
+#include "sak/email_html_sanitizer.h"
 #include "sak/email_inspector_controller.h"
+#include "sak/email_safe_text_browser.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -1101,8 +1103,8 @@ void EmailCalendarDialog::setupCalendarViews(QSplitter* splitter) {
 // ============================================================================
 
 void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
-    m_detail_browser = new QTextBrowser(this);
-    m_detail_browser->setOpenExternalLinks(false);
+    // Renders an untrusted appointment body; deny non-data: resource loads and link navigation.
+    m_detail_browser = new EmailSafeTextBrowser(this);
     m_detail_browser->setAccessibleName(tr("Calendar event details"));
     m_detail_browser->setMinimumWidth(email::kCalendarDetailMinWidth);
     m_detail_browser->setPlaceholderText(tr("Select an event to view details"));
@@ -1781,10 +1783,14 @@ QString EmailCalendarDialog::buildAttendeesHtml(const CalendarEvent& evt) {
 
 QString EmailCalendarDialog::buildBodyHtml(const CalendarEvent& evt) {
     if (!evt.body_html.isEmpty()) {
+        // An appointment body is attacker-authored markup like any mail body. Strip active
+        // content with the same sanitizer the export writers use; the detail view's
+        // EmailSafeTextBrowser then denies every non-data: resource load, so a surviving
+        // <img src="file:///..."> or remote tracking pixel is inert as well.
         return QString::fromLatin1(ui::kHtmlHorizontalRule)
                    .arg(ui::kCssBorderWidthDefaultPx)
                    .arg(ui::htmlColor(ui::kColorBorderDefault)) +
-               evt.body_html;
+               sanitizeEmailBodyHtml(evt.body_html);
     }
     if (!evt.body_plain.isEmpty()) {
         return QString::fromLatin1(ui::kHtmlHorizontalRulePreWrapParagraph)

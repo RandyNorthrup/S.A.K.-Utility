@@ -62,6 +62,7 @@ private slots:
     // ---- diskpart 0-exit-but-failed detection (CR3-9) ----
     void diskpartOutputIsError_detectsFailureMarkers();
     void diskpartOutputIsError_ignoresSuccessChatter();
+    void diskpartOutputIsError_detectsSelectionAndArgumentFailures();
 
     // ---- bundled-executable trust check (CR3-6) ----
     void isSafeBundledExecutable_acceptsRegularFileUnderAppDir();
@@ -321,6 +322,27 @@ void WindowsUSBCreatorTests::diskpartOutputIsError_ignoresSuccessChatter() {
     QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
         QStringLiteral("DiskPart marked the current partition as active.")));
     QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(QString()));
+}
+
+void WindowsUSBCreatorTests::diskpartOutputIsError_detectsSelectionAndArgumentFailures() {
+    // R5-P5-7: the original three markers missed the failures diskpart reports most often
+    // while still exiting 0 -- a command that ran against no selection, or with arguments it
+    // rejected. Those leave the media unformatted and must not be read as success.
+    QVERIFY(
+        WindowsUSBCreator::diskpartOutputIsError(QStringLiteral("There is no volume selected.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(QStringLiteral("There is no disk selected.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("There is no partition selected.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("The arguments specified for this command are not valid.")));
+    QVERIFY(
+        WindowsUSBCreator::diskpartOutputIsError(QStringLiteral("The media is write protected.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("The disk management services could not complete the operation.")));
+    // Normal progress chatter still reads as success.
+    QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("Volume 3 is the selected volume.\nDiskPart successfully assigned the "
+                       "drive letter or mount point.")));
 }
 
 // ===========================================================================

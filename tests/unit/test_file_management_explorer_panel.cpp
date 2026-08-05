@@ -2041,6 +2041,74 @@ private Q_SLOTS:
         QVERIFY2(after.isEmpty(), qPrintable(after.join(QStringLiteral(", "))));
     }
 
+    void replaceSiblingNamesAreUnguessableAndNeverClobberPlantedContent() {
+        // R5 p9_filemgmt-5: the staging/backup siblings used to be named with a bare
+        // per-engine counter (".sak-stage-<name>.0", ".sak-old-<name>.1"), so content
+        // already sitting at those predictable paths was overwritten (a file), merged
+        // into (a directory), or deleted by the cleanup. The names now carry system
+        // entropy AND the staging name is claimed by an exclusive create, so anything
+        // planted at the old predictable paths must survive a Replace untouched.
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        const QDir dest_dir(destination.path());
+        const auto write = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        write(QDir(source.path()).filePath(QStringLiteral("keep.txt")), "replacement payload");
+        const QString occupied = dest_dir.filePath(QStringLiteral("keep.txt"));
+        write(occupied, "original payload");
+
+        // Plant at the exact paths the old sequence-only naming would have produced:
+        // the staging sibling (seq 0) as a file and the set-aside sibling (seq 1) as a
+        // directory holding a file, so both the overwrite and the merge/delete vector
+        // are covered.
+        const QString planted_stage = dest_dir.filePath(QStringLiteral(".sak-stage-keep.txt.0"));
+        const QString planted_backup = dest_dir.filePath(QStringLiteral(".sak-old-keep.txt.1"));
+        write(planted_stage, "victim stage payload");
+        QVERIFY(dest_dir.mkpath(QStringLiteral(".sak-old-keep.txt.1/nested")));
+        write(planted_backup + QStringLiteral("/nested/victim.bin"), "victim backup payload");
+
+        sak::FileExplorerTransferEngine engine(
+            sak::FileManagementFileSystemBridge::localTarget(source.path()),
+            sak::FileManagementFileSystemBridge::localTarget(destination.path()),
+            0);
+        sak::FileExplorerTransferItem item;
+        item.source_path = QDir(source.path()).filePath(QStringLiteral("keep.txt"));
+        item.destination_path = occupied;
+        item.replace_destination = true;
+        QVERIFY2(engine.transferEntry(item),
+                 qPrintable(engine.blockers().join(QStringLiteral(" | "))));
+
+        // The Replace landed...
+        {
+            QFile replaced(occupied);
+            QVERIFY(replaced.open(QIODevice::ReadOnly));
+            QCOMPARE(replaced.readAll(), QByteArrayLiteral("replacement payload"));
+        }
+        // ...and neither planted entry was touched.
+        {
+            QFile survivor(planted_stage);
+            QVERIFY2(survivor.open(QIODevice::ReadOnly), "planted staging file was destroyed");
+            QCOMPARE(survivor.readAll(), QByteArrayLiteral("victim stage payload"));
+        }
+        {
+            QFile survivor(planted_backup + QStringLiteral("/nested/victim.bin"));
+            QVERIFY2(survivor.open(QIODevice::ReadOnly), "planted backup tree was destroyed");
+            QCOMPARE(survivor.readAll(), QByteArrayLiteral("victim backup payload"));
+        }
+        // The engine's own siblings were cleaned up: only the planted pair remains.
+        auto leftovers = dest_dir.entryList(QStringList{QStringLiteral(".sak-*")},
+                                            QDir::Files | QDir::Dirs | QDir::Hidden);
+        leftovers.sort();
+        QCOMPARE(leftovers,
+                 (QStringList{QStringLiteral(".sak-old-keep.txt.1"),
+                              QStringLiteral(".sak-stage-keep.txt.0")}));
+    }
+
     void compressRefusesToClobberExistingArchive() {
         // B8-07 (already remediated by B6-19/20 exclusive-create): compressToZip must
         // never truncate a file that already occupies the archive path, and its
@@ -4432,6 +4500,133 @@ private Q_SLOTS:
         QCOMPARE(cancelled_spy.count(), 1);
         QVERIFY(canceled_worker.completedItems().isEmpty());
         QVERIFY(!QDir(root.filePath(QStringLiteral("dest/bundle2"))).exists());
+    }
+
+    void incompleteCopyIsNotReportedAsACompletedItem() {
+        // R5 p9_filemgmt-10: completedItems() promises "landed whole", but an ordinary
+        // (non-move) copy was appended to it on transferEntry's plain ok, even when the
+        // walk silently dropped entries at the depth bound. Such a copy must now be
+        // reported as a failed item with a blocker instead.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QString deep = QStringLiteral("tree");
+        for (int level = 0; level < 40; ++level) {
+            deep += QStringLiteral("/d");
+        }
+        QVERIFY(root.mkpath(deep));
+        {
+            QFile bottom(root.filePath(deep + QStringLiteral("/leaf.txt")));
+            QVERIFY(bottom.open(QIODevice::WriteOnly));
+            QVERIFY(bottom.write("deep leaf") > 0);
+        }
+        QVERIFY(root.mkdir(QStringLiteral("dest")));
+
+        sak::FileExplorerTransferRequest request;
+        request.source_target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        request.destination_target = request.source_target;
+        request.items = {{root.filePath(QStringLiteral("tree")),
+                          root.filePath(QStringLiteral("dest/tree")),
+                          0,
+                          true}};
+        request.raw_read_cap = 512ULL * 1024 * 1024;
+        sak::FileExplorerTransferWorker worker(request);
+        QSignalSpy finished_spy(&worker, &QThread::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 20'000);
+
+        QVERIFY2(worker.completedItems().isEmpty(),
+                 "a copy that dropped entries was still listed as completed");
+        QVERIFY(!worker.blockers().isEmpty());
+        QVERIFY2(worker.blockers()
+                     .join(QStringLiteral(" | "))
+                     .contains(QStringLiteral("did not copy whole")),
+                 qPrintable(worker.blockers().join(QStringLiteral(" | "))));
+        // The source is untouched (this is a copy, not a move).
+        QVERIFY(QFileInfo(root.filePath(QStringLiteral("tree"))).isDir());
+    }
+
+    void itemCountedAndZeroByteRunsReachATerminalStatus() {
+        // R5 p9_filemgmt-11: the reporter's auto-success needs a non-zero size
+        // denominator, which the delete family (and a batch of zero-byte files) never
+        // has, and execute() only ever set Cancelled/Failed. A clean run therefore sat
+        // at InProgress forever: the card spun and completed-item cleanup never reaped
+        // it. execute() now sets Success explicitly on a clean run.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile doomed(root.filePath(QStringLiteral("doomed.txt")));
+            QVERIFY(doomed.open(QIODevice::WriteOnly));
+            QVERIFY(doomed.write("delete me") > 0);
+        }
+
+        sak::FileExplorerTransferRequest deletion;
+        deletion.source_target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        deletion.destination_target = deletion.source_target;
+        deletion.kind = sak::FileExplorerTransferKind::Delete;
+        deletion.items = {{root.filePath(QStringLiteral("doomed.txt")), QString(), 9, false}};
+        sak::FileExplorerTransferWorker delete_worker(deletion);
+        QSignalSpy delete_progress(&delete_worker,
+                                   &sak::FileExplorerTransferWorker::statusProgress);
+        QSignalSpy delete_finished(&delete_worker, &QThread::finished);
+        delete_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(delete_finished.count(), 1, 10'000);
+        QVERIFY2(delete_worker.blockers().isEmpty(),
+                 qPrintable(delete_worker.blockers().join(QStringLiteral("; "))));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("doomed.txt"))));
+        QVERIFY(delete_progress.count() > 0);
+        QCOMPARE(delete_progress.last().first().value<sak::FileExplorerStatusProgress>().status,
+                 sak::FileExplorerReturnResult::Success);
+
+        // A byte-moving transfer whose items are all zero-byte has the same zero
+        // denominator, so it needs the same explicit terminal status.
+        QVERIFY(root.mkdir(QStringLiteral("empty-dest")));
+        {
+            QFile empty(root.filePath(QStringLiteral("empty.txt")));
+            QVERIFY(empty.open(QIODevice::WriteOnly));
+        }
+        sak::FileExplorerTransferRequest copy;
+        copy.source_target = deletion.source_target;
+        copy.destination_target = deletion.source_target;
+        copy.items = {{root.filePath(QStringLiteral("empty.txt")),
+                       root.filePath(QStringLiteral("empty-dest/empty.txt")),
+                       0,
+                       false}};
+        sak::FileExplorerTransferWorker copy_worker(copy);
+        QSignalSpy copy_progress(&copy_worker, &sak::FileExplorerTransferWorker::statusProgress);
+        QSignalSpy copy_finished(&copy_worker, &QThread::finished);
+        copy_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(copy_finished.count(), 1, 10'000);
+        QVERIFY2(copy_worker.blockers().isEmpty(),
+                 qPrintable(copy_worker.blockers().join(QStringLiteral("; "))));
+        QCOMPARE(copy_worker.completedItems().size(), 1);
+        QVERIFY(copy_progress.count() > 0);
+        QCOMPARE(copy_progress.last().first().value<sak::FileExplorerStatusProgress>().status,
+                 sak::FileExplorerReturnResult::Success);
+    }
+
+    void recycleRefusesVolumesWithoutABinInsteadOfDeletingPermanently() {
+        // R5 p9_filemgmt-7: on a volume with no Recycle Bin (a UNC share is the
+        // canonical case) the shell's FOF_ALLOWUNDO delete is PERMANENT, so a recycle
+        // there silently destroyed the item while the worker reported a recoverable
+        // move to the bin. The worker now refuses outright and names the reason. The
+        // path is rejected before any shell/network call, so no host is contacted.
+        sak::FileExplorerTransferRequest request;
+        request.source_target = sak::FileManagementFileSystemBridge::localTarget(QString());
+        request.destination_target = request.source_target;
+        request.kind = sak::FileExplorerTransferKind::Recycle;
+        request.items = {
+            {QStringLiteral("\\\\sak-no-such-host\\share\\payload.txt"), QString(), 0, false}};
+        sak::FileExplorerTransferWorker worker(request);
+        QSignalSpy finished_spy(&worker, &QThread::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 10'000);
+
+        QVERIFY(worker.completedItems().isEmpty());
+        const QString reported = worker.blockers().join(QStringLiteral(" | "));
+        QVERIFY2(reported.contains(QStringLiteral("not on a volume with a Recycle Bin")),
+                 qPrintable(reported));
     }
 
     void pasteCopyRunsOnWorkerWithStatusCards() {

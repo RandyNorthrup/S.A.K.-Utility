@@ -38,7 +38,12 @@ class CleanupWorker : public WorkerBase {
 public:
     /// @param selectedItems  Items to clean up
     /// @param useRecycleBin  If true, files are sent to the Recycle Bin instead
-    ///                       of permanent deletion
+    ///                       of permanent deletion. This also turns recoverable-only mode ON
+    ///                       by default (see setRequireRecoverable): asking for the Recycle
+    ///                       Bin is a request for RECOVERABILITY, so a recycle failure must
+    ///                       not silently escalate to a permanent delete. A caller whose
+    ///                       contract allows permanent deletion (a human reviewed each item)
+    ///                       opts out explicitly with setRequireRecoverable(false).
     /// @param parent         Parent QObject
     explicit CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                            bool useRecycleBin = false,
@@ -57,6 +62,11 @@ public:
     ///        scheduled for reboot removal. Used by AUTOMATIC (no human review) cleanup so an
     ///        auto-deleted item is always undoable. Must be paired with useRecycleBin=true.
     void setRequireRecoverable(bool require) { m_requireRecoverable = require; }
+
+    /// @brief Whether recoverable-only mode is in effect (defaults to the constructor's
+    ///        useRecycleBin). Exposed so a caller -- and the unit suite -- can assert the
+    ///        recycle-implies-recoverable invariant rather than assume it.
+    [[nodiscard]] bool requireRecoverable() const { return m_requireRecoverable; }
 
     /// @brief Resolve a Windows system tool (e.g. "sc.exe") to its ABSOLUTE
     ///        @p systemRoot \\System32 path so a same-named binary planted in the app dir / CWD /

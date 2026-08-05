@@ -8,6 +8,7 @@
 
 #include "sak/file_explorer_item_model.h"
 #include "sak/layout_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QCheckBox>
 #include <QCryptographicHash>
@@ -198,11 +199,14 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
     m_name_edit->setReadOnly(!single);
     form->addRow(tr("Name:"), m_name_edit);
 
-    auto* type_label = new QLabel(single ? first.type : tr("Multiple types"), page);
+    // Everything below is read out of the mounted target -- names, paths, type and file-system
+    // strings, on-disk identifiers -- and a raw ext4/HFS+/APFS image can carry any bytes it
+    // likes in those fields, so every value label renders its text verbatim.
+    auto* type_label = plainTextLabel(single ? first.type : tr("Multiple types"), page);
     type_label->setObjectName(QStringLiteral("fileExplorerPropertiesType"));
     form->addRow(tr("Type:"), type_label);
 
-    auto* location_label = new QLabel(m_target.label, page);
+    auto* location_label = plainTextLabel(m_target.label, page);
     location_label->setObjectName(QStringLiteral("fileExplorerPropertiesLocation"));
     location_label->setText(single ? first.path : m_target.label);
     location_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -212,12 +216,12 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
     m_size_label->setObjectName(QStringLiteral("fileExplorerPropertiesSize"));
     form->addRow(tr("Size:"), m_size_label);
 
-    auto* fs_label = new QLabel(m_target.file_system, page);
+    auto* fs_label = plainTextLabel(m_target.file_system, page);
     fs_label->setObjectName(QStringLiteral("fileExplorerPropertiesFileSystem"));
     form->addRow(tr("File system:"), fs_label);
 
     if (single && !first.identifier.isEmpty()) {
-        auto* id_label = new QLabel(first.identifier, page);
+        auto* id_label = plainTextLabel(first.identifier, page);
         id_label->setObjectName(QStringLiteral("fileExplorerPropertiesIdentifier"));
         form->addRow(FileManagementFileSystemBridge::identifierLabel(m_target.file_system) +
                          QStringLiteral(":"),
@@ -229,7 +233,7 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
         form->addRow(tr("Modified:"),
                      new QLabel(FileExplorerItemModel::timeText(first.modified_time), page));
         form->addRow(tr("Attributes:"),
-                     new QLabel(FileExplorerItemModel::attributeSummary(first), page));
+                     plainTextLabel(FileExplorerItemModel::attributeSummary(first), page));
     }
     m_tabs->addTab(page, tr("General"));
 }

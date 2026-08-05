@@ -89,6 +89,29 @@ PartitionManagerState PartitionManagerController::state() const noexcept {
     return m_state;
 }
 
+PartitionManagerState PartitionManagerController::inventoryReadyState(
+    const PartitionInventory& inventory) {
+    return inventory.hasPartitionEnumerationFailure() ? PartitionManagerState::ReadyPartial
+                                                      : PartitionManagerState::Ready;
+}
+
+QString PartitionManagerController::inventoryStatusMessage(const PartitionInventory& inventory) {
+    QStringList failed;
+    for (const auto& disk : inventory.disks) {
+        if (disk.partition_enumeration_failed) {
+            failed.append(QString::number(disk.disk_number));
+        }
+    }
+    if (failed.isEmpty()) {
+        return QStringLiteral("Partition Manager: inventory ready");
+    }
+    return QStringLiteral(
+               "Partition Manager: inventory INCOMPLETE -- partition enumeration "
+               "failed for disk(s) %1; operations on them are refused until a "
+               "refresh succeeds")
+        .arg(failed.join(QStringLiteral(", ")));
+}
+
 void PartitionManagerController::refreshInventory() {
     if (m_state == PartitionManagerState::RefreshingInventory) {
         Q_EMIT statusMessage(QStringLiteral("Partition Manager: inventory refresh already running"),
@@ -108,14 +131,17 @@ void PartitionManagerController::refreshInventory() {
                 m_inventory.warnings.size());
         for (const auto& warning : m_inventory.warnings) {
             logWarning("Partition Manager inventory warning: {}", warning.toStdString());
+            // The scan's blockers belong in front of the USER, not only in the app log.
+            Q_EMIT logOutput(warning);
         }
         m_queue.setBaseLayoutHash(m_inventory.layout_hash);
-        setState(PartitionManagerState::Ready);
+        // Ready only when the inventory is authoritative; a disk whose partition enumeration
+        // failed downgrades the reported state instead of passing partial data off as complete.
+        setState(inventoryReadyState(m_inventory));
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
         Q_EMIT progressUpdate(kPercentMax, kPercentMax);
-        Q_EMIT statusMessage(QStringLiteral("Partition Manager: inventory ready"),
-                             sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(inventoryStatusMessage(m_inventory), sak::kTimerStatusDefaultMs);
         watcher->deleteLater();
     });
     watcher->setFuture(
@@ -152,7 +178,8 @@ void PartitionManagerController::redo() {
 void PartitionManagerController::discardQueue() {
     m_queue.discard();
     emitQueueChanged();
-    setState(PartitionManagerState::Ready);
+    // Emptying the queue must not silently promote a partial inventory back to a clean Ready.
+    setState(inventoryReadyState(m_inventory));
 }
 
 void PartitionManagerController::applyQueue(bool dry_run, bool use_elevation) {
@@ -244,9 +271,11 @@ void PartitionManagerController::finishApplyQueue(
     if (result.success && !m_apply_dry_run) {
         m_queue.discard();
     }
-    setState(result.cancelled
-                 ? PartitionManagerState::Cancelled
-                 : (result.success ? PartitionManagerState::Ready : PartitionManagerState::Failed));
+    // The post-apply re-scan is held to the same honesty bar: a disk that stopped enumerating
+    // during the apply reports ReadyPartial, never a clean Ready.
+    setState(result.cancelled ? PartitionManagerState::Cancelled
+                              : (result.success ? inventoryReadyState(m_inventory)
+                                                : PartitionManagerState::Failed));
     Q_EMIT inventoryChanged(m_inventory);
     emitQueueChanged();
     Q_EMIT executionFinished(result);
@@ -332,6 +361,10 @@ void PartitionManagerController::setTestInventory(const PartitionInventory& inve
     m_queue.setBaseLayoutHash(m_inventory.layout_hash);
     Q_EMIT inventoryChanged(m_inventory);
     emitQueueChanged();
+}
+
+void PartitionManagerController::setTestState(PartitionManagerState state) {
+    setState(state);
 }
 #endif
 

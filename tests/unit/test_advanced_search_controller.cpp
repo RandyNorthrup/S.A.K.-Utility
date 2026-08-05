@@ -15,6 +15,10 @@
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 using sak::AdvancedSearchController;
 using sak::SearchConfig;
 using sak::SearchMatch;
@@ -53,6 +57,9 @@ private Q_SLOTS:
 
     // ── Worker Double-Start ──
     void doubleStart_cancelsFirst();
+
+    // -- Codex review 5: completeness must travel with the counts --
+    void searchFinished_carriesCompleteness();
 
 private:
     QTemporaryDir m_temp_dir;
@@ -365,6 +372,74 @@ void AdvancedSearchControllerTests::doubleStart_cancelsFirst() {
     const auto history = ctrl.searchHistory();
     QVERIFY(history.contains("Hello"));
     QVERIFY(history.contains("target"));
+}
+
+// ============================================================================
+// Codex review 5: completeness must travel with the counts
+// ============================================================================
+
+void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
+    // A run that skipped files must not be announceable as complete by ANY
+    // consumer -- the status bar and the panel's log pane both read this flag.
+
+    // (a) A clean run: complete == true.
+    QTemporaryDir clean_dir;
+    QVERIFY(clean_dir.isValid());
+    {
+        QFile readable(QDir(clean_dir.path()).filePath(QStringLiteral("readable.txt")));
+        QVERIFY(readable.open(QIODevice::WriteOnly));
+        readable.write("Hello there");
+        readable.close();
+    }
+
+    SearchPreferences prefs;
+    prefs.max_results = 0;  // an on-disk cap would itself make the run incomplete
+
+    AdvancedSearchController clean_ctrl;
+    clean_ctrl.setPreferences(prefs);
+    QSignalSpy cleanFinished(&clean_ctrl, &AdvancedSearchController::searchFinished);
+
+    SearchConfig clean_config;
+    clean_config.root_path = clean_dir.path();
+    clean_config.pattern = QStringLiteral("Hello");
+    clean_config.exclude_patterns.clear();
+    clean_ctrl.startSearch(clean_config);
+
+    QVERIFY(cleanFinished.wait(10'000));
+    QCOMPARE(cleanFinished.count(), 1);
+    QCOMPARE(cleanFinished[0][2].toBool(), true);
+
+    // (b) A run holding a file the worker cannot open: complete == false.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString lockedPath = QDir(dir.path()).filePath(QStringLiteral("locked.txt"));
+    {
+        QFile locked(lockedPath);
+        QVERIFY(locked.open(QIODevice::WriteOnly));
+        locked.write("Hello secret");
+        locked.close();
+    }
+
+    const std::wstring wpath = lockedPath.toStdWString();
+    HANDLE handle = CreateFileW(
+        wpath.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    QVERIFY(handle != INVALID_HANDLE_VALUE);
+
+    AdvancedSearchController ctrl;
+    ctrl.setPreferences(prefs);
+    QSignalSpy finished(&ctrl, &AdvancedSearchController::searchFinished);
+
+    SearchConfig config;
+    config.root_path = dir.path();
+    config.pattern = QStringLiteral("Hello");
+    config.exclude_patterns.clear();
+    ctrl.startSearch(config);
+
+    const bool emitted = finished.wait(10'000);
+    CloseHandle(handle);
+    QVERIFY(emitted);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished[0][2].toBool(), false);
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchControllerTests)

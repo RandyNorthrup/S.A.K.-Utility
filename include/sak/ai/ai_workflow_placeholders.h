@@ -53,9 +53,24 @@ enum class WorkflowPlaceholderMode {
 /// PowerShellSingleQuoted substitution: every `${key}` placeholder (using the same
 /// `[A-Za-z0-9_]+` grammar the substitutor recognizes) must sit INSIDE a single-quoted
 /// literal. In that mode the substitutor only doubles embedded single quotes; a placeholder
-/// placed outside a `'...'` literal would inject its value UNESCAPED. Returns false and sets
-/// @p error on the first offending placeholder. Pure; unit-testable.
+/// placed outside a `'...'` literal would inject its value UNESCAPED.
+///
+/// The text before each placeholder is lexed with a minimal PowerShell scanner that
+/// understands single-quoted literals, double-quoted strings and backtick escapes. Any
+/// construct outside that accepted grammar (a comment, a here-string, or a `$( )`
+/// subexpression nested in a double-quoted string) is REFUSED rather than guessed at, so
+/// the answer is provable instead of heuristic. Returns false and sets @p error on the
+/// first offending placeholder. Pure; unit-testable.
 [[nodiscard]] bool powerShellCommandTemplateIsSingleQuoteSafe(const QString& command,
                                                               QString* error = nullptr);
+
+/// @brief Validate that a run_cmd workflow command template embeds no `${key}` placeholder.
+/// cmd.exe has no literal-quoting construct that makes an arbitrary value inert (`"..."`
+/// still expands `%VAR%`, a bare `"` ends the quoted run, and `^` escapes only outside
+/// quotes), so a placeholder in a cmd.exe command cannot be proven safe for its substitution
+/// context and is rejected before the command is built. Returns false and sets @p error on
+/// the first placeholder found. Pure; unit-testable.
+[[nodiscard]] bool cmdCommandTemplateIsPlaceholderFree(const QString& command,
+                                                       QString* error = nullptr);
 
 }  // namespace sak::ai

@@ -6,6 +6,7 @@
 
 #include "sak/bandwidth_tester.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QtTest/QtTest>
 
@@ -38,6 +39,10 @@ private Q_SLOTS:
     // -- composeNetshPath (absolute netsh, fail closed on empty root) --
     void netshPath_absoluteUnderSystemRoot();
     void netshPath_emptyRootFailsClosed();
+
+    // -- runNetworkTransfer (R5-P9-34: a non-positive timeout is refused) --
+    void networkTransfer_rejectsZeroTimeoutBeforeAnyRequest();
+    void networkTransfer_rejectsNegativeTimeout();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -196,6 +201,42 @@ void TestBandwidthTester::netshPath_emptyRootFailsClosed() {
     // No known Windows root -> no trusted netsh -> empty means "do not run" (fail
     // closed), never a fallback to bare "netsh".
     QVERIFY(BandwidthTester::composeNetshPath(QString()).isEmpty());
+}
+
+// ===================================================================
+// runNetworkTransfer -- a non-positive timeout must be refused, never
+// coerced to a default and never treated as "no timeout" (R5-P9-34)
+// ===================================================================
+
+void TestBandwidthTester::networkTransfer_rejectsZeroTimeoutBeforeAnyRequest() {
+    // timeout_ms == 0 disables Qt's transfer timeout AND leaves the deadline timer unarmed, so
+    // the synchronous runNetworkTransfer() would wait on a stalled server forever when no
+    // cancel callback is supplied. The request must be refused before any network access: an
+    // untouched elapsed_ms proves the worker thread never ran.
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = 0;
+
+    const NetworkTransferResult result = runNetworkTransfer(request);
+    QVERIFY(!result.success);
+    QVERIFY(!result.timed_out);
+    QVERIFY2(result.error_message.contains(QStringLiteral("timeout_ms")),
+             qPrintable(result.error_message));
+    QCOMPARE(result.elapsed_ms, 0LL);
+    QCOMPARE(result.bytes_received, 0LL);
+    QVERIFY(result.body.isEmpty());
+}
+
+void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = -1;
+
+    const NetworkTransferResult result = runNetworkTransfer(request);
+    QVERIFY(!result.success);
+    QVERIFY2(result.error_message.contains(QStringLiteral("timeout_ms")),
+             qPrintable(result.error_message));
+    QCOMPARE(result.elapsed_ms, 0LL);
 }
 
 QTEST_MAIN(TestBandwidthTester)

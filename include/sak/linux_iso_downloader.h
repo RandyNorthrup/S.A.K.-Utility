@@ -105,6 +105,32 @@ public:
         return !cancelled && result_generation == current_generation;
     }
 
+    /// @brief True iff @p token is exactly @p hex_length hexadecimal characters, i.e. it has
+    ///        the shape of a digest of the expected algorithm. A checksum source is not always
+    ///        a bare sums file -- some projects publish per-release digests inside a release
+    ///        note alongside prose -- so a token is only accepted as the digest when it looks
+    ///        like one. Without this an arbitrary word next to the ISO's name would be taken
+    ///        as the hash, verifying nothing. Pure; unit-testable.
+    [[nodiscard]] static bool isHexDigestOfLength(const QString& token, qsizetype hex_length);
+
+    /// @brief Algorithm name of a per-algorithm heading line such as "### SHA256SUMS:",
+    ///        uppercased ("SHA256"), or an empty string when @p line is not such a heading.
+    ///        A release note groups its digests under these headings, and a BLAKE3 digest is
+    ///        the same 64 hex characters as a SHA-256 one, so the heading is the only thing
+    ///        that distinguishes them. Pure; unit-testable.
+    [[nodiscard]] static QString checksumSectionAlgorithm(const QString& line);
+
+    /// @brief Digest carried by a BSD-style record line -- "SHA256 (file) = hash", as Fedora
+    ///        publishes -- or an empty string when @p line is not such a record, names an
+    ///        algorithm other than @p algorithm, names a file other than @p expectedFileName,
+    ///        or carries a token that is not a @p hex_length hex digest. The algorithm is
+    ///        named on the line, so it is followed exactly like a section heading: a SHA256
+    ///        record must never satisfy a SHA-512 configuration. Pure; unit-testable.
+    [[nodiscard]] static QString bsdRecordDigest(const QString& line,
+                                                 const QString& expectedFileName,
+                                                 const QString& algorithm,
+                                                 qsizetype hex_length);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when the download phase changes
@@ -163,10 +189,21 @@ private:
                                      const QString& outDir,
                                      const QString& outFile) const;
     void verifyChecksum();
+    /// @brief Refuse a release whose integrity cannot be proven before it is written to
+    ///        removable media: a missing checksum URL/type leaves the ISO unverifiable, and a
+    ///        non-HTTPS checksum URL can be tampered with on the same leg as the artifact.
+    ///        Returns false and reports the failure when the download must not proceed.
+    bool requirePinnedChecksum(const QString& distroName);
     void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);
     /// @brief Launch the background file-hash + gen-tagged verify watcher.
     void launchChecksumHash(QCryptographicHash::Algorithm algorithm, const QString& expectedHash);
     QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
+    /// @brief Hex-character count a digest of the configured checksum type must have.
+    [[nodiscard]] qsizetype expectedHashHexLength() const;
+    /// @brief Digest for @p expectedFileName carried by a single "hash filename" record line,
+    ///        or an empty string when the line carries no digest for that file.
+    [[nodiscard]] QString hashFromRecordLine(const QString& line,
+                                             const QString& expectedFileName) const;
     void onChecksumVerified(bool match, const QString& expected, const QString& actual);
     QString findAria2c() const;
     void cleanupPartialFiles();

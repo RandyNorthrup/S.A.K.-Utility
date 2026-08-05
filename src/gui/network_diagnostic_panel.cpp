@@ -2099,8 +2099,12 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
 }
 
 QString NetworkDiagnosticPanel::formatAdapterIdentity(const NetworkAdapterInfo& adapter) const {
+    // The adapter alias is renameable by any local user and the description is a driver INF
+    // string; this feeds m_detailIdentity, which is explicitly Qt::RichText, so escape both.
     return QStringLiteral("<b>%1</b><br>%2<br>MAC: %3")
-        .arg(adapter.name, adapter.description, adapter.macAddress);
+        .arg(adapter.name.toHtmlEscaped(),
+             adapter.description.toHtmlEscaped(),
+             adapter.macAddress.toHtmlEscaped());
 }
 
 QString NetworkDiagnosticPanel::formatAdapterAddressing(const NetworkAdapterInfo& adapter) const {
@@ -2318,7 +2322,7 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
                                   "connectivity temporarily.\n\n"
                                   "Administrator privileges are required.\n\n"
                                   "Continue?")
-                                   .arg(targetAdapter),
+                                   .arg(targetAdapter.toHtmlEscaped()),
                                QMessageBox::Yes | QMessageBox::No,
                                QMessageBox::No);
 
@@ -2365,7 +2369,17 @@ QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() co
 
 bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* output) {
     constexpr int kFinishTimeoutMs = 15'000;
-    const auto process = runProcess(QStringLiteral("netsh"), args, kFinishTimeoutMs);
+    // System32-qualified netsh, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, and these adapter commands are privileged. Fail closed
+    // when the path cannot be resolved rather than run whatever PATH/CWD supplies.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        if (output) {
+            *output = tr("Cannot resolve the System32 netsh.exe path");
+        }
+        return false;
+    }
+    const auto process = runProcess(netsh_exe, args, kFinishTimeoutMs);
 
     if (process.timed_out) {
         if (output) {
@@ -2411,7 +2425,14 @@ void NetworkDiagnosticPanel::runCommandAsync(
 
 void NetworkDiagnosticPanel::runNetshCommandAsync(
     const QStringList& args, std::function<void(bool success, QString output)> callback) {
-    runCommandAsync(QStringLiteral("netsh"), args, sak::kTimeoutNetworkReadMs, std::move(callback));
+    // System32-qualified netsh only; an unresolvable path reports failure through the
+    // caller's own callback instead of launching a PATH/CWD-resolved binary.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        callback(false, tr("Cannot resolve the System32 netsh.exe path"));
+        return;
+    }
+    runCommandAsync(netsh_exe, args, sak::kTimeoutNetworkReadMs, std::move(callback));
 }
 
 namespace {
@@ -2698,7 +2719,13 @@ void NetworkDiagnosticPanel::onAdapterProperties() {
         settings_uri = QStringLiteral("ms-settings:network");
     }
 
-    QProcess::startDetached(QStringLiteral("explorer.exe"), {settings_uri});
+    // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary): a
+    // shell-open is resolved through the same search order as any other launch, so a bare
+    // name would let a planted explorer.exe run. Unresolvable -> nothing is launched.
+    if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {settings_uri})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch Windows Settings"));
+        return;
+    }
     Q_EMIT logOutput(tr("Opened %1 properties for '%2'").arg(type, adapter->name));
     Q_EMIT statusMessage(tr("Opened %1 settings for '%2'").arg(type, adapter->name),
                          sak::kTimerStatusMessageMs);
@@ -2754,7 +2781,7 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
                                            tr("Disable Adapter"),
                                            tr("Disable adapter <b>%1</b>?\n\n"
                                               "You may lose network connectivity.")
-                                               .arg(adapter->name),
+                                               .arg(adapter->name.toHtmlEscaped()),
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
     if (confirm != QMessageBox::Yes) {
@@ -2809,7 +2836,13 @@ void NetworkDiagnosticPanel::onAdapterDiagnose() {
         diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
     }
 
-    QProcess::startDetached(QStringLiteral("msdt.exe"), {QStringLiteral("/id"), diagnostic_id});
+    // System32-qualified msdt.exe; unresolvable (or absent on newer Windows) -> report the
+    // failure rather than let CreateProcess search PATH/CWD for the name.
+    if (!sak::startDetachedSystem32Tool(QStringLiteral("msdt.exe"),
+                                        {QStringLiteral("/id"), diagnostic_id})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch the Windows network troubleshooter"));
+        return;
+    }
     Q_EMIT statusMessage(tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name),
                          sak::kTimerStatusMessageMs);
     Q_EMIT logOutput(tr("Launched %1 diagnostics for '%2'").arg(type, adapter->name));
@@ -2831,7 +2864,8 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     dialog.setMinimumWidth(kRenameDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
-    layout->addWidget(new QLabel(tr("Current name: <b>%1</b>").arg(adapter->name), &dialog));
+    layout->addWidget(
+        new QLabel(tr("Current name: <b>%1</b>").arg(adapter->name.toHtmlEscaped()), &dialog));
 
     auto* name_edit = new QLineEdit(&dialog);
     name_edit->setText(adapter->name);
@@ -2889,18 +2923,26 @@ void NetworkDiagnosticPanel::onOpenAdapterSettings() {
         return;
     }
 
+    // Absolute paths throughout: explorer.exe from the Windows directory, control.exe from
+    // System32 (and by its real ".exe" name). A failed resolve launches nothing.
     const auto& type = adapter->adapterType;
+    bool launched = false;
     if (type == QStringLiteral("WiFi")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:network-wifi")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:network-wifi")});
     } else if (type == QStringLiteral("Bluetooth")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:bluetooth")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:bluetooth")});
     } else if (type == QStringLiteral("VPN")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:network-vpn")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:network-vpn")});
     } else {
-        QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
+        launched = sak::startDetachedSystem32Tool(QStringLiteral("control.exe"),
+                                                  {QStringLiteral("ncpa.cpl")});
+    }
+    if (!launched) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch the adapter settings page"));
+        return;
     }
 
     Q_EMIT logOutput(tr("Opened adapter settings for '%1'").arg(adapter->name));
@@ -2909,8 +2951,11 @@ void NetworkDiagnosticPanel::onOpenAdapterSettings() {
 }
 
 void NetworkDiagnosticPanel::onViewBluetoothDevices() {
-    QProcess::startDetached(QStringLiteral("explorer.exe"),
-                            {QStringLiteral("ms-settings:bluetooth")});
+    if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                       {QStringLiteral("ms-settings:bluetooth")})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch Bluetooth settings"));
+        return;
+    }
     Q_EMIT logOutput(tr("Opened Bluetooth devices settings"));
     Q_EMIT statusMessage(tr("Opened Bluetooth devices settings"), sak::kTimerStatusMessageMs);
     sak::logInfo("Opened Bluetooth devices settings");
@@ -2942,7 +2987,11 @@ void NetworkDiagnosticPanel::onBridgeConnections() {
         return;
     }
 
-    QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
+    if (!sak::startDetachedSystem32Tool(QStringLiteral("control.exe"),
+                                        {QStringLiteral("ncpa.cpl")})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch Network Connections"));
+        return;
+    }
     Q_EMIT logOutput(tr("Bridge requested for: %1").arg(adapter_names.join(QStringLiteral(", "))));
     Q_EMIT statusMessage(
         tr("Opened Network Connections for bridging %1 adapters").arg(selected.size()),
@@ -3144,8 +3193,14 @@ QString netshStepOutput(const ProcessResult& process) {
 // Runs netsh steps in order on a worker thread, stopping at the first failure.
 // Returns {index of first failed step (or -1 if all succeeded), its output}.
 QPair<int, QString> runNetshStepsSequential(const QList<QStringList>& steps, int timeout_ms) {
+    // System32-qualified netsh only; unresolvable means step 0 failed (fail closed), never
+    // a PATH/CWD-resolved launch of a privileged DNS/adapter mutation.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        return {0, NetworkDiagnosticPanel::tr("Cannot resolve the System32 netsh.exe path")};
+    }
     for (int i = 0; i < steps.size(); ++i) {
-        const auto process = runProcess(QStringLiteral("netsh"), steps.at(i), timeout_ms);
+        const auto process = runProcess(netsh_exe, steps.at(i), timeout_ms);
         if (!process.succeeded()) {
             return {i, netshStepOutput(process)};
         }
@@ -3309,7 +3364,7 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
                                 tr("Enable DHCP"),
                                 tr("Switch adapter <b>%1</b> to DHCP?\n\n"
                                    "The current static IP configuration will be removed.")
-                                    .arg(adapter->name),
+                                    .arg(adapter->name.toHtmlEscaped()),
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
     if (confirm != QMessageBox::Yes) {
@@ -3350,8 +3405,14 @@ void NetworkDiagnosticPanel::onReleaseDhcpLease() {
 
     constexpr int kIpconfigTimeoutMs = 10'000;
     const QString adapter_name = adapter->name;
+    // System32-qualified ipconfig, never the bare name (same hijack surface as netsh).
+    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
+    if (ipconfig_exe.isEmpty()) {
+        Q_EMIT logOutput(tr("[ERROR] Cannot resolve the System32 ipconfig.exe path"));
+        return;
+    }
     runCommandAsync(
-        QStringLiteral("ipconfig"),
+        ipconfig_exe,
         {QStringLiteral("/release"), adapter_name},
         kIpconfigTimeoutMs,
         [this, adapter_name](bool success, const QString& output) {
@@ -3381,7 +3442,13 @@ void NetworkDiagnosticPanel::onRenewDhcpLease() {
 
     constexpr int kIpconfigTimeoutMs = 30'000;
     const QString adapter_name = adapter->name;
-    runCommandAsync(QStringLiteral("ipconfig"),
+    // System32-qualified ipconfig, never the bare name (same hijack surface as netsh).
+    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
+    if (ipconfig_exe.isEmpty()) {
+        Q_EMIT logOutput(tr("[ERROR] Cannot resolve the System32 ipconfig.exe path"));
+        return;
+    }
+    runCommandAsync(ipconfig_exe,
                     {QStringLiteral("/renew"), adapter_name},
                     kIpconfigTimeoutMs,
                     [this, adapter_name](bool success, const QString& output) {
@@ -4520,7 +4587,8 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
                        "Average Speed: <b>%5 Mbps</b> (%6 MB/s)<br>"
                        "Peak Speed: %7 Mbps")
             .arg(result.isUpload ? tr("Upload") : tr("Download"))
-            .arg(result.remoteAddress)
+            // remoteAddress is a peer-supplied string echoed into a rich-text label.
+            .arg(result.remoteAddress.toHtmlEscaped())
             .arg(result.bytesTransferred / sak::kBytesPerMBf, 0, 'f', kDecimalPrecisionOne)
             .arg(result.durationSec, 0, 'f', 1)
             .arg(result.avgSpeedMbps, 0, 'f', 1)
@@ -4535,7 +4603,7 @@ void NetworkDiagnosticPanel::onStateChanged(int newState) {
     // With concurrent operations, per-operation button management is handled
     // by operationFinished and the individual completion signal handlers.
     // This slot is kept for backward compatibility but does not re-enable
-    // all buttons globally — that would interfere with other running ops.
+    // all buttons globally -- that would interfere with other running ops.
 }
 
 void NetworkDiagnosticPanel::resetDiagnosticButtons(int finishedState) {
@@ -4624,7 +4692,7 @@ void NetworkDiagnosticPanel::onError(QString error) {
 }
 
 // ===================================================================
-// Quick Actions — Reset Network
+// Quick Actions -- Reset Network
 // ===================================================================
 
 void NetworkDiagnosticPanel::createResetNetworkAction() {
@@ -5153,8 +5221,10 @@ void NetworkDiagnosticPanel::showSharesContextMenu(const QPoint& pos) {
                 QApplication::clipboard()->setText(unc_path);
                 Q_EMIT statusMessage(tr("Copied: %1").arg(unc_path), sak::kTimerBroadcastMs);
             });
-            menu.addAction(tr("Open in Explorer"), this, [unc_path]() {
-                QProcess::startDetached(QStringLiteral("explorer.exe"), {unc_path});
+            menu.addAction(tr("Open in Explorer"), this, [this, unc_path]() {
+                if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {unc_path})) {
+                    Q_EMIT logOutput(tr("[ERROR] Could not launch Explorer"));
+                }
             });
         }
 

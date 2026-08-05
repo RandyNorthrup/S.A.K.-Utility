@@ -13,6 +13,9 @@
 #include "sak/email_constants.h"
 #include "sak/email_contacts_dialog.h"
 #include "sak/email_file_scanner_dialog.h"
+#include "sak/email_html_sanitizer.h"
+#include "sak/email_safe_text_browser.h"
+#include "sak/email_view_ids.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -705,9 +708,10 @@ QWidget* EmailInspectorPanel::createContentTab() {
     layout->setSpacing(ui::kSpacingTight);
 
 
-    m_content_browser = new QTextBrowser(this);
-    m_content_browser->setOpenExternalLinks(false);
-    m_content_browser->setReadOnly(true);
+    // Renders attacker-authored message markup: EmailSafeTextBrowser denies every non-data:
+    // resource load (no file:/// disclosure, no remote tracking pixel) and refuses to navigate
+    // on a link activation. See sak/email_safe_text_browser.h.
+    m_content_browser = new EmailSafeTextBrowser(this);
     m_content_browser->setAccessibleName(QStringLiteral("Email Content"));
     m_content_browser->setStyleSheet(ui::emailContentBrowserStyle());
     layout->addWidget(m_content_browser, 1);
@@ -1012,7 +1016,6 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
     if (!ok) {
         return;
     }
-    m_pending_item_id = item_id;
     m_controller->loadItemDetail(item_id);
     m_controller->loadItemProperties(item_id);
 }
@@ -1025,7 +1028,6 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
                 uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
-                m_pending_item_id = nid;
                 m_controller->loadItemDetail(nid);
             }
         }
@@ -1062,12 +1064,20 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     if (!item) {
         return;
     }
+    // Resolve the RIGHT-CLICKED folder and export that id. A right-click does not
+    // emit itemClicked, so m_current_folder_id still names the last LEFT-clicked
+    // folder: exporting through it exported a folder the user never pointed at.
+    // Captured by value so the export actions do not have to reach back into the
+    // tree once the menu is open. An item with no usable id yields nullopt, and
+    // exportFolderAs refuses rather than falling back to the selection.
+    const std::optional<uint64_t> folder_id = sak::decodeEmailViewId(item->data(0, Qt::UserRole));
+
     QMenu menu(this);
-    menu.addAction(tr("Export Folder as EML..."), this, [this] {
-        exportCurrentFolderAs(sak::ExportFormat::Eml);
+    menu.addAction(tr("Export Folder as EML..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::Eml, folder_id);
     });
-    menu.addAction(tr("Export Folder as CSV..."), this, [this] {
-        exportCurrentFolderAs(sak::ExportFormat::CsvEmails);
+    menu.addAction(tr("Export Folder as CSV..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::CsvEmails, folder_id);
     });
     menu.addSeparator();
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
@@ -1243,8 +1253,17 @@ void EmailInspectorPanel::onExportClicked() {
     m_controller->exportItems(config);
 }
 
-void EmailInspectorPanel::exportCurrentFolderAs(sak::ExportFormat format) {
+void EmailInspectorPanel::exportFolderAs(sak::ExportFormat format,
+                                         std::optional<uint64_t> folder_id) {
     if (!m_controller->isFileOpen()) {
+        return;
+    }
+    if (!folder_id.has_value()) {
+        // Fail visibly. Falling back to the selected folder here would export a
+        // folder other than the one the user asked for.
+        sak::showWarningLogged(this,
+                               tr("Folder Not Identified"),
+                               tr("This folder carries no identifier, so nothing was exported."));
         return;
     }
     const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
@@ -1255,13 +1274,23 @@ void EmailInspectorPanel::exportCurrentFolderAs(sak::ExportFormat format) {
     sak::EmailExportConfig config;
     config.format = format;
     config.output_path = dir_path;
-    config.folder_id = m_current_folder_id;
+    config.folder_id = *folder_id;
     config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }
 
 void EmailInspectorPanel::onExportAttachmentsClicked() {
     if (!m_controller->isFileOpen()) {
+        return;
+    }
+    if (m_batch_save.isActive()) {
+        // The dialog takes over the controller's attachment signals for as long as
+        // it is open, so a batch running here would never see its remaining
+        // arrivals and would never complete. Refuse rather than strand it.
+        sak::showWarningLogged(this,
+                               tr("Save In Progress"),
+                               tr("An attachment save is already running. Wait for it to "
+                                  "finish before browsing attachments."));
         return;
     }
     m_dialog_active = true;
@@ -1278,7 +1307,6 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
             m_current_page = 0;
             m_current_total = 0;
             reloadCurrentPage();
-            m_pending_item_id = message_id;
             m_controller->loadItemDetail(message_id);
             m_controller->loadItemProperties(message_id);
         }
@@ -1289,35 +1317,89 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
 // Attachment Slots
 // ============================================================================
 
+std::optional<uint64_t> EmailInspectorPanel::attachmentSaveSource() {
+    if (m_batch_save.isActive()) {
+        sak::showWarningLogged(this,
+                               tr("Save In Progress"),
+                               tr("An attachment save is already running. Wait for it to "
+                                  "finish before starting another."));
+        return std::nullopt;
+    }
+    if (!m_current_item_id.has_value()) {
+        // Without a committed message identity the request cannot name the message
+        // the attachment belongs to, and would otherwise be issued against whatever
+        // id happened to be left in place.
+        sak::showWarningLogged(this,
+                               tr("No Email Open"),
+                               tr("Open an email before saving its attachments."));
+        return std::nullopt;
+    }
+    return m_current_item_id;
+}
+
+void EmailInspectorPanel::startAttachmentBatch(const QString& dir,
+                                               const QVector<sak::AttachmentRef>& refs) {
+    if (!m_batch_save.begin(dir, refs)) {
+        sak::showWarningLogged(this,
+                               tr("Cannot Save Attachments"),
+                               tr("The attachment save could not be started. "
+                                  "Nothing was written."));
+        return;
+    }
+    // Lock the controls for the duration: arrivals from a second batch begun now
+    // would interleave with this one's and land in each other's slots.
+    setAttachmentSaveControlsEnabled(false);
+    updateStatusBar(tr("Saving %1 attachment(s)...").arg(refs.size()));
+    for (const auto& ref : refs) {
+        m_controller->loadAttachmentContent(ref.message_id, ref.index);
+    }
+}
+
+void EmailInspectorPanel::finishAttachmentBatchIfComplete() {
+    if (!m_batch_save.isComplete()) {
+        return;
+    }
+    updateStatusBar(m_batch_save.summaryText());
+    m_batch_save.reset();
+    setAttachmentSaveControlsEnabled(!m_current_detail.attachments.isEmpty());
+}
+
 void EmailInspectorPanel::onSaveAttachmentClicked() {
-    int row = m_attachments_table->currentRow();
+    const std::optional<uint64_t> source = attachmentSaveSource();
+    if (!source.has_value()) {
+        return;
+    }
+    const int row = m_attachments_table->currentRow();
     if (row < 0 || row >= m_current_detail.attachments.size()) {
         return;
     }
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
     if (dir.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, 1);
-    const auto& attachment = m_current_detail.attachments.at(row);
-    updateStatusBar(tr("Saving attachment..."));
-    m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
+    const QVector<sak::AttachmentRef> refs{
+        sak::AttachmentRef{*source, m_current_detail.attachments.at(row).index}};
+    startAttachmentBatch(dir, refs);
 }
 
 void EmailInspectorPanel::onSaveAllAttachmentsClicked() {
+    const std::optional<uint64_t> source = attachmentSaveSource();
+    if (!source.has_value()) {
+        return;
+    }
     if (m_current_detail.attachments.isEmpty()) {
         return;
     }
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
     if (dir.isEmpty()) {
         return;
     }
-    int count = m_current_detail.attachments.size();
-    m_batch_save.begin(dir, count);
+    QVector<sak::AttachmentRef> refs;
+    refs.reserve(m_current_detail.attachments.size());
     for (const auto& attachment : m_current_detail.attachments) {
-        m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
+        refs.append(sak::AttachmentRef{*source, attachment.index});
     }
-    updateStatusBar(tr("Saving %1 attachments...").arg(count));
+    startAttachmentBatch(dir, refs);
 }
 
 // ============================================================================
@@ -1360,7 +1442,8 @@ void EmailInspectorPanel::onFileClosed() {
     m_item_count_label->clear();
     m_current_items.clear();
     m_current_folder_id = 0;
-    m_current_item_id = 0;
+    m_current_item_id.reset();
+    m_properties_item_id.reset();
     m_current_detail = {};
     m_current_page = 0;
     m_current_total = 0;
@@ -1412,12 +1495,23 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     m_remote_images.clear();
     m_redraw_timer->stop();
 
-    // Commit the pending item ID now that the load succeeded
-    m_current_item_id = m_pending_item_id;
+    // Commit the identity the response itself carries, not the most recently
+    // clicked row. Under rapid navigation an out-of-order response would otherwise
+    // pair message A's content with message B's identity, and every later action
+    // that reads the committed id -- attachment saves above all -- would address
+    // the wrong message.
+    m_current_item_id = detail.node_id;
     m_current_detail = detail;
     displayItemDetail(detail);
     displayAttachments(detail.attachments);
-    m_save_all_attachments_button->setEnabled(!detail.attachments.isEmpty());
+
+    // The properties tab is filled by a separate response. Until the one for THIS
+    // message arrives, whatever is on screen describes the previous message, so
+    // clear it rather than leave it captioned by the message now displayed.
+    if (m_properties_item_id != m_current_item_id) {
+        m_properties_item_id.reset();
+        displayProperties({});
+    }
 
     // Request inline image attachments so they can be rendered once data
     // arrives.  Always requested regardless of the HTML toggle: flipping the
@@ -1434,33 +1528,50 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     }
 }
 
-void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t /*item_id*/,
+void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t item_id,
                                                  QVector<sak::MapiProperty> properties) {
     if (m_dialog_active) {
         return;
     }
+    // Apply only the response that describes the message the detail view has
+    // committed. Responses arrive out of order under rapid navigation, and
+    // applying whichever one lands last would caption message A's properties with
+    // message B's identity.
+    if (m_current_item_id != item_id) {
+        return;
+    }
+    m_properties_item_id = item_id;
     displayProperties(properties);
 }
 
-void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
+void EmailInspectorPanel::onAttachmentContentReady(uint64_t message_id,
                                                    int index,
                                                    QByteArray attachment_data,
                                                    QString filename) {
     if (m_dialog_active) {
         return;
     }
+    const sak::AttachmentRef ref{message_id, index};
 
-    // Save operation — delegate entirely to shared batch saver
-    if (m_batch_save.isActive()) {
-        m_batch_save.recordOne(filename, attachment_data);
-        if (m_batch_save.isComplete()) {
-            updateStatusBar(m_batch_save.summaryText());
-            m_batch_save.reset();
+    // Save operation: record only what this batch actually asked for. A stray
+    // arrival -- an inline-image fetch, or a leftover from an earlier batch --
+    // would otherwise be written into one of the batch's slots, saving the wrong
+    // payload while the batch still reported a full count.
+    if (m_batch_save.expects(ref)) {
+        const auto result = m_batch_save.recordOne(ref, filename, attachment_data);
+        if (!result.success) {
+            Q_EMIT logOutput(tr("Attachment save failed: %1").arg(result.error_message));
         }
+        finishAttachmentBatchIfComplete();
         return;
     }
 
-    // Not a save — check for inline CID image
+    // Not part of a save: inline CID image for the message on screen. A late
+    // arrival for a previously opened message must not be cached under this
+    // message's Content-Ids.
+    if (m_current_item_id != message_id) {
+        return;
+    }
     for (const auto& att : m_current_detail.attachments) {
         if (att.index == index && !att.content_id.isEmpty()) {
             // Cache by Content-Id so the HTML builder can inline as data URI.
@@ -1508,6 +1619,15 @@ void EmailInspectorPanel::onErrorOccurred(QString message) {
     updateStatusBar(tr("Error: %1").arg(message));
     sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
+
+    // A failed attachment read is reported through this signal and names no
+    // attachment, so an in-flight batch has to count it. Without this the batch
+    // never reaches its expected total, and the save controls -- locked for the
+    // duration of a batch -- would stay locked for the rest of the session.
+    if (m_batch_save.isActive()) {
+        m_batch_save.recordError();
+        finishAttachmentBatchIfComplete();
+    }
 }
 
 // MBOX-specific handlers
@@ -1616,9 +1736,15 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
     // so Save Attachment(s) acted on a previously-selected PST message.
     m_current_item_id = static_cast<uint64_t>(detail.message_index);
     sak::PstItemDetail normalized;
-    normalized.node_id = m_current_item_id;
+    normalized.node_id = *m_current_item_id;
     normalized.attachments = detail.attachments;
     m_current_detail = normalized;
+
+    // MBOX carries no MAPI properties. Anything left in the properties tab
+    // describes a previously opened PST message, so clear it rather than leave it
+    // under this message's identity.
+    m_properties_item_id.reset();
+    displayProperties({});
 
     // Attachments
     displayAttachments(detail.attachments);
@@ -1939,7 +2065,10 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
     if (!detail.body_html.isEmpty()) {
-        html += detail.body_html;
+        // A task body is untrusted markup exactly like a mail body; route it through the same
+        // choke point instead of splicing it in raw (this path previously skipped both the
+        // sanitizer and the inline/remote image neutralization).
+        html += buildPreviewHtml(detail.body_html);
     } else if (!detail.body_plain.isEmpty()) {
         html += QString::fromLatin1(ui::kHtmlPreWrap).arg(detail.body_plain.toHtmlEscaped());
     }
@@ -1976,7 +2105,13 @@ void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
 }
 
 QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
-    // Inline every image `src` we can resolve offline — both `cid:`
+    // Single choke point for every untrusted body this panel renders. Strip active content
+    // first, with the SAME sanitizer the HTML and PDF export writers use -- one authority, not a
+    // second dialect -- so script blocks, inline event handlers, javascript:/vbscript: URIs and
+    // framing/loading tags (iframe/object/embed/link/meta/...) never reach the document.
+    const QString safe_html = sanitizeEmailBodyHtml(body_html);
+
+    // Then inline every image `src` we can resolve offline -- both `cid:`
     // attachment references and any already-downloaded http(s) URLs.  The
     // result is self-contained HTML that `QTextBrowser` can render without
     // a network stack.  Anything we cannot resolve gets blanked out so the
@@ -1985,12 +2120,12 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
                                             QRegularExpression::CaseInsensitiveOption);
 
     QString out;
-    out.reserve(body_html.size());
+    out.reserve(safe_html.size());
     int pos = 0;
-    auto it = kImgSrc.globalMatch(body_html);
+    auto it = kImgSrc.globalMatch(safe_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
-        out.append(body_html.mid(pos, m.capturedStart() - pos));
+        out.append(safe_html.mid(pos, m.capturedStart() - pos));
         pos = m.capturedEnd();
 
         const QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
@@ -2005,7 +2140,7 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
         const QByteArray image_data = resolveInlineImageData(src, lower);
         appendInlineImageAttr(out, m, image_data);
     }
-    out.append(body_html.mid(pos));
+    out.append(safe_html.mid(pos));
 
     // Neutralise any lingering remote refs that are not `src=...` attributes
     // (CSS url(...), background/poster attributes) when images are off.
@@ -2232,8 +2367,14 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     }
     m_attachments_table->setUpdatesEnabled(true);
     m_attachments_table->setSortingEnabled(true);
-    m_save_attachment_button->setEnabled(!attachments.isEmpty());
-    m_save_all_attachments_button->setEnabled(!attachments.isEmpty());
+    // Never unlock the save controls while a batch is still running: a second
+    // batch started now would interleave its arrivals with the first one's.
+    setAttachmentSaveControlsEnabled(!attachments.isEmpty() && !m_batch_save.isActive());
+}
+
+void EmailInspectorPanel::setAttachmentSaveControlsEnabled(bool enabled) {
+    m_save_attachment_button->setEnabled(enabled);
+    m_save_all_attachments_button->setEnabled(enabled);
 }
 
 void EmailInspectorPanel::updateFileInfoBar(const sak::PstFileInfo& info) {

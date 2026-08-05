@@ -28,6 +28,9 @@ constexpr int kDosDeviceQueryAttempts = 3;
 constexpr int kDosDeviceBufferGrowthFactor = 2;
 constexpr DWORD kStorageDescriptorBufferBytes = 1024;
 constexpr int kVolumePathBufferMultiplier = 4;
+// One initial query plus retries after ERROR_MORE_DATA (the mount table can change between
+// attempts); bounded so a volume whose path list keeps growing cannot spin forever.
+constexpr int kVolumePathQueryAttempts = 3;
 
 /// @brief Check if any drive in the list has the given devicePath
 bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
@@ -316,7 +319,9 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
     info.isRemovable = isDriveRemovable(driveNumber);
     info.isReadOnly = isDriveReadOnly(hDrive);
     info.isSystem = containsWindowsInstallation(driveNumber);
-    info.mountPoints = getMountPoints(driveNumber);
+    // The completeness flag travels with the record: a failed/partial volume enumeration is
+    // reported honestly instead of surfacing as a confident "no mount points".
+    info.mountPoints = getMountPoints(driveNumber, &info.mountPointsComplete);
 
     if (!info.mountPoints.isEmpty()) {
         info.volumeLabel = getVolumeLabel(info.mountPoints.first());
@@ -588,29 +593,41 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
         writable_ok, writable_error, length_ok, lengthInfo.Length.QuadPart);
 }
 
-QStringList DriveScanner::getMountPoints(int driveNumber) {
+QStringList DriveScanner::getMountPoints(int driveNumber, bool* enumerationOk) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "getMountPoints", "driveNumber must be non-negative");
     QStringList mountPoints;
+    bool ok = true;
 
     wchar_t volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
 
     if (hFind == INVALID_HANDLE_VALUE) {
-        return mountPoints;
+        // Enumeration itself failed: signal it so a caller does not read the empty result as
+        // "this drive has no mounted volumes".
+        ok = false;
+    } else {
+        do {
+            size_t len = wcslen(volumeName);
+            if (len > 0 && volumeName[len - 1] == L'\\') {
+                volumeName[len - 1] = L'\0';
+            }
+            if (volumeMatchesDrive(volumeName, driveNumber) &&
+                !collectMountPaths(volumeName, len, mountPoints)) {
+                ok = false;
+            }
+        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+        // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
+        // list may be incomplete -> report non-authoritative so the caller fails closed.
+        if (GetLastError() != ERROR_NO_MORE_FILES) {
+            ok = false;
+        }
+        FindVolumeClose(hFind);
     }
 
-    do {
-        size_t len = wcslen(volumeName);
-        if (len > 0 && volumeName[len - 1] == L'\\') {
-            volumeName[len - 1] = L'\0';
-        }
-        if (volumeMatchesDrive(volumeName, driveNumber)) {
-            collectMountPaths(volumeName, len, mountPoints);
-        }
-    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
-
-    FindVolumeClose(hFind);
+    if (enumerationOk != nullptr) {
+        *enumerationOk = ok;
+    }
     return mountPoints;
 }
 
@@ -636,24 +653,28 @@ bool DriveScanner::volumeMatchesDrive(const wchar_t* volumeName, int driveNumber
     return match;
 }
 
-void DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots) {
+bool DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots) {
     const QString guidRoot = QString::fromWCharArray(volumeName);  // keeps trailing backslash
     size_t len = wcslen(volumeName);
     if (len > 0 && volumeName[len - 1] == L'\\') {
         volumeName[len - 1] = L'\0';
     }
     if (!volumeMatchesDrive(volumeName, driveNumber)) {
-        return;
+        return true;
     }
     QStringList mounts;
-    collectMountPaths(volumeName, len, mounts);
+    const bool mountsOk = collectMountPaths(volumeName, len, mounts);
     if (mounts.isEmpty()) {
         // Unmounted volume: it has no drive letter, but its \\?\Volume{GUID}\ path is still
         // inspectable -- so an unmounted Windows partition is not missed by the system check.
+        // The same GUID path is appended when the mount-path query FAILED (mounts is empty but
+        // not authoritative), so the volume is still inspected; mountsOk tells the caller the
+        // root list is not authoritative.
         roots.append(guidRoot);
     } else {
         roots += mounts;
     }
+    return mountsOk;
 }
 
 QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerationOk) {
@@ -670,7 +691,9 @@ QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerat
         ok = false;
     } else {
         do {
-            appendVolumeRoot(volumeName, driveNumber, roots);
+            if (!appendVolumeRoot(volumeName, driveNumber, roots)) {
+                ok = false;
+            }
         } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
         // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
         // list may be incomplete -> report non-authoritative so the caller fails closed.
@@ -686,25 +709,58 @@ QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerat
     return roots;
 }
 
-void DriveScanner::collectMountPaths(wchar_t* volumeName,
+sak::VolumePathQuery DriveScanner::volumePathQueryOutcome(bool query_ok,
+                                                          DWORD query_error,
+                                                          DWORD required_chars,
+                                                          size_t buffer_chars) {
+    if (query_ok) {
+        return sak::VolumePathQuery::Complete;
+    }
+    // ERROR_MORE_DATA is the only recoverable failure: the API reports how many characters it
+    // needs, so grow to that size and ask again instead of dropping the volume's mount paths.
+    // A required size that would not grow the buffer is treated as a failure -- retrying with
+    // the same buffer would spin forever.
+    if (query_error == ERROR_MORE_DATA && required_chars > buffer_chars) {
+        return sak::VolumePathQuery::Retry;
+    }
+    return sak::VolumePathQuery::Failed;
+}
+
+bool DriveScanner::collectMountPaths(wchar_t* volumeName,
                                      size_t nameLen,
                                      QStringList& mountPoints) {
     volumeName[nameLen - 1] = L'\\';
 
-    wchar_t pathNames[MAX_PATH * kVolumePathBufferMultiplier];
-    DWORD pathLen = 0;
-    if (!GetVolumePathNamesForVolumeNameW(
-            volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
-        volumeName[nameLen - 1] = L'\0';
-        return;
+    // Grow the buffer to the size the API asks for (ERROR_MORE_DATA) rather than dropping this
+    // volume's mount paths; any other failure is surfaced so the caller never presents an
+    // unreadable volume as unmounted.
+    std::vector<wchar_t> pathNames(MAX_PATH * kVolumePathBufferMultiplier, L'\0');
+    bool query_ok = false;
+    for (int attempt = 0; attempt < kVolumePathQueryAttempts; ++attempt) {
+        DWORD required = 0;
+        const bool call_ok = GetVolumePathNamesForVolumeNameW(volumeName,
+                                                              pathNames.data(),
+                                                              static_cast<DWORD>(pathNames.size()),
+                                                              &required) != 0;
+        const auto outcome =
+            volumePathQueryOutcome(call_ok, GetLastError(), required, pathNames.size());
+        if (outcome != sak::VolumePathQuery::Retry) {
+            query_ok = outcome == sak::VolumePathQuery::Complete;
+            break;
+        }
+        pathNames.assign(required, L'\0');
+    }
+    volumeName[nameLen - 1] = L'\0';
+    if (!query_ok) {
+        return false;
     }
 
-    wchar_t* ptr = pathNames;
+    const wchar_t* ptr = pathNames.data();
     while (*ptr) {
         mountPoints.append(QString::fromWCharArray(ptr));
         ptr += wcslen(ptr) + 1;
     }
-    volumeName[nameLen - 1] = L'\0';
+    return true;
 }
 
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {

@@ -230,6 +230,19 @@ public:
     [[nodiscard]] static QStringList unmetClosureDependencies(
         const QVector<BatchInternalizationJob>& jobs);
 
+    /// @brief Integrity decision for a feed .nupkg fetched by the direct-download
+    ///        harvester. A .nupkg has a DIFFERENT trust root than an installer binary:
+    ///        an installer is authenticated against the checksum its install script
+    ///        declares (PackageInternalizationEngine::installerVerified), a .nupkg
+    ///        against the hash the NuGet feed publishes (base64, per
+    ///        @p hash_algorithm). Returns true ONLY when the feed published a hash and
+    ///        @p body matches it; an empty hash, an unknown algorithm or a mismatch all
+    ///        REFUSE, so an unauthenticated .nupkg is never extracted, script-parsed or
+    ///        harvested. Pure; unit-testable.
+    [[nodiscard]] static bool nupkgFeedVerified(const QByteArray& body,
+                                                const QString& feed_hash_base64,
+                                                const QString& hash_algorithm);
+
 Q_SIGNALS:
     /// @brief Batch operation started
     void operationStarted(int total_packages);
@@ -471,14 +484,32 @@ private:
                                               const QString& output_dir,
                                               QSet<QString>& used_names);
 
-    /// @brief Download a single file from a URL to disk. When @p expected_checksum
-    ///        is non-empty the downloaded bytes must match it (under @p
-    ///        checksum_type, or inferred from length) or the download fails closed
-    ///        and nothing is committed.
+    /// @brief Download a single INSTALLER from a URL to disk. The bytes must match
+    ///        @p expected_checksum (under @p checksum_type, or inferred from length)
+    ///        or the download fails closed and nothing is committed. An empty
+    ///        checksum is itself a refusal (PackageInternalizationEngine::
+    ///        installerVerified fails closed on an unverifiable installer), so both
+    ///        arguments are REQUIRED -- there is no unchecksummed installer path.
+    ///        A feed .nupkg is fetched through downloadVerifiedNupkg instead, which
+    ///        supplies the feed's own published PackageHash.
     [[nodiscard]] bool downloadFileFromUrl(const QString& url,
                                            const QString& output_path,
-                                           const QString& expected_checksum = QString(),
-                                           const QString& checksum_type = QString());
+                                           const QString& expected_checksum,
+                                           const QString& checksum_type);
+
+    /// @brief Fetch the NuGet feed's published (PackageHash, PackageHashAlgorithm)
+    ///        for @p pkg_id at @p version. Empty-first pair on any failure.
+    [[nodiscard]] QPair<QString, QString> fetchNupkgHashMeta(const QString& pkg_id,
+                                                             const QString& version);
+
+    /// @brief Download the feed .nupkg for @p pkg_id @p version to @p output_path,
+    ///        verified against the feed's published PackageHash BEFORE anything is
+    ///        written. Fails closed when the feed publishes no hash for that version
+    ///        or the bytes do not match -- the .nupkg is never taken on trust just
+    ///        because the install script inside it carries no checksum of its own.
+    [[nodiscard]] bool downloadVerifiedNupkg(const QString& pkg_id,
+                                             const QString& version,
+                                             const QString& output_path);
 
     /// @brief Emit a log message to the UI from a background thread
     void emitLog(const QString& message);

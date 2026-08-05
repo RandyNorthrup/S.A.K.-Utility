@@ -28,8 +28,17 @@ bool RestorePointManager::isSystemRestoreEnabled() const {
     // shadow copies/backups independently of System Restore, so a running VSS
     // would falsely report "enabled" (a safety-check failing OPEN, letting a
     // destructive op skip its restore point).
+    //
+    // Launch the System32-qualified interpreter, never a bare "powershell.exe": this
+    // manager runs elevated, so a PATH/CWD-planted powershell would execute with our
+    // token. Unresolvable -> report NOT enabled (fail closed), never probe via PATH.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return false;
+    }
+
     const auto result = sak::runProcess(
-        QStringLiteral("powershell.exe"),
+        powershell,
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-NonInteractive"),
          QStringLiteral("-Command"),
@@ -53,6 +62,33 @@ bool RestorePointManager::restoreEnabledFromProbe(bool probeSucceeded, const QSt
     return probeSucceeded && output.trimmed() == QStringLiteral("ENABLED");
 }
 
+namespace {
+
+/// @brief Checkpoint-Computer script for @p safe_desc (single quotes already doubled).
+///
+/// Checkpoint-Computer does NOT throw when Windows SKIPS creation under the once-per-24h
+/// frequency throttle -- it only writes a warning (and exits 0). The script fails on that
+/// warning so a silent no-op is never reported as a created restore point; the warning's
+/// '1440'/'frequency' text then routes to the throttle branch in the caller.
+QString buildCheckpointScript(const QString& safe_desc) {
+    return QString(
+               "try { "
+               "  Checkpoint-Computer -Description '%1' "
+               "    -RestorePointType 'APPLICATION_UNINSTALL' "
+               "    -ErrorAction Stop "
+               "    -WarningVariable wv "
+               "    -WarningAction SilentlyContinue; "
+               "  if ($wv) { Write-Error $wv; exit 1; } "
+               "  Write-Output 'SUCCESS'; "
+               "} catch { "
+               "  Write-Error $_.Exception.Message; "
+               "  exit 1; "
+               "}")
+        .arg(safe_desc);
+}
+
+}  // namespace
+
 bool RestorePointManager::createRestorePoint(const QString& description) {
     Q_ASSERT(!description.isEmpty());
     if (!isElevated()) {
@@ -66,30 +102,20 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
     // Escape single quotes in description
     safe_desc.replace("'", "''");
 
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    // Restore-point creation is the elevated step: resolve the System32 interpreter and
+    // REFUSE to run if it cannot be resolved rather than let CreateProcess search PATH/CWD.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        Q_EMIT restorePointFailed(
+            "Cannot resolve the System32 PowerShell path; refusing to create a restore point.");
+        return false;
+    }
+
+    const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NonInteractive"),
                                          QStringLiteral("-Command"),
-                                         QString("try { "
-                                                 "  Checkpoint-Computer -Description '%1' "
-                                                 "    -RestorePointType 'APPLICATION_UNINSTALL' "
-                                                 "    -ErrorAction Stop "
-                                                 "    -WarningVariable wv "
-                                                 "    -WarningAction SilentlyContinue; "
-                                                 // Checkpoint-Computer does NOT throw when Windows
-                                                 // SKIPS creation under the once-per-24h frequency
-                                                 // throttle -- it only writes a warning (and exits
-                                                 // 0). Fail on that warning so a silent no-op is
-                                                 // never reported as a created restore point; its
-                                                 // '1440'/'frequency' text routes to the throttle
-                                                 // branch below.
-                                                 "  if ($wv) { Write-Error $wv; exit 1; } "
-                                                 "  Write-Output 'SUCCESS'; "
-                                                 "} catch { "
-                                                 "  Write-Error $_.Exception.Message; "
-                                                 "  exit 1; "
-                                                 "}")
-                                             .arg(safe_desc)},
+                                         buildCheckpointScript(safe_desc)},
                                         kCreateTimeoutMs);
 
     if (result.timed_out) {
@@ -144,8 +170,15 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& 
     queryOk = false;
     QVector<QPair<QDateTime, QString>> points;
 
+    // System32-qualified interpreter only; an unresolvable path is a FAILED query
+    // (queryOk stays false), never a PATH-resolved probe.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return points;
+    }
+
     const auto result = sak::runProcess(
-        QStringLiteral("powershell.exe"),
+        powershell,
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-NonInteractive"),
          QStringLiteral("-Command"),

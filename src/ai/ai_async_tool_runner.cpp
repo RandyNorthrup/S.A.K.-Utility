@@ -45,6 +45,11 @@ void AiAsyncToolRunner::onWatcherFinished() {
     if (attached) {
         Q_EMIT finished(result);
     }
+    // Always announce that the pool task left, even when its result was dropped: a
+    // detached job emits nothing else, so without this a caller that treats a running
+    // runner as busy (a cancelled-but-still-executing mutation) would never learn that
+    // it finally went idle.
+    Q_EMIT drained();
 }
 
 }  // namespace sak::ai

@@ -5,6 +5,7 @@
 
 #include "sak/follow_scroll_controller.h"
 #include "sak/layout_constants.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
@@ -108,7 +109,9 @@ void DetachableLogWindow::appendLog(const QString& message) {
     const int previous_value = m_logScrollController ? m_logScrollController->scrollValue() : 0;
     const bool follow_newest = !m_logScrollController ||
                                m_logScrollController->shouldFollowNewestForAppend();
-    m_logEdit->append(timestamp + message);
+    // QTextEdit::append() promotes anything that looks like markup to rich text, and log lines
+    // carry file paths, program names, command output and AI text; wrap so they read literally.
+    m_logEdit->append(sak::ui::asLiteralRichText(timestamp + message));
     if (!m_logScrollController) {
         return;
     }

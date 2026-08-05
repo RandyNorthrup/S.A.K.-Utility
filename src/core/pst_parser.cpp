@@ -6,6 +6,7 @@
 
 #include "sak/pst_parser.h"
 
+#include "sak/email_html_sanitizer.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 
@@ -2933,10 +2934,15 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
     // Ensure both body representations are always populated when the message
     // has any body at all.  Many PST messages store only PR_HTML (no PR_BODY);
     // downstream consumers (the Plain Text view, search indexers, exporters)
-    // must not have to re-implement HTML→text conversion.
+    // must not have to re-implement HTML-to-text conversion.
+    //
+    // The body is attacker-authored, so it goes through the same sanitizer the viewers and the
+    // export writers use before it is parsed -- otherwise script/handler text could surface as
+    // "plain text" in the Plain Text view and in every exported artifact. No resource-denying
+    // document is needed here: toPlainText() never lays the document out, so nothing is loaded.
     if (detail.body_plain.isEmpty() && !detail.body_html.isEmpty()) {
         QTextDocument doc;
-        doc.setHtml(detail.body_html);
+        doc.setHtml(sak::sanitizeEmailBodyHtml(detail.body_html));
         detail.body_plain = doc.toPlainText();
     }
 

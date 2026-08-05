@@ -308,9 +308,15 @@ QString WindowsUSBCreator::system32ExePath(const QString& exeName) {
 bool WindowsUSBCreator::diskpartOutputIsError(const QString& output) {
     // diskpart commonly exits 0 even when an individual command failed, printing a
     // hard-failure marker to stdout. Treat those markers as failure (fail closed).
+    // The list covers the selection failures ("There is no volume selected") and argument
+    // rejections that leave the media unformatted while diskpart still exits 0 -- the three
+    // original markers missed those entirely.
     static const QRegularExpression errorRe(
         QStringLiteral("DiskPart has encountered an error|Virtual Disk Service error|"
-                       "Access is denied"),
+                       "Access is denied|There is no (disk|volume|partition) selected|"
+                       "(is|are) not valid|DiskPart failed|could not complete the operation|"
+                       "write protected|not convertible|not enough usable space|"
+                       "The operation is not supported"),
         QRegularExpression::CaseInsensitiveOption);
     return errorRe.match(output).hasMatch();
 }
@@ -333,6 +339,14 @@ bool WindowsUSBCreator::checkDiskpartResult(const sak::ProcessResult& result) {
     }
     if (diskpartOutputIsError(result.std_out)) {
         setError("Diskpart reported an error in its output despite a zero exit code");
+        sak::logError(lastError().toStdString());
+        return false;
+    }
+    // A zero exit code with no output at all is not proof of success: diskpart always echoes
+    // its banner and a per-command acknowledgement when it actually runs a script, so silence
+    // means the script never executed. Fail closed rather than treat it as a completed format.
+    if (result.std_out.trimmed().isEmpty()) {
+        setError("Diskpart produced no output; the script did not run");
         sak::logError(lastError().toStdString());
         return false;
     }

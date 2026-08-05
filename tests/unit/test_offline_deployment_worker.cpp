@@ -41,6 +41,8 @@ private Q_SLOTS:
     void installContextForMode_bundleLocalListFeed();
     void unmetClosureDependencies_flagsMissingIntraClosureDeps();
     void isSuccessInstallExitCode_acceptsZeroAndRebootCodes();
+    void nupkgFeedVerified_requiresAFeedPublishedHash();
+    void nupkgFeedVerified_acceptsOnlyTheMatchingFeedHash();
 };
 
 void TestOfflineDeploymentWorker::classifyWorkDir_freshWhenMissingOrEmpty() {
@@ -413,6 +415,54 @@ void TestOfflineDeploymentWorker::isSuccessInstallExitCode_acceptsZeroAndRebootC
     QVERIFY(OfflineDeploymentWorker::isSuccessInstallExitCode(3010));  // reboot required
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1));    // generic failure
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(-1));
+}
+
+// R5-P7-25: the direct-download harvester used to fetch the feed .nupkg through
+// downloadFileFromUrl with NO checksum, which (correctly) fails closed on an
+// unverifiable installer -- so the whole harvester was dead by construction. The repair
+// is not to weaken that gate but to authenticate the .nupkg against its OWN trust root:
+// the hash the NuGet feed publishes. This seam is that decision.
+void TestOfflineDeploymentWorker::nupkgFeedVerified_requiresAFeedPublishedHash() {
+    const QByteArray body = QByteArrayLiteral("nupkg-bytes");
+
+    // No hash from the feed means there is nothing trusted to compare against: REFUSE
+    // rather than commit an unauthenticated package whose install script drives every
+    // later download and whose tools/ binaries are harvested straight into the bundle.
+    QVERIFY(!OfflineDeploymentWorker::nupkgFeedVerified(body, QString(), QStringLiteral("SHA512")));
+    QVERIFY(!OfflineDeploymentWorker::nupkgFeedVerified(
+        body, QStringLiteral("   "), QStringLiteral("SHA512")));
+
+    // A hash the feed published under an algorithm we cannot compute is equally
+    // unverifiable, so it must not pass either.
+    const QString sha512 =
+        QString::fromLatin1(QCryptographicHash::hash(body, QCryptographicHash::Sha512).toBase64());
+    QVERIFY(!OfflineDeploymentWorker::nupkgFeedVerified(body, sha512, QStringLiteral("SHA999")));
+    QVERIFY(!OfflineDeploymentWorker::nupkgFeedVerified(body, sha512, QString()));
+}
+
+void TestOfflineDeploymentWorker::nupkgFeedVerified_acceptsOnlyTheMatchingFeedHash() {
+    const QByteArray body = QByteArrayLiteral("nupkg-bytes");
+    const QString sha512 =
+        QString::fromLatin1(QCryptographicHash::hash(body, QCryptographicHash::Sha512).toBase64());
+
+    // The feed's PackageHash is BASE64 (not hex, unlike a script-declared installer
+    // checksum), so the matching form is what NuGet actually publishes.
+    QVERIFY(OfflineDeploymentWorker::nupkgFeedVerified(body, sha512, QStringLiteral("SHA512")));
+
+    // A tampered body under the same published hash is refused.
+    QVERIFY(!OfflineDeploymentWorker::nupkgFeedVerified(
+        QByteArrayLiteral("nupkg-bytez"), sha512, QStringLiteral("SHA512")));
+
+    // So is a substituted hash for the genuine body.
+    const QString other_hash = QString::fromLatin1(
+        QCryptographicHash::hash(QByteArrayLiteral("other"), QCryptographicHash::Sha512)
+            .toBase64());
+    QVERIFY(
+        !OfflineDeploymentWorker::nupkgFeedVerified(body, other_hash, QStringLiteral("SHA512")));
+
+    // The installer gate is UNCHANGED and still fails closed on an absent checksum: that
+    // is why the .nupkg needed its own trust root rather than a weakened downloader.
+    QVERIFY(!PackageInternalizationEngine::installerVerified(body, QString(), QString()));
 }
 
 QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)

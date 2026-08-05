@@ -69,6 +69,22 @@ public:
                                                        int exitCode,
                                                        bool cancelled);
 
+    /// @brief Trust screen for the program token parsed out of a registry uninstall string.
+    ///
+    /// The Uninstall subtree is attacker-influenceable -- ANY user can create an HKCU
+    /// entry -- and the program it names is launched with the uninstaller's (usually
+    /// ELEVATED) token. A bare or relative image name would be resolved by the
+    /// CreateProcess search order, which includes the current directory and PATH ahead of
+    /// the real install location, so a planted "setup.exe" would run elevated.
+    ///
+    /// Accepts ONLY a fully-qualified LOCAL path to an .exe -- "C:\\App\\unins000.exe",
+    /// separators either way. REFUSES: empty/whitespace, a bare image name, any relative
+    /// or drive-relative ("C:file.exe") or root-relative ("\\dir\\file.exe") form, UNC and
+    /// other doubled-separator paths (an untrusted remote origin for an elevated launch),
+    /// any "." or ".." segment, an alternate-data-stream suffix, an unexpanded "%VAR%",
+    /// and any image whose extension is not .exe. Pure; unit-testable.
+    [[nodiscard]] static bool uninstallProgramPathTrusted(const QString& exe);
+
 Q_SIGNALS:
     /// @brief Native uninstaller has been launched
     void nativeUninstallerStarted(const QString& programName);

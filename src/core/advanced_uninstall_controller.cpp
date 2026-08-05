@@ -284,7 +284,15 @@ QVector<LeftoverItem> AdvancedUninstallController::screenCleanupItems(
         if (!item.selected) {
             continue;
         }
-        const QString refusal = cleanupItemRefusal(item);
+        // A report-only item carries no deletion authority however it got selected: the
+        // scanner surfaced it for visibility because it could not tie the path to this
+        // program (an unverifiable registry InstallLocation). Refuse it with a reason
+        // rather than dropping it silently.
+        const QString refusal = item.deletable
+                                    ? cleanupItemRefusal(item)
+                                    : QStringLiteral(
+                                          "reported for review only -- this path could not be "
+                                          "tied to the program being uninstalled");
         if (refusal.isEmpty()) {
             screenedItems.append(item);
         } else {
@@ -366,7 +374,8 @@ QVector<LeftoverItem> AdvancedUninstallController::safeLeftovers(
     const QVector<LeftoverItem>& items) {
     QVector<LeftoverItem> safe;
     for (const LeftoverItem& item : items) {
-        if (item.risk == LeftoverItem::RiskLevel::Safe) {
+        // deletable gates first: a report-only item is never offered for removal.
+        if (item.deletable && item.risk == LeftoverItem::RiskLevel::Safe) {
             LeftoverItem copy = item;
             copy.selected = true;
             safe.append(copy);
@@ -392,7 +401,8 @@ QVector<LeftoverItem> AdvancedUninstallController::autoCleanableLeftovers(
     const QVector<LeftoverItem>& items) {
     QVector<LeftoverItem> out;
     for (const LeftoverItem& item : items) {
-        if (item.risk == LeftoverItem::RiskLevel::Safe && isRecoverableLeftoverType(item)) {
+        if (item.deletable && item.risk == LeftoverItem::RiskLevel::Safe &&
+            isRecoverableLeftoverType(item)) {
             LeftoverItem copy = item;
             copy.selected = true;
             out.append(copy);

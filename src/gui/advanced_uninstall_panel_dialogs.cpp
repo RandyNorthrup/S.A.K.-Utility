@@ -74,8 +74,12 @@ QStringList programFlagLabels(const sak::ProgramInfo& program) {
 void addUninstallProgramHeader(QDialog* dialog,
                                QVBoxLayout* layout,
                                const sak::ProgramInfo& program) {
-    auto* headerLabel = new QLabel(QObject::tr("Uninstall <b>%1</b>?").arg(program.displayName),
-                                   dialog);
+    // displayName/publisher come from the uninstall registry keys, and HKCU is writable by a
+    // non-admin process, so they are untrusted markup: escape them into the template that wants
+    // <b>, and force plain text where the template wants none (see
+    // populateProgramPropertiesForm(), which does the same for every other registry field).
+    auto* headerLabel = new QLabel(
+        QObject::tr("Uninstall <b>%1</b>?").arg(program.displayName.toHtmlEscaped()), dialog);
     headerLabel->setWordWrap(true);
     layout->addWidget(headerLabel);
 
@@ -83,7 +87,8 @@ void addUninstallProgramHeader(QDialog* dialog,
         return;
     }
 
-    auto* pubLabel = new QLabel(QObject::tr("Publisher: %1").arg(program.publisher), dialog);
+    auto* pubLabel = sak::plainTextLabel(QObject::tr("Publisher: %1").arg(program.publisher),
+                                         dialog);
     pubLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     layout->addWidget(pubLabel);
 }
@@ -188,7 +193,7 @@ QLabel* addForcedUninstallDescription(QDialog* dialog,
                                "* The program won't uninstall normally\n"
                                "* You want to perform a deep clean\n\n"
                                "A complete leftover scan will be performed after removal.")
-                       .arg(program.displayName),
+                       .arg(program.displayName.toHtmlEscaped()),
                    dialog);
     descLabel->setWordWrap(true);
     layout->addWidget(descLabel);
@@ -456,11 +461,15 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
 void AdvancedUninstallPanel::populateProgramPropertiesForm(const ProgramInfo& program,
                                                            QWidget* scrollWidget,
                                                            QFormLayout* formLayout) const {
+    // Every `value` below is a raw uninstall-registry string (name, publisher, install location,
+    // uninstall command, ...), and HKCU is writable without elevation, so the value label must
+    // show it verbatim instead of letting QLabel auto-detect markup inside it. Only `label` --
+    // always a tr() literal from this function -- is allowed to carry markup.
     const auto addRow = [&](const QString& label, const QString& value) {
         if (value.isEmpty()) {
             return;
         }
-        auto* valueLabel = new QLabel(value, scrollWidget);
+        auto* valueLabel = sak::plainTextLabel(value, scrollWidget);
         valueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse |
                                             Qt::TextSelectableByKeyboard);
         valueLabel->setWordWrap(true);

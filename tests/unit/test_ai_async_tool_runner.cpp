@@ -8,6 +8,7 @@
 #include "sak/ai/ai_async_tool_runner.h"
 
 #include <QElapsedTimer>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -95,6 +96,45 @@ private Q_SLOTS:
         QVERIFY(spy.wait(5000));
         QCOMPARE(spy.count(), 1);
         QVERIFY(spy.at(0).at(0).toJsonObject().value(QStringLiteral("fresh")).toBool());
+    }
+
+    // R5 p11_gui-5: a detached job keeps executing, so the runner keeps reporting
+    // isRunning() and announces its exit with drained() -- the only notification a
+    // detached job produces. Callers that gate on isRunning() need it to learn when the
+    // abandoned work actually stopped; without it they would wait forever.
+    void detachedJobKeepsRunningAndAnnouncesDrain() {
+        sak::ai::AiAsyncToolRunner runner;
+        QSignalSpy finished_spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
+        QSignalSpy drained_spy(&runner, &sak::ai::AiAsyncToolRunner::drained);
+        QSemaphore gate;
+        QVERIFY(runner.start([&gate]() {
+            gate.acquire();
+            return QJsonObject{{QStringLiteral("stale"), true}};
+        }));
+
+        runner.detach();
+        // Detaching drops the RESULT; it does not stop the work.
+        QVERIFY(runner.isRunning());
+        QCOMPARE(drained_spy.count(), 0);
+
+        gate.release();
+        QVERIFY(drained_spy.wait(5000));
+        QCOMPARE(drained_spy.count(), 1);
+        QCOMPARE(finished_spy.count(), 0);
+        QVERIFY(!runner.isRunning());
+    }
+
+    // An attached job announces both: finished() with its result, then drained().
+    void attachedJobEmitsFinishedThenDrained() {
+        sak::ai::AiAsyncToolRunner runner;
+        QSignalSpy drained_spy(&runner, &sak::ai::AiAsyncToolRunner::drained);
+        QSignalSpy finished_spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
+        QVERIFY(runner.start([]() { return QJsonObject{{QStringLiteral("done"), true}}; }));
+
+        QVERIFY(drained_spy.wait(5000));
+        QCOMPARE(drained_spy.count(), 1);
+        QCOMPARE(finished_spy.count(), 1);
+        QVERIFY(!runner.isRunning());
     }
 };
 

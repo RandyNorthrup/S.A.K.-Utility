@@ -74,6 +74,23 @@ public:
     /// malformed/hostile greeting cannot trigger credential transmission.
     [[nodiscard]] static bool isValidImapGreeting(const QString& buf);
 
+    /// Hard ceiling on the accumulated IMAP response buffer.
+    ///
+    /// Every response reader waits for a COMPLETE (CRLF-terminated) line, so a
+    /// server that streams bytes without a line terminator would grow the buffer
+    /// without bound. The peer is an untrusted network endpoint (a hostile or
+    /// MITM'd server), so that is a memory-exhaustion vector. Real IMAP status
+    /// responses -- even a verbose CAPABILITY or a long tagged NO -- are orders of
+    /// magnitude below this.
+    static constexpr qsizetype kMaxResponseBufferChars = 1024 * 1024;
+
+    /// True when appending @p incoming_bytes to a buffer already holding
+    /// @p buffered_chars would cross kMaxResponseBufferChars. The connection is
+    /// then FAILED (never truncated and parsed on, which would decide a command's
+    /// outcome from a half-read response). Fails closed on a negative size.
+    [[nodiscard]] static bool responseBufferWouldOverflow(qsizetype buffered_chars,
+                                                          qsizetype incoming_bytes);
+
 Q_SIGNALS:
     void uploadStarted(int total_items);
     void uploadProgress(int items_done, int total_items, qint64 bytes_sent);

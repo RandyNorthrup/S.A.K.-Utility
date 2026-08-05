@@ -12,6 +12,8 @@ private Q_SLOTS:
     void statusStringsRoundTrip();
     void runStateJsonRoundTrip();
     void terminalStateDetection();
+    void panelBusyCountsEveryInFlightSource();
+    void stopStatusStaysCancellingWhileDetachedToolRuns();
 };
 
 void AiRunStateTests::statusStringsRoundTrip() {
@@ -57,6 +59,49 @@ void AiRunStateTests::terminalStateDetection() {
     QVERIFY(sak::ai::isTerminalRunStatus(sak::ai::AiRunStatus::Failed));
     QVERIFY(sak::ai::isTerminalRunStatus(sak::ai::AiRunStatus::Cancelled));
     QVERIFY(!sak::ai::isTerminalRunStatus(sak::ai::AiRunStatus::Running));
+}
+
+void AiRunStateTests::panelBusyCountsEveryInFlightSource() {
+    // R5 p11_gui-5: the panel's busy predicate omitted the async built-in tool runner, so a
+    // blocking install/recipe that was still executing reported idle. Every field must count.
+    QVERIFY(!sak::ai::aiPanelIsBusy(sak::ai::AiPanelActivity{}));
+
+    sak::ai::AiPanelActivity activity;
+    activity.client_busy = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+
+    activity = {};
+    activity.tool_turn_active = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+
+    activity = {};
+    activity.workflow_run_active = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+
+    activity = {};
+    activity.execution_broker_running = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+
+    activity = {};
+    activity.offline_worker_running = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+
+    // The one the finding was about: everything else has stopped, but the detached async
+    // tool is still mutating the machine, so the panel is NOT idle.
+    activity = {};
+    activity.async_tool_runner_running = true;
+    QVERIFY(sak::ai::aiPanelIsBusy(activity));
+}
+
+void AiRunStateTests::stopStatusStaysCancellingWhileDetachedToolRuns() {
+    // Stop resolves to Cancelled only when nothing is in flight. Reporting Cancelled while a
+    // detached blocking tool still runs is what let the UI accept new work over a live
+    // mutation, so the drain-in-progress case must stay Cancelling.
+    sak::ai::AiPanelActivity draining;
+    draining.async_tool_runner_running = true;
+    QCOMPARE(sak::ai::aiStopRunStatus(draining), sak::ai::AiRunStatus::Cancelling);
+
+    QCOMPARE(sak::ai::aiStopRunStatus(sak::ai::AiPanelActivity{}), sak::ai::AiRunStatus::Cancelled);
 }
 
 QTEST_GUILESS_MAIN(AiRunStateTests)

@@ -19,6 +19,8 @@ private Q_SLOTS:
     void clampsCallerControlledOutputCap();
     void singleQuotedModeEscapesEmbeddedQuotes();
     void templateSingleQuoteSafetyGatesRawPlaceholders();
+    void templateSingleQuoteScannerLexesQuotingContext();
+    void cmdTemplateRejectsEveryPlaceholder();
 };
 
 void AiWorkflowPowerShellToolRunnerTests::rejectsMissingCommand() {
@@ -197,6 +199,69 @@ void AiWorkflowPowerShellToolRunnerTests::templateSingleQuoteSafetyGatesRawPlace
     // Unsafe: placeholder after the single-quoted span has closed.
     QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
         QStringLiteral("$a='x'; Invoke-Expression ${user_message}")));
+}
+
+void AiWorkflowPowerShellToolRunnerTests::templateSingleQuoteScannerLexesQuotingContext() {
+    // R5 p1_ai-3: the placement check used to toggle on EVERY single quote, so an
+    // apostrophe that is not a delimiter (one inside a double-quoted string, a comment or a
+    // here-string) flipped the scanner's idea of the quoting context and a bare placeholder
+    // passed. The scanner now lexes the constructs it accepts and refuses the rest.
+    using sak::ai::powerShellCommandTemplateIsSingleQuoteSafe;
+
+    // The bypass: the ' inside "'" is string CONTENT, so ${user_message} really is bare code.
+    QString error;
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("$x=\"'\"; ${user_message}"),
+                                                        &error));
+    QVERIFY(!error.isEmpty());
+    // Same shape with the quote-carrying string reached through an escaped quote.
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output \"it`'s\"; ${user_message}")));
+    // A double-quoted string that legitimately closes leaves the scanner in command
+    // position, so a following bare placeholder is still rejected.
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output \"a\"; ${app_name}")));
+
+    // A double-quoted string BEFORE the placeholder is lexed exactly, so the bundled
+    // "quote the value, then use it in a -like filter" shape keeps working.
+    QVERIFY(powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output \"scan\"; $name='${app_name}'; Get-Item")));
+    // A backtick escapes the next character, so an escaped quote never opens a literal.
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output `'; ${user_message}")));
+    // A backtick immediately before the placeholder escapes its '$': the value would be
+    // spliced into command position, so it must not be accepted as "inside a literal".
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("Write-Output `${x}")));
+
+    // Constructs the scanner does not lex are refused rather than guessed at (fail closed).
+    QString construct_error;
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("# it's fine\n$name='${app_name}'"), &construct_error));
+    QVERIFY(construct_error.contains(QStringLiteral("comment")));
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("<# it's fine #>$name='${app_name}'")));
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("$t=@'\nit's\n'@; $name='${app_name}'")));
+    QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
+        QStringLiteral("Write-Output \"$(Get-Date -Format \"'\")\"; $n='${app_name}'")));
+}
+
+void AiWorkflowPowerShellToolRunnerTests::cmdTemplateRejectsEveryPlaceholder() {
+    // R5 p1_ai-2: run_cmd commands were substituted in Raw mode with no placement check and
+    // no escaping. cmd.exe has no literal-quoting construct that makes an arbitrary value
+    // inert, so a placeholder is rejected outright instead of escaped-and-hoped.
+    using sak::ai::cmdCommandTemplateIsPlaceholderFree;
+
+    QVERIFY(cmdCommandTemplateIsPlaceholderFree(QStringLiteral("ipconfig /all")));
+    QVERIFY(cmdCommandTemplateIsPlaceholderFree(QString()));
+    // %VAR% is cmd.exe's own expansion, not the workflow placeholder grammar.
+    QVERIFY(cmdCommandTemplateIsPlaceholderFree(QStringLiteral("echo %PATH%")));
+
+    QString error;
+    QVERIFY(!cmdCommandTemplateIsPlaceholderFree(QStringLiteral("echo ${user_message}"), &error));
+    QVERIFY(error.contains(QStringLiteral("${user_message}")));
+    // Quoting the placeholder does NOT make it safe in cmd.exe, so it is rejected too.
+    QVERIFY(!cmdCommandTemplateIsPlaceholderFree(QStringLiteral("findstr \"${app_name}\" a.txt")));
+    QVERIFY(!cmdCommandTemplateIsPlaceholderFree(QStringLiteral("dir ${result_scan_path}")));
 }
 
 QTEST_GUILESS_MAIN(AiWorkflowPowerShellToolRunnerTests)

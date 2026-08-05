@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_installation_busy.h"
 #include "sak/app_installation_panel.h"
 #include "sak/app_installation_worker.h"
 #include "sak/chocolatey_manager.h"
@@ -243,12 +244,35 @@ std::shared_ptr<MigrationReport> AppInstallationPanel::buildInstallMigrationRepo
     return report;
 }
 
+bool AppInstallationPanel::packageOperationInFlight() const {
+    sak::PackageOperationActivity activity;
+    activity.online_claimed = m_install_in_progress;
+    activity.online_worker_running = m_worker && m_worker->isRunning();
+    activity.offline_claimed = m_offline_in_progress;
+    activity.offline_worker_running = m_offline_worker && m_offline_worker->isRunning();
+    return sak::packageOperationInFlight(activity);
+}
+
+void AppInstallationPanel::refreshPackageOperationControls() {
+    // Both groups are driven from the single authority, so an operation on either path
+    // disables the other path's controls and neither group can be re-enabled while any
+    // package work is still in flight.
+    const bool idle = !packageOperationInFlight();
+    enableControls(idle);
+    enableOfflineControls(idle);
+}
+
 void AppInstallationPanel::setInstallInProgressUi(bool running) {
     m_install_in_progress = running;
-    enableControls(!running);
+    refreshPackageOperationControls();
     m_installButton->setVisible(!running);
     m_cancelButton->setVisible(running);
     m_cancelButton->setEnabled(running);
+}
+
+void AppInstallationPanel::setOfflineInProgressUi(bool running) {
+    m_offline_in_progress = running;
+    refreshPackageOperationControls();
 }
 
 void AppInstallationPanel::onInstallAll() {
@@ -257,6 +281,17 @@ void AppInstallationPanel::onInstallAll() {
             this,
             tr("Empty Queue"),
             tr("No packages in the install queue. Search for packages and add them first."));
+        return;
+    }
+
+    // Cross-path guard, checked BEFORE the elevation prompt: the offline deployment path
+    // drives Chocolatey against the same machine locations, so an offline bundle install or
+    // download in flight blocks an online install just as another online install does.
+    if (packageOperationInFlight()) {
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("A package operation is already running. Wait for it to "
+                                      "finish or cancel it before installing."));
         return;
     }
 
@@ -274,13 +309,6 @@ void AppInstallationPanel::onInstallAll() {
         sak::showWarningLogged(this,
                                tr("Chocolatey Not Available"),
                                tr("Chocolatey is not initialized. Installation is unavailable."));
-        return;
-    }
-
-    if (m_worker->isRunning()) {
-        sak::showInformationLogged(this,
-                                   tr("Installation In Progress"),
-                                   tr("An installation is already running."));
         return;
     }
 
@@ -532,10 +560,13 @@ void AppInstallationPanel::onBuildBundle() {
         return;
     }
 
-    if (m_offline_worker->isRunning()) {
+    // Single authority: an ONLINE Chocolatey install in flight blocks this too (both paths
+    // drive choco against the same machine locations).
+    if (packageOperationInFlight()) {
         sak::showInformationLogged(this,
                                    tr("Operation In Progress"),
-                                   tr("An offline deployment operation is already running."));
+                                   tr("A package operation is already running. Wait for it to "
+                                      "finish or cancel it before building a bundle."));
         return;
     }
 
@@ -558,8 +589,7 @@ void AppInstallationPanel::onBuildBundle() {
     Q_EMIT logOutput(
         QString("=== Building Offline Bundle: %1 package(s) ===").arg(packages.size()));
 
-    m_offline_in_progress = true;
-    enableOfflineControls(false);
+    setOfflineInProgressUi(true);
 
     const auto mode = static_cast<sak::PayloadMode>(m_payloadModeCombo->currentData().toInt());
     m_offline_worker->buildDeploymentBundle(
@@ -567,10 +597,13 @@ void AppInstallationPanel::onBuildBundle() {
 }
 
 void AppInstallationPanel::onInstallFromBundle() {
-    if (m_offline_worker->isRunning()) {
+    // Single authority: an ONLINE Chocolatey install in flight blocks this too -- a bundle
+    // install and an online install both run choco against the same install root.
+    if (packageOperationInFlight()) {
         sak::showInformationLogged(this,
                                    tr("Operation In Progress"),
-                                   tr("An offline deployment operation is already running."));
+                                   tr("A package operation is already running. Wait for it to "
+                                      "finish or cancel it before installing from a bundle."));
         return;
     }
 
@@ -606,8 +639,7 @@ void AppInstallationPanel::onInstallFromBundle() {
 
     Q_EMIT logOutput(QString("=== Installing from Bundle: %1 ===").arg(manifest_path));
 
-    m_offline_in_progress = true;
-    enableOfflineControls(false);
+    setOfflineInProgressUi(true);
 
     m_offline_worker->installFromBundle(manifest_path, packages_dir, m_airGapCheck->isChecked());
 }
@@ -618,10 +650,12 @@ void AppInstallationPanel::onDirectDownload() {
         return;
     }
 
-    if (m_offline_worker->isRunning()) {
+    // Single authority: an ONLINE Chocolatey install in flight blocks this too.
+    if (packageOperationInFlight()) {
         sak::showInformationLogged(this,
                                    tr("Operation In Progress"),
-                                   tr("An offline deployment operation is already running."));
+                                   tr("A package operation is already running. Wait for it to "
+                                      "finish or cancel it before downloading."));
         return;
     }
 
@@ -641,8 +675,7 @@ void AppInstallationPanel::onDirectDownload() {
 
     Q_EMIT logOutput(QString("=== Direct Download: %1 package(s) ===").arg(packages.size()));
 
-    m_offline_in_progress = true;
-    enableOfflineControls(false);
+    setOfflineInProgressUi(true);
 
     m_offline_worker->directDownload(packages, output_dir);
 }
@@ -734,7 +767,7 @@ void AppInstallationPanel::onLoadOfflineList() {
 // ============================================================================
 
 void AppInstallationPanel::updateOfflineListDisplay() {
-    // Already managed inline — list widget items track their own data
+    // Already managed inline - list widget items track their own data
 }
 
 void AppInstallationPanel::enableOfflineControls(bool enabled) {

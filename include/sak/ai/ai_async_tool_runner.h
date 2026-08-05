@@ -43,11 +43,21 @@ public:
 
     /// Abandons the in-flight job: its result will be dropped and finished()
     /// will not be emitted for it. The pool task keeps running to completion in
-    /// the background; a new start() is allowed once it finishes.
+    /// the background; a new start() is allowed once it finishes. isRunning()
+    /// stays true until it does, because the abandoned work is still mutating
+    /// the machine -- callers must keep treating the runner as busy and wait for
+    /// drained() rather than assuming the job stopped.
     void detach();
 
 Q_SIGNALS:
+    /// Result of an ATTACHED job, delivered on the owning thread.
     void finished(const QJsonObject& result);
+
+    /// The pool task left the pool, whether it was attached or detached. This is
+    /// the only notification a detached job produces, so it is what lets a caller
+    /// that gated on isRunning() (a cancelled-but-still-running mutation) learn
+    /// that the runner finally went idle. Emitted after finished() when attached.
+    void drained();
 
 private:
     void onWatcherFinished();

@@ -10,10 +10,21 @@
 
 #include <QByteArray>
 #include <QFile>
+#include <QHashFunctions>
 #include <QRegularExpression>
 #include <QSaveFile>
 
+#include <utility>
+
 namespace sak {
+
+// ============================================================================
+// Attachment identity
+// ============================================================================
+
+size_t qHash(const AttachmentRef& ref, size_t seed) noexcept {
+    return qHashMulti(seed, ref.message_id, ref.index);
+}
 
 // ============================================================================
 // Filename sanitization
@@ -102,18 +113,43 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
 // AttachmentBatchSave
 // ============================================================================
 
-void AttachmentBatchSave::begin(const QString& dir, int count) {
-    Q_ASSERT(!dir.isEmpty());
-    Q_ASSERT(count > 0);
+bool AttachmentBatchSave::begin(const QString& dir, const QVector<AttachmentRef>& expected) {
+    // Refuse to overlap batches: two live expectation sets would interleave their
+    // arrivals, and each batch would record payloads the other asked for.
+    if (isActive() || dir.isEmpty() || expected.isEmpty()) {
+        return false;
+    }
+    QSet<AttachmentRef> outstanding;
+    outstanding.reserve(expected.size());
+    for (const auto& ref : expected) {
+        outstanding.insert(ref);
+    }
     m_dir = dir;
-    m_pending = count;
+    m_outstanding = std::move(outstanding);
+    m_expected_count = static_cast<int>(m_outstanding.size());
     m_succeeded = 0;
     m_failed = 0;
+    return true;
 }
 
-AttachmentSaveResult AttachmentBatchSave::recordOne(const QString& filename,
+bool AttachmentBatchSave::expects(const AttachmentRef& ref) const {
+    return isActive() && m_outstanding.contains(ref);
+}
+
+AttachmentSaveResult AttachmentBatchSave::recordOne(const AttachmentRef& ref,
+                                                    const QString& filename,
                                                     const QByteArray& data) {
-    Q_ASSERT(isActive());
+    // An arrival this batch did not ask for, or already recorded, is refused
+    // outright. Writing it would put the wrong payload in one of the batch's
+    // slots and let the batch report a full count it never actually filled.
+    if (!expects(ref)) {
+        return {false,
+                {},
+                QStringLiteral("Attachment %1 of message %2 is not outstanding in this batch")
+                    .arg(ref.index)
+                    .arg(ref.message_id)};
+    }
+    m_outstanding.remove(ref);
     auto result = saveAttachmentToDirectory(m_dir, filename, data);
     if (result.success) {
         ++m_succeeded;
@@ -129,7 +165,7 @@ void AttachmentBatchSave::recordError() {
 }
 
 bool AttachmentBatchSave::isComplete() const {
-    return m_pending > 0 && (m_succeeded + m_failed >= m_pending);
+    return m_expected_count > 0 && (m_succeeded + m_failed >= m_expected_count);
 }
 
 bool AttachmentBatchSave::isActive() const {
@@ -142,13 +178,14 @@ QString AttachmentBatchSave::summaryText() const {
     }
     return QStringLiteral("Saved %1 of %2 attachment(s) (%3 failed)")
         .arg(m_succeeded)
-        .arg(m_pending)
+        .arg(m_expected_count)
         .arg(m_failed);
 }
 
 void AttachmentBatchSave::reset() {
     m_dir.clear();
-    m_pending = 0;
+    m_outstanding.clear();
+    m_expected_count = 0;
     m_succeeded = 0;
     m_failed = 0;
 }

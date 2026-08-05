@@ -120,6 +120,30 @@ QString installOutcomeText(const ProcessResult& process, bool success) {
     return (process.std_out.isEmpty() ? process.std_err : process.std_out)
         .left(kInstallErrorPreviewChars);
 }
+
+// A NuGet OData feed document is small; cap the buffered response so a hostile endpoint
+// cannot exhaust memory while we are only after the published PackageHash.
+constexpr int64_t kMaxFeedDocumentBytes = 32LL * 1024 * 1024;
+
+/// @brief Commit @p body to @p output_path via QSaveFile. Fails CLOSED on a short write
+/// or a failed commit -- the temp file is discarded -- so a truncated artifact is never
+/// counted as a downloaded package.
+bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
+    QSaveFile file(output_path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
+        return false;
+    }
+    const qint64 written = file.write(body);
+    if (written != body.size() || !file.commit()) {
+        sak::logError("[DirectDownload] Short write for {}: {} of {} bytes",
+                      output_path.toStdString(),
+                      written,
+                      static_cast<qint64>(body.size()));
+        return false;
+    }
+    return true;
+}
 }  // namespace
 
 // ============================================================================
@@ -1430,12 +1454,12 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
 QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
                                                          const QString& resolved_version,
                                                          const QString& temp_dir) {
-    QString nupkg_url =
-        QString("%1%2%3/%4")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, resolved_version);
     QString nupkg_path = temp_dir + "/" + pkg_id + ".nupkg";
 
-    if (!downloadFileFromUrl(nupkg_url, nupkg_path)) {
+    // The .nupkg carries no checksum of its own (the install script inside it declares
+    // the INSTALLER checksums), so it is authenticated against the feed's published
+    // PackageHash instead -- never fetched unverified.
+    if (!downloadVerifiedNupkg(pkg_id, resolved_version, nupkg_path)) {
         emitLog(QString("[%1] nupkg download failed").arg(pkg_id));
         return {};
     }
@@ -1474,11 +1498,9 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
         return {};
     }
 
-    QString dep_nupkg_url =
-        QString("%1%2%3/%4")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, dep_id, dep_version);
     QString dep_nupkg_path = temp_dir + "/" + dep_id + ".nupkg";
-    if (!downloadFileFromUrl(dep_nupkg_url, dep_nupkg_path)) {
+    // Same feed-hash authentication as the parent .nupkg (see downloadVerifiedNupkg).
+    if (!downloadVerifiedNupkg(dep_id, dep_version, dep_nupkg_path)) {
         emitLog(QString("[%1] Dependency nupkg download failed").arg(dep_id));
         return {};
     }
@@ -1612,6 +1634,97 @@ int OfflineDeploymentWorker::downloadInstallersToDir(const QString& pkg_id,
     return downloaded;
 }
 
+QPair<QString, QString> OfflineDeploymentWorker::fetchNupkgHashMeta(const QString& pkg_id,
+                                                                    const QString& version) {
+    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(pkg_id));
+    url.setQuery(query);
+
+    NetworkTransferRequest request;
+    request.url = url;
+    request.timeout_ms = offline::kApiRequestTimeoutMs;
+    // Feed metadata is a small document; cap the buffer so a hostile endpoint cannot
+    // exhaust memory here.
+    request.max_response_bytes = kMaxFeedDocumentBytes;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{
+        QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
+
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (!transfer.success) {
+        return {};
+    }
+    return PackageInternalizationEngine::parsePackageHashFromOData(transfer.body, version);
+}
+
+bool OfflineDeploymentWorker::nupkgFeedVerified(const QByteArray& body,
+                                                const QString& feed_hash_base64,
+                                                const QString& hash_algorithm) {
+    // A .nupkg has a DIFFERENT trust root than an installer binary: an installer is
+    // authenticated against the checksum its install script declares (installerVerified),
+    // a .nupkg against the hash the NuGet feed publishes. Fail closed when the feed
+    // published nothing -- an unauthenticated .nupkg must never be extracted, because its
+    // install script drives every later download and its tools/ binaries are harvested
+    // straight into the offline bundle.
+    if (feed_hash_base64.trimmed().isEmpty()) {
+        return false;
+    }
+    return PackageInternalizationEngine::nupkgHashMatches(body, feed_hash_base64, hash_algorithm);
+}
+
+bool OfflineDeploymentWorker::downloadVerifiedNupkg(const QString& pkg_id,
+                                                    const QString& version,
+                                                    const QString& output_path) {
+    // Resolve the feed's own published hash FIRST: with no trusted hash there is nothing
+    // to authenticate the package against, so the fetch is refused outright rather than
+    // downgraded to an unverified download.
+    const auto meta = fetchNupkgHashMeta(pkg_id, version);
+    if (meta.first.isEmpty()) {
+        sak::logError("[DirectDownload] Feed published no hash for {} v{}",
+                      pkg_id.toStdString(),
+                      version.toStdString());
+        return false;
+    }
+
+    const QString nupkg_url =
+        QString("%1%2%3/%4")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, version);
+    if (!PackageInternalizationEngine::isAllowedInstallerUrl(nupkg_url)) {
+        sak::logError("[DirectDownload] Refusing non-https package URL: {}",
+                      nupkg_url.toStdString());
+        return false;
+    }
+
+    NetworkTransferRequest request;
+    request.url = QUrl(nupkg_url);
+    request.timeout_ms = offline::kDownloadTimeoutMs;
+    request.max_response_bytes = offline::kMaxBinarySizeBytes;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (!transfer.success || transfer.body.isEmpty()) {
+        sak::logError("[DirectDownload] nupkg HTTP {} for {}: {}",
+                      transfer.http_status,
+                      nupkg_url.toStdString(),
+                      transfer.error_message.toStdString());
+        return false;
+    }
+
+    // Authenticate BEFORE anything reaches disk: a tampered .nupkg would otherwise have
+    // its install script parsed and its embedded binaries harvested into the bundle.
+    if (!nupkgFeedVerified(transfer.body, meta.first, meta.second)) {
+        sak::logError("[DirectDownload] nupkg hash mismatch for {} v{}",
+                      pkg_id.toStdString(),
+                      version.toStdString());
+        return false;
+    }
+
+    return writeDownloadedBody(output_path, transfer.body);
+}
+
 bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
                                                   const QString& output_path,
                                                   const QString& expected_checksum,
@@ -1657,20 +1770,7 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
 
     // QSaveFile: fail closed on a short write / flush failure so a truncated installer is never
     // counted as a downloaded package; the temp file is discarded on any failure.
-    QSaveFile file(output_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
-        return false;
-    }
-    const qint64 written = file.write(transfer.body);
-    if (written != transfer.body.size() || !file.commit()) {
-        sak::logError("[DirectDownload] Short write for {}: {} of {} bytes",
-                      output_path.toStdString(),
-                      written,
-                      static_cast<qint64>(transfer.body.size()));
-        return false;
-    }
-    return true;
+    return writeDownloadedBody(output_path, transfer.body);
 }
 
 // ============================================================================

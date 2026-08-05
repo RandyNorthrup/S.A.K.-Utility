@@ -52,8 +52,8 @@ class PackageListManager;
  * - Real-time log output
  *
  * The panel uses a tab layout:
- *   Tab 0 — Online Install (search, queue, install via Chocolatey)
- *   Tab 1 — Offline Deploy (build bundles, install from bundles, presets)
+ *   Tab 0 - Online Install (search, queue, install via Chocolatey)
+ *   Tab 1 - Offline Deploy (build bundles, install from bundles, presets)
  *
  * Thread-Safety: UI updates occur on main thread.
  * Search and install operations run on background threads.
@@ -193,6 +193,19 @@ private:
     void updateOfflineListDisplay();
     /** @brief Enable/disable offline deployment controls during operations */
     void enableOfflineControls(bool enabled);
+    /** @brief Claim/release the offline path and refresh both control groups. */
+    void setOfflineInProgressUi(bool running);
+    /**
+     * @brief The ONE authority on whether package work is in flight.
+     *
+     * The online install queue and the offline deployment path both mutate machine
+     * locations through Chocolatey, so they are mutually exclusive. Every entry point and
+     * both control groups gate on this single predicate; separate per-path flags could
+     * disagree and let an offline bundle install start on top of a running online install.
+     */
+    [[nodiscard]] bool packageOperationInFlight() const;
+    /** @brief Enable both control groups iff no package operation is in flight. */
+    void refreshPackageOperationControls();
 
     // Publisher icon cache
     static QHash<QString, QString> s_publisherMap;

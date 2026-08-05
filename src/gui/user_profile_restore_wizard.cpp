@@ -180,6 +180,9 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
 }
 
 void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& manifest) {
+    // version/source_machine are read straight out of the selected backup's manifest.json, which
+    // anyone who can hand the technician a .sakbackup controls. This label is explicitly
+    // Qt::RichText (setupUi), so both must be escaped before they enter the template.
     QString info = QString(
                        "<b>[OK] Valid Backup Found</b><br>"
                        "<b>Version:</b> %1<br>"
@@ -187,9 +190,9 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
                        "<b>Source Machine:</b> %3<br>"
                        "<b>Users:</b> %4<br>"
                        "<b>Total Size:</b> %5 GB")
-                       .arg(manifest.version,
+                       .arg(manifest.version.toHtmlEscaped(),
                             manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
-                            manifest.source_machine,
+                            manifest.source_machine.toHtmlEscaped(),
                             QString::number(manifest.users.size()),
                             QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
                                             'f',

@@ -20,6 +20,10 @@ private Q_SLOTS:
     void saveToPathWritesExactBytes();
     void saveToDirectoryDeduplicates();
     void saveToDirectoryDoesNotTruncateWhenExhausted();
+    void batchRefusesArrivalItDidNotRequest();
+    void batchRecordsEachExpectedRefOnce();
+    void batchRefusesOverlappingBegin();
+    void batchRefusesEmptyExpectation();
 };
 
 void TestEmailAttachmentSaver::sanitizeStripsInvalidChars() {
@@ -90,6 +94,106 @@ void TestEmailAttachmentSaver::saveToDirectoryDoesNotTruncateWhenExhausted() {
     QFile last(dir.path() + QStringLiteral("/a_999.txt"));
     QVERIFY(last.open(QIODevice::ReadOnly));
     QCOMPARE(last.readAll(), sentinel);
+}
+
+// A batch must only ever record the attachments it asked for. Attachment content
+// arrives asynchronously and is addressed by (message id, attachment index); a
+// delivery that names anything else belongs to some other request -- an inline
+// image fetch, or a leftover from an earlier batch -- and writing it would put the
+// wrong payload in one of this batch's slots while the batch still counted the
+// slot as filled.
+void TestEmailAttachmentSaver::batchRefusesArrivalItDidNotRequest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    const sak::AttachmentRef wanted{42, 0};
+    QVERIFY(batch.begin(dir.path(), {wanted}));
+
+    // A different message, and a different attachment of the same message.
+    const sak::AttachmentRef other_message{43, 0};
+    const sak::AttachmentRef other_index{42, 1};
+    QVERIFY(!batch.expects(other_message));
+    QVERIFY(!batch.expects(other_index));
+
+    const auto stray =
+        batch.recordOne(other_message, QStringLiteral("report.pdf"), QByteArray("STRAY", 5));
+    QVERIFY(!stray.success);
+    QCOMPARE(batch.succeeded(), 0);
+    QCOMPARE(batch.failed(), 0);
+    QVERIFY(!batch.isComplete());
+    QVERIFY(!QFile::exists(dir.path() + QStringLiteral("/report.pdf")));
+
+    // The arrival the batch did ask for still fills the slot, with its own bytes.
+    QVERIFY(batch.expects(wanted));
+    const auto real = batch.recordOne(wanted, QStringLiteral("report.pdf"), QByteArray("REAL", 4));
+    QVERIFY(real.success);
+    QCOMPARE(batch.succeeded(), 1);
+    QVERIFY(batch.isComplete());
+
+    QFile written(dir.path() + QStringLiteral("/report.pdf"));
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QCOMPARE(written.readAll(), QByteArray("REAL", 4));
+}
+
+void TestEmailAttachmentSaver::batchRecordsEachExpectedRefOnce() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    const sak::AttachmentRef first{7, 0};
+    const sak::AttachmentRef second{7, 1};
+    QVERIFY(batch.begin(dir.path(), {first, second}));
+    QCOMPARE(batch.expectedCount(), 2);
+
+    QVERIFY(batch.recordOne(first, QStringLiteral("a.txt"), QByteArray("ONE", 3)).success);
+
+    // A duplicate delivery of an already-recorded ref is no longer outstanding: it
+    // must not be saved as a deduped second copy, and must not count as progress.
+    QVERIFY(!batch.expects(first));
+    QVERIFY(!batch.recordOne(first, QStringLiteral("a.txt"), QByteArray("DUP", 3)).success);
+    QVERIFY(!batch.isComplete());
+    QVERIFY(!QFile::exists(dir.path() + QStringLiteral("/a_1.txt")));
+
+    QVERIFY(batch.recordOne(second, QStringLiteral("b.txt"), QByteArray("TWO", 3)).success);
+    QVERIFY(batch.isComplete());
+    QCOMPARE(batch.succeeded(), 2);
+    QCOMPARE(batch.failed(), 0);
+}
+
+void TestEmailAttachmentSaver::batchRefusesOverlappingBegin() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    QVERIFY(batch.begin(dir.path(), {sak::AttachmentRef{1, 0}}));
+
+    // Two live expectation sets would interleave their arrivals, so the second
+    // batch is refused and the first one is left untouched.
+    QVERIFY(!batch.begin(dir.path(), {sak::AttachmentRef{2, 0}}));
+    QVERIFY(batch.expects(sak::AttachmentRef{1, 0}));
+    QVERIFY(!batch.expects(sak::AttachmentRef{2, 0}));
+
+    batch.reset();
+    QVERIFY(!batch.isActive());
+    QVERIFY(batch.begin(dir.path(), {sak::AttachmentRef{2, 0}}));
+}
+
+void TestEmailAttachmentSaver::batchRefusesEmptyExpectation() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    QVERIFY(!batch.begin(dir.path(), {}));
+    QVERIFY(!batch.isActive());
+    QVERIFY(!batch.begin(QString(), {sak::AttachmentRef{1, 0}}));
+    QVERIFY(!batch.isActive());
+
+    // No batch started, so nothing can be recorded into one.
+    QVERIFY(!batch.expects(sak::AttachmentRef{1, 0}));
+    QVERIFY(!batch.recordOne(sak::AttachmentRef{1, 0}, QStringLiteral("x.txt"), QByteArray("X", 1))
+                 .success);
+    QVERIFY(!QFile::exists(dir.path() + QStringLiteral("/x.txt")));
 }
 
 QTEST_MAIN(TestEmailAttachmentSaver)

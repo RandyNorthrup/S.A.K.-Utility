@@ -106,6 +106,35 @@ public:
      */
     [[nodiscard]] int filesUnhashed() const { return m_files_unhashed; }
 
+    /// @name Bounds for the recursive walk of a raw/image file-system target
+    ///
+    /// The directory hierarchy inside an image is UNTRUSTED data (APFS/HFS/ext bytes that
+    /// may be corrupt or crafted): it can be cyclic or arbitrarily deep, and the bridge's
+    /// listDirectory is single-level, so the reader's own B-tree guards do not bound this
+    /// hierarchy recursion. These caps mirror the export walker's and keep a hostile image
+    /// from driving unbounded recursion (stack exhaustion) or unbounded memory.
+    /// @{
+    static constexpr int kVirtualWalkMaxDepth = 32;
+    static constexpr int kVirtualWalkMaxDirectories = 100'000;
+    static constexpr qsizetype kVirtualWalkMaxFiles = 500'000;
+    /// @}
+
+    /// @brief True while the image walk is still inside its depth / directory / file
+    ///        budget. Evaluated on ENTRY to each directory, so the file count may overshoot
+    ///        by at most one directory listing -- it is a bound, not an exact quota.
+    ///        A breach REFUSES the scan (a silently truncated file set would misreport
+    ///        duplicates), it does not trim the results.
+    [[nodiscard]] static bool virtualWalkWithinBounds(int depth,
+                                                      int directories_visited,
+                                                      qsizetype files_collected);
+
+    /// @brief Usable roots for an image scan: each configured entry trimmed, blanks dropped.
+    ///
+    /// An EMPTY result means the scan must be refused. It must never fall back to the image
+    /// root, which would silently turn a mis-specified scan into a full walk of an untrusted
+    /// image.
+    [[nodiscard]] static QVector<QString> resolveVirtualRoots(const QVector<QString>& configured);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when scanning progresses
@@ -189,15 +218,30 @@ private:
         qint64 size{0};
     };
 
+    /// @brief Accumulated state of one image walk, carried across the whole recursion so the
+    ///        directory and file budgets are TOTALS rather than per-directory counts.
+    struct VirtualWalkState {
+        QVector<VirtualFile> files;
+        int directories_visited{0};
+    };
+
     /// @brief Execute duplicate detection against a raw/image file-system target
     auto executeFileSystemTarget() -> std::expected<void, sak::error_code>;
 
     /// @brief Collect files from the configured raw/image target
     auto scanFileSystemTarget() -> std::expected<QVector<VirtualFile>, sak::error_code>;
 
-    /// @brief Recursively collect virtual file entries from a target directory
-    auto collectVirtualFiles(const QString& directory_path, QVector<VirtualFile>& files, int depth)
+    /// @brief Recursively collect virtual file entries from a target directory. Refuses
+    ///        (scan_failed) as soon as the untrusted-image walk bounds are breached.
+    auto collectVirtualFiles(const QString& directory_path, VirtualWalkState& state, int depth)
         -> std::expected<void, sak::error_code>;
+
+    /// @brief Apply one listing entry: record an eligible file and/or recurse into a
+    ///        subdirectory. Split out so collectVirtualFiles stays inside the complexity
+    ///        budget once the walk bounds are enforced.
+    auto collectVirtualEntry(const sak::FileManagementEntry& entry,
+                             VirtualWalkState& state,
+                             int depth) -> std::expected<void, sak::error_code>;
 
     /// @brief Hash virtual files using the shared bridge reader
     auto hashVirtualFiles(const QVector<VirtualFile>& files)

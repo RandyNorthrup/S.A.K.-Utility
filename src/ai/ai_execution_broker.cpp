@@ -4,6 +4,7 @@
 #include "sak/ai/ai_execution_broker.h"
 
 #include "sak/ai/ai_credential_store.h"
+#include "sak/process_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -228,15 +229,23 @@ bool ExecutionBroker::startPowerShell(const AiCommandRequest& request, const QSt
         completeWith(std::move(elevated_result));
         return true;
     }
+    // System32-qualified interpreter, never a bare "powershell.exe": CreateProcess searches
+    // the current directory ahead of System32, so a planted powershell would execute the
+    // assistant's command. Unresolvable -> refuse the run (fail closed).
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        AiCommandResult fail;
+        fail.error_message = QStringLiteral(
+            "Cannot resolve the System32 PowerShell path; refusing to launch a bare "
+            "powershell.exe");
+        emitDeferredFinish(std::move(fail));
+        return false;
+    }
     QStringList args;
     args << QStringLiteral("-NoProfile") << QStringLiteral("-ExecutionPolicy")
          << QStringLiteral("Bypass") << QStringLiteral("-Command") << request.command;
-    return launchProcess({QStringLiteral("powershell.exe"),
-                          args,
-                          request.timeout_seconds,
-                          request.max_output_bytes,
-                          command_id,
-                          false});
+    return launchProcess(
+        {powershell, args, request.timeout_seconds, request.max_output_bytes, command_id, false});
 }
 
 bool ExecutionBroker::startCmd(const AiCommandRequest& request, const QString& command_id) {
@@ -262,14 +271,20 @@ bool ExecutionBroker::startCmd(const AiCommandRequest& request, const QString& c
         emitDeferredFinish(std::move(fail));
         return false;
     }
+    // System32-qualified shell, never a bare "cmd.exe" (same search-order hijack).
+    const QString shell = sak::system32Path(QStringLiteral("cmd.exe"));
+    if (shell.isEmpty()) {
+        AiCommandResult fail;
+        fail.error_message = QStringLiteral(
+            "Cannot resolve the System32 cmd.exe path; refusing to launch a bare "
+            "cmd.exe");
+        emitDeferredFinish(std::move(fail));
+        return false;
+    }
     QStringList args;
     args << QStringLiteral("/c") << request.command;
-    return launchProcess({QStringLiteral("cmd.exe"),
-                          args,
-                          request.timeout_seconds,
-                          request.max_output_bytes,
-                          command_id,
-                          false});
+    return launchProcess(
+        {shell, args, request.timeout_seconds, request.max_output_bytes, command_id, false});
 }
 
 bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QString& command_id) {

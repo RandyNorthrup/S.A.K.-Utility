@@ -103,6 +103,18 @@ struct LeftoverItem {
     qint64 sizeBytes = 0;
     bool selected = false;
 
+    /// @brief FALSE when the item is surfaced for VISIBILITY ONLY and must never be
+    ///        deleted, whatever `selected` says.
+    ///
+    /// Set by the scanner when a path was named by untrusted input it could not tie back
+    /// to the program being uninstalled -- today that is a registry InstallLocation, a
+    /// value any user can write under HKCU, which would otherwise hand an admin-run
+    /// cleanup recursive-delete authority over an arbitrary directory. A technician still
+    /// SEES the path (that is the point of reporting it), but it cannot be checked in the
+    /// table, cannot be auto-cleaned, and is refused again at CleanupWorker. Default true:
+    /// every other producer yields an ordinarily deletable item.
+    bool deletable = true;
+
     // Registry-specific
     QString registryValueName;
     QString registryValueData;

@@ -215,6 +215,11 @@ struct OstConversionResult {
     int items_converted = 0;
     int items_failed = 0;
     int items_recovered = 0;  ///< Deleted items recovered
+    /// False when the deleted-item scan could not enumerate every candidate (a non-cancel read
+    /// error truncated the Recoverable Items walk, or an orphan node could not be read), so
+    /// items_recovered is a floor and NOT the count of what the source holds. An empty or small
+    /// recovered set is only authoritative when this is true.
+    bool recovery_complete = true;
     int folders_processed = 0;
     qint64 bytes_written = 0;
     int pst_volumes_created = 0;  ///< For split PST (1 if no split)

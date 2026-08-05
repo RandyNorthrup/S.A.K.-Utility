@@ -86,9 +86,9 @@ private:
             m_sinks.result->error_message = QStringLiteral("Network transfer timed out");
             reply->abort();
         });
-        if (m_request.timeout_ms > 0) {
-            timeout_timer->start(m_request.timeout_ms);
-        }
+        // runNetworkTransfer rejects a non-positive timeout, so the deadline is ALWAYS armed:
+        // no transfer can sit forever on the synchronous finished.acquire() below.
+        timeout_timer->start(m_request.timeout_ms);
         return timeout_timer;
     }
 
@@ -179,6 +179,15 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
     NetworkTransferResult result;
     if (!request.url.isValid() || request.url.isEmpty()) {
         result.error_message = QStringLiteral("Invalid URL");
+        return result;
+    }
+
+    // A non-positive timeout DISABLES Qt's transfer timeout and leaves the deadline timer
+    // unarmed, so a hostile/slow-loris server would block this synchronous call forever when
+    // no should_cancel callback is supplied. Reject it instead of substituting a default: the
+    // caller's deadline is a real requirement, and silently inventing one hides the bad input.
+    if (request.timeout_ms <= 0) {
+        result.error_message = QStringLiteral("Invalid timeout_ms: must be positive");
         return result;
     }
 

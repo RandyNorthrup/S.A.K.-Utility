@@ -20,7 +20,9 @@
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
+#include "sak/process_runner.h"
 #include "sak/recycle_bin.h"
+#include "sak/rich_text_safety.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -2040,8 +2042,10 @@ void FileManagementExplorerPanel::appendSidebarTarget(const FileManagementTarget
     auto* item = new QListWidgetItem(icon, label, m_target_list);
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Target));
     item->setData(kTargetIndexRole, target_index);
-    item->setToolTip(QStringLiteral("%1\n%2").arg(
-        target.root_path, FileManagementFileSystemBridge::capabilitySummary(target)));
+    // root_path names a mounted medium (including MTP/phone device names), so the tooltip -- a
+    // sink with no plain-text mode -- shows it literally.
+    item->setToolTip(ui::asLiteralRichText(QStringLiteral("%1\n%2").arg(
+        target.root_path, FileManagementFileSystemBridge::capabilitySummary(target))));
     if (!target.blockers.isEmpty()) {
         item->setStatusTip(target.blockers.join(QStringLiteral("; ")));
     }
@@ -2181,7 +2185,8 @@ void FileManagementExplorerPanel::appendTagRows() {
             FileExplorerIconRegistry::iconForKey(QStringLiteral("tag")), tag, m_target_list);
         item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Tag));
         item->setData(kSidebarTagRole, tag);
-        item->setToolTip(tr("Filter the current folder to items tagged '%1'").arg(tag));
+        item->setToolTip(
+            ui::asLiteralRichText(tr("Filter the current folder to items tagged '%1'").arg(tag)));
     }
 }
 
@@ -4459,7 +4464,9 @@ void FileManagementExplorerPanel::applyCommandState(QPushButton* button,
     const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
     button->setEnabled(state.enabled);
     button->setAccessibleName(state.command.accessible_name);
-    button->setToolTip(state.enabled ? state.command.status_text : state.blocker);
+    // A blocker embeds the offending path/target name; wrap so the tooltip renders it literally.
+    button->setToolTip(
+        ui::asLiteralRichText(state.enabled ? state.command.status_text : state.blocker));
 }
 
 QAction* FileManagementExplorerPanel::addCommandMenuAction(
@@ -4478,8 +4485,10 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
         action->setIcon(icon);
     }
     action->setEnabled(state.enabled);
-    action->setToolTip(state.enabled ? state.command.status_text : state.blocker);
-    action->setStatusTip(action->toolTip());
+    const QString hint = state.enabled ? state.command.status_text : state.blocker;
+    action->setToolTip(ui::asLiteralRichText(hint));
+    // The status tip goes to the plain status bar, so it keeps the unwrapped text.
+    action->setStatusTip(hint);
     if (!state.command.shortcut.trimmed().isEmpty()) {
         action->setShortcut(QKeySequence(state.command.shortcut));
         // Display-only hint: the panel's own QShortcut handles the key.
@@ -5204,10 +5213,20 @@ void FileManagementExplorerPanel::openTerminalHere() {
     if (directories.isEmpty()) {
         directories.append(m_current_path);
     }
+    // The cmd.exe leg is launched with the browsed directory as its working directory, so a
+    // bare "cmd.exe" would be resolved by the CreateProcess search order against exactly that
+    // (possibly attacker-writable) directory. Use the System32-qualified shell, and skip the
+    // leg entirely when it cannot be resolved rather than fall back to the bare name.
+    //
+    // wt.exe is deliberately left unqualified: Windows Terminal is a Store app reached through
+    // an app-execution alias under %LOCALAPPDATA%\Microsoft\WindowsApps, so it has no fixed
+    // absolute path to pin. Its failure simply falls through to the qualified cmd.exe leg.
+    const QString shell = sak::system32Path(QStringLiteral("cmd.exe"));
     for (const QString& directory : directories) {
         const QString native = QDir::toNativeSeparators(directory);
-        if (!QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), native})) {
-            QProcess::startDetached(QStringLiteral("cmd.exe"), {}, native);
+        if (!QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), native}) &&
+            !shell.isEmpty()) {
+            QProcess::startDetached(shell, {}, native);
         }
         logMessage(tr("Open in Terminal: %1").arg(native));
     }
@@ -5222,8 +5241,10 @@ void FileManagementExplorerPanel::editSelectionInNotepad() {
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
         if (entry.regular_file) {
-            QProcess::startDetached(QStringLiteral("notepad.exe"),
-                                    {QDir::toNativeSeparators(entry.path)});
+            // Absolute System32 notepad.exe; unresolvable -> open nothing rather than let
+            // CreateProcess find a notepad.exe on the search path.
+            (void)sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe"),
+                                                 {QDir::toNativeSeparators(entry.path)});
         }
     }
 }
@@ -5845,7 +5866,7 @@ void FileManagementExplorerPanel::runSearchSuggestions(const QString& query) {
                     continue;
                 }
                 auto* item = new QListWidgetItem(nameForPath(match.file_path, local), list);
-                item->setToolTip(match.file_path);
+                item->setToolTip(ui::asLiteralRichText(match.file_path));
                 item->setData(kSearchPathRole, match.file_path);
             }
         },

@@ -545,7 +545,16 @@ bool ProgramEnumerator::appxScanSucceeded(const ProcessResult& result) {
 QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    // System32-qualified interpreter, never a bare "powershell.exe": the enumerated
+    // programs feed an elevated uninstall, so a PATH/CWD-planted powershell must not be
+    // able to supply the inventory. Unresolvable -> FAILED scan (scanOk false).
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        scanOk = false;
+        return results;
+    }
+
+    const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NonInteractive"),
                                          QStringLiteral("-Command"),
@@ -570,8 +579,15 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
 QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
+    // Same System32 qualification as scanUwpPackages: unresolvable -> FAILED scan.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        scanOk = false;
+        return results;
+    }
+
     const auto result = sak::runProcess(
-        QStringLiteral("powershell.exe"),
+        powershell,
         {QStringLiteral("-NoProfile"),
          QStringLiteral("-NonInteractive"),
          QStringLiteral("-Command"),

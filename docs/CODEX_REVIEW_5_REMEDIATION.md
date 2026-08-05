@@ -42,12 +42,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: commandLooksCatastrophic (633) matches contiguous /bformat/b//bformat-volume/b; commandLooksObfuscated (621) + commandUsesResolutionIndirection (317) cover -enc/iex/concat/call-operator but NOT '^' or '`'. 'fo^rmat C: /q' and 'For`mat-Volume C:' break the word so BOTH catastrophic AND obfuscation return false; commandLooksRiskyChange also misses -> under MutatingRequiresLease evaluateMutatingPolicy(risky=false) runs it with NO lease/restore/confirm. R4 (doc line 76) added obfuscation-forces-catastrophic but did not cover cmd caret / PS backtick.
   - Fix: Strip cmd caret and PS backtick line-escapes before regex matching, OR add '^' and '`' (adjacent to word chars) to commandLooksObfuscated so they force catastrophic + hard human confirm.
-- [ ] **R5-P1-2** [MEDIUM] [CONFIRMED_REAL] run_cmd workflow placeholders substituted raw, no cmd escaping or placement validation
+- [x] **R5-P1-2** [MEDIUM] [CONFIRMED_REAL] run_cmd workflow placeholders substituted raw, no cmd escaping or placement validation
+  - FIXED: wave 5
   - Files: src/gui/ai_assistant_panel.cpp:9259, src/ai/ai_workflow_template.cpp:199, src/ai/ai_workflow_placeholders.cpp:157
   - Boundary: local-config-or-registry (reachable)
   - Evidence: initializeWorkflowToolPlan substitutes phase.arguments in Raw mode (9259); only tool=='run_powershell' gets PowerShellSingleQuoted re-substitution (9260-9265). validateWorkflowPhases validates placement ONLY for run_powershell (199-205); no run_cmd equivalent. User workflows load from user-writable ai/workflows dir (ai_paths.cpp:20). No bundled run_cmd templates today, but a user-dir run_cmd template with ${user_message} injects unescaped CMD. Asymmetric vs the PS hardening (B1-05).
   - Fix: Add cmd-context escaping + a run_cmd placement validator (or reject run_cmd templates whose command embeds ${...}).
-- [ ] **R5-P1-3** [MEDIUM] [PARTIAL] PowerShell single-quote-placement validator is not a real lexer
+- [x] **R5-P1-3** [MEDIUM] [PARTIAL] PowerShell single-quote-placement validator is not a real lexer
+  - FIXED: wave 5
   - Files: src/ai/ai_workflow_placeholders.cpp:98, src/ai/ai_workflow_placeholders.cpp:116
   - Boundary: local-config-or-registry (reachable)
   - Evidence: offsetInsideSingleQuotedSpan (98) naively toggles on every ' including apostrophes inside double-quoted strings/comments/here-strings. Template `$x="'"; ${user_message}` counts the '/'' inside "'" as a delimiter, so the trailing bare ${user_message} is judged inside a single-quoted span and passes powerShellCommandTemplateIsSingleQuoteSafe, yet substitutes as bare PS code. Builds on R3-16 which added this validator; the guard exists but is bypassable.
@@ -247,7 +249,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 12 actionable
 
-- [ ] **R5-P3-31** [MEDIUM] [CONFIRMED_REAL] Duplicate virtual scan defaults roots to / and recurses unbounded
+- [x] **R5-P3-31** [MEDIUM] [CONFIRMED_REAL] Duplicate virtual scan defaults roots to / and recurses unbounded
+  - FIXED: wave 5
   - Files: src/threading/duplicate_finder_worker.cpp:304, src/threading/duplicate_finder_worker.cpp:327
   - Boundary: untrusted-input (reachable)
   - Evidence: collectVirtualFiles ignores its depth parameter (Q_UNUSED at 330) and recurses on every directory entry (351-356) with NO depth cap, cycle/visited-set, or total-entry bound while walking an UNTRUSTED file-system image (APFS/HFS/ext bytes). listDirectory is single-level so the reader's own B-tree cycle guards do not bound this hierarchy recursion; the export walker DOES cap depth (file_management_file_system.cpp:1301) but this path does not. A corrupt/malicious image with a directory-hierarchy cycle or extreme depth -> unbounded recursion / stack-overflow DoS. The '/' default is benign (image root).
@@ -312,22 +315,26 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 17 actionable
 
-- [ ] **R5-P4-7** [MEDIUM] [CONFIRMED_REAL] Wrapped HFS+ embedded extent count validated only nonzero, length discarded
+- [x] **R5-P4-7** [MEDIUM] [CONFIRMED_REAL] Wrapped HFS+ embedded extent count validated only nonzero, length discarded
+  - FIXED: wave 5
   - Files: include/sak/partition_hfs_internal.h:9899, include/sak/partition_hfs_internal.h:10010
   - Boundary: untrusted-input (reachable)
   - Evidence: wrapperGeometryLooksValid checks extentBlockCount!=0 (9913) but the count is never used to bound the inner volume; volumeExceedsDeviceLength (10010) bounds the embedded volume's total_blocks against the whole DEVICE length, not against embeddedOffset + extentBlockCount*allocationBlockSize. A malformed wrapper lets the inner HFS+ volume claim blocks past the wrapper extent into surrounding media (device-bounded). Reads leak adjacent in-device data; the gated writer could mutate outside the embedded extent.
   - Fix: Bound volumeEnd against embeddedOffset + (uint64)extentBlockCount*allocationBlockSize (overflow-checked), not only device length.
-- [ ] **R5-P4-19** [MEDIUM] [CONFIRMED_REAL] Recursive directory collector has no visited-set/depth bound
+- [x] **R5-P4-19** [MEDIUM] [CONFIRMED_REAL] Recursive directory collector has no visited-set/depth bound
+  - FIXED: wave 5
   - Files: src/core/partition_apfs_writer.cpp:17259
   - Boundary: untrusted-input (reachable)
   - Evidence: collectDirectorySubtree recurses per subdirectory (17276+) with a per-directory entry cap but NO visited-directory-id set and NO depth bound. The reader's node-level cycle/depth guards do not cover a drec-level directory cycle (dir A lists dir B, dir B lists dir A) crafted in an untrusted source image, so recursion is unbounded -> stack exhaustion (crash/DoS). On the evidence-gated repair path but reachable from a malicious source image.
   - Fix: Add a visited dirObjectId QSet + depth limit (mirror the reader's kMaxFsTreeDepth) and fail closed on a repeat/over-depth.
-- [ ] **R5-P4-20** [MEDIUM] [PARTIAL] Free-queue run validation permits container-sized runs -> OOM
+- [x] **R5-P4-20** [MEDIUM] [PARTIAL] Free-queue run validation permits container-sized runs -> OOM
+  - FIXED: wave 5
   - Files: src/core/partition_apfs_writer.cpp:8830, src/core/partition_apfs_writer.cpp:8928
   - Boundary: untrusted-input (reachable)
   - Evidence: freeQueueRunInBounds (8830, R4 M-A4-4 doc:266) bounds a run to paddr<blockCount and length<=blockCount-paddr, but a single hostile run of length~=blockCount still passes and expandFreeQueueEntries (8928) materializes every block (blockCount uint64s). For a large container this is a multi-GB allocation from untrusted on-disk metadata -> OOM/DoS on the gated write path.
   - Fix: Cap total expanded blocks to a sane budget (e.g. the container's real free-block count / a fixed max), or operate on runs without materializing each block.
-- [ ] **R5-P4-22** [MEDIUM] [CONFIRMED_REAL] HFS+ exporter has no canonical-root/reparse containment
+- [x] **R5-P4-22** [MEDIUM] [CONFIRMED_REAL] HFS+ exporter has no canonical-root/reparse containment
+  - FIXED: wave 5
   - Files: src/core/partition_hfs_file_system_reader.cpp:82, src/core/partition_hfs_file_system_reader.cpp:200
   - Boundary: untrusted-input (reachable)
   - Evidence: HFS+ writeExportFile (82-90) has ONLY NewOnly and no realizedPathWithinRoot check, and takes no canonicalRoot param; exportDirectory mkpath (200-205) has no containment re-check. The parent-junction TOCTOU that R4 M-A4-27 closed for APFS/ext is entirely absent here -- a junction planted at an export ancestor after mkpath redirects the write outside the export root. Leaf NewOnly still blocks the simplest symlink-at-leaf case.
@@ -408,27 +415,32 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: validatePartitionMetadataOperation (1469-1471) only requires the SELECTED target partition to have a drive letter; no guard compares payload['drive_letter'] to partition.volume->drive_letter. Builders read payloadString(op,'drive_letter',target.drive_letter): clusterSizePayload (2830), buildChangeVolumeSerialNumberScript (5075), buildConvertDynamicDiskToBasicScript (5145). So an op can pass validation on innocuous target partition 5 (E:) while the elevated script Format-Volume's / diskpart-deletes the payload's D: -- an unrelated mounted volume the protected-partition/OS-disk guards never checked. Contrast allocationDonorVolumePayloadMismatch (1220) which DOES bind source_drive_letter for AllocateFreeSpace; the target-volume ops have no equivalent.
   - Fix: In the validator, block when payload['drive_letter'] is present and differs from the target partition's volume->drive_letter; for dynamic-to-basic require the drive_letter volume to reside on the target disk.
-- [ ] **R5-P5-2** [MEDIUM] [PARTIAL] ClonePartition accepts zero target offset and unknown source size; no in-bounds/unallocated proof
+- [x] **R5-P5-2** [MEDIUM] [PARTIAL] ClonePartition accepts zero target offset and unknown source size; no in-bounds/unallocated proof
+  - FIXED: wave 5
   - Files: src/core/partition_safety_validator.cpp:1080, src/core/partition_safety_validator.cpp:1100, src/core/partition_script_builder.cpp:2268
   - Boundary: app-own-certified-path (reachable)
   - Evidence: clonePartitionRegionMissingFields (1080-1093) only checks target_offset_bytes is PRESENT (contains), not non-zero/in-bounds; an explicit target_offset_bytes:0 passes and cloneTransferCopyBodyScript (2273) seeks target to 0 -> writes over the target disk GPT. blocksTooSmallPartitionCloneTarget (1100-1107) skips when source_size==0, and cloneTransferCopyBodyScript (2270) derives expectedBytes from stream length at runtime -- so the too-small guard is bypassed for unknown source size. Mitigated: target disk must exist, be non-OS/non-system (isUnsafeRawWriteTargetDisk 1163), be taken offline (Assert-SakRawWriteTarget), and target_wipe_confirmed required -- so damage is bounded to a user-confirmed non-OS target disk, not arbitrary disks.
   - Fix: Reject target_offset_bytes==0 for ClonePartition region, require a known non-zero source_size, and validate target_offset+source_size <= target disk size (and no overlap with the partition table/existing partitions).
-- [ ] **R5-P5-7** [MEDIUM] [PARTIAL] DiskPart success handling is fail-open (exit-code only in builder; limited markers in USB creator)
+- [x] **R5-P5-7** [MEDIUM] [PARTIAL] DiskPart success handling is fail-open (exit-code only in builder; limited markers in USB creator)
+  - FIXED: wave 5
   - Files: src/core/partition_script_builder.cpp:1910, src/core/windows_usb_creator.cpp:308, src/core/windows_usb_creator.cpp:318
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: Confirmed: builder Invoke-SakDiskPart (1910-1918) checks ONLY $LASTEXITCODE with no stdout error-marker scan -- diskpart commonly exits 0 on per-command failure. The USB creator DOES scan stdout (diskpartOutputIsError 308-316) but only for 3 phrases (DiskPart has encountered an error / Virtual Disk Service error / Access is denied), missing e.g. 'no volume selected'/'not valid'. Mitigation: builder diskpart flows (dynamic-to-basic 5192, primary/logical 5049) run against a validated non-OS disk and follow diskpart with robocopy restore + Assert-SakManifestMatch, so a silent diskpart failure that left no valid volume is caught downstream.
   - Fix: Add a stdout error-marker scan to Invoke-SakDiskPart (throw on 'DiskPart has encountered an error' / no-selection markers) and broaden diskpartOutputIsError's marker list.
-- [ ] **R5-P5-11** [MEDIUM] [PARTIAL] Catalog entries without checksums complete unverified; SourceForge permits HTTP mirror legs
+- [x] **R5-P5-11** [MEDIUM] [PARTIAL] Catalog entries without checksums complete unverified; SourceForge permits HTTP mirror legs
+  - FIXED: wave 5
   - Files: src/core/linux_distro_catalog.cpp:210, src/core/linux_distro_catalog.cpp:235, src/core/linux_iso_downloader.cpp:416
   - Boundary: untrusted-input (reachable)
   - Evidence: Clonezilla (210-211), GParted (235-236) and other SourceForge entries have empty checksumUrl/checksumType; onDownloadFinished (403-428) marks the download Completed and emits downloadComplete for any non-empty file when no checksum is configured. It does NOT fabricate 'verified' -- it logs a warning and surfaces 'integrity NOT verified' (423-426). aria2c passes --check-certificate=true (293,307) but the SourceForge branch (288-289) intentionally allows redirects to HTTP mirrors where no TLS cert applies, so a MITM on the HTTP leg could tamper an ISO that is then flashed to bootable media. Real network-peer integrity gap, partially mitigated by explicit user-facing warning + TLS on HTTPS legs.
   - Fix: Require a pinned per-release checksum for all flashable catalog entries and/or fail closed on any download that traversed a non-HTTPS leg.
-- [ ] **R5-P5-12** [MEDIUM] [CONFIRMED_REAL] Recreate sizes trusted from payload (not live capacity) + sizeMbArg overflow -> 1 MiB recreate
+- [x] **R5-P5-12** [MEDIUM] [CONFIRMED_REAL] Recreate sizes trusted from payload (not live capacity) + sizeMbArg overflow -> 1 MiB recreate
+  - FIXED: wave 5
   - Files: src/core/partition_safety_validator.cpp:1391, src/core/partition_script_builder.cpp:1783, src/core/partition_script_builder.cpp:5204
   - Boundary: untrusted-input (reachable)
   - Evidence: dynamicToBasicMissingPayload (1391-1400) only requires source_size_bytes!=0, never that it equals the live source volume size; ConvertPrimaryLogical likewise checks partitions.size()==1 but not source_size. sizeMbArg (1783-1789) computes (bytes + 1MiB-1)/1MiB with kCloneIoBufferBytes=1MiB (line 28); for bytes near UINT64_MAX the addition wraps to a tiny value -> megabytes 0 -> std::max(kMinimumDiskPartSizeMb=1,0)=1 MiB. Used at 5204 (dynamic-to-basic diskpart create) and 5064 (primary/logical). A payload source_size of ~UINT64_MAX passes validation then recreates the wiped volume as 1 MiB. Mitigated (no data loss): the source is backed up first and robocopy restore + Assert-SakManifestMatch fail if the undersized recreate can't hold the data.
   - Fix: Validate source_size_bytes equals the live source volume size from inventory, and guard sizeMbArg against overflow (reject bytes > UINT64_MAX-(divisor-1) or use overflow-safe ceiling division).
-- [ ] **R5-P5-17** [MEDIUM] [CONFIRMED_REAL] Raw-device classification inconsistent: validator/raw-IO accept /?/ forms, clone/image builder only /./
+- [x] **R5-P5-17** [MEDIUM] [CONFIRMED_REAL] Raw-device classification inconsistent: validator/raw-IO accept /?/ forms, clone/image builder only /./
+  - FIXED: wave 5
   - Files: src/core/partition_safety_validator.cpp:494, src/core/partition_raw_device_io.cpp:633, src/core/partition_script_builder.cpp:2248
   - Boundary: untrusted-input (reachable)
   - Evidence: Validator physicalDriveNumberFromPath (518-533) and isExtendedRawDevicePath (500-510), and raw-I/O isWindowsRawDevicePath (633-644), accept //?/PhysicalDriveN / //?/GLOBALROOT / //?/Volume{}. So RestoreImage/MigrateOs/CloneDisk with target_path=//?/PhysicalDrive2 passes validation (disk resolved, isUnsafeRawWriteTargetDisk checked at plan time). But the generated clone/image PowerShell recognizes only //./: Get-SakPhysicalDriveNumber (2250-2254) returns $null for a //?/ path so Assert-SakRawWriteTarget SKIPS taking the disk offline and skips the runtime IsBoot/IsSystem re-check (2255-2263), and Open-SakWrite (2209) opens it with FileMode::Create (file semantics) instead of raw-device Open. Real inconsistency: offline-guard bypass + wrong open-mode for a validator-approved spelling (OS-disk still blocked at plan time, so not a wrong-disk write).
@@ -473,7 +485,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 12 actionable
 
-- [ ] **R5-P6-16** [MEDIUM] [CONFIRMED_REAL] IMAP response buffer has no size ceiling -> memory exhaustion from hostile server
+- [x] **R5-P6-16** [MEDIUM] [CONFIRMED_REAL] IMAP response buffer has no size ceiling -> memory exhaustion from hostile server
+  - FIXED: wave 5
   - Files: src/core/imap_uploader.cpp:27, src/core/imap_uploader.cpp:378
   - Boundary: untrusted-input (reachable)
   - Evidence: handleReadable does `m_buffer += QString::fromUtf8(m_socket->readAll())` (379) with NO cap. handleGreeting waits for '/r/n' (404) and tagged handling waits for a complete line, so a server streaming bytes without a line terminator grows m_buffer unbounded. kImapReadBufferSize (line 27) is declared but grep confirms it is used nowhere. A malicious/MITM IMAP server = untrusted network peer. Not covered by R3 (which fixed greeting-parse and input coercion, not the buffer ceiling).
@@ -538,22 +551,26 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 25 actionable
 
-- [ ] **R5-P7-6** [MEDIUM] [PARTIAL] Registry InstallLocation becomes deletion authority
+- [x] **R5-P7-6** [MEDIUM] [PARTIAL] Registry InstallLocation becomes deletion authority
+  - FIXED: wave 5
   - Files: src/core/leftover_scanner.cpp:275, src/core/leftover_scanner.cpp:1103, src/core/leftover_scanner.cpp:264
   - Boundary: local-config-or-registry (reachable)
   - Evidence: classifyRisk checks isProtectedPath/isSharedContainerPath FIRST (1148, R4 H12 fix) so C:/Windows etc. -> Risky/not preselected, and classifyFileRisk requires exact path or real segment boundary (1112). Residual: any EXISTING non-protected path equal to the registry InstallLocation is classified Safe and preselected (264,1113) -- a non-admin HKCU Uninstall entry pointing at e.g. another user's non-protected folder is trusted+preselected for an admin-run cleanup delete.
   - Fix: Do not auto-classify a raw registry InstallLocation whole-directory leftover as Safe/preselected; require it to be under the program's own derived/profile location or leave whole-dir install-location leftovers as Review.
-- [ ] **R5-P7-9** [MEDIUM] [CONFIRMED_REAL] Elevated uninstall runs registry exec path with no trust policy
+- [x] **R5-P7-9** [MEDIUM] [CONFIRMED_REAL] Elevated uninstall runs registry exec path with no trust policy
+  - FIXED: wave 5
   - Files: src/core/uninstall_worker.cpp:291, src/core/uninstall_worker.cpp:65
   - Boundary: local-config-or-registry (reachable)
   - Evidence: runNativeUninstaller takes m_program.uninstallString from the registry, parseUninstallCommand extracts exe (which may be bare/relative, 81-89), and hands it to sak::runProcess (315) with NO absolute-path/regular-file/signature check. A non-admin HKCU Uninstall key with a bare UninstallString (e.g. "setup.exe") + a planted setup.exe on the CreateProcess search path (CWD/PATH) is run when an admin uninstalls that enumerated entry -> local EoP.
   - Fix: Before launch require parsed.exe to be an absolute path to an existing regular file (reject bare/relative), resolve+canonicalize, and never let CreateProcess resolve via PATH/CWD.
-- [ ] **R5-P7-22** [MEDIUM] [CONFIRMED_REAL] Privileged ops invoke bare powershell.exe
+- [x] **R5-P7-22** [MEDIUM] [CONFIRMED_REAL] Privileged ops invoke bare powershell.exe
+  - FIXED: wave 5
   - Files: src/core/restore_point_manager.cpp:32, src/core/program_enumerator.cpp:548, src/core/user_data_manager.cpp:736
   - Boundary: local-config-or-registry (reachable)
   - Evidence: restore_point_manager (32/69/148), program_enumerator (548/574) and user_data_manager (736/870/929) launch bare "powershell.exe" via runProcess, resolved by the CreateProcess search order (CWD ahead of System32). hardware_inventory_scanner.cpp already recognizes this exact hijack and resolves the absolute System32 path via systemPowerShellPath() (86-104) -- an inconsistency. Restore-point creation runs elevated, so a planted powershell.exe = local EoP.
   - Fix: Resolve powershell.exe to its System32/WindowsPowerShell/v1.0 absolute path (reuse the systemPowerShellPath pattern) in these three files; fail closed if unresolvable.
-- [ ] **R5-P7-25** [MEDIUM] [CONFIRMED_REAL] Direct .nupkg download uses checksum-required downloader with no checksum
+- [x] **R5-P7-25** [MEDIUM] [CONFIRMED_REAL] Direct .nupkg download uses checksum-required downloader with no checksum
+  - FIXED: wave 5
   - Files: src/core/offline_deployment_worker.cpp:1438, src/core/offline_deployment_worker.cpp:1481, src/core/offline_deployment_worker.cpp:1651
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: downloadAndExtractNupkg (1438) and resolveMetaPackageDependency (1481) call downloadFileFromUrl with the default empty checksum. After the R4 M-B2-15 change, downloadFileFromUrl gates on installerVerified (1651), which returns false for an empty declared checksum (package_internalization_engine.cpp:848-851). So the feed .nupkg fetch fails by construction, breaking the entire direct-download harvester. Fail-closed (feature broken), not a vuln.
@@ -668,12 +685,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 32 actionable
 
-- [ ] **R5-P8-2** [MEDIUM] [PARTIAL] Elevated boundary validates client but not task payload; BitLocker dest no canonicalization/policy
+- [x] **R5-P8-2** [MEDIUM] [PARTIAL] Elevated boundary validates client but not task payload; BitLocker dest no canonicalization/policy
+  - FIXED: wave 5
   - Files: src/elevated/elevated_helper_main.cpp:685, src/actions/backup_bitlocker_keys_action.cpp:773
   - Boundary: local-config-or-registry (reachable)
   - Evidence: Client-image validation (elevated_pipe_server.cpp:409-423) is the boundary and each handler validates its own payload by design; the BitLocker action DOES harden the dir ACL before writing keys and fails closed (backup_bitlocker_keys_action.cpp:795). BUT backup_location (payload key, from GUI/config settings_dialog.cpp:271) is passed to QDir().mkpath/mkdir with NO network/UNC/device/reparse rejection -- unlike validateExportPaths. Recovery keys (which unlock BitLocker) could be written to a UNC share or via a pre-planted reparse in the parent.
   - Fix: In the elevated BitLocker handler/action, reject isNetworkOrDevicePath + pathReparseUnsafe and canonicalize backup_location before creating the dir/writing keys.
-- [ ] **R5-P8-3** [MEDIUM] [CONFIRMED_REAL] Recycle-mode clean_leftovers permanently deletes on Recycle Bin failure
+- [x] **R5-P8-3** [MEDIUM] [CONFIRMED_REAL] Recycle-mode clean_leftovers permanently deletes on Recycle Bin failure
+  - FIXED: wave 5
   - Files: src/core/cleanup_worker.cpp:451, src/core/app_mutating_actions.cpp:2240
   - Boundary: untrusted-input (reachable)
   - Evidence: clean_leftovers builds CleanupWorker via the 2-arg ctor (app_mutating_actions.cpp:2064) and never calls setRequireRecoverable, so m_requireRecoverable stays false (cleanup_worker.h:86). With use_recycle_bin=true (default) but requireRecoverable=false, attemptRecycle on SHFileOperation failure returns FallThrough -> permanent delete (cleanup_worker.cpp:451-456); the auto-clean GUI path fails closed at 446-449 but the AI action does not. It is surfaced in permanently_deleted, but the recycle (recoverable) contract is broken on failure.
@@ -839,17 +858,20 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: transferReplacing checks only the bool return of transferItemTo (100). importDirectoryFromHost/exportDirectoryToHost return ok=true while setting complete=false on depth/entry-cap/symlink drops (file_management_file_system.cpp:1546; transfer_worker:183-186,205-207). m_last_transfer_incomplete is never consulted before the original is moved to backup (109), staged swapped in (112), and backup deleted (127). An incomplete copy (crafted raw image tree >32 depth / >10000 entries / symlinks, or a deep local tree) destroys a COMPLETE destination. lastTransferComplete() is only checked later in transferOne (435) for moves, after the backup is already gone.
   - Fix: In transferReplacing, after staging, if !lastTransferComplete() remove the staged copy and return false WITHOUT moving the original aside or swapping.
-- [ ] **R5-P9-5** [MEDIUM] [PARTIAL] Replace staging/backup names predictable and not exclusively reserved
+- [x] **R5-P9-5** [MEDIUM] [PARTIAL] Replace staging/backup names predictable and not exclusively reserved
+  - FIXED: wave 5
   - Files: src/core/file_explorer_transfer_worker.cpp:67, src/core/file_explorer_transfer_worker.cpp:99, src/core/file_explorer_transfer_worker.cpp:108
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: siblingTempPath builds .sak-stage-<name>.<m_replace_seq> / .sak-old-<name>.<seq> with a monotonic per-engine counter starting at 0 (67-78,115). transferItemTo for a directory merges via importDirectoryFromHost (mkpath) and removeDestinationEntry(staged) deletes on cleanup, so pre-existing content at that predictable path could be merged/overwritten/deleted. Exploitation requires a co-located attacker with write access to the destination's parent; unlike compressToZip/writeExtractedFile this path lacks exclusive-create.
   - Fix: Create the stage/backup sibling with a random suffix via exclusive create (QFile NewOnly / QTemporaryDir-style) so a pre-existing collision fails closed.
-- [ ] **R5-P9-6** [MEDIUM] [CONFIRMED_REAL] Partition enumeration errors suppressed -> disk labeled fully unallocated and emitted ready
+- [x] **R5-P9-6** [MEDIUM] [CONFIRMED_REAL] Partition enumeration errors suppressed -> disk labeled fully unallocated and emitted ready
+  - FIXED: wave 5
   - Files: src/core/storage_inventory_worker.cpp:610, src/core/storage_inventory_worker.cpp:130, src/core/storage_inventory_worker.cpp:488
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: Get-Partition runs with -ErrorAction SilentlyContinue (610) overriding the script's ErrorActionPreference=Stop, so a partition-enum failure yields an empty Partitions array. appendUnallocatedRegions (130-146) then labels the whole disk unallocated, and scan() emits inventoryReady because the inventory is non-empty (488-497). A transient Get-Partition failure mis-presents a populated disk as entirely unallocated in a partition manager (data-loss risk if acted on). Not attacker-controlled (local OS query), but a fail-open that masks the real error.
   - Fix: Capture Get-Partition failure (drop SilentlyContinue / test $Error) and surface a blocker instead of emitting a phantom fully-unallocated disk as ready.
-- [ ] **R5-P9-7** [MEDIUM] [PARTIAL] Recycle may permanently delete on UNC / no-bin volumes while worker reports success
+- [x] **R5-P9-7** [MEDIUM] [PARTIAL] Recycle may permanently delete on UNC / no-bin volumes while worker reports success
+  - FIXED: wave 5
   - Files: include/sak/recycle_bin.h:13, src/core/recycle_bin.cpp:35, src/core/file_explorer_transfer_worker.cpp:449
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: SHFileOperationW with FOF_ALLOWUNDO permanently deletes on volumes without a recycle bin / UNC; this is documented intended behavior (recycle_bin.h:15-16). Residual fail-open: deleteOne treats sendPathToRecycleBin==true as 'recycled' (449-453) with no distinction, so a permanent delete is reported to the user as a recoverable recycle.
@@ -859,67 +881,80 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: total_bytes += info.size (293) precedes the cap check on the SAME value (294) so positive sizes are fine; and the per-file cap uses the declared size before decode. Residuals: (a) a negative declared size (ZIP64 >2^63 into qint64) passes info.size>kExtractMaxFileBytes (294) and skips the isEmpty guard (229, gated on info.size>0), letting a corrupt/empty entry be written as success; (b) after reader.fileData (226) neither reader.status()==NoError nor data.size()==info.size is verified, so a partial/short non-empty decode is written and counted as complete.
   - Fix: Reject info.size<0; after fileData verify reader.status()==NoError and data.size()==info.size.
-- [ ] **R5-P9-10** [MEDIUM] [CONFIRMED_REAL] Incomplete ordinary directory copies enter completedItems() (contract 'landed whole' violated)
+- [x] **R5-P9-10** [MEDIUM] [CONFIRMED_REAL] Incomplete ordinary directory copies enter completedItems() (contract 'landed whole' violated)
+  - FIXED: wave 5
   - Files: src/core/file_explorer_transfer_worker.cpp:402, src/core/file_explorer_transfer_worker.cpp:428, include/sak/file_explorer_transfer_worker.h:159
   - Boundary: untrusted-input (reachable)
   - Evidence: For a non-move copy, transferOne returns transferEntry()'s ok (428-444) without consulting lastTransferComplete(); transferItems then appends the item to m_completed (402-404). transferFromHost/transferRawDirectoryToLocal return ok=true with only warnings when depth/entry caps or symlinks dropped entries (183-186,205-207), so an incomplete copy (incl. from a crafted raw image) is listed in completedItems() whose contract is 'items that landed whole' (header:159).
   - Fix: For copies too, exclude the item from completedItems() (or raise a blocker) when !engine->lastTransferComplete().
-- [ ] **R5-P9-11** [MEDIUM] [CONFIRMED_REAL] Delete/recycle/rename & zero-byte transfers never transition from InProgress
+- [x] **R5-P9-11** [MEDIUM] [CONFIRMED_REAL] Delete/recycle/rename & zero-byte transfers never transition from InProgress
+  - FIXED: wave 5
   - Files: src/core/file_explorer_status_center.cpp:220, src/core/file_explorer_transfer_worker.cpp:306
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: report() auto-success requires total_size!=0 (status_center:220-224). For delete/recycle/rename (and zero-byte-only transfers) total_size stays 0 (discover only sets item count, transfer_worker:329,334). execute() sets status only on cancel or non-empty blockers (306-312) and never sets Success explicitly. So a clean delete/recycle/rename ends stuck at InProgress -> card spins forever and completed-item cleanup never reaps it.
   - Fix: Set reporter status to Success explicitly on clean completion in execute(), or drop the total_size!=0 gate for item-counted operations.
-- [ ] **R5-P9-12** [MEDIUM] [CONFIRMED_REAL] Local/import enumeration can't distinguish empty from failure; import materializes before cap
+- [x] **R5-P9-12** [MEDIUM] [CONFIRMED_REAL] Local/import enumeration can't distinguish empty from failure; import materializes before cap
+  - FIXED: wave 5
   - Files: src/core/file_management_file_system.cpp:379, src/core/file_management_file_system.cpp:1455, src/core/file_management_file_system.cpp:1465
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: listLocalDirectory checks QDir::exists then iterates via QDirIterator (383-389); QDirIterator reports no error, so an existing-but-unreadable directory returns ok=true with empty entries (fail-open, cannot distinguish empty vs access/IO failure). importDirectoryLevel calls QDir::entryInfoList (1455) which materializes the WHOLE directory (one stat each) before the 10000 cap is applied (1465-1466) -- unlike the listing path's bounded collectLocalEntries (352, B8-20).
   - Fix: Surface directory-open/iteration failure distinctly (don't report empty=success); bound import materialization the way collectLocalEntries does.
-- [ ] **R5-P9-13** [MEDIUM] [CONFIRMED_REAL] Advanced search: unrestricted PCRE, unbounded globalMatch, no match/time budget
+- [x] **R5-P9-13** [MEDIUM] [CONFIRMED_REAL] Advanced search: unrestricted PCRE, unbounded globalMatch, no match/time budget
+  - FIXED: wave 5
   - Files: src/core/advanced_search_worker.cpp:175, src/core/advanced_search_worker.cpp:800, src/core/advanced_search_worker.cpp:2017
   - Boundary: untrusted-input (reachable)
   - Evidence: compileRegex builds QRegularExpression with no complexity/match limit (175); globalMatch runs per line with checkStop only BETWEEN lines (795-810,2011-2018), so a catastrophic-backtracking pattern on a long line hangs the worker uninterruptibly. Pattern is user/AI-supplied; a prompt-injected AI-planned search is a listed untrusted source. Impact is a local worker-thread DoS (GUI stays responsive).
   - Fix: Cap the length of lines passed to globalMatch (and/or a per-file match/iteration budget); Qt has no QRegularExpression match timeout.
-- [ ] **R5-P9-14** [MEDIUM] [CONFIRMED_REAL] Search incompleteness overwritten as 'Search complete'
+- [x] **R5-P9-14** [MEDIUM] [CONFIRMED_REAL] Search incompleteness overwritten as 'Search complete'
+  - FIXED: wave 5
   - Files: src/core/advanced_search_worker.cpp:426, src/core/advanced_search_worker.cpp:726, src/core/advanced_search_controller.cpp:193
   - Boundary: untrusted-input (reachable)
   - Evidence: m_files_unreadable is incremented for unreadable/over-line-limit/oversize-archive files (772,788,1436,1884,2083,2093) but is NEVER read anywhere. runDirectorySearch reports 'Search complete' unconditionally (426) ignoring it and the max_results break. searchTargetFile swallows a real read failure (read.ok==false -> return, 726-727) without markTargetScanIncomplete. And onWorkerFinished always emits searchFinished + 'Search complete' (controller:193-197), overwriting even the target path's transient 'INCOMPLETE' message (worker:577).
   - Fix: Carry an incomplete/unreadable count from worker to controller; mark target read failures incomplete; report INCOMPLETE when unreadable>0 / caps / truncation hit.
-- [ ] **R5-P9-15** [MEDIUM] [CONFIRMED_REAL] ZIP content search reads sizes from local headers; data-descriptor zips stop silently as complete
+- [x] **R5-P9-15** [MEDIUM] [CONFIRMED_REAL] ZIP content search reads sizes from local headers; data-descriptor zips stop silently as complete
+  - FIXED: wave 5
   - Files: src/core/advanced_search_worker.cpp:1942, src/core/advanced_search_worker.cpp:2111, src/core/advanced_search_worker.cpp:2124
   - Boundary: untrusted-input (reachable)
   - Evidence: readArchiveEntry reads compSize from the LOCAL file header (1942). A data-descriptor zip (GP flag bit 3) stores compSize=0 there, so entry_size=0 and next_offset lands inside the compressed data; the next readArchiveEntry sees no local-file-header signature and returns nullopt, so searchArchive breaks (2112-2113) and returns the partial matches. No incompleteness is recorded (m_files_unreadable not incremented on this path), so a normal streaming zip yields missing matches reported as complete.
   - Fix: Parse via QZipReader (as file_explorer_archive_service does) or detect a premature stop before the central directory and mark the archive incomplete.
-- [ ] **R5-P9-16** [MEDIUM] [CONFIRMED_REAL] Single-file search bypasses extension/max-size filters and loads all lines
+- [x] **R5-P9-16** [MEDIUM] [CONFIRMED_REAL] Single-file search bypasses extension/max-size filters and loads all lines
+  - FIXED: wave 5
   - Files: src/core/advanced_search_worker.cpp:625, src/core/advanced_search_worker.cpp:779
   - Boundary: untrusted-input (reachable)
   - Evidence: The single-file branch (execute 625-639) only calls isExcluded, never shouldSkipFile, so matchesExtensionFilter and max_file_size are bypassed. searchFile->searchTextContent then reads every line into a QStringList (780-791); the only guard is a 500k-line count cap, so a huge single-line file is read whole into one QString (unbounded memory). root_path is user/AI-supplied.
   - Fix: Apply max_file_size (and optionally extension) checks on the single-file path and bound the bytes read.
-- [ ] **R5-P9-17** [MEDIUM] [PARTIAL] UNC probe detaches on timeout; per-file SMB reads unbounded; mapped drives bypass probe
+- [x] **R5-P9-17** [MEDIUM] [PARTIAL] UNC probe detaches on timeout; per-file SMB reads unbounded; mapped drives bypass probe
+  - FIXED: wave 5
   - Files: src/core/advanced_search_worker.cpp:233, src/core/advanced_search_worker.cpp:216, src/core/advanced_search_worker.cpp:381
   - Boundary: untrusted-input (reachable)
   - Evidence: checkNetworkPathAccessible deliberately detaches the probe thread to avoid blocking on the future's destructor (documented, 228-237). Residuals are real: it only probes the // root once; per-file QFile/QDirIterator reads over UNC during the walk have no timeout (381) so a hostile SMB server hangs the worker; and isNetworkPath only matches // or // (217), so a mapped network drive-letter bypasses the probe entirely.
   - Fix: Detect mapped network drives (GetDriveType==DRIVE_REMOTE) and bound per-file network reads with a timeout.
-- [ ] **R5-P9-18** [MEDIUM] [CONFIRMED_REAL] Share discovery ignores 'ok' and emits discoveryComplete for partial/cancelled enumeration
+- [x] **R5-P9-18** [MEDIUM] [CONFIRMED_REAL] Share discovery ignores 'ok' and emits discoveryComplete for partial/cancelled enumeration
+  - FIXED: wave 5
   - Files: src/core/network_share_browser.cpp:114, src/core/network_share_browser.cpp:124
   - Boundary: untrusted-input (reachable)
   - Evidence: discoverShares computes ok via enumerateShares (114) but ignores it and unconditionally emits discoveryComplete(shares) (124). enumerateShares sets ok=false on cancel or truncated ERROR_MORE_DATA loops (193-195); on a hard NetShareEnum error it returns early with ok=false (177-182). So a partial or cancelled enumeration is reported as a complete discovery (a cancel emits only discoveryComplete, no error). NetShareEnum is also a blocking call with no timeout.
   - Fix: Gate discoveryComplete on ok, or emit a distinct incomplete/error signal when ok==false.
-- [ ] **R5-P9-21** [MEDIUM] [CONFIRMED_REAL] Link-following: canonicalization failure descends without cycle identity
+- [x] **R5-P9-21** [MEDIUM] [CONFIRMED_REAL] Link-following: canonicalization failure descends without cycle identity
+  - FIXED: wave 5
   - Files: src/core/file_scanner.cpp:347, src/core/file_scanner.cpp:349
   - Boundary: untrusted-input (reachable)
   - Evidence: In canDescendInto, when follow_symlinks is enabled, canonical(path, ec) is computed and the visited-set insert/cycle check runs only if !ec (347-353). On canonicalization FAILURE the guard is skipped and control falls through to return true, so an unreadable junction/symlink target is descended into with no cycle identity registered. Depth is still bounded by passesDepthAndVisibility, but confinement/cycle protection is lost. Requires the opt-in follow_symlinks plus a planted link in an untrusted tree.
   - Fix: On canonical() failure under follow_symlinks, return false (fail closed) rather than descending.
-- [ ] **R5-P9-26** [MEDIUM] [CONFIRMED_REAL] Orphan-node detail read failures dropped without marking result unreliable
+- [x] **R5-P9-26** [MEDIUM] [CONFIRMED_REAL] Orphan-node detail read failures dropped without marking result unreliable
+  - FIXED: wave 5
   - Files: src/core/deleted_item_scanner.cpp:172, src/core/deleted_item_scanner.cpp:265
   - Boundary: untrusted-input (reachable)
   - Evidence: tryReadOrphanedNode returns nullopt on any readItemDetail failure with no flag (265-271); scanOrphanedNodes silently skips it (172-175) and there is no orphan-reliable flag -- unlike the recoverable path which sets m_recoverable_reliable=false on non-cancel read failures (91-93,122-127, B8-23). A crafted PST/OST with unreadable orphan nodes yields a silently-truncated orphan set reported as complete.
   - Fix: Add an orphan-reliable flag set false on a non-cancel readItemDetail failure, mirroring the recoverable-scan treatment.
-- [ ] **R5-P9-34** [MEDIUM] [CONFIRMED_REAL] Network transfers allow timeout_ms<=0, disabling all timeouts (indefinite block)
+- [x] **R5-P9-34** [MEDIUM] [CONFIRMED_REAL] Network transfers allow timeout_ms<=0, disabling all timeouts (indefinite block)
+  - FIXED: wave 5
   - Files: src/core/network_transfer_runner.cpp:61, src/core/network_transfer_runner.cpp:89, src/core/network_transfer_runner.cpp:205
   - Boundary: untrusted-input (reachable)
   - Evidence: With timeout_ms<=0, setTransferTimeout(m_request.timeout_ms) disables Qt's transfer timeout (61) and createTimeoutTimer does not start (89-91). runNetworkTransfer blocks synchronously on finished.acquire() (205). If no should_cancel callback is supplied, a hostile/slow-loris server hangs the calling thread indefinitely. Note max_response_bytes IS clamped when <=0 (189-191) but timeout_ms is not -- an inconsistency.
   - Fix: Clamp timeout_ms to a positive default when <=0, mirroring the max_response_bytes clamp.
-- [ ] **R5-P9-36** [MEDIUM] [CONFIRMED_REAL] getMountPoints ignores abnormal FindNextVolumeW end; drops paths on buffer-too-small
+- [x] **R5-P9-36** [MEDIUM] [CONFIRMED_REAL] getMountPoints ignores abnormal FindNextVolumeW end; drops paths on buffer-too-small
+  - FIXED: wave 5
   - Files: src/core/drive_scanner.cpp:611, src/core/drive_scanner.cpp:696
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: getMountPoints' do/while (FindNextVolumeW ...) loop (603-611) does NOT check GetLastError() for ERROR_NO_MORE_FILES vs an abnormal error and returns a QStringList with no ok signal, so a mid-enumeration failure yields a silently partial list -- the sibling getVolumeRootsForDrive DOES perform exactly this check (677-679). collectMountPaths returns dropping all paths when GetVolumePathNamesForVolumeNameW fails, e.g. ERROR_MORE_DATA on a too-small fixed buffer (696-700). Local drive state, not attacker-controlled; likely an informational path.
@@ -1291,42 +1326,50 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: onMboxMessagesLoaded (1533-1553) builds visible_indices from the loop position within the loaded page vector and stores visible_indices.at(row) (a page-LOCAL 0-based index) as the row item id (1548/1552), NOT msg.message_index. MboxParser::readMessages assigns msg.message_index = offset+position (mbox_parser.cpp:220, offset from reloadCurrentPage m_current_page*page_size at 2311). So on page 2+ the stored id != the global index -> double-click/export opens the WRONG message. Separately checkedItemIds (1179) skips item_id==0, so genuine message_index 0 (first message) is silently omitted from checked exports.
   - Fix: Store messages.at(visible_indices.at(row)).message_index as the id for both ColSelect and ColSubject, and replace the 0-as-invalid sentinel (store index+1, or track validity separately) so message_index 0 is not dropped.
-- [ ] **R5-P11-3** [MEDIUM] [CONFIRMED_REAL] Partition wizard paths bypass central in-flight queue guard
+- [x] **R5-P11-3** [MEDIUM] [CONFIRMED_REAL] Partition wizard paths bypass central in-flight queue guard
+  - FIXED: wave 5
   - Files: src/gui/partition_manager_panel.cpp:10447, src/gui/partition_manager_panel.cpp:10709, src/gui/partition_manager_panel.cpp:10801
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The panel has a central choke point queueMutationBlockedByRunningOperation() (9221-9233) rejecting queue changes while Applying/Verifying; the guarded panel queueOperation wrappers (9235,9248) use it. But onAllocateFreeSpace (10447), onConvertDynamicDiskToBasic (10709) and queueQuickPartitionOperations (10801/10807/10812) call m_controller->queueOperation() DIRECTLY, bypassing it. Controller::queueOperation (partition_manager_controller.cpp:128) unconditionally setState(PlanningOperation)->QueueDirty with no applyIsRunning check, so these wizard flows can corrupt the state machine mid-Apply (flip operationRunning false, disable Cancel). Context menu / dialogs are not disabled during Apply. (Line 8115 is a test-only method, ignore.)
   - Fix: Route those three direct m_controller->queueOperation calls through the guarded panel queueOperation, or call queueMutationBlockedByRunningOperation() at the start of onQuickPartition/onAllocateFreeSpace/onConvertDynamicDiskToBasic before opening the dialog.
-- [ ] **R5-P11-5** [MEDIUM] [CONFIRMED_REAL] isAiBusy omits async runner; Stop detaches a still-running blocking mutation
+- [x] **R5-P11-5** [MEDIUM] [CONFIRMED_REAL] isAiBusy omits async runner; Stop detaches a still-running blocking mutation
+  - FIXED: wave 5
   - Files: src/gui/ai_assistant_panel.cpp:4523, src/gui/ai_assistant_panel.cpp:11176
   - Boundary: untrusted-input (reachable)
   - Evidence: isAiBusy() (4523-4527) checks client/toolTurn/workflow/executionBroker/offlineWorker but NOT m_asyncToolRunner->isRunning(). cancelLocalAiWork (11176-11178) calls m_asyncToolRunner->detach() and clears m_asyncToolInFlight; AiAsyncToolRunner::detach (ai_async_tool_runner.cpp:36) only sets m_attached=false -- m_running stays true and the pool task runs to completion (header docstring 44-46). Token cancel only stops token-polling ops; a blocking choco install / app-action recipe keeps running. So after Stop, finalizeStopRequest (11192) reads isAiBusy()==false, reports 'Cancelled', and the UI accepts new work while the detached mutation continues invisibly.
   - Fix: Add (m_asyncToolRunner && m_asyncToolRunner->isRunning()) to isAiBusy() so Stop reports Cancelling and new-run acceptance is gated until the detached op drains.
-- [ ] **R5-P11-9** [MEDIUM] [CONFIRMED_REAL] Online and offline installers have separate busy flags -> concurrent choco runs
+- [x] **R5-P11-9** [MEDIUM] [CONFIRMED_REAL] Online and offline installers have separate busy flags -> concurrent choco runs
+  - FIXED: wave 5
   - Files: src/gui/app_installation_panel_actions.cpp:280, src/gui/app_installation_panel_actions.cpp:570
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: enableControls (table.cpp:213-221) disables only online search/queue/install controls; enableOfflineControls (actions.cpp:740-755) disables only offline controls; they are independent. onInstallAll (280) checks only m_worker->isRunning(); onInstallFromBundle (570) and onDirectDownload (621) check only m_offline_worker->isRunning(). Neither entry point checks the other's flag/worker, so an online Chocolatey install and an offline-bundle install (both mutate machine locations via choco) can run concurrently.
   - Fix: Cross-guard: online entry points also reject when m_offline_in_progress/m_offline_worker->isRunning(), offline entry points also reject when m_install_in_progress/m_worker->isRunning(); disable both control groups during either operation.
-- [ ] **R5-P11-12** [MEDIUM] [CONFIRMED_REAL] Detail load commits shared m_pending_item_id, not detail's own id; properties id ignored
+- [x] **R5-P11-12** [MEDIUM] [CONFIRMED_REAL] Detail load commits shared m_pending_item_id, not detail's own id; properties id ignored
+  - FIXED: wave 5
   - Files: src/gui/email_inspector_panel.cpp:1410, src/gui/email_inspector_panel.cpp:1431
   - Boundary: untrusted-input (reachable)
   - Evidence: onItemDetailLoaded (1400) sets m_current_item_id = m_pending_item_id (1410) -- the shared latest-clicked id -- while storing m_current_detail = detail (1411). detail carries its own detail.node_id (used at 1422). Under rapid navigation an out-of-order response pairs message A's content with message B's identity, so subsequent attachment saves (which read m_current_item_id) target the wrong message. onItemPropertiesLoaded (1431) discards its item_id parameter entirely. (The MBOX path at 1605 correctly commits detail.message_index.)
   - Fix: Set m_current_item_id = detail.node_id in onItemDetailLoaded; in onItemPropertiesLoaded ignore the response unless item_id == m_current_item_id.
-- [ ] **R5-P11-13** [MEDIUM] [CONFIRMED_REAL] Attachment batch savers ignore response message id and index
+- [x] **R5-P11-13** [MEDIUM] [CONFIRMED_REAL] Attachment batch savers ignore response message id and index
+  - FIXED: wave 5
   - Files: src/gui/email_inspector_panel.cpp:1439, src/gui/email_attachments_browser_dialog.cpp:623
   - Boundary: untrusted-input (reachable)
   - Evidence: Both onAttachmentContentReady handlers ignore the message_id and index parameters (panel 1439 uses /*message_id*/,index but only m_batch_save.recordOne(filename,data) at 1449; dialog 623 ignores both) and record purely by filename against a fixed count. Any stray attachmentContentReady (inline-image fetch, leftover from a prior batch) is consumed into the active batch, saving the wrong payload into a slot. Save controls are not disabled during a batch (saveOneAttachment 549 / onSaveSelectedClicked 559 / onSaveAllVisibleClicked 588 never disable buttons), so overlapping batches can interleave.
   - Fix: Track the expected (message_id, att_index) set for the batch and only accept/record arrivals that match it; disable the save controls while a batch is active.
-- [ ] **R5-P11-14** [MEDIUM] [CONFIRMED_REAL] Backup destination accepts whitespace, relative, and nested-source paths
+- [x] **R5-P11-14** [MEDIUM] [CONFIRMED_REAL] Backup destination accepts whitespace, relative, and nested-source paths
+  - FIXED: wave 5
   - Files: src/gui/user_profile_backup_wizard_pages.cpp:699, src/gui/user_profile_backup_wizard_execute.cpp:214
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: validateDestination (699-720) tests text().isEmpty() with no trim (whitespace-only passes), performs no QFileInfo::isAbsolute() check, and has no guard that the destination lies outside the selected source trees. m_destinationPath is stored raw (776). ensureDestinationDirectory (execute.cpp:214-224) just QDir(path)+mkpath -- a relative path resolves against the process CWD, and a destination nested inside a source profile is not rejected, so the backup can recurse into its own growing output.
   - Fix: Trim the text; reject empty-after-trim; require QFileInfo(path).isAbsolute(); reject a destination that is inside or equal to any selected source root.
-- [ ] **R5-P11-16** [MEDIUM] [CONFIRMED_REAL] Folder context menu exports m_current_folder_id, not the right-clicked folder
+- [x] **R5-P11-16** [MEDIUM] [CONFIRMED_REAL] Folder context menu exports m_current_folder_id, not the right-clicked folder
+  - FIXED: wave 5
   - Files: src/gui/email_inspector_panel.cpp:1066, src/gui/email_inspector_panel.cpp:1252
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: onFolderTreeContextMenu (1060) captures item = m_folder_tree->itemAt(pos) but the Export-Folder actions (1066-1071) call exportCurrentFolderAs, which sets config.folder_id = m_current_folder_id (1252). m_current_folder_id is only updated on left-click (onFolderTreeItemClicked, 993); a right-click does not change selection, so right-clicking an unselected folder and choosing Export exports the previously selected folder.
   - Fix: Read the right-clicked item's folder id and pass it into exportCurrentFolderAs (add a folder_id parameter), or selectRow the right-clicked item first.
-- [ ] **R5-P11-18** [MEDIUM] [CONFIRMED_REAL] Untrusted text rendered as rich HTML in QLabels without escaping
+- [x] **R5-P11-18** [MEDIUM] [CONFIRMED_REAL] Untrusted text rendered as rich HTML in QLabels without escaping
+  - FIXED: wave 5
   - Files: src/gui/advanced_uninstall_panel_dialogs.cpp:77, src/gui/user_profile_restore_wizard.cpp:183, src/gui/ai_transcript_view.cpp:419
   - Boundary: local-config-or-registry (reachable)
   - Evidence: Uninstall dialogs interpolate registry program.displayName into HTML templates '<b>%1</b>' with no escaping (addUninstallProgramHeader 77, addForcedUninstallDescription 184); the restore welcome page injects manifest.version/source_machine into an explicit HTML block (showLoadedManifest 183-196); ai_transcript_view builds QLabel(body) with default AutoText (419) over model/tool output. QLabel auto-detects and renders rich text, so markup in these untrusted sources (HKCU uninstall keys are non-admin writable; the .sakbackup manifest and AI/tool output are attacker-influenced) can spoof a destructive-action confirmation dialog and fetch resources via <img src=...> (local/remote); no JS execution.
@@ -1700,6 +1743,303 @@ time with nothing reporting it, because no preflight asserts the toolchain exist
       something discovered only when someone happens to run the gate
 - [ ] R5-G11-3 check_blocking_patterns.ps1 is wired into CI and currently reports 10
       violations; determine whether CI is red or whether the failure is not blocking
+
+### G14 - the dynamic-analysis gap (NO static tool would have caught our real bugs)
+
+Grounding fact for this whole section: of the five genuine shipped bugs fixed in waves 1
+through 4, ZERO were reachable by any static analyzer. That is the strongest evidence in
+the campaign that the remaining LOW static-analysis tail is not where the risk lives.
+
+| Shipped bug | Static tool? | What actually catches it |
+|---|---|---|
+| fo^rmat C: bypassed all three risk classifiers | No | Property test: classify(s) == classify(deobfuscate(s)) over generated mutations |
+| Cancel signalled the wrong writer | No | Fault injection: after cancel(), assert no writer is active |
+| MBOX rows keyed by page-local offset | No | Strong types: MessageIndex vs RowIndex makes it a compile error |
+| Replace swapped a partial tree over the original | No | Fault injection: fail the copy midway, assert the original survives |
+| Payload drive_letter redirected a format | Weakly (taint) | One validated-target type the builders are required to consume |
+
+MEASURED GAP 1 - the sanitizer gate is dead configuration. CMakeCache reports
+ENABLE_ASAN:BOOL=ON, which reads as covered. It is not. The sanitizer block in
+CMakeLists.txt is guarded on 'if(CMAKE_BUILD_TYPE STREQUAL "Debug")', but the generator
+is Visual Studio 17 2022, which is MULTI-CONFIG: the configuration is chosen at build
+time by --config, not by CMAKE_BUILD_TYPE. /fsanitize=address has therefore never been
+applied to a single translation unit of this codebase. This is the SAME defect class as
+G12 (clang-tidy enabling zero checks) and G13 (cppcheck analyzing branches that never
+compile): a gate that reports healthy while analyzing nothing. Third occurrence.
+
+MEASURED GAP 2 - no fuzzing of first-party parsers. The only fuzz directories in the
+tree belong to vendored e2fsprogs. Every one of these parsers consumes attacker-supplied
+bytes and none is fuzzed: PST/OST, MBOX, EML, APFS, HFS+, ext, ZIP and archive entries,
+IMAP server responses, and browser-extension JSON.
+
+MEASURED GAP 3 - no coverage measurement of any kind. No OpenCppCoverage, gcov, or
+llvm-cov anywhere in the build or CI. '208 tests pass' therefore has an unknown
+denominator: there is no evidence about what fraction of the raw-filesystem engines,
+the elevation boundary, or the AI tool policy those tests actually execute.
+
+- [ ] R5-G14-1 Fix the dead sanitizer guard: select on the multi-config generator
+      correctly (generator expressions, or a dedicated single-config sanitizer build
+      tree) so /fsanitize=address is genuinely applied
+- [ ] R5-G14-2 Run the full 208-test suite under ASan and fix everything it reports
+- [ ] R5-G14-3 Add a CI job that builds with ASan and runs ctest, so the sanitizer
+      cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
+- [ ] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
+      implement UBSan or TSan); run the suite under UBSan
+- [ ] R5-G14-5 Fuzz harness: PST/OST parser
+- [ ] R5-G14-6 Fuzz harness: MBOX and EML parsers
+- [ ] R5-G14-7 Fuzz harness: APFS reader/writer structures
+- [ ] R5-G14-8 Fuzz harness: HFS+ reader structures
+- [ ] R5-G14-9 Fuzz harness: ext reader structures
+- [ ] R5-G14-10 Fuzz harness: ZIP and archive entry decoding
+- [ ] R5-G14-11 Fuzz harness: IMAP response reader
+- [ ] R5-G14-12 Fuzz harness: browser-extension JSON contract
+- [ ] R5-G14-13 Seed corpora from the real fixtures already in temp/ost_pst_files and the
+      APFS/HFS cert images, and check the corpora in so runs are reproducible
+- [ ] R5-G14-14 Wire a short fuzz run into CI and archive any crash reproducer
+- [ ] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
+- [ ] R5-G14-16 Publish the coverage number per subsystem as the baseline
+
+COVERAGE TARGET, decided 2026-08-04: FLAT 100 PERCENT LINE AND BRANCH COVERAGE ON ALL
+TESTABLE CODE. One rule, no tiers, no 'critical' vs 'non-critical' judgement calls, so
+no file can hide in a lower tier. The only permitted exclusions are code that genuinely
+cannot run headless: raw disk writes, elevation, netsh and other live network mutation,
+and display-dependent GUI. Every excluded entry must be NAMED in an inventory with the
+live-cert evidence that covers it instead. 'Excluded' must never come to mean 'unknown'.
+
+Stated plainly so it is not discovered later as a surprise: this is a large amount of
+work, and some of it is low-yield ceremony over GUI glue and boilerplate. That cost was
+weighed and accepted in exchange for an auditable rule with no judgement calls in it.
+
+Coverage is necessary but NOT sufficient, and this campaign has the proof. The
+diskpartOutputIsError regex had full line coverage - 42 passing cases executed that
+line every run - and still shipped a pattern reading 'is not valid' when diskpart
+actually says 'are not valid'. Coverage proves a line EXECUTED, never that it was
+CHECKED. Branch coverage on fail-closed paths plus assertions against real-world
+behaviour is what catches defects; the percentage only proves nothing was skipped.
+
+- [ ] R5-G14-16a Enforce 100 percent line coverage on all testable code
+- [ ] R5-G14-16b Enforce 100 percent BRANCH coverage on all testable code, so every
+      fail-closed branch is proven taken by a test rather than merely compiled past
+- [ ] R5-G14-16c Build the exclusion inventory: every excluded file or function named,
+      with the reason it cannot run headless and the live-cert evidence covering it
+- [ ] R5-G14-16d Wire the coverage gate into pre-commit and CI so it cannot regress
+- [ ] R5-G14-17 Add a fault-injection seam for filesystem, network, and process calls so
+      mid-operation failure paths are actually executed by tests. Two of the five real
+      bugs were exactly 'what happens if this fails halfway'
+- [ ] R5-G14-18 Property tests over the AI command classifiers: generated obfuscations
+      must not change the classification of a destructive command
+- [ ] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
+      (message index vs row index, disk vs partition index, validated vs raw target)
+
+### G15 - compiler and CI hardening
+
+The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
+/DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA at link. The gaps are elsewhere.
+
+- [ ] R5-G15-1 Enable /analyze (MSVC static analyzer) and fix what it reports; it
+      overlaps clang-tidy only partially and understands the Windows SAL annotations
+      on the Win32 APIs this codebase calls constantly
+- [ ] R5-G15-2 CI runs only a Release build plus ctest. Add the Debug configuration so
+      assertions and Debug-only preconditions are actually exercised somewhere
+- [ ] R5-G15-3 Extend the plain-ASCII rule from docs to ALL first-party text and add a
+      gate. MEASURED: 156 tracked first-party files carry 46748 non-ASCII bytes.
+      Breakdown by codepoint: 8696 U+2550 and 6124 U+2500 box-drawing (banner
+      separators, concentrated in the test suite), 329 U+2014 em-dash, 104 U+251C,
+      97 U+2502, 91 U+00A9, 54 U+FEFF BYTE ORDER MARK, 41 U+2192 arrow, 20 U+00A7,
+      10 U+2264. The 54 BOMs matter beyond style: a BOM changes how PowerShell and
+      JSON parsers read a file. One case is worse than a style violation -
+      src/core/partition_apfs_writer.cpp:147 contains U+00E2 U+20AC U+201D, an
+      em-dash double-encoded through cp1252, so that comment is already corrupted
+      text and needs rewriting rather than a character swap
+- [ ] R5-G15-4 CI has no clang-tidy, no cppcheck, no dead-code, and no sanitizer job;
+      every gate that exists only in pre-commit can be bypassed by a direct push
+
+### G18 - test QUALITY: a test that cannot fail is not a test
+
+Coverage proves a line executed. It does not prove the test would notice if the line
+were wrong. This campaign has produced direct evidence in both directions:
+
+  * diskpartOutputIsError had 42 passing cases and full line coverage, and still
+    shipped a regex reading 'is not valid' against diskpart text saying 'are not valid'.
+  * Nine test files with roughly 89 assertions had never executed at all, yet earlier
+    campaigns cited them as evidence that findings were fixed.
+
+So the suite itself must be audited for tests that pass regardless of the code.
+
+- [ ] R5-G18-1 Mutation testing over the first-party sources: deliberately break a
+      predicate, a boundary, a comparison operator, or a return value, and require that
+      some test fails. A surviving mutant is a hole in the suite, named and closed
+- [ ] R5-G18-2 Find and fix vacuous assertions: QVERIFY(true)-equivalents, assertions on
+      a value the test itself just computed the same way the code does, tautologies, and
+      tests whose only assertion is that nothing threw
+- [ ] R5-G18-3 Find tests that assert an implementation detail rather than the contract,
+      so a correct refactor breaks them and a real behaviour change does not
+- [ ] R5-G18-4 Every test must fail without its fix. For each regression test in this
+      campaign, prove it by reverting the fix locally and observing the failure
+- [ ] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
+      test_active_connections_monitor asserting a live system has TCP connections is the
+      known instance
+
+### G19 - implementation completeness: nothing half-wired
+
+- [ ] R5-G19-1 Inventory every TODO, FIXME, HACK, XXX and 'not implemented' in first-party
+      code; each becomes a tracked item that is implemented or deleted, never left
+- [ ] R5-G19-2 Find declared-but-unwired features: manifest entries with supported:false,
+      settings with no consumer, signals with no connection, handlers never registered,
+      menu actions that do nothing
+- [ ] R5-G19-3 Find stubs that return a plausible default instead of doing the work; this
+      is the fallback rule applied to whole functions
+- [ ] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches
+      to a real implementation end to end
+- [ ] R5-G19-5 Dead and orphaned code: unreferenced functions, unreachable branches,
+      unused members, headers nobody includes, whole files nobody compiles. The nine
+      orphaned test files prove this class exists in the build system too, not only in
+      the source
+
+### G20 - GUI and UX polish
+
+- [ ] R5-G20-1 Every interactive widget has an accessible name and a sensible tab order
+- [ ] R5-G20-2 Every long-running action shows progress, is cancellable, and the cancel
+      actually stops the work rather than detaching it
+- [ ] R5-G20-3 Every error surfaced to the user says what failed and what to do about it,
+      with no raw error codes or internal identifiers leaking into the message
+- [ ] R5-G20-4 No blocking of the GUI thread: close out the 10 measured nested event loop
+      and processEvents violations
+- [ ] R5-G20-5 Consistent visual language: all styling through the token system, zero raw
+      stylesheet literals, zero magic layout numbers
+- [ ] R5-G20-6 Keyboard operability for every flow that a technician uses under time
+      pressure, and no state that can only be reached by mouse
+- [ ] R5-G20-7 Empty, loading, partial and error states designed for every panel, not
+      just the success path
+
+### G21 - gate coherence and regression-proofing
+
+Gates must be strict, must not contradict each other, and must run everywhere. A gate
+that only runs in pre-commit is bypassed by a direct push; a gate that fights another
+gate teaches people to disable both.
+
+- [ ] R5-G21-1 Audit every gate pair for contradiction. The known risk is clang-format
+      line breaking versus lizard function length versus clang-tidy readability rules,
+      where satisfying one can violate another. Resolve by configuration, not by
+      suppression
+- [ ] R5-G21-2 Every gate runs in BOTH pre-commit and CI. CI currently has no clang-tidy,
+      no cppcheck, no dead-code and no sanitizer job
+- [ ] R5-G21-3 Every gate set to its strictest defensible setting, with any relaxation
+      carrying a written justification in the config itself
+- [ ] R5-G21-4 Every gate fails closed on a missing tool, and the preflight proves the
+      whole toolchain is present before anything runs
+- [ ] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
+      return even if the gate that would catch its class is later weakened
+- [ ] R5-G21-6 Branch protection: the gates are required checks, not advisory
+
+### G17 - defects found while FIXING, that the review never reported
+
+Wave 5 fixed the 43 verified MEDIUM findings. While doing so it uncovered defects more
+severe than the findings that led to them. None of these appears anywhere in the 398
+Phase 1 Codex findings. They were found by agents pulling a thread, reading callers, and
+checking a framework default against the installed headers rather than assuming it.
+
+This is the strongest evidence in the campaign that a review's own severity ranking is
+not a reliable guide to where the risk is. The parent findings were rated MEDIUM.
+
+- [x] R5-G17-1 CRITICAL. Email viewers disclosed arbitrary local files. All three
+      QTextBrowser instances set setOpenExternalLinks(false), which looks handled, but
+      left setOpenLinks at its default true and used the stock loadResource(), which
+      reads file:/// and UNC paths off the technician's machine and hands the bytes to
+      the document. An untrusted message containing
+      <img src="file:///C:/Users/Username/.ssh/id_rsa"> was a live disclosure vector.
+      stripRemoteContent() did not cover it: it rewrites only http:, https: and //, and
+      only when images are disabled. Fixed with a data:-only loadResource whitelist.
+- [x] R5-G17-2 CRITICAL. A registry InstallLocation of "D:\" produced a PRE-SELECTED
+      recursive delete of an entire volume, because classifyFileRisk returned Safe when
+      the path equalled installLocation and scan() pre-selected Safe items. The same
+      value could also exempt a subtree of C:\Windows from isProtectedPath through the
+      leftoverInsideOwnInstallSubfolder exemption. The review rated this MEDIUM and a
+      prior verifier marked it defer.
+- [x] R5-G17-3 HIGH. displayTaskDetail did html += detail.body_html with no sanitizer
+      and no image neutralization, so a task item's HTML body was live even with images
+      turned off.
+- [x] R5-G17-4 HIGH. QTextDocument::setMarkdown defaults to MarkdownDialectGitHub,
+      which does NOT include MarkdownNoHTML. Confirmed against the installed Qt 6.10.3
+      headers rather than assumed. Raw HTML blocks and spans were passing through into
+      the document at all three AI sinks: model output, workflow-library JSON, and run
+      details. Now pinned to an explicit feature set at every call, because relying on
+      a framework default is a dependency on something that can change underneath.
+- [x] R5-G17-5 HIGH. The ISO checksum parser accepted the first single-token line as
+      the digest with no validation. Against a real GParted release note it returned
+      the '=====' underline on line 2. Separately, BLAKE3 digests are 64 hex characters,
+      identical in shape to SHA-256, so selection by shape alone could silently take a
+      B3SUMS digest where SHA-256 was configured. Now section-aware: it follows the
+      algorithm label, not the position, and was validated against real upstream bytes
+      with the blocks deliberately reordered.
+- [x] R5-G17-6 HIGH. finalizeFsCommit ignored mainFq.ok entirely, and shrinkMainFreeQueue
+      clobbered a refused advance back to true with advance.ok = !readFailed. Both are
+      pre-existing fail-opens on the APFS commit path, surfaced only because a new error
+      channel was plumbed through the callers.
+- [x] R5-G17-7 HIGH. cmd.exe was launched with the browsed directory as its working
+      directory, so a planted binary in a browsed folder could be resolved ahead of the
+      intended one. Found by sweeping for bare interpreters, not cited by the review.
+- [x] R5-G17-8 BUILD BLOCKER. A new header named include/sak/ui_text_safety.h broke the
+      Release build of the main application. Qt's AUTOUIC treats any include of the form
+      ui_<name>.h as a request for a generated header and demands a matching <name>.ui.
+      main_window.cpp is in a target with AUTOUIC ON. Renamed to rich_text_safety.h.
+- [ ] R5-G17-9 MEDIUM. Fedora's CHECKSUM is BSD format, SHA256 (file) = hash, which the
+      parser has never handled, so Fedora ISO verification always failed closed. Safe,
+      but the feature never worked.
+- [x] R5-G17-10 MEDIUM. The PST body_html to body_plain derivation was unsanitized, so
+      script and handler text surfaced as plain text in the Plain Text view, the search
+      index, and every .txt, EML and MBOX export downstream.
+- [x] R5-G17-11 MEDIUM. The shared email sanitizer did not cover CSS. expression( and
+      url( are now neutralized, with a negative lookahead so a self-contained
+      url(data:...) survives and inline images keep working.
+
+### G16 - NINE test files exist, are documented, and have never run
+
+Found while fixing p9_filemgmt-18: tests/unit/test_network_share_browser.cpp existed,
+was listed in tests/README.md, and had no target in any CMakeLists, so it had never
+built and never executed. Auditing the whole suite found it was not alone. Of 217
+test_*.cpp files, NINE have no target anywhere. All nine are documented in
+tests/README.md. Together they hold roughly 89 test slots that have never once run.
+
+| Test file | Lines | Slots |
+|---|---|---|
+| tests/unit/test_network_share_browser.cpp | - | - |
+| tests/unit/test_active_connections_monitor.cpp | 107 | 9 |
+| tests/unit/test_bundled_tools_manager.cpp | 73 | 10 |
+| tests/unit/test_drive_unmounter.cpp | 29 | 3 |
+| tests/unit/test_image_source.cpp | 146 | 21 |
+| tests/unit/test_network_adapter_inspector.cpp | 115 | 13 |
+| tests/unit/test_network_diagnostic_controller.cpp | 85 | 10 |
+| tests/unit/test_port_scanner.cpp | 125 | 14 |
+| tests/unit/test_uninstall_worker.cpp | 93 | 9 |
+
+This is the most serious instance of the pattern this campaign keeps finding, because
+it is the TEST SUITE that was reporting healthy while covering nothing. Two of the nine
+cover code being repaired in this very campaign: test_uninstall_worker covers the
+elevated uninstall path with no trust policy (p7_sysops-9), and test_drive_unmounter
+covers volume dismount. The count of running tests, 208, was therefore never the count
+of tests that exist.
+
+Running tally of gates that reported healthy while analyzing nothing:
+
+1. clang-tidy - config enabled ZERO checks (G12)
+2. cppcheck - analyzed the non-Windows branches that never compile (G13)
+3. ASan - ENABLE_ASAN=ON but never applied under a multi-config generator (G14)
+4. Seven style and quality gates - existed but were wired to nothing (G8)
+5. Nine test files - documented but never compiled (this section)
+
+- [ ] R5-G16-1 Wire targets for all nine orphaned test files
+- [ ] R5-G16-2 Run them and disposition every failure. A test that was never validated
+      may be stale, in which case it is updated to the current contract and the change
+      recorded; or it may be RIGHT and the code wrong, which is a real defect found by
+      a test that never ran, and the test must not be weakened
+- [ ] R5-G16-3 Add a gate asserting that every test_*.cpp has a target and every target
+      is registered with ctest, so a test file can never again be documented as
+      covering something while never executing
+- [ ] R5-G16-4 Reconcile tests/README.md against the real ctest list; the README asserted
+      coverage that did not exist
+- [ ] R5-G16-5 Audit for the inverse defect: targets that build but are never registered
+      with add_test, and add_test entries excluded by a label or filter
 
 ### G10 - definition of done for this campaign
 

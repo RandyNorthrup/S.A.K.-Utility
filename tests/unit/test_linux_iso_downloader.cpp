@@ -20,6 +20,7 @@
 #include "sak/linux_iso_downloader.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -66,8 +67,14 @@ private Q_SLOTS:
 
     // Checksum URL resolution
     void testResolveChecksumUrl_Ubuntu();
-    void testResolveChecksumUrl_NoChecksum_SystemRescue();
+    void testResolveChecksumUrl_SystemRescue();
+    void testResolveChecksumUrl_GParted();
     void testResolveChecksumUrl_NoChecksum_Clonezilla();
+    void testEveryPinnedChecksumUrlIsHttpsAndPerRelease();
+    void testParseExpectedHash_requiresRealDigest();
+    void testChecksumSectionAlgorithm_separatesSameLengthDigests();
+    void testBsdRecordDigest_followsAlgorithmAndFileLabels();
+    void testResolveChecksumUrl_Fedora();
 
     // Filename resolution
     void testResolveFileName_Direct();
@@ -96,6 +103,7 @@ private Q_SLOTS:
     // Input validation
     void testStartDownload_UnknownDistro();
     void testStartDownload_WhileDownloading();
+    void testStartDownload_RefusesReleaseWithoutPinnedChecksum();
 
     // Phase management
     void testPhaseTransitions();
@@ -342,16 +350,155 @@ void LinuxISODownloaderTests::testResolveChecksumUrl_Ubuntu() {
     QVERIFY(url.contains("SHA256SUMS"));
 }
 
-void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_SystemRescue() {
+void LinuxISODownloaderTests::testResolveChecksumUrl_SystemRescue() {
+    // R5-P5-11: SystemRescue keeps a per-release .sha256 on its own site, so the entry is
+    // pinnable and no longer refused. The digest host is deliberately NOT the SourceForge
+    // mirror network that serves the ISO.
     auto d = m_catalog->distroById("systemrescue");
-    QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(url.isEmpty());  // SourceForge distros have no separate checksum URL
+    const QString url = m_catalog->resolveChecksumUrl(d);
+    QVERIFY2(url.startsWith("https://www.system-rescue.org/releases/"), qPrintable(url));
+    QVERIFY2(url.endsWith(".iso.sha256"), qPrintable(url));
+    QVERIFY2(url.contains(d.version), qPrintable(url));
+    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    QCOMPARE(d.checksumType, QString("sha256"));
+}
+
+void LinuxISODownloaderTests::testResolveChecksumUrl_GParted() {
+    // R5-P5-11: GParted ships no .sha256 sidecar; its per-release digests live in the release
+    // note in the same {version} directory as the ISO, which is equally per-release.
+    auto d = m_catalog->distroById("gparted-live");
+    const QString url = m_catalog->resolveChecksumUrl(d);
+    const QString expectedPrefix = "https://downloads.sourceforge.net/project/gparted/";
+    QVERIFY2(url.startsWith(expectedPrefix), qPrintable(url));
+    QVERIFY2(url.contains(d.version), qPrintable(url));
+    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    QCOMPARE(d.checksumType, QString("sha256"));
 }
 
 void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_Clonezilla() {
+    // Clonezilla publishes no checksum at a URL that addresses one release for its whole life
+    // (see the note in linux_distro_catalog.cpp), so it stays deliberately unpinned -- and
+    // therefore refused by requirePinnedChecksum rather than downloaded unverified.
     auto d = m_catalog->distroById("clonezilla");
     QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(url.isEmpty());  // SourceForge distros have no checksum URL
+    QVERIFY(url.isEmpty());
+}
+
+void LinuxISODownloaderTests::testParseExpectedHash_requiresRealDigest() {
+    // R5-P5-11: GParted's per-release digests arrive inside a release note, not a bare sums
+    // file, so the parser walks prose. A token is only accepted as the digest when it has the
+    // shape of one -- otherwise an ordinary word sitting next to the ISO's name (or a lone
+    // word on its own line) would be returned as "the hash" and verify nothing.
+    const QString sha256 = QString(64, QLatin1Char('a'));
+    const QString sha1 = QString(40, QLatin1Char('b'));
+    QVERIFY(LinuxISODownloader::isHexDigestOfLength(sha256, 64));
+    QVERIFY(LinuxISODownloader::isHexDigestOfLength(sha1, 40));
+    QVERIFY(LinuxISODownloader::isHexDigestOfLength(
+        QString("3F66B2E10B8BB2C573ED6CDD3A9B54FD0A8E7690634AB6B15C3C8F517992D1A1"), 64));
+
+    // The real GParted 1.8.1-3 SHA-256 and BLAKE3 digests of the SAME ISO. Both pass the shape
+    // test, which is precisely why the per-algorithm heading -- not the shape -- decides which
+    // one is used.
+    const QString realSha256 = "3f66b2e10b8bb2c573ed6cdd3a9b54fd0a8e7690634ab6b15c3c8f517992d1a1";
+    const QString realBlake3 = "3c2c2edf2ae67b85c2b74984d2ccfcbe64045d528ac8bbc6f7d092858f66e626";
+    QVERIFY(LinuxISODownloader::isHexDigestOfLength(realSha256, 64));
+    QVERIFY(LinuxISODownloader::isHexDigestOfLength(realBlake3, 64));
+    QVERIFY(realSha256 != realBlake3);
+
+    // Wrong length, non-hex characters, prose words and empty input are all refused.
+    QVERIFY(!LinuxISODownloader::isHexDigestOfLength(sha256, 40));
+    QVERIFY(!LinuxISODownloader::isHexDigestOfLength(QString("Download"), 64));
+    QVERIFY(!LinuxISODownloader::isHexDigestOfLength(QString(64, QLatin1Char('z')), 64));
+    QVERIFY(!LinuxISODownloader::isHexDigestOfLength(QString(), 64));
+    QVERIFY(!LinuxISODownloader::isHexDigestOfLength(sha256 + QLatin1Char('a'), 64));
+}
+
+void LinuxISODownloaderTests::testChecksumSectionAlgorithm_separatesSameLengthDigests() {
+    // R5-P5-11: GParted's release note carries MD5/SHA1/SHA256/SHA512/B2/B3 blocks for the
+    // SAME ISO. A BLAKE3 digest is 64 hex characters, exactly like SHA-256, so length alone
+    // cannot tell them apart -- only the per-algorithm heading can. Selecting by shape would
+    // silently return whichever block came first.
+    QCOMPARE(LinuxISODownloader::checksumSectionAlgorithm("### SHA256SUMS:"), QString("SHA256"));
+    QCOMPARE(LinuxISODownloader::checksumSectionAlgorithm("### B3SUMS:"), QString("B3"));
+    QCOMPARE(LinuxISODownloader::checksumSectionAlgorithm("MD5SUMS"), QString("MD5"));
+    QCOMPARE(LinuxISODownloader::checksumSectionAlgorithm("# SHA1SUMS:"), QString("SHA1"));
+
+    // Digest records and prose are not headings.
+    QVERIFY(LinuxISODownloader::checksumSectionAlgorithm(
+                "3f66b2e10b8bb2c573ed6cdd3a9b54fd0a8e7690634ab6b15c3c8f517992d1a1  x.iso")
+                .isEmpty());
+    QVERIFY(LinuxISODownloader::checksumSectionAlgorithm("This is GParted live 1.8.1-3").isEmpty());
+    QVERIFY(LinuxISODownloader::checksumSectionAlgorithm("").isEmpty());
+}
+
+void LinuxISODownloaderTests::testBsdRecordDigest_followsAlgorithmAndFileLabels() {
+    // R5-P5-11 follow-up: Fedora publishes BSD-style records, which the parser never handled,
+    // so Fedora could never verify. The algorithm is named on the line, so it is followed the
+    // same way a section heading is.
+    using D = LinuxISODownloader;
+    const QString iso = "Fedora-Workstation-Live-44-1.7.x86_64.iso";
+    const QString other = "Fedora-Workstation-Live-44-1.7.aarch64.iso";
+    const QString digest = "1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf";
+    const QString record = "SHA256 (" + iso + ") = " + digest;
+    QCOMPARE(D::bsdRecordDigest(record, iso, "sha256", 64), digest);
+
+    // "SHA-256" and "SHA256" name the same algorithm.
+    const QString dashed = "SHA-256 (" + iso + ") = " + digest;
+    QCOMPARE(D::bsdRecordDigest(dashed, iso, "sha256", 64), digest);
+
+    // NEGATIVE: a record naming a DIFFERENT algorithm must be rejected, never accepted just
+    // because its digest happens to be the right length.
+    const QString blake = "BLAKE3 (" + iso + ") = " + digest;
+    QVERIFY(D::bsdRecordDigest(record, iso, "sha1", 40).isEmpty());
+    QVERIFY(D::bsdRecordDigest(blake, iso, "sha256", 64).isEmpty());
+
+    // NEGATIVE: a record naming a DIFFERENT file must be rejected, so a CHECKSUM covering
+    // several artifacts cannot yield another file's digest.
+    QVERIFY(D::bsdRecordDigest(record, other, "sha256", 64).isEmpty());
+
+    // NEGATIVE: the shape check still applies -- a non-digest token is not a digest.
+    const QString notHash = "SHA256 (" + iso + ") = notahash";
+    const QString shortHash = "SHA256 (" + iso + ") = " + digest.left(63);
+    QVERIFY(D::bsdRecordDigest(notHash, iso, "sha256", 64).isEmpty());
+    QVERIFY(D::bsdRecordDigest(shortHash, iso, "sha256", 64).isEmpty());
+
+    // A plain sums record and the PGP armor Fedora wraps its CHECKSUM in are not BSD records.
+    const QString plain = digest + "  " + iso;
+    QVERIFY(D::bsdRecordDigest(plain, iso, "sha256", 64).isEmpty());
+    QVERIFY(D::bsdRecordDigest("-----BEGIN PGP SIGNATURE-----", iso, "sha256", 64).isEmpty());
+}
+
+void LinuxISODownloaderTests::testResolveChecksumUrl_Fedora() {
+    // Fedora's CHECKSUM was pinned and HTTPS all along; what was missing was a parser that
+    // could read its BSD-style records. Assert the pin still satisfies the catalog invariant.
+    auto d = m_catalog->distroById("fedora-workstation");
+    const QString url = m_catalog->resolveChecksumUrl(d);
+    QVERIFY2(url.startsWith("https://"), qPrintable(url));
+    QVERIFY2(url.endsWith("-CHECKSUM"), qPrintable(url));
+    QVERIFY2(url.contains(d.version), qPrintable(url));
+    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    QCOMPARE(d.checksumType, QString("sha256"));
+}
+
+void LinuxISODownloaderTests::testEveryPinnedChecksumUrlIsHttpsAndPerRelease() {
+    // Every catalog entry that carries a pinned checksum must carry it over TLS and must
+    // resolve to a concrete release: an unresolved {version} placeholder would fetch a
+    // non-existent file and a plain-HTTP digest could be tampered with on the same leg as
+    // the ISO. An entry with no pinned checksum is allowed -- it is refused at download time.
+    for (const auto& d : m_catalog->allDistros()) {
+        const QString url = m_catalog->resolveChecksumUrl(d);
+        if (url.isEmpty()) {
+            QVERIFY2(d.checksumUrl.isEmpty() ||
+                         d.sourceType == LinuxDistroCatalog::SourceType::GitHubRelease,
+                     qPrintable("Entry " + d.id + " has a checksum template that resolved away"));
+            continue;
+        }
+        QVERIFY2(url.startsWith("https://"),
+                 qPrintable(d.id + " checksum URL is not HTTPS: " + url));
+        QVERIFY2(!url.contains("{version}"),
+                 qPrintable(d.id + " checksum URL has an unresolved placeholder: " + url));
+        QVERIFY2(!d.checksumType.isEmpty(), qPrintable(d.id + " has a checksum URL but no type"));
+    }
 }
 
 // ============================================================================
@@ -510,6 +657,31 @@ void LinuxISODownloaderTests::testStartDownload_WhileDownloading() {
     // First attempt with unknown distro to trigger error
     downloader.startDownload("nonexistent", "C:/tmp/test.iso");
     QCOMPARE(errorSpy.count(), 1);
+}
+
+void LinuxISODownloaderTests::testStartDownload_RefusesReleaseWithoutPinnedChecksum() {
+    // R5-P5-11: a downloaded ISO is written to bootable media. A catalog entry with no pinned
+    // checksum could not be verified at all, and the SourceForge download URL redirects onto
+    // mirrors that may serve the file over plain HTTP -- so the download previously completed
+    // as an explicitly-unverified artifact. It is now refused up front instead.
+    auto clonezilla = m_catalog->distroById("clonezilla");
+    QVERIFY(m_catalog->resolveChecksumUrl(clonezilla).isEmpty());
+
+    LinuxISODownloader downloader;
+    QSignalSpy errorSpy(&downloader, &LinuxISODownloader::downloadError);
+    downloader.startDownload("clonezilla", QDir::tempPath() + "/sak-test-clonezilla.iso");
+
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY2(errorSpy.at(0).at(0).toString().contains("checksum", Qt::CaseInsensitive),
+             qPrintable(errorSpy.at(0).at(0).toString()));
+    QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Failed);
+    QVERIFY(!downloader.isDownloading());
+
+    // An entry that DOES publish a pinned HTTPS checksum is not blocked by this guard.
+    auto ubuntu = m_catalog->distroById("ubuntu-desktop");
+    const QString ubuntuChecksum = m_catalog->resolveChecksumUrl(ubuntu);
+    QVERIFY(!ubuntuChecksum.isEmpty());
+    QVERIFY(ubuntuChecksum.startsWith("https://"));
 }
 
 // ============================================================================

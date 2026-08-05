@@ -28,6 +28,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QString>
 #include <QStringList>
 
@@ -681,10 +682,19 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
         QStringLiteral("Backup BitLocker Keys"),
         [](const QJsonObject& payload,
            sak::ProgressCallback progress,
-           sak::CancelCheck is_cancelled) {
-            QString backup_location = payload["backup_location"].toString("C:/SAK_Backups");
+           sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+            // The task PAYLOAD is validated here, not only the calling client image: this
+            // destination receives PLAINTEXT recovery keys. An absent or wrong-typed value is
+            // REFUSED rather than coerced to a built-in default -- the elevated helper must
+            // never invent a destination the requester did not ask for. The action then
+            // canonicalizes and policy-screens the value (screenBackupLocation) before it
+            // creates anything.
+            const QJsonValue raw = payload.value(QStringLiteral("backup_location"));
+            if (!raw.isString() || raw.toString().trimmed().isEmpty()) {
+                return {false, {}, "Missing or invalid backup_location in payload"};
+            }
             return runQuickAction<sak::BackupBitlockerKeysAction>(
-                payload, std::move(progress), std::move(is_cancelled), backup_location);
+                payload, std::move(progress), std::move(is_cancelled), raw.toString());
         });
 }
 
@@ -890,7 +900,7 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
     while (true) {
         auto msg = server.readMessage();
         if (!msg) {
-            sak::logInfo("ElevatedHelper: client disconnected — shutting down");
+            sak::logInfo("ElevatedHelper: client disconnected -- shutting down");
             break;
         }
 

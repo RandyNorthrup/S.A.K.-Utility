@@ -1600,8 +1600,16 @@ void WifiManagerPanel::onScanNetworksClicked() {
 }
 
 QStringList WifiManagerPanel::scanWindowsProfileNames() {
+    // System32-qualified netsh, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, so a planted netsh could feed us fabricated profiles
+    // (or run with our token). Unresolvable -> FAILED scan, never a PATH-found binary.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        sak::logError("Cannot resolve the System32 netsh.exe path; WiFi profile scan aborted");
+        return {};
+    }
     const auto result = sak::runProcess(
-        QStringLiteral("netsh"),
+        netsh_exe,
         {QStringLiteral("wlan"), QStringLiteral("show"), QStringLiteral("profiles")},
         sak::kTimerNetshWaitMs);
     if (!result.succeeded()) {
@@ -1630,7 +1638,12 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() {
 
 WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QString& profileName) {
     Q_ASSERT(!profileName.isEmpty());
-    const auto result = sak::runProcess(QStringLiteral("netsh"),
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        sak::logError("Cannot resolve the System32 netsh.exe path; WiFi profile read aborted");
+        return {};
+    }
+    const auto result = sak::runProcess(netsh_exe,
                                         {QStringLiteral("wlan"),
                                          QStringLiteral("show"),
                                          QStringLiteral("profile"),
@@ -1926,6 +1939,14 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
     Q_ASSERT(!xml.isEmpty());
     (void)row;
 
+    // Adding a WLAN profile is a privileged mutation: resolve the System32 netsh and
+    // refuse outright when it cannot be resolved rather than let CreateProcess search.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        sak::logError("Cannot resolve the System32 netsh.exe path; WLAN profile install refused");
+        return false;
+    }
+
     // Use QTemporaryFile with .xml suffix for secure unique temp file
     QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
     tmpFile.setAutoRemove(true);
@@ -1941,7 +1962,7 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
 
     const QString tmpPath = tmpFile.fileName();
 
-    const auto result = sak::runProcess(QStringLiteral("netsh"),
+    const auto result = sak::runProcess(netsh_exe,
                                         {QStringLiteral("wlan"),
                                          QStringLiteral("add"),
                                          QStringLiteral("profile"),

@@ -10,6 +10,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 #include "sak/regex_pattern_library.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
@@ -1352,13 +1353,23 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
     m_results_tree->setUpdatesEnabled(true);
 }
 
-void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles) {
+void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles, bool complete) {
     Q_ASSERT(m_results_count_label);
     setSearchRunning(false);
     Q_EMIT statusMessage(tr("Found %1 matches in %2 files").arg(totalMatches).arg(totalFiles),
                          sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(totalMatches, totalMatches);
     m_results_count_label->setText(tr("(%1 matches, %2 files)").arg(totalMatches).arg(totalFiles));
+    if (!complete) {
+        // The log pane is the durable record of the run. Writing "Search complete"
+        // here for a run that skipped files would contradict the status bar and
+        // let the user read a partial result as an authoritative "not found".
+        logMessage(tr("Search INCOMPLETE: %1 matches in %2 files; some files could not be "
+                      "searched, results may be missing matches")
+                       .arg(totalMatches)
+                       .arg(totalFiles));
+        return;
+    }
     logMessage(tr("Search complete: %1 matches in %2 files").arg(totalMatches).arg(totalFiles));
 }
 
@@ -1484,8 +1495,10 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
     openDirAction->setEnabled(currentSearchTarget().local_file_system);
     connect(openDirAction, &QAction::triggered, this, [filePath]() {
         const QString native = QDir::toNativeSeparators(filePath);
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("/select,") + native});
+        // explorer.exe by absolute Windows-directory path (it is NOT in System32): a bare
+        // name is resolved through the CreateProcess search order like any other launch.
+        (void)sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                            {QStringLiteral("/select,") + native});
     });
 
     menu.addSeparator();

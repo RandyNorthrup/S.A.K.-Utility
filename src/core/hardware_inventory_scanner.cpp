@@ -11,7 +11,6 @@
 #include "sak/process_runner.h"
 
 #include <QDateTime>
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -81,28 +80,6 @@ QString classifyMediaType(const QString& interface_type,
         return QStringLiteral("HDD");
     }
     return QStringLiteral("Unknown");
-}
-
-/// @brief Absolute path to the system powershell.exe, or empty on failure.
-///
-/// Launching the unqualified "powershell.exe" resolves it via the CreateProcess
-/// search order -- which includes the current directory ahead of System32 -- so an
-/// attacker who plants a powershell.exe in a searched directory could have it run,
-/// worse still when the tool is elevated. Fail CLOSED (return empty) rather than
-/// fall back to the unqualified name so a resolution failure aborts the query.
-QString systemPowerShellPath() {
-#ifdef SAK_PLATFORM_WINDOWS
-    wchar_t system_dir[MAX_PATH];
-    const UINT len = GetSystemDirectoryW(system_dir, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH) {
-        return {};
-    }
-    const QString dir = QString::fromWCharArray(system_dir, static_cast<int>(len));
-    const QString path = dir + QStringLiteral("\\WindowsPowerShell\\v1.0\\powershell.exe");
-    return QFile::exists(path) ? path : QString();
-#else
-    return QStringLiteral("powershell.exe");
-#endif
 }
 
 /// @brief Copy driver/display metadata from a WMI Win32_VideoController row.
@@ -368,7 +345,9 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
                                    "ConvertTo-Json -Compress")
                                    .arg(wmi_class, prop_list);
 
-    const QString ps_exe = systemPowerShellPath();
+    // Shared resolver: the System32-qualified interpreter, empty when unresolvable so
+    // this query aborts instead of letting CreateProcess search PATH/CWD.
+    const QString ps_exe = sak::systemPowerShellPath();
     if (ps_exe.isEmpty()) {
         logError("WMI query for class {} aborted: system powershell.exe not resolvable",
                  wmi_class.toStdString());
@@ -678,7 +657,7 @@ QHash<QString, uint32_t> HardwareInventoryScanner::queryVolumeDiskMap() {
         "DiskIndex=$p[$_.Antecedent.DeviceID]}}|"
         "ConvertTo-Json -Compress");
 
-    const QString ps_exe = systemPowerShellPath();
+    const QString ps_exe = sak::systemPowerShellPath();
     if (ps_exe.isEmpty()) {
         logWarning("Volume-to-disk mapping query aborted: system powershell.exe not resolvable");
         m_wmiQueryFailed = true;

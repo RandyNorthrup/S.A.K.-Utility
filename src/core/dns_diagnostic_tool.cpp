@@ -365,10 +365,19 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 void DnsDiagnosticTool::inspectDnsCache() {
     m_cancelled.store(false);
 
-    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
-                                        {QStringLiteral("/displaydns")},
-                                        10'000,
-                                        [this]() { return m_cancelled.load(); });
+    // System32-qualified ipconfig, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, so a planted ipconfig could feed this tool a fabricated
+    // DNS cache. Unresolvable -> report no results (fail closed), never a PATH/CWD launch.
+    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
+    if (ipconfig_exe.isEmpty()) {
+        Q_EMIT dnsCacheResults({});
+        return;
+    }
+
+    const auto result =
+        sak::runProcess(ipconfig_exe, {QStringLiteral("/displaydns")}, 10'000, [this]() {
+            return m_cancelled.load();
+        });
     if (!result.succeeded()) {
         Q_EMIT dnsCacheResults({});
         return;

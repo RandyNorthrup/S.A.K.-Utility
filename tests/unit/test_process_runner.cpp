@@ -39,6 +39,9 @@ private Q_SLOTS:
 
     // CODEX_REVIEW_4 H14: System32 qualification of system executables
     void system32Path_qualifiesUnderSystem32();
+
+    // R5-P7-22: the shared PowerShell resolver every privileged caller must use
+    void systemPowerShellPath_resolvesAbsoluteInterpreter();
 };
 
 // ============================================================================
@@ -273,6 +276,31 @@ void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
                          Qt::CaseInsensitive),
              qPrintable(ps));
     QVERIFY2(QFileInfo::exists(ps), qPrintable(ps));
+#endif
+}
+
+// R5-P7-22: restore points, program enumeration, archiving and thermal polling all used
+// to launch a BARE "powershell.exe", which CreateProcess resolves through a search order
+// that puts the current directory ahead of System32 -- a planted powershell would then run
+// with an elevated token. Every one of those call sites now goes through this one resolver,
+// so it must hand back an ABSOLUTE path under the real system directory (never the bare
+// name, and never a relative form a caller could pass straight to CreateProcess).
+void ProcessRunnerTests::systemPowerShellPath_resolvesAbsoluteInterpreter() {
+#ifndef Q_OS_WIN
+    QSKIP("System32 resolution is Windows-specific");
+#else
+    const QString ps = sak::systemPowerShellPath();
+    QVERIFY2(!ps.isEmpty(), "the system PowerShell must resolve on a healthy Windows install");
+    QVERIFY2(ps != QStringLiteral("powershell.exe"), qPrintable(ps));
+    QVERIFY2(QDir::isAbsolutePath(ps), qPrintable(ps));
+    QVERIFY2(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                         Qt::CaseInsensitive),
+             qPrintable(ps));
+    // Fail-closed contract: the resolver only ever returns a path that really exists, so a
+    // non-empty result can be handed to CreateProcess without a PATH search.
+    QVERIFY2(QFileInfo(ps).isFile(), qPrintable(ps));
+    // It agrees with the generic System32 resolver used for netsh/reg/cmd/msiexec.
+    QCOMPARE(ps, sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe")));
 #endif
 }
 

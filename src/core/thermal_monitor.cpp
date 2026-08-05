@@ -85,7 +85,14 @@ QVector<ThermalReading> ThermalMonitor::pollOnce() {
 
 QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
     queryOk = false;
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    // System32-qualified interpreter, never a bare "powershell.exe": the poll can run
+    // from an elevated session, so a PATH/CWD-planted powershell must not satisfy it.
+    // Unresolvable -> FAILED query (queryOk stays false).
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return {};
+    }
+    const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NoLogo"),
                                          QStringLiteral("-Command"),
@@ -254,7 +261,13 @@ void ThermalMonitor::processReadings(const QVector<ThermalReading>& readings) {
 // ============================================================================
 
 double ThermalMonitor::queryCpuTemperature() {
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    // System32-qualified interpreter only; unresolvable -> no reading (-1.0), never a
+    // PATH/CWD-resolved launch.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return -1.0;
+    }
+    const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NoLogo"),
                                          QStringLiteral("-Command"),

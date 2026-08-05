@@ -7,6 +7,7 @@
 #include "sak/partition_script_builder.h"
 
 #include "sak/partition_file_system_tool_runner.h"
+#include "sak/partition_raw_device_io.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -1784,7 +1785,13 @@ QString sizeMbArg(uint64_t bytes) {
     // DiskPart sizes are whole MiB. Round UP so a destructive recreate never rebuilds a
     // partition smaller than the source it just deleted (flooring could shave off up to
     // <1MiB and leave the restore unable to fit). Ceiling only ever grows the request.
-    const uint64_t megabytes = (bytes + kCloneIoBufferBytes - 1) / kCloneIoBufferBytes;
+    //
+    // The ceiling is computed WITHOUT the usual (bytes + divisor - 1) bias: that addition
+    // wraps for a byte count within one MiB of UINT64_MAX and collapses to a tiny megabyte
+    // count, which would recreate a wiped volume as a 1 MiB partition. Dividing first cannot
+    // overflow, and the +1 is bounded by UINT64_MAX / kCloneIoBufferBytes.
+    const uint64_t whole = bytes / kCloneIoBufferBytes;
+    const uint64_t megabytes = (bytes % kCloneIoBufferBytes == 0) ? whole : whole + 1;
     return QString::number(std::max<uint64_t>(kMinimumDiskPartSizeMb, megabytes));
 }
 
@@ -1907,27 +1914,85 @@ QString backupRestoreHelpersScript() {
                "}\n");
 }
 
+// diskpart.exe commonly exits 0 even when an individual script command failed, printing a
+// hard-failure marker to stdout instead. The exit code alone is therefore not proof of success:
+// the output is captured, echoed for the operation log, and scanned for failure markers, and an
+// empty output (diskpart never ran the script) is failure too. Success is then established
+// POSITIVELY -- and language-independently -- by Assert-SakDiskPartVolume below, which proves
+// the recreated volume actually exists at the expected size before the restore continues.
 QString diskPartRunnerScript() {
     return QStringLiteral(
         "function Invoke-SakDiskPart([string[]]$lines) {\n"
         "  $scriptPath = Join-Path $env:TEMP ('sak-diskpart-{0}.txt' -f "
         "[guid]::NewGuid().ToString('N'))\n"
-        "  try { $lines | Set-Content -LiteralPath $scriptPath -Encoding ASCII; diskpart.exe /s "
-        "$scriptPath; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }\n"
+        "  try {\n"
+        "    $lines | Set-Content -LiteralPath $scriptPath -Encoding ASCII\n"
+        // 2>&1 under $ErrorActionPreference='Stop' would turn any stderr line into a
+        // terminating error before the markers below can be inspected, so the preference is
+        // relaxed for the capture only and restored immediately.
+        "    $oldPreference = $ErrorActionPreference\n"
+        "    $ErrorActionPreference = 'Continue'\n"
+        "    try { $output = (& diskpart.exe /s $scriptPath 2>&1 | Out-String); $code = "
+        "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
+        "    Write-Output $output\n"
+        "    if ($code -ne 0) { exit $code }\n"
+        "    if ([string]::IsNullOrWhiteSpace($output)) { throw 'DiskPart produced no output; the "
+        "script was not executed' }\n"
+        "    if ($output -match 'DiskPart has encountered an error|Virtual Disk Service error|"
+        "Access is denied|There is no (disk|volume|partition) selected|is not valid|"
+        "DiskPart failed|could not complete the operation|write protected|not convertible|"
+        "not enough usable space|The operation is not supported') { throw ('DiskPart reported a "
+        "failure despite exit code 0: {0}' -f $output.Trim()) }\n"
+        "  }\n"
         "  finally { Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue }\n"
+        "}\n"
+        "function Get-SakManifestBytes($manifest) {\n"
+        "  $sum = ($manifest | Measure-Object -Property Length -Sum).Sum\n"
+        "  if ($null -eq $sum) { return [uint64]0 }\n"
+        "  return [uint64]$sum\n"
+        "}\n"
+        "function Assert-SakDiskPartVolume([string]$driveLetter, [uint64]$minimumBytes) {\n"
+        "  Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+        "  $volume = $null\n"
+        "  for ($attempt = 0; $attempt -lt 20 -and $null -eq $volume; $attempt++) {\n"
+        "    $volume = Get-Volume -DriveLetter $driveLetter -ErrorAction SilentlyContinue\n"
+        "    if ($null -eq $volume) { Start-Sleep -Milliseconds 500 }\n"
+        "  }\n"
+        "  if ($null -eq $volume) { throw ('DiskPart did not leave a usable volume on {0}; the "
+        "recreate failed' -f $driveLetter) }\n"
+        // The recreate size comes from a payload-declared byte count, so prove the new volume
+        // can actually hold the backup before the restore is attempted. This catches an
+        // undersized recreate (e.g. a wrapped size collapsing to the 1 MiB floor) immediately
+        // instead of part-way through the robocopy that would otherwise surface it.
+        "  if ([uint64]$volume.Size -lt $minimumBytes) { throw ('Recreated volume {0} is {1} "
+        "bytes, smaller than the {2} bytes of backed-up data it must hold' -f $driveLetter, "
+        "$volume.Size, $minimumBytes) }\n"
         "}\n");
 }
 
-bool isRawDevicePath(QString path) {
-    path = path.trimmed();
-    path.replace('/', '\\');
-    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive);
+// Raw-device classification is ONE authority (sak::isWindowsRawDevicePath /
+// sak::rawDevicePhysicalDriveNumber) shared with the plan-time validator and the raw I/O
+// layer. The builder previously matched only \\.\ while the validator also accepted the
+// equivalent \\?\ spellings, so a validator-approved \\?\PhysicalDriveN target was emitted
+// as a plain file write with no take-offline / IsBoot re-check.
+bool isRawDevicePath(const QString& path) {
+    return isWindowsRawDevicePath(path);
 }
 
-bool isPhysicalDrivePath(QString path) {
-    path = path.trimmed();
-    path.replace('/', '\\');
-    return path.startsWith(QStringLiteral("\\\\.\\PhysicalDrive"), Qt::CaseInsensitive);
+bool isPhysicalDrivePath(const QString& path) {
+    return rawDevicePhysicalDriveNumber(path).has_value();
+}
+
+// The emitted PowerShell recognizes a raw device only by the \\.\ prefix: that is what makes
+// Get-SakPhysicalDriveNumber resolve the disk (so Assert-SakRawWriteTarget takes it offline and
+// re-checks IsBoot/IsSystem at run time) and what makes Open-SakWrite open the target with
+// device rather than file (FileMode::Create) semantics. Rewrite an equivalent \\?\ device
+// spelling to its \\.\ form before it reaches the script so those guards cannot be skipped by
+// spelling the target differently. A non-device path -- including an extended-length
+// \\?\C:\dir\x.img image file -- is left exactly as supplied.
+QString canonicalCloneTransferPath(const QString& path) {
+    const QString canonical = canonicalRawDevicePath(path);
+    return canonical.isEmpty() ? path : canonical;
 }
 
 bool isSupportedAllocationUnitSize(uint64_t value) {
@@ -2020,8 +2085,10 @@ struct CloneTransferSpec {
 
 CloneTransferSpec cloneTransferSpec(const PartitionOperation& operation) {
     CloneTransferSpec spec;
-    spec.source = payloadString(operation, QStringLiteral("source_path"));
-    spec.target = payloadString(operation, QStringLiteral("target_path"));
+    spec.source =
+        canonicalCloneTransferPath(payloadString(operation, QStringLiteral("source_path")));
+    spec.target =
+        canonicalCloneTransferPath(payloadString(operation, QStringLiteral("target_path")));
     spec.source_size = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
     spec.target_size = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
     spec.verify_mode = payloadString(operation, QStringLiteral("verify_mode"));
@@ -2063,6 +2130,26 @@ bool cloneTargetTooSmall(const CloneTransferSpec& spec) {
     return spec.source_size > spec.target_size;
 }
 
+// A partition clone writes raw bytes at an explicit target offset. A zero offset seeks the
+// target device to sector 0 and lays the source over the target disk's partition table instead
+// of the intended region, and an unknown source size makes the copied byte count come from the
+// source stream at run time instead of the size the safety validator approved. Both fail closed
+// here as well as in the validator, so neither entry point can dispatch the write alone.
+QString clonePartitionSpecError(const PartitionOperation& operation,
+                                const CloneTransferSpec& spec) {
+    if (operation.type != PartitionOperationType::ClonePartition) {
+        return {};
+    }
+    if (spec.source_size == 0) {
+        return QStringLiteral("Partition clone requires a known source size");
+    }
+    if (isPhysicalDrivePath(spec.target) && spec.target_offset == 0) {
+        return QStringLiteral(
+            "Partition clone to a physical disk requires a non-zero target offset");
+    }
+    return {};
+}
+
 QString validateCloneOrImageScript(const PartitionOperation& operation,
                                    const CloneTransferSpec& spec) {
     if (missingClonePaths(spec)) {
@@ -2082,6 +2169,9 @@ QString validateCloneOrImageScript(const PartitionOperation& operation,
     }
     if (cloneTargetTooSmall(spec)) {
         return QStringLiteral("Target is smaller than source");
+    }
+    if (const QString blocker = clonePartitionSpecError(operation, spec); !blocker.isEmpty()) {
+        return blocker;
     }
     return {};
 }
@@ -5066,6 +5156,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
             "$lines += ('format fs={0} quick label=\"{1}\"' -f $fileSystem, $label)\n"
             "$lines += ('assign letter={0}' -f $drive)\n"
             "Invoke-SakDiskPart $lines\n"
+            "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
             "Assert-SakManifestMatch $backupManifest $restoredManifest\n"
@@ -5203,6 +5294,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
             "fs={0} quick label=\"{1}\"' -f $fileSystem, $label),('assign letter={0}' -f $drive))\n"
             "Invoke-SakDiskPart $lines\n"
             "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+            "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
             "Assert-SakManifestMatch $backupManifest $restoredManifest\n"

@@ -544,6 +544,21 @@ void NetworkDiagnosticController::connectShareBrowserSignals() {
                     QStringLiteral("Share discovery: %1 shares found").arg(shares.size()));
                 removeOperation(State::BrowsingShares);
             });
+    // A discovery that did NOT complete must not populate the share cache: m_cachedShares feeds
+    // the report, which would then present a truncated list as this host's share inventory. The
+    // cache was already dropped by clearCacheFor() when the run started, so leaving it untouched
+    // is the fail-closed action -- surface the reason and end the operation.
+    connect(m_shareBrowser.get(),
+            &NetworkShareBrowser::discoveryFailed,
+            this,
+            [this](QVector<NetworkShareInfo> partialShares, QString reason) {
+                Q_EMIT errorOccurred(reason);
+                Q_EMIT logOutput(QStringLiteral("Share discovery incomplete: %1 (%2 partial "
+                                                "entries discarded)")
+                                     .arg(reason)
+                                     .arg(partialShares.size()));
+                removeOperation(State::BrowsingShares);
+            });
     connect(m_shareBrowser.get(),
             &NetworkShareBrowser::errorOccurred,
             this,

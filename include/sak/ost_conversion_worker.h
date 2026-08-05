@@ -52,6 +52,20 @@ public:
     /// Request cancellation
     void cancel();
 
+    /// @brief Fold a deleted-item scan's honesty flags into @p result.
+    ///
+    /// items_recovered alone cannot say whether the scan ENUMERATED everything: a read error in
+    /// the Recoverable Items hierarchy, or an unreadable orphan node, silently shrinks the set.
+    /// Recovering fewer items than exist and reporting a clean conversion is a fail-open, so an
+    /// unreliable scan clears recovery_complete AND records an error, which classifyOutcome turns
+    /// into a Failed job rather than a Complete one. @p orphans_scanned is false when the run
+    /// never attempted the orphan pass, in which case @p orphan_reliable says nothing and is
+    /// ignored. Pure and static so the rule is testable without a PST fixture.
+    static void recordRecoveryReliability(bool recoverable_reliable,
+                                          bool orphan_reliable,
+                                          bool orphans_scanned,
+                                          OstConversionResult& result);
+
 Q_SIGNALS:
     void conversionStarted(int total_items);
     void progressUpdated(int items_done, int items_total, QString current_folder);

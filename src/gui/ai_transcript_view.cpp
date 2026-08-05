@@ -385,7 +385,10 @@ void AiTranscriptView::addTranscriptHeading(QVBoxLayout* bubble_layout,
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     heading_row->setSpacing(sak::ui::kSpacingSmall);
 
+    // chatRoleHeading() falls through to the raw role for anything it does not recognize, and the
+    // role is parsed off a transcript line loaded from disk, so it is shown verbatim too.
     auto* role_label = new QLabel(chatRoleHeading(message.role), bubble);
+    role_label->setTextFormat(Qt::PlainText);
     role_label->setStyleSheet(sak::ui::transparentTextStyle(sak::ui::kFontSizeSmall,
                                                             sak::ui::kFontWeightBold,
                                                             user ? sak::ui::kColorBgUserBubbleText
@@ -416,7 +419,10 @@ void AiTranscriptView::addTranscriptBody(QVBoxLayout* bubble_layout,
                                          QFrame* bubble,
                                          const QString& body,
                                          bool user) {
+    // `body` is raw model / tool / MCP output. It is displayed as written -- never interpreted as
+    // markup -- so a reply cannot forge emphasis or make the app fetch an <img src=...> resource.
     auto* body_label = new QLabel(body, bubble);
+    body_label->setTextFormat(Qt::PlainText);
     body_label->setWordWrap(true);
     body_label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     body_label->setStyleSheet(sak::ui::transparentBodyTextStyle(
@@ -467,6 +473,8 @@ QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {
     bubble_layout->addWidget(role_label);
 
     m_activityLabel = new QLabel(bubble);
+    // The activity text embeds run-supplied identifiers (workflow phase ids, tool names).
+    m_activityLabel->setTextFormat(Qt::PlainText);
     m_activityLabel->setWordWrap(true);
     m_activityLabel->setToolTip(QObject::tr("Current AI activity"));
     m_activityLabel->setStyleSheet(sak::ui::transparentTextStyle(

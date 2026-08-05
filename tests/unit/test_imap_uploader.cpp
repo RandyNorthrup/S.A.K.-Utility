@@ -71,6 +71,25 @@ private Q_SLOTS:
         QVERIFY(!ImapUploader::isValidImapGreeting(QStringLiteral("* OK still coming")));
     }
 
+    // R5 p6_email-16: the accumulate-until-CRLF read needs a hard ceiling. A hostile
+    // server can stream bytes without ever sending a line terminator, and every reader
+    // waits for a complete line, so an uncapped buffer is a memory-exhaustion vector.
+    void responseBufferWouldOverflow_capsUnterminatedResponse() {
+        constexpr qsizetype cap = ImapUploader::kMaxResponseBufferChars;
+        QVERIFY(cap > 0);
+        // A normal status response is nowhere near the ceiling.
+        QVERIFY(!ImapUploader::responseBufferWouldOverflow(0, 64));
+        QVERIFY(!ImapUploader::responseBufferWouldOverflow(cap - 1, 1));
+        // Crossing the ceiling is refused -- both by accumulation...
+        QVERIFY(ImapUploader::responseBufferWouldOverflow(cap, 1));
+        QVERIFY(ImapUploader::responseBufferWouldOverflow(cap - 1, 2));
+        // ...and in a single oversized chunk, which is refused BEFORE it is appended.
+        QVERIFY(ImapUploader::responseBufferWouldOverflow(0, cap + 1));
+        // A nonsensical size fails closed rather than being treated as "fits".
+        QVERIFY(ImapUploader::responseBufferWouldOverflow(-1, 0));
+        QVERIFY(ImapUploader::responseBufferWouldOverflow(0, -1));
+    }
+
     void hasCompleteLineWithPrefix_continuationOnlyAtLineStart() {
         // A continuation request is a line that starts with '+'.
         QVERIFY(ImapUploader::hasCompleteLineWithPrefix(QStringLiteral("+ Ready\r\n"),

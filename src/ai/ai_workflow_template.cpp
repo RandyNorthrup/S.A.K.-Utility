@@ -169,6 +169,28 @@ void validateWorkflowRequiredFields(const WorkflowTemplate& workflow, QStringLis
            type.compare(QStringLiteral("overseer"), Qt::CaseInsensitive) == 0;
 }
 
+// A shell phase's command template is validated at LOAD, for user AND bundled workflows,
+// because both shells build their command by string substitution:
+//   * run_powershell substitutes in PowerShellSingleQuoted mode, which only doubles embedded
+//     single quotes, so every ${...} must be provably inside a '...' literal;
+//   * run_cmd has no literal-quoting construct at all, so its command must carry no ${...}
+//     placeholder (a value that cannot be proven inert is rejected, never escaped-and-hoped).
+// Either violation would inject a placeholder value into the command unescaped.
+void validatePhaseCommandTemplate(const WorkflowPhase& phase, QStringList* errors) {
+    const bool powershell = phase.tool == QLatin1String("run_powershell");
+    const bool cmd = phase.tool == QLatin1String("run_cmd");
+    if (!powershell && !cmd) {
+        return;
+    }
+    const QString command = phase.arguments.value(QStringLiteral("command")).toString();
+    QString detail;
+    const bool safe = powershell ? powerShellCommandTemplateIsSingleQuoteSafe(command, &detail)
+                                 : cmdCommandTemplateIsPlaceholderFree(command, &detail);
+    if (!safe) {
+        errors->append(QStringLiteral("Phase %1: %2").arg(phase.id, detail));
+    }
+}
+
 void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* errors) {
     QSet<QString> seen_ids;
     for (const auto& phase : workflow.phases) {
@@ -193,16 +215,7 @@ void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* error
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
         }
-        // A run_powershell command is substituted in PowerShellSingleQuoted mode, which only
-        // escapes embedded single quotes: reject at load any command whose ${...} placeholder is
-        // NOT inside a single-quoted literal (raw injection risk), for user AND bundled templates.
-        if (phase.tool == QLatin1String("run_powershell")) {
-            QString ps_error;
-            const QString command = phase.arguments.value(QStringLiteral("command")).toString();
-            if (!powerShellCommandTemplateIsSingleQuoteSafe(command, &ps_error)) {
-                errors->append(QStringLiteral("Phase %1: %2").arg(phase.id, ps_error));
-            }
-        }
+        validatePhaseCommandTemplate(phase, errors);
     }
 }
 

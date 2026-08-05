@@ -18,7 +18,9 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+#include "sak/process_runner.h"
 #include "sak/ribbon_tool_button.h"
+#include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractButton>
@@ -6819,9 +6821,10 @@ BitLockerDialogAction showBitLockerDialog(QWidget* parent,
         QApplication::clipboard()->setText(commandLines.join('\n'));
     });
     QObject::connect(openButton, &QPushButton::clicked, []() {
-        QProcess::startDetached(QStringLiteral("control.exe"),
-                                {QStringLiteral("/name"),
-                                 QStringLiteral("Microsoft.BitLockerDriveEncryption")});
+        // Absolute System32 control.exe; unresolvable -> launch nothing (no bare-name retry).
+        (void)sak::startDetachedSystem32Tool(
+            QStringLiteral("control.exe"),
+            {QStringLiteral("/name"), QStringLiteral("Microsoft.BitLockerDriveEncryption")});
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
@@ -6963,7 +6966,8 @@ OptimizeDialogAction showOptimizeDrivesDialog(QWidget* parent, const OptimizeDia
         QApplication::clipboard()->setText(commands.join('\n'));
     });
     QObject::connect(openButton, &QPushButton::clicked, []() {
-        QProcess::startDetached(QStringLiteral("dfrgui.exe"));
+        // Absolute System32 dfrgui.exe; unresolvable -> launch nothing (no bare-name retry).
+        (void)sak::startDetachedSystem32Tool(QStringLiteral("dfrgui.exe"));
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
@@ -7122,9 +7126,11 @@ QTableWidget* createSpaceAnalyzerTable(QWidget* parent,
                         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
                         return;
                     }
-                    QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                            {QStringLiteral("/select,"),
-                                             QDir::toNativeSeparators(path)});
+                    // explorer.exe lives in the Windows directory, not System32; name it
+                    // absolutely so a planted explorer.exe cannot satisfy the launch.
+                    (void)sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                        {QStringLiteral("/select,"),
+                                                         QDir::toNativeSeparators(path)});
                 });
                 QObject::connect(copy, &QAction::triggered, table, [path]() {
                     QApplication::clipboard()->setText(QDir::toNativeSeparators(path));
@@ -8118,6 +8124,10 @@ void PartitionManagerPanel::queueTestOperationForReview(PartitionOperationType t
 bool PartitionManagerPanel::showApplyReviewDialogForTest() {
     return showApplyReviewDialog();
 }
+
+void PartitionManagerPanel::setTestApplyStateForReview(PartitionManagerState state) {
+    m_controller->setTestState(state);
+}
 #endif
 
 void PartitionManagerPanel::setupUi() {
@@ -9023,6 +9033,27 @@ void PartitionManagerPanel::attachDiskMapContextMenu(QWidget* widget,
             });
 }
 
+QStringList PartitionManagerPanel::diskStatusParts(const PartitionDiskInfo& disk) {
+    QStringList parts;
+    if (!disk.health_status.isEmpty()) {
+        parts.append(disk.health_status);
+    }
+    if (!disk.operational_status.isEmpty()) {
+        parts.append(disk.operational_status);
+    }
+    if (disk.temperature_celsius >= 0) {
+        parts.append(tr("%1 C").arg(disk.temperature_celsius));
+    }
+    if (disk.wear_percent > 0) {
+        parts.append(tr("%1% wear").arg(disk.wear_percent));
+    }
+    if (disk.read_errors_total > 0 || disk.write_errors_total > 0) {
+        parts.append(
+            tr("R/W errors %1/%2").arg(disk.read_errors_total).arg(disk.write_errors_total));
+    }
+    return parts;
+}
+
 void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
@@ -9033,32 +9064,18 @@ void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     font.setBold(true);
     target->setFont(font);
     target->setData(Qt::UserRole, rowData);
-    target->setToolTip(
+    // partition_style and the health/operational status strings come from WMI/SMART; build the
+    // whole tooltip first, then wrap it once so the tooltip renders it literally.
+    QString tooltip =
         tr("Disk %1, %2, %3, %4")
             .arg(disk.disk_number)
-            .arg(disk.partition_style, formatPartitionBytes(disk.size_bytes), disk.health_status));
-    m_table->setItem(row, ColPartition, target);
-    QStringList statusParts;
-    if (!disk.health_status.isEmpty()) {
-        statusParts.append(disk.health_status);
-    }
-    if (!disk.operational_status.isEmpty()) {
-        statusParts.append(disk.operational_status);
-    }
-    if (disk.temperature_celsius >= 0) {
-        statusParts.append(tr("%1 C").arg(disk.temperature_celsius));
-    }
-    if (disk.wear_percent > 0) {
-        statusParts.append(tr("%1% wear").arg(disk.wear_percent));
-    }
-    if (disk.read_errors_total > 0 || disk.write_errors_total > 0) {
-        statusParts.append(
-            tr("R/W errors %1/%2").arg(disk.read_errors_total).arg(disk.write_errors_total));
-    }
+            .arg(disk.partition_style, formatPartitionBytes(disk.size_bytes), disk.health_status);
+    const QStringList statusParts = diskStatusParts(disk);
     if (!statusParts.isEmpty()) {
-        target->setToolTip(target->toolTip() +
-                           tr(", %1").arg(statusParts.join(QStringLiteral(" | "))));
+        tooltip += tr(", %1").arg(statusParts.join(QStringLiteral(" | ")));
     }
+    target->setToolTip(ui::asLiteralRichText(tooltip));
+    m_table->setItem(row, ColPartition, target);
     for (int column = ColFileSystem; column < ColCount; ++column) {
         m_table->setItem(row, column, new QTableWidgetItem(QString()));
     }
@@ -9083,7 +9100,7 @@ void PartitionManagerPanel::addPartitionRow(const PartitionDiskInfo& disk,
     auto* fileSystemItem = new QTableWidgetItem(partition.volume ? partition.volume->file_system
                                                                  : QString());
     if (partition.volume) {
-        fileSystemItem->setToolTip(fileSystemTooltipText(*partition.volume));
+        fileSystemItem->setToolTip(ui::asLiteralRichText(fileSystemTooltipText(*partition.volume)));
     }
     m_table->setItem(row, ColFileSystem, fileSystemItem);
     m_table->setItem(row,
@@ -10444,13 +10461,15 @@ bool PartitionManagerPanel::queueUnallocatedFreeSpace(const PartitionTarget& tar
         return false;
     }
 
-    m_controller->queueOperation(
-        choice.move_partition_start ? PartitionOperationType::MovePartition
-                                    : PartitionOperationType::Resize,
-        partitionTargetFromPartition(*partition),
-        choice.move_partition_start
-            ? freeSpaceMovePayload(widgets, *partition, amountBytes)
-            : freeSpaceResizePayload(*partition, target.size_bytes, amountBytes));
+    // Route through the panel wrapper, not the controller directly: it re-runs the central
+    // running-operation guard after the modal (an Apply can start during the dialog's nested
+    // event loop) instead of mutating the queue the executor is consuming.
+    queueOperation(choice.move_partition_start ? PartitionOperationType::MovePartition
+                                               : PartitionOperationType::Resize,
+                   partitionTargetFromPartition(*partition),
+                   choice.move_partition_start
+                       ? freeSpaceMovePayload(widgets, *partition, amountBytes)
+                       : freeSpaceResizePayload(*partition, target.size_bytes, amountBytes));
     return true;
 }
 
@@ -10499,6 +10518,13 @@ bool PartitionManagerPanel::queueAdjacentDonorFreeSpace(const PartitionTarget& t
 }
 
 void PartitionManagerPanel::onAllocateFreeSpace() {
+    // Every queue mutation goes through the one central guard, wizards included: the
+    // context menu and these action links are NOT disabled during an Apply, so the check
+    // has to happen here rather than relying on button state. Checked before the wizard
+    // opens so the user is told up front; the queue call re-checks after the modal.
+    if (queueMutationBlockedByRunningOperation()) {
+        return;
+    }
     const auto target = selectedTarget();
     const auto* diskPtr = selectedDisk();
     // Copy disk/partition by value before opening the helper's modal: a background inventory
@@ -10642,7 +10668,30 @@ void PartitionManagerPanel::onChangeVolumeSerialNumber() {
     queueOperation(PartitionOperationType::ChangeVolumeSerialNumber, payload);
 }
 
+namespace {
+
+// Payload for the dynamic-to-basic backup / convert / restore engine. Extracted from the
+// wizard entry point so that stays within the function-length gate.
+QJsonObject dynamicToBasicPayload(const BackupRestoreWidgets& widgets,
+                                  const PartitionInfoEx& partition) {
+    QJsonObject payload;
+    payload[QStringLiteral("drive_letter")] = partition.volume->drive_letter.left(1).toUpper();
+    payload[QStringLiteral("source_size_bytes")] = QString::number(partition.size_bytes);
+    payload[QStringLiteral("file_system")] = partition.volume->file_system;
+    payload[QStringLiteral("label")] = partition.volume->label;
+    payload[QStringLiteral("backup_directory")] =
+        QDir::toNativeSeparators(widgets.backup_directory->text().trimmed());
+    payload[QStringLiteral("target_wipe_confirmed")] = widgets.confirmation->isChecked();
+    return payload;
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
+    // Same central guard as every other queue mutation (see onAllocateFreeSpace).
+    if (queueMutationBlockedByRunningOperation()) {
+        return;
+    }
     const auto* diskPtr = selectedDisk();
     if (!diskPtr) {
         showWarningLogged(this,
@@ -10697,18 +10746,10 @@ void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
         return;
     }
 
-    QJsonObject payload;
-    payload[QStringLiteral("drive_letter")] =
-        sourcePartition->volume->drive_letter.left(1).toUpper();
-    payload[QStringLiteral("source_size_bytes")] = QString::number(sourcePartition->size_bytes);
-    payload[QStringLiteral("file_system")] = sourcePartition->volume->file_system;
-    payload[QStringLiteral("label")] = sourcePartition->volume->label;
-    payload[QStringLiteral("backup_directory")] =
-        QDir::toNativeSeparators(widgets.backup_directory->text().trimmed());
-    payload[QStringLiteral("target_wipe_confirmed")] = widgets.confirmation->isChecked();
-    m_controller->queueOperation(PartitionOperationType::ConvertDynamicDiskToBasic,
-                                 diskTarget,
-                                 payload);
+    // Panel wrapper, not the controller directly: it re-runs the guard after the modal.
+    queueOperation(PartitionOperationType::ConvertDynamicDiskToBasic,
+                   diskTarget,
+                   dynamicToBasicPayload(widgets, *sourcePartition));
 }
 
 void PartitionManagerPanel::onExtendPartitionWizard() {
@@ -10732,6 +10773,10 @@ void PartitionManagerPanel::onExtendPartitionWizard() {
 }
 
 void PartitionManagerPanel::onQuickPartition() {
+    // Same central guard as every other queue mutation (see onAllocateFreeSpace).
+    if (queueMutationBlockedByRunningOperation()) {
+        return;
+    }
     const auto* diskPtr = selectedDisk();
     const QString blocker = quickPartitionBlocker(diskPtr);
     if (!blocker.isEmpty()) {
@@ -10772,6 +10817,13 @@ void PartitionManagerPanel::onQuickPartition() {
 
 void PartitionManagerPanel::queueQuickPartitionOperations(const PartitionDiskInfo& disk,
                                                           const QJsonObject& options) {
+    // Re-run the central running-operation guard here, after the wizard's modal closed: an
+    // Apply can start (or reach AwaitingElevation) during the dialog's nested event loop.
+    // This one check covers ALL the enqueues below, so a state flip can never leave a half-
+    // queued Initialize/Delete-All set behind (the per-call wrapper could).
+    if (queueMutationBlockedByRunningOperation()) {
+        return;
+    }
     // Validate the requested layout BEFORE enqueuing any destructive operation. Initialize and
     // Delete-All must never be left in the pending queue when validation fails, so every check
     // runs first and the function returns with no side effects on any failure path.

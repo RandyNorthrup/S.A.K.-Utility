@@ -271,8 +271,14 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
     QDir output_dir(output_dir_path);
     for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
          ++attempt) {
-        QProcess::startDetached("explorer.exe",
-                                QStringList() << QString("ms-settings:%1").arg(ms_uri));
+        // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary):
+        // a shell-open resolves through the same CreateProcess search order as any other
+        // launch, so a bare name lets a planted explorer.exe run. Refuse the whole capture
+        // attempt rather than fall back to the bare name.
+        if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                           {QString("ms-settings:%1").arg(ms_uri)})) {
+            return false;
+        }
 
         const int wait_time = kSettingsCaptureInitialWaitMs +
                               (attempt - kSettingsCaptureFirstAttempt) *

@@ -264,6 +264,10 @@ struct HfsForkData {
 struct HfsVolume {
     QString file_system;
     uint64_t volume_offset{0};
+    // Bytes of the HFS wrapper's embedded extent (embeddedExtentBlockCount allocation
+    // blocks) that the inner volume is allowed to occupy; 0 when the volume is not
+    // wrapped. A wrapped volume claiming more than this is refused.
+    uint64_t embedded_extent_bytes{0};
     uint32_t file_count{0};
     uint32_t folder_count{0};
     uint32_t next_catalog_id{0};

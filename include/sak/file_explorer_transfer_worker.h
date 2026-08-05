@@ -68,8 +68,20 @@ public:
     /// symlinks, capped raw files, or depth/entry-cap overflow); a move must
     /// never delete the source when the copy did not land whole.
     [[nodiscard]] bool lastTransferComplete() const { return !m_last_transfer_incomplete; }
+    /// False when the last transferEntry lost content the caller never asked to
+    /// lose. Narrower than @ref lastTransferComplete: an explicitly permitted
+    /// capped raw read (Copy Out, which marks the copy as capped) is a shortfall
+    /// the caller requested and stays true here. This is the predicate for "may
+    /// be reported as a completed item".
+    [[nodiscard]] bool lastTransferLandedAsRequested() const {
+        return !m_last_transfer_unrequested_loss;
+    }
 
 private:
+    /// Record a shortfall in the last copy leg. @p sanctioned marks a shortfall
+    /// the caller explicitly asked for (an allowed capped raw read), which still
+    /// blocks a move's source delete but not the completed-item report.
+    void noteIncompleteTransfer(bool sanctioned);
     [[nodiscard]] bool removeReplacedDestination(const FileExplorerTransferItem& item);
     /// Dispatch @p item to the correct copy leg, writing to @p destination.
     [[nodiscard]] bool transferItemTo(const FileExplorerTransferItem& item,
@@ -82,9 +94,22 @@ private:
     [[nodiscard]] bool transferReplacing(const FileExplorerTransferItem& item,
                                          const FileManagementTransferObserver& observer);
     /// A staging/backup sibling of @p destination_path in its own parent (so the
-    /// final move is a same-directory rename), named with @p prefix and a per-engine
-    /// sequence for uniqueness within the run.
+    /// final move is a same-directory rename), named with @p prefix, a per-engine
+    /// sequence for uniqueness within the run, and 64 bits of system entropy so the
+    /// name cannot be guessed and pre-planted by a co-located writer.
     [[nodiscard]] QString siblingTempPath(const QString& destination_path, const QString& prefix);
+    /// True only when NOTHING occupies @p path on the destination target. Anything
+    /// short of proof of absence -- an occupant, an undecidable stat, a failed or
+    /// truncated listing -- reports false so the caller fails closed instead of
+    /// planting a staging/backup sibling on top of existing data.
+    [[nodiscard]] bool destinationPathVacant(const QString& path);
+    /// Claim @p path as this engine's staging sibling: a local destination gets a
+    /// genuine exclusive create (a directory when @p directory, otherwise an empty
+    /// file), so a pre-existing entry or a planted symlink at the name fails rather
+    /// than being merged into, overwritten, or deleted by the cleanup. Raw
+    /// destinations have no exclusive-create primitive and fall back to proving the
+    /// name vacant through @ref destinationPathVacant.
+    [[nodiscard]] bool reserveStagingPath(const QString& path, bool directory);
     // Best-effort cleanup of a staged/backup sibling, resolving its kind at
     // execution time; the caller reports the real outcome, so the removal result is
     // advisory (not [[nodiscard]]).
@@ -112,6 +137,7 @@ private:
     QString m_last_file_sha256;
     bool m_last_file_hash_capped{false};
     bool m_last_transfer_incomplete{false};
+    bool m_last_transfer_unrequested_loss{false};
     int m_replace_seq{0};
 };
 

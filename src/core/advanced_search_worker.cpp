@@ -9,6 +9,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -26,10 +27,41 @@
 
 #include <zlib.h>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace sak {
 
 namespace {
 constexpr qsizetype kMaxTextSearchLines = 500'000;
+
+/// Longest line handed to QRegularExpression::globalMatch. Qt exposes no match
+/// or time limit for PCRE2 and the stop flag is only reachable BETWEEN lines, so
+/// a hostile pattern (the pattern is user- or AI-supplied) whose cost grows with
+/// the subject length would otherwise spin the worker thread uninterruptibly on
+/// a single very long line. Lines past this length are not scanned at all and
+/// the file is recorded as unreadable, so the omission is surfaced rather than
+/// silently swallowed.
+constexpr qsizetype kMaxScanLineChars = 256 * 1024;
+
+/// GetDriveTypeW() value for a mapped network drive. Named here so the
+/// classification is available on every platform; the value is checked against
+/// the Win32 macro below.
+constexpr unsigned int kWin32DriveRemote = 4;
+#ifdef Q_OS_WIN
+static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
+#endif
+
+/// Bytes per bounded overlapped read window. Small enough that a stalled server
+/// is detected inside one timeout budget, large enough that a 100 MiB archive is
+/// not thousands of SMB round trips.
+constexpr qint64 kNetworkReadWindowBytes = 1LL * sak::kBytesPerMB;
+
+/// Ceiling on the configured network timeout so the seconds-to-milliseconds
+/// conversion cannot overflow int.
+constexpr int kMaxNetworkTimeoutSec = 300;
+
 constexpr int kByteIndex2 = 2;
 constexpr int kByteIndex3 = 3;
 constexpr int kByteShift8 = 8;
@@ -96,6 +128,179 @@ constexpr int kTargetSearchBrowseMaxEntries = 10'000;
     }
     return std::nullopt;
 }
+
+/// @brief Read every line of a LOCAL text file into @p lines.
+///
+/// Kept on the plain QFile/QTextStream path deliberately: local reads must stay
+/// fast, and only a network path needs the bounded overlapped reader.
+/// @return nullopt on success, else the fail-closed reason for the caller to
+///         record -- the partially filled @p lines must then not be searched.
+[[nodiscard]] std::optional<QString> readLocalTextLines(const QString& file_path,
+                                                        QStringList& lines) {
+    QFile file(file_path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QStringLiteral("open failed");
+    }
+
+    QTextStream stream(&file);
+    stream.setEncoding(QStringConverter::Utf8);
+
+    // Read all lines for context window support.
+    while (!stream.atEnd()) {
+        lines.append(stream.readLine());
+
+        // Safety limit: refuse a file that somehow passed the byte-size check.
+        if (lines.size() > kMaxTextSearchLines) {
+            return QStringLiteral("exceeds %1 lines").arg(kMaxTextSearchLines);
+        }
+    }
+    return std::nullopt;
+}
+
+/// @brief Win32 drive type of @p path's "X:\" root, or 0 (DRIVE_UNKNOWN) when the
+///        path has no drive-letter root or the platform has no such concept.
+///        GetDriveTypeW answers from the local mount table, so it does not itself
+///        touch the (possibly unresponsive) share.
+[[nodiscard]] unsigned int rootDriveType(const QString& path) {
+#ifdef Q_OS_WIN
+    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
+    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+        return 0;
+    }
+    return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
+#else
+    Q_UNUSED(path)
+    return 0;
+#endif
+}
+
+#ifdef Q_OS_WIN
+
+/// @brief Owns a Win32 HANDLE and closes it exactly once, on every exit path.
+///        CreateFileW and CreateEventW report failure differently
+///        (INVALID_HANDLE_VALUE vs nullptr), so both count as "nothing owned".
+class ScopedWin32Handle {
+public:
+    explicit ScopedWin32Handle(HANDLE handle) : m_handle(handle) {}
+    ~ScopedWin32Handle() {
+        if (valid()) {
+            CloseHandle(m_handle);
+        }
+    }
+    ScopedWin32Handle(const ScopedWin32Handle&) = delete;
+    ScopedWin32Handle& operator=(const ScopedWin32Handle&) = delete;
+    ScopedWin32Handle(ScopedWin32Handle&&) = delete;
+    ScopedWin32Handle& operator=(ScopedWin32Handle&&) = delete;
+
+    [[nodiscard]] bool valid() const {
+        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE;
+    }
+    [[nodiscard]] HANDLE get() const { return m_handle; }
+
+private:
+    HANDLE m_handle;
+};
+
+/// @brief One bounded overlapped read window, grouped so the reader below stays
+///        inside the five-parameter gate limit.
+struct BoundedReadWindow {
+    HANDLE file{nullptr};
+    HANDLE event{nullptr};
+    qint64 offset{0};
+    DWORD bytes{0};
+    int timeout_ms{0};
+};
+
+/// @brief Issue one overlapped ReadFile and wait at most @p w.timeout_ms for it.
+///
+/// On timeout the outstanding I/O is cancelled AND drained: the kernel may still
+/// write into @p out and into the OVERLAPPED, both of which live in this frame,
+/// so returning before the request has truly finished would corrupt the stack.
+/// CancelIoEx makes the drain complete promptly instead of inheriting the hang.
+[[nodiscard]] AdvancedSearchWorker::NetworkReadStep readBoundedWindow(const BoundedReadWindow& w,
+                                                                      char* out,
+                                                                      DWORD& read_bytes) {
+    using Step = AdvancedSearchWorker::NetworkReadStep;
+    read_bytes = 0;
+
+    OVERLAPPED overlapped{};
+    overlapped.hEvent = w.event;
+    overlapped.Offset = static_cast<DWORD>(static_cast<quint64>(w.offset) & 0xFF'FF'FF'FFULL);
+    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<quint64>(w.offset) >> 32);
+    ResetEvent(w.event);
+
+    if (ReadFile(w.file, out, w.bytes, nullptr, &overlapped) == FALSE &&
+        GetLastError() != ERROR_IO_PENDING) {
+        return GetLastError() == ERROR_HANDLE_EOF ? Step::EndOfFile : Step::Failed;
+    }
+
+    if (WaitForSingleObject(w.event, static_cast<DWORD>(w.timeout_ms)) != WAIT_OBJECT_0) {
+        CancelIoEx(w.file, &overlapped);
+        DWORD drained = 0;
+        GetOverlappedResult(w.file, &overlapped, &drained, TRUE);
+        return Step::TimedOut;
+    }
+
+    DWORD transferred = 0;
+    const bool io_ok = GetOverlappedResult(w.file, &overlapped, &transferred, FALSE) != FALSE;
+    const bool at_eof = !io_ok && GetLastError() == ERROR_HANDLE_EOF;
+    read_bytes = transferred;
+    return AdvancedSearchWorker::classifyNetworkReadStep(
+        true, io_ok || at_eof, static_cast<qint64>(transferred), static_cast<qint64>(w.bytes));
+}
+
+/// @brief Read at most @p max_bytes of @p path with every window bounded by
+///        @p timeout_ms.
+///
+/// A timeout discards everything read so far: a truncated buffer handed back as
+/// "the file" would turn a hung share into a silent false-negative search result.
+[[nodiscard]] std::expected<QByteArray, QString> readNetworkFileBounded(const QString& path,
+                                                                        qint64 max_bytes,
+                                                                        int timeout_ms) {
+    const std::wstring wide_path = path.toStdWString();
+    const ScopedWin32Handle file(CreateFileW(wide_path.c_str(),
+                                             GENERIC_READ,
+                                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                             nullptr,
+                                             OPEN_EXISTING,
+                                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+                                             nullptr));
+    if (!file.valid()) {
+        return std::unexpected(QStringLiteral("open failed (Win32 error %1)").arg(GetLastError()));
+    }
+    const ScopedWin32Handle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event.valid()) {
+        return std::unexpected(
+            QStringLiteral("read event creation failed (Win32 error %1)").arg(GetLastError()));
+    }
+
+    QByteArray data;
+    qint64 filled = 0;
+    while (filled < max_bytes) {
+        const qint64 window = std::min(kNetworkReadWindowBytes, max_bytes - filled);
+        data.resize(filled + window);
+        const BoundedReadWindow request{
+            file.get(), event.get(), filled, static_cast<DWORD>(window), timeout_ms};
+        DWORD landed = 0;
+        const auto step = readBoundedWindow(request, data.data() + filled, landed);
+        if (step == AdvancedSearchWorker::NetworkReadStep::TimedOut) {
+            return std::unexpected(
+                QStringLiteral("network read timed out after %1 ms").arg(timeout_ms));
+        }
+        if (step == AdvancedSearchWorker::NetworkReadStep::Failed) {
+            return std::unexpected(
+                QStringLiteral("network read failed (Win32 error %1)").arg(GetLastError()));
+        }
+        filled += landed;
+        if (step == AdvancedSearchWorker::NetworkReadStep::EndOfFile) {
+            break;
+        }
+    }
+    data.resize(filled);
+    return data;
+}
+
+#endif  // Q_OS_WIN
 }  // namespace
 
 // -- Zlib Inflate Helper ------------------------------------------------------
@@ -213,8 +418,85 @@ bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
 
 // -- Network Path Detection --------------------------------------------------
 
+bool AdvancedSearchWorker::requiresNetworkProbe(const QString& path, unsigned int root_drive_type) {
+    if (path.startsWith("\\\\") || path.startsWith("//")) {
+        return true;
+    }
+    // A drive letter mapped to an SMB share looks local. Without this rule the
+    // bounded accessibility probe is skipped entirely for it, so an unresponsive
+    // share blocks the walk with nothing to time it out.
+    return root_drive_type == kWin32DriveRemote;
+}
+
 bool AdvancedSearchWorker::isNetworkPath(const QString& path) {
-    return path.startsWith("\\\\") || path.startsWith("//");
+    return requiresNetworkProbe(path, rootDriveType(path));
+}
+
+bool AdvancedSearchWorker::readsOverNetwork(const QString& file_path) const {
+    // The root's classification (computed once in prepareSearchConfig) covers
+    // every file under it, and a path that is itself UNC is caught by a prefix
+    // test. Neither costs a syscall, so the ordinary local walk is unaffected.
+    if (m_root_on_network || file_path.startsWith("\\\\") || file_path.startsWith("//")) {
+        return true;
+    }
+    // A reparse point inside an otherwise local tree can still resolve onto a
+    // share (a planted symlink is an attacker-reachable way to do exactly that),
+    // and opening it reads over SMB. The TARGET decides, not the link's own
+    // local-looking path. Only entries that are actually links pay this lookup.
+    const QFileInfo info(file_path);
+    if (!info.isSymLink()) {
+        return false;
+    }
+    return isNetworkPath(info.symLinkTarget());
+}
+
+AdvancedSearchWorker::NetworkReadStep AdvancedSearchWorker::classifyNetworkReadStep(
+    bool wait_signalled, bool io_succeeded, qint64 bytes_read, qint64 bytes_requested) {
+    if (bytes_requested <= 0) {
+        // A zero-length window is a caller bug, never a clean stop.
+        return NetworkReadStep::Failed;
+    }
+    if (!wait_signalled) {
+        // Fail closed: the caller cancels the I/O and discards the partial buffer.
+        // A timeout is a FAILURE, never a short read.
+        return NetworkReadStep::TimedOut;
+    }
+    if (!io_succeeded || bytes_read < 0) {
+        return NetworkReadStep::Failed;
+    }
+    if (bytes_read < bytes_requested) {
+        // A file read comes up short only at end of file; keep what landed.
+        return NetworkReadStep::EndOfFile;
+    }
+    return NetworkReadStep::Complete;
+}
+
+int AdvancedSearchWorker::networkReadTimeoutMs(int network_timeout_sec) {
+    const int configured = network_timeout_sec > 0 ? network_timeout_sec
+                                                   : kAdvancedSearchNetworkTimeoutSec;
+    return std::clamp(configured, 1, kMaxNetworkTimeoutSec) * kMillisecondsPerSecond;
+}
+
+std::expected<QByteArray, QString> AdvancedSearchWorker::readSearchFileBytes(
+    const QString& file_path, qint64 max_bytes) const {
+    if (max_bytes <= 0) {
+        return std::unexpected(QStringLiteral("read budget is not positive"));
+    }
+#ifdef Q_OS_WIN
+    if (readsOverNetwork(file_path)) {
+        // QFile has no read timeout, so a hostile or dead SMB server would block
+        // this worker thread forever on a plain read. Network paths go through the
+        // bounded overlapped read; local paths keep the plain (fast) QFile read.
+        return readNetworkFileBounded(file_path,
+                                      max_bytes,
+                                      networkReadTimeoutMs(m_config.network_timeout_sec));
+    }
+#endif
+    QFile file(file_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::unexpected(QStringLiteral("open failed"));
+    }
+    return file.read(std::min(file.size(), max_bytes));
 }
 
 bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const {
@@ -252,6 +534,8 @@ std::optional<QString> AdvancedSearchWorker::firstInvalidExcludePattern(
 auto AdvancedSearchWorker::prepareSearchConfig()
     -> std::expected<QRegularExpression, sak::error_code> {
     m_files_unreadable = 0;  // fresh count for this run
+    m_scan_incomplete = false;
+    m_incomplete_notes.clear();
 
     // Clamp context_lines before any match is built: a negative value silently
     // inverts the context window, and INT_MIN makes line_index - ctx overflow
@@ -284,8 +568,12 @@ auto AdvancedSearchWorker::prepareSearchConfig()
             QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption));
     }
 
-    // Check network accessibility
-    if (!m_config.use_file_system_target && isNetworkPath(m_config.root_path)) {
+    // Check network accessibility. The classification is kept for the run: every
+    // scanned file lives under this root, so the per-file read path can decide
+    // between the plain QFile read and the bounded overlapped read without
+    // repeating the drive-type lookup.
+    m_root_on_network = !m_config.use_file_system_target && isNetworkPath(m_config.root_path);
+    if (m_root_on_network) {
         if (!checkNetworkPathAccessible(m_config.root_path)) {
             logError(
                 "AdvancedSearchWorker: network path "
@@ -423,13 +711,39 @@ void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
         Q_EMIT resultsReady(batch_matches);
     }
 
-    reportProgress(file_count,
-                   file_count,
-                   QString("Search complete: %1 matches in %2 files "
-                           "(%3 files scanned)")
+    reportScanOutcome(total_matches, total_files, file_count);
+}
+
+void AdvancedSearchWorker::reportScanOutcome(int total_matches,
+                                             int total_files,
+                                             int files_scanned) {
+    // A hit result cap means matches (and the files after it) were dropped, so
+    // the reported total is a floor rather than the answer.
+    if (m_config.max_results > 0 && total_matches >= m_config.max_results) {
+        markScanIncomplete(QStringLiteral("result cap of %1 reached; further matches were dropped")
+                               .arg(m_config.max_results));
+    }
+    if (m_scan_incomplete) {
+        // Something was skipped, so a "0 matches" or low count here is not
+        // authoritative. Report the run as incomplete and log the reasons rather
+        // than letting the user conclude the string is absent.
+        logWarning("AdvancedSearchWorker: scan incomplete -- {}",
+                   m_incomplete_notes.join(QStringLiteral("; ")).toStdString());
+        reportProgress(files_scanned,
+                       files_scanned,
+                       QString("Search INCOMPLETE: %1 matches in %2 files (%3 scanned); some files "
+                               "could not be searched, results may be missing matches")
+                           .arg(total_matches)
+                           .arg(total_files)
+                           .arg(files_scanned));
+        return;
+    }
+    reportProgress(files_scanned,
+                   files_scanned,
+                   QString("Search complete: %1 matches in %2 files (%3 files scanned)")
                        .arg(total_matches)
                        .arg(total_files)
-                       .arg(file_count));
+                       .arg(files_scanned));
 }
 
 bool AdvancedSearchWorker::processTargetEntry(const FileManagementEntry& entry,
@@ -440,8 +754,7 @@ bool AdvancedSearchWorker::processTargetEntry(const FileManagementEntry& entry,
     ++batch.file_count;
     if (!shouldSkipTargetFile(entry)) {
         if (targetReadWouldTruncate(m_config.max_file_size, entry.size_bytes)) {
-            markTargetScanIncomplete(batch,
-                                     QStringLiteral("file read truncated at '%1'").arg(entry.path));
+            markScanIncomplete(QStringLiteral("file read truncated at '%1'").arg(entry.path));
         }
         if (!processTargetFile(entry, regex, batch.batch_matches, total_matches, total_files)) {
             return false;
@@ -462,14 +775,19 @@ bool AdvancedSearchWorker::processTargetEntry(const FileManagementEntry& entry,
     return true;
 }
 
-void AdvancedSearchWorker::markTargetScanIncomplete(TargetBatchState& batch, const QString& note) {
-    batch.incomplete = true;
+void AdvancedSearchWorker::markScanIncomplete(const QString& note) {
+    m_scan_incomplete = true;
     // Cap the retained notes so a deeply-truncated tree cannot grow this list
     // without bound; the incomplete flag alone conveys the essential state.
     constexpr int kMaxIncompleteNotes = 32;
-    if (batch.incomplete_notes.size() < kMaxIncompleteNotes) {
-        batch.incomplete_notes.append(note);
+    if (m_incomplete_notes.size() < kMaxIncompleteNotes) {
+        m_incomplete_notes.append(note);
     }
+}
+
+void AdvancedSearchWorker::recordUnreadableFile(const QString& file_path, const QString& reason) {
+    ++m_files_unreadable;
+    markScanIncomplete(QStringLiteral("'%1': %2").arg(file_path, reason));
 }
 
 bool AdvancedSearchWorker::searchTargetDirectory(const QString& directory_path,
@@ -487,18 +805,15 @@ bool AdvancedSearchWorker::searchTargetDirectory(const QString& directory_path,
         logWarning("AdvancedSearchWorker: target listing failed at '{}': {}",
                    directory_path.toStdString(),
                    listing.blockers.join(QStringLiteral("; ")).toStdString());
-        markTargetScanIncomplete(batch,
-                                 QStringLiteral("listing failed at '%1'").arg(directory_path));
+        markScanIncomplete(QStringLiteral("listing failed at '%1'").arg(directory_path));
         return true;
     }
     if (!listing.warnings.isEmpty()) {
         // A truncated listing (ok == true but entries capped) silently omits
         // files past the cap, which would otherwise turn a real match into a
         // false "not found". Record it so the run is reported as incomplete.
-        markTargetScanIncomplete(batch,
-                                 QStringLiteral("listing truncated at '%1': %2")
-                                     .arg(directory_path,
-                                          listing.warnings.join(QStringLiteral("; "))));
+        markScanIncomplete(QStringLiteral("listing truncated at '%1': %2")
+                               .arg(directory_path, listing.warnings.join(QStringLiteral("; "))));
     }
 
     for (const auto& entry : listing.entries) {
@@ -568,28 +883,34 @@ void AdvancedSearchWorker::runFileSystemTargetSearch(const QRegularExpression& r
     if (!batch.batch_matches.isEmpty()) {
         Q_EMIT resultsReady(batch.batch_matches);
     }
-    if (batch.incomplete) {
-        // Some directories were not fully enumerated, so a "0 matches" or low
-        // count here is not authoritative. Report the run as incomplete and log
-        // the reasons rather than letting the user conclude the string is absent.
-        logWarning("AdvancedSearchWorker: target scan incomplete -- {}",
-                   batch.incomplete_notes.join(QStringLiteral("; ")).toStdString());
-        reportProgress(batch.file_count,
-                       batch.file_count,
-                       QString(
-                           "Search INCOMPLETE: %1 matches in %2 files (%3 scanned); some "
-                           "directories could not be fully listed, results may be missing matches")
-                           .arg(total_matches)
-                           .arg(total_files)
-                           .arg(batch.file_count));
+    reportScanOutcome(total_matches, total_files, batch.file_count);
+}
+
+void AdvancedSearchWorker::searchSingleFile(const QRegularExpression& regex,
+                                            int& total_matches,
+                                            int& total_files) {
+    // The explicitly-named single file goes through the SAME filters as the
+    // directory walk. It previously skipped shouldSkipFile entirely, so
+    // max_file_size and the extension filter were bypassed on this path and an
+    // arbitrarily large file was read whole. A filtered-out file was never
+    // opened, so reporting "0 matches" for it would be a false negative: mark
+    // the run incomplete instead.
+    if (shouldSkipFile(m_config.root_path)) {
+        markScanIncomplete(QStringLiteral("'%1' was filtered out (exclusion, extension filter or "
+                                          "max_file_size) and never searched")
+                               .arg(m_config.root_path));
+        reportScanOutcome(total_matches, total_files, 1);
         return;
     }
-    reportProgress(batch.file_count,
-                   batch.file_count,
-                   QString("Search complete: %1 matches in %2 files (%3 files scanned)")
-                       .arg(total_matches)
-                       .arg(total_files)
-                       .arg(batch.file_count));
+
+    auto matches = searchFile(m_config.root_path, regex);
+    if (!matches.isEmpty()) {
+        total_matches += matches.size();
+        total_files++;
+        Q_EMIT fileSearched(m_config.root_path, matches.size());
+        Q_EMIT resultsReady(matches);
+    }
+    reportScanOutcome(total_matches, total_files, 1);
 }
 
 auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
@@ -623,19 +944,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
 
     // Single file search -- no directory iteration needed
     if (QFileInfo(m_config.root_path).isFile()) {
-        if (!isExcluded(m_config.root_path)) {
-            auto matches = searchFile(m_config.root_path, regex);
-            if (!matches.isEmpty()) {
-                totalMatches += matches.size();
-                totalFiles++;
-                Q_EMIT fileSearched(m_config.root_path, matches.size());
-                Q_EMIT resultsReady(matches);
-            }
-        }
-        reportProgress(
-            1,
-            1,
-            QString("Search complete: %1 matches in %2 files").arg(totalMatches).arg(totalFiles));
+        searchSingleFile(regex, totalMatches, totalFiles);
         return {};
     }
 
@@ -724,6 +1033,10 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTargetFile(const FileManagement
     const auto read =
         FileManagementFileSystemBridge::readFile(m_config.file_system_target, file.path, readLimit);
     if (!read.ok) {
+        // A failed read yields no content matches, indistinguishable from a file
+        // that genuinely holds none. Record it so the run is reported incomplete
+        // instead of swallowing a real read failure as a clean result.
+        recordUnreadableFile(file.path, read.blockers.join(QStringLiteral("; ")));
         return matches;
     }
 
@@ -761,81 +1074,106 @@ SearchMatch AdvancedSearchWorker::buildContextMatch(
     return match;
 }
 
+bool AdvancedSearchWorker::lineWithinScanLimit(const QString& file_path,
+                                               const QString& line,
+                                               int line_index,
+                                               bool& already_recorded) {
+    if (line.size() <= kMaxScanLineChars) {
+        return true;
+    }
+    if (!already_recorded) {
+        already_recorded = true;
+        recordUnreadableFile(file_path,
+                             QStringLiteral("line %1 exceeds the %2-character regex scan limit")
+                                 .arg(line_index + 1)
+                                 .arg(kMaxScanLineChars));
+    }
+    return false;
+}
+
+void AdvancedSearchWorker::scanLinesForMatches(const QString& file_path,
+                                               const QStringList& lines,
+                                               const QRegularExpression& regex,
+                                               QVector<SearchMatch>& matches) {
+    bool over_long_recorded = false;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (checkStop()) {
+            return;
+        }
+
+        const QString& line = lines[i];
+        if (!lineWithinScanLimit(file_path, line, i, over_long_recorded)) {
+            continue;
+        }
+
+        auto match_iter = regex.globalMatch(line);
+        while (match_iter.hasNext()) {
+            const auto regex_match = match_iter.next();
+            matches.append(buildContextMatch(file_path, lines, i, regex_match));
+
+            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
+                return;
+            }
+        }
+    }
+}
+
 QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& filePath,
                                                              const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        // Unreadable file: count it so an empty result is not mistaken for a
-        // genuinely clean file (a false negative the caller must surface).
-        ++m_files_unreadable;
+    // Bound the bytes pulled into memory before reading anything. Oversized files
+    // are dropped up front by shouldSkipFile only while max_file_size is positive;
+    // with it unlimited an arbitrarily large file (in the worst case a single
+    // unbounded line) would otherwise be slurped whole into one QString.
+    const qint64 read_budget = m_config.max_file_size > 0 ? m_config.max_file_size
+                                                          : kDefaultBinarySearchBytes;
+    if (QFileInfo(filePath).size() > read_budget) {
+        logWarning("AdvancedSearchWorker: file '{}' exceeds the text read budget, skipping",
+                   filePath.toStdString());
+        recordUnreadableFile(
+            filePath, QStringLiteral("exceeds the %1-byte text read budget").arg(read_budget));
         return matches;
     }
 
-    QTextStream stream(&file);
-    stream.setEncoding(QStringConverter::Utf8);
+    // A read over SMB has no timeout in QFile, so a network file goes through the
+    // bounded reader and is then scanned from bytes -- the same byte path the
+    // raw/virtual target search already uses. Local files keep QTextStream.
+    if (readsOverNetwork(filePath)) {
+        const auto read = readSearchFileBytes(filePath, read_budget);
+        if (!read) {
+            recordUnreadableFile(filePath, read.error());
+            return matches;
+        }
+        return searchTextBytes(filePath, *read, regex);
+    }
 
-    // Read all lines for context window support
     QStringList lines;
-    while (!stream.atEnd()) {
-        lines.append(stream.readLine());
-
-        // Safety limit: skip very large files that somehow passed the size check
-        if (lines.size() > kMaxTextSearchLines) {
-            logWarning("AdvancedSearchWorker: file '{}' exceeds 500k lines, skipping",
-                       filePath.toStdString());
-            ++m_files_unreadable;  // over-limit -> only partially searched; surface it
-            return matches;
-        }
+    if (const std::optional<QString> error = readLocalTextLines(filePath, lines)) {
+        // Unreadable (or over-limit) file: count it so an empty result is not
+        // mistaken for a genuinely clean file -- a false negative to surface.
+        recordUnreadableFile(filePath, *error);
+        return matches;
     }
 
-    // Search each line for matches
-    for (int i = 0; i < lines.size(); ++i) {
-        if (checkStop()) {
-            return matches;
-        }
-
-        const QString& line = lines[i];
-        auto match_iter = regex.globalMatch(line);
-
-        while (match_iter.hasNext()) {
-            auto regex_match = match_iter.next();
-            matches.append(buildContextMatch(filePath, lines, i, regex_match));
-
-            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
-                return matches;
-            }
-        }
-    }
-
+    scanLinesForMatches(filePath, lines, regex, matches);
     return matches;
 }
 
 QVector<SearchMatch> AdvancedSearchWorker::searchTextBytes(const QString& file_path,
                                                            const QByteArray& data,
-                                                           const QRegularExpression& regex) const {
+                                                           const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
     const QStringList lines = QString::fromUtf8(data).split(QLatin1Char('\n'));
     if (lines.size() > kMaxTextSearchLines) {
         logWarning("AdvancedSearchWorker: virtual file '{}' exceeds 500k lines, skipping",
                    file_path.toStdString());
+        recordUnreadableFile(file_path,
+                             QStringLiteral("exceeds %1 lines").arg(kMaxTextSearchLines));
         return matches;
     }
 
-    for (int i = 0; i < lines.size(); ++i) {
-        if (checkStop()) {
-            return matches;
-        }
-        auto match_iter = regex.globalMatch(lines.at(i));
-        while (match_iter.hasNext()) {
-            const auto regex_match = match_iter.next();
-            matches.append(buildContextMatch(file_path, lines, i, regex_match));
-            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
-                return matches;
-            }
-        }
-    }
+    scanLinesForMatches(file_path, lines, regex, matches);
     return matches;
 }
 
@@ -1407,8 +1745,29 @@ void gatherFormatMetadata(const QByteArray& file_data,
     }
 }
 
-void supplementWithImageReader(const QString& file_path, QMap<QString, QString>& metadata) {
-    QImageReader reader(file_path);
+/// @brief Add QImageReader-derived fields (text keys, dimensions) to @p metadata.
+/// @return False when the reader could not be pointed at the image at all.
+///
+/// A LOCAL file is handed to QImageReader by path so it can seek the whole file.
+/// A file @p over_network is handed the already-bounded prefix through a QBuffer
+/// instead: QImageReader would otherwise open the share itself with a plain
+/// synchronous read, which is exactly the unbounded hang the bounded reader
+/// exists to prevent.
+[[nodiscard]] bool supplementWithImageReader(const QString& file_path,
+                                             const QByteArray& bounded_data,
+                                             bool over_network,
+                                             QMap<QString, QString>& metadata) {
+    QBuffer buffer;
+    QImageReader reader;
+    if (over_network) {
+        buffer.setData(bounded_data);
+        if (!buffer.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        reader.setDevice(&buffer);
+    } else {
+        reader.setFileName(file_path);
+    }
     reader.setAutoDetectImageFormat(true);
     const QStringList keys = reader.textKeys();
     for (const auto& key : keys) {
@@ -1423,23 +1782,21 @@ void supplementWithImageReader(const QString& file_path, QMap<QString, QString>&
         metadata.insert("Dimensions",
                         QString("%1x%2").arg(img_size.width()).arg(img_size.height()));
     }
+    return true;
 }
 
 QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& filePath,
                                                                const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    constexpr qint64 kMaxImageMetadataRead = 256 * 1024;
+    const auto read = readSearchFileBytes(filePath, kMaxImageMetadataRead);
+    if (!read) {
         // Unreadable image: count it so an empty result is not mistaken for a
         // genuinely metadata-free file (a false negative the caller must surface).
-        ++m_files_unreadable;
+        recordUnreadableFile(filePath, read.error());
         return matches;
     }
-
-    constexpr qint64 kMaxMetadataRead = 256 * 1024;
-    const QByteArray fileData = file.read(std::min(file.size(), kMaxMetadataRead));
-    file.close();
 
     if (checkStop()) {
         return matches;
@@ -1447,8 +1804,11 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
     QMap<QString, QString> metadata;
-    gatherFormatMetadata(fileData, ext, metadata);
-    supplementWithImageReader(filePath, metadata);
+    gatherFormatMetadata(*read, ext, metadata);
+    if (!supplementWithImageReader(filePath, *read, readsOverNetwork(filePath), metadata)) {
+        recordUnreadableFile(filePath, QStringLiteral("image reader could not be opened"));
+        return matches;
+    }
 
     // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
     if (checkStop()) {
@@ -1497,6 +1857,32 @@ bool isZipLocalFileHeader(const QByteArray& data, int offset) {
            static_cast<uint8_t>(data[offset + kZipSignatureByte3]) == kZipSignatureLocal3;
 }
 
+/// Trailing two signature bytes of the records that legitimately terminate a
+/// ZIP's local-file-header chain.
+constexpr std::uint16_t kZipCentralDirTail = 0x0102;
+constexpr std::uint16_t kZipEndOfCentralDirTail = 0x0506;
+constexpr std::uint16_t kZipZip64EndOfCentralDirTail = 0x0606;
+
+/// @brief Whether @p offset points at the central directory (or an end-of-central
+///        directory record, for an archive with no further entries), i.e. the
+///        local-file-header chain ended exactly where a well-formed ZIP says it
+///        should. Anything else means the walk stopped early and entries past
+///        that point were never examined.
+[[nodiscard]] bool isZipDirectorySignature(const QByteArray& data, qsizetype offset) {
+    constexpr qsizetype kSignatureBytes = 4;
+    if (offset < 0 || offset + kSignatureBytes > data.size()) {
+        return false;
+    }
+    const auto* raw = reinterpret_cast<const std::uint8_t*>(data.constData() + offset);
+    if (raw[0] != kZipSignaturePk0 || raw[1] != kZipSignaturePk1) {
+        return false;
+    }
+    const auto tail =
+        static_cast<std::uint16_t>((raw[kByteIndex2] << kByteShift8) | raw[kByteIndex3]);
+    return tail == kZipCentralDirTail || tail == kZipEndOfCentralDirTail ||
+           tail == kZipZip64EndOfCentralDirTail;
+}
+
 bool isMetadataTarget(const QString& entry_name) {
     static const QStringList kMetadataFiles = {
         "docprops/core.xml", "docprops/app.xml", "meta.xml", "content.opf", "oebps/content.opf"};
@@ -1529,6 +1915,10 @@ constexpr qint64 kMaxMetadataRead = 512 * 1024;
 constexpr qint64 kMaxZipMetadataRead = 10LL * 1024 * 1024;
 constexpr qint64 kMaxArchiveSize = 100LL * 1024 * 1024;
 constexpr int kZipLocalHeaderSize = 30;
+constexpr int kZipFlagsOffset = 6;
+/// General-purpose bit 3: the entry's sizes are not in the local file header but
+/// in a data descriptor written AFTER the compressed bytes (a streaming ZIP).
+constexpr std::uint16_t kZipFlagDataDescriptor = 0x0008;
 constexpr int kZipMethodOffset = 8;
 constexpr int kZipCompressedSizeOffset = 18;
 constexpr int kZipUncompressedSizeOffset = 22;
@@ -1819,34 +2209,6 @@ bool isZipMetadataExtension(const QString& ext) {
     return kZipMetadataExtensions.contains(ext);
 }
 
-QMap<QString, QString> extractZipMetadataFromFile(const QString& file_path) {
-    QFile full_file(file_path);
-    if (!full_file.open(QIODevice::ReadOnly)) {
-        return {};
-    }
-
-    if (full_file.size() > kMaxZipMetadataRead) {
-        return {};
-    }
-
-    return extractZipXmlMetadata(full_file.readAll());
-}
-
-QMap<QString, QString> extractMetadataForExtension(const QString& file_path,
-                                                   const QString& ext,
-                                                   const QByteArray& file_data) {
-    if (ext == "pdf") {
-        return extractPdfMetadata(file_data);
-    }
-    if (isZipMetadataExtension(ext)) {
-        return extractZipMetadataFromFile(file_path);
-    }
-    if (ext == "mp3") {
-        return extractMp3Metadata(file_data);
-    }
-    return {};
-}
-
 void appendFilesystemMetadata(const QString& file_path,
                               const QString& ext,
                               QMap<QString, QString>& metadata) {
@@ -1873,27 +2235,54 @@ bool isArchiveTextCompression(std::uint16_t method) {
 
 }  // anonymous namespace
 
+std::expected<QMap<QString, QString>, QString> AdvancedSearchWorker::metadataForExtension(
+    const QString& file_path, const QString& ext, const QByteArray& leading) const {
+    if (ext == QStringLiteral("pdf")) {
+        return extractPdfMetadata(leading);
+    }
+    if (ext == QStringLiteral("mp3")) {
+        return extractMp3Metadata(leading);
+    }
+    if (!isZipMetadataExtension(ext)) {
+        return QMap<QString, QString>{};
+    }
+    // A ZIP-based document (docx/odt/epub) keeps its metadata parts anywhere in
+    // the container, so this one format needs a second, larger read -- through the
+    // same bounded reader, never a raw re-open of the share. An oversized
+    // container yields no format metadata, as before.
+    if (QFileInfo(file_path).size() > kMaxZipMetadataRead) {
+        return QMap<QString, QString>{};
+    }
+    const auto container = readSearchFileBytes(file_path, kMaxZipMetadataRead);
+    if (!container) {
+        return std::unexpected(container.error());
+    }
+    return extractZipXmlMetadata(*container);
+}
+
 QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& filePath,
                                                               const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    const auto leading = readSearchFileBytes(filePath, kMaxMetadataRead);
+    if (!leading) {
         // Unreadable file: count it so an empty result is not mistaken for a
         // genuinely metadata-free file (a false negative the caller must surface).
-        ++m_files_unreadable;
+        recordUnreadableFile(filePath, leading.error());
         return matches;
     }
-
-    const QByteArray fileData = file.read(std::min(file.size(), kMaxMetadataRead));
-    file.close();
 
     if (checkStop()) {
         return matches;
     }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
-    QMap<QString, QString> metadata = extractMetadataForExtension(filePath, ext, fileData);
+    const auto extracted = metadataForExtension(filePath, ext, *leading);
+    if (!extracted) {
+        recordUnreadableFile(filePath, extracted.error());
+        return matches;
+    }
+    QMap<QString, QString> metadata = *extracted;
     appendFilesystemMetadata(filePath, ext, metadata);
 
     // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
@@ -1935,6 +2324,17 @@ std::optional<AdvancedSearchWorker::ArchiveEntry> AdvancedSearchWorker::readArch
     const QByteArray& archive_data, const QString& file_path, int offset) const {
     const int data_size = archive_data.size();
     if (offset + kZipLocalHeaderSize > data_size || !isZipLocalFileHeader(archive_data, offset)) {
+        return std::nullopt;
+    }
+
+    // A streaming ZIP (general-purpose bit 3) stores compressed_size 0 in every
+    // local header and the real sizes in a trailing data descriptor. Trusting the
+    // header would put next_offset INSIDE the compressed bytes, so the chain
+    // silently dies at the first entry and the remaining entries are never
+    // searched. Refuse the entry: the caller records the archive as incomplete
+    // instead of returning a partial result that reads like a full scan.
+    const uint16_t flags = readU16(archive_data.constData() + offset + kZipFlagsOffset, true);
+    if ((flags & kZipFlagDataDescriptor) != 0) {
         return std::nullopt;
     }
 
@@ -2007,13 +2407,17 @@ bool AdvancedSearchWorker::appendArchiveNameMatches(const ArchiveEntry& entry,
 bool AdvancedSearchWorker::appendArchiveLineMatches(const QString& archive_path,
                                                     const QStringList& lines,
                                                     const QRegularExpression& regex,
-                                                    QVector<SearchMatch>& matches) const {
+                                                    QVector<SearchMatch>& matches) {
+    bool over_long_recorded = false;
     for (int lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
         if (checkStop()) {
             return true;
         }
 
         const QString& line = lines[lineIdx];
+        if (!lineWithinScanLimit(archive_path, line, lineIdx, over_long_recorded)) {
+            continue;
+        }
         auto matchIter = regex.globalMatch(line);
         while (matchIter.hasNext()) {
             auto regexMatch = matchIter.next();
@@ -2046,7 +2450,7 @@ bool AdvancedSearchWorker::appendArchiveLineMatches(const QString& archive_path,
 bool AdvancedSearchWorker::appendArchiveContentMatches(const QByteArray& archive_data,
                                                        const ArchiveEntry& entry,
                                                        const QRegularExpression& regex,
-                                                       QVector<SearchMatch>& matches) const {
+                                                       QVector<SearchMatch>& matches) {
     const QString entryExt = QFileInfo(entry.name).suffix().toLower();
     if (!isArchiveTextCompression(entry.compression_method) || !isArchiveTextExtension(entryExt)) {
         return false;
@@ -2072,56 +2476,76 @@ bool AdvancedSearchWorker::appendArchiveContentMatches(const QByteArray& archive
         entry.path, QString::fromUtf8(entryData).split('\n'), regex, matches);
 }
 
-QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath,
-                                                         const QRegularExpression& regex) {
-    QVector<SearchMatch> matches;
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        // Unreadable archive: count it so an empty result is not mistaken for an
-        // archive that genuinely contains no match (a false negative to surface).
-        ++m_files_unreadable;
-        return matches;
-    }
-
-    if (file.size() > kMaxArchiveSize) {
-        logWarning("AdvancedSearchWorker: archive '{}' too large ({} bytes), skipping",
-                   filePath.toStdString(),
-                   file.size());
-        // Over the cap -> not searched at all; surface it as incomplete rather
-        // than reporting a clean "no matches".
-        ++m_files_unreadable;
-        return matches;
-    }
-
-    const QByteArray archiveData = file.readAll();
-    file.close();
-
-    if (checkStop()) {
-        return matches;
-    }
-
+qsizetype AdvancedSearchWorker::scanArchiveEntries(const QByteArray& archive_data,
+                                                   const QString& file_path,
+                                                   const QRegularExpression& regex,
+                                                   QVector<SearchMatch>& matches) {
     int offset = 0;
-    const int dataSize = archiveData.size();
-    while (offset + kZipLocalHeaderSize < dataSize) {
+    const int data_size = archive_data.size();
+    while (offset + kZipLocalHeaderSize < data_size) {
         if (checkStop()) {
-            return matches;
+            return -1;
         }
 
-        const std::optional<ArchiveEntry> entry = readArchiveEntry(archiveData, filePath, offset);
+        const std::optional<ArchiveEntry> entry = readArchiveEntry(archive_data, file_path, offset);
         if (!entry.has_value()) {
             break;
         }
 
         if (appendArchiveNameMatches(*entry, regex, matches)) {
-            return matches;
+            return -1;
         }
 
-        if (appendArchiveContentMatches(archiveData, *entry, regex, matches)) {
-            return matches;
+        if (appendArchiveContentMatches(archive_data, *entry, regex, matches)) {
+            return -1;
         }
 
         offset = entry->next_offset;
+    }
+    return offset;
+}
+
+QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath,
+                                                         const QRegularExpression& regex) {
+    QVector<SearchMatch> matches;
+
+    const qint64 archive_size = QFileInfo(filePath).size();
+    if (archive_size > kMaxArchiveSize) {
+        logWarning("AdvancedSearchWorker: archive '{}' too large ({} bytes), skipping",
+                   filePath.toStdString(),
+                   archive_size);
+        // Over the cap -> not searched at all; surface it as incomplete rather
+        // than reporting a clean "no matches".
+        recordUnreadableFile(
+            filePath, QStringLiteral("exceeds the %1-byte archive limit").arg(kMaxArchiveSize));
+        return matches;
+    }
+
+    const auto read = readSearchFileBytes(filePath, kMaxArchiveSize);
+    if (!read) {
+        // Unreadable archive: count it so an empty result is not mistaken for an
+        // archive that genuinely contains no match (a false negative to surface).
+        recordUnreadableFile(filePath, read.error());
+        return matches;
+    }
+    const QByteArray& archiveData = *read;
+
+    if (checkStop()) {
+        return matches;
+    }
+
+    const qsizetype stop_offset = scanArchiveEntries(archiveData, filePath, regex, matches);
+
+    // The local-file-header chain must land exactly on the central directory. A
+    // premature stop means every entry past that point went unexamined -- a
+    // truncated/corrupt archive, or a streaming (data-descriptor) ZIP whose local
+    // headers carry no sizes. Record it so the partial result is surfaced as
+    // incomplete instead of being read as "the archive holds no match".
+    if (stop_offset >= 0 && !isZipDirectorySignature(archiveData, stop_offset)) {
+        recordUnreadableFile(filePath,
+                             QStringLiteral(
+                                 "entry chain stopped at offset %1 before the central directory")
+                                 .arg(stop_offset));
     }
 
     return matches;
@@ -2131,24 +2555,27 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
                                                         const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return matches;
-    }
-
     // Size guard -- refuse to load extremely large files into memory
     const qint64 maxBinarySize = m_config.max_file_size > 0 ? m_config.max_file_size
                                                             : kDefaultBinarySearchBytes;
-    if (file.size() > maxBinarySize) {
+    const qint64 binary_size = QFileInfo(filePath).size();
+    if (binary_size > maxBinarySize) {
         logWarning("AdvancedSearchWorker: binary file '{}' exceeds size limit ({} bytes), skipping",
                    filePath.toStdString(),
-                   file.size());
+                   binary_size);
+        recordUnreadableFile(
+            filePath, QStringLiteral("exceeds the %1-byte binary read limit").arg(maxBinarySize));
         return matches;
     }
 
-    // Read file as raw bytes
-    const QByteArray content = file.readAll();
-    file.close();
+    // Read file as raw bytes (bounded reader: a network path gets a read timeout).
+    const auto read = readSearchFileBytes(filePath, maxBinarySize);
+    if (!read) {
+        // Not scanned at all: an empty result here must not read as "no match".
+        recordUnreadableFile(filePath, read.error());
+        return matches;
+    }
+    const QByteArray& content = *read;
 
     // Decode as Latin-1, not UTF-8: each byte maps 1:1 to a distinct code point
     // (U+0000..U+00FF) and the mapping is fully reversible. This makes ANY byte

@@ -7,7 +7,12 @@
 
 #pragma once
 
+#include <QSet>
 #include <QString>
+#include <QVector>
+
+#include <cstddef>
+#include <cstdint>
 
 class QByteArray;
 
@@ -19,6 +24,25 @@ struct AttachmentSaveResult {
     QString saved_path;
     QString error_message;
 };
+
+/// @brief Identifies one attachment: the message that owns it and the
+///        attachment's index inside that message.
+///
+/// This pair is what a content request is issued with and what the
+/// asynchronous arrival carries back, so it is the only thing that can prove an
+/// arrival belongs to the batch that asked for it. A filename cannot: two
+/// messages routinely carry attachments of the same name.
+struct AttachmentRef {
+    uint64_t message_id = 0;
+    int index = 0;
+
+    [[nodiscard]] friend bool operator==(const AttachmentRef& lhs, const AttachmentRef& rhs) {
+        return lhs.message_id == rhs.message_id && lhs.index == rhs.index;
+    }
+};
+
+/// Hash for QSet/QHash storage. Found by argument-dependent lookup.
+[[nodiscard]] size_t qHash(const AttachmentRef& ref, size_t seed = 0) noexcept;
 
 /// Sanitize an attachment filename for safe use on Windows filesystems.
 /// Strips invalid characters, trailing dots/spaces, and returns
@@ -39,20 +63,38 @@ struct AttachmentSaveResult {
 
 /// @brief Tracks state for a batch attachment save operation.
 ///
-/// Both the email inspector panel and the attachments browser dialog
-/// use this to avoid duplicating save-state logic. Call begin() to
-/// start a batch, recordOne() for each attachment content callback,
-/// and check isComplete() to know when to show results.
+/// Both the email inspector panel and the attachments browser dialog use this
+/// to avoid duplicating save-state logic. A batch is defined by the exact set
+/// of attachments it asked for, and only an arrival that is still outstanding
+/// in that set may be recorded. Without that check any stray delivery -- an
+/// inline-image fetch, or a leftover from a previous batch -- is written into
+/// one of the batch's slots, saving the wrong payload while the batch still
+/// reports a full count.
+///
+/// Call begin() to start a batch, expects() to test each incoming arrival,
+/// recordOne() for the ones it accepts, and isComplete() to know when to show
+/// results.
 class AttachmentBatchSave {
 public:
-    /// Start a new batch save to @p dir expecting @p count files.
-    void begin(const QString& dir, int count);
+    /// Start a new batch saving into @p dir the attachments named by @p expected.
+    /// @return false when a batch is already running, when @p dir is empty, or
+    ///         when @p expected names nothing. No batch starts in those cases
+    ///         and the caller must not issue any content requests.
+    [[nodiscard]] bool begin(const QString& dir, const QVector<AttachmentRef>& expected);
+
+    /// True when @p ref is one this batch asked for and has not been recorded yet.
+    [[nodiscard]] bool expects(const AttachmentRef& ref) const;
 
     /// Record one incoming attachment. Saves to the directory set by begin().
-    /// @return The result of this individual save.
-    AttachmentSaveResult recordOne(const QString& filename, const QByteArray& data);
+    /// @return The result of this individual save, or a failed result -- nothing
+    ///         written, nothing counted -- when @p ref is not outstanding.
+    AttachmentSaveResult recordOne(const AttachmentRef& ref,
+                                   const QString& filename,
+                                   const QByteArray& data);
 
     /// Record a failure that happened upstream (e.g. controller error signal).
+    /// That signal names no attachment, so this counts against the batch total
+    /// without clearing a specific outstanding entry.
     void recordError();
 
     /// True once all expected attachments have been processed.
@@ -70,11 +112,13 @@ public:
 
     [[nodiscard]] int succeeded() const { return m_succeeded; }
     [[nodiscard]] int failed() const { return m_failed; }
+    [[nodiscard]] int expectedCount() const { return m_expected_count; }
     [[nodiscard]] const QString& directory() const { return m_dir; }
 
 private:
     QString m_dir;
-    int m_pending = 0;
+    QSet<AttachmentRef> m_outstanding;
+    int m_expected_count = 0;
     int m_succeeded = 0;
     int m_failed = 0;
 };

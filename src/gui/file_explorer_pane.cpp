@@ -132,6 +132,9 @@ void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {
     m_status_label = new QLabel(tr("No target selected"), this);
     m_status_label->setObjectName(QStringLiteral("fileExplorerStatusLabel"));
     m_status_label->setAccessibleName(tr("Explorer status"));
+    // Status text carries command blockers and target/selection descriptions, which embed paths
+    // and names read off the mounted medium; show them verbatim, never as markup.
+    m_status_label->setTextFormat(Qt::PlainText);
     m_status_label->setWordWrap(true);
     layout->addWidget(m_status_label);
 }

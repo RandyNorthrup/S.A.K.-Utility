@@ -79,11 +79,40 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
     return {};
 }
 
+// True when @p child resolves (junctions/symlinks followed) to a real path at or under
+// @p canonicalRoot. Fail closed on an empty root or an unresolvable/vanished child: a reparse
+// point planted at an ancestor after the root check would otherwise redirect the write outside
+// the export directory. canonicalFilePath yields '/'-separated paths, so the boundary test uses
+// '/'; a sibling-prefix (Root vs RootX) is rejected by requiring the separator.
+[[nodiscard]] bool realizedPathWithinRoot(const QString& canonicalRoot, const QString& child) {
+    if (canonicalRoot.isEmpty()) {
+        return false;
+    }
+    const QString canonicalChild = QFileInfo(child).canonicalFilePath();
+    if (canonicalChild.isEmpty()) {
+        return false;
+    }
+    return canonicalChild == canonicalRoot ||
+           canonicalChild.startsWith(canonicalRoot + QLatin1Char('/'));
+}
+
 bool writeExportFile(const QString& path,
                      const QByteArray& data,
                      QStringList* blockers,
-                     const QString& label) {
+                     const QString& label,
+                     const QString& canonicalRoot) {
+    // Re-check the leaf's PARENT directory on every write: mkpath created the ancestor chain, but
+    // a junction swapped in afterward would redirect this file outside the export root. The
+    // NewOnly guard below only protects the final component.
+    if (!realizedPathWithinRoot(canonicalRoot, QFileInfo(path).absolutePath())) {
+        blockers->append(
+            QStringLiteral("Export target escapes the export root (reparse point): %1").arg(label));
+        return false;
+    }
     QFile output(path);
+    // NewOnly (O_EXCL/CREATE_NEW) fails closed if anything already exists at `path`: uniquePath
+    // returned a non-existent candidate, so a file/symlink appearing here is a TOCTOU race and
+    // an overwrite would have followed it to an arbitrary target. Refuse instead.
     if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly) ||
         output.write(data) != data.size()) {
         blockers->append(QStringLiteral("Unable to write exported %1: %2").arg(label, path));
@@ -118,8 +147,10 @@ void appendHfsExportRequestBlockers(const QString& imagePath,
 
 class HfsDirectoryExporter {
 public:
-    HfsDirectoryExporter(QIODevice* image, const PartitionHfsDirectoryExportOptions& options)
-        : image_(image), options_(options) {}
+    HfsDirectoryExporter(QIODevice* image,
+                         const PartitionHfsDirectoryExportOptions& options,
+                         const QString& canonicalRoot)
+        : image_(image), options_(options), canonical_root_(canonicalRoot) {}
 
     PartitionHfsDirectoryExportResult run(const QString& sourcePath,
                                           const QString& outputDirectory) {
@@ -203,6 +234,14 @@ private:
                 QStringLiteral("Unable to create exported directory: %1").arg(targetPath));
             return false;
         }
+        // mkpath follows an existing reparse point instead of failing, so prove the realized
+        // directory is still under the export root before anything is written beneath it.
+        if (!realizedPathWithinRoot(canonical_root_, targetPath)) {
+            result_.blockers.append(
+                QStringLiteral("Exported directory escapes the export root (reparse point): %1")
+                    .arg(targetPath));
+            return false;
+        }
         ++result_.directories_exported;
         pending_.append({entry.path, targetPath, entry.catalog_id});
         return true;
@@ -231,7 +270,8 @@ private:
             result_.blockers.append(dataFork.blockers);
             return false;
         }
-        if (!writeExportFile(targetPath, dataFork.data, &result_.blockers, entry.path)) {
+        if (!writeExportFile(
+                targetPath, dataFork.data, &result_.blockers, entry.path, canonical_root_)) {
             return false;
         }
         ++result_.files_exported;
@@ -261,7 +301,8 @@ private:
         if (!writeExportFile(resourcePath,
                              resourceFork.data,
                              &result_.blockers,
-                             QStringLiteral("%1 resource fork").arg(entry.path))) {
+                             QStringLiteral("%1 resource fork").arg(entry.path),
+                             canonical_root_)) {
             return false;
         }
         ++result_.resource_forks_exported;
@@ -288,6 +329,7 @@ private:
     PartitionHfsDirectoryExportResult result_;
     QVector<HfsExportFrame> pending_;
     QSet<uint32_t> visited_directories_;
+    const QString canonical_root_;
 };
 
 }  // namespace
@@ -436,8 +478,22 @@ PartitionHfsDirectoryExportResult PartitionHfsFileSystemReader::exportDirectoryF
         exportResult.blockers.append(QStringLiteral("Unable to create output directory"));
         return exportResult;
     }
+    // Resolve the export root ONCE: every realized directory and file target is proved to sit
+    // under this canonical path, so an image-supplied name or a reparse point planted at an
+    // ancestor cannot redirect a write outside it.
+    const QString canonicalRoot = QFileInfo(root.absolutePath()).canonicalFilePath();
+    if (canonicalRoot.isEmpty()) {
+        exportResult.blockers.append(QStringLiteral("Unable to resolve export root path"));
+        return exportResult;
+    }
 
-    return HfsDirectoryExporter(image.get(), options).run(source_path, root.absolutePath());
+    return HfsDirectoryExporter(image.get(), options, canonicalRoot)
+        .run(source_path, root.absolutePath());
+}
+
+bool PartitionHfsFileSystemReader::exportPathWithinRootForTesting(const QString& canonical_root,
+                                                                  const QString& child) {
+    return realizedPathWithinRoot(canonical_root, child);
 }
 
 }  // namespace sak

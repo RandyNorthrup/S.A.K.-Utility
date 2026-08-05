@@ -68,10 +68,69 @@ public:
         std::function<void(const QString&, int)> progressCallback = {},
         LeftoverScanReliability* reliability = nullptr);
 
+    /// @brief Syntactic screen for a registry-supplied InstallLocation, BEFORE that value
+    ///        is allowed to name anything a cleanup deletes.
+    ///
+    /// InstallLocation lives in the Uninstall subtree, which any user can write under
+    /// HKCU, yet a whole-directory leftover built from it is handed to a recursive delete
+    /// run by an administrator. The value must therefore pin exactly one literal local
+    /// directory: shares the windows_path_policy dialect with the sibling UninstallString
+    /// screen, so a relative, drive-relative, UNC, traversal-bearing, "%VAR%"-carrying or
+    /// volume-root value is refused, as is any directory in @p criticalRoots (the Windows
+    /// / Program Files / ProgramData / AppData / TEMP roots, the profiles container and
+    /// every user profile root -- see criticalInstallRoots()).
+    ///
+    /// @return an empty string when the value may proceed to the filesystem and ownership
+    ///         checks, otherwise a human-readable refusal reason. Pure; unit-testable.
+    [[nodiscard]] static QString installLocationSyntaxRefusal(const QString& rawLocation,
+                                                              const QStringList& criticalRoots);
+
+    /// @brief Proof that @p canonicalLocation really is THIS program's directory rather
+    ///        than an arbitrary path a registry value merely claims is.
+    ///
+    /// Derived ONLY from the program's own identity -- never from the install location
+    /// itself, which would be circular. The directory leaf, or the "Publisher\\Product"
+    /// pair formed with its parent, must fold to @p displayName or @p packageFamilyName
+    /// once case and non-alphanumerics are removed (installer display names routinely
+    /// carry a version/architecture suffix the directory omits, and vice versa). Pure;
+    /// unit-testable.
+    [[nodiscard]] static bool installLocationMatchesProgram(const QString& canonicalLocation,
+                                                            const QString& displayName,
+                                                            const QString& packageFamilyName);
+
+    /// @brief Directories that must NEVER become a deletion target however a registry
+    ///        value names them. Read from the live environment (so a machine whose system
+    ///        drive is not C: is protected too) plus every user profile root present on
+    ///        the machine. Volume roots need no entry: the syntactic screen already
+    ///        refuses them.
+    [[nodiscard]] static QStringList criticalInstallRoots();
+
 private:
+    /// @brief Outcome of screening the registry-supplied InstallLocation.
+    struct ScreenedInstallLocation {
+        /// Native, separator-normalized location that passed the SYNTACTIC screen only.
+        /// Safe to derive matching NAMES from and to stat; empty when even the syntax was
+        /// refused. Carries no deletion authority on its own.
+        QString syntactic;
+        /// Canonical native location that MAY authorize deletion: additionally exists, is
+        /// a directory, is no reparse point, and is proven to belong to this program.
+        QString trusted;
+        /// Why `trusted` is empty. Empty when the location was accepted, and also when the
+        /// program records no install location at all (nothing to refuse).
+        QString refusal;
+    };
+
     ProgramInfo m_program;
     ScanLevel m_level;
     QSet<QString> m_registryBefore;
+
+    /// Syntactically-screened install location (see ScreenedInstallLocation::syntactic).
+    QString m_screenedInstallLocation;
+    /// Install location that may authorize deletion (ScreenedInstallLocation::trusted).
+    /// EVERY use of the install location as authority reads THIS, never m_program.
+    QString m_trustedInstallLocation;
+    /// Refusal reason shown on the report-only install-location item.
+    QString m_installLocationRefusal;
 
     QStringList m_exactNames;     ///< Exact names for directory/file matching (lowercase)
     QString m_installDirName;     ///< Last component of install path (lowercase)
@@ -79,6 +138,20 @@ private:
     QString m_concatenatedName;   ///< Display name without separators (lowercase)
 
     void buildExactNames();
+
+    /// @brief Run both screening tiers over @p program's recorded install location.
+    [[nodiscard]] static ScreenedInstallLocation screenInstallLocation(const ProgramInfo& program);
+
+    /// @brief Filesystem + ownership tier. Returns the canonical location, or an empty
+    ///        string with @p refusalOut set to the reason it may not authorize a delete.
+    [[nodiscard]] static QString provenInstallLocation(const QString& screenedLocation,
+                                                       const ProgramInfo& program,
+                                                       QString& refusalOut);
+
+    /// @brief Visibility-only item for an install location that passed the syntax screen
+    ///        but could not be proven to belong to this program. Empty when there is
+    ///        nothing safe to report.
+    [[nodiscard]] QVector<LeftoverItem> reportOnlyInstallLocation() const;
 
     // Phase 1: Remaining files at known install location
     QVector<LeftoverItem> scanInstallLocation(const std::atomic<bool>& stopRequested);

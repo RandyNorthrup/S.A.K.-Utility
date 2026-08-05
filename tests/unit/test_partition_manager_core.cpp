@@ -32,6 +32,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QtEndian>
 #include <QtTest/QtTest>
@@ -1884,6 +1885,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_replaysBigEndianJournal();
     void hfsFileSystemWriter_handlesOnOtherDeviceJournal();
     void hfsFileSystemWriter_writesIntoWrappedVolume();
+    void hfsFileSystemReader_rejectsWrappedVolumePastEmbeddedExtent();
     void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
     void hfsFileSystemWriter_mutatesMultiMapNodeCatalog();
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
@@ -2017,6 +2019,8 @@ private Q_SLOTS:
     void inventoryParser_parsesDiskAndPartition();
     void inventoryParser_infersHiddenProtectedPartitionFileSystems();
     void inventoryParser_keepsRawBasicDiskInitializable();
+    void inventoryParser_failedPartitionQueryIsNeverUnallocated();
+    void safetyValidator_refusesEveryOperationOnUnreadableDiskLayout();
     void inventoryScript_handlesRawDisksWithoutAbort();
     void safetyValidator_blocksSystemPartitionDelete();
     void scriptBuilder_createRespectsWizardPayload();
@@ -2051,6 +2055,8 @@ private Q_SLOTS:
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
     void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
+    void apfsWriter_freeQueueExpansionBudgetFailsClosed();
+    void apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles();
     void exporter_realizedPathWithinRootRejectsEscape();
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
@@ -2106,6 +2112,14 @@ private Q_SLOTS:
     void fileRecoveryEngine_boundsHostileUnterminatedSignatures();
     void fileRecoveryEngine_confinesCraftedCandidateNames();
     void fileRecoveryEngine_prefixHashDoesNotClaimWholeSource();
+    void safetyValidator_refusesClonePartitionZeroOffsetOrUnknownSize();
+    void safetyValidator_provesPartitionCloneRegionAgainstLiveTargetDisk();
+    void safetyValidator_bindsRecreateSizesToLiveVolumes();
+    void rawDeviceClassifier_canonicalizesExtendedDeviceSpellings();
+    void scriptBuilder_emitsCanonicalRawTargetForExtendedSpelling();
+    void scriptBuilder_clonePartitionRegionFailsClosed();
+    void scriptBuilder_diskPartRunnerProvesSuccessBeyondExitCode();
+    void scriptBuilder_sizeMbArgDoesNotWrapToOneMegabyte();
 };
 
 QByteArray fixtureJson() {
@@ -2177,6 +2191,29 @@ QByteArray rawBasicDiskFixtureJson() {
                            {QStringLiteral("IsSystem"), false},
                            {QStringLiteral("IsReadOnly"), false},
                            {QStringLiteral("IsDynamic"), false},
+                           {QStringLiteral("Partitions"), QJsonArray()}};
+    return QJsonDocument(QJsonArray{disk}).toJson(QJsonDocument::Compact);
+}
+
+// A populated disk whose Get-Partition query FAILED: the inventory carries the failure instead
+// of an empty partition list that would otherwise be rendered as one whole-disk free region.
+QByteArray failedPartitionQueryFixtureJson() {
+    const QJsonObject disk{{QStringLiteral("Number"), 3},
+                           {QStringLiteral("FriendlyName"), QStringLiteral("Populated Disk")},
+                           {QStringLiteral("SerialNumber"), QStringLiteral("FAIL123")},
+                           {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
+                           {QStringLiteral("OperationalStatus"), QStringLiteral("Online")},
+                           {QStringLiteral("BusType"), QStringLiteral("SATA")},
+                           {QStringLiteral("MediaType"), QStringLiteral("SSD")},
+                           {QStringLiteral("PartitionStyle"), QStringLiteral("GPT")},
+                           {QStringLiteral("Size"), QStringLiteral("4294967296")},
+                           {QStringLiteral("IsBoot"), false},
+                           {QStringLiteral("IsSystem"), false},
+                           {QStringLiteral("IsReadOnly"), false},
+                           {QStringLiteral("IsDynamic"), false},
+                           {QStringLiteral("PartitionQueryFailed"), true},
+                           {QStringLiteral("PartitionQueryError"),
+                            QStringLiteral("Access is denied.")},
                            {QStringLiteral("Partitions"), QJsonArray()}};
     return QJsonDocument(QJsonArray{disk}).toJson(QJsonDocument::Compact);
 }
@@ -5386,6 +5423,42 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
     // Nothing was written at the non-wrapped (offset-0) data position.
     QVERIFY(after.mid(static_cast<qsizetype>(kTestHfsHelloFileBlock) * kTestHfsBlockSize, 8) !=
             QByteArrayLiteral("wrapped!"));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemReader_rejectsWrappedVolumePastEmbeddedExtent() {
+    // CODEX_REVIEW_5 p4_rawfs-7: the wrapper MDB's embeddedExtentBlockCount was validated
+    // only as non-zero and then discarded, so the embedded volume was bounded by the whole
+    // DEVICE instead of by its extent. A wrapped header claiming more allocation blocks than
+    // the extent covers must be refused: reads would otherwise leak media surrounding the
+    // embedded volume, and the gated writer would mutate it.
+    const qsizetype embeddedOffset =
+        static_cast<qsizetype>(kTestHfsWrapperAllocationStartSector * 512ULL +
+                               static_cast<uint64_t>(kTestHfsWrapperEmbeddedStartBlock) *
+                                   kTestHfsWrapperAllocationBlockSize);
+
+    // The fixture leaves one spare block past the embedded volume, so a claim of one block
+    // past the 64-block extent still fits the device: only the extent bound catches it.
+    QByteArray overclaimed = buildHfsWrappedVolumeImage(embeddedOffset);
+    writeBe32(&overclaimed,
+              embeddedOffset + kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset,
+              static_cast<uint32_t>(kTestHfsWrapperEmbeddedBlockCount) + 1U);
+    QBuffer overclaimedBuffer(&overclaimed);
+    QVERIFY(overclaimedBuffer.open(QIODevice::ReadOnly));
+    // checkConsistency surfaces the engine's own load blockers, so the extent rejection is
+    // observable (listDirectory reports only its generic open failure).
+    const auto rejected = PartitionHfsFileSystemReader::checkConsistency(&overclaimedBuffer, 20);
+    QVERIFY(!rejected.ok);
+    QVERIFY2(rejected.blockers.join(' ').contains(
+                 QStringLiteral("exceeds the HFS wrapper embedded extent")),
+             qPrintable(rejected.blockers.join(QStringLiteral("; "))));
+
+    // The exact-fit wrapped fixture (64 blocks inside the 64-block extent) still loads.
+    QByteArray exact = buildHfsWrappedVolumeImage(embeddedOffset);
+    QBuffer exactBuffer(&exact);
+    QVERIFY(exactBuffer.open(QIODevice::ReadOnly));
+    const auto ok =
+        PartitionHfsFileSystemReader::listDirectory(&exactBuffer, QStringLiteral("/"), 20);
+    QVERIFY2(ok.ok, qPrintable(ok.blockers.join(QStringLiteral("; "))));
 }
 
 namespace {
@@ -16056,13 +16129,85 @@ void PartitionManagerCoreTests::inventoryParser_keepsRawBasicDiskInitializable()
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
 }
 
+void PartitionManagerCoreTests::inventoryParser_failedPartitionQueryIsNeverUnallocated() {
+    const auto inventory =
+        StorageInventoryWorker::parseInventoryJson(failedPartitionQueryFixtureJson());
+    QCOMPARE(inventory.disks.size(), 1);
+    const auto& disk = inventory.disks.first();
+    QVERIFY(disk.partition_enumeration_failed);
+    QCOMPARE(disk.partition_enumeration_error, QStringLiteral("Access is denied."));
+    // The whole-disk phantom free region must NOT be synthesized from a failed query: acting on
+    // it (create/format in "free space") would destroy the disk's real contents.
+    QCOMPARE(disk.unallocated_regions.size(), 0);
+    QVERIFY(disk.partitions.isEmpty());
+
+    // The failure is surfaced, not silenced, and marks the whole inventory untrustworthy.
+    QVERIFY(inventory.hasPartitionEnumerationFailure());
+    const QString warnings = inventory.warnings.join(QStringLiteral("; "));
+    QVERIFY2(warnings.contains(QStringLiteral("Partition enumeration failed for disk 3")),
+             qPrintable(warnings));
+    QVERIFY2(warnings.contains(QStringLiteral("Access is denied.")), qPrintable(warnings));
+
+    // A genuinely empty (RAW) disk is unaffected: it still reports one whole-disk free region.
+    const auto healthy = StorageInventoryWorker::parseInventoryJson(rawBasicDiskFixtureJson());
+    QVERIFY(!healthy.hasPartitionEnumerationFailure());
+    QVERIFY(healthy.warnings.isEmpty());
+    QCOMPARE(healthy.disks.first().unallocated_regions.size(), 1);
+}
+
+// A disk whose partition table could not be read cannot be validated at all: its "empty"
+// partition list, its absent system/boot partition and its apparent free space are unknowns,
+// not facts. Every operation against it is REFUSED at the plan gate AND at the apply gate.
+void PartitionManagerCoreTests::safetyValidator_refusesEveryOperationOnUnreadableDiskLayout() {
+    const auto inventory =
+        StorageInventoryWorker::parseInventoryJson(failedPartitionQueryFixtureJson());
+    QCOMPARE(inventory.disks.size(), 1);
+    const auto& disk = inventory.disks.first();
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = disk.disk_number;
+    target.size_bytes = disk.size_bytes;
+
+    PartitionOperationPlanner planner;
+    for (const auto type : {PartitionOperationType::InitializeDisk,
+                            PartitionOperationType::DeleteAllPartitions,
+                            PartitionOperationType::WipeDisk,
+                            PartitionOperationType::CheckFileSystem}) {
+        const auto operation = PartitionOperationPlanner::makeOperation(type, target);
+        const auto preview = planner.previewOperation(inventory, operation);
+        QVERIFY2(!preview.canApply(), "An unreadable disk layout must block every operation.");
+        QVERIFY2(preview.blockers.join(QStringLiteral("; "))
+                     .contains(QStringLiteral("Partition enumeration failed for disk 3")),
+                 qPrintable(preview.blockers.join(QStringLiteral("; "))));
+
+        // The refusal must also hold at the apply gate, not just in the preview text: a queued
+        // operation carrying the blocker can never be dispatched.
+        PartitionOperationQueue queue;
+        queue.addPreview(preview);
+        QVERIFY(!queue.blockers().isEmpty());
+        QVERIFY2(!queue.canApply(inventory.layout_hash),
+                 "A queue holding an unreadable-layout operation must never be applyable.");
+    }
+}
+
 void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
     const QString script = StorageInventoryWorker::inventoryPowerShellScript();
     QVERIFY2(script.contains(QStringLiteral("$ProgressPreference = 'SilentlyContinue'")),
              "Inventory script should suppress progress records so stdout remains JSON-only.");
-    QVERIFY2(script.contains(QStringLiteral(
-                 "Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue")),
+    QVERIFY2(script.contains(QStringLiteral("Get-Partition -DiskNumber $DiskNumber "
+                                            "-ErrorAction Stop")),
+             "A failing partition query must raise, not be silenced into an empty list.");
+    QVERIFY2(script.contains(QStringLiteral("CmdletizationQuery_NotFound")),
              "RAW disks with no partitions must not abort the whole inventory scan.");
+    QVERIFY2(script.contains(QStringLiteral("PartitionQueryFailed")),
+             "The inventory must carry the partition-query failure flag to the parser.");
+    // The helper must be DEFINED before the Get-Disk pipeline that calls it.
+    const int definedAt = script.indexOf(QStringLiteral("function Get-SakPartitionsForDisk"));
+    const int calledAt =
+        script.indexOf(QStringLiteral("$partitionQuery = Get-SakPartitionsForDisk"));
+    QVERIFY2(definedAt >= 0 && calledAt > definedAt,
+             "Get-SakPartitionsForDisk must be defined before the disk pipeline calls it.");
     QVERIFY2(script.contains(QStringLiteral("Get-SakVolumeForPartition")),
              "Hidden partitions should use a resilient volume lookup helper.");
     QVERIFY2(script.contains(QStringLiteral("Get-Volume -Path $accessPath")),
@@ -17407,6 +17552,60 @@ void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange
     QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, 1, 0));  // empty container
 }
 
+void PartitionManagerCoreTests::apfsWriter_freeQueueExpansionBudgetFailsClosed() {
+    // CODEX_REVIEW_5 p4_rawfs-20: "inside the container" was never a bound. On a large
+    // container a single in-bounds run still expanded to one uint64_t per block -- a multi-GB
+    // allocation driven by attacker-supplied metadata. A run is now bounded by what a commit
+    // can legitimately free contiguously, and the whole queue by a fixed expansion budget.
+    constexpr quint64 kHugeContainer = 1ULL << 32;  // 4 Gi blocks = 16 TiB at 4 KiB
+    constexpr quint64 kRunCap = 2'097'152;          // kApfsFreeQueueMaxRunBlocks
+    constexpr quint64 kExpansionCap = 4'194'304;    // kApfsFreeQueueMaxExpandedBlocks
+
+    // Container containment alone accepted these: they are refused by the run-length bound.
+    using W = PartitionApfsWriter;
+    QVERIFY(!W::freeQueueRunInBoundsForTesting(0, kHugeContainer, kHugeContainer));
+    QVERIFY(!W::freeQueueRunInBoundsForTesting(0, kRunCap + 1, kHugeContainer));
+    QVERIFY(
+        !W::freeQueueRunInBoundsForTesting(kHugeContainer / 2, kHugeContainer / 2, kHugeContainer));
+    // A run at the cap that still fits the container stays legal; the container bound is not
+    // replaced by the length bound, both must hold.
+    QVERIFY(W::freeQueueRunInBoundsForTesting(0, kRunCap, kHugeContainer));
+    QVERIFY(!W::freeQueueRunInBoundsForTesting(0, kRunCap, kRunCap - 1));
+
+    // The whole-queue budget is cumulative: runs that each pass the per-run bound still fail
+    // closed once their total would materialize past the expansion ceiling.
+    QVERIFY(W::freeQueueExpansionWithinBudgetForTesting(0, kExpansionCap));
+    QVERIFY(W::freeQueueExpansionWithinBudgetForTesting(kExpansionCap - kRunCap, kRunCap));
+    QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(0, kExpansionCap + 1));
+    QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(kExpansionCap, 1));
+    QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(kExpansionCap - kRunCap + 1, kRunCap));
+    // No wrap: an accumulated total already past the budget can never admit another run.
+    QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(~0ULL, 1));
+    QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(~0ULL, 0));
+}
+
+void PartitionManagerCoreTests::apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles() {
+    // CODEX_REVIEW_5 p4_rawfs-19: the in-place commit's recursive subtree collector walks
+    // drec listings from an untrusted source image. The reader's cycle/depth guards are
+    // per B-tree NODE, so a drec-level directory cycle (A lists B, B lists A) recursed
+    // forever until the stack was exhausted. Every directory id is admitted at most once
+    // and the nesting depth is capped, both fail closed.
+    QSet<quint64> visited;
+    // The root, a child, and a directory at the deepest allowed nesting are all admitted.
+    QVERIFY(PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(2, 0, &visited));
+    QVERIFY(PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(30, 1, &visited));
+    QVERIFY(PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(31, 16, &visited));
+    // The same directory id reached a second time is a cycle, not a re-visit to skip.
+    QVERIFY(!PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(30, 2, &visited));
+    QVERIFY(!PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(2, 1, &visited));
+    // One level past the cap is refused even for an id never seen before.
+    QVERIFY(!PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(40, 17, &visited));
+    QVERIFY(!PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(41, 4096, &visited));
+    QVERIFY(!visited.contains(40));
+    // A missing visited set is a programming error, not a reason to descend unguarded.
+    QVERIFY(!PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(42, 0, nullptr));
+}
+
 void PartitionManagerCoreTests::exporter_realizedPathWithinRootRejectsEscape() {
     // CODEX_REVIEW_4 M-A4-27: the export writers re-check that every realized target stays
     // under the canonical export root, so a junction planted at an ancestor after mkpath cannot
@@ -17427,6 +17626,18 @@ void PartitionManagerCoreTests::exporter_realizedPathWithinRootRejectsEscape() {
     QVERIFY(!R::exportPathWithinRootForTesting(root, QString()));   // empty child -> closed
     QVERIFY(!R::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
     QVERIFY(!R::exportPathWithinRootForTesting(
+        root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
+
+    // CODEX_REVIEW_5 p4_rawfs-22: the HFS+ exporter had neither the canonical root nor this
+    // re-check (only leaf NewOnly), so a junction planted at an export ancestor redirected the
+    // write outside. It now carries the identical containment seam.
+    using H = PartitionHfsFileSystemReader;
+    QVERIFY(H::exportPathWithinRootForTesting(root, inner));     // nested child -> allowed
+    QVERIFY(H::exportPathWithinRootForTesting(root, root));      // the root itself -> allowed
+    QVERIFY(!H::exportPathWithinRootForTesting(root, sibling));  // sibling prefix OutX -> rejected
+    QVERIFY(!H::exportPathWithinRootForTesting(root, QString()));   // empty child -> closed
+    QVERIFY(!H::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
+    QVERIFY(!H::exportPathWithinRootForTesting(
         root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
 }
 
@@ -19698,6 +19909,354 @@ void PartitionManagerCoreTests::fileRecoveryEngine_confinesCraftedCandidateNames
     const auto skipped = FileRecoveryEngine::restoreCandidates(dotsRestore);
     QVERIFY(skipped.restored_paths.isEmpty());
     QVERIFY(!skipped.warnings.isEmpty());
+}
+
+namespace {
+
+// Shared fixture for the partition-clone region tests: the fixture data partition on disk 0
+// cloned into an unallocated region on a disposable 100 GiB target disk, with the overwrite
+// confirmation already given so only the region proofs decide the outcome.
+PartitionOperation partitionRegionCloneOperation(PartitionInventory* inventory) {
+    *inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(inventory);
+    appendDisposableTargetDisk(inventory);
+    const auto& partition = inventory->disks.first().partitions.at(1);
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 0;
+    target.partition_number = partition.partition_number;
+    target.size_bytes = partition.size_bytes;
+    target.drive_letter = partition.volume->drive_letter;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\C:");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_disk_number")] = 1;
+    payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    return PartitionOperationPlanner::makeOperation(PartitionOperationType::ClonePartition,
+                                                    target,
+                                                    payload);
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::safetyValidator_refusesClonePartitionZeroOffsetOrUnknownSize() {
+    // R5-P5-2: a partition-clone region was accepted on the strength of the payload alone --
+    // an explicit target_offset_bytes of 0 passed the "is the field present" check and the
+    // executor then seeked the target device to sector 0 and laid the source over the target
+    // disk's partition table. An unknown source size likewise left the copied byte count to
+    // the source stream at run time instead of the size validation approved.
+    PartitionInventory inventory;
+    const auto operation = partitionRegionCloneOperation(&inventory);
+    PartitionOperationPlanner planner;
+    QVERIFY(planner.previewOperation(inventory, operation).canApply());
+
+    auto zeroOffset = operation;
+    zeroOffset.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("0");
+    auto preview = planner.previewOperation(inventory, zeroOffset);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("target offset")));
+
+    auto unknownSource = operation;
+    unknownSource.payload.remove(QStringLiteral("source_size_bytes"));
+    preview = planner.previewOperation(inventory, unknownSource);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("known source partition size")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_provesPartitionCloneRegionAgainstLiveTargetDisk() {
+    // R5-P5-2: the region is proven against the LIVE target disk before any byte is written --
+    // in-bounds, clear of the partition-table reserve, and inside space the inventory reports
+    // as unallocated (which is what proves it holds no existing partition).
+    PartitionInventory inventory;
+    const auto operation = partitionRegionCloneOperation(&inventory);
+    PartitionOperationPlanner planner;
+    OperationPreview preview;
+
+    // A region that runs past the end of the live target disk is refused, not clamped.
+    auto pastEnd = operation;
+    pastEnd.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("107374182400");
+    preview = planner.previewOperation(inventory, pastEnd);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("does not fit within the target")));
+
+    // A region inside the head partition-table reserve is refused even though it is in bounds.
+    auto insideReserve = operation;
+    insideReserve.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("65536");
+    preview = planner.previewOperation(inventory, insideReserve);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("partition-table reserve")));
+
+    // A region that lands on space the target disk does not report as unallocated (i.e. it
+    // would overwrite an existing partition) is refused.
+    auto occupiedInventory = inventory;
+    auto& targetDisk = occupiedInventory.disks.last();
+    targetDisk.unallocated_regions.clear();
+    targetDisk.unallocated_regions.append({targetDisk.disk_number, 1'048'576ULL, 4'194'304ULL});
+    preview = planner.previewOperation(occupiedInventory, operation);
+    QVERIFY(preview.canApply());  // still inside the (now smaller) unallocated region
+    auto occupied = operation;
+    occupied.payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("33554432");
+    preview = planner.previewOperation(occupiedInventory, occupied);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("free unallocated space")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_bindsRecreateSizesToLiveVolumes() {
+    // R5-P5-12: the destructive backup/recreate flows took the recreate size (and, for
+    // dynamic-to-basic, the volume letter) from the payload with no reference to the live
+    // volume the validator approved. A declared size that does not match the live volume
+    // rebuilds the wrong geometry after the source has already been wiped, so both are now
+    // bound to inventory and any mismatch fails closed.
+    PartitionOperationPlanner planner;
+
+    auto dynamicInventory = singleDataDiskInventory(true);
+    const auto& dynamicPartition = dynamicInventory.disks.first().partitions.first();
+    PartitionTarget diskTarget;
+    diskTarget.kind = PartitionTargetKind::Disk;
+    diskTarget.disk_number = dynamicInventory.disks.first().disk_number;
+    diskTarget.size_bytes = dynamicInventory.disks.first().size_bytes;
+    QJsonObject dynamicPayload;
+    dynamicPayload[QStringLiteral("drive_letter")] = dynamicPartition.volume->drive_letter;
+    dynamicPayload[QStringLiteral("source_size_bytes")] =
+        QString::number(dynamicPartition.size_bytes);
+    dynamicPayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    dynamicPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    dynamicPayload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto dynamicOp = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, diskTarget, dynamicPayload);
+    QVERIFY(planner.previewOperation(dynamicInventory, dynamicOp).canApply());
+
+    // A payload size near UINT64_MAX passed validation and then collapsed to a 1 MiB recreate.
+    auto wrappedSize = dynamicOp;
+    wrappedSize.payload[QStringLiteral("source_size_bytes")] =
+        QStringLiteral("18446744073709551615");
+    auto preview = planner.previewOperation(dynamicInventory, wrappedSize);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("must match the live")));
+
+    // A payload letter naming a different volume than the one on the selected disk is refused.
+    auto otherLetter = dynamicOp;
+    otherLetter.payload[QStringLiteral("drive_letter")] = QStringLiteral("Q");
+    preview = planner.previewOperation(dynamicInventory, otherLetter);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("must match the live")));
+
+    auto basicInventory = singleDataDiskInventory();
+    const auto& basicPartition = basicInventory.disks.first().partitions.first();
+    PartitionTarget partitionTarget;
+    partitionTarget.kind = PartitionTargetKind::Partition;
+    partitionTarget.disk_number = basicPartition.disk_number;
+    partitionTarget.partition_number = basicPartition.partition_number;
+    partitionTarget.size_bytes = basicPartition.size_bytes;
+    partitionTarget.drive_letter = basicPartition.volume->drive_letter;
+    QJsonObject primaryPayload;
+    primaryPayload[QStringLiteral("target_layout")] = QStringLiteral("logical");
+    primaryPayload[QStringLiteral("source_size_bytes")] =
+        QString::number(basicPartition.size_bytes);
+    primaryPayload[QStringLiteral("drive_letter")] = basicPartition.volume->drive_letter;
+    primaryPayload[QStringLiteral("file_system")] = basicPartition.volume->file_system;
+    primaryPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    primaryPayload[QStringLiteral("target_wipe_confirmed")] = true;
+    auto primaryOp = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPrimaryLogical, partitionTarget, primaryPayload);
+    QVERIFY(planner.previewOperation(basicInventory, primaryOp).canApply());
+
+    auto primaryMismatch = primaryOp;
+    primaryMismatch.payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    preview = planner.previewOperation(basicInventory, primaryMismatch);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(
+        QStringLiteral("must match the live selected partition")));
+}
+
+void PartitionManagerCoreTests::rawDeviceClassifier_canonicalizesExtendedDeviceSpellings() {
+    // R5-P5-17: raw-device classification is ONE authority shared by the validator, the raw
+    // I/O layer and the clone/image builder. The \\?\ device spellings name the same devices
+    // as their \\.\ forms and canonicalize to them, so the executor's take-offline / IsBoot
+    // guard cannot be skipped by spelling a validator-approved target differently.
+    QCOMPARE(sak::canonicalRawDevicePath(QStringLiteral("\\\\?\\PhysicalDrive3")),
+             QStringLiteral("\\\\.\\PhysicalDrive3"));
+    QCOMPARE(sak::canonicalRawDevicePath(QStringLiteral("\\\\.\\PhysicalDrive3")),
+             QStringLiteral("\\\\.\\PhysicalDrive3"));
+    QCOMPARE(sak::canonicalRawDevicePath(
+                 QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2")),
+             QStringLiteral("\\\\.\\GLOBALROOT\\Device\\Harddisk1\\Partition2"));
+    // An ordinary file -- including an extended-length long path -- is not a device and is
+    // left alone, so a legitimate image write is never rerouted through the raw-device path.
+    const QString volumeGuidFile =
+        QStringLiteral("\\\\?\\Volume{12345678-1234-1234-1234-1234567890ab}\\x.img");
+    QVERIFY(sak::canonicalRawDevicePath(QStringLiteral("D:\\images\\x.img")).isEmpty());
+    QVERIFY(sak::canonicalRawDevicePath(QStringLiteral("\\\\?\\C:\\images\\x.img")).isEmpty());
+    QVERIFY(sak::canonicalRawDevicePath(volumeGuidFile).isEmpty());
+
+    const auto extendedNumber =
+        sak::rawDevicePhysicalDriveNumber(QStringLiteral("\\\\?\\PhysicalDrive7"));
+    const auto deviceNumber =
+        sak::rawDevicePhysicalDriveNumber(QStringLiteral("\\\\.\\PhysicalDrive7"));
+    QCOMPARE(extendedNumber.value_or(99), static_cast<uint32_t>(7));
+    QCOMPARE(deviceNumber.value_or(99), static_cast<uint32_t>(7));
+    QVERIFY(!sak::rawDevicePhysicalDriveNumber(QStringLiteral("\\\\.\\C:")).has_value());
+    QVERIFY(!sak::rawDevicePhysicalDriveNumber(QStringLiteral("D:\\images\\x.img")).has_value());
+
+    // The Windows device spellings classify identically on every build host: the plan-time
+    // validator and the executor must never disagree about whether a target is a raw device.
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\PhysicalDrive3")));
+    QVERIFY(sak::isWindowsRawDevicePath(
+        QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk0\\Partition1")));
+    QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\C:\\images\\x.img")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_emitsCanonicalRawTargetForExtendedSpelling() {
+    // R5-P5-17: a \\?\PhysicalDriveN target passed validation but the emitted PowerShell
+    // recognized only \\.\, so Get-SakPhysicalDriveNumber returned $null, Assert-SakRawWriteTarget
+    // skipped taking the disk offline and re-checking IsBoot/IsSystem, and Open-SakWrite opened
+    // the device with FileMode::Create file semantics. The target is normalized before emission.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 0;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\?\\PhysicalDrive0");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\?\\PhysicalDrive2");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CloneDisk, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    QVERIFY(script.script.contains(QStringLiteral("$dst = '\\\\.\\PhysicalDrive2'")));
+    QVERIFY(script.script.contains(QStringLiteral("$src = '\\\\.\\PhysicalDrive0'")));
+    QVERIFY(!script.script.contains(QStringLiteral("\\\\?\\PhysicalDrive")));
+
+    // An image-file destination keeps file semantics and is not rewritten.
+    QJsonObject imagePayload;
+    imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, imagePayload));
+    QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
+    QVERIFY(image.script.contains(QStringLiteral("$dst = 'D:\\images\\disk0.img'")));
+
+    // Create Image must refuse a raw destination in EVERY spelling the validator accepts.
+    QJsonObject rawImagePayload = imagePayload;
+    rawImagePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\?\\PhysicalDrive2");
+    const auto rawImage = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, rawImagePayload));
+    QVERIFY(!rawImage.valid());
+    QVERIFY(rawImage.blockers.join(' ').contains(QStringLiteral("must be a file path")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_clonePartitionRegionFailsClosed() {
+    // R5-P5-2 (builder half): the script builder is a second, independent gate. An unknown
+    // source size or a zero target offset on a physical-disk target must not produce a script.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = 0;
+    target.partition_number = 2;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\C:");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+
+    PartitionScriptBuilder builder;
+    const auto unknownSize = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, payload));
+    QVERIFY(!unknownSize.valid());
+    QVERIFY(unknownSize.blockers.join(' ').contains(QStringLiteral("known source size")));
+
+    QJsonObject zeroOffsetPayload = payload;
+    zeroOffsetPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    zeroOffsetPayload[QStringLiteral("target_offset_bytes")] = QStringLiteral("0");
+    const auto zeroOffset = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, zeroOffsetPayload));
+    QVERIFY(!zeroOffset.valid());
+    QVERIFY(zeroOffset.blockers.join(' ').contains(QStringLiteral("non-zero target offset")));
+
+    QJsonObject okPayload = zeroOffsetPayload;
+    okPayload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+    const auto ok = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ClonePartition, target, okPayload));
+    QVERIFY2(ok.valid(), qPrintable(ok.blockers.join(QStringLiteral("; "))));
+    QVERIFY(ok.script.contains(QStringLiteral("$targetOffset = [uint64]1048576")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_diskPartRunnerProvesSuccessBeyondExitCode() {
+    // R5-P5-7: diskpart commonly exits 0 with an individual command failed, so the runner
+    // scanned nothing and treated exit 0 as success. It now captures the output, refuses on a
+    // failure marker or on no output at all, and the recreate is then proven POSITIVELY by
+    // asserting the rebuilt volume exists and can hold the backed-up bytes.
+    PartitionScriptBuilder builder;
+    PartitionTarget diskTarget;
+    diskTarget.kind = PartitionTargetKind::Disk;
+    diskTarget.disk_number = 3;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, diskTarget, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    QVERIFY(script.script.contains(QStringLiteral("DiskPart has encountered an error|")));
+    QVERIFY(script.script.contains(QStringLiteral("There is no (disk|volume|partition) selected")));
+    QVERIFY(script.script.contains(QStringLiteral("DiskPart produced no output")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)")));
+    QVERIFY(script.script.contains(QStringLiteral("DiskPart did not leave a usable volume")));
+    // The old exit-code-only gate must be gone.
+    QVERIFY(!script.script.contains(
+        QStringLiteral("diskpart.exe /s $scriptPath; if ($LASTEXITCODE -ne 0)")));
+
+    PartitionTarget partitionTarget;
+    partitionTarget.kind = PartitionTargetKind::Partition;
+    partitionTarget.disk_number = 2;
+    partitionTarget.partition_number = 1;
+    partitionTarget.drive_letter = QStringLiteral("T");
+    QJsonObject primaryPayload;
+    primaryPayload[QStringLiteral("target_layout")] = QStringLiteral("logical");
+    primaryPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("1073741824");
+    primaryPayload[QStringLiteral("drive_letter")] = QStringLiteral("T");
+    primaryPayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    primaryPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\backup");
+    primaryPayload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto primary = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertPrimaryLogical, partitionTarget, primaryPayload));
+    QVERIFY2(primary.valid(), qPrintable(primary.blockers.join(QStringLiteral("; "))));
+    QVERIFY(primary.script.contains(
+        QStringLiteral("Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_sizeMbArgDoesNotWrapToOneMegabyte() {
+    // R5-P5-12: the MiB ceiling used (bytes + 1MiB - 1) / 1MiB, which wraps for a byte count
+    // within one MiB of UINT64_MAX and collapsed to megabytes 0 -> a 1 MiB recreate where the
+    // whole volume belonged. The ceiling is now computed without the overflowing bias.
+    PartitionScriptBuilder builder;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = 3;
+    QJsonObject payload;
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("18446744073709551615");
+    payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    payload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    QVERIFY(!script.script.contains(QStringLiteral("$sourceSizeMb = 1\n")));
+    QVERIFY(script.script.contains(QStringLiteral("$sourceSizeMb = 17592186044416")));
+
+    // The existing round-UP behaviour is unchanged for ordinary sizes.
+    QJsonObject exactPayload = payload;
+    exactPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
+    const auto exact = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ConvertDynamicDiskToBasic, target, exactPayload));
+    QVERIFY(exact.script.contains(QStringLiteral("$sourceSizeMb = 100\n")));
 }
 
 QTEST_MAIN(PartitionManagerCoreTests)

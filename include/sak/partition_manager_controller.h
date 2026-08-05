@@ -30,6 +30,16 @@ public:
     [[nodiscard]] const PartitionOperationQueue& queue() const noexcept;
     [[nodiscard]] PartitionManagerState state() const noexcept;
 
+    // --- Pure reporting seams (no instance state; unit-tested without a live scan) ---
+    /// @brief State to report once a scan lands: Ready ONLY when every disk's partition
+    ///        enumeration succeeded, otherwise ReadyPartial -- a partial inventory is never
+    ///        announced as a complete one.
+    [[nodiscard]] static PartitionManagerState inventoryReadyState(
+        const PartitionInventory& inventory);
+    /// @brief Status line for a completed scan. Names the disks whose partition enumeration
+    ///        failed (and that operations on them are refused) instead of "inventory ready".
+    [[nodiscard]] static QString inventoryStatusMessage(const PartitionInventory& inventory);
+
 public Q_SLOTS:
     void refreshInventory();
     void queueOperation(PartitionOperationType type,
@@ -44,6 +54,9 @@ public Q_SLOTS:
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     void setTestInventory(const PartitionInventory& inventory);
+    // Drives the state machine directly so a test can assert the panel's running-operation
+    // guard without dispatching a real (destructive) apply.
+    void setTestState(PartitionManagerState state);
 #endif
 
 Q_SIGNALS:

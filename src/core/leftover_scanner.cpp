@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
+#include "sak/windows_path_policy.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -17,6 +18,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <vector>
 
 namespace sak {
@@ -121,6 +123,60 @@ bool isSharedContainerPath(const QString& path) {
     return kSharedRootNames.contains(QDir(path).dirName().toLower());
 }
 
+/// A leftover is pre-selected only when it may actually be deleted AND is classified Safe:
+/// a report-only item (one whose path could not be tied to the program) is never checked.
+bool leftoverPreSelected(const LeftoverItem& item) {
+    return item.deletable && item.risk == LeftoverItem::RiskLevel::Safe;
+}
+
+/// Reduce a name to its comparable core: lower-cased, non-alphanumerics dropped. Lets
+/// "Vendor App 2.0" and "VendorApp" compare equal without a substring free-for-all.
+QString foldedName(const QString& value) {
+    static const QRegularExpression kNoise(QStringLiteral("[^a-z0-9]+"));
+    QString folded = value.toLower();
+    folded.remove(kNoise);
+    return folded;
+}
+
+/// Two folded names match when they are equal, or one is a prefix of the other and the
+/// shorter side is long enough to be distinctive. Installer display names routinely carry
+/// a version/architecture suffix the install directory omits ("Notepad++ (64-bit)" vs
+/// "Notepad++"), and vendor directories routinely omit the vendor ("Google Chrome" vs
+/// "Google\\Chrome"), so an exact-only rule would reject real installs. The length floor
+/// stops a two-letter leaf from matching every program on the machine.
+bool foldedNamesMatch(const QString& a, const QString& b) {
+    constexpr int kMinDistinctiveFoldedLen = 4;
+    if (a.isEmpty() || b.isEmpty()) {
+        return false;
+    }
+    if (a == b) {
+        return true;
+    }
+    if (std::min(a.size(), b.size()) < kMinDistinctiveFoldedLen) {
+        return false;
+    }
+    return a.startsWith(b) || b.startsWith(a);
+}
+
+/// Append the profiles container (e.g. C:\\Users) and EVERY user profile root under it.
+/// Deleting another user's whole profile is as catastrophic as deleting our own, and a
+/// registry value can name any of them.
+void appendProfileRoots(QStringList& roots) {
+    const QString user_profile = qEnvironmentVariable("USERPROFILE");
+    if (user_profile.isEmpty()) {
+        return;
+    }
+    QDir profiles(user_profile);
+    if (!profiles.cdUp()) {
+        return;
+    }
+    roots.append(QDir::toNativeSeparators(profiles.absolutePath()));
+    const auto children = profiles.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString& child : children) {
+        roots.append(QDir::toNativeSeparators(profiles.absoluteFilePath(child)));
+    }
+}
+
 }  // namespace
 
 // Protected system paths that should NEVER be auto-selected for deletion
@@ -149,14 +205,145 @@ LeftoverScanner::LeftoverScanner(const ProgramInfo& program,
                                  ScanLevel level,
                                  const QSet<QString>& registryBefore)
     : m_program(program), m_level(level), m_registryBefore(registryBefore) {
+    // Screen the registry-supplied InstallLocation ONCE, before anything derives names or
+    // deletion targets from it. Everything downstream reads the screened/trusted copies;
+    // m_program.installLocation is never used as authority again.
+    const ScreenedInstallLocation screened = screenInstallLocation(program);
+    m_screenedInstallLocation = screened.syntactic;
+    m_trustedInstallLocation = screened.trusted;
+    m_installLocationRefusal = screened.refusal;
     buildExactNames();
 }
 
+QStringList LeftoverScanner::criticalInstallRoots() {
+    QStringList roots;
+    const auto addEnv = [&roots](const char* variable) {
+        const QString value = qEnvironmentVariable(variable);
+        if (!value.isEmpty()) {
+            roots.append(QDir::toNativeSeparators(value));
+        }
+    };
+    addEnv("SystemRoot");
+    addEnv("windir");
+    addEnv("ProgramFiles");
+    addEnv("ProgramFiles(x86)");
+    addEnv("ProgramW6432");
+    addEnv("ProgramData");
+    addEnv("CommonProgramFiles");
+    addEnv("CommonProgramFiles(x86)");
+    addEnv("ALLUSERSPROFILE");
+    addEnv("APPDATA");
+    addEnv("LOCALAPPDATA");
+    addEnv("PUBLIC");
+    addEnv("TEMP");
+    addEnv("TMP");
+    addEnv("USERPROFILE");
+    roots.append(QDir::toNativeSeparators(QDir::homePath()));
+    appendProfileRoots(roots);
+    return roots;
+}
+
+QString LeftoverScanner::installLocationSyntaxRefusal(const QString& rawLocation,
+                                                      const QStringList& criticalRoots) {
+    if (rawLocation.trimmed().isEmpty()) {
+        return QStringLiteral("no install location is recorded");
+    }
+    // Same dialect as the UninstallString screen: refuses relative, drive-relative,
+    // root-relative, UNC, traversal-bearing, "%VAR%"-carrying and volume-root values.
+    if (!literalLocalPathTrusted(rawLocation)) {
+        return QStringLiteral(
+            "it is not a literal local directory path (relative, UNC, traversal, "
+            "unexpanded variable or a whole volume)");
+    }
+    const QString screened = screeningPathForm(rawLocation);
+    for (const QString& root : criticalRoots) {
+        if (screeningPathForm(root).compare(screened, Qt::CaseInsensitive) == 0) {
+            return QStringLiteral("it is a system, shared or user-profile root directory");
+        }
+    }
+    return {};
+}
+
+bool LeftoverScanner::installLocationMatchesProgram(const QString& canonicalLocation,
+                                                    const QString& displayName,
+                                                    const QString& packageFamilyName) {
+    QDir dir(canonicalLocation);
+    const QString leaf = foldedName(dir.dirName());
+    QString parent_leaf;
+    if (dir.cdUp()) {
+        parent_leaf = foldedName(dir.dirName());
+    }
+    // "App" and the "Publisher\App" pair are the two shapes a real install uses.
+    const QStringList location_names{leaf, parent_leaf + leaf};
+    const QStringList program_names{foldedName(displayName), foldedName(packageFamilyName)};
+    for (const QString& location_name : location_names) {
+        for (const QString& program_name : program_names) {
+            if (foldedNamesMatch(location_name, program_name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+LeftoverScanner::ScreenedInstallLocation LeftoverScanner::screenInstallLocation(
+    const ProgramInfo& program) {
+    ScreenedInstallLocation out;
+    if (program.installLocation.trimmed().isEmpty()) {
+        return out;  // nothing recorded: no candidate, and nothing to refuse
+    }
+    const QString refusal = installLocationSyntaxRefusal(program.installLocation,
+                                                         criticalInstallRoots());
+    if (!refusal.isEmpty()) {
+        // Fail closed and do NOT touch the filesystem: a UNC or traversal value must not
+        // even be stat'ed, let alone become a deletion candidate.
+        out.refusal = refusal;
+        return out;
+    }
+    out.syntactic = QDir::toNativeSeparators(screeningPathForm(program.installLocation));
+    out.trusted = provenInstallLocation(out.syntactic, program, out.refusal);
+    return out;
+}
+
+QString LeftoverScanner::provenInstallLocation(const QString& screenedLocation,
+                                               const ProgramInfo& program,
+                                               QString& refusalOut) {
+    const QFileInfo info(screenedLocation);
+    if (!info.exists() || !info.isDir()) {
+        refusalOut = QStringLiteral("it is not an existing directory");
+        return {};
+    }
+    // A junction/symlink lets the registry value aim a recursive delete at a target it
+    // does not name. Refuse the reparse point itself; canonicalFilePath() additionally
+    // resolves one in any PARENT component, and the resolved path is screened again so it
+    // cannot land on a UNC share or a critical root by redirection.
+    if (info.isSymLink()) {
+        refusalOut = QStringLiteral("it is a reparse point (junction or symbolic link)");
+        return {};
+    }
+    const QString canonical = QDir::toNativeSeparators(info.canonicalFilePath());
+    if (canonical.isEmpty() ||
+        !installLocationSyntaxRefusal(canonical, criticalInstallRoots()).isEmpty()) {
+        refusalOut = QStringLiteral("it does not resolve to a literal local directory");
+        return {};
+    }
+    if (!installLocationMatchesProgram(canonical, program.displayName, program.packageFamilyName)) {
+        refusalOut = QStringLiteral("it cannot be tied to this program by name");
+        return {};
+    }
+    return canonical;
+}
+
 void LeftoverScanner::extractInstallDirNames() {
-    if (m_program.installLocation.isEmpty()) {
+    // Names are derived from the SYNTACTICALLY screened value, not the raw registry
+    // string: a "%VAR%"/UNC/volume-root value must not seed the exact-name set that
+    // decides which unrelated directories get matched elsewhere. The full trust tier is
+    // deliberately NOT required here -- after an uninstall the directory is usually gone,
+    // and its name is still the best signal for finding what it left behind.
+    if (m_screenedInstallLocation.isEmpty()) {
         return;
     }
-    QDir install_dir(m_program.installLocation);
+    QDir install_dir(m_screenedInstallLocation);
     QString dir_name = install_dir.dirName().toLower();
     if (!dir_name.isEmpty() && !kGenericDirNames.contains(dir_name)) {
         m_installDirName = dir_name;
@@ -261,7 +448,7 @@ QVector<LeftoverItem> LeftoverScanner::scan(
             continue;
         }
         seen.insert(item.path);
-        item.selected = (item.risk == LeftoverItem::RiskLevel::Safe);
+        item.selected = leftoverPreSelected(item);
         result.append(std::move(item));
     }
 
@@ -273,24 +460,49 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 // ======================================================================
 
 QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<bool>& stopRequested) {
-    if (m_program.installLocation.isEmpty() || stopRequested.load()) {
+    if (stopRequested.load()) {
         return {};
     }
-
-    QDir install_dir(m_program.installLocation);
-    if (!install_dir.exists()) {
-        return {};
+    // Only the TRUSTED location may become a deletion candidate. Anything less is either
+    // reported without deletion authority or dropped entirely (see reportOnlyInstallLocation).
+    if (m_trustedInstallLocation.isEmpty()) {
+        return reportOnlyInstallLocation();
     }
 
     LeftoverItem item;
     item.type = LeftoverItem::Type::Folder;
-    item.path = QDir::toNativeSeparators(install_dir.absolutePath());
+    item.path = m_trustedInstallLocation;
     item.description = "Program install directory still exists";
-    item.sizeBytes = calculateSize(install_dir.absolutePath(), stopRequested);
+    item.sizeBytes = calculateSize(item.path, stopRequested);
     // Route through classifyRisk so a shared publisher/OS install location (e.g. a program
     // whose InstallLocation is Program Files\Common Files) is Risky, not auto-selected.
     item.risk = classifyRisk(item.path, item.type);
 
+    return {item};
+}
+
+QVector<LeftoverItem> LeftoverScanner::reportOnlyInstallLocation() const {
+    // A value that failed the SYNTAX screen yields nothing at all -- it is never stat'ed
+    // and never becomes a candidate, with or without a warning attached.
+    if (m_screenedInstallLocation.isEmpty() || m_installLocationRefusal.isEmpty()) {
+        return {};
+    }
+    if (!QFileInfo(m_screenedInstallLocation).exists()) {
+        return {};
+    }
+
+    // Syntactically clean and present, but not provably this program's directory. Surface
+    // it so a technician can see and judge it, with deletion authority withheld: the size
+    // walk is skipped too, since we will not be deleting this tree.
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::Folder;
+    item.path = m_screenedInstallLocation;
+    item.description = QStringLiteral(
+                           "Registered install directory -- REVIEW ONLY, not "
+                           "deletable because %1")
+                           .arg(m_installLocationRefusal);
+    item.risk = LeftoverItem::RiskLevel::Risky;
+    item.deletable = false;
     return {item};
 }
 
@@ -537,7 +749,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 
     // Check for product keys under standard hives
     if (!m_installDirName.isEmpty()) {
-        QString dir_proper = QDir(m_program.installLocation).dirName();
+        QString dir_proper = QDir(m_screenedInstallLocation).dirName();
         checkKey(
             HKEY_CURRENT_USER, "Software\\" + dir_proper, "HKCU", "Leftover product registry key");
         checkKey(
@@ -1104,7 +1316,9 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lo
     // A bare startsWith would classify a sibling like C:\App2 as inside C:\App and
     // exempt it from the protected-root check (eligible for auto-selected recursive
     // deletion). Require an exact match or a real path-segment boundary.
-    const QString install_lower = m_program.installLocation.toLower();
+    // The TRUSTED location only: an unverifiable registry value must not be able to
+    // declare an arbitrary directory (and everything beneath it) Safe and pre-selected.
+    const QString install_lower = m_trustedInstallLocation.toLower();
     if (!install_lower.isEmpty()) {
         const QString install_with_sep = install_lower.endsWith(QLatin1Char('\\'))
                                              ? install_lower
@@ -1180,9 +1394,10 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const {
         return false;
     }
     const QString path_native = QDir::toNativeSeparators(path);
-    const QString install_native = m_program.installLocation.isEmpty()
-                                       ? QString{}
-                                       : QDir::toNativeSeparators(m_program.installLocation);
+    // The protected-root exemption is granted only to a TRUSTED install location. An
+    // unverifiable registry value pointing inside C:\Windows must not be able to exempt
+    // that subtree from the protected-path check.
+    const QString install_native = m_trustedInstallLocation;
 
     for (const auto& protected_path : kProtectedPaths) {
         if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {

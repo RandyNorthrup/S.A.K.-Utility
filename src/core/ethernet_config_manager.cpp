@@ -411,7 +411,19 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
     Q_ASSERT(!args.isEmpty());
 
-    const auto result = sak::runProcess(QStringLiteral("netsh.exe"), args, 10'000);
+    // System32-qualified netsh, never the bare name: adapter configuration runs elevated,
+    // and CreateProcess searches the current directory ahead of System32. Fail closed when
+    // it cannot be resolved instead of launching whatever PATH/CWD supplies.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        if (ok != nullptr) {
+            *ok = false;
+        }
+        Q_EMIT errorOccurred(QStringLiteral("Cannot resolve the System32 netsh.exe path"));
+        return {};
+    }
+
+    const auto result = sak::runProcess(netsh_exe, args, 10'000);
     // Propagate the authoritative exit status: netsh reports failures (elevation, bad adapter) on
     // stdout with a zero-length stderr, so callers cannot rely on the "error" substring alone.
     if (ok != nullptr) {
