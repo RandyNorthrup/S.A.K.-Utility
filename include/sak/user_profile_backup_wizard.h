@@ -81,25 +81,10 @@ public:
     SmartFilter getSmartFilter() const { return m_smartFilter; }
 
     /**
-     * @brief Get compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
-     */
-    int getCompressionLevel() const;
-
-    /**
      * @brief Get the permission mode chosen on the settings page.
      * @return the selected PermissionMode, or StripAll (safest) if unset/invalid.
      */
     PermissionMode getPermissionMode() const;
-
-    /**
-     * @brief Check if encryption is enabled
-     */
-    [[nodiscard]] bool isEncryptionEnabled() const;
-
-    /**
-     * @brief Get encryption password
-     */
-    QString getEncryptionPassword() const;
 
     /** @brief Get/set installed apps selected for backup */
     QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
@@ -395,15 +380,14 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_destinationAndCompression(QVBoxLayout* layout);
-    void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
+    void setupUi_destination(QVBoxLayout* layout);
+    void setupUi_permissions(QVBoxLayout* layout);
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
     /// @brief Screen the typed destination and store the accepted form in m_destinationPath
     /// @return false (with a refusal dialog) for blank, relative, or source-overlapping paths
     bool validateDestination();
     /// @brief Ask before reusing an existing folder; true when the run may proceed
     bool confirmExistingDestination(const QString& destination);
-    bool validateEncryptionSettings();
     void installExecutePage();
 
     BackupManifest& m_manifest;
@@ -411,10 +395,6 @@ private:
 
     QLineEdit* m_destinationEdit{nullptr};
     QPushButton* m_browseButton{nullptr};
-    QComboBox* m_compressionCombo{nullptr};
-    QCheckBox* m_encryptionCheck{nullptr};
-    QLineEdit* m_passwordEdit{nullptr};
-    QLineEdit* m_passwordConfirmEdit{nullptr};
     QComboBox* m_permissionModeCombo{nullptr};
     QCheckBox* m_verifyCheck{nullptr};
     QLabel* m_summaryLabel{nullptr};
@@ -476,11 +456,7 @@ private:
     bool saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
-    void connectAndStartBackupWorker(SmartFilter smartFilter,
-                                     PermissionMode permissionMode,
-                                     int compressionLevel,
-                                     bool encrypt,
-                                     const QString& password);
+    void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode);
 
     BackupManifest& m_manifest;
     QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page

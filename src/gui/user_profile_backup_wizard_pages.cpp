@@ -51,8 +51,6 @@ constexpr int kDefaultMaxSingleFileMb = 2048;
 constexpr int kMaxFolderSizeMinimumGb = 1;
 constexpr int kMaxFolderSizeMaximumGb = 1000;
 constexpr int kDefaultMaxFolderSizeGb = 50;
-constexpr int kBalancedCompressionIndex = 2;
-constexpr int kMinimumEncryptionPasswordLength = 8;
 constexpr int kInstalledAppColumnName = 0;
 constexpr int kInstalledAppColumnVersion = 1;
 constexpr int kInstalledAppColumnPublisher = 2;
@@ -570,7 +568,7 @@ UserProfileBackupSettingsPage::UserProfileBackupSettingsPage(BackupManifest& man
     setupUi();
 }
 
-void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayout* layout) {
+void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     // Destination path
     auto* destLayout = new QHBoxLayout();
@@ -591,56 +589,19 @@ void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayou
     destLayout->addWidget(m_browseButton);
     layout->addLayout(destLayout);
 
-    // Compression
-    auto* compressionLayout = new QHBoxLayout();
-    compressionLayout->addWidget(new QLabel(tr("Compression:"), this));
-    m_compressionCombo = new QComboBox(this);
-    m_compressionCombo->addItems({tr("None"), tr("Fast"), tr("Balanced"), tr("Maximum")});
-    m_compressionCombo->setCurrentIndex(kBalancedCompressionIndex);
-    m_compressionCombo->setToolTip(
-        tr("Choose compression level:\n"
-           "* None: No compression, fastest\n"
-           "* Fast: Quick compression, larger files\n"
-           "* Balanced: Good balance (recommended)\n"
-           "* Maximum: Best compression, slower"));
-    compressionLayout->addWidget(m_compressionCombo);
-    compressionLayout->addStretch();
-    layout->addLayout(compressionLayout);
+    // The compression combo that used to sit here is gone. It defaulted to Balanced, so
+    // every default run logged "Compression: Balanced" and then produced an uncompressed
+    // verbatim copy. UserProfileBackupWorker has never compressed anything. See R5-G19-1.
 }
 
-void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout* layout) {
+void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    // Encryption
-    auto* encryptionLayout = new QHBoxLayout();
-    m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
-    m_encryptionCheck->setToolTip(
-        tr("Protects the backup with AES-256 encryption -- you'll need "
-           "the password to restore"));
-    connect(m_encryptionCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_passwordEdit->setEnabled(checked);
-        m_passwordConfirmEdit->setEnabled(checked);
-    });
-    encryptionLayout->addWidget(m_encryptionCheck);
-    encryptionLayout->addStretch();
-    layout->addLayout(encryptionLayout);
-
-    auto* passwordLayout = new QHBoxLayout();
-    passwordLayout->addWidget(new QLabel(tr("Password:"), this));
-    m_passwordEdit = new QLineEdit(this);
-    m_passwordEdit->setEchoMode(QLineEdit::Password);
-    m_passwordEdit->setEnabled(false);
-    m_passwordEdit->setPlaceholderText(tr("Enter encryption password"));
-    passwordLayout->addWidget(m_passwordEdit);
-    layout->addLayout(passwordLayout);
-
-    auto* confirmLayout = new QHBoxLayout();
-    confirmLayout->addWidget(new QLabel(tr("Confirm:"), this));
-    m_passwordConfirmEdit = new QLineEdit(this);
-    m_passwordConfirmEdit->setEchoMode(QLineEdit::Password);
-    m_passwordConfirmEdit->setEnabled(false);
-    m_passwordConfirmEdit->setPlaceholderText(tr("Confirm encryption password"));
-    confirmLayout->addWidget(m_passwordConfirmEdit);
-    layout->addLayout(confirmLayout);
+    // The "Encrypt backup" checkbox and its two password fields used to sit here. They
+    // advertised AES-256, validated a password and its confirmation, and the run then
+    // aborted with "Encrypted backup is not supported" - this worker writes plaintext
+    // copies. Removed rather than left advertising a guarantee nothing delivered; the
+    // constructor ordering was also latently wrong, since the toggled lambda captured
+    // m_passwordEdit ten lines before it was created. See R5-G19-1.
 
     // Permission mode
     auto* permLayout = new QHBoxLayout();
@@ -687,10 +648,7 @@ void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* 
 
     // Register wizard fields for validation
     registerField("destination*", m_destinationEdit);
-    registerField("compressionLevel", m_compressionCombo, "currentIndex");
     registerField("permissionMode", m_permissionModeCombo, "currentIndex");
-    registerField("encryptionEnabled", m_encryptionCheck);
-    registerField("encryptionPassword", m_passwordEdit);
 }
 
 void UserProfileBackupSettingsPage::setupUi() {
@@ -702,8 +660,8 @@ void UserProfileBackupSettingsPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
-    setupUi_destinationAndCompression(layout);
-    setupUi_encryptionAndPermissions(layout);
+    setupUi_destination(layout);
+    setupUi_permissions(layout);
     setupUi_summaryAndRegistration(layout);
 }
 
@@ -762,42 +720,6 @@ bool UserProfileBackupSettingsPage::validateDestination() {
     return true;
 }
 
-bool UserProfileBackupSettingsPage::validateEncryptionSettings() {
-    if (!m_encryptionCheck->isChecked()) {
-        return true;
-    }
-
-    const QString password = m_passwordEdit->text();
-    const QString confirm = m_passwordConfirmEdit->text();
-    if (password.isEmpty()) {
-        sak::logWarning("User profile backup: encryption password empty");
-        sak::showWarningLogged(this,
-                               tr("Missing Password"),
-                               tr("Please enter an encryption password."));
-        m_passwordEdit->setFocus();
-        return false;
-    }
-    if (password != confirm) {
-        sak::logWarning("User profile backup: encryption passwords do not match");
-        sak::showWarningLogged(this,
-                               tr("Password Mismatch"),
-                               tr("Passwords do not match. Please re-enter."));
-        m_passwordConfirmEdit->clear();
-        m_passwordConfirmEdit->setFocus();
-        return false;
-    }
-    if (password.length() < kMinimumEncryptionPasswordLength) {
-        sak::logWarning("User profile backup: encryption password too short");
-        sak::showWarningLogged(this,
-                               tr("Weak Password"),
-                               tr("Password must be at least %1 characters long.")
-                                   .arg(kMinimumEncryptionPasswordLength));
-        m_passwordEdit->setFocus();
-        return false;
-    }
-    return true;
-}
-
 void UserProfileBackupSettingsPage::installExecutePage() {
     auto* wizard = qobject_cast<UserProfileBackupWizard*>(this->wizard());
     if (wizard) {
@@ -811,9 +733,8 @@ void UserProfileBackupSettingsPage::installExecutePage() {
 
 bool UserProfileBackupSettingsPage::validatePage() {
     Q_ASSERT(m_destinationEdit);
-    Q_ASSERT(m_encryptionCheck);
     // validateDestination() stores the screened destination in m_destinationPath.
-    if (!validateDestination() || !validateEncryptionSettings()) {
+    if (!validateDestination()) {
         return false;
     }
 

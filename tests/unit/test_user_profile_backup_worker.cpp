@@ -31,7 +31,6 @@ private Q_SLOTS:
     void testCancelWhenNotRunning();
 
     // ── Encryption not supported (P06-25) ───────────────────
-    void testEncryptedBackupRefusedFailsClosed();
 
     // ── B7-01: lifetime uses QThread state, not a late member flag ──
     void testStartThenImmediateDestroyIsSafe();
@@ -159,50 +158,6 @@ void TestUserProfileBackupWorker::testCancelWhenNotRunning() {
 }
 
 // ============================================================================
-// Encryption not supported (P06-25): a backup requesting encryption must abort
-// with a failure instead of writing plaintext copies mislabeled as AES-256.
-// ============================================================================
-
-void TestUserProfileBackupWorker::testEncryptedBackupRefusedFailsClosed() {
-    UserProfileBackupWorker worker;
-
-    UserProfile user;
-    user.username = "tester";
-    user.profile_path = QDir::tempPath();
-    user.is_selected = true;
-
-    std::atomic<bool> done{false};
-    bool successFlag = true;
-    QString message;
-    // DirectConnection avoids marshalling BackupManifest (no metatype); the
-    // captures are read only after wait() joins the worker thread.
-    QObject::connect(
-        &worker,
-        &UserProfileBackupWorker::backupComplete,
-        &worker,
-        [&](bool ok, const QString& msg, const BackupManifest&) {
-            successFlag = ok;
-            message = msg;
-            done.store(true);
-        },
-        Qt::DirectConnection);
-
-    UserProfileBackupWorker::BackupOptions options;
-    options.encrypt = true;
-    options.password = "secret";
-    worker.startBackup(BackupManifest{},
-                       {user},
-                       QDir::tempPath() + "/sak_up_backup_test_dest",
-                       SmartFilter{},
-                       options);
-
-    QTRY_VERIFY_WITH_TIMEOUT(done.load(), 5000);
-    worker.wait();
-    QVERIFY(!successFlag);
-    QVERIFY(message.contains("not supported"));
-}
-
-// ============================================================================
 // B7-01: isRunning() now reflects QThread state (true the instant start()
 // returns), so destroying a worker right after startBackup() -- with NO prior
 // wait() -- cancels and joins the live thread instead of tearing it down
@@ -213,17 +168,13 @@ void TestUserProfileBackupWorker::testEncryptedBackupRefusedFailsClosed() {
 void TestUserProfileBackupWorker::testStartThenImmediateDestroyIsSafe() {
     for (int i = 0; i < 5; ++i) {
         UserProfileBackupWorker worker;
-        UserProfile user;
-        user.username = "tester";
-        user.profile_path = QDir::tempPath();
-        user.is_selected = true;
-        UserProfileBackupWorker::BackupOptions options;
-        options.encrypt = true;  // run() self-terminates quickly -- keeps the test fast
-        worker.startBackup(BackupManifest{},
-                           {user},
-                           QDir::tempPath() + "/sak_up_b7_01_dest",
-                           SmartFilter{},
-                           options);
+        const UserProfileBackupWorker::BackupOptions options;
+        // An empty user list is a backup of nothing and run() returns almost at once,
+        // which is what keeps this start-then-destroy loop fast. It previously relied on
+        // options.encrypt = true to make run() self-terminate; that abort path is gone
+        // with the encryption controls it existed to reject.
+        worker.startBackup(
+            BackupManifest{}, {}, QDir::tempPath() + "/sak_up_b7_01_dest", SmartFilter{}, options);
         // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
     }
     QVERIFY(true);  // Survived every start-then-immediate-destroy iteration.

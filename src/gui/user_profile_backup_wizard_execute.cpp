@@ -19,8 +19,6 @@
 namespace sak {
 
 namespace {
-constexpr int kCompressionFastMaxLevel = 3;
-constexpr int kCompressionBalancedMaxLevel = 6;
 
 // Write JSON to `path` atomically: QSaveFile stages a temp file and only renames
 // it into place on commit(), so a short or interrupted write never leaves a
@@ -143,20 +141,6 @@ void UserProfileBackupExecutePage::onStartBackup() {
     SmartFilter smartFilter = wiz->getSmartFilter();
     PermissionMode permissionMode = wiz->getPermissionMode();
 
-    int compressionLevel = wiz->getCompressionLevel();
-    bool encrypt = wiz->isEncryptionEnabled();
-    QString password = wiz->getEncryptionPassword();
-
-    appendLog(tr("Compression: %1")
-                  .arg(compressionLevel == 0                              ? tr("None")
-                       : compressionLevel <= kCompressionFastMaxLevel     ? tr("Fast")
-                       : compressionLevel <= kCompressionBalancedMaxLevel ? tr("Balanced")
-                                                                          : tr("Maximum")));
-
-    if (encrypt) {
-        appendLog(tr("Encryption: Enabled (AES-256)"));
-    }
-
     // The sidecars are written into the destination directory, so it must exist
     // and be writable before anything is saved (previously they were written
     // first and silently failed when the directory did not yet exist).
@@ -175,7 +159,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
         return;
     }
 
-    connectAndStartBackupWorker(smartFilter, permissionMode, compressionLevel, encrypt, password);
+    connectAndStartBackupWorker(smartFilter, permissionMode);
 }
 
 bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz) {
@@ -380,10 +364,7 @@ bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
 }
 
 void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,
-                                                               PermissionMode permissionMode,
-                                                               int compressionLevel,
-                                                               bool encrypt,
-                                                               const QString& password) {
+                                                               PermissionMode permissionMode) {
     auto worker = new UserProfileBackupWorker(this);
 
     connect(worker,
@@ -410,8 +391,7 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
                 worker->deleteLater();
             });
 
-    const UserProfileBackupWorker::BackupOptions backup_options{
-        permissionMode, compressionLevel, encrypt, password};
+    const UserProfileBackupWorker::BackupOptions backup_options{permissionMode};
     worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
 
     m_overallProgress->setRange(0, m_users.size());

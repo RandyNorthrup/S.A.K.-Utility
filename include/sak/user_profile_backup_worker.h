@@ -14,13 +14,24 @@
 
 namespace sak {
 
-inline constexpr int kDefaultUserProfileCompressionLevel = 6;
-
 /**
  * @brief Background worker for backing up user profiles
  *
  * Copies selected user profile files/folders to backup destination
  * with smart filtering, permission handling, and progress reporting.
+ *
+ * This worker copies files verbatim. It has never compressed or encrypted
+ * anything, so the compression_level / encrypt / password options were removed
+ * along with the wizard controls that fed them: the wizard collected a password
+ * twice, logged "Encryption: Enabled (AES-256)", and then the run aborted with
+ * "Encrypted backup is not supported", while the compression box defaulted to
+ * Balanced and produced an uncompressed copy on every default run. Advertising
+ * either one is worse than not offering it.
+ *
+ * UserDataManager DOES implement both for application-data backups. Bringing
+ * them here means an archive format the restore side can read, a password
+ * prompt in the restore wizard, and extract-to-temp-then-wipe so selective
+ * folder restore keeps working - a real feature, not a checkbox. See R5-G19-1.
  */
 class UserProfileBackupWorker : public QThread {
     Q_OBJECT
@@ -32,9 +43,6 @@ public:
     /// @brief Options controlling backup behavior
     struct BackupOptions {
         PermissionMode permission_mode{PermissionMode::StripAll};
-        int compression_level{kDefaultUserProfileCompressionLevel};
-        bool encrypt{false};
-        QString password;
     };
 
     /**
@@ -165,9 +173,6 @@ private:
     QString m_destinationPath;
     SmartFilter m_smartFilter;
     PermissionMode m_permissionMode{PermissionMode::StripAll};
-    int m_compressionLevel{kDefaultUserProfileCompressionLevel};
-    bool m_encrypt{false};
-    QString m_password;
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

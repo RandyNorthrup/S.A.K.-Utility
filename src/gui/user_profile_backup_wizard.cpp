@@ -21,11 +21,6 @@
 namespace sak {
 
 namespace {
-constexpr int kCompressionLevelNone = 0;
-constexpr int kCompressionLevelFast = 3;
-constexpr int kCompressionLevelBalanced = 6;
-constexpr int kCompressionLevelMax = 9;
-constexpr int kCompressionLevelOptionCount = 4;
 constexpr int kProfileSizeDisplayPrecision = 1;
 
 enum UserProfileColumn {
@@ -74,20 +69,6 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(pare
 
 UserProfileBackupWizard::~UserProfileBackupWizard() = default;
 
-int UserProfileBackupWizard::getCompressionLevel() const {
-    int index = field("compressionLevel").toInt();
-    // Map combo index to compression level: 0=none(0), 1=fast(3), 2=balanced(6), 3=max(9)
-    static constexpr std::array<int, kCompressionLevelOptionCount> levels{
-        kCompressionLevelNone,
-        kCompressionLevelFast,
-        kCompressionLevelBalanced,
-        kCompressionLevelMax,
-    };
-    return (index >= 0 && index < static_cast<int>(levels.size()))
-               ? levels[static_cast<size_t>(index)]
-               : kCompressionLevelBalanced;
-}
-
 PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     // The settings-page combo is built in enum order; map its index explicitly so
     // an unset or out-of-range field falls back to the safest mode (StripAll).
@@ -99,14 +80,6 @@ PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     default:
         return PermissionMode::StripAll;
     }
-}
-
-bool UserProfileBackupWizard::isEncryptionEnabled() const {
-    return field("encryptionEnabled").toBool();
-}
-
-QString UserProfileBackupWizard::getEncryptionPassword() const {
-    return field("encryptionPassword").toString();
 }
 
 // ============================================================================

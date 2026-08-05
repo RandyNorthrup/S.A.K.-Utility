@@ -66,12 +66,10 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const QString& destinationPath,
                                           const SmartFilter& smartFilter,
                                           const BackupOptions& options) {
-    // No asserts on these. An empty user list is a backup of nothing, which
-    // completes with an empty manifest; an empty destination fails the path
-    // validation below; and compression_level is inert because this worker copies
-    // verbatim and says so at run(). Asserting any of them would abort a Debug
-    // build on input that Release accepts, which is what made the mirror-image
-    // restore worker unable to run its own tests in Debug.
+    // No asserts on these. An empty user list is a backup of nothing, which completes
+    // with an empty manifest, and an empty destination fails the path validation below.
+    // Asserting either would abort a Debug build on input that Release accepts, which is
+    // what made the mirror-image restore worker unable to run its own tests in Debug.
     if (isRunning()) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
@@ -84,9 +82,6 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_destinationPath = destinationPath;
     m_smartFilter = smartFilter;
     m_permissionMode = options.permission_mode;
-    m_compressionLevel = options.compression_level;
-    m_encrypt = options.encrypt;
-    m_password = options.password;
 
     m_cancelled = false;
     m_bytesCopied = 0;
@@ -126,21 +121,9 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("Destination: %1").arg(m_destinationPath), false);
     Q_EMIT logMessage(tr("Users to backup: %1").arg(m_users.size()), false);
 
-    // Encryption is offered in the wizard but not implemented in this worker.
-    // Refuse rather than writing plaintext copies the user believes are AES-256.
-    if (m_encrypt) {
-        Q_EMIT logMessage(tr("Encrypted backup is not supported; aborting"), true);
-        Q_EMIT backupComplete(false, tr("Encrypted backup is not supported"), m_manifest);
-        return;
-    }
-
-    // Compression is offered in the wizard but this worker copies files verbatim.
-    // An uncompressed backup is still valid, so don't abort -- but surface the gap so
-    // the user is not misled into believing the output is compressed (B7-34).
-    if (m_compressionLevel > 0) {
-        Q_EMIT logMessage(tr("Note: compression is not applied; files are copied uncompressed."),
-                          true);
-    }
+    // The encryption refusal and the "compression is not applied" note that used to sit
+    // here are gone with the wizard controls that caused them: this worker copies files
+    // verbatim, and nothing now claims otherwise.
 
     // Validate inputs
     if (!validateSourcePaths()) {
