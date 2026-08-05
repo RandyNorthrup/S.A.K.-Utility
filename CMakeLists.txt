@@ -167,14 +167,57 @@ if(ENABLE_TSAN AND ENABLE_ASAN)
     set(ENABLE_ASAN OFF)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+# The sanitizer flags MUST be selected per-configuration with a generator
+# expression, never behind "if(CMAKE_BUILD_TYPE STREQUAL Debug)".
+#
+# This project is generated with "Visual Studio 17 2022", a MULTI-CONFIG
+# generator: CMAKE_BUILD_TYPE is empty there and the configuration is chosen at
+# build time by --config. The old guard therefore never fired, and
+# /fsanitize=address was never applied to a single translation unit even though
+# CMakeCache reported ENABLE_ASAN:BOOL=ON. Verified before the fix: 0 of 246
+# generated .vcxproj files carried /fsanitize. A gate that reports healthy while
+# analyzing nothing is worse than an absent one.
+#
+# $<CONFIG:Debug> is evaluated per configuration, so this is correct under both
+# multi-config and single-config generators. Release is unaffected.
+if(TRUE)
     if(MSVC)
-        # MSVC Address Sanitizer — strictest configuration
+        # MSVC Address Sanitizer - strictest configuration
         if(ENABLE_ASAN)
-            add_compile_options(/fsanitize=address)
+            add_compile_options($<$<CONFIG:Debug>:/fsanitize=address>)
             # /Zi for full debug info with ASan stack traces
-            add_compile_options(/Zi)
-            message(STATUS "Address Sanitizer:  ENABLED (MSVC /fsanitize=address)")
+            add_compile_options($<$<CONFIG:Debug>:/Zi>)
+            # MSVC ASan is incompatible with incremental linking, so turn it off
+            # for Debug only. Note that /RTC1 (CMake's Debug default, emitted as
+            # BasicRuntimeChecks=EnableFastChecks) is NOT stripped: it was tested
+            # against MSVC 14.44 and the two coexist, so removing it would be a
+            # change made on an assumption rather than on evidence.
+            add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
+            # An ASan-instrumented binary loads clang_rt.asan_dynamic at startup.
+            # Without it on the search path every Debug executable dies with
+            # STATUS_DLL_NOT_FOUND (0xC0000135) BEFORE main, which looks like a
+            # broken test rather than a missing runtime. Resolve it from the
+            # compiler's own directory (it ships beside cl.exe) and fail closed
+            # if it is not there, instead of producing binaries that cannot run.
+            get_filename_component(SAK_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set(SAK_ASAN_RUNTIME
+                "${SAK_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+            if(NOT EXISTS "${SAK_ASAN_RUNTIME}")
+                message(FATAL_ERROR
+                    "ENABLE_ASAN is ON but the ASan runtime was not found at "
+                    "${SAK_ASAN_RUNTIME}. Install the 'C++ AddressSanitizer' "
+                    "component of the Visual Studio installer, or configure with "
+                    "-DENABLE_ASAN=OFF.")
+            endif()
+            message(STATUS "Address Sanitizer:  ENABLED for the Debug configuration")
+            message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
+            # Stage it beside both Debug output roots at configure time, so every
+            # Debug executable finds it without depending on the developer's PATH.
+            # An instrumented binary that cannot load this DLL dies with
+            # STATUS_DLL_NOT_FOUND before main, which reads as a broken test
+            # rather than a missing runtime -- measured, not assumed.
+            file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/Debug")
+            file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/tests/Debug")
         endif()
         # Note: MSVC does not support UBSan or TSan.
         # Use clang-cl or GCC for UBSan/TSan coverage.
@@ -185,37 +228,37 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "TSan:               SKIPPED (MSVC does not support TSan)")
         endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        # GCC/Clang Sanitizers — strictest flags
+        # GCC/Clang Sanitizers - strictest flags. Same per-config rule as MSVC.
         if(ENABLE_ASAN)
             add_compile_options(
-                -fsanitize=address
-                -fno-omit-frame-pointer
-                -fno-optimize-sibling-calls   # Better stack traces
+                $<$<CONFIG:Debug>:-fsanitize=address>
+                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+                $<$<CONFIG:Debug>:-fno-optimize-sibling-calls>  # Better stack traces
             )
-            add_link_options(-fsanitize=address)
-            message(STATUS "Address Sanitizer:  ENABLED")
+            add_link_options($<$<CONFIG:Debug>:-fsanitize=address>)
+            message(STATUS "Address Sanitizer:  ENABLED for the Debug configuration")
         endif()
 
         if(ENABLE_UBSAN)
             add_compile_options(
-                -fsanitize=undefined
-                -fsanitize=float-divide-by-zero
-                -fsanitize=float-cast-overflow
-                -fsanitize=integer
-                -fno-sanitize-recover=all     # Strictest: abort on any UB
-                -fno-omit-frame-pointer
+                $<$<CONFIG:Debug>:-fsanitize=undefined>
+                $<$<CONFIG:Debug>:-fsanitize=float-divide-by-zero>
+                $<$<CONFIG:Debug>:-fsanitize=float-cast-overflow>
+                $<$<CONFIG:Debug>:-fsanitize=integer>
+                $<$<CONFIG:Debug>:-fno-sanitize-recover=all>  # Strictest: abort on any UB
+                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
             )
-            add_link_options(-fsanitize=undefined)
-            message(STATUS "UBSan:              ENABLED (strictest — no recovery)")
+            add_link_options($<$<CONFIG:Debug>:-fsanitize=undefined>)
+            message(STATUS "UBSan:              ENABLED for Debug (strictest, no recovery)")
         endif()
 
         if(ENABLE_TSAN)
             add_compile_options(
-                -fsanitize=thread
-                -fno-omit-frame-pointer
+                $<$<CONFIG:Debug>:-fsanitize=thread>
+                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
             )
-            add_link_options(-fsanitize=thread)
-            message(STATUS "Thread Sanitizer:   ENABLED")
+            add_link_options($<$<CONFIG:Debug>:-fsanitize=thread>)
+            message(STATUS "Thread Sanitizer:   ENABLED for the Debug configuration")
         endif()
     endif()
 endif()

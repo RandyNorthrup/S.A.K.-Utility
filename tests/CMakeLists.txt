@@ -6943,3 +6943,37 @@ foreach(_sak_core_test_target
         target_compile_definitions(${_sak_core_test_target} PRIVATE QT_NO_KEYWORDS)
     endif()
 endforeach()
+
+# ============================================================================
+# Debug / sanitizer run environment
+# ============================================================================
+#
+# Release test binaries find their Qt DLLs because the packaging step stages
+# them next to the executables. The Debug configuration has no such step, so a
+# Debug test binary imports Qt6Cored.dll / Qt6Testd.dll and dies with
+# STATUS_DLL_NOT_FOUND (0xC0000135) before main -- which looks like a crashing
+# test rather than a missing runtime. That is exactly the failure mode that let
+# the dead ASan gate hide, so it is fixed here rather than documented as a
+# developer setup step.
+#
+# ENVIRONMENT_MODIFICATION prepends rather than replaces, so the rest of PATH
+# survives. Applied to every registered test in this directory, so a new test
+# target inherits it automatically and cannot regress.
+if(WIN32)
+    get_target_property(_sak_qt_core_location Qt6::Core LOCATION)
+    if(_sak_qt_core_location)
+        get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_location}" DIRECTORY)
+        get_property(_sak_registered_tests DIRECTORY PROPERTY TESTS)
+        foreach(_sak_test IN LISTS _sak_registered_tests)
+            set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                         "PATH=path_list_prepend:${_sak_qt_bin_dir}")
+        endforeach()
+        list(LENGTH _sak_registered_tests _sak_test_count)
+        message(STATUS "Test PATH staging: ${_sak_test_count} tests get ${_sak_qt_bin_dir}")
+    else()
+        message(FATAL_ERROR
+                "Could not resolve the Qt6::Core location, so test binaries would "
+                "not find their Qt DLLs. Refusing to configure a test suite that "
+                "cannot run.")
+    endif()
+endif()
