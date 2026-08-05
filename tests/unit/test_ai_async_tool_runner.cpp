@@ -36,7 +36,12 @@ private Q_SLOTS:
         QVERIFY(started);
         QVERIFY(runner.isRunning());
 
-        QVERIFY(spy.wait(5000));
+        // QTRY_COMPARE, not spy.wait(). QSignalSpy::wait() records origCount on entry
+        // and only reports emissions that land after it, so a job that completed before
+        // the main thread got here would leave wait() blocking for a second finished()
+        // that never comes -- a false failure on working code. QTRY_COMPARE returns at
+        // once when the signal already arrived and still polls the same 5s when it has not.
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
         QCOMPARE(spy.count(), 1);
         QVERIFY(!runner.isRunning());
         QVERIFY(work_thread.load() != owning);  // ran off the owning thread
@@ -53,12 +58,12 @@ private Q_SLOTS:
         QElapsedTimer timer;
         timer.start();
         QSignalSpy spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
-        runner.start([]() {
+        QVERIFY(runner.start([]() {
             QThread::msleep(300);
             return QJsonObject{};
-        });
+        }));
         QVERIFY(timer.elapsed() < 200);  // returned well before the 300ms work
-        QVERIFY(spy.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
     }
 
     // Only one job at a time.
@@ -70,7 +75,7 @@ private Q_SLOTS:
             return QJsonObject{{QStringLiteral("first"), true}};
         }));
         QVERIFY(!runner.start([]() { return QJsonObject{{QStringLiteral("second"), true}}; }));
-        QVERIFY(spy.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
         QCOMPARE(spy.count(), 1);
         QVERIFY(spy.at(0).at(0).toJsonObject().value(QStringLiteral("first")).toBool());
     }
@@ -80,20 +85,24 @@ private Q_SLOTS:
     void detachSuppressesFinishedAndAllowsRestart() {
         sak::ai::AiAsyncToolRunner runner;
         QSignalSpy spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
-        runner.start([]() {
+        QVERIFY(runner.start([]() {
             QThread::msleep(120);
             return QJsonObject{{QStringLiteral("stale"), true}};
-        });
+        }));
         runner.detach();
 
-        // Give the detached job time to finish; finished() must NOT fire.
+        // Give the detached job time to finish; finished() must NOT fire. The count is
+        // asserted on BOTH sides of the window: !wait() alone is also false when the
+        // signal arrived before the wait was entered, so it cannot carry this claim.
+        QCOMPARE(spy.count(), 0);
         QVERIFY(!spy.wait(1000));
         QCOMPARE(spy.count(), 0);
         QVERIFY(!runner.isRunning());
 
-        // A fresh job now runs and delivers normally.
+        // A fresh job now runs and delivers normally. It is trivial work, so it can
+        // complete before the main thread reaches the wait.
         QVERIFY(runner.start([]() { return QJsonObject{{QStringLiteral("fresh"), true}}; }));
-        QVERIFY(spy.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
         QCOMPARE(spy.count(), 1);
         QVERIFY(spy.at(0).at(0).toJsonObject().value(QStringLiteral("fresh")).toBool());
     }
@@ -118,7 +127,7 @@ private Q_SLOTS:
         QCOMPARE(drained_spy.count(), 0);
 
         gate.release();
-        QVERIFY(drained_spy.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(drained_spy.count(), 1, 5000);
         QCOMPARE(drained_spy.count(), 1);
         QCOMPARE(finished_spy.count(), 0);
         QVERIFY(!runner.isRunning());
@@ -131,7 +140,9 @@ private Q_SLOTS:
         QSignalSpy finished_spy(&runner, &sak::ai::AiAsyncToolRunner::finished);
         QVERIFY(runner.start([]() { return QJsonObject{{QStringLiteral("done"), true}}; }));
 
-        QVERIFY(drained_spy.wait(5000));
+        // Nothing gates this job, so both signals can already be recorded by the time
+        // the main thread gets here.
+        QTRY_COMPARE_WITH_TIMEOUT(drained_spy.count(), 1, 5000);
         QCOMPARE(drained_spy.count(), 1);
         QCOMPARE(finished_spy.count(), 1);
         QVERIFY(!runner.isRunning());

@@ -131,8 +131,13 @@ private Q_SLOTS:
 
         auto stats = worker.getStats();
         QCOMPARE(stats.total, 5);
-        // Jobs start as Pending
-        QVERIFY(stats.pending + stats.queued + stats.cancelled >= 0);
+        // Was QVERIFY(pending + queued + cancelled >= 0), a tautology: all three are
+        // non-negative counters, so the sum can never be negative and the assertion could
+        // not fail. This asserts a real invariant instead - the worker can never report
+        // more finished jobs than it was given - and it holds at any point in the run, so
+        // it does not depend on how far this fast-failing migration has got.
+        QVERIFY2(stats.success + stats.failed <= stats.total,
+                 "more jobs reported finished than were ever queued");
 
         worker.cancel();
     }
@@ -234,11 +239,15 @@ private Q_SLOTS:
         auto report = createTestReport(3, 1, 2, 0);
         worker.startMigration(report, 0);
 
-        // migrationStarted may be emitted synchronously or async
-        if (startSpy.isEmpty()) {
-            QVERIFY(startSpy.wait(1000));
-        }
-        QCOMPARE(startSpy.count(), 1);
+        // QSignalSpy connects with Qt::DirectConnection, so a signal emitted before
+        // the main thread reaches wait() is already recorded and wait() then blocks
+        // for a SECOND emission that never comes. Check-then-wait does not close
+        // that hole: the emission can land between isEmpty() and wait(). Today
+        // migrationStarted is emitted synchronously inside startMigration(), which
+        // makes the old branch dead code that could only ever burn the timeout and
+        // fail. QTRY_COMPARE succeeds at once on an already-recorded signal and
+        // still polls the original 1000ms if the emit ever moves off this thread.
+        QTRY_COMPARE_WITH_TIMEOUT(startSpy.count(), 1, 1000);
         QCOMPARE(startSpy.at(0).at(0).toInt(), 3);  // 3 valid jobs
 
         worker.cancel();

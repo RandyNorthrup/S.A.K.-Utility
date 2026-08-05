@@ -119,7 +119,10 @@ void TestCleanupWorker::permanentMode_deletesAndEmitsNoRecycleFallback() {
     QSignalSpy fallbackSpy(&worker, &CleanupWorker::recycleFallbackItems);
 
     worker.start();
-    QVERIFY(completeSpy.wait(5000));
+    // QTRY, not completeSpy.wait(): the worker runs on its own QThread and QSignalSpy records
+    // via DirectConnection, so a fast run can finish before the main thread reaches the wait --
+    // wait() would then block for a second emission that never comes and fail a correct worker.
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
 
     QVERIFY(!QFile::exists(path));     // permanently deleted
     QCOMPARE(fallbackSpy.count(), 0);  // recycle-fallback signal only fires in recycle mode
@@ -158,7 +161,7 @@ void TestCleanupWorker::permanentMode_deletesNestedFolderTree() {
     CleanupWorker worker(items, /*useRecycleBin=*/false);
     QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
     worker.start();
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
 
     QVERIFY(!QDir(root).exists());    // whole tree gone
     const auto args = completeSpy.takeFirst();
@@ -195,7 +198,7 @@ void TestCleanupWorker::requireRecoverable_neverPermanentlyDeletes() {
     worker.setRequireRecoverable(true);
     QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
     worker.start();
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
 
     QVERIFY(QFile::exists(path));     // NOT permanently deleted -- recoverable-only refused
     const auto args = completeSpy.takeFirst();
@@ -254,7 +257,7 @@ void TestCleanupWorker::cancelledBeforeStart_emitsCancelledNotComplete() {
     // pre-start stop request, so execute() bails on the first checkStop().
     worker.requestStop();
     worker.start();
-    QVERIFY(cancelledSpy.wait(3000));
+    QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 3000);
 
     // A cancelled run must NOT emit the success-shaped cleanupComplete...
     QCOMPARE(completeSpy.count(), 0);
@@ -302,7 +305,7 @@ void TestCleanupWorker::deniedTargets_refusedWithoutDeletion() {
     QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
     QSignalSpy itemSpy(&worker, &CleanupWorker::itemCleaned);
     worker.start();
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
 
     const auto args = completeSpy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 0);  // zero succeeded -- both refused by the guard

@@ -49,7 +49,12 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &OrganizerWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(5000));
+        // QTRY_COMPARE_WITH_TIMEOUT, not spy.wait(). QSignalSpy connects with
+        // Qt::DirectConnection, so the worker thread records finished() the moment it is
+        // emitted, and wait() only returns true for an emission it has not already seen.
+        // A three-file run finishes almost instantly, so whenever the worker beats the
+        // main thread to the wait, wait() blocks for a second signal that never comes.
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
 
         // Files should still be in place (preview mode = dry run)
         QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath("photo.jpg")));
@@ -73,7 +78,7 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &OrganizerWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
 
         // Original files should be moved to category subdirectories
         QVERIFY(!QFile::exists(QDir(tmpDir.path()).filePath("image.png")));

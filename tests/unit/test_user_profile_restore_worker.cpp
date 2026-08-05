@@ -233,7 +233,7 @@ void UserProfileRestoreWorkerTests::invalidBackupNoManifest() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // failure
 }
@@ -262,7 +262,7 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
         {},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // success
 }
@@ -296,7 +296,7 @@ void UserProfileRestoreWorkerTests::manifestChecksumMismatchFailsValidation() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // integrity failure -> refuse
 }
@@ -332,7 +332,7 @@ void UserProfileRestoreWorkerTests::payloadChecksumMismatchFailsValidation() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
 }
@@ -375,7 +375,7 @@ void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // valid integrity -> proceeds
     QVERIFY(QFile::exists(destDir.path() + "/Users/TestUser/Documents/hello.txt"));
@@ -417,7 +417,7 @@ void UserProfileRestoreWorkerTests::sealedManifestMissingUserDigestFailsClosed()
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // sealed manifest, no payload digest
 }
@@ -493,7 +493,7 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // Verify file was actually copied.
@@ -536,7 +536,7 @@ void UserProfileRestoreWorkerTests::unselectedMappingSkipped() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // Destination file should NOT exist.
@@ -572,7 +572,7 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     // Fail closed (R3-02): a requested user absent from the manifest is a real
     // failure to restore, so the overall result must be reported as failure --
     // not the previous fail-open "success" that hid an incomplete restore.
@@ -629,7 +629,7 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // All three files should be present at the destination.
@@ -677,7 +677,7 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // File should be unchanged (original content, not backup content).
@@ -721,7 +721,7 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix() {
         {mapping},
         {sak::ConflictResolution::RenameWithSuffix, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // Original should be untouched.
@@ -796,7 +796,7 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
         {mapping},
         {sak::ConflictResolution::KeepNewer, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     QFile result(destFile);
@@ -841,7 +841,7 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger() {
         {mapping},
         {sak::ConflictResolution::KeepLarger, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // Larger backup file should have replaced the tiny dest.
@@ -887,7 +887,7 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
         {mapping},
         {sak::ConflictResolution::PromptUser, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // Original untouched.
@@ -945,7 +945,7 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     // Immediately cancel.
     worker.cancel();
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
 
     // The restore should report failure (cancelled) or partial completion.
@@ -990,7 +990,7 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
 
     auto args = completeSpy.first();
@@ -1030,7 +1030,7 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
 
     // Several log messages should have been emitted:
     // "=== Restore Started ===", "Backup: ...", "Users to restore: 1",
@@ -1135,7 +1135,7 @@ void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
         {mapping},
         {sak::ConflictResolution::KeepLarger, sak::PermissionMode::PreserveOriginal, false, true});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     // The larger backup replaced the small original.
@@ -1184,7 +1184,7 @@ void UserProfileRestoreWorkerTests::unknownMergeModeFailsClosed() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
 }
 
@@ -1218,7 +1218,7 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
 }
 
@@ -1258,7 +1258,7 @@ void UserProfileRestoreWorkerTests::verifyGoodCopySucceeds() {
         {mapping},
         {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, true});
 
-    QVERIFY(completeSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
     const QString destFile = destDir.path() + "/Users/VUser/Documents/verify.txt";

@@ -109,9 +109,14 @@ void AdvancedSearchControllerTests::startSearch_changesState() {
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Searching);
     QVERIFY(stateSpy.count() >= 1);
 
-    // Wait for completion
+    // Wait for completion by polling the count, not with spy.wait(). The worker emits
+    // finished() from its own thread and the controller re-emits searchFinished on the main
+    // thread through a queued connection, so whether the emission lands before or after this
+    // line depends on when the event loop next runs. wait() only reports emissions that
+    // arrive after it is entered, so it fails on the ordering it does not happen to like;
+    // polling the absolute count is correct for both orderings.
     QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
-    QVERIFY(finishedSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
 
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
@@ -130,7 +135,7 @@ void AdvancedSearchControllerTests::startSearch_emitsSignals() {
     ctrl.startSearch(config);
 
     // Wait for completion
-    QVERIFY(finishedSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
 
     QCOMPARE(startedSpy.count(), 1);
     QCOMPARE(startedSpy[0][0].toString(), "Hello");
@@ -168,20 +173,22 @@ void AdvancedSearchControllerTests::cancelSearch_changesState() {
     ctrl.cancelSearch();
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Cancelled);
 
-    // Wait for worker to finish
-    QSignalSpy cancelledSpy(&ctrl, &AdvancedSearchController::searchCancelled);
-    QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
-
-    // Wait for either cancelled or finished
-    QTest::qWait(2000);
-
-    // Should return to Idle
-    QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
+    // What this test actually asserts is that the controller returns to Idle once the worker
+    // has acknowledged the stop. The state is Cancelled on entry, so polling cannot pass
+    // before the worker has been heard from, and it replaces a fixed qWait(2000) that failed
+    // outright if the worker needed 2001ms. Same budget, no false failure.
+    //
+    // It does NOT assert that searchCancelled is emitted -- see R5-G18-10. The spies that
+    // used to sit here were never read, so they were asserting nothing; adding a real
+    // assertion is a separate change because a fast search can legitimately complete before
+    // cancelSearch() takes effect, and the honest form has to allow both outcomes.
+    QTRY_COMPARE_WITH_TIMEOUT(ctrl.currentState(), AdvancedSearchController::State::Idle, 2000);
 }
 
 void AdvancedSearchControllerTests::cancelSearch_emitsSignal() {
     AdvancedSearchController ctrl;
     QSignalSpy cancelledSpy(&ctrl, &AdvancedSearchController::searchCancelled);
+    QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
 
     // Start a search on a non-existent large path so it doesn't finish instantly
     SearchConfig config;
@@ -192,12 +199,18 @@ void AdvancedSearchControllerTests::cancelSearch_emitsSignal() {
     ctrl.startSearch(config);
     ctrl.cancelSearch();
 
-    // Wait for worker to process
-    QTest::qWait(1000);
+    // Wait for worker to process. The search may have finished before cancel took effect,
+    // or may have been cancelled -- either way the state must reach Idle, and it is
+    // Cancelled on entry so polling cannot pass before the worker has been heard from.
+    QTRY_COMPARE_WITH_TIMEOUT(ctrl.currentState(), AdvancedSearchController::State::Idle, 1000);
 
-    // The search may have finished before cancel took effect, or may have been cancelled
-    // Either way, state should be Idle
-    QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
+    // cancelledSpy used to be constructed here and never read, which left a test named
+    // cancelSearch_emitsSignal asserting nothing about any signal. Requiring an exact
+    // searchCancelled would be wrong -- a search this small can genuinely complete before
+    // the stop is observed -- but the controller must announce the outcome one way or the
+    // other, and that claim does not depend on who won the race.
+    QVERIFY2(cancelledSpy.count() + finishedSpy.count() >= 1,
+             "controller returned to Idle without emitting searchCancelled or searchFinished");
 }
 
 void AdvancedSearchControllerTests::searchComplete_returnsToIdle() {
@@ -210,7 +223,7 @@ void AdvancedSearchControllerTests::searchComplete_returnsToIdle() {
     config.exclude_patterns.clear();
 
     ctrl.startSearch(config);
-    QVERIFY(finishedSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
 
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
@@ -234,7 +247,7 @@ void AdvancedSearchControllerTests::history_addedOnSearch() {
 
     QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
     ctrl.startSearch(config);
-    QVERIFY(finishedSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
 
     const auto history = ctrl.searchHistory();
     QVERIFY(history.contains("unique_search_term"));
@@ -362,8 +375,10 @@ void AdvancedSearchControllerTests::doubleStart_cancelsFirst() {
     // Immediately start second — should cancel first
     ctrl.startSearch(config2);
 
+    // Only the second search reaches this signal: the superseded worker's queued
+    // finished() is dropped by the generation guard.
     QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
-    QVERIFY(finishedSpy.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
 
     // Should have completed (the second search)
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
@@ -405,7 +420,7 @@ void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
     clean_config.exclude_patterns.clear();
     clean_ctrl.startSearch(clean_config);
 
-    QVERIFY(cleanFinished.wait(10'000));
+    QTRY_COMPARE_WITH_TIMEOUT(cleanFinished.count(), 1, 10'000);
     QCOMPARE(cleanFinished.count(), 1);
     QCOMPARE(cleanFinished[0][2].toBool(), true);
 
@@ -435,7 +450,11 @@ void AdvancedSearchControllerTests::searchFinished_carriesCompleteness() {
     config.exclude_patterns.clear();
     ctrl.startSearch(config);
 
-    const bool emitted = finished.wait(10'000);
+    // qWaitFor re-checks the predicate, so it returns at once when the emission already
+    // landed; finished.wait() would latch the count on entry and burn the whole timeout.
+    // The QTRY_* form is not usable here -- the handle has to be released before any
+    // assertion can abort the function, or a failure leaves the temp dir undeletable.
+    const bool emitted = QTest::qWaitFor([&finished]() { return finished.count() > 0; }, 10'000);
     CloseHandle(handle);
     QVERIFY(emitted);
     QCOMPARE(finished.count(), 1);

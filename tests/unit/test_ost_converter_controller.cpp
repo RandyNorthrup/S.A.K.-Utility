@@ -32,7 +32,7 @@ class TestOstConverterController : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Queue Management — Add Files
+    // Queue Management -- Add Files
     // ====================================================================
 
     void testAddSingleFile() {
@@ -77,7 +77,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Queue Management — Remove Files
+    // Queue Management -- Remove Files
     // ====================================================================
 
     void testRemoveFile() {
@@ -109,7 +109,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Queue Management — Clear
+    // Queue Management -- Clear
     // ====================================================================
 
     void testClearQueue() {
@@ -334,8 +334,13 @@ private Q_SLOTS:
         ctrl.startConversion(config);
 
         constexpr int kBatchWaitMs = 15'000;
-        QVERIFY2(complete_spy.wait(kBatchWaitMs),
-                 "batch wedged: allConversionsComplete never fired");
+        // Assert the absolute count rather than spy.wait(). The batch is finalized from a
+        // worker thread's completion signal, so the emission can be recorded before the main
+        // thread reaches this line, and wait() only reports emissions that arrive after it is
+        // entered -- it would sit out the full 15s waiting for a second one.
+        QTRY_VERIFY2_WITH_TIMEOUT(complete_spy.count() >= 1,
+                                  "batch wedged: allConversionsComplete never fired",
+                                  kBatchWaitMs);
         QVERIFY(!ctrl.isRunning());
     }
 

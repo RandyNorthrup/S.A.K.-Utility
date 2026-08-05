@@ -99,15 +99,17 @@ void WindowsISODownloaderTests::testFetchBuilds() {
 
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    // Wait up to 15 seconds for API response
-    bool ok = buildsSpy.wait(15'000) || errorSpy.count() > 0;
+    // Wait up to 15 seconds for whichever signal lands first. QSignalSpy::wait()
+    // latches the count on entry, so an emission that already arrived is invisible to
+    // it, and it never looks at the error spy -- an early apiError would still burn the
+    // whole timeout. Polling the absolute counts settles as soon as either one fires.
+    QTRY_VERIFY_WITH_TIMEOUT(buildsSpy.count() > 0 || errorSpy.count() > 0, 15'000);
 
     if (errorSpy.count() > 0) {
         qWarning() << "API error:" << errorSpy.at(0).at(0).toString();
         QSKIP("UUP dump API unreachable - skipping network test");
     }
 
-    QVERIFY2(ok, "Timeout waiting for buildsFetched signal");
     QCOMPARE(buildsSpy.count(), 1);
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
@@ -154,7 +156,11 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
+    // Poll the absolute counts for the same reason as testFetchBuilds. This site skips
+    // rather than fails when nothing arrives, so it needs qWaitFor's return value; a
+    // QTRY macro would turn an unreachable API into a hard failure.
+    const bool ok = QTest::qWaitFor(
+        [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
     if (buildErrorSpy.count() > 0 || !ok) {
         QSKIP("UUP dump API unreachable - skipping network test");
     }
@@ -171,13 +177,12 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
+    QTRY_VERIFY_WITH_TIMEOUT(filesSpy.count() > 0 || fileErrorSpy.count() > 0, 15'000);
     if (fileErrorSpy.count() > 0) {
         qWarning() << "API error:" << fileErrorSpy.at(0).at(0).toString();
         QSKIP("getFiles API call failed - skipping");
     }
 
-    QVERIFY2(ok, "Timeout waiting for filesFetched signal");
     QCOMPARE(filesSpy.count(), 1);
 
     auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
@@ -198,7 +203,8 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
+    const bool ok = QTest::qWaitFor(
+        [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
     if (buildErrorSpy.count() > 0 || !ok) {
         QSKIP("UUP dump API unreachable - skipping network test");
     }
@@ -214,8 +220,9 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
-    if (fileErrorSpy.count() > 0 || !ok) {
+    const bool filesOk =
+        QTest::qWaitFor([&]() { return filesSpy.count() > 0 || fileErrorSpy.count() > 0; }, 15'000);
+    if (fileErrorSpy.count() > 0 || !filesOk) {
         QSKIP("getFiles API call failed - skipping");
     }
 

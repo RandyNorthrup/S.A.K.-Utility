@@ -36,7 +36,10 @@ private Q_SLOTS:
 namespace {
 
 [[nodiscard]] bool waitForFinish(QSignalSpy& spy, int timeout_ms = 20'000) {
-    return spy.count() > 0 || spy.wait(timeout_ms);
+    // qWaitFor re-checks the predicate, so it returns immediately when the broker already
+    // emitted finished before the test reached this call. A bare spy.wait() latches the
+    // count on entry and would block for a second emission that never comes.
+    return QTest::qWaitFor([&spy]() { return spy.count() > 0; }, timeout_ms);
 }
 
 [[nodiscard]] sak::ai::AiCommandResult resultFromSpy(const QSignalSpy& spy) {
@@ -179,10 +182,11 @@ void AiExecutionBrokerTests::runPowerShell_rejectsConcurrentStarts() {
     QVERIFY(!broker.startPowerShell(second, QStringLiteral("cmd_second")));
 
     broker.cancel();
-    // Wait for both: deferred reject + actual cancel.
-    while (finished_spy.count() < 2) {
-        QVERIFY(finished_spy.wait(10'000));
-    }
+    // Wait for both: deferred reject + actual cancel. The old loop called wait(10'000) once
+    // per emission, so its real budget was up to 20s for the two signals; a single
+    // 10'000 here would have halved that for no reason, so the timeout is doubled to match
+    // what this test was actually allowed before.
+    QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 2, 20'000);
 
     bool saw_first_cancelled = false;
     bool saw_second_rejected = false;

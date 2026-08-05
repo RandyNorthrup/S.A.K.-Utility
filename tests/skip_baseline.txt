@@ -1,0 +1,93 @@
+# Reviewed test skips.
+#
+# One line per test function that called QSKIP, in the form
+#   <test_binary>::<TestClass::testFunction> = why this skip is acceptable
+#
+# scripts/check_test_skips.ps1 fails when a skip appears that is not listed
+# here AND when a line here did not skip on the last run. Regenerate with
+# -UpdateBaseline, then replace every NEEDS-REASON with a real reason;
+# the check rejects the marker, so the file cannot become a rubber stamp.
+#
+# A skip is only acceptable when the thing it needs genuinely cannot exist on
+# a build machine. "Hard to set up" is not a reason - it is a fixture to write.
+#
+# Measured on the run that produced this file: 4203 test functions passed and
+# 33 skipped, so 0.78 percent of what the suite could execute did not execute.
+# That number is the point of this file. ctest reports a binary as Passed when
+# every one of its functions skipped, so without this the suite can report
+# 222/222 while a subsystem quietly stops being exercised.
+#
+# The four groups below are ordered by how defensible they are. Group D is the
+# one that should shrink.
+
+# ---------------------------------------------------------------------------
+# A. DESTRUCTIVE HARDWARE CERTIFICATION - opt-in, and must stay opt-in.
+#
+# These write to a real physical disk. Running them unprompted on a build
+# machine would destroy it. The env var IS the safety interlock, so these skips
+# are correct behaviour and must never be "fixed" by defaulting them on.
+# ---------------------------------------------------------------------------
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveApplyCertToDisposableDisk = Destructive: writes a partition layout to the physical disk named by SAK_LIVE_APPLY_DISK. The interlock is the feature, not a gap.
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveFlashCertToDisposableDisk = Destructive: raw-writes an image to the physical disk named by SAK_LIVE_FLASH_DISK. Certified separately on a disposable USB; see the flash live-cert record.
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveGuardProbeAgainstRealDisks = Enumerates the host's real disks to prove the destructive-op guards refuse them. Needs SAK_LIVE_DISK_PROBE because it is only meaningful against real hardware.
+
+# ---------------------------------------------------------------------------
+# B. HOST PRIVILEGE OR PLATFORM BEHAVIOUR the test cannot manufacture.
+#
+# The precondition is a property of the machine, not of the code. Each of these
+# asserts something that is only observable in a state the test is not allowed
+# to create for itself.
+# ---------------------------------------------------------------------------
+test_elevation_hardening::TestElevationHardening::gate_alreadyElevatedSkipsDialog = Asserts the already-elevated bypass path, which only exists when the process is already running elevated. The suite deliberately runs unelevated.
+test_elevation_ux::TestElevationUx::testCreateElevationBannerReturnsNullWhenAdmin = The banner is suppressed only for an admin process; unelevated is the correct default for a test run.
+test_mixed_tier_operations::TestMixedTierOperations::testTryTakeOwnershipInvalidSid = The code path under test sits behind an isAdmin() check, so an unelevated run cannot reach it.
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
+test_file_scanner::FileScannerTests::symlink_notFollowedWhenDisabled = Same privilege requirement for a directory symlink.
+test_file_scanner::FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved = Needs a directory whose canonical path cannot be resolved. This host resolves canonical() even on an exclusively opened directory, so the precondition cannot be staged here.
+
+# ---------------------------------------------------------------------------
+# C. LIVE THIRD-PARTY NETWORK - costs money or depends on someone else's uptime.
+#
+# Making these unconditional would let an unrelated outage fail the gate, and
+# the OpenAI ones bill per run.
+# ---------------------------------------------------------------------------
+test_openai_responses_client::OpenAIResponsesClientTests::realModelSmokeTest_optIn = Bills a real OpenAI request. SAK_AI_REAL_MODEL_TEST=1 opts in.
+test_openai_responses_client::OpenAIResponsesClientTests::realInputTokenCountSmokeTest_optIn = Bills a real OpenAI request. SAK_AI_REAL_MODEL_TEST=1 opts in.
+test_openai_responses_client::OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn = Bills a real OpenAI request, and a tool loop bills several. SAK_AI_REAL_MODEL_TEST=1 opts in.
+test_linux_iso_downloader::LinuxISODownloaderTests::testGitHubVersionCheck_Network = Depends on api.github.com being reachable and unthrottled; skipped rather than failing the gate on someone else's outage.
+test_ai_mcp_stdio_client::AiMcpStdioClientTests::liveWin32McpListWindows_optIn = Spawns the bundled Win32 control engine and drives real windows on the host desktop. SAK_WIN32_MCP_LIVE_TEST=1 opts in.
+test_ai_mcp_stdio_session::AiMcpStdioSessionTests::liveWin32McpPersistentSession_optIn = Same live engine, held open across calls. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
+test_ai_mcp_session_pool::AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn = Same live engine, several concurrent sessions. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
+
+# ---------------------------------------------------------------------------
+# D. MISSING FIXTURE - the honest gaps. THIS GROUP SHOULD SHRINK.
+#
+# Nothing about a build machine prevents these; they are skipped because no
+# committed fixture exists. Two distinct sub-cases, and only the first is a
+# real constraint:
+#
+#   * the APFS cert-emit tests each stage a sparse container of roughly 16 GiB,
+#     which is a disk-space decision rather than a missing file;
+#   * the rest just need a sample file that nobody has committed. Real PST/OST
+#     samples do exist locally under temp/ost_pst_files, but temp/ is not in the
+#     repository, so on any clean checkout - including CI - these do not run.
+#     Committing a small redistributable sample would convert several of these
+#     into real coverage. Tracked as R5-G18-11.
+# ---------------------------------------------------------------------------
+test_ost_integration::TestOstIntegration::openRealOstFile = No committed OST sample; SAK_TEST_OST_PATH points at one when a developer has it. R5-G18-11.
+test_ost_integration::TestOstIntegration::openRealPstFile = No committed PST sample; SAK_TEST_PST_PATH points at one when a developer has it. R5-G18-11.
+test_pst_parser::TestPstParser::realEmailFilesParseSafely = Parse-safety smoke over a directory of real stores; needs SAK_TEST_PST_DIR. R5-G18-11.
+test_iso_analyzer::IsoAnalyzerTests::realIsosClassifyByContent = Content classification needs real ISO media; SAK_TEST_ISO_DIR. Multi-GB, so unlikely ever to be committed. R5-G18-11.
+test_advanced_search_worker::AdvancedSearchWorkerTests::imageMetadataSearch_realDirectory = EXIF search over real images; SAK_EXIF_SAMPLE_DIR. A handful of small committed JPEGs would close this. R5-G18-11.
+test_file_management_file_system::FileManagementFileSystemTests::rawApfsTransferMatrixEndToEnd = Needs a raw APFS image via SAK_APFS_RAW_IMAGE; covered by the C3e certification flow instead.
+test_file_management_file_system::FileManagementFileSystemTests::rawHfsTransferMatrixEndToEnd = Needs a raw HFS image via SAK_HFS_RAW_IMAGE; covered by the C8 certification flow instead.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch = Cert-emit only: produces evidence for the macOS kernel cert, needs SAK_CERT_OUT and SAK_PROBE.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certOmapBoundaryDivergeEmit = Cert-emit only: needs SAK_CERT_OUT (optionally SAK_CERT_N).
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certSnapshotCreateAfterDiverge = Cert-emit only: needs SAK_CERT_OUT.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certSnapshotDivergeSequence = Cert-emit only: needs SAK_CERT_OUT.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_deletedCibKSpilledFileFreesChunk = Stages a ~16 GiB sparse container via SAK_MCFREE_CERT_DIR; disk-space gated, not fixture gated.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks = Stages a ~16 GiB sparse container via SAK_S4_CERT_DIR.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_spillsIntoCib1OwnedChunk = Stages a ~16 GiB sparse container via SAK_S4B_CERT_DIR.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree = Slow full-tree omap read/free walk; SAK_OMAP_DRIFT=1 opts in so the default suite stays under its time budget.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp = Needs a container produced by a real mkapfs with a multi-block internal-pool bitmap; SAK_IPBM_ORACLE.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve = Probe-emit only: needs a real-Apple sparse oracle via SAK_SPARSE_ORACLE plus SAK_CERT_OUT.

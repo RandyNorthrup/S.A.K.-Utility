@@ -13,9 +13,10 @@ find_package(Qt6 REQUIRED COMPONENTS Test Network Concurrent Widgets)
 set(TEST_OUTPUT_DIR "${CMAKE_BINARY_DIR}/test_results")
 file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 
+
 # Put test executables next to sak_utility.exe so they share deployed DLLs.
 # MSVC multi-config generators append the config name to RUNTIME_OUTPUT_DIRECTORY,
-# which would put tests in build/Release/Release/ ??? away from the DLLs that
+# which would put tests in build/Release/Release/ - away from the DLLs that
 # windeployqt placed in build/Release/.  Using the config-specific property
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
@@ -175,6 +176,7 @@ foreach(test_name ${UNIT_TESTS})
         # Add to CTest
         add_test(NAME ${test_name}
                  COMMAND ${test_name}
+                 -o "${TEST_OUTPUT_DIR}/${test_name}.txt,txt" -o -,txt
                  WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
         message(STATUS "Added unit test: ${test_name}")
@@ -185,7 +187,7 @@ endforeach()
 # Unit Tests - Diagnostic & Benchmarking Panel
 # ============================================================================
 
-# test_worker_base ??? WorkerBase lifecycle, exception safety, cancellation
+# test_worker_base - WorkerBase lifecycle, exception safety, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
     add_executable(test_worker_base
         unit/test_worker_base.cpp
@@ -204,11 +206,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_worker_base COMMAND test_worker_base
+             -o "${TEST_OUTPUT_DIR}/test_worker_base.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_worker_base")
 endif()
 
-# test_error_codes ??? to_string completeness
+# test_error_codes - to_string completeness
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
     add_executable(test_error_codes
         unit/test_error_codes.cpp
@@ -224,6 +227,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_error_codes COMMAND test_error_codes
+             -o "${TEST_OUTPUT_DIR}/test_error_codes.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_error_codes")
 endif()
@@ -244,6 +248,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_catalog.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_model_catalog COMMAND test_ai_model_catalog
+             -o "${TEST_OUTPUT_DIR}/test_ai_model_catalog.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_model_catalog")
 endif()
@@ -269,11 +274,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_restore_point_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_restore_point_manager COMMAND test_restore_point_manager
+             -o "${TEST_OUTPUT_DIR}/test_restore_point_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_restore_point_manager")
 endif()
 
-# test_diagnostic_types ??? struct defaults and value semantics
+# test_diagnostic_types - struct defaults and value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     add_executable(test_diagnostic_types
         unit/test_diagnostic_types.cpp
@@ -289,6 +295,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_diagnostic_types COMMAND test_diagnostic_types
+             -o "${TEST_OUTPUT_DIR}/test_diagnostic_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_diagnostic_types")
 endif()
@@ -350,6 +357,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
+             -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_partition_manager_core")
 endif()
@@ -643,7 +651,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_partition_manager_panel COMMAND test_partition_manager_panel
-             -o test_partition_manager_panel.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_partition_manager_panel.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_partition_manager_panel")
 endif()
@@ -674,7 +682,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_manager_panel.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/third_party/qrcodegen
     )
     add_test(NAME test_wifi_manager_panel COMMAND test_wifi_manager_panel
-             -o test_wifi_manager_panel.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_wifi_manager_panel.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_wifi_manager_panel")
 endif()
@@ -698,7 +706,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_breadcrumb.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_breadcrumb COMMAND test_file_explorer_breadcrumb
-             -o test_file_explorer_breadcrumb.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_breadcrumb.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_breadcrumb")
 endif()
@@ -721,7 +729,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_properties_calc.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_properties_calc COMMAND test_file_explorer_properties_calc
-             -o test_file_explorer_properties_calc.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_properties_calc.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_properties_calc")
 endif()
@@ -745,7 +753,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_iso_analyzer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_iso_analyzer COMMAND test_iso_analyzer
-             -o test_iso_analyzer.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_iso_analyzer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_iso_analyzer")
 endif()
@@ -769,12 +777,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_selection.
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_user_profile_restore_selection COMMAND test_user_profile_restore_selection
-             -o test_user_profile_restore_selection.txt,txt
+             -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_selection.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_user_profile_restore_selection")
 endif()
 
-# test_diagnostic_controller ??? suite state machine, cancellation, error handling
+# test_diagnostic_controller - suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller
         unit/test_diagnostic_controller.cpp
@@ -815,6 +823,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_diagnostic_controller COMMAND test_diagnostic_controller
+             -o "${TEST_OUTPUT_DIR}/test_diagnostic_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_diagnostic_controller")
 endif()
@@ -839,11 +848,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_hardware_inventory_scanner.cpp"
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_hardware_inventory_scanner COMMAND test_hardware_inventory_scanner
+             -o "${TEST_OUTPUT_DIR}/test_hardware_inventory_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_hardware_inventory_scanner")
 endif()
 
-# test_thermal_monitor ??? timer behavior and polling
+# test_thermal_monitor - timer behavior and polling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     add_executable(test_thermal_monitor
         unit/test_thermal_monitor.cpp
@@ -863,11 +873,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_thermal_monitor COMMAND test_thermal_monitor
+             -o "${TEST_OUTPUT_DIR}/test_thermal_monitor.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_thermal_monitor")
 endif()
 
-# test_diagnostic_report_generator ??? HTML, JSON, CSV report output
+# test_diagnostic_report_generator - HTML, JSON, CSV report output
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp")
     add_executable(test_diagnostic_report_generator
         unit/test_diagnostic_report_generator.cpp
@@ -886,11 +897,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_diagnostic_report_generator COMMAND test_diagnostic_report_generator
+             -o "${TEST_OUTPUT_DIR}/test_diagnostic_report_generator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_diagnostic_report_generator")
 endif()
 
-# test_cpu_benchmark_worker ??? construction, result defaults, signal types
+# test_cpu_benchmark_worker - construction, result defaults, signal types
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
     add_executable(test_cpu_benchmark_worker
         unit/test_cpu_benchmark_worker.cpp
@@ -911,11 +923,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_cpu_benchmark_worker COMMAND test_cpu_benchmark_worker
+             -o "${TEST_OUTPUT_DIR}/test_cpu_benchmark_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_cpu_benchmark_worker")
 endif()
 
-# test_disk_benchmark_worker ??? construction, config, result defaults
+# test_disk_benchmark_worker - construction, config, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
     add_executable(test_disk_benchmark_worker
         unit/test_disk_benchmark_worker.cpp
@@ -938,11 +951,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_disk_benchmark_worker COMMAND test_disk_benchmark_worker
+             -o "${TEST_OUTPUT_DIR}/test_disk_benchmark_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_disk_benchmark_worker")
 endif()
 
-# test_memory_benchmark_worker ??? construction, result defaults
+# test_memory_benchmark_worker - construction, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
     add_executable(test_memory_benchmark_worker
         unit/test_memory_benchmark_worker.cpp
@@ -963,11 +977,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_memory_benchmark_worker COMMAND test_memory_benchmark_worker
+             -o "${TEST_OUTPUT_DIR}/test_memory_benchmark_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_memory_benchmark_worker")
 endif()
 
-# test_stress_test_worker ??? construction, config, result defaults
+# test_stress_test_worker - construction, config, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
     add_executable(test_stress_test_worker
         unit/test_stress_test_worker.cpp
@@ -993,6 +1008,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_stress_test_worker COMMAND test_stress_test_worker
+             -o "${TEST_OUTPUT_DIR}/test_stress_test_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_stress_test_worker")
 endif()
@@ -1003,7 +1019,7 @@ endif()
 
 # --- Tier 1: Security & Data Integrity ---
 
-# test_encryption ??? AES-256-CBC round-trip, wrong password, corrupted ciphertext
+# test_encryption - AES-256-CBC round-trip, wrong password, corrupted ciphertext
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
     add_executable(test_encryption
         unit/test_encryption.cpp
@@ -1022,11 +1038,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_encryption COMMAND test_encryption
+             -o "${TEST_OUTPUT_DIR}/test_encryption.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_encryption")
 endif()
 
-# test_file_hash ??? MD5/SHA256, verify correct/incorrect, progress, cancellation
+# test_file_hash - MD5/SHA256, verify correct/incorrect, progress, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
     add_executable(test_file_hash
         unit/test_file_hash.cpp
@@ -1044,11 +1061,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_hash COMMAND test_file_hash
+             -o "${TEST_OUTPUT_DIR}/test_file_hash.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_hash")
 endif()
 
-# test_path_utils ??? safe path, traversal, pattern matching, directory size
+# test_path_utils - safe path, traversal, pattern matching, directory size
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
     add_executable(test_path_utils
         unit/test_path_utils.cpp
@@ -1066,11 +1084,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_path_utils COMMAND test_path_utils
+             -o "${TEST_OUTPUT_DIR}/test_path_utils.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_path_utils")
 endif()
 
-# test_secure_memory ??? wipe, secure_buffer, secure_allocator, secure random
+# test_secure_memory - wipe, secure_buffer, secure_allocator, secure random
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
     add_executable(test_secure_memory
         unit/test_secure_memory.cpp
@@ -1088,11 +1107,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_secure_memory COMMAND test_secure_memory
+             -o "${TEST_OUTPUT_DIR}/test_secure_memory.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_secure_memory")
 endif()
 
-# test_input_validator ??? path/string/numeric validation, safe arithmetic, buffer validation
+# test_input_validator - path/string/numeric validation, safe arithmetic, buffer validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_input_validator.cpp")
     add_executable(test_input_validator
         unit/test_input_validator.cpp
@@ -1110,13 +1130,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_input_validator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_input_validator COMMAND test_input_validator
+             -o "${TEST_OUTPUT_DIR}/test_input_validator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_input_validator")
 endif()
 
 # --- Tier 2: Core Business Logic ---
 
-# test_decompressor_factory ??? format detection, isCompressed, factory create
+# test_decompressor_factory - format detection, isCompressed, factory create
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
     add_executable(test_decompressor_factory
         unit/test_decompressor_factory.cpp
@@ -1142,11 +1163,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_decompressor_factory COMMAND test_decompressor_factory
+             -o "${TEST_OUTPUT_DIR}/test_decompressor_factory.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_decompressor_factory")
 endif()
 
-# test_config_manager ??? singleton, get/set, defaults, signals, typed accessors
+# test_config_manager - singleton, get/set, defaults, signals, typed accessors
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
     add_executable(test_config_manager
         unit/test_config_manager.cpp
@@ -1167,11 +1189,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_config_manager COMMAND test_config_manager
+             -o "${TEST_OUTPUT_DIR}/test_config_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_config_manager")
 endif()
 
-# test_smart_file_filter ??? dangerous files, size limits, pattern/folder exclusion
+# test_smart_file_filter - dangerous files, size limits, pattern/folder exclusion
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
     add_executable(test_smart_file_filter
         unit/test_smart_file_filter.cpp
@@ -1190,6 +1213,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_smart_file_filter COMMAND test_smart_file_filter
+             -o "${TEST_OUTPUT_DIR}/test_smart_file_filter.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_smart_file_filter")
 endif()
@@ -1212,6 +1236,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_recycle_bin.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_recycle_bin COMMAND test_recycle_bin
+             -o "${TEST_OUTPUT_DIR}/test_recycle_bin.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_recycle_bin")
 endif()
@@ -1236,6 +1261,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_imap_uploader.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_imap_uploader COMMAND test_imap_uploader
+             -o "${TEST_OUTPUT_DIR}/test_imap_uploader.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_imap_uploader")
 endif()
@@ -1259,6 +1285,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_firewall_rule_auditor.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_firewall_rule_auditor COMMAND test_firewall_rule_auditor
+             -o "${TEST_OUTPUT_DIR}/test_firewall_rule_auditor.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_firewall_rule_auditor")
 endif()
@@ -1283,11 +1310,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ethernet_config_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ethernet_config_manager COMMAND test_ethernet_config_manager
+             -o "${TEST_OUTPUT_DIR}/test_ethernet_config_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ethernet_config_manager")
 endif()
 
-# test_file_scanner ??? scan, filters, cancellation, static convenience methods
+# test_file_scanner - scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner
         unit/test_file_scanner.cpp
@@ -1306,6 +1334,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_scanner COMMAND test_file_scanner
+             -o "${TEST_OUTPUT_DIR}/test_file_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_scanner")
 endif()
@@ -1337,6 +1366,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_types COMMAND test_file_explorer_types
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_types")
 endif()
@@ -1364,6 +1394,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_session_store.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_session_store COMMAND test_file_explorer_session_store
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_session_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_session_store")
 endif()
@@ -1386,6 +1417,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_tag_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_tag_store COMMAND test_file_explorer_tag_store
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_tag_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_tag_store")
 endif()
@@ -1415,6 +1447,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_explorer_item_model COMMAND test_file_explorer_item_model
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_item_model.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_explorer_item_model")
 endif()
@@ -1515,6 +1548,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_management_explorer_panel COMMAND test_file_management_explorer_panel
+             -o "${TEST_OUTPUT_DIR}/test_file_management_explorer_panel.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     # GUI suite runs on the offscreen platform: no windows appear on the
     # developer desktop and stray focus changes cannot disturb the tests.
@@ -1560,11 +1594,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_file_management_file_system COMMAND test_file_management_file_system
+             -o "${TEST_OUTPUT_DIR}/test_file_management_file_system.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_file_management_file_system")
 endif()
 
-# test_process_runner ??? echo, exit code, stderr, timeout, cancellation, PowerShell
+# test_process_runner - echo, exit code, stderr, timeout, cancellation, PowerShell
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
     add_executable(test_process_runner
         unit/test_process_runner.cpp
@@ -1582,11 +1617,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_process_runner COMMAND test_process_runner
+             -o "${TEST_OUTPUT_DIR}/test_process_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_process_runner")
 endif()
 
-# test_smart_disk_analyzer ??? SmartReport parsing, health assessment
+# test_smart_disk_analyzer - SmartReport parsing, health assessment
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_token_usage_tracker.cpp")
     add_executable(test_ai_token_usage_tracker
         unit/test_ai_token_usage_tracker.cpp
@@ -1604,6 +1640,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_token_usage_tracker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_token_usage_tracker COMMAND test_ai_token_usage_tracker
+             -o "${TEST_OUTPUT_DIR}/test_ai_token_usage_tracker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_token_usage_tracker")
 endif()
@@ -1636,6 +1673,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
+             -o "${TEST_OUTPUT_DIR}/test_openai_responses_client.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_openai_responses_client")
 endif()
@@ -1659,6 +1697,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_registry.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_provider_registry COMMAND test_ai_provider_registry
+             -o "${TEST_OUTPUT_DIR}/test_ai_provider_registry.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_provider_registry")
 endif()
@@ -1680,6 +1719,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_prompt_assembler.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_prompt_assembler COMMAND test_ai_prompt_assembler
+             -o "${TEST_OUTPUT_DIR}/test_ai_prompt_assembler.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_prompt_assembler")
 endif()
@@ -1995,6 +2035,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
     )
     add_test(NAME test_ai_assistant_panel_tool_dispatch
              COMMAND test_ai_assistant_panel_tool_dispatch
+             -o "${TEST_OUTPUT_DIR}/test_ai_assistant_panel_tool_dispatch.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_assistant_panel_tool_dispatch")
 endif()
@@ -2016,6 +2057,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_async_tool_runner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_async_tool_runner COMMAND test_ai_async_tool_runner
+             -o "${TEST_OUTPUT_DIR}/test_ai_async_tool_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_async_tool_runner")
 endif()
@@ -2037,6 +2079,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_health_ledger.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_health_ledger COMMAND test_ai_tool_health_ledger
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_health_ledger.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_health_ledger")
 endif()
@@ -2058,6 +2101,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_follow_scroll_controller.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_follow_scroll_controller COMMAND test_follow_scroll_controller
+             -o "${TEST_OUTPUT_DIR}/test_follow_scroll_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_follow_scroll_controller")
 endif()
@@ -2079,6 +2123,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_splash_screen.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_splash_screen COMMAND test_splash_screen
+             -o "${TEST_OUTPUT_DIR}/test_splash_screen.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_splash_screen")
 endif()
@@ -2104,6 +2149,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_transcript_view.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_transcript_view COMMAND test_ai_transcript_view
+             -o "${TEST_OUTPUT_DIR}/test_ai_transcript_view.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_transcript_view")
 endif()
@@ -2135,6 +2181,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_gateway.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
+             -o "${TEST_OUTPUT_DIR}/test_ai_provider_gateway.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_provider_gateway")
 endif()
@@ -2174,6 +2221,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_app_action_planner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_app_action_planner COMMAND test_ai_app_action_planner
+             -o "${TEST_OUTPUT_DIR}/test_ai_app_action_planner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_app_action_planner")
 endif()
@@ -2195,6 +2243,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_win32_gui_runner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_win32_gui_runner COMMAND test_ai_win32_gui_runner
+             -o "${TEST_OUTPUT_DIR}/test_ai_win32_gui_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_win32_gui_runner")
 endif()
@@ -2219,6 +2268,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_dialog_choice.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_dialog_choice COMMAND test_win32_mcp_dialog_choice
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_dialog_choice.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_dialog_choice")
 endif()
@@ -2244,6 +2294,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_text_match.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_text_match COMMAND test_win32_mcp_text_match
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_text_match.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_text_match")
 endif()
@@ -2268,6 +2319,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_key_chord COMMAND test_win32_mcp_key_chord
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_key_chord.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_key_chord")
 endif()
@@ -2293,6 +2345,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_input_plan COMMAND test_win32_mcp_input_plan
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_input_plan.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_input_plan")
 endif()
@@ -2317,6 +2370,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_uia_ref.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_uia_ref COMMAND test_win32_mcp_uia_ref
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_uia_ref.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_uia_ref")
 endif()
@@ -2341,6 +2395,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_fingerprint.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_fingerprint COMMAND test_win32_mcp_fingerprint
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_fingerprint.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_fingerprint")
 endif()
@@ -2365,6 +2420,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_json_clamp.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_json_clamp COMMAND test_win32_mcp_json_clamp
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_json_clamp.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_json_clamp")
 endif()
@@ -2389,6 +2445,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_geometry.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_geometry COMMAND test_win32_mcp_geometry
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_geometry.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_geometry")
 endif()
@@ -2410,6 +2467,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_command_guard COMMAND test_ai_command_guard
+             -o "${TEST_OUTPUT_DIR}/test_ai_command_guard.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_command_guard")
 endif()
@@ -2447,6 +2505,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_tool_planner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_command_tool_planner COMMAND test_ai_command_tool_planner
+             -o "${TEST_OUTPUT_DIR}/test_ai_command_tool_planner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_command_tool_planner")
 endif()
@@ -2469,6 +2528,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_call_router.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_call_router COMMAND test_ai_tool_call_router
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_call_router.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_call_router")
 endif()
@@ -2490,6 +2550,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_http_client.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_mcp_http_client COMMAND test_ai_mcp_http_client
+             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_http_client.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_mcp_http_client")
 endif()
@@ -2511,6 +2572,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_stdio_client.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_mcp_stdio_client COMMAND test_ai_mcp_stdio_client
+             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_client.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_mcp_stdio_client")
 endif()
@@ -2532,6 +2594,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_stdio_session.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_mcp_stdio_session COMMAND test_ai_mcp_stdio_session
+             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_session.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 endif()
@@ -2555,6 +2618,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_session_pool.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
+             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_session_pool.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_mcp_session_pool")
 endif()
@@ -2576,6 +2640,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_registry.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_app_action_registry COMMAND test_app_action_registry
+             -o "${TEST_OUTPUT_DIR}/test_app_action_registry.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_app_action_registry")
 endif()
@@ -2610,6 +2675,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_service.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_app_action_service COMMAND test_app_action_service
+             -o "${TEST_OUTPUT_DIR}/test_app_action_service.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_app_action_service")
 endif()
@@ -2638,6 +2704,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_conversation_store COMMAND test_ai_conversation_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_conversation_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_conversation_store")
 endif()
@@ -2659,6 +2726,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_chat_title.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
+             -o "${TEST_OUTPUT_DIR}/test_ai_chat_title.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_chat_title")
 endif()
@@ -2689,6 +2757,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_execution_broker COMMAND test_ai_execution_broker
+             -o "${TEST_OUTPUT_DIR}/test_ai_execution_broker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_execution_broker")
 endif()
@@ -2710,6 +2779,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_cancellation_token.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_cancellation_token COMMAND test_ai_cancellation_token
+             -o "${TEST_OUTPUT_DIR}/test_ai_cancellation_token.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_cancellation_token")
 endif()
@@ -2733,6 +2803,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_run_state COMMAND test_ai_run_state
+             -o "${TEST_OUTPUT_DIR}/test_ai_run_state.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_run_state")
 endif()
@@ -2756,6 +2827,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_human_gate_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_human_gate_store COMMAND test_ai_human_gate_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_human_gate_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_human_gate_store")
 endif()
@@ -2777,6 +2849,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_recovery_policy.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_recovery_policy COMMAND test_ai_recovery_policy
+             -o "${TEST_OUTPUT_DIR}/test_ai_recovery_policy.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_recovery_policy")
 endif()
@@ -2798,6 +2871,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_selection.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_package_selection COMMAND test_ai_package_selection
+             -o "${TEST_OUTPUT_DIR}/test_ai_package_selection.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_package_selection")
 endif()
@@ -2820,6 +2894,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_clarifier.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_workflow_clarifier COMMAND test_ai_workflow_clarifier
+             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_clarifier.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_workflow_clarifier")
 endif()
@@ -2852,6 +2927,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_trace_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_trace_store COMMAND test_ai_trace_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_trace_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_trace_store")
 endif()
@@ -2873,6 +2949,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_policy.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_policy COMMAND test_ai_tool_policy
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_policy.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_policy")
 endif()
@@ -2900,6 +2977,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_skill_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_skill_store COMMAND test_ai_skill_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_skill_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_skill_store")
 endif()
@@ -2921,6 +2999,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_lease_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
+             -o "${TEST_OUTPUT_DIR}/test_ai_lease_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_lease_manager")
 endif()
@@ -2944,6 +3023,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_tool_executor.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_subagent_tool_executor COMMAND test_ai_subagent_tool_executor
+             -o "${TEST_OUTPUT_DIR}/test_ai_subagent_tool_executor.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_subagent_tool_executor")
 endif()
@@ -2965,6 +3045,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_loop_detector.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_loop_detector COMMAND test_ai_tool_loop_detector
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_loop_detector.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_loop_detector")
 endif()
@@ -2986,6 +3067,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_tool_planner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_package_tool_planner COMMAND test_ai_package_tool_planner
+             -o "${TEST_OUTPUT_DIR}/test_ai_package_tool_planner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_package_tool_planner")
 endif()
@@ -3008,6 +3090,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_offline_downloader_tool_runn
     )
     add_test(NAME test_ai_offline_downloader_tool_runner
              COMMAND test_ai_offline_downloader_tool_runner
+             -o "${TEST_OUTPUT_DIR}/test_ai_offline_downloader_tool_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_offline_downloader_tool_runner")
 endif()
@@ -3046,6 +3129,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_run
     )
     add_test(NAME test_ai_workflow_powershell_tool_runner
              COMMAND test_ai_workflow_powershell_tool_runner
+             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_powershell_tool_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_workflow_powershell_tool_runner")
 endif()
@@ -3073,6 +3157,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_dispatcher.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_dispatcher COMMAND test_ai_tool_dispatcher
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_dispatcher.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_dispatcher")
 endif()
@@ -3095,6 +3180,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_turn.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_turn COMMAND test_ai_tool_turn
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_turn.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_turn")
 endif()
@@ -3124,6 +3210,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_result_recorder.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_tool_result_recorder COMMAND test_ai_tool_result_recorder
+             -o "${TEST_OUTPUT_DIR}/test_ai_tool_result_recorder.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_tool_result_recorder")
 endif()
@@ -3149,6 +3236,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_run_state_store COMMAND test_ai_run_state_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_run_state_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_run_state_store")
 endif()
@@ -3176,6 +3264,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_runner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_subagent_runner COMMAND test_ai_subagent_runner
+             -o "${TEST_OUTPUT_DIR}/test_ai_subagent_runner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_subagent_runner")
 endif()
@@ -3237,6 +3326,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_workflow_evals COMMAND test_ai_workflow_evals
+             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_evals.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_workflow_evals")
     set_target_properties(test_ai_orchestrator PROPERTIES
@@ -3250,6 +3340,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_orchestrator COMMAND test_ai_orchestrator
+             -o "${TEST_OUTPUT_DIR}/test_ai_orchestrator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_orchestrator")
 endif()
@@ -3280,6 +3371,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_store.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ai_workflow_store COMMAND test_ai_workflow_store
+             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_store.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_workflow_store")
 endif()
@@ -3305,11 +3397,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_smart_disk_analyzer COMMAND test_smart_disk_analyzer
+             -o "${TEST_OUTPUT_DIR}/test_smart_disk_analyzer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_smart_disk_analyzer")
 endif()
 
-# test_package_matcher ??? mapping CRUD, export/import, findMatch
+# test_package_matcher - mapping CRUD, export/import, findMatch
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
     add_executable(test_package_matcher
         unit/test_package_matcher.cpp
@@ -3333,13 +3426,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_package_matcher COMMAND test_package_matcher
+             -o "${TEST_OUTPUT_DIR}/test_package_matcher.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_package_matcher")
 endif()
 
 # --- Tier 3: Hardware & System ---
 
-# test_drive_scanner ??? DriveInfo struct, getDrives, lifecycle
+# test_drive_scanner - DriveInfo struct, getDrives, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
     add_executable(test_drive_scanner
         unit/test_drive_scanner.cpp
@@ -3358,11 +3452,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_drive_scanner COMMAND test_drive_scanner
+             -o "${TEST_OUTPUT_DIR}/test_drive_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_drive_scanner")
 endif()
 
-# test_permission_manager ??? canModifyPermissions, getOwner, SDDL, stripPermissions
+# test_permission_manager - canModifyPermissions, getOwner, SDDL, stripPermissions
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     add_executable(test_permission_manager
         unit/test_permission_manager.cpp
@@ -3381,11 +3476,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_permission_manager COMMAND test_permission_manager
+             -o "${TEST_OUTPUT_DIR}/test_permission_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_permission_manager")
 endif()
 
-# test_elevation_manager ??? isElevated, canElevate, error messages
+# test_elevation_manager - isElevated, canElevate, error messages
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
     add_executable(test_elevation_manager
         unit/test_elevation_manager.cpp
@@ -3403,11 +3499,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevation_manager COMMAND test_elevation_manager
+             -o "${TEST_OUTPUT_DIR}/test_elevation_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevation_manager")
 endif()
 
-# test_elevation_tier ??? tier classification, feature lookup, table integrity
+# test_elevation_tier - tier classification, feature lookup, table integrity
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
     add_executable(test_elevation_tier
         unit/test_elevation_tier.cpp
@@ -3423,11 +3520,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevation_tier COMMAND test_elevation_tier
+             -o "${TEST_OUTPUT_DIR}/test_elevation_tier.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevation_tier")
 endif()
 
-# test_elevated_pipe_protocol ??? wire protocol framing, parsing, pipe name generation
+# test_elevated_pipe_protocol - wire protocol framing, parsing, pipe name generation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
     add_executable(test_elevated_pipe_protocol
         unit/test_elevated_pipe_protocol.cpp
@@ -3443,11 +3541,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevated_pipe_protocol COMMAND test_elevated_pipe_protocol
+             -o "${TEST_OUTPUT_DIR}/test_elevated_pipe_protocol.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevated_pipe_protocol")
 endif()
 
-# test_elevated_task_dispatcher ??? allowlist, dispatch, exception safety, callbacks
+# test_elevated_task_dispatcher - allowlist, dispatch, exception safety, callbacks
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
     add_executable(test_elevated_task_dispatcher
         unit/test_elevated_task_dispatcher.cpp
@@ -3467,11 +3566,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevated_task_dispatcher COMMAND test_elevated_task_dispatcher
+             -o "${TEST_OUTPUT_DIR}/test_elevated_task_dispatcher.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevated_task_dispatcher")
 endif()
 
-# test_mixed_tier_operations ??? Phase 3 mixed-tier elevation: PermissionManager
+# test_mixed_tier_operations - Phase 3 mixed-tier elevation: PermissionManager
 # expected overloads, canReadPath, backup worker signal, task handlers, thermal
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
     add_executable(test_mixed_tier_operations
@@ -3503,11 +3603,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_mixed_tier_operations COMMAND test_mixed_tier_operations
+             -o "${TEST_OUTPUT_DIR}/test_mixed_tier_operations.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_mixed_tier_operations")
 endif()
 
-# test_elevation_ux ??? Phase 4 shield icon extraction, elevation banner, style tokens
+# test_elevation_ux - Phase 4 shield icon extraction, elevation banner, style tokens
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
     add_executable(test_elevation_ux
         unit/test_elevation_ux.cpp
@@ -3530,11 +3631,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevation_ux COMMAND test_elevation_ux
+             -o "${TEST_OUTPUT_DIR}/test_elevation_ux.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevation_ux")
 endif()
 
-# test_elevation_hardening ??? Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
+# test_elevation_hardening - Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_hardening.cpp")
     add_executable(test_elevation_hardening
         unit/test_elevation_hardening.cpp
@@ -3557,13 +3659,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_hardening.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_elevation_hardening COMMAND test_elevation_hardening
+             -o "${TEST_OUTPUT_DIR}/test_elevation_hardening.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevation_hardening")
 endif()
 
 # --- Tier 4: Streaming/IO ---
 
-# test_streaming_decompressor ??? gzip/bzip2/xz lifecycle, byte tracking
+# test_streaming_decompressor - gzip/bzip2/xz lifecycle, byte tracking
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
     add_executable(test_streaming_decompressor
         unit/test_streaming_decompressor.cpp
@@ -3589,11 +3692,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_streaming_decompressor COMMAND test_streaming_decompressor
+             -o "${TEST_OUTPUT_DIR}/test_streaming_decompressor.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_streaming_decompressor")
 endif()
 
-# test_logger ??? initialization, level filtering, file output, thread safety
+# test_logger - initialization, level filtering, file output, thread safety
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
     add_executable(test_logger
         unit/test_logger.cpp
@@ -3610,6 +3714,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_logger COMMAND test_logger
+             -o "${TEST_OUTPUT_DIR}/test_logger.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_logger")
 endif()
@@ -3618,7 +3723,7 @@ endif()
 # Unit Tests - Offline Deployment
 # ============================================================================
 
-# test_install_script_parser ??? PowerShell install script parsing
+# test_install_script_parser - PowerShell install script parsing
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
     add_executable(test_install_script_parser
         unit/test_install_script_parser.cpp
@@ -3637,11 +3742,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_install_script_parser COMMAND test_install_script_parser
+             -o "${TEST_OUTPUT_DIR}/test_install_script_parser.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_install_script_parser")
 endif()
 
-# test_script_rewriter ??? URL replacement for offline deployment
+# test_script_rewriter - URL replacement for offline deployment
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
     add_executable(test_script_rewriter
         unit/test_script_rewriter.cpp
@@ -3662,11 +3768,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_script_rewriter COMMAND test_script_rewriter
+             -o "${TEST_OUTPUT_DIR}/test_script_rewriter.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_script_rewriter")
 endif()
 
-# test_package_list_manager ??? curated package lists and presets
+# test_package_list_manager - curated package lists and presets
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
     add_executable(test_package_list_manager
         unit/test_package_list_manager.cpp
@@ -3685,6 +3792,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_package_list_manager COMMAND test_package_list_manager
+             -o "${TEST_OUTPUT_DIR}/test_package_list_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_package_list_manager")
 endif()
@@ -3710,6 +3818,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_vulnerability_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_vulnerability_scanner COMMAND test_vulnerability_scanner
+             -o "${TEST_OUTPUT_DIR}/test_vulnerability_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_vulnerability_scanner")
 endif()
@@ -3732,6 +3841,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_version_range.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_nuget_version_range COMMAND test_nuget_version_range
+             -o "${TEST_OUTPUT_DIR}/test_nuget_version_range.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_nuget_version_range")
 endif()
@@ -3756,11 +3866,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_dependency_resolver.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_nuget_dependency_resolver COMMAND test_nuget_dependency_resolver
+             -o "${TEST_OUTPUT_DIR}/test_nuget_dependency_resolver.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_nuget_dependency_resolver")
 endif()
 
-# test_offline_package_search ??? offline deploy search workflow, dedup, data flow
+# test_offline_package_search - offline deploy search workflow, dedup, data flow
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
     add_executable(test_offline_package_search
         unit/test_offline_package_search.cpp
@@ -3782,6 +3893,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_offline_package_search COMMAND test_offline_package_search
+             -o "${TEST_OUTPUT_DIR}/test_offline_package_search.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_offline_package_search")
 endif()
@@ -3814,6 +3926,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.
 
     add_test(NAME test_uup_conversion_pipeline
              COMMAND test_uup_conversion_pipeline
+             -o "${TEST_OUTPUT_DIR}/test_uup_conversion_pipeline.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added integration test: test_uup_conversion_pipeline")
@@ -3823,7 +3936,7 @@ endif()
 # Unit Tests - Quick Actions
 # ============================================================================
 
-# test_action_factory ??? Action metadata, category distribution, initial state
+# test_action_factory - Action metadata, category distribution, initial state
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
     add_executable(test_action_factory
         unit/actions/test_action_factory.cpp
@@ -3889,6 +4002,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
 
     add_test(NAME test_action_factory
              COMMAND test_action_factory
+             -o "${TEST_OUTPUT_DIR}/test_action_factory.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_action_factory")
@@ -3943,6 +4057,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_backup_bitlocker_keys_a
 
     add_test(NAME test_backup_bitlocker_keys_action
              COMMAND test_backup_bitlocker_keys_action
+             -o "${TEST_OUTPUT_DIR}/test_backup_bitlocker_keys_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_backup_bitlocker_keys_action")
@@ -3997,6 +4112,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_verify_system_files_act
 
     add_test(NAME test_verify_system_files_action
              COMMAND test_verify_system_files_action
+             -o "${TEST_OUTPUT_DIR}/test_verify_system_files_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_verify_system_files_action")
@@ -4051,6 +4167,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_check_disk_errors_actio
 
     add_test(NAME test_check_disk_errors_action
              COMMAND test_check_disk_errors_action
+             -o "${TEST_OUTPUT_DIR}/test_check_disk_errors_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_check_disk_errors_action")
@@ -4105,6 +4222,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_reset_network_action.cp
 
     add_test(NAME test_reset_network_action
              COMMAND test_reset_network_action
+             -o "${TEST_OUTPUT_DIR}/test_reset_network_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_reset_network_action")
@@ -4159,6 +4277,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_generate_system_report_
 
     add_test(NAME test_generate_system_report_action
              COMMAND test_generate_system_report_action
+             -o "${TEST_OUTPUT_DIR}/test_generate_system_report_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_generate_system_report_action")
@@ -4210,6 +4329,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_screenshot_settings_act
 
     add_test(NAME test_screenshot_settings_action
              COMMAND test_screenshot_settings_action
+             -o "${TEST_OUTPUT_DIR}/test_screenshot_settings_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_screenshot_settings_action")
@@ -4260,6 +4380,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_optimize_power_settings
 
     add_test(NAME test_optimize_power_settings_action
              COMMAND test_optimize_power_settings_action
+             -o "${TEST_OUTPUT_DIR}/test_optimize_power_settings_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_optimize_power_settings_action")
@@ -4292,6 +4413,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_archive_service.c
 
     add_test(NAME test_file_explorer_archive_service
              COMMAND test_file_explorer_archive_service
+             -o "${TEST_OUTPUT_DIR}/test_file_explorer_archive_service.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
     message(STATUS "Added unit test: test_file_explorer_archive_service")
@@ -4301,7 +4423,7 @@ endif()
 # Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
 # ============================================================================
 
-# test_flash_types ??? FlashProgress arithmetic, FlashResult checks (TST-02)
+# test_flash_types - FlashProgress arithmetic, FlashResult checks (TST-02)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     add_executable(test_flash_types
         unit/test_flash_types.cpp
@@ -4317,11 +4439,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_flash_types COMMAND test_flash_types
+             -o "${TEST_OUTPUT_DIR}/test_flash_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_flash_types")
 endif()
 
-# test_quick_action ??? QuickAction static helpers and base class (TST-10)
+# test_quick_action - QuickAction static helpers and base class (TST-10)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
     add_executable(test_quick_action
         unit/test_quick_action.cpp
@@ -4340,11 +4463,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_quick_action COMMAND test_quick_action
+             -o "${TEST_OUTPUT_DIR}/test_quick_action.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_quick_action")
 endif()
 
-# test_user_profile_types ??? Serialization round-trips (TST-05)
+# test_user_profile_types - Serialization round-trips (TST-05)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
     add_executable(test_user_profile_types
         unit/test_user_profile_types.cpp
@@ -4362,11 +4486,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_user_profile_types COMMAND test_user_profile_types
+             -o "${TEST_OUTPUT_DIR}/test_user_profile_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_user_profile_types")
 endif()
 
-# test_user_data_manager ??? Checksums, data locations, size calc (TST-04)
+# test_user_data_manager - Checksums, data locations, size calc (TST-04)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
     add_executable(test_user_data_manager
         unit/test_user_data_manager.cpp
@@ -4388,11 +4513,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_user_data_manager COMMAND test_user_data_manager
+             -o "${TEST_OUTPUT_DIR}/test_user_data_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_user_data_manager")
 endif()
 
-# test_duplicate_finder_worker ??? Duplicate detection with temp files (TST-11)
+# test_duplicate_finder_worker - Duplicate detection with temp files (TST-11)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
     add_executable(test_duplicate_finder_worker
         unit/test_duplicate_finder_worker.cpp
@@ -4434,11 +4560,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_duplicate_finder_worker COMMAND test_duplicate_finder_worker
+             -o "${TEST_OUTPUT_DIR}/test_duplicate_finder_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_duplicate_finder_worker")
 endif()
 
-# test_organizer_worker ??? File categorization and undo (TST-11)
+# test_organizer_worker - File categorization and undo (TST-11)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
     add_executable(test_organizer_worker
         unit/test_organizer_worker.cpp
@@ -4460,11 +4587,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_organizer_worker COMMAND test_organizer_worker
+             -o "${TEST_OUTPUT_DIR}/test_organizer_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_organizer_worker")
 endif()
 
-# test_app_installation_worker ??? Job filtering, stats, state management (TST-03)
+# test_app_installation_worker - Job filtering, stats, state management (TST-03)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
     add_executable(test_app_installation_worker
         unit/test_app_installation_worker.cpp
@@ -4495,6 +4623,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_app_installation_worker COMMAND test_app_installation_worker
+             -o "${TEST_OUTPUT_DIR}/test_app_installation_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_app_installation_worker")
 endif()
@@ -4519,11 +4648,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_busy.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_app_installation_busy COMMAND test_app_installation_busy
+             -o "${TEST_OUTPUT_DIR}/test_app_installation_busy.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_app_installation_busy")
 endif()
 
-# test_user_profile_restore_worker ??? Restore flow, conflict resolution, signals (TST-06)
+# test_user_profile_restore_worker - Restore flow, conflict resolution, signals (TST-06)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp")
     add_executable(test_user_profile_restore_worker
         unit/test_user_profile_restore_worker.cpp
@@ -4556,11 +4686,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_user_profile_restore_worker COMMAND test_user_profile_restore_worker
+             -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_user_profile_restore_worker")
 endif()
 
-# test_windows_usb_creator ??? Input validation, BUG-09 disk number injection (TST-07)
+# test_windows_usb_creator - Input validation, BUG-09 disk number injection (TST-07)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
     add_executable(test_windows_usb_creator
         unit/test_windows_usb_creator.cpp
@@ -4581,11 +4712,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_windows_usb_creator COMMAND test_windows_usb_creator
+             -o "${TEST_OUTPUT_DIR}/test_windows_usb_creator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_windows_usb_creator")
 endif()
 
-# test_flash_worker ??? Structs, validation, early-exit paths, cancellation (TST-09)
+# test_flash_worker - Structs, validation, early-exit paths, cancellation (TST-09)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
     add_executable(test_flash_worker
         unit/test_flash_worker.cpp
@@ -4623,6 +4755,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_flash_worker COMMAND test_flash_worker
+             -o "${TEST_OUTPUT_DIR}/test_flash_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_flash_worker")
 endif()
@@ -4631,7 +4764,7 @@ endif()
 # Unit Tests - Phase 8: Expanded Test Coverage
 # ============================================================================
 
-# test_quick_action_result_io ??? enum ??? string round-trips, file write/read
+# test_quick_action_result_io - enum to string round-trips, file write/read
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
     add_executable(test_quick_action_result_io
         unit/test_quick_action_result_io.cpp
@@ -4652,6 +4785,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_quick_action_result_io COMMAND test_quick_action_result_io
+             -o "${TEST_OUTPUT_DIR}/test_quick_action_result_io.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_quick_action_result_io")
 endif()
@@ -4675,11 +4809,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_keep_awake.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_keep_awake COMMAND test_keep_awake
+             -o "${TEST_OUTPUT_DIR}/test_keep_awake.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_keep_awake")
 endif()
 
-# test_quick_action_controller ??? registration, lookup, category filtering
+# test_quick_action_controller - registration, lookup, category filtering
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     add_executable(test_quick_action_controller
         unit/test_quick_action_controller.cpp
@@ -4713,11 +4848,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_quick_action_controller COMMAND test_quick_action_controller
+             -o "${TEST_OUTPUT_DIR}/test_quick_action_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_quick_action_controller")
 endif()
 
-# test_migration_report ??? entry CRUD, selection, counts, distribution
+# test_migration_report - entry CRUD, selection, counts, distribution
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
     add_executable(test_migration_report
         unit/test_migration_report.cpp
@@ -4744,11 +4880,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_migration_report COMMAND test_migration_report
+             -o "${TEST_OUTPUT_DIR}/test_migration_report.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_migration_report")
 endif()
 
-# test_linux_distro_catalog ??? catalog integrity, category filtering, resolution
+# test_linux_distro_catalog - catalog integrity, category filtering, resolution
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
     add_executable(test_linux_distro_catalog
         unit/test_linux_distro_catalog.cpp
@@ -4767,11 +4904,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_linux_distro_catalog COMMAND test_linux_distro_catalog
+             -o "${TEST_OUTPUT_DIR}/test_linux_distro_catalog.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_linux_distro_catalog")
 endif()
 
-# test_flash_coordinator ??? defaults, config, guards, cancel safety
+# test_flash_coordinator - defaults, config, guards, cancel safety
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
     add_executable(test_flash_coordinator
         unit/test_flash_coordinator.cpp
@@ -4815,11 +4953,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_flash_coordinator COMMAND test_flash_coordinator
+             -o "${TEST_OUTPUT_DIR}/test_flash_coordinator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_flash_coordinator")
 endif()
 
-# test_user_profile_backup_worker ??? construction, initial state, cancel
+# test_user_profile_backup_worker - construction, initial state, cancel
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp")
     add_executable(test_user_profile_backup_worker
         unit/test_user_profile_backup_worker.cpp
@@ -4847,6 +4986,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_user_profile_backup_worker COMMAND test_user_profile_backup_worker
+             -o "${TEST_OUTPUT_DIR}/test_user_profile_backup_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_user_profile_backup_worker")
 endif()
@@ -4870,11 +5010,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_dump_api.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_uup_dump_api COMMAND test_uup_dump_api
+             -o "${TEST_OUTPUT_DIR}/test_uup_dump_api.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_uup_dump_api")
 endif()
 
-# test_uup_iso_builder ??? phase defaults, cancel, weight constants
+# test_uup_iso_builder - phase defaults, cancel, weight constants
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     add_executable(test_uup_iso_builder
         unit/test_uup_iso_builder.cpp
@@ -4901,11 +5042,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_uup_iso_builder COMMAND test_uup_iso_builder
+             -o "${TEST_OUTPUT_DIR}/test_uup_iso_builder.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_uup_iso_builder")
 endif()
 
-# test_all_actions_metadata ??? per-action expected values, cancel behavior
+# test_all_actions_metadata - per-action expected values, cancel behavior
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cpp")
     add_executable(test_all_actions_metadata
         unit/actions/test_all_actions_metadata.cpp
@@ -4964,6 +5106,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_all_actions_metadata COMMAND test_all_actions_metadata
+             -o "${TEST_OUTPUT_DIR}/test_all_actions_metadata.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_all_actions_metadata")
 endif()
@@ -4972,7 +5115,7 @@ endif()
 # Unit Tests - Advanced Search Panel
 # ============================================================================
 
-# test_advanced_search_types ??? struct defaults, extension sets, value semantics
+# test_advanced_search_types - struct defaults, extension sets, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
     add_executable(test_advanced_search_types
         unit/test_advanced_search_types.cpp
@@ -4988,11 +5131,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_advanced_search_types COMMAND test_advanced_search_types
+             -o "${TEST_OUTPUT_DIR}/test_advanced_search_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_advanced_search_types")
 endif()
 
-# test_regex_pattern_library ??? built-in/custom patterns, enable/disable, CRUD, combined
+# test_regex_pattern_library - built-in/custom patterns, enable/disable, CRUD, combined
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
     add_executable(test_regex_pattern_library
         unit/test_regex_pattern_library.cpp
@@ -5013,11 +5157,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_regex_pattern_library COMMAND test_regex_pattern_library
+             -o "${TEST_OUTPUT_DIR}/test_regex_pattern_library.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_regex_pattern_library")
 endif()
 
-# test_advanced_search_worker ??? regex compilation, text/metadata/archive/binary search
+# test_advanced_search_worker - regex compilation, text/metadata/archive/binary search
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
     add_executable(test_advanced_search_worker
         unit/test_advanced_search_worker.cpp
@@ -5058,11 +5203,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_advanced_search_worker COMMAND test_advanced_search_worker
+             -o "${TEST_OUTPUT_DIR}/test_advanced_search_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_advanced_search_worker")
 endif()
 
-# test_advanced_search_controller ??? state machine, history, preferences, lifecycle
+# test_advanced_search_controller - state machine, history, preferences, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp")
     add_executable(test_advanced_search_controller
         unit/test_advanced_search_controller.cpp
@@ -5110,6 +5256,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_advanced_search_controller COMMAND test_advanced_search_controller
+             -o "${TEST_OUTPUT_DIR}/test_advanced_search_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_advanced_search_controller")
 endif()
@@ -5138,6 +5285,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_html_sanitizer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_html_sanitizer COMMAND test_email_html_sanitizer
+             -o "${TEST_OUTPUT_DIR}/test_email_html_sanitizer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_html_sanitizer")
 endif()
@@ -5161,6 +5309,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_rich_text_safety.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_rich_text_safety COMMAND test_rich_text_safety
+             -o "${TEST_OUTPUT_DIR}/test_rich_text_safety.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_rich_text_safety")
 endif()
@@ -5184,6 +5333,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_destination_gu
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_backup_destination_guard COMMAND test_backup_destination_guard
+             -o "${TEST_OUTPUT_DIR}/test_backup_destination_guard.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_backup_destination_guard")
 endif()
@@ -5205,6 +5355,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_cleanup_guard.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_leftover_cleanup_guard COMMAND test_leftover_cleanup_guard
+             -o "${TEST_OUTPUT_DIR}/test_leftover_cleanup_guard.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_leftover_cleanup_guard")
 endif()
@@ -5254,6 +5405,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_win32_mcp_server COMMAND test_win32_mcp_server
+             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_server.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_server")
 endif()
@@ -5277,6 +5429,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_contract.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_browser_contract COMMAND test_browser_contract
+             -o "${TEST_OUTPUT_DIR}/test_browser_contract.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_contract")
 endif()
@@ -5302,6 +5455,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_native_messaging.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_native_messaging COMMAND test_native_messaging
+             -o "${TEST_OUTPUT_DIR}/test_native_messaging.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_native_messaging")
 endif()
@@ -5328,6 +5482,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_browser_bridge COMMAND test_browser_bridge
+             -o "${TEST_OUTPUT_DIR}/test_browser_bridge.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge")
 endif()
@@ -5361,6 +5516,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_extension_installer.cpp
         target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
     endif()
     add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
+             -o "${TEST_OUTPUT_DIR}/test_browser_extension_installer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_extension_installer")
 endif()
@@ -5385,6 +5541,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_securi
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_browser_bridge_security COMMAND test_browser_bridge_security
+             -o "${TEST_OUTPUT_DIR}/test_browser_bridge_security.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_security")
 endif()
@@ -5411,6 +5568,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_browser_bridge_pipe COMMAND test_browser_bridge_pipe
+             -o "${TEST_OUTPUT_DIR}/test_browser_bridge_pipe.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_pipe")
 endif()
@@ -5444,11 +5602,12 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_browser_bridge_relay COMMAND test_browser_bridge_relay
+             -o "${TEST_OUTPUT_DIR}/test_browser_bridge_relay.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_relay")
 endif()
 
-# test_advanced_uninstall_types ??? struct defaults, enums, value semantics
+# test_advanced_uninstall_types - struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types
         unit/test_advanced_uninstall_types.cpp
@@ -5464,6 +5623,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_advanced_uninstall_types COMMAND test_advanced_uninstall_types
+             -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_advanced_uninstall_types")
 endif()
@@ -5487,6 +5647,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_user_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_windows_user_scanner COMMAND test_windows_user_scanner
+             -o "${TEST_OUTPUT_DIR}/test_windows_user_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_windows_user_scanner")
 endif()
@@ -5514,6 +5675,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_app_scanner COMMAND test_app_scanner
+             -o "${TEST_OUTPUT_DIR}/test_app_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_app_scanner")
 endif()
@@ -5538,6 +5700,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_chocolatey_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_chocolatey_manager COMMAND test_chocolatey_manager
+             -o "${TEST_OUTPUT_DIR}/test_chocolatey_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_chocolatey_manager")
 endif()
@@ -5565,11 +5728,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cleanup_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_cleanup_worker COMMAND test_cleanup_worker
+             -o "${TEST_OUTPUT_DIR}/test_cleanup_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_cleanup_worker")
 endif()
 
-# test_advanced_uninstall_controller ??? state machine, queue, settings, input validation
+# test_advanced_uninstall_controller - state machine, queue, settings, input validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.cpp")
     add_executable(test_advanced_uninstall_controller
         unit/test_advanced_uninstall_controller.cpp
@@ -5608,11 +5772,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_advanced_uninstall_controller COMMAND test_advanced_uninstall_controller
+             -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_advanced_uninstall_controller")
 endif()
 
-# test_leftover_scanner ??? pattern building, risk classification, scan levels, cancellation
+# test_leftover_scanner - pattern building, risk classification, scan levels, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
     add_executable(test_leftover_scanner
         unit/test_leftover_scanner.cpp
@@ -5634,6 +5799,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_leftover_scanner COMMAND test_leftover_scanner
+             -o "${TEST_OUTPUT_DIR}/test_leftover_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_leftover_scanner")
 endif()
@@ -5658,11 +5824,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_program_enumerator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_program_enumerator COMMAND test_program_enumerator
+             -o "${TEST_OUTPUT_DIR}/test_program_enumerator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_program_enumerator")
 endif()
 
-# test_registry_snapshot_engine ??? diff logic, pattern matching, capture smoke test
+# test_registry_snapshot_engine - diff logic, pattern matching, capture smoke test
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
     add_executable(test_registry_snapshot_engine
         unit/test_registry_snapshot_engine.cpp
@@ -5681,6 +5848,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_registry_snapshot_engine COMMAND test_registry_snapshot_engine
+             -o "${TEST_OUTPUT_DIR}/test_registry_snapshot_engine.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_registry_snapshot_engine")
 endif()
@@ -5689,7 +5857,7 @@ endif()
 # Network Diagnostic Panel Tests
 # ============================================================================
 
-# test_network_diagnostic_types ??? value/move semantics, enums, compile-time invariants
+# test_network_diagnostic_types - value/move semantics, enums, compile-time invariants
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
     add_executable(test_network_diagnostic_types
         unit/test_network_diagnostic_types.cpp
@@ -5705,11 +5873,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_diagnostic_types COMMAND test_network_diagnostic_types
+             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_diagnostic_types")
 endif()
 
-# test_network_diagnostic_utils ??? WiFi freq conversion, vendor lookup, port presets, DNS lists
+# test_network_diagnostic_utils - WiFi freq conversion, vendor lookup, port presets, DNS lists
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     add_executable(test_network_diagnostic_utils
         unit/test_network_diagnostic_utils.cpp
@@ -5733,6 +5902,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_diagnostic_utils COMMAND test_network_diagnostic_utils
+             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_utils.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_diagnostic_utils")
 endif()
@@ -5756,6 +5926,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_share_browser.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_share_browser COMMAND test_network_share_browser
+             -o "${TEST_OUTPUT_DIR}/test_network_share_browser.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_share_browser")
 endif()
@@ -5789,6 +5960,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_connections_monitor.cpp"
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_active_connections_monitor COMMAND test_active_connections_monitor
+             -o "${TEST_OUTPUT_DIR}/test_active_connections_monitor.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_active_connections_monitor")
 endif()
@@ -5812,6 +5984,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bundled_tools_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_bundled_tools_manager COMMAND test_bundled_tools_manager
+             -o "${TEST_OUTPUT_DIR}/test_bundled_tools_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_bundled_tools_manager")
 endif()
@@ -5836,6 +6009,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_unmounter.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_drive_unmounter COMMAND test_drive_unmounter
+             -o "${TEST_OUTPUT_DIR}/test_drive_unmounter.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_drive_unmounter")
 endif()
@@ -5870,6 +6044,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_image_source.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_image_source COMMAND test_image_source
+             -o "${TEST_OUTPUT_DIR}/test_image_source.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_image_source")
 endif()
@@ -5893,6 +6068,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_adapter_inspector.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_adapter_inspector COMMAND test_network_adapter_inspector
+             -o "${TEST_OUTPUT_DIR}/test_network_adapter_inspector.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_adapter_inspector")
 endif()
@@ -5942,6 +6118,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_controller.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_diagnostic_controller COMMAND test_network_diagnostic_controller
+             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_diagnostic_controller")
 endif()
@@ -5965,6 +6142,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_port_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_port_scanner COMMAND test_port_scanner
+             -o "${TEST_OUTPUT_DIR}/test_port_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_port_scanner")
 endif()
@@ -6002,6 +6180,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uninstall_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_uninstall_worker COMMAND test_uninstall_worker
+             -o "${TEST_OUTPUT_DIR}/test_uninstall_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_uninstall_worker")
 endif()
@@ -6026,6 +6205,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_analyzer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_wifi_analyzer COMMAND test_wifi_analyzer
+             -o "${TEST_OUTPUT_DIR}/test_wifi_analyzer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_wifi_analyzer")
 endif()
@@ -6052,6 +6232,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bandwidth_tester.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_bandwidth_tester COMMAND test_bandwidth_tester
+             -o "${TEST_OUTPUT_DIR}/test_bandwidth_tester.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_bandwidth_tester")
 endif()
@@ -6075,6 +6256,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_connectivity_tester.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_connectivity_tester COMMAND test_connectivity_tester
+             -o "${TEST_OUTPUT_DIR}/test_connectivity_tester.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_connectivity_tester")
 endif()
@@ -6099,11 +6281,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dns_diagnostic_tool.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_dns_diagnostic_tool COMMAND test_dns_diagnostic_tool
+             -o "${TEST_OUTPUT_DIR}/test_dns_diagnostic_tool.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_dns_diagnostic_tool")
 endif()
 
-# test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
+# test_network_diagnostic_report - HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report
         unit/test_network_diagnostic_report.cpp
@@ -6121,6 +6304,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_network_diagnostic_report COMMAND test_network_diagnostic_report
+             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_report.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_diagnostic_report")
 endif()
@@ -6129,7 +6313,7 @@ endif()
 # Unit Tests - Utility & Deduplication
 # ============================================================================
 
-# test_format_utils ??? sak::formatBytes() display formatting
+# test_format_utils - sak::formatBytes() display formatting
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
     add_executable(test_format_utils
         unit/test_format_utils.cpp
@@ -6145,11 +6329,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_format_utils COMMAND test_format_utils
+             -o "${TEST_OUTPUT_DIR}/test_format_utils.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_format_utils")
 endif()
 
-# test_wifi_profile_scanner ??? WiFi profile name/security parsing
+# test_wifi_profile_scanner - WiFi profile name/security parsing
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
     add_executable(test_wifi_profile_scanner
         unit/test_wifi_profile_scanner.cpp
@@ -6169,6 +6354,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_wifi_profile_scanner COMMAND test_wifi_profile_scanner
+             -o "${TEST_OUTPUT_DIR}/test_wifi_profile_scanner.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_wifi_profile_scanner")
 endif()
@@ -6177,7 +6363,7 @@ endif()
 # Unit Tests - Email & PST/OST Inspector Panel
 # ============================================================================
 
-# test_email_types ??? struct defaults, enum values, constants validation
+# test_email_types - struct defaults, enum values, constants validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
     add_executable(test_email_types
         unit/test_email_types.cpp
@@ -6193,11 +6379,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_types COMMAND test_email_types
+             -o "${TEST_OUTPUT_DIR}/test_email_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_types")
 endif()
 
-# test_pst_parser ??? header validation, magic, encryption, lifecycle
+# test_pst_parser - header validation, magic, encryption, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
     add_executable(test_pst_parser
         unit/test_pst_parser.cpp
@@ -6216,11 +6403,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_pst_parser COMMAND test_pst_parser
+             -o "${TEST_OUTPUT_DIR}/test_pst_parser.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_pst_parser")
 endif()
 
-# test_ost_integration ??? opens real OST/PST files and exercises full parse pipeline
+# test_ost_integration - opens real OST/PST files and exercises full parse pipeline
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
     add_executable(test_ost_integration
         integration/test_ost_integration.cpp
@@ -6250,11 +6438,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ost_integration COMMAND test_ost_integration
+             -o "${TEST_OUTPUT_DIR}/test_ost_integration.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added integration test: test_ost_integration")
 endif()
 
-# test_mbox_parser ??? indexing, message loading, From line detection
+# test_mbox_parser - indexing, message loading, From line detection
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
     add_executable(test_mbox_parser
         unit/test_mbox_parser.cpp
@@ -6273,11 +6462,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_mbox_parser COMMAND test_mbox_parser
+             -o "${TEST_OUTPUT_DIR}/test_mbox_parser.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_mbox_parser")
 endif()
 
-# test_email_search_worker ??? criteria, cancel, search hit structure
+# test_email_search_worker - criteria, cancel, search hit structure
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
     add_executable(test_email_search_worker
         unit/test_email_search_worker.cpp
@@ -6300,11 +6490,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_search_worker COMMAND test_email_search_worker
+             -o "${TEST_OUTPUT_DIR}/test_email_search_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_search_worker")
 endif()
 
-# test_email_export_worker ??? config, result, format coverage
+# test_email_export_worker - config, result, format coverage
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
     add_executable(test_email_export_worker
         unit/test_email_export_worker.cpp
@@ -6334,11 +6525,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_export_worker COMMAND test_email_export_worker
+             -o "${TEST_OUTPUT_DIR}/test_email_export_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_export_worker")
 endif()
 
-# test_email_profile_manager ??? discovery, backup/restore, linked files
+# test_email_profile_manager - discovery, backup/restore, linked files
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     add_executable(test_email_profile_manager
         unit/test_email_profile_manager.cpp
@@ -6358,6 +6550,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_profile_manager COMMAND test_email_profile_manager
+             -o "${TEST_OUTPUT_DIR}/test_email_profile_manager.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_profile_manager")
 endif()
@@ -6382,6 +6575,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_setup_script.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_wifi_setup_script COMMAND test_wifi_setup_script
+             -o "${TEST_OUTPUT_DIR}/test_wifi_setup_script.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_wifi_setup_script")
 endif()
@@ -6403,6 +6597,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_deadline_canceller.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_deadline_canceller COMMAND test_deadline_canceller
+             -o "${TEST_OUTPUT_DIR}/test_deadline_canceller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_deadline_canceller")
 endif()
@@ -6426,6 +6621,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_attachment_saver.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
+             -o "${TEST_OUTPUT_DIR}/test_email_attachment_saver.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_attachment_saver")
 endif()
@@ -6447,11 +6643,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_view_ids.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_view_ids COMMAND test_email_view_ids
+             -o "${TEST_OUTPUT_DIR}/test_email_view_ids.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_view_ids")
 endif()
 
-# test_email_report_generator ??? HTML, JSON, CSV output validation
+# test_email_report_generator - HTML, JSON, CSV output validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     add_executable(test_email_report_generator
         unit/test_email_report_generator.cpp
@@ -6470,6 +6667,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_email_report_generator COMMAND test_email_report_generator
+             -o "${TEST_OUTPUT_DIR}/test_email_report_generator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_email_report_generator")
 endif()
@@ -6505,6 +6703,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.
     )
     add_test(NAME test_package_internalization_engine
              COMMAND test_package_internalization_engine
+             -o "${TEST_OUTPUT_DIR}/test_package_internalization_engine.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_package_internalization_engine")
 endif()
@@ -6542,11 +6741,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
     )
     add_test(NAME test_offline_deployment_worker
              COMMAND test_offline_deployment_worker
+             -o "${TEST_OUTPUT_DIR}/test_offline_deployment_worker.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_offline_deployment_worker")
 endif()
 
-# test_offline_package_builder ??? builds the Office PC offline deployment bundle
+# test_offline_package_builder - builds the Office PC offline deployment bundle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
     add_executable(test_offline_package_builder
         integration/test_offline_package_builder.cpp
@@ -6579,6 +6779,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
     )
     add_test(NAME test_offline_package_builder
              COMMAND test_offline_package_builder
+             -o "${TEST_OUTPUT_DIR}/test_offline_package_builder.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     # This integration test intentionally downloads and repacks real package
     # assets, so the default 300s CTest timeout creates false failures when
@@ -6587,7 +6788,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
     message(STATUS "Added integration test: test_offline_package_builder")
 endif()
 
-# test_ost_converter_types ??? type defaults, constants, enum coverage
+# test_ost_converter_types - type defaults, constants, enum coverage
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
     add_executable(test_ost_converter_types
         unit/test_ost_converter_types.cpp
@@ -6605,11 +6806,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ost_converter_types COMMAND test_ost_converter_types
+             -o "${TEST_OUTPUT_DIR}/test_ost_converter_types.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ost_converter_types")
 endif()
 
-# test_eml_writer ??? RFC 5322 output, filename sanitization, collision handling
+# test_eml_writer - RFC 5322 output, filename sanitization, collision handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
     add_executable(test_eml_writer
         unit/test_eml_writer.cpp
@@ -6629,11 +6831,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_eml_writer COMMAND test_eml_writer
+             -o "${TEST_OUTPUT_DIR}/test_eml_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_eml_writer")
 endif()
 
-# test_ost_converter_controller ??? queue management, duplicate detection
+# test_ost_converter_controller - queue management, duplicate detection
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
     add_executable(test_ost_converter_controller
         unit/test_ost_converter_controller.cpp
@@ -6671,11 +6874,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_ost_converter_controller COMMAND test_ost_converter_controller
+             -o "${TEST_OUTPUT_DIR}/test_ost_converter_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ost_converter_controller")
 endif()
 
-# test_pst_writer ??? PST binary creation, folder hierarchy, magic bytes
+# test_pst_writer - PST binary creation, folder hierarchy, magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
     add_executable(test_pst_writer
         unit/test_pst_writer.cpp
@@ -6695,11 +6899,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_pst_writer COMMAND test_pst_writer
+             -o "${TEST_OUTPUT_DIR}/test_pst_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_pst_writer")
 endif()
 
-# test_pst_splitter ??? volume rotation, single volume, error cases
+# test_pst_splitter - volume rotation, single volume, error cases
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
     add_executable(test_pst_splitter
         unit/test_pst_splitter.cpp
@@ -6721,11 +6926,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_pst_splitter COMMAND test_pst_splitter
+             -o "${TEST_OUTPUT_DIR}/test_pst_splitter.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_pst_splitter")
 endif()
 
-# test_msg_writer ??? OLE2 compound file, MAPI properties, magic bytes
+# test_msg_writer - OLE2 compound file, MAPI properties, magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
     add_executable(test_msg_writer
         unit/test_msg_writer.cpp
@@ -6745,11 +6951,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_msg_writer COMMAND test_msg_writer
+             -o "${TEST_OUTPUT_DIR}/test_msg_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_msg_writer")
 endif()
 
-# test_mbox_writer ??? Unix mbox format, From_ escaping, per-folder
+# test_mbox_writer - Unix mbox format, From_ escaping, per-folder
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
     add_executable(test_mbox_writer
         unit/test_mbox_writer.cpp
@@ -6771,11 +6978,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_mbox_writer COMMAND test_mbox_writer
+             -o "${TEST_OUTPUT_DIR}/test_mbox_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_mbox_writer")
 endif()
 
-# test_dbx_writer ??? Outlook Express DBX, folder magic bytes
+# test_dbx_writer - Outlook Express DBX, folder magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
     add_executable(test_dbx_writer
         unit/test_dbx_writer.cpp
@@ -6797,11 +7005,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_dbx_writer COMMAND test_dbx_writer
+             -o "${TEST_OUTPUT_DIR}/test_dbx_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_dbx_writer")
 endif()
 
-# test_html_email_writer ??? styled HTML output, data URIs
+# test_html_email_writer - styled HTML output, data URIs
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
     add_executable(test_html_email_writer
         unit/test_html_email_writer.cpp
@@ -6822,11 +7031,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_html_email_writer COMMAND test_html_email_writer
+             -o "${TEST_OUTPUT_DIR}/test_html_email_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_html_email_writer")
 endif()
 
-# test_pdf_email_writer ??? QPdfWriter output, PDF header
+# test_pdf_email_writer - QPdfWriter output, PDF header
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
     add_executable(test_pdf_email_writer
         unit/test_pdf_email_writer.cpp
@@ -6846,11 +7056,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_pdf_email_writer COMMAND test_pdf_email_writer
+             -o "${TEST_OUTPUT_DIR}/test_pdf_email_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_pdf_email_writer")
 endif()
 
-# test_conversion_report_generator ??? HTML report, CSV manifest
+# test_conversion_report_generator - HTML report, CSV manifest
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_conversion_report_generator.cpp")
     add_executable(test_conversion_report_generator
         unit/test_conversion_report_generator.cpp
@@ -6871,6 +7082,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_conversion_report_generator.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
     add_test(NAME test_conversion_report_generator COMMAND test_conversion_report_generator
+             -o "${TEST_OUTPUT_DIR}/test_conversion_report_generator.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_conversion_report_generator")
 endif()

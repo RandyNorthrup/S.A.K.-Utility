@@ -8,6 +8,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -66,7 +67,11 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10'000));
+        // Assert the absolute count rather than spy.wait(): QSignalSpy connects with
+        // Qt::DirectConnection, so the worker thread records finished the instant it fires --
+        // frequently before the main thread reaches this line -- and wait() then blocks for a
+        // SECOND emission that never comes.
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 1);
         QCOMPARE(wastedSpace, static_cast<qint64>(content.size()));
@@ -95,6 +100,9 @@ private Q_SLOTS:
                                     FILE_ATTRIBUTE_NORMAL,
                                     nullptr);
         QVERIFY(handle != INVALID_HANDLE_VALUE);
+        // The lock has to outlive the scan but still be released if an assertion below returns
+        // early, otherwise QTemporaryDir cannot remove locked.bin.
+        const auto release = qScopeGuard([handle]() { CloseHandle(handle); });
 
         DuplicateFinderWorker::Config config;
         config.scanDirectories << tmpDir.path();
@@ -104,9 +112,7 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        const bool finished = spy.wait(10'000);
-        CloseHandle(handle);
-        QVERIFY(finished);
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         // The locked file could not be hashed -> surfaced, not hidden.
         QCOMPARE(worker.filesUnhashed(), 1);
@@ -133,7 +139,7 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10'000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 0);
     }
@@ -159,7 +165,7 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10'000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 0);
     }
@@ -186,7 +192,7 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10'000));
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 1);
     }
@@ -247,7 +253,7 @@ private Q_SLOTS:
 
         QSignalSpy failedSpy(&worker, &WorkerBase::failed);
         worker.start();
-        QVERIFY(failedSpy.wait(10'000));
+        QTRY_COMPARE_WITH_TIMEOUT(failedSpy.count(), 1, 10'000);
         QCOMPARE(failedSpy.takeFirst().at(0).toInt(),
                  static_cast<int>(sak::error_code::invalid_argument));
     }
@@ -270,7 +276,7 @@ private Q_SLOTS:
 
         QSignalSpy failedSpy(&worker, &WorkerBase::failed);
         worker.start();
-        QVERIFY(failedSpy.wait(30'000));
+        QTRY_COMPARE_WITH_TIMEOUT(failedSpy.count(), 1, 30'000);
         QCOMPARE(failedSpy.takeFirst().at(0).toInt(),
                  static_cast<int>(sak::error_code::scan_failed));
     }
@@ -296,7 +302,7 @@ private Q_SLOTS:
 
         QSignalSpy finishedSpy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(finishedSpy.wait(30'000));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 30'000);
         QCOMPARE(duplicateCount, 1);
     }
 };

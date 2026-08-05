@@ -777,7 +777,10 @@ void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
     auto* reply = nam.head(request);
     QSignalSpy finishedSpy(reply, &QNetworkReply::finished);
 
-    bool ok = finishedSpy.wait(15'000);
+    // qWaitFor re-checks the spy instead of waiting for a further emission, so a reply that
+    // finished before the wait begins is not misread as a timeout. A genuine timeout still
+    // skips: this test is only meaningful with network access.
+    bool ok = QTest::qWaitFor([&finishedSpy]() { return finishedSpy.count() > 0; }, 15'000);
     if (!ok) {
         reply->deleteLater();
         QSKIP("Network timeout — skipping URL reachability test");

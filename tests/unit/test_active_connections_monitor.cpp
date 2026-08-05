@@ -103,8 +103,12 @@ void TestActiveConnectionsMonitor::startMonitoring_emitsConnectionsUpdated() {
     monitor.startMonitoring(config);
 
     constexpr int kMaxWaitMs = 3000;
-    QVERIFY(updated_spy.wait(kMaxWaitMs));
-    QVERIFY(updated_spy.count() >= 1);
+    // startMonitoring() calls refreshNow() synchronously, so the spy already holds one
+    // emission by the time it returns. The original wait() therefore blocked for a SECOND
+    // emission, i.e. it was testing that the 100ms refresh timer actually fires -- so the
+    // assertion has to be >= 2. Settling for >= 1 here would pass on the synchronous emit
+    // alone and stop covering the timer entirely.
+    QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 2, kMaxWaitMs);
 
     monitor.stopMonitoring();
 }
@@ -119,15 +123,21 @@ void TestActiveConnectionsMonitor::startStop_lifecycle() {
 
     monitor.startMonitoring(config);
 
+    // Unlike the test above, this spy is constructed AFTER startMonitoring(), so it misses
+    // the synchronous first refresh and >= 1 is the timer-driven emission.
     QSignalSpy updated_spy(&monitor, &ActiveConnectionsMonitor::connectionsUpdated);
-    QVERIFY(updated_spy.wait(3000));
+    QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 1, 3000);
 
     const auto connections = monitor.getCurrentConnections();
     QVERIFY2(!connections.isEmpty(), "Running system should have active TCP/UDP connections");
 
     monitor.stopMonitoring();
 
-    QVERIFY(monitor.getCurrentConnections().size() >= 0);
+    // Was QVERIFY(size() >= 0), which is a tautology: size() returns qsizetype and can
+    // never be negative, so it asserted nothing. The real claim is that stopping only stops
+    // the refresh timer and leaves the last snapshot readable, so a caller that stops
+    // monitoring can still render what it already had.
+    QCOMPARE(monitor.getCurrentConnections().size(), connections.size());
 }
 
 QTEST_MAIN(TestActiveConnectionsMonitor)
