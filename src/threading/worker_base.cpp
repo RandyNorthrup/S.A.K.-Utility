@@ -86,14 +86,26 @@ void WorkerBase::run() {
         sak::logError("Worker thread threw exception: {}", e.what());
         Q_EMIT failed(static_cast<int>(sak::error_code::internal_error),
                       QString("Unhandled exception: %1").arg(e.what()));
-    } catch (...) {  // Final safety net: re-throw in debug builds
+    } catch (...) {
+        // Final safety net. This deliberately does NOT rethrow.
+        //
+        // It used to rethrow under #ifndef NDEBUG as a "fail fast in development"
+        // measure. That was wrong in two ways. First, this is the top frame of a
+        // worker thread, so a rethrow does not reach a handler -- it reaches
+        // std::terminate and aborts the process. Second, failed() has already been
+        // emitted at that point, so every observer has been told the error was
+        // handled and the process then dies anyway; the two statements contradict
+        // each other. The reporting below IS the fail-closed behaviour: the run is
+        // marked not-running, the cause is logged, and the caller is told the
+        // operation failed with internal_error.
+        //
+        // It also made the Debug configuration unable to run its own test suite
+        // (exceptionSafety_unknownException aborted with exit 3 and could only ever
+        // pass in Release), which blocked every sanitizer run.
         m_is_running.store(false, std::memory_order_release);
         sak::logError("Worker thread threw unknown exception");
         Q_EMIT failed(static_cast<int>(sak::error_code::internal_error),
                       QStringLiteral("Unhandled unknown exception"));
-#ifndef NDEBUG
-        throw;
-#endif
     }
 }
 

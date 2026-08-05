@@ -55,6 +55,24 @@ repos:
         always_run: true
 
       # -------------------------------------------------------------------
+      # 0b. Test registration - an assertion is only evidence once it runs.
+      #     Nine test files (about 89 assertions) existed, were documented in
+      #     tests/README.md, and had no CMake target, so they had never
+      #     compiled or executed - while earlier remediation campaigns cited
+      #     assertions inside them as proof that findings were fixed. This
+      #     gate makes that state unreachable, in both directions: a source
+      #     that nothing builds, and a target that ctest never runs.
+      # -------------------------------------------------------------------
+      - id: test-registration
+        name: "Test registration (every test builds and runs)"
+        description: "Fail if a test source has no target, or a target has no add_test"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_test_registration.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
       # 1. Secret/path scan - no key-shaped literals or developer paths
       # -------------------------------------------------------------------
       - id: secret-path-scan

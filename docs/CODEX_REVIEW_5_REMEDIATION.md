@@ -1780,7 +1780,44 @@ the elevation boundary, or the AI tool policy those tests actually execute.
 - [ ] R5-G14-1 Fix the dead sanitizer guard: select on the multi-config generator
       correctly (generator expressions, or a dedicated single-config sanitizer build
       tree) so /fsanitize=address is genuinely applied
-- [ ] R5-G14-2 Run the full 208-test suite under ASan and fix everything it reports
+- [x] R5-G14-2 FIRST ASan RUN COMPLETED: 212 of 222 pass. Results below.
+
+      REAL DEFECT FOUND AND FIXED - worker_base.cpp catch-all rethrew under
+      #ifndef NDEBUG. That rethrow sits on the top frame of a WORKER THREAD, so it
+      never reaches a handler; it reaches std::terminate and aborts the process with
+      exit 3. Two things were wrong with it independent of testing. First, failed()
+      with internal_error had ALREADY been emitted, so every observer was told the
+      error was handled and the process then died anyway - the two statements
+      contradict each other. Second, it meant the Debug configuration could never
+      run its own test suite, because exceptionSafety_unknownException aborted every
+      time and could only ever pass in Release. That is why nobody noticed ASan was
+      dead: a broken Debug suite and a dead sanitizer gate concealed each other, and
+      Release and Debug had DIFFERENT crash semantics on the one code path whose
+      entire purpose is making an unknown exception survivable. The rethrow is
+      removed; logging plus failed(internal_error) is the fail-closed contract.
+
+      NOT YET DIAGNOSED - 9 tests die instantly with exit 0xC0000409 and produce no
+      output at all: not a QtTest line, not an ASan report, not even with
+      ASAN_OPTIONS=log_path set. They are test_file_hash, test_secure_memory,
+      test_ethernet_config_manager, test_file_management_explorer_panel,
+      test_user_profile_types, test_user_profile_restore_worker,
+      test_windows_usb_creator, test_quick_action_result_io and test_image_source.
+
+      This is deliberately NOT recorded as nine memory bugs. Nine unrelated
+      subsystems failing with an identical instant fail-fast signature, before main
+      and before ASan can report, points to one toolchain integration problem rather
+      than nine independent defects. The leading hypothesis is a CRT or allocator
+      mismatch: no cmake/SAK_BuildConfig.cmake is present, so the runtime falls back
+      to the DYNAMIC CRT, while the vcpkg triplet in use is x64-windows-static.
+      Mixed instrumentation was checked and ruled out - the 20 projects without
+      /fsanitize are all CMake utility targets (ALL_BUILD, ZERO_CHECK, INSTALL,
+      RUN_TESTS), not libraries.
+
+- [ ] R5-G14-2a Diagnose the 0xC0000409 class before trusting or wiring the ASan
+      gate. An unexplained mass failure must not be suppressed, excluded, or
+      declared expected; until it is understood, the ASan result is not evidence
+- [ ] R5-G14-2b Once understood, fix whatever it turns out to be and re-run to a
+      clean 222 of 222 under ASan
 - [ ] R5-G14-3 Add a CI job that builds with ASan and runs ctest, so the sanitizer
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
 - [ ] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
@@ -1853,6 +1890,65 @@ The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
       text and needs rewriting rather than a character swap
 - [ ] R5-G15-4 CI has no clang-tidy, no cppcheck, no dead-code, and no sanitizer job;
       every gate that exists only in pre-commit can be bypassed by a direct push
+
+### G23 - classes nothing in this program yet catches
+
+Everything above closes a class that has already bitten this codebase. This section is
+the opposite: gaps identified by asking what a serious Windows desktop product needs
+that is still absent here. Each one is justified against this project's own history
+rather than as generic advice.
+
+- [ ] R5-G23-1 CONCURRENCY. The largest uncovered class. MSVC implements no
+      ThreadSanitizer, so nothing in this program detects a data race, and this codebase
+      is heavily threaded: worker objects, QThread, std::jthread, and cross-thread
+      atomics. The history confirms the gap - the Files QThread crash and the shutdown
+      teardown crash (806d5c5) were both found by crashing, not by a gate. Add a
+      clang-cl configuration so TSan is reachable at all, and add deterministic
+      scheduler seams so a race reproduces on demand instead of one run in fifty
+- [ ] R5-G23-2 CRASH REPORTING. A crash on a technician's machine currently yields
+      nothing. Diagnosing the shutdown crash required debug PDBs, a DbgHelp unhandled-
+      exception probe, and multi-run bisection. Ship an unhandled-exception handler that
+      writes a minidump, so a field crash becomes a fixable bug instead of an anecdote
+- [ ] R5-G23-3 PERFORMANCE BUDGETS IN CI. Startup regressed from about 1 second to 31
+      seconds through a DirectWrite font-database regression (e5836aa). Nothing caught
+      it; it was noticed by using the application. Add startup and key-operation time
+      budgets as CI assertions
+- [ ] R5-G23-4 HOSTILE ENVIRONMENT MATRIX. The code assumes C: is the system drive,
+      paths are under MAX_PATH, administrator rights are available, the network works,
+      and Windows is English. The last assumption already caused a defect: diskpart's
+      success text is localized, which is why the recreate path had to be given a
+      language-independent proof. Test the matrix: non-C: system drive, paths over 260
+      characters, UNC-only working directories, no administrator, no network,
+      non-English locale, and missing bundled tools
+- [ ] R5-G23-5 CONFIG SCHEMA VERSIONING. Nothing tests what happens when this version
+      reads an older config, or when a rollback makes an older version read this one's.
+      Silent data loss on upgrade is a classic failure and is currently untested
+- [ ] R5-G23-6 SUPPLY CHAIN. Vendored lzfse, qrcodegen and e2fsprogs, the vcpkg
+      dependency set, and the bundled chocolatey, smartmontools, aria2c and iPerf3
+      payloads. Pin every one to a hash, scan for known CVEs, and publish an SBOM.
+      Highest-value item in this group: VERIFY THE AUTHENTICODE SIGNATURE OF EVERY
+      BUNDLED EXECUTABLE BEFORE RUNNING IT, because several are run elevated
+- [ ] R5-G23-7 DESTRUCTIVE-OPERATION INVARIANTS AS PROPERTY TESTS. This application
+      formats disks and deletes user profiles. State the invariants once and fuzz them:
+      never write outside the validated target; the source stays intact until the
+      destination is verified; recycle means recycle; and every destructive operation
+      either has a rollback or explicitly acknowledges that it has none
+- [ ] R5-G23-8 DOC-ACCURACY GATES. tests/README.md asserted coverage that did not exist,
+      which is precisely how nine dead test files stayed hidden. Any document asserting
+      a fact about the code must be machine-verified, the way the partition filesystem
+      tool manifest gate already is
+- [ ] R5-G23-9 BUILD-SYSTEM LINTING. Two dead 'if(CMAKE_BUILD_TYPE STREQUAL ...)' guards
+      were found by hand in this campaign, one of which had silently disabled ASan
+      across the entire project. cmake-lint finds that class mechanically
+- [ ] R5-G23-10 RESOURCE-LEAK SOAK TEST. Handle, GDI object and memory growth across a
+      long session. Technicians leave this application open all day
+- [ ] R5-G23-11 OUTPUT-FORMAT COMPATIBILITY. Exported PST, EML and MBOX must open in the
+      real Outlook and Thunderbird, the same way APFS and HFS+ images are already
+      certified against a real macOS kernel. Generalize that discipline to every format
+      this application writes for another program to read
+- [ ] R5-G23-12 ERROR MESSAGE UNIQUENESS. No two distinct failures may share a message,
+      and no message may say 'unknown error'. Field support is only tractable when the
+      message identifies the failure
 
 ### G22 - wave 5 follow-ups: uncited issues surfaced while fixing
 
