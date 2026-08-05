@@ -89,6 +89,9 @@ AppInstallationWorker::~AppInstallationWorker() {
     // Ensure background thread is stopped before destruction
     cancel();
     if (m_processFuture.isRunning()) {
+        // SAK-ALLOW-BLOCKING: cancel() above is cooperative and the pool task dereferences
+        // this worker's members, which die when this body returns. Abandoning the wait would
+        // leave the task writing into freed state.
         m_processFuture.waitForFinished();
     }
 }
@@ -131,7 +134,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         // Launch background processing (will wait for mutex release)
         m_processFuture = QtConcurrent::run([this]() { processQueue(); });
     }
-    // Mutex released — safe to emit (handlers may call getStats())
+    // Mutex released - safe to emit (handlers may call getStats())
     for (const auto& item : skipped) {
         Q_EMIT jobProgress(item.first, QStringLiteral("Skipped: ") + item.second);
     }
@@ -245,7 +248,7 @@ void AppInstallationWorker::cancel() {
 
         m_waitCondition.wakeAll();
     }
-    // Emit outside the lock — handlers may call getStats()
+    // Emit outside the lock - handlers may call getStats()
     for (const auto& job : cancelled_jobs) {
         Q_EMIT jobStatusChanged(job.entryIndex, job);
     }
@@ -412,7 +415,7 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
         job.status = MigrationStatus::Skipped;
         job.startTime = QDateTime::currentDateTime();
         job.endTime = job.startTime;
-        QString message = QString("Skipped %1 — newer version %2 already installed")
+        QString message = QString("Skipped %1 - newer version %2 already installed")
                               .arg(job.appName, installed_version);
         job.errorMessage = message;
         storeJobSnapshot(jobIndex, job);

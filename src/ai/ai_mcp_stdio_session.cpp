@@ -386,6 +386,9 @@ void AiMcpStdioSession::close() {
                 m_worker, [this]() { m_worker->doClose(); }, Qt::BlockingQueuedConnection);
         }
         m_thread->quit();
+        // SAK-ALLOW-BLOCKING: `delete m_thread` follows, and deleting a live QThread aborts
+        // the process. doClose() above already ran to completion on that thread via a
+        // blocking queued call, so the event loop has nothing left but to exit.
         m_thread->wait();
         delete m_thread;  // m_worker was deleteLater'd on QThread::finished
         m_thread = nullptr;

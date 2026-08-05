@@ -209,6 +209,8 @@ void NetworkDiagnosticController::cleanupThread(State op) {
         // cooperative stop is guaranteed to return; blocking here is the fail-closed choice
         // (a bounded shutdown delay) over a UAF. terminate() is never used -- it would kill a
         // worker mid-syscall and corrupt shared state or leak held locks.
+        // SAK-ALLOW-BLOCKING: cancel is issued before teardown and every worker has a
+        // bounded internal timeout, so the cooperative stop is guaranteed to return.
         thread->wait();
     }
     thread->deleteLater();
@@ -1202,6 +1204,9 @@ LanUploadOutcome runLanUpload(const QString& targetAddr,
     QObject::connect(&thread, &QThread::started, worker, [worker]() { worker->start(); });
     thread.start();
     done.acquire();
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. The upload worker
+    // has already released `done`, so nothing is left to run.
     thread.wait();
     return outcome;
 }

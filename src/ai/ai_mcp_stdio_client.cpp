@@ -384,6 +384,10 @@ StdioCallState performStdioToolCall(const AiMcpStdioCallRequest& request) {
         state.error_message = QStringLiteral("MCP stdio worker thread did not start");
     }
     stdio_thread.quit();
+    // SAK-ALLOW-BLOCKING: `stdio_thread` is a stack local destroyed on return, and
+    // ~QThread on a live thread aborts the process. quit() precedes it, and QThread::exit
+    // is remembered even if exec() has not started yet, so this cannot hang on a thread
+    // that raced past its own event loop.
     stdio_thread.wait();
     return state;
 }

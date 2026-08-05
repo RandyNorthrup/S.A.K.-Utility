@@ -221,6 +221,9 @@ UserProfileRestoreWorker::~UserProfileRestoreWorker() {
         // bounded wait can time out. Block until the thread has fully exited
         // rather than destroying a running QThread (which aborts the process).
         if (!wait(kTimeoutThreadTerminateMs)) {
+            // SAK-ALLOW-BLOCKING: the bounded wait above already gave up once. Destroying a
+            // running QThread aborts the process, and terminate() during a restore copy can
+            // leave a half-written file on the target profile, so blocking is safer.
             wait();
         }
     }

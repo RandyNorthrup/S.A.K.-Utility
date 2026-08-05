@@ -1440,6 +1440,9 @@ UserProfileBackupAppDataPage::~UserProfileBackupAppDataPage() {
         m_scanCancel->store(true);
     }
     if (m_scanWatcher && m_scanWatcher->isRunning()) {
+        // SAK-ALLOW-BLOCKING: m_scanCancel was set above and the scan polls it, so the task
+        // returns on its own. The watcher dies with this page, so abandoning the wait would
+        // free it under a running scan.
         m_scanWatcher->waitForFinished();
     }
 }

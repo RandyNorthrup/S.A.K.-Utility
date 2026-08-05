@@ -255,6 +255,9 @@ NetworkDiagnosticPanel::~NetworkDiagnosticPanel() {
     // this cannot hang teardown beyond a bounded few seconds even if several are in flight.
     for (QFuture<QPair<bool, QString>>& future : m_pending_command_futures) {
         if (future.isRunning()) {
+            // SAK-ALLOW-BLOCKING: each op carries its own process timeout, so every future
+            // completes on its own. Some of these MUTATE adapters via netsh; abandoning the
+            // wait would let that mutation run detached past teardown.
             future.waitForFinished();
         }
     }

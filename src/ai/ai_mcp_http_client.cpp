@@ -272,6 +272,10 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
         state.timed_out = true;
     }
     network_thread.quit();
+    // SAK-ALLOW-BLOCKING: `network_thread` is a stack local destroyed on return, and
+    // ~QThread on a live thread aborts the process. quit() precedes it, and QThread::exit
+    // is remembered even if exec() has not started yet, so this cannot hang on a thread
+    // that raced past its own event loop.
     network_thread.wait();
     return state;
 }

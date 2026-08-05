@@ -212,6 +212,9 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
 
     thread.start();
     finished.acquire();
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. The worker has
+    // already released `finished`, so nothing is left to run.
     thread.wait();
     return result;
 }

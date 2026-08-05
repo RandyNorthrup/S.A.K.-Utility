@@ -21,6 +21,10 @@ AiAsyncToolRunner::AiAsyncToolRunner(QObject* parent) : QObject(parent) {
 AiAsyncToolRunner::~AiAsyncToolRunner() {
     // Do not leave a pool task writing into a destroyed watcher: wait it out.
     if (m_running) {
+        // SAK-ALLOW-BLOCKING: a QtConcurrent pool task cannot be cancelled, and it writes
+        // into m_watcher, which is destroyed the moment this body returns. Giving up on the
+        // wait would hand the pool a dangling watcher. Callers cancel the inner op first so
+        // the task returns promptly.
         m_watcher.waitForFinished();
     }
 }

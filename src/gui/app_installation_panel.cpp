@@ -107,7 +107,10 @@ AppInstallationPanel::~AppInstallationPanel() {
     // thread lambdas capture raw `this` and deref m_choco_manager, so a search
     // still running at teardown would use freed state. QtConcurrent::run futures
     // are not cancelable; waitForFinished() on a finished/null future is a no-op.
+    // SAK-ALLOW-BLOCKING: a QtConcurrent::run future is not cancelable, so there is nothing
+    // to give up TO -- the only alternative to waiting is the use-after-free above.
     m_searchFuture.waitForFinished();
+    // SAK-ALLOW-BLOCKING: same contract as the search future above.
     m_offlineSearchFuture.waitForFinished();
 }
 

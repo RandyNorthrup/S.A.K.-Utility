@@ -37,6 +37,9 @@ ThermalMonitor::ThermalMonitor(QObject* parent) : QObject(parent) {
 ThermalMonitor::~ThermalMonitor() {
     stop();
     if (m_poll_watcher.isRunning()) {
+        // SAK-ALLOW-BLOCKING: the pool task writes its readings into m_poll_watcher, which
+        // dies with this object. A single sensor poll is short, bounded work; abandoning it
+        // would hand the pool a dangling watcher.
         m_poll_watcher.waitForFinished();
     }
 }

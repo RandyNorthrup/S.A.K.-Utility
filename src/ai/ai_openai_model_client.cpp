@@ -170,7 +170,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
         state.timed_out = true;
     }
     network_thread.quit();
-    network_thread.wait();
+    network_thread.wait();  // SAK-ALLOW-BLOCKING: stack QThread, quit() sent; join mandatory
 
     return modelResponseFromState(state, token);
 }

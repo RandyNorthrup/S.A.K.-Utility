@@ -146,7 +146,20 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # NOTE: five further gate scripts exist and are NOT yet listed here
+      # 6b. Nested event loops and unbounded blocking waits
+      #     Debt reached zero, so this one is now wired. Every gated site
+      #     carries a SAK-ALLOW-BLOCKING justification; see the script header.
+      # -------------------------------------------------------------------
+      - id: blocking-patterns
+        name: "Nested event loop / unbounded wait check"
+        description: "Event loops and no-timeout joins must be justified at the site"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_blocking_patterns.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # NOTE: four further gate scripts exist and are NOT yet listed here
       # because they currently report real debt, and a failing hook would
       # block the very commits that fix it. They are wired the moment their
       # debt reaches zero. Tracked as R5-G9 in
@@ -154,7 +167,6 @@ repos:
       #   check_magic_numbers.py             452 violations
       #   check_gui_stylesheet_literals.ps1   73 violations
       #   check_gui_magic_numbers.ps1         18 violations
-      #   check_blocking_patterns.ps1         10 violations (also runs in CI)
       #   check_gui_style_tokens.ps1           1 violation
       # -------------------------------------------------------------------
 

@@ -1880,6 +1880,9 @@ bool downloadUrlBytes(const QUrl& url,
     network_thread.start();
     done.acquire();
     network_thread.quit();
+    // SAK-ALLOW-BLOCKING: `network_thread` is a stack local destroyed on return, and
+    // ~QThread on a live thread aborts the process. The download worker has already
+    // released `done`, and quit() precedes this, so nothing is left to run.
     network_thread.wait();
 
     if (!state.ok) {
@@ -3291,6 +3294,10 @@ static bool pumpEventsUntilStopped(const std::function<bool()>& running) {
         if (deadline.hasExpired()) {
             return false;
         }
+        // SAK-ALLOW-BLOCKING: the worker captured `this` and marshals UI calls back to
+        // this thread, so the runner's join would dead-lock unless those calls are
+        // delivered. The caller hard-cancels first and the loop is deadline-bounded;
+        // user input is excluded so no new user-driven work can re-enter teardown.
         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, kAsyncToolDrainSliceMs);
     }
     return true;
@@ -6425,6 +6432,9 @@ ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
     command_thread.start();
     done.acquire();
     command_thread.quit();
+    // SAK-ALLOW-BLOCKING: `command_thread` is a stack local destroyed on return, and
+    // ~QThread on a live thread aborts the process. The broker's finished handler has
+    // already released `done` and quit the thread, so nothing is left to run.
     command_thread.wait();
     if (!finished) {
         command_result.error_message =
@@ -7381,6 +7391,9 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
         return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
     });
     offline_thread.quit();
+    // SAK-ALLOW-BLOCKING: `offline_thread` is a stack local destroyed on return, and
+    // ~QThread on a live thread aborts the process. waitForOfflineWorker above already
+    // returned, which means the worker reached a terminal signal or honored the cancel.
     offline_thread.wait();
     return run;
 }

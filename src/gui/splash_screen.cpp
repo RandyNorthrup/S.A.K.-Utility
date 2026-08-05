@@ -93,6 +93,11 @@ void SplashScreen::showCentered() {
     // screen before the caller starts main-window construction. Without this
     // the first frame would only appear once the event loop runs, which is
     // after all of the (potentially long) startup work.
+    // SAK-ALLOW-BLOCKING: runs once during startup, BEFORE the main event loop and
+    // before the main window exists, so there is no application state for a
+    // re-entered slot to corrupt. User input is excluded. There is no non-pumping
+    // alternative: a widget shown but not yet exposed will not repaint until
+    // something drains the queue.
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 

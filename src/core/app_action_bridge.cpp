@@ -118,6 +118,10 @@ AppActionResult runQuickActionSync(QuickActionController* controller,
         return {false, QStringLiteral("Unknown action: %1").arg(action_name), {}};
     }
 
+    // SAK-ALLOW-BLOCKING: nested loop on the CALLER's thread, which is the assistant's
+    // worker thread, never the controller's. executeAction is marshaled with a queued
+    // connection so it cannot complete before exec() begins, and the timeout below
+    // always quits the loop.
     QEventLoop loop;
     QObject ctx;  // caller-thread affinity: all lambdas run serially on this thread
     AppActionResult out{false, QStringLiteral("Action did not complete"), {}};

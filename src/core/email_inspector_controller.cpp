@@ -458,6 +458,9 @@ void EmailInspectorController::cancelOperation() {
     // Block until every in-flight task observes the cancel flags and returns, so
     // no background thread is still inside the parsers/workers when they (and this
     // controller) are destroyed.
+    // SAK-ALLOW-BLOCKING: every parser and worker was cancelled on the lines above and
+    // polls that flag, so the tasks return on their own; abandoning the wait would leave
+    // them running inside objects about to be freed.
     m_tasks.waitForFinished();
     m_tasks.clearFutures();
     setState(State::Idle);

@@ -184,6 +184,9 @@ TcpProbeResult runTcpProbe(const QString& target,
 
     thread.start();
     done.acquire();
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. The probe has
+    // already released `done`, so nothing is left to run.
     thread.wait();
     return result;
 }

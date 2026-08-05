@@ -126,6 +126,10 @@ public:
     [[nodiscard]] AppActionResult run(const std::function<void()>& start);
 
 private:
+    // SAK-ALLOW-BLOCKING: nested loop on a WORKER thread, never the GUI thread. The
+    // assistant's tool handler must return a value, and the op it drives is signal-
+    // completed; run() enters this loop only after checking m_done, and finish() is
+    // first-wins across the completion, error and timeout paths.
     QEventLoop m_loop;
     QObject m_ctx;
     AppActionResult m_result{false, QStringLiteral("Action did not complete"), {}};

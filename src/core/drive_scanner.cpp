@@ -137,6 +137,8 @@ void DriveScanner::stop() {
     // Block until any in-flight worker scan finishes so its lambda does not
     // touch this object after destruction.
     if (m_scanWatcher.isRunning()) {
+        // SAK-ALLOW-BLOCKING: giving up would leave the scan lambda holding this object.
+        // A drive enumeration is bounded work with no network or user input in it.
         m_scanWatcher.waitForFinished();
     }
     unregisterDeviceNotification();

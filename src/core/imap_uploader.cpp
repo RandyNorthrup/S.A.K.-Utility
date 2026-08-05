@@ -539,6 +539,9 @@ ImapSessionResult runImapSession(const ImapSessionRequest& request) {
     QObject::connect(&thread, &QThread::started, worker, [worker]() { worker->start(); });
     thread.start();
     done.acquire();
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. The worker has
+    // already released `done`, so the quit-less exec() has nothing left to run.
     thread.wait();
     return result;
 }

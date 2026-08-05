@@ -113,6 +113,9 @@ QuickActionController::~QuickActionController() {
         thread->quit();
         if (!thread->wait(kThreadShutdownWaitMs)) {
             sak::logError("QuickAction thread slow to stop; blocking until joined");
+            // SAK-ALLOW-BLOCKING: `delete thread` follows and the owned QuickActions are freed
+            // right after this dtor body, so a thread still in scan()/execute() would use freed
+            // state. The bounded wait above already gave up once; the escalation is logged.
             thread->wait();
         }
         delete thread;
@@ -350,6 +353,11 @@ void QuickActionController::onScanComplete() {
     // Cleanup thread
     if (m_scan_thread) {
         m_scan_thread->quit();
+        // SAK-ALLOW-BLOCKING: load-bearing, not just teardown hygiene. The thread's finished
+        // handler moves `action` back to the app thread, and the next queued scan calls
+        // action->moveToThread() -- which is only legal once that has happened. Dropping this
+        // join would move an object that still lives on a running thread. The action has
+        // already emitted its completion signal, so only its return path remains.
         m_scan_thread->wait();
         m_scan_thread->deleteLater();
         m_scan_thread = nullptr;
@@ -384,6 +392,9 @@ void QuickActionController::onExecutionComplete() {
     // Cleanup thread
     if (m_execution_thread) {
         m_execution_thread->quit();
+        // SAK-ALLOW-BLOCKING: same load-bearing contract as onScanComplete() -- the next
+        // queued action calls action->moveToThread(), which is only legal once this thread's
+        // finished handler has moved the action back to the app thread.
         m_execution_thread->wait();
         m_execution_thread->deleteLater();
         m_execution_thread = nullptr;

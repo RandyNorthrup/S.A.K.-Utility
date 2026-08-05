@@ -96,6 +96,9 @@ LinuxISODownloader::~LinuxISODownloader() {
     // non-cancelable and its lambda reads m_savePath, so tearing down while it runs is a UAF.
     // Wait only here (not in cancel()) so a live-object cancel never blocks the GUI thread.
     if (m_hashFuture.isRunning()) {
+        // SAK-ALLOW-BLOCKING: a QtConcurrent::run future is not cancelable, so there is
+        // nothing to give up TO -- the only alternative to waiting is the use-after-free
+        // described above.
         m_hashFuture.waitForFinished();
     }
 }

@@ -54,6 +54,9 @@ UserProfileBackupWorker::~UserProfileBackupWorker() {
         // Never let ~QThread run on a live thread: if an in-flight copy of a
         // large/stalled file outlasts the grace period, block until it finishes.
         if (!wait(kTimeoutThreadTerminateMs)) {
+            // SAK-ALLOW-BLOCKING: the bounded wait above already gave up once. Destroying a
+            // running QThread aborts the process, and terminate() during a file copy can
+            // leave a half-written file in the backup, so blocking is the safer end state.
             wait();
         }
     }

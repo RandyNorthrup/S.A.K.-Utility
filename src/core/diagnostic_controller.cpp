@@ -328,9 +328,13 @@ void DiagnosticController::cancelCurrent() {
 
     // Wait for QtConcurrent futures to prevent dangling raw pointers
     if (m_hw_scan_future.isRunning()) {
+        // SAK-ALLOW-BLOCKING: both scanners were cancelled on the lines above and poll that
+        // flag, and their tasks hold raw pointers into this controller. Giving up on either
+        // wait would leave a task dereferencing them.
         m_hw_scan_future.waitForFinished();
     }
     if (m_smart_analysis_future.isRunning()) {
+        // SAK-ALLOW-BLOCKING: same contract as the hardware scan future above.
         m_smart_analysis_future.waitForFinished();
     }
 

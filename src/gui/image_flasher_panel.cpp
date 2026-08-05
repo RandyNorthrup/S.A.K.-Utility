@@ -155,6 +155,10 @@ ImageFlasherPanel::~ImageFlasherPanel() {
             m_windowsUsbCreator->cancel();
         }
         m_windowsUsbThread->quit();
+        // SAK-ALLOW-BLOCKING: the creator polls the cancel atomic set above, and destroying a
+        // running QThread aborts the process. Deliberately NOT bounded: the fallback to a
+        // bounded wait is terminate(), and killing a thread mid raw-disk-write is worse than
+        // a slow exit.
         m_windowsUsbThread->wait();
     }
 }

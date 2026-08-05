@@ -173,7 +173,12 @@ FileExplorerPropertiesDialog::~FileExplorerPropertiesDialog() {
     }
     m_size_watcher.cancel();
     m_hash_watcher.cancel();
+    // SAK-ALLOW-BLOCKING: the shared cancel flag set above is polled by the directory
+    // walk's lister and by the hash loop, so both return promptly. The watchers are
+    // members destroyed on return, so abandoning the wait would free them under a
+    // running task.
     m_size_watcher.waitForFinished();
+    // SAK-ALLOW-BLOCKING: same contract as the size watcher above.
     m_hash_watcher.waitForFinished();
 }
 

@@ -319,6 +319,9 @@ OfflineDeploymentWorker::OfflineDeploymentWorker(QObject* parent) : QObject(pare
 OfflineDeploymentWorker::~OfflineDeploymentWorker() {
     cancel();
     if (m_operation_future.isRunning()) {
+        // SAK-ALLOW-BLOCKING: cancel() above is cooperative and the pool task dereferences
+        // this worker's members, which die when this body returns. Abandoning the wait would
+        // leave the task writing into freed state.
         m_operation_future.waitForFinished();
     }
 }

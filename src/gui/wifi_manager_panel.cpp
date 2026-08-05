@@ -219,6 +219,9 @@ WifiManagerPanel::~WifiManagerPanel() {
     // timeout), not one per selected network. The panel (and this atomic) outlive the wait.
     m_wlanInstallCancel.store(true);
     if (m_wlanInstallFuture.isRunning()) {
+        // SAK-ALLOW-BLOCKING: installWlanProfiles checks the flag set above between profiles
+        // and each netsh call has its own process timeout, so this blocks for at most one
+        // in-flight call. Abandoning it would let a netsh mutation run detached past teardown.
         m_wlanInstallFuture.waitForFinished();
     }
 }

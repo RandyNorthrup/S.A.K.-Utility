@@ -54,6 +54,9 @@ void cancelJoinDeleteWatcher(QFutureWatcher<ResultT>*& watcher, QObject* owner) 
         return;
     }
     QObject::disconnect(watcher, nullptr, owner, nullptr);
+    // SAK-ALLOW-BLOCKING: `delete watcher` follows on the next line, so abandoning the wait
+    // would free the watcher underneath a running task. The caller has already issued the
+    // cooperative cancel this relies on (see the contract above).
     watcher->waitForFinished();
     delete watcher;
     watcher = nullptr;
