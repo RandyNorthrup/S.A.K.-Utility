@@ -430,6 +430,7 @@ set(CORE_SOURCES
     src/core/input_validator.cpp
     src/core/secure_memory.cpp
     src/core/encryption.cpp
+    src/core/backup_file_codec.cpp
     src/core/keep_awake.cpp
     src/core/elevation_manager.cpp
     src/core/bundled_tools_manager.cpp

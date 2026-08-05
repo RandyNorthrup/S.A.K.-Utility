@@ -161,6 +161,145 @@ QByteArray compute_hmac(const QByteArray& mac_key, const QByteArray& message) {
     return tag;
 }
 
+/// @brief Incremental HMAC-SHA256, so a tag can cover a stream that never fits in memory.
+/// compute_hmac() above is the one-shot form used by the in-memory API.
+class HmacStream {
+public:
+    HmacStream() = default;
+    ~HmacStream() { reset(); }
+
+    HmacStream(const HmacStream&) = delete;
+    HmacStream& operator=(const HmacStream&) = delete;
+    HmacStream(HmacStream&&) = delete;
+    HmacStream& operator=(HmacStream&&) = delete;
+
+    [[nodiscard]] bool init(const QByteArray& mac_key) {
+        if (BCryptOpenAlgorithmProvider(
+                &m_alg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+            sak::logError("BCrypt: Failed to open HMAC provider for streaming authentication");
+            return false;
+        }
+        DWORD object_len = 0;
+        DWORD copied = 0;
+        if (BCryptGetProperty(m_alg,
+                              BCRYPT_OBJECT_LENGTH,
+                              reinterpret_cast<PUCHAR>(&object_len),
+                              sizeof(object_len),
+                              &copied,
+                              0) != 0) {
+            sak::logError("BCrypt: Failed to size the streaming HMAC object");
+            return false;
+        }
+        m_object.resize(static_cast<qsizetype>(object_len));
+        if (BCryptCreateHash(m_alg,
+                             &m_hash,
+                             reinterpret_cast<PUCHAR>(m_object.data()),
+                             object_len,
+                             reinterpret_cast<PUCHAR>(const_cast<char*>(mac_key.data())),
+                             static_cast<ULONG>(mac_key.size()),
+                             0) != 0) {
+            sak::logError("BCrypt: Failed to create the streaming HMAC");
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool update(const QByteArray& data) {
+        if (!m_hash || data.isEmpty()) {
+            return m_hash != nullptr;
+        }
+        if (BCryptHashData(m_hash,
+                           reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())),
+                           static_cast<ULONG>(data.size()),
+                           0) != 0) {
+            sak::logError("BCrypt: Streaming HMAC update failed");
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] QByteArray finish() {
+        if (!m_hash) {
+            return {};
+        }
+        QByteArray tag(kEncryptionMacBytes, 0);
+        const NTSTATUS status = BCryptFinishHash(
+            m_hash, reinterpret_cast<PUCHAR>(tag.data()), static_cast<ULONG>(tag.size()), 0);
+        if (status != 0) {
+            sak::logError("BCrypt: Streaming HMAC finalization failed");
+            return {};
+        }
+        return tag;
+    }
+
+private:
+    void reset() {
+        if (m_hash) {
+            BCryptDestroyHash(m_hash);
+            m_hash = nullptr;
+        }
+        if (m_alg) {
+            BCryptCloseAlgorithmProvider(m_alg, 0);
+            m_alg = nullptr;
+        }
+    }
+
+    BCRYPT_ALG_HANDLE m_alg{nullptr};
+    BCRYPT_HASH_HANDLE m_hash{nullptr};
+    QByteArray m_object;
+};
+
+/// @brief Encrypt whole blocks with the chaining IV updated in place, so the next call
+/// continues the same CBC stream. No padding: the caller only passes whole blocks until
+/// the final flush.
+bool aes_encrypt_blocks(BCRYPT_KEY_HANDLE key,
+                        QByteArray& iv,
+                        const QByteArray& in,
+                        QByteArray& out) {
+    out.resize(in.size());
+    DWORD written = 0;
+    if (BCryptEncrypt(key,
+                      reinterpret_cast<PUCHAR>(const_cast<char*>(in.data())),
+                      static_cast<ULONG>(in.size()),
+                      nullptr,
+                      reinterpret_cast<PUCHAR>(iv.data()),
+                      static_cast<ULONG>(iv.size()),
+                      reinterpret_cast<PUCHAR>(out.data()),
+                      static_cast<ULONG>(out.size()),
+                      &written,
+                      0) != 0) {
+        sak::logError("BCrypt: Streaming AES encryption failed ({} bytes)", in.size());
+        return false;
+    }
+    out.resize(static_cast<qsizetype>(written));
+    return true;
+}
+
+/// @brief Decrypt whole blocks with the chaining IV updated in place. No padding: the
+/// caller always holds the final block back for the padded flush.
+bool aes_decrypt_blocks(BCRYPT_KEY_HANDLE key,
+                        QByteArray& iv,
+                        const QByteArray& in,
+                        QByteArray& out) {
+    out.resize(in.size());
+    DWORD written = 0;
+    if (BCryptDecrypt(key,
+                      reinterpret_cast<PUCHAR>(const_cast<char*>(in.data())),
+                      static_cast<ULONG>(in.size()),
+                      nullptr,
+                      reinterpret_cast<PUCHAR>(iv.data()),
+                      static_cast<ULONG>(iv.size()),
+                      reinterpret_cast<PUCHAR>(out.data()),
+                      static_cast<ULONG>(out.size()),
+                      &written,
+                      0) != 0) {
+        sak::logError("BCrypt: Streaming AES decryption failed ({} bytes)", in.size());
+        return false;
+    }
+    out.resize(static_cast<qsizetype>(written));
+    return true;
+}
+
 /// @brief Constant-time byte comparison to avoid tag-verification timing leaks
 bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
     if (a.size() != b.size()) {
@@ -429,6 +568,293 @@ auto decryptData(const QByteArray& encrypted_data,
 
     return *plaintext;
 #else
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+// ============================================================================
+// Streaming AES-256-CBC + HMAC-SHA256 (encrypt-then-MAC)
+// ============================================================================
+
+struct StreamEncryptor::Impl {
+#ifdef _WIN32
+    BCRYPT_ALG_HANDLE alg{nullptr};
+    BCRYPT_KEY_HANDLE key{nullptr};
+    HmacStream mac;
+#endif
+    QByteArray salt;
+    QByteArray iv;       // running CBC state, updated in place by each block call
+    QByteArray pending;  // sub-block remainder awaiting more input or the final flush
+    bool finished{false};
+};
+
+StreamEncryptor::StreamEncryptor() : m_impl(std::make_unique<Impl>()) {}
+
+StreamEncryptor::~StreamEncryptor() {
+#ifdef _WIN32
+    destroy_aes_key(m_impl->alg, m_impl->key);
+#endif
+    secure_wiper::wipe(m_impl->iv.data(), m_impl->iv.size());
+    secure_wiper::wipe(m_impl->pending.data(), m_impl->pending.size());
+}
+
+auto StreamEncryptor::create(const QString& password, const EncryptionParams& params)
+    -> std::expected<std::unique_ptr<StreamEncryptor>, error_code> {
+#ifdef _WIN32
+    if (password.isEmpty() || !valid_encryption_params(params)) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    std::unique_ptr<StreamEncryptor> self(new StreamEncryptor());
+    Impl& impl = *self->m_impl;
+
+    impl.salt = generate_random_bytes(params.salt_size);
+    impl.iv = generate_random_bytes(params.iv_size);
+    if (impl.salt.isEmpty() || impl.iv.isEmpty()) {
+        logError("Failed to generate random bytes for the encryption stream");
+        return std::unexpected(error_code::crypto_error);
+    }
+
+    QByteArray enc_key;
+    QByteArray mac_key;
+    if (!derive_enc_and_mac_keys(password, impl.salt, params, enc_key, mac_key)) {
+        logError("Failed to derive keys for the encryption stream");
+        return std::unexpected(error_code::crypto_error);
+    }
+
+    const bool ready = initialize_aes_key(impl.alg, impl.key, enc_key, "stream encryption") &&
+                       impl.mac.init(mac_key);
+    secure_wiper::wipe(enc_key.data(), enc_key.size());
+    secure_wiper::wipe(mac_key.data(), mac_key.size());
+    if (!ready) {
+        return std::unexpected(error_code::crypto_error);
+    }
+
+    // The tag covers the header too, so a swapped salt or IV cannot go unnoticed.
+    if (!impl.mac.update(self->header())) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    return self;
+#else
+    Q_UNUSED(password)
+    Q_UNUSED(params)
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+QByteArray StreamEncryptor::header() const {
+    return m_impl->salt + m_impl->iv;
+}
+
+auto StreamEncryptor::update(const QByteArray& plaintext) -> std::expected<QByteArray, error_code> {
+#ifdef _WIN32
+    if (m_impl->finished) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    m_impl->pending.append(plaintext);
+
+    // Encrypt only whole blocks; padding belongs to finish() alone.
+    const qsizetype whole = (m_impl->pending.size() / kAesBlockBytes) * kAesBlockBytes;
+    if (whole == 0) {
+        return QByteArray{};
+    }
+    const QByteArray input = m_impl->pending.left(whole);
+    QByteArray out;
+    if (!aes_encrypt_blocks(m_impl->key, m_impl->iv, input, out) || !m_impl->mac.update(out)) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    m_impl->pending.remove(0, whole);
+    return out;
+#else
+    Q_UNUSED(plaintext)
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+auto StreamEncryptor::finish() -> std::expected<QByteArray, error_code> {
+#ifdef _WIN32
+    if (m_impl->finished) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    m_impl->finished = true;
+
+    // BCRYPT_BLOCK_PADDING always emits a full extra block, so an empty remainder still
+    // produces one block here and an empty payload round-trips to empty.
+    QByteArray out(m_impl->pending.size() + kAesBlockBytes, 0);
+    DWORD written = 0;
+    if (BCryptEncrypt(m_impl->key,
+                      reinterpret_cast<PUCHAR>(m_impl->pending.data()),
+                      static_cast<ULONG>(m_impl->pending.size()),
+                      nullptr,
+                      reinterpret_cast<PUCHAR>(m_impl->iv.data()),
+                      static_cast<ULONG>(m_impl->iv.size()),
+                      reinterpret_cast<PUCHAR>(out.data()),
+                      static_cast<ULONG>(out.size()),
+                      &written,
+                      BCRYPT_BLOCK_PADDING) != 0) {
+        logError("BCrypt: Streaming AES final block encryption failed");
+        return std::unexpected(error_code::crypto_error);
+    }
+    out.resize(static_cast<qsizetype>(written));
+    secure_wiper::wipe(m_impl->pending.data(), m_impl->pending.size());
+    m_impl->pending.clear();
+
+    if (!m_impl->mac.update(out)) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    const QByteArray tag = m_impl->mac.finish();
+    if (tag.isEmpty()) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    return out + tag;
+#else
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+struct StreamDecryptor::Impl {
+#ifdef _WIN32
+    BCRYPT_ALG_HANDLE alg{nullptr};
+    BCRYPT_KEY_HANDLE key{nullptr};
+    HmacStream mac;
+#endif
+    QByteArray iv;
+    QByteArray pending;  // always retains the final block for the padded flush
+    bool finished{false};
+};
+
+StreamDecryptor::StreamDecryptor() : m_impl(std::make_unique<Impl>()) {}
+
+StreamDecryptor::~StreamDecryptor() {
+#ifdef _WIN32
+    destroy_aes_key(m_impl->alg, m_impl->key);
+#endif
+    secure_wiper::wipe(m_impl->iv.data(), m_impl->iv.size());
+    secure_wiper::wipe(m_impl->pending.data(), m_impl->pending.size());
+}
+
+int StreamDecryptor::headerSize(const EncryptionParams& params) {
+    return params.salt_size + params.iv_size;
+}
+
+auto StreamDecryptor::create(const QString& password,
+                             const QByteArray& header,
+                             const EncryptionParams& params)
+    -> std::expected<std::unique_ptr<StreamDecryptor>, error_code> {
+#ifdef _WIN32
+    if (password.isEmpty() || !valid_encryption_params(params)) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    if (header.size() != headerSize(params)) {
+        logError("Encrypted stream header is the wrong size - corrupted or not our format");
+        return std::unexpected(error_code::invalid_format);
+    }
+    std::unique_ptr<StreamDecryptor> self(new StreamDecryptor());
+    Impl& impl = *self->m_impl;
+
+    const QByteArray salt = header.left(params.salt_size);
+    impl.iv = header.mid(params.salt_size, params.iv_size);
+
+    QByteArray enc_key;
+    QByteArray mac_key;
+    if (!derive_enc_and_mac_keys(password, salt, params, enc_key, mac_key)) {
+        logError("Failed to derive keys for the decryption stream");
+        return std::unexpected(error_code::crypto_error);
+    }
+
+    const bool ready = initialize_aes_key(impl.alg, impl.key, enc_key, "stream decryption") &&
+                       impl.mac.init(mac_key);
+    secure_wiper::wipe(enc_key.data(), enc_key.size());
+    secure_wiper::wipe(mac_key.data(), mac_key.size());
+    if (!ready) {
+        return std::unexpected(error_code::crypto_error);
+    }
+
+    if (!impl.mac.update(header)) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    return self;
+#else
+    Q_UNUSED(password)
+    Q_UNUSED(header)
+    Q_UNUSED(params)
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+auto StreamDecryptor::update(const QByteArray& ciphertext)
+    -> std::expected<QByteArray, error_code> {
+#ifdef _WIN32
+    if (m_impl->finished) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    if (!m_impl->mac.update(ciphertext)) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    m_impl->pending.append(ciphertext);
+
+    // Always hold back at least one whole block: the padded flush in finish() needs it,
+    // and only that call may strip padding.
+    if (m_impl->pending.size() <= kAesBlockBytes) {
+        return QByteArray{};
+    }
+    const qsizetype whole = ((m_impl->pending.size() - 1) / kAesBlockBytes) * kAesBlockBytes;
+    if (whole == 0) {
+        return QByteArray{};
+    }
+    const QByteArray input = m_impl->pending.left(whole);
+    QByteArray out;
+    if (!aes_decrypt_blocks(m_impl->key, m_impl->iv, input, out)) {
+        return std::unexpected(error_code::crypto_error);
+    }
+    m_impl->pending.remove(0, whole);
+    return out;
+#else
+    Q_UNUSED(ciphertext)
+    return std::unexpected(error_code::not_implemented);
+#endif
+}
+
+auto StreamDecryptor::finish(const QByteArray& tag) -> std::expected<QByteArray, error_code> {
+#ifdef _WIN32
+    if (m_impl->finished) {
+        return std::unexpected(error_code::invalid_argument);
+    }
+    m_impl->finished = true;
+
+    // Authenticate BEFORE the padded decrypt, exactly as decryptData() does: a wrong
+    // password or an edited stream stops here and never reaches the padding check.
+    const QByteArray computed = m_impl->mac.finish();
+    if (computed.isEmpty() || !constant_time_equal(computed, tag)) {
+        logError("Authentication failed - stream tampered, truncated, or wrong password");
+        return std::unexpected(error_code::decrypt_failed);
+    }
+    // A genuine stream always ends on a whole block, because every byte of it came out of
+    // BCryptEncrypt. Anything else is a truncation the tag should already have caught.
+    if (m_impl->pending.size() != kAesBlockBytes) {
+        logError("Encrypted stream does not end on a block boundary");
+        return std::unexpected(error_code::invalid_format);
+    }
+
+    QByteArray out(m_impl->pending.size(), 0);
+    DWORD written = 0;
+    if (BCryptDecrypt(m_impl->key,
+                      reinterpret_cast<PUCHAR>(m_impl->pending.data()),
+                      static_cast<ULONG>(m_impl->pending.size()),
+                      nullptr,
+                      reinterpret_cast<PUCHAR>(m_impl->iv.data()),
+                      static_cast<ULONG>(m_impl->iv.size()),
+                      reinterpret_cast<PUCHAR>(out.data()),
+                      static_cast<ULONG>(out.size()),
+                      &written,
+                      BCRYPT_BLOCK_PADDING) != 0) {
+        logError("BCrypt: Streaming AES final block decryption failed");
+        return std::unexpected(error_code::decrypt_failed);
+    }
+    out.resize(static_cast<qsizetype>(written));
+    m_impl->pending.clear();
+    return out;
+#else
+    Q_UNUSED(tag)
     return std::unexpected(error_code::not_implemented);
 #endif
 }

@@ -1043,6 +1043,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
     message(STATUS "Added unit test: test_encryption")
 endif()
 
+# test_backup_file_codec - streaming per-file compression/encryption container
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_file_codec.cpp")
+    add_executable(test_backup_file_codec
+        unit/test_backup_file_codec.cpp
+        ../src/core/backup_file_codec.cpp
+        ../src/core/encryption.cpp
+        ../src/core/secure_memory.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_backup_file_codec PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_backup_file_codec PRIVATE
+        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_backup_file_codec PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_backup_file_codec COMMAND test_backup_file_codec
+             -o "${TEST_OUTPUT_DIR}/test_backup_file_codec.txt,txt" -o -,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_backup_file_codec")
+endif()
+
 # test_file_hash - MD5/SHA256, verify correct/incorrect, progress, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
     add_executable(test_file_hash
