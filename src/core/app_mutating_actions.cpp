@@ -61,7 +61,9 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <expected>
 #include <functional>
 #include <optional>
 
@@ -3073,32 +3075,45 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
 // front; larger stores use the GUI). Matches the export cap.
 constexpr qint64 kMaxConvertSourceBytes = 2LL * 1024 * 1024 * 1024;
 
+// Every FILE output format the converter knows, gated or not. imap_upload is deliberately absent:
+// it is network egress, not a file format, so no argument value can reach an upload path.
+struct ConvertFormatName {
+    QLatin1String name;
+    OstOutputFormat format;
+};
+constexpr std::array<ConvertFormatName, 7> kConvertFormats{
+    {{QLatin1String("pst"), OstOutputFormat::Pst},
+     {QLatin1String("eml"), OstOutputFormat::Eml},
+     {QLatin1String("msg"), OstOutputFormat::Msg},
+     {QLatin1String("mbox"), OstOutputFormat::Mbox},
+     {QLatin1String("dbx"), OstOutputFormat::Dbx},
+     {QLatin1String("html"), OstOutputFormat::Html},
+     {QLatin1String("pdf"), OstOutputFormat::Pdf}}};
+
 // Map the model-facing format string to a FILE OstOutputFormat. Returns nullopt for imap_upload
 // (network) or any unknown value, so the op refuses it -- no network egress path is ever taken.
+// Gated-off formats still MAP here so the refusal below can name the real reason instead of
+// blaming an unrecognized value.
 std::optional<OstOutputFormat> convertFormatFromArg(const QString& value) {
     const QString v = value.trimmed().toLower();
-    if (v == QLatin1String("pst")) {
-        return OstOutputFormat::Pst;
-    }
-    if (v == QLatin1String("eml")) {
-        return OstOutputFormat::Eml;
-    }
-    if (v == QLatin1String("msg")) {
-        return OstOutputFormat::Msg;
-    }
-    if (v == QLatin1String("mbox")) {
-        return OstOutputFormat::Mbox;
-    }
-    if (v == QLatin1String("dbx")) {
-        return OstOutputFormat::Dbx;
-    }
-    if (v == QLatin1String("html")) {
-        return OstOutputFormat::Html;
-    }
-    if (v == QLatin1String("pdf")) {
-        return OstOutputFormat::Pdf;
+    for (const auto& entry : kConvertFormats) {
+        if (v == entry.name) {
+            return entry.format;
+        }
     }
     return std::nullopt;
+}
+
+// The formats a caller may actually ask for, derived from isOutputFormatSupported so the schema
+// and the error messages cannot drift from the gate that enforces them.
+QStringList supportedConvertFormatNames() {
+    QStringList names;
+    for (const auto& entry : kConvertFormats) {
+        if (isOutputFormatSupported(entry.format)) {
+            names.append(QString(entry.name));
+        }
+    }
+    return names;
 }
 
 // Map a completed conversion into the tool result. Honest: a hard error (folder read / open
@@ -3115,7 +3130,6 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
                      {QStringLiteral("items_recovered"), result.items_recovered},
                      {QStringLiteral("folders_processed"), result.folders_processed},
                      {QStringLiteral("bytes_written"), static_cast<double>(result.bytes_written)},
-                     {QStringLiteral("pst_volumes_created"), result.pst_volumes_created},
                      {QStringLiteral("error_count"), static_cast<int>(result.errors.size())},
                      {QStringLiteral("errors"), jsonStringArrayCapped(result.errors, 50)}};
     // Honest + export-aligned (buildExportResult): a run that WROTE files is a success even if some
@@ -3150,6 +3164,33 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
     return {false, QStringLiteral("Conversion failed: %1").arg(reason), data};
 }
 
+// Resolve the requested format or explain exactly why it cannot run. Split out of convertOst
+// to keep that function inside the length budget. The error type is the refusal itself, so
+// there is no way to fail without carrying the reason the caller must return.
+std::expected<OstOutputFormat, AppActionResult> resolveConvertFormat(const QString& requested) {
+    const std::optional<OstOutputFormat> format = convertFormatFromArg(requested);
+    if (!format) {
+        return std::unexpected(AppActionResult{
+            false,
+            QStringLiteral("format must be one of %1 (direct IMAP upload is not available in this "
+                           "headless tool)")
+                .arg(supportedConvertFormatNames().join(QLatin1Char('/'))),
+            {}});
+    }
+    // Refuse gated-off formats up front with a precise reason instead of letting the worker
+    // attempt and fail: the PST/MSG/DBX writers are not spec-conformant, so their output
+    // cannot be opened by any reader (B7-12).
+    if (!isOutputFormatSupported(*format)) {
+        return std::unexpected(AppActionResult{
+            false,
+            QStringLiteral("%1 output is not supported (no spec-conformant writer); use %2")
+                .arg(requested.trimmed().toLower(),
+                     supportedConvertFormatNames().join(QStringLiteral(", "))),
+            {}});
+    }
+    return *format;
+}
+
 AppActionResult convertOst(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_dir = args.value(QStringLiteral("output_directory")).toString().trimmed();
@@ -3165,22 +3206,10 @@ AppActionResult convertOst(const QJsonObject& args) {
         return *error;
     }
 
-    const std::optional<OstOutputFormat> format =
-        convertFormatFromArg(args.value(QStringLiteral("format")).toString());
+    const std::expected<OstOutputFormat, AppActionResult> format =
+        resolveConvertFormat(args.value(QStringLiteral("format")).toString());
     if (!format) {
-        return {false,
-                QStringLiteral("format must be one of eml/mbox/html/pdf (direct IMAP upload is not "
-                               "available in this headless tool)"),
-                {}};
-    }
-    // Refuse gated-off formats up front with a precise reason instead of letting the
-    // worker attempt and fail: PST/MSG/DBX writers are not spec-conformant, so their
-    // output cannot be opened by any reader (B7-12).
-    if (!isOutputFormatSupported(*format)) {
-        return {false,
-                QStringLiteral("PST/MSG/DBX output is not supported (no spec-conformant writer); "
-                               "use eml, mbox, html, or pdf"),
-                {}};
+        return format.error();
     }
 
     OstConversionConfig config;
@@ -3221,15 +3250,15 @@ AppActionResult convertOst(const QJsonObject& args) {
 }
 
 QJsonObject convertOstParamsSchema() {
+    // Advertise ONLY the formats whose writers can produce a file a reader can open. The enum
+    // used to list pst/msg/dbx as well, which told the model those conversions were available
+    // when every one of them is refused -- a schema that invites a call it can only fail.
+    QJsonArray format_values;
+    for (const QString& name : supportedConvertFormatNames()) {
+        format_values.append(name);
+    }
     QJsonObject format_prop{{QStringLiteral("type"), QStringLiteral("string")},
-                            {QStringLiteral("enum"),
-                             QJsonArray{QStringLiteral("pst"),
-                                        QStringLiteral("eml"),
-                                        QStringLiteral("msg"),
-                                        QStringLiteral("mbox"),
-                                        QStringLiteral("dbx"),
-                                        QStringLiteral("html"),
-                                        QStringLiteral("pdf")}},
+                            {QStringLiteral("enum"), format_values},
                             {QStringLiteral("description"),
                              QStringLiteral("Output format to convert the store into")}};
     QJsonObject recover_prop{

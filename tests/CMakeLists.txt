@@ -1886,11 +1886,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/wifi_setup_script.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ost_conversion_worker.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/ost_conversion_worker.h
-        ${CMAKE_SOURCE_DIR}/src/core/pst_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/msg_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/dbx_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/mbox_writer.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/pst_splitter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/html_email_writer.cpp
@@ -6990,8 +6988,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ../src/core/ost_converter_controller.cpp
         ../src/core/ost_conversion_worker.cpp
         ../src/core/eml_writer.cpp
-        ../src/core/pst_writer.cpp
-        ../src/core/pst_splitter.cpp
         ../src/core/msg_writer.cpp
         ../src/core/mbox_writer.cpp
         ../src/core/dbx_writer.cpp
@@ -7024,58 +7020,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
              -o "${TEST_OUTPUT_DIR}/test_ost_converter_controller.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ost_converter_controller")
-endif()
-
-# test_pst_writer - PST binary creation, folder hierarchy, magic bytes
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
-    add_executable(test_pst_writer
-        unit/test_pst_writer.cpp
-        ../src/core/pst_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/pst_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_pst_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_pst_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_pst_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_pst_writer COMMAND test_pst_writer
-             -o "${TEST_OUTPUT_DIR}/test_pst_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_pst_writer")
-endif()
-
-# test_pst_splitter - volume rotation, single volume, error cases
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
-    add_executable(test_pst_splitter
-        unit/test_pst_splitter.cpp
-        ../src/core/pst_splitter.cpp
-        ../src/core/pst_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/pst_splitter.h
-        ../include/sak/pst_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_pst_splitter PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_pst_splitter PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_pst_splitter PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_pst_splitter COMMAND test_pst_splitter
-             -o "${TEST_OUTPUT_DIR}/test_pst_splitter.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_pst_splitter")
 endif()
 
 # test_msg_writer - OLE2 compound file, MAPI properties, magic bytes

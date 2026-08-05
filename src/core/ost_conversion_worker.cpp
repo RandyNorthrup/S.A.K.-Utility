@@ -19,8 +19,6 @@
 #include "sak/ost_converter_constants.h"
 #include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
-#include "sak/pst_splitter.h"
-#include "sak/pst_writer.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -142,11 +140,11 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         processRecoveredItems(parser.get(), config, result);
     }
 
-    finalizeWriters(result);
+    finalizeWriters();
 
     result.finished = QDateTime::currentDateTime();
 
-    logInfo("OST Converter: completed {} — {} items converted, {} failed",
+    logInfo("OST Converter: completed {} -- {} items converted, {} failed",
             source_path.toStdString(),
             std::to_string(result.items_converted),
             std::to_string(result.items_failed));
@@ -219,35 +217,6 @@ std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& 
 }
 
 namespace {
-constexpr uint64_t kPstRootFolderNid = 0x122;
-
-qint64 splitSizeToBytes(PstSplitSize split_size, qint64 custom_mb) {
-    switch (split_size) {
-    case PstSplitSize::Split2Gb:
-        return ost::kSplit2GbBytes;
-    case PstSplitSize::Split10Gb:
-        return ost::kSplit10GbBytes;
-    case PstSplitSize::Custom:
-        return custom_mb * kBytesPerMB;
-    default:
-        return ost::kSplit5GbBytes;
-    }
-}
-
-/// Pick an output base name whose <directory>/<name>.pst target does not already
-/// exist. Two sources with the same basename in different folders (mail.ost in
-/// A\ and B\) would otherwise both resolve to <directory>/mail.pst and the second
-/// job would truncate the first job's finished PST.
-QString uniqueOutputBaseName(const QString& directory, const QString& base_name) {
-    QString name = base_name;
-    int counter = 1;
-    while (QFile::exists(directory + QStringLiteral("/") + name + QStringLiteral(".pst"))) {
-        name = base_name + QStringLiteral("_") + QString::number(counter);
-        ++counter;
-    }
-    return name;
-}
-
 /// Give each source its own MBOX output subdirectory. The MboxWriter always emits
 /// a fixed <dir>/mailbox.mbox (combined) or per-folder files under <dir>, so two
 /// jobs sharing one output directory -- run concurrently or back to back -- would
@@ -302,22 +271,21 @@ void OstConversionWorker::createPerItemWriter(const OstConversionConfig& config,
         m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
         break;
     default:
-        break;  // Pst handled by the caller; ImapUpload has no per-item writer
+        // Pst and ImapUpload have no per-item writer; initializeFormatWriters refuses
+        // both before this is reached.
+        break;
     }
 }
 
 bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
                                                   const QString& source_path,
                                                   OstConversionResult& result) {
-    m_pst_writer.reset();
-    m_pst_splitter.reset();
     m_mbox_writer.reset();
     m_dbx_writer.reset();
     m_eml_writer.reset();
     m_msg_writer.reset();
     m_html_writer.reset();
     m_pdf_writer.reset();
-    m_pst_folder_nids.clear();
 
     // IMAP upload is checked first so the message names the real reason: nothing wires
     // ImapUploader to this pipeline, so the per-item path would count every message as
@@ -332,11 +300,13 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
         return false;
     }
 
-    // MSG (broken CFB directory tree) and DBX (no OE5/6 B-tree index) can only produce files
-    // no reader can open, so reject once here rather than writing per-message garbage. PST is
-    // the one unsupported format still routed to create() below, to keep its in-progress
-    // NDB/LTP writer path exercised; create() fails closed there.
-    if (!isOutputFormatSupported(config.format) && config.format != OstOutputFormat::Pst) {
+    // PST (no MS-PST writer at all), MSG (broken CFB directory tree) and DBX (no OE5/6
+    // B-tree index) can only produce files no reader can open, so reject once here rather
+    // than writing per-message garbage. PST used to be exempted from this gate and routed
+    // to a PstWriter whose create() refused unconditionally, which reported the generic
+    // "Failed to create PST output" -- a message that reads like a disk or permission
+    // problem instead of naming the real reason.
+    if (!isOutputFormatSupported(config.format)) {
         const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
                                 .arg(unsupportedFormatLabel(config.format));
         result.errors.append(msg);
@@ -344,48 +314,11 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
         return false;
     }
 
-    if (config.format != OstOutputFormat::Pst) {
-        createPerItemWriter(config, source_path);
-        return true;
-    }
-
-    const QString base_name = uniqueOutputBaseName(config.output_directory,
-                                                   QFileInfo(source_path).completeBaseName());
-    if (config.split_size != PstSplitSize::NoSplit) {
-        const qint64 max_bytes = splitSizeToBytes(config.split_size, config.custom_split_mb);
-        const QString base_path = config.output_directory + QStringLiteral("/") + base_name;
-        m_pst_splitter = std::make_unique<PstSplitter>(base_path, max_bytes);
-        if (!m_pst_splitter->create().has_value()) {
-            m_pst_splitter.reset();
-            result.errors.append(QStringLiteral("Failed to create PST output"));
-            Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-            return false;
-        }
-        return true;
-    }
-
-    const QString out_path = config.output_directory + QStringLiteral("/") + base_name +
-                             QStringLiteral(".pst");
-    m_pst_writer = std::make_unique<PstWriter>(out_path);
-    if (!m_pst_writer->create().has_value()) {
-        m_pst_writer.reset();
-        result.errors.append(QStringLiteral("Failed to create PST output"));
-        Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-        return false;
-    }
+    createPerItemWriter(config, source_path);
     return true;
 }
 
-void OstConversionWorker::finalizeWriters(OstConversionResult& result) {
-    if (m_pst_writer && !m_pst_writer->finalize().has_value()) {
-        result.errors.append(QStringLiteral("Failed to finalize PST output"));
-    }
-    if (m_pst_splitter) {
-        if (!m_pst_splitter->finalizeAll().has_value()) {
-            result.errors.append(QStringLiteral("Failed to finalize PST volumes"));
-        }
-        result.pst_volumes_created = m_pst_splitter->volumeCount();
-    }
+void OstConversionWorker::finalizeWriters() {
     if (m_mbox_writer) {
         m_mbox_writer->finalize();
     }
@@ -422,8 +355,6 @@ bool OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
     switch (config.format) {
     case OstOutputFormat::Eml:
         return writeItemEml(item, parser, folder_path, config, result);
-    case OstOutputFormat::Pst:
-        return writeItemPst(item, parser, folder_path, config, result);
     case OstOutputFormat::Msg:
         return writeItemMsg(item, parser, folder_path, config, result);
     case OstOutputFormat::Mbox:
@@ -434,10 +365,11 @@ bool OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
         return writeItemHtml(item, parser, folder_path, config, result);
     case OstOutputFormat::Pdf:
         return writeItemPdf(item, parser, folder_path, config, result);
+    case OstOutputFormat::Pst:
     case OstOutputFormat::ImapUpload:
-        // Unreachable: initializeFormatWriters rejects ImapUpload upfront because no
-        // upload is wired. Fail closed defensively so a message is never counted as
-        // converted when nothing was uploaded.
+        // Unreachable: initializeFormatWriters rejects both upfront -- PST has no
+        // spec-conformant writer and no IMAP upload is wired. Fail closed defensively
+        // so a message is never counted as converted when nothing was written or sent.
         ++result.items_failed;
         return false;
     }
@@ -660,83 +592,6 @@ bool OstConversionWorker::writeItemEml(const PstItemDetail& item,
     // The writer persists across the run, so its byte count is cumulative: assign
     // it rather than add a per-message delta.
     result.bytes_written = m_eml_writer->totalBytesWritten();
-    return true;
-}
-
-std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QString& folder_path) {
-    if (m_pst_folder_nids.contains(folder_path)) {
-        return m_pst_folder_nids.value(folder_path);
-    }
-
-    QStringList parts = folder_path.split(QStringLiteral("/"), Qt::SkipEmptyParts);
-    QString accumulated;
-    uint64_t parent_nid = kPstRootFolderNid;
-
-    for (const auto& part : parts) {
-        accumulated = accumulated.isEmpty() ? part : accumulated + QStringLiteral("/") + part;
-        if (!m_pst_folder_nids.contains(accumulated)) {
-            std::expected<uint64_t, error_code> folder_result;
-            if (m_pst_splitter) {
-                folder_result =
-                    m_pst_splitter->createFolder(parent_nid, part, QStringLiteral("IPF.Note"));
-            } else if (m_pst_writer) {
-                folder_result =
-                    m_pst_writer->createFolder(parent_nid, part, QStringLiteral("IPF.Note"));
-            } else {
-                return std::nullopt;
-            }
-            if (folder_result.has_value()) {
-                m_pst_folder_nids[accumulated] = folder_result.value();
-                parent_nid = folder_result.value();
-            }
-        } else {
-            parent_nid = m_pst_folder_nids[accumulated];
-        }
-    }
-
-    return m_pst_folder_nids.value(folder_path, kPstRootFolderNid);
-}
-
-bool OstConversionWorker::writeItemPst(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    auto hierarchy_result = ensurePstFolderHierarchy(folder_path);
-    if (!hierarchy_result.has_value()) {
-        ++result.items_failed;
-        return false;
-    }
-
-    uint64_t folder_nid = hierarchy_result.value();
-
-    std::expected<void, error_code> write_result;
-    if (m_pst_splitter) {
-        write_result = m_pst_splitter->writeMessage(folder_nid, item, attachment_data);
-    } else if (m_pst_writer) {
-        write_result = m_pst_writer->writeMessage(folder_nid, item, attachment_data);
-    } else {
-        ++result.items_failed;
-        return false;
-    }
-
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write PST item: " + item.subject);
-        return false;
-    }
-    if (m_pst_writer) {
-        result.bytes_written = m_pst_writer->currentSize();
-    }
     return true;
 }
 

@@ -67,8 +67,6 @@ private Q_SLOTS:
         QVERIFY(config.folder_exclude.isEmpty());
         QCOMPARE(config.recovery_mode, sak::RecoveryMode::Normal);
         QVERIFY(!config.recover_deleted_items);
-        QCOMPARE(config.split_size, sak::PstSplitSize::NoSplit);
-        QCOMPARE(config.custom_split_mb, static_cast<qint64>(5120));
         QVERIFY(config.prefix_filename_with_date);
         QVERIFY(config.preserve_folder_structure);
         QVERIFY(config.one_mbox_per_folder);
@@ -131,7 +129,6 @@ private Q_SLOTS:
         QCOMPARE(result.items_recovered, 0);
         QCOMPARE(result.folders_processed, 0);
         QCOMPARE(result.bytes_written, static_cast<qint64>(0));
-        QCOMPARE(result.pst_volumes_created, 0);
         QVERIFY(result.errors.isEmpty());
         QVERIFY(result.source_sha256.isEmpty());
     }
@@ -154,12 +151,6 @@ private Q_SLOTS:
     // ====================================================================
     // Constants
     // ====================================================================
-
-    void testSplitSizeConstants() {
-        QCOMPARE(sak::ost::kSplit2GbBytes, static_cast<int64_t>(2LL * 1024 * 1024 * 1024));
-        QCOMPARE(sak::ost::kSplit5GbBytes, static_cast<int64_t>(5LL * 1024 * 1024 * 1024));
-        QCOMPARE(sak::ost::kSplit10GbBytes, static_cast<int64_t>(10LL * 1024 * 1024 * 1024));
-    }
 
     void testQueueColumnEnum() {
         QCOMPARE(sak::ost::ColFile, 0);

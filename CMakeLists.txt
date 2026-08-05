@@ -142,7 +142,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # ============================================================================
-# Sanitizers — Strictest Settings for Debug and Testing
+# Sanitizers -- Strictest Settings for Debug and Testing
 # ============================================================================
 #
 # MSVC supports:  ASan only (/fsanitize=address)
@@ -707,8 +707,6 @@ set(CORE_SOURCES
     src/core/ost_converter_controller.cpp
     src/core/ost_conversion_worker.cpp
     src/core/eml_writer.cpp
-    src/core/pst_writer.cpp
-    src/core/pst_splitter.cpp
     src/core/msg_writer.cpp
     src/core/mbox_writer.cpp
     src/core/dbx_writer.cpp
@@ -722,8 +720,6 @@ set(CORE_SOURCES
     include/sak/ost_converter_controller.h
     include/sak/ost_conversion_worker.h
     include/sak/eml_writer.h
-    include/sak/pst_writer.h
-    include/sak/pst_splitter.h
     include/sak/msg_writer.h
     include/sak/mbox_writer.h
     include/sak/dbx_writer.h
@@ -1266,7 +1262,7 @@ add_dependencies(sak_utility sak_hfs_writer_cli)
 # (chrome-extension:// origin) -- so there is a single executable to ship and sign.
 
 # ============================================================================
-# Elevated Helper Executable (Phase 2 — per-task elevation)
+# Elevated Helper Executable (Phase 2 -- per-task elevation)
 # ============================================================================
 
 if(PLATFORM_WINDOWS)
@@ -1337,7 +1333,7 @@ if(PLATFORM_WINDOWS)
         QT_DISABLE_DEPRECATED_BEFORE=0x060000
     )
 
-    # Suppress linker-generated manifest — we embed via RC
+    # Suppress linker-generated manifest -- we embed via RC
     if(MSVC)
         set_target_properties(sak_elevated_helper PROPERTIES
             LINK_FLAGS "/MANIFEST:NO"
@@ -1667,7 +1663,7 @@ else()
 endif()
 
 # ============================================================================
-# Static Analysis Integration — Strictest Settings
+# Static Analysis Integration -- Strictest Settings
 # ============================================================================
 #
 # Enable during build:   cmake -B build -DENABLE_CLANG_TIDY=ON -DENABLE_CPPCHECK=ON
@@ -1712,7 +1708,7 @@ if(ENABLE_CPPCHECK)
         )
         message(STATUS "cppcheck:           ENABLED (exhaustive, all checks, C++23)")
     else()
-        message(WARNING "cppcheck not found — install from https://cppcheck.sourceforge.io/")
+        message(WARNING "cppcheck not found -- install from https://cppcheck.sourceforge.io/")
     endif()
 endif()
 

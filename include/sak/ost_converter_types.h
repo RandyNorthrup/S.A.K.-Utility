@@ -23,7 +23,6 @@ inline constexpr uint16_t kDefaultImapSslPort = 993;
 inline constexpr int kDefaultImapTimeoutSeconds = 30;
 inline constexpr int kDefaultImapMaxRetries = 3;
 inline constexpr int kDefaultOstConversionThreads = 2;
-inline constexpr qint64 kDefaultPstCustomSplitMb = 5120;
 
 // ============================================================================
 // Output Format
@@ -83,19 +82,6 @@ enum class RecoveryMode {
     Normal,       ///< Standard parsing - stop on critical errors
     SkipCorrupt,  ///< Skip corrupt blocks, log errors, continue
     DeepRecovery  ///< Scan all NBT nodes including orphaned ones
-};
-
-// ============================================================================
-// PST Split Size
-// ============================================================================
-
-/// @brief PST split size preset
-enum class PstSplitSize {
-    NoSplit,    ///< Single file (no splitting)
-    Split2Gb,   ///< 2 GB per volume (ANSI PST compat)
-    Split5Gb,   ///< 5 GB per volume (recommended)
-    Split10Gb,  ///< 10 GB per volume
-    Custom      ///< User-specified size in MB
 };
 
 // ============================================================================
@@ -190,10 +176,6 @@ struct OstConversionConfig {
     RecoveryMode recovery_mode = RecoveryMode::Normal;
     bool recover_deleted_items = false;
 
-    // PST output options
-    PstSplitSize split_size = PstSplitSize::NoSplit;
-    qint64 custom_split_mb = kDefaultPstCustomSplitMb;  ///< Custom split size in MB
-
     // EML/MSG options
     bool prefix_filename_with_date = true;
     bool preserve_folder_structure = true;
@@ -230,7 +212,6 @@ struct OstConversionResult {
     bool recovery_complete = true;
     int folders_processed = 0;
     qint64 bytes_written = 0;
-    int pst_volumes_created = 0;  ///< For split PST (1 if no split)
     QStringList errors;
     QDateTime started;
     QDateTime finished;

@@ -19,15 +19,6 @@ constexpr int kMaxThreads = 8;
 constexpr int kDefaultThreads = 2;
 
 // ============================================================================
-// PST Split Sizes (bytes)
-// ============================================================================
-
-constexpr int64_t kSplit2GbBytes = 2LL * 1024 * 1024 * 1024;
-constexpr int64_t kSplit5GbBytes = 5LL * 1024 * 1024 * 1024;
-constexpr int64_t kSplit10GbBytes = 10LL * 1024 * 1024 * 1024;
-constexpr int64_t kDefaultCustomSplitMb = 5120;
-
-// ============================================================================
 // EML Writer Limits
 // ============================================================================
 

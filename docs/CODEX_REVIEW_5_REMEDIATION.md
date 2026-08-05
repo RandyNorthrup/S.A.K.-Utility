@@ -2372,6 +2372,22 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [ ] R5-G19-2 Find declared-but-unwired features: manifest entries with supported:false,
       settings with no consumer, signals with no connection, handlers never registered,
       menu actions that do nothing
+  - [x] PST output (2026-08-05). PstWriter::create() refused unconditionally and nothing
+        ever set m_is_open, so the whole NDB/LTP writer plus PstSplitter was unreachable
+        (~500 lines) and would have emitted corrupt .pst if ungated. DELETED, along with
+        every consumer that could only serve it: PstSplitSize, split_size/custom_split_mb,
+        pst_volumes_created, the split-size GUI row (only visible when format == PST,
+        which the picker disables), writeItemPst and ensurePstFolderHierarchy. Two real
+        defects fell out: the worker EXEMPTED PST from the unsupported-format gate and
+        reported "Failed to create PST output" (reads like a disk/permission fault) rather
+        than naming the missing writer, and the email.convert_ost tool schema advertised
+        pst/msg/dbx in its format enum -- inviting a model call that can only be refused.
+        The schema enum is now derived from isOutputFormatSupported so it cannot drift.
+  - [ ] MSG and DBX are the same shape as PST and are still present: both are gated off by
+        isOutputFormatSupported, so createPerItemWriter's Msg/Dbx arms, writeItemMsg and
+        writeItemDbx, and MsgWriter/DbxWriter themselves are unreachable through the
+        pipeline. Decide per writer: make it spec-conformant or delete it as PST was.
+        Separate commit -- each has its own test target and its own blast radius.
 - [ ] R5-G19-3 Find stubs that return a plausible default instead of doing the work; this
       is the fallback rule applied to whole functions
 - [ ] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches

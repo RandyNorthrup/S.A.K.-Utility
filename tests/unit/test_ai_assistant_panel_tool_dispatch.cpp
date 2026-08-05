@@ -2210,6 +2210,56 @@ private Q_SLOTS:
         QVERIFY(found);
     }
 
+    // The advertised format enum must contain exactly the formats that can actually run.
+    // It used to also list pst/msg/dbx, whose writers are gated off, so the schema invited
+    // a call the op can only refuse -- and the model has nothing but the schema to go on.
+    void convertOstSchemaAdvertisesOnlyWorkingFormats() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+
+        QJsonArray formats;
+        bool found = false;
+        for (const auto& value : result.value(QStringLiteral("actions")).toArray()) {
+            const QJsonObject action = value.toObject();
+            if (action.value(QStringLiteral("id")).toString() !=
+                QLatin1String("email.convert_ost")) {
+                continue;
+            }
+            found = true;
+            formats = action.value(QStringLiteral("params"))
+                          .toObject()
+                          .value(QStringLiteral("properties"))
+                          .toObject()
+                          .value(QStringLiteral("format"))
+                          .toObject()
+                          .value(QStringLiteral("enum"))
+                          .toArray();
+        }
+        QVERIFY(found);
+        QVERIFY(!formats.isEmpty());
+
+        QStringList advertised;
+        for (const auto& value : formats) {
+            advertised.append(value.toString());
+        }
+        advertised.sort();
+        QCOMPARE(advertised,
+                 (QStringList{QStringLiteral("eml"),
+                              QStringLiteral("html"),
+                              QStringLiteral("mbox"),
+                              QStringLiteral("pdf")}));
+        // Named explicitly so a writer that becomes spec-conformant has to update this
+        // test deliberately rather than have the list silently grow.
+        QVERIFY(!advertised.contains(QStringLiteral("pst")));
+        QVERIFY(!advertised.contains(QStringLiteral("msg")));
+        QVERIFY(!advertised.contains(QStringLiteral("dbx")));
+        // IMAP upload is network egress, never a value this file-only tool accepts.
+        QVERIFY(!advertised.contains(QStringLiteral("imap_upload")));
+    }
+
     void convertOstBlockedInChatSession() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());

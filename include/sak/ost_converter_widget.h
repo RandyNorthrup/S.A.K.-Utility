@@ -88,7 +88,6 @@ private:
     void addOutputFormatRow(QVBoxLayout* layout, QWidget* group);
     void markUnsupportedFormats();
     void addOutputOptionsRow(QVBoxLayout* layout, QWidget* group);
-    void addPstSplitRow(QVBoxLayout* layout, QWidget* group);
     QWidget* createFilterSection();
     void addFilterDateRow(QVBoxLayout* layout);
     void addFilterTextRows(QVBoxLayout* layout);
@@ -118,8 +117,6 @@ private:
     QComboBox* m_format_combo{nullptr};
     QLineEdit* m_output_dir_edit{nullptr};
     QPushButton* m_browse_button{nullptr};
-    QCheckBox* m_split_check{nullptr};
-    QComboBox* m_split_size_combo{nullptr};
     QCheckBox* m_preserve_folders_check{nullptr};
     QCheckBox* m_prefix_date_check{nullptr};
     QSpinBox* m_threads_spin{nullptr};

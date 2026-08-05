@@ -319,25 +319,6 @@ void OstConverterWidget::addOutputOptionsRow(QVBoxLayout* layout, QWidget* group
     layout->addLayout(options_row);
 }
 
-void OstConverterWidget::addPstSplitRow(QVBoxLayout* layout, QWidget* group) {
-    auto* split_row = new QHBoxLayout();
-    m_split_check = new QCheckBox(tr("Split PST files:"), group);
-    m_split_check->setAccessibleName(tr("Split PST files"));
-    m_split_check->setVisible(false);
-    split_row->addWidget(m_split_check);
-
-    m_split_size_combo = new QComboBox(group);
-    m_split_size_combo->setAccessibleName(tr("PST split size"));
-    m_split_size_combo->addItem(tr("2 GB"), static_cast<int>(PstSplitSize::Split2Gb));
-    m_split_size_combo->addItem(tr("5 GB"), static_cast<int>(PstSplitSize::Split5Gb));
-    m_split_size_combo->addItem(tr("10 GB"), static_cast<int>(PstSplitSize::Split10Gb));
-    m_split_size_combo->setCurrentIndex(1);
-    m_split_size_combo->setVisible(false);
-    split_row->addWidget(m_split_size_combo);
-    split_row->addStretch(1);
-    layout->addLayout(split_row);
-}
-
 QWidget* OstConverterWidget::createOutputSettingsSection() {
     auto* group = new QGroupBox(tr("Output Settings"), this);
     auto* layout = new QVBoxLayout(group);
@@ -345,7 +326,6 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
 
     addOutputFormatRow(layout, group);
     addOutputOptionsRow(layout, group);
-    addPstSplitRow(layout, group);
     return group;
 }
 
@@ -439,8 +419,8 @@ QWidget* OstConverterWidget::createRecoverySection() {
     m_recover_deleted_check->setAccessibleName(tr("Recover deleted email items"));
     layout->addWidget(m_recover_deleted_check);
 
-    m_deep_recovery_check =
-        new QCheckBox(tr("Deep recovery (scan orphaned nodes — slow, thorough)"), m_recovery_group);
+    m_deep_recovery_check = new QCheckBox(
+        tr("Deep recovery (scan orphaned nodes -- slow, thorough)"), m_recovery_group);
     m_deep_recovery_check->setAccessibleName(tr("Enable deep email recovery"));
     m_deep_recovery_check->setToolTip(
         tr("Walk all NBT nodes to find hard-deleted messages not in any folder"));
@@ -554,7 +534,7 @@ QWidget* OstConverterWidget::createButtonBar() {
 }
 
 // ============================================================================
-// Slot Implementations — File Queue
+// Slot Implementations -- File Queue
 // ============================================================================
 
 void OstConverterWidget::onAddFilesClicked() {
@@ -581,7 +561,7 @@ void OstConverterWidget::onClearQueueClicked() {
 }
 
 // ============================================================================
-// Slot Implementations — Conversion Control
+// Slot Implementations -- Conversion Control
 // ============================================================================
 
 void OstConverterWidget::onConvertClicked() {
@@ -613,10 +593,6 @@ void OstConverterWidget::onFormatChanged(int /*index*/) {
     int format_val = m_format_combo->currentData().toInt();
     auto format = static_cast<OstOutputFormat>(format_val);
 
-    bool is_pst = (format == OstOutputFormat::Pst);
-    m_split_check->setVisible(is_pst);
-    m_split_size_combo->setVisible(is_pst);
-
     bool is_per_file = (format == OstOutputFormat::Eml || format == OstOutputFormat::Msg);
     m_prefix_date_check->setVisible(is_per_file);
     m_preserve_folders_check->setVisible(format != OstOutputFormat::ImapUpload);
@@ -628,7 +604,7 @@ void OstConverterWidget::onFormatChanged(int /*index*/) {
 }
 
 // ============================================================================
-// Slot Implementations — Controller Signals
+// Slot Implementations -- Controller Signals
 // ============================================================================
 
 void OstConverterWidget::onFileAdded(int /*index*/, OstConversionJob job) {
@@ -682,7 +658,7 @@ void OstConverterWidget::onFileProgressUpdated(int file_index,
         }
     }
 
-    Q_EMIT statusMessage(tr("Converting: %1 — %2")
+    Q_EMIT statusMessage(tr("Converting: %1 -- %2")
                              .arg(current_folder)
                              .arg(tr("%1 / %2 items").arg(items_done).arg(items_total)),
                          0);
@@ -795,11 +771,6 @@ OstConversionConfig OstConverterWidget::buildConfig() const {
         config.recovery_mode = RecoveryMode::SkipCorrupt;
     }
 
-    // PST split
-    if (m_split_check->isChecked() && m_split_check->isVisible()) {
-        config.split_size = static_cast<PstSplitSize>(m_split_size_combo->currentData().toInt());
-    }
-
     const bool filters_enabled = m_filters_enabled_check != nullptr &&
                                  m_filters_enabled_check->isChecked();
 
@@ -838,7 +809,7 @@ void OstConverterWidget::updateQueueRow(int row, const OstConversionJob& job) {
                            ost::ColItems,
                            new QTableWidgetItem(job.estimated_items > 0
                                                     ? QStringLiteral("~%1").arg(job.estimated_items)
-                                                    : tr("—")));
+                                                    : tr("-")));
     m_queue_table->setItem(row, ost::ColStatus, new QTableWidgetItem(statusLabel(job.status)));
     m_queue_table->setItem(row, ost::ColProgress, new QTableWidgetItem(QString()));
 }

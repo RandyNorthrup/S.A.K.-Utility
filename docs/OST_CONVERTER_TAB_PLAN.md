@@ -8,6 +8,36 @@
 
 ---
 
+## Implementation status (updated August 5, 2026)
+
+This document is the ORIGINAL plan and is kept as the design record. It is not a
+description of the shipped code. What actually landed differs on output formats:
+
+- **Shipped and supported**: EML, MBOX, HTML, PDF. `isOutputFormatSupported()` in
+  `include/sak/ost_converter_types.h` is the single source of truth, shared by the
+  worker, the GUI format picker and the headless `email.convert_ost` action.
+- **Gated off**: MSG (the CFB directory tree the writer emits is broken) and DBX (no
+  OE5/6 B-tree index). Both are listed in the picker as "not supported" and refused
+  before the source is opened.
+- **Removed**: PST output. `PstWriter` and `PstSplitter` were deleted. Their NDB/LTP
+  implementation was never MS-PST spec-conformant -- no ROOT/BREF pointers, no
+  PAGETRAILER/BLOCKTRAILER, no dwCRCPartial/dwCRCFull -- so no reader could mount the
+  result. `PstWriter::create()` had been gated to refuse unconditionally, which left
+  roughly five hundred lines of writer machinery that could not run and would emit
+  corrupt .pst files if anyone ever ungated it. Everything downstream of it went with
+  it: `PstSplitSize` and PST volume splitting, `OstConversionConfig::split_size` /
+  `custom_split_mb`, `OstConversionResult::pst_volumes_created`, and the split-size
+  GUI row (which was only ever visible when the format was PST).
+- **Not wired**: IMAP upload. `ImapUploader` exists but nothing connects it to the
+  conversion pipeline, so the format is reported unsupported rather than counting
+  every message as converted while uploading none.
+
+Sections below that describe `PstWriter`, `PstSplitter`, `PstSplitSize`, PST volume
+rotation or their tests describe code that no longer exists. Restoring PST output
+means writing a spec-conformant MS-PST writer, not reviving what was deleted.
+
+---
+
 ## Executive Summary
 
 The OST Converter tab adds bulk, multi-threaded OST/PST file conversion capabilities
