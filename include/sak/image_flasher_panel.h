@@ -23,6 +23,7 @@ class WindowsISODownloader;
 class LinuxISODownloader;
 class QVBoxLayout;
 class QThread;
+class QSystemTrayIcon;
 class WindowsUSBCreator;
 
 namespace sak {
@@ -177,8 +178,26 @@ private:
     [[nodiscard]] bool confirmSelectionStillValid();
     /** @brief Ask the user to confirm before destructive write */
     void showConfirmationDialog();
+    /** @brief Take the UI into the flashing state and hand off to the right writer. Called only
+     *         after every refusal gate has passed and the user has confirmed. */
+    void beginConfirmedFlash(bool isWindowsISO);
     /** @brief Build a formatted list of selected drives and detect system drives */
     QStringList buildDriveDetailsList(bool& hasSystemDrive) const;
+    /** @brief Selected drives at or above the configured large-drive threshold, formatted for
+     *         display. A drive whose capacity cannot be read is included: an unreadable capacity
+     *         is exactly what the warning guards against, so it is not silently passed. */
+    [[nodiscard]] QStringList selectedDrivesOverThreshold(qint64 thresholdBytes) const;
+    /** @brief Extra confirmation when a target exceeds the large-drive threshold and the warning
+     *         is enabled. Returns true to continue; false when the user declined (or the setting
+     *         is off but nothing is oversized). */
+    [[nodiscard]] bool confirmLargeDrives();
+    /** @brief Build the completion page's detail text, including the per-drive eject outcome when
+     *         eject-on-completion was applied. */
+    [[nodiscard]] static QString buildCompletionDetails(const FlashResult& result);
+    /** @brief Show a desktop notification for a finished flash, when the setting is enabled and
+     *         the system tray can actually display one. Logs and does nothing otherwise -- it never
+     *         reports a notification it did not show. */
+    void notifyFlashFinished(const FlashResult& result);
     /** @brief Build the destructive-operation confirmation message */
     QString buildFlashConfirmationMessage(const QStringList& driveDetails, bool isWindowsISO) const;
 
@@ -280,6 +299,11 @@ private:
     // wait for the worker instead of destroying a still-running QThread child.
     QThread* m_windowsUsbThread{nullptr};
     WindowsUSBCreator* m_windowsUsbCreator{nullptr};
+
+    // Tray icon used only to raise the flash-finished desktop notification. Created
+    // on first use and kept hidden between notifications, so an install with
+    // notifications turned off never puts an icon in the tray at all.
+    QSystemTrayIcon* m_notificationTray{nullptr};
 };
 
 }  // namespace sak

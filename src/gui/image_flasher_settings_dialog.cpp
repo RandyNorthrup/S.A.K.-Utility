@@ -33,6 +33,7 @@ constexpr int kBufferSizeMaximumMb = 512;
 constexpr int kBufferSizeStepMb = 16;
 constexpr int kConcurrentWritesMinimum = 1;
 constexpr int kConcurrentWritesMaximum = 16;
+constexpr int kDefaultMaxConcurrentWrites = 1;
 constexpr int kLargeDriveThresholdMinimumGb = 8;
 constexpr int kLargeDriveThresholdMaximumGb = 2048;
 constexpr int kLargeDriveThresholdStepGb = 8;
@@ -130,17 +131,15 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout)
 
 void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout) {
     Q_ASSERT(mainLayout);
-    // Safety group
+    // Safety group.
+    //
+    // There is deliberately no "show system drive warning" control here. The panel
+    // does not warn about the system drive, it REFUSES it outright -- and so does
+    // FlashCoordinator, independently, before any device is opened. A checkbox
+    // offering to turn that off would describe protection the user cannot actually
+    // disable, which is worse than no checkbox at all.
     auto* safetyGroup = new QGroupBox("Safety", this);
     auto* safetyLayout = new QVBoxLayout(safetyGroup);
-
-    m_showSystemDriveWarningCheck = new QCheckBox("Show system drive warning", safetyGroup);
-    auto* sysRow = new QHBoxLayout();
-    sysRow->addWidget(m_showSystemDriveWarningCheck);
-    sysRow->addWidget(new sak::InfoButton(
-        "Prevents accidentally overwriting your Windows installation drive (C:)", safetyGroup));
-    sysRow->addStretch();
-    safetyLayout->addLayout(sysRow);
 
     m_showLargeDriveWarningCheck = new QCheckBox("Show large drive warning", safetyGroup);
     auto* lgRow = new QHBoxLayout();
@@ -257,7 +256,6 @@ void ImageFlasherSettingsDialog::loadSettings() {
     m_maxConcurrentWritesSpin->setValue(config.getImageFlasherMaxConcurrentWrites());
 
     // Safety options
-    m_showSystemDriveWarningCheck->setChecked(config.getImageFlasherShowSystemDriveWarning());
     m_showLargeDriveWarningCheck->setChecked(config.getImageFlasherShowLargeDriveWarning());
     m_largeDriveThresholdSpin->setValue(config.getImageFlasherLargeDriveThreshold());
 
@@ -281,7 +279,6 @@ void ImageFlasherSettingsDialog::saveSettings() {
     config.setImageFlasherMaxConcurrentWrites(m_maxConcurrentWritesSpin->value());
 
     // Safety options
-    config.setImageFlasherShowSystemDriveWarning(m_showSystemDriveWarningCheck->isChecked());
     config.setImageFlasherShowLargeDriveWarning(m_showLargeDriveWarningCheck->isChecked());
     config.setImageFlasherLargeDriveThreshold(m_largeDriveThresholdSpin->value());
 
@@ -300,8 +297,7 @@ void ImageFlasherSettingsDialog::onAccept() {
 void ImageFlasherSettingsDialog::onResetDefaults() {
     m_validationModeCombo->setCurrentIndex(0);  // Full
     m_bufferSizeSpin->setValue(static_cast<int>(sak::kBufferAlignment));
-    m_maxConcurrentWritesSpin->setValue(1);
-    m_showSystemDriveWarningCheck->setChecked(true);
+    m_maxConcurrentWritesSpin->setValue(kDefaultMaxConcurrentWrites);
     m_showLargeDriveWarningCheck->setChecked(true);
     m_largeDriveThresholdSpin->setValue(kDefaultLargeDriveThresholdGb);
     m_unmountOnCompletionCheck->setChecked(true);

@@ -42,7 +42,6 @@ private:
     QComboBox* m_validationModeCombo;
     QSpinBox* m_bufferSizeSpin;
     QCheckBox* m_unmountOnCompletionCheck;
-    QCheckBox* m_showSystemDriveWarningCheck;
     QCheckBox* m_showLargeDriveWarningCheck;
     QSpinBox* m_largeDriveThresholdSpin;
     QSpinBox* m_maxConcurrentWritesSpin;

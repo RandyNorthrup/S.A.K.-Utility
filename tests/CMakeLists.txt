@@ -4473,6 +4473,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     message(STATUS "Added unit test: test_flash_types")
 endif()
 
+# test_flasher_policy - pure decisions behind the Image Flasher settings:
+# the large-drive warning threshold and the concurrent-write ceiling.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flasher_policy.cpp")
+    add_executable(test_flasher_policy
+        unit/test_flasher_policy.cpp
+        ../include/sak/flasher_policy.h
+    )
+    set_target_properties(test_flasher_policy PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_flasher_policy PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_flasher_policy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_flasher_policy COMMAND test_flasher_policy
+             -o "${TEST_OUTPUT_DIR}/test_flasher_policy.txt,txt" -o -,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_flasher_policy")
+endif()
+
 # test_quick_action - QuickAction static helpers and base class (TST-10)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
     add_executable(test_quick_action

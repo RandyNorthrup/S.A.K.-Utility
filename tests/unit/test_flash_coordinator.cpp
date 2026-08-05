@@ -20,20 +20,25 @@ class TestFlashCoordinator : public QObject {
 private Q_SLOTS:
     void init();
 
-    // ── Construction defaults ───────────────────────────────
+    // -- Construction defaults -------------------------------
     void testInitialState();
     void testInitialProgress();
     void testVerificationEnabledByDefault();
 
-    // ── Configuration ───────────────────────────────────────
+    // -- Configuration ---------------------------------------
     void testSetVerification();
     void testSetBufferSize();
+    void testDefaultConcurrencyAndEject();
+    void testSetMaxConcurrentWrites();
+    void testSetMaxConcurrentWritesRejectsBelowOne();
+    void testSetEjectOnCompletion();
+    void testStartableWorkerCountSeam();
 
-    // ── State queries ───────────────────────────────────────
+    // -- State queries ---------------------------------------
     void testIsFlashingWhenIdle();
     void testStateWhenIdle();
 
-    // ── startFlash guards ───────────────────────────────────
+    // -- startFlash guards -----------------------------------
     void testStartFlashEmptyDrives();
     void testStartFlashRejectsZeroLengthImage();
     void testStartFlashRejectsDuplicateTargets();
@@ -88,6 +93,50 @@ void TestFlashCoordinator::testSetBufferSize() {
     // Should not crash
     constexpr qint64 size128MB = 128LL * 1024 * 1024;
     m_coord->setBufferSize(size128MB);
+}
+
+void TestFlashCoordinator::testDefaultConcurrencyAndEject() {
+    // The defaults must match what the settings dialog shows an untouched install,
+    // or the dialog describes behaviour the coordinator does not have.
+    QCOMPARE(m_coord->maxConcurrentWrites(), 1);
+    // Ejecting is opt-in: a coordinator nobody configured must not start pulling
+    // drives out from under the caller.
+    QVERIFY(!m_coord->ejectOnCompletion());
+}
+
+void TestFlashCoordinator::testSetMaxConcurrentWrites() {
+    m_coord->setMaxConcurrentWrites(4);
+    QCOMPARE(m_coord->maxConcurrentWrites(), 4);
+    m_coord->setMaxConcurrentWrites(1);
+    QCOMPARE(m_coord->maxConcurrentWrites(), 1);
+}
+
+void TestFlashCoordinator::testSetMaxConcurrentWritesRejectsBelowOne() {
+    // A ceiling below one would start no worker at all, so the run could never
+    // finish. Refuse it and keep the previous ceiling rather than silently
+    // substituting a number the caller did not ask for.
+    m_coord->setMaxConcurrentWrites(3);
+    m_coord->setMaxConcurrentWrites(0);
+    QCOMPARE(m_coord->maxConcurrentWrites(), 3);
+    m_coord->setMaxConcurrentWrites(-8);
+    QCOMPARE(m_coord->maxConcurrentWrites(), 3);
+}
+
+void TestFlashCoordinator::testSetEjectOnCompletion() {
+    m_coord->setEjectOnCompletion(true);
+    QVERIFY(m_coord->ejectOnCompletion());
+    m_coord->setEjectOnCompletion(false);
+    QVERIFY(!m_coord->ejectOnCompletion());
+}
+
+void TestFlashCoordinator::testStartableWorkerCountSeam() {
+    // The scheduling decision the coordinator makes each time a drive finishes.
+    // Exhaustively covered in test_flasher_policy; this asserts the coordinator
+    // really routes through it rather than re-deriving the answer.
+    QCOMPARE(FlashCoordinator::startableWorkerCount(1, 0, 3), 1);
+    QCOMPARE(FlashCoordinator::startableWorkerCount(1, 1, 2), 0);
+    QCOMPARE(FlashCoordinator::startableWorkerCount(4, 1, 5), 3);
+    QCOMPARE(FlashCoordinator::startableWorkerCount(4, 0, 0), 0);
 }
 
 // ============================================================================

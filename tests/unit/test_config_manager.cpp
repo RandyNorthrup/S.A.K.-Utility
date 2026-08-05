@@ -51,6 +51,7 @@ private Q_SLOTS:
     // Typed accessors -- image flasher
     void imageFlasherValidationMode_setGet();
     void imageFlasherBufferSize_setGet();
+    void imageFlasherDefaults_doNotRecreateRetiredSystemDriveWarning();
 
     // Getter-side invariant enforcement (mirror setter invariants on read)
     void typedGetters_reclampOutOfRangeStoredValues();
@@ -224,6 +225,24 @@ void ConfigManagerTests::imageFlasherBufferSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setImageFlasherBufferSize(2048);
     QCOMPARE(mgr.getImageFlasherBufferSize(), 2048);
+}
+
+// image_flasher/show_system_drive_warning was retired: the system-drive block is
+// unconditional, so a switch that claimed to control it described protection the
+// user could not actually turn off. Nothing may put it back -- a default for it
+// would resurrect the control in every config file.
+void ConfigManagerTests::imageFlasherDefaults_doNotRecreateRetiredSystemDriveWarning() {
+    auto& mgr = sak::ConfigManager::instance();
+    mgr.resetToDefaults();
+
+    // The flasher defaults really did run (otherwise the absence below proves
+    // nothing).
+    QVERIFY(mgr.contains("image_flasher/show_large_drive_warning"));
+    QVERIFY(mgr.contains("image_flasher/large_drive_threshold"));
+    QVERIFY(mgr.contains("image_flasher/max_concurrent_writes"));
+    QVERIFY(mgr.contains("image_flasher/unmount_on_completion"));
+
+    QVERIFY(!mgr.contains("image_flasher/show_system_drive_warning"));
 }
 
 // ============================================================================

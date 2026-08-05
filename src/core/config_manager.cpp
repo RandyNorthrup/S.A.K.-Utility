@@ -102,8 +102,13 @@ void ConfigManager::initializeFlasherDefaults() {
     if (!contains("image_flasher/unmount_on_completion")) {
         setValue("image_flasher/unmount_on_completion", true);
     }
-    if (!contains("image_flasher/show_system_drive_warning")) {
-        setValue("image_flasher/show_system_drive_warning", true);
+    // image_flasher/show_system_drive_warning is retired, not defaulted: the
+    // system-drive block is unconditional in both ImageFlasherPanel and
+    // FlashCoordinator, so the setting described protection that could not be turned
+    // off. Drop it from installs that already carry it, so a stored value cannot
+    // outlive the control it described.
+    if (contains("image_flasher/show_system_drive_warning")) {
+        remove("image_flasher/show_system_drive_warning");
     }
     if (!contains("image_flasher/show_large_drive_warning")) {
         setValue("image_flasher/show_large_drive_warning", true);
@@ -296,14 +301,6 @@ bool ConfigManager::getImageFlasherUnmountOnCompletion() const {
 
 void ConfigManager::setImageFlasherUnmountOnCompletion(bool unmount) {
     setValue("image_flasher/unmount_on_completion", unmount);
-}
-
-bool ConfigManager::getImageFlasherShowSystemDriveWarning() const {
-    return getValue("image_flasher/show_system_drive_warning", true).toBool();
-}
-
-void ConfigManager::setImageFlasherShowSystemDriveWarning(bool show) {
-    setValue("image_flasher/show_system_drive_warning", show);
 }
 
 bool ConfigManager::getImageFlasherShowLargeDriveWarning() const {

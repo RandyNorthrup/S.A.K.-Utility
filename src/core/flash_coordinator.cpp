@@ -5,6 +5,7 @@
 
 #include "sak/drive_unmounter.h"
 #include "sak/flash_worker.h"
+#include "sak/flasher_policy.h"
 #include "sak/input_validator.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -23,6 +24,9 @@
 namespace {
 constexpr qint64 kDefaultFlashBufferSizeMb = 256;
 constexpr int kMaxPhysicalDriveNumber = 99;
+// One drive at a time unless a caller raises it. Matches the ConfigManager default
+// the settings dialog shows, so an untouched install behaves the way the dialog says.
+constexpr int kDefaultMaxConcurrentWrites = 1;
 constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
 
 // Tri-state result of the OS-disk identity probe. Undetermined MUST be treated
@@ -128,6 +132,9 @@ FlashCoordinator::FlashCoordinator(QObject* parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
     , m_bufferSize(kDefaultFlashBufferSizeMb * sak::kBytesPerMB)
+    , m_maxConcurrentWrites(kDefaultMaxConcurrentWrites)
+    , m_ejectOnCompletion(false)
+    , m_nextWorkerIndex(0)
     // Most thorough by default. A caller that never calls setValidationMode gets the same
     // behaviour FlashWorker had on its own, so this wiring cannot weaken an existing run.
     , m_validationMode(sak::ValidationMode::Full)
@@ -290,6 +297,14 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
     m_state = sak::FlashState::Flashing;
     Q_EMIT stateChanged(m_state, QString("Writing to %1 drives...").arg(targetDrives.size()));
 
+    // Build every worker up front, but start only as many as the concurrent-write
+    // ceiling allows; the rest are queued and started as earlier drives finish.
+    // Construction opens nothing -- FlashWorker opens its image source and its
+    // device handle on its own thread inside execute() -- so a queued worker costs
+    // no handle while it waits.
+    // Point the queue at the first worker THIS run creates rather than at index 0,
+    // so a leftover finished worker from a previous run can never be restarted.
+    m_nextWorkerIndex = m_workers.size();
     for (const QString& drive : targetDrives) {
         std::unique_ptr<ImageSource> workerSource;
         if (CompressedImageSource::isCompressed(imagePath)) {
@@ -303,13 +318,49 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
         worker->setBufferSize(m_bufferSize);
         worker->setValidationMode(m_validationMode);
         connectWorkerSignals(worker.get());
-        worker->start();
         m_workers.push_back(std::move(worker));
     }
 
-    m_progress.activeDrives = static_cast<int>(m_workers.size());
+    startPendingWorkers();
 
     return true;
+}
+
+void FlashCoordinator::startPendingWorkers() {
+    std::vector<FlashWorker*> toStart;
+    {
+        QMutexLocker locker(&m_mutex);
+        // A cancelled or already-finished run must not start another drive. Without
+        // this, cancelling a queued multi-drive run would tear down the running
+        // worker and then start the next queued one on the back of its failure
+        // report -- the run would keep writing drives after the user stopped it.
+        if (m_isCancelled.load() || m_state != sak::FlashState::Flashing) {
+            return;
+        }
+        // Saturate rather than subtract blind: m_workers is cleared at teardown while
+        // m_nextWorkerIndex keeps its value, and an unsigned underflow here would turn
+        // "nothing queued" into a huge pending count.
+        const size_t queued =
+            m_nextWorkerIndex < m_workers.size() ? m_workers.size() - m_nextWorkerIndex : 0;
+        const int pending = static_cast<int>(queued);
+        const int startable =
+            startableWorkerCount(m_maxConcurrentWrites, m_progress.activeDrives, pending);
+        for (int i = 0; i < startable; ++i) {
+            toStart.push_back(m_workers[m_nextWorkerIndex].get());
+            ++m_nextWorkerIndex;
+        }
+        // Count them as active before releasing the lock so a completion arriving
+        // between here and start() cannot see a stale slot as free.
+        m_progress.activeDrives += startable;
+    }
+
+    for (FlashWorker* worker : toStart) {
+        worker->start();
+    }
+}
+
+int FlashCoordinator::startableWorkerCount(int maxConcurrent, int running, int pending) {
+    return sak::startableWorkerCount(maxConcurrent, running, pending);
 }
 
 void FlashCoordinator::cancel() {
@@ -325,8 +376,29 @@ void FlashCoordinator::cancel() {
         worker->requestStop();
     }
 
+    markQueuedWorkersCancelled();
+
     m_state = sak::FlashState::Cancelled;
     Q_EMIT stateChanged(m_state, "Cancelled by user");
+}
+
+void FlashCoordinator::markQueuedWorkersCancelled() {
+    // Workers still queued behind the concurrent-write ceiling were never started,
+    // so they will never emit a terminal signal of their own. Count them as failed
+    // now: without this the finalize predicate (completed + failed == targets) can
+    // never be satisfied after a cancel, and the run would wait forever for drives
+    // that are never going to be written.
+    QMutexLocker locker(&m_mutex);
+    while (m_nextWorkerIndex < m_workers.size()) {
+        const QString devicePath = m_workers[m_nextWorkerIndex]->targetDevice();
+        ++m_nextWorkerIndex;
+        m_progress.failedDrives++;
+        m_result.failedDrives.append(devicePath);
+        m_result.errorMessages.append(
+            QString("%1: cancelled before writing started").arg(devicePath));
+        sak::logInfo(
+            QString("Cancelled queued drive %1 before it started").arg(devicePath).toStdString());
+    }
 }
 
 bool FlashCoordinator::isFlashing() const {
@@ -371,6 +443,31 @@ void FlashCoordinator::setBufferSize(qint64 sizeBytes) {
 
 void FlashCoordinator::setValidationMode(sak::ValidationMode mode) {
     m_validationMode = mode;
+}
+
+void FlashCoordinator::setMaxConcurrentWrites(int maxWrites) {
+    if (maxWrites < 1) {
+        // A ceiling below one would start nothing and hang the run. Refuse it and
+        // say so rather than silently substituting a number the caller did not ask
+        // for.
+        sak::logError("Refusing a concurrent-write ceiling of {}; keeping {}",
+                      maxWrites,
+                      m_maxConcurrentWrites);
+        return;
+    }
+    m_maxConcurrentWrites = maxWrites;
+}
+
+int FlashCoordinator::maxConcurrentWrites() const {
+    return m_maxConcurrentWrites;
+}
+
+void FlashCoordinator::setEjectOnCompletion(bool eject) {
+    m_ejectOnCompletion = eject;
+}
+
+bool FlashCoordinator::ejectOnCompletion() const {
+    return m_ejectOnCompletion;
 }
 
 void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) {
@@ -492,7 +589,11 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
 
     if (terminal) {
         emitTerminalOutcome(terminalState, terminalResult, terminalMessage);
+        return;
     }
+
+    // A slot freed up: let the next queued drive start.
+    startPendingWorkers();
 }
 
 void FlashCoordinator::onWorkerFailed(const QString& error) {
@@ -564,7 +665,13 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
 
     if (terminal) {
         emitTerminalOutcome(terminalState, terminalResult, terminalMessage);
+        return;
     }
+
+    // One drive failing does not abandon the rest of the queue -- the remaining
+    // targets are independent disks. startPendingWorkers() refuses to start
+    // anything once the run has been cancelled.
+    startPendingWorkers();
 }
 
 void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
@@ -577,9 +684,44 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
     // Re-onlining a half-written disk is safe: it cannot corrupt anything further,
     // and the user can immediately re-partition or re-flash it.
     reonlineDrives(result.successfulDrives + result.failedDrives);
+
+    // Eject AFTER re-onlining, never instead of it. The OFFLINE attribute is
+    // persistent, so ejecting while it is still set would leave a drive that comes
+    // back offline the next time it is plugged in -- the eject must remove a normal,
+    // online disk.
+    // ejectCompletedDrives opens devices, so it runs here with m_mutex released.
+    sak::FlashResult finalResult = result;
+    if (m_ejectOnCompletion) {
+        ejectCompletedDrives(finalResult);
+    }
+
     Q_EMIT stateChanged(state, statusMessage);
-    Q_EMIT flashCompleted(result);
+    Q_EMIT flashCompleted(finalResult);
     cleanupWorkers();
+}
+
+void FlashCoordinator::ejectCompletedDrives(sak::FlashResult& result) {
+    DriveUnmounter unmounter;
+    for (const QString& devicePath : result.successfulDrives) {
+        const int driveNumber = parsePhysicalDriveNumber(devicePath);
+        if (driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
+            result.ejectFailedDrives.append(devicePath);
+            sak::logWarning(
+                QString("Cannot eject %1: unparseable drive number").arg(devicePath).toStdString());
+            continue;
+        }
+        if (unmounter.ejectDrive(driveNumber)) {
+            result.ejectedDrives.append(devicePath);
+            continue;
+        }
+        // Not a flash failure: the image is written and verified. It is a removal
+        // failure, and it is reported as one so the user does not unplug a drive
+        // Windows still has mounted.
+        result.ejectFailedDrives.append(devicePath);
+        sak::logWarning(QString("Flashed %1 but could not eject it: %2")
+                            .arg(devicePath, unmounter.lastError())
+                            .toStdString());
+    }
 }
 
 void FlashCoordinator::reonlineDrives(const QStringList& drivePaths) {
@@ -904,6 +1046,9 @@ void FlashCoordinator::cleanupWorkers() {
     }
 
     m_workers.clear();
+    // The queue index is an index into m_workers; leaving it behind would make it
+    // point past the end of an empty vector.
+    m_nextWorkerIndex = 0;
 
     if (m_imageSource) {
         m_imageSource->close();

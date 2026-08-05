@@ -16,6 +16,7 @@
 // only forward declares that enum so it does not drag <windows.h> into every GUI header;
 // a translation unit that has to name the enumerators includes the real header itself.
 #include "sak/flash_worker.h"
+#include "sak/flasher_policy.h"
 #include "sak/format_utils.h"
 #include "sak/image_flasher_settings_dialog.h"
 #include "sak/iso_analyzer.h"
@@ -40,7 +41,9 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QSystemTrayIcon>
 #include <QThread>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -57,6 +60,9 @@ constexpr int kCompletionPageIndex = 3;
 constexpr int kIsoInfoLabelColumnMinWidth = 100;
 constexpr int kCompletionMessageFontSize = 14;
 constexpr int kImageFlasherStatusTimeoutMs = kTimerStatusDefaultMs;
+// How long the flash-finished toast stays up, and how long the tray icon that
+// carries it is kept alive before being hidden again.
+constexpr int kNotificationTimeoutMs = 10'000;
 
 // Stable identity signature for a physical drive. Binds the selection to the concrete device so a
 // mid-flow swap (same PhysicalDriveN number, different hardware) or disk-number reuse is detected.
@@ -819,13 +825,12 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
         m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     }
 
-    QString details = QString("Successful: %1\nFailed: %2")
-                          .arg(result.successfulDrives.size())
-                          .arg(result.failedDrives.size());
-    m_completionDetailsLabel->setText(details);
+    m_completionDetailsLabel->setText(buildCompletionDetails(result));
 
     m_stackedWidget->setCurrentWidget(m_completionPage);
     updateNavigationButtons();
+
+    notifyFlashFinished(result);
 
     Q_EMIT flashCompleted(result.totalDrives(), result.bytesWritten);
     Q_EMIT statusMessage(QString("Image Flasher: Flash %1 - %2 successful, %3 failed")
@@ -833,6 +838,63 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
                              .arg(result.successfulDrives.size())
                              .arg(result.failedDrives.size()),
                          kImageFlasherStatusTimeoutMs);
+}
+
+QString ImageFlasherPanel::buildCompletionDetails(const FlashResult& result) {
+    QString details = QString("Successful: %1\nFailed: %2")
+                          .arg(result.successfulDrives.size())
+                          .arg(result.failedDrives.size());
+
+    if (!result.ejectedDrives.isEmpty()) {
+        details += QString("\nEjected (safe to remove): %1").arg(result.ejectedDrives.size());
+    }
+    if (!result.ejectFailedDrives.isEmpty()) {
+        // Never let a failed eject read as a successful one. The write is fine; the
+        // drive is simply still mounted, and pulling it now can lose the last writes
+        // Windows has cached.
+        details += QString(
+                       "\nCould NOT be ejected (%1) -- use Safely Remove Hardware before "
+                       "unplugging:\n%2")
+                       .arg(result.ejectFailedDrives.size())
+                       .arg(result.ejectFailedDrives.join("\n"));
+    }
+    return details;
+}
+
+void ImageFlasherPanel::notifyFlashFinished(const FlashResult& result) {
+    if (!sak::ConfigManager::instance().getImageFlasherEnableNotifications()) {
+        return;
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable() || !QSystemTrayIcon::supportsMessages()) {
+        // Say so rather than silently doing nothing: the user turned notifications on
+        // and is entitled to know why none arrived.
+        logWarning(
+            "Image flasher: desktop notifications are enabled but this session's system "
+            "tray cannot display messages; no notification shown");
+        return;
+    }
+
+    if (!m_notificationTray) {
+        m_notificationTray = new QSystemTrayIcon(
+            QIcon(QStringLiteral(":/icons/icons/panel_image_flasher.svg")), this);
+    }
+    m_notificationTray->show();
+    m_notificationTray->showMessage(
+        tr("Image Flasher"),
+        QString("Flash %1: %2 successful, %3 failed.")
+            .arg(result.success ? tr("completed") : tr("finished with errors"))
+            .arg(result.successfulDrives.size())
+            .arg(result.failedDrives.size()),
+        result.success ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning,
+        kNotificationTimeoutMs);
+
+    // Drop the tray icon again once the message has had its time on screen; it exists
+    // only to carry the notification, not to give the app a permanent tray presence.
+    QTimer::singleShot(kNotificationTimeoutMs, m_notificationTray, [this]() {
+        if (m_notificationTray) {
+            m_notificationTray->hide();
+        }
+    });
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
@@ -1043,6 +1105,69 @@ QStringList ImageFlasherPanel::buildDriveDetailsList(bool& hasSystemDrive) const
     return driveDetails;
 }
 
+QStringList ImageFlasherPanel::selectedDrivesOverThreshold(qint64 thresholdBytes) const {
+    const QList<DriveInfo> current = m_driveScanner->getDrives();
+    QStringList oversized;
+    for (const QString& drivePath : m_selectedDrives) {
+        const auto match = std::find_if(current.cbegin(), current.cend(), [&](const DriveInfo& d) {
+            return d.devicePath == drivePath;
+        });
+        // A drive that is no longer in the scan has no readable capacity; -1 makes
+        // driveExceedsLargeThreshold warn instead of quietly passing it.
+        const qint64 driveBytes = (match == current.cend()) ? -1 : match->size;
+        if (driveExceedsLargeThreshold(driveBytes, thresholdBytes)) {
+            oversized << QString("  \u2022 %1").arg(findDriveDisplayText(drivePath));
+        }
+    }
+    return oversized;
+}
+
+bool ImageFlasherPanel::confirmLargeDrives() {
+    const auto& config = sak::ConfigManager::instance();
+    if (!config.getImageFlasherShowLargeDriveWarning()) {
+        return true;
+    }
+
+    const int thresholdGb = config.getImageFlasherLargeDriveThreshold();
+    const qint64 thresholdBytes = largeDriveThresholdBytes(thresholdGb);
+    if (thresholdBytes < 0) {
+        // Name the unusable value instead of skipping the check the user asked for.
+        // Every selected drive is then reported as oversized (fail closed), so the
+        // prompt still appears rather than silently disappearing.
+        logError(
+            "Image flasher: unusable large-drive threshold {} GB; warning about every "
+            "selected drive",
+            thresholdGb);
+    }
+
+    const QStringList oversized = selectedDrivesOverThreshold(thresholdBytes);
+    if (oversized.isEmpty()) {
+        return true;
+    }
+
+    // Say which of the two situations this is. Claiming the listed drives exceed a
+    // threshold that could not be applied would be a lie about why they are listed.
+    const QString lead =
+        thresholdBytes < 0 ? QString(
+                                 "The large-drive threshold (%1 GB) could not be applied, so every "
+                                 "selected target is listed:")
+                                 .arg(thresholdGb)
+                           : QString("The following target(s) are larger than the %1 GB threshold:")
+                                 .arg(thresholdGb);
+
+    const auto reply = sak::showWarningLogged(
+        this,
+        "Large Drive Selected",
+        QString("%1\n\n%2\n\n"
+                "Drives this size are usually internal or external hard disks rather than "
+                "USB sticks or SD cards. Flashing one ERASES ALL DATA on it.\n\n"
+                "Continue with these targets?")
+            .arg(lead, oversized.join("\n")),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    return reply == QMessageBox::Yes;
+}
+
 QString ImageFlasherPanel::findDriveDisplayText(const QString& devicePath) const {
     for (int i = 0; i < m_driveListWidget->count(); ++i) {
         auto* item = m_driveListWidget->item(i);
@@ -1107,6 +1232,13 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
+    // Large-drive warning, if the user left it on. It runs BEFORE the destructive
+    // confirmation, so declining here costs nothing: it is a chance to notice an
+    // internal disk in the list, not a second copy of the same prompt.
+    if (!confirmLargeDrives()) {
+        return;
+    }
+
     QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
 
     auto reply = sak::showWarningLogged(this,
@@ -1119,6 +1251,10 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
+    beginConfirmedFlash(isWindowsISO);
+}
+
+void ImageFlasherPanel::beginConfirmedFlash(bool isWindowsISO) {
     // Disable UI immediately upon confirmation
     m_isFlashing = true;
     m_flashButton->setEnabled(false);
@@ -1167,12 +1303,20 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
         Q_EMIT progressUpdate(percentage, kPercentMax);
     });
 
-    connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {
+    connect(creator, &WindowsUSBCreator::completed, this, [this]() {
         m_isFlashing = false;
         FlashResult result;
         result.success = true;
         result.successfulDrives = m_selectedDrives;
         result.bytesWritten = m_imageSize * m_selectedDrives.size();
+
+        // Windows installation media is written by WindowsUSBCreator, not by
+        // FlashCoordinator, so this path has to apply the eject-on-completion setting
+        // itself. Both paths run the same coordinator routine, so a Windows USB and a
+        // raw image report removal identically.
+        if (sak::ConfigManager::instance().getImageFlasherUnmountOnCompletion()) {
+            FlashCoordinator::ejectCompletedDrives(result);
+        }
 
         onFlashCompleted(result);
     });
@@ -1294,9 +1438,21 @@ void ImageFlasherPanel::applyFlasherSettings() {
                       bufferSizeMb);
     }
 
-    sak::logInfo("Image flasher settings applied: validation='{}', buffer={} MB",
-                 modeSetting.toStdString(),
-                 bufferSizeMb);
+    // setMaxConcurrentWrites refuses a value below 1 and says so, so a corrupt
+    // setting keeps the previous ceiling instead of stalling the run.
+    const int maxConcurrent = config.getImageFlasherMaxConcurrentWrites();
+    m_flashCoordinator->setMaxConcurrentWrites(maxConcurrent);
+
+    const bool ejectOnCompletion = config.getImageFlasherUnmountOnCompletion();
+    m_flashCoordinator->setEjectOnCompletion(ejectOnCompletion);
+
+    sak::logInfo(
+        "Image flasher settings applied: validation='{}', buffer={} MB, "
+        "max concurrent writes={}, eject on completion={}",
+        modeSetting.toStdString(),
+        bufferSizeMb,
+        m_flashCoordinator->maxConcurrentWrites(),
+        ejectOnCompletion);
 }
 
 bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {

@@ -79,6 +79,13 @@ struct FlashResult {
     QStringList failedDrives;
     QStringList errorMessages;
     QString sourceChecksum;
+    /// Drives the eject-on-completion setting actually ejected, and those it could
+    /// not. Both stay empty when the setting is off. Reported separately from
+    /// successfulDrives because a flash can succeed on a drive that then refuses to
+    /// eject, and telling the user a drive is safe to unplug when it is not is the
+    /// failure this reporting exists to prevent.
+    QStringList ejectedDrives;
+    QStringList ejectFailedDrives;
 
     bool hasErrors() const { return !failedDrives.isEmpty(); }
     int totalDrives() const { return successfulDrives.size() + failedDrives.size(); }
@@ -214,6 +221,47 @@ public:
      */
     void setValidationMode(sak::ValidationMode mode);
 
+    /**
+     * @brief Cap how many target drives are written at the same time.
+     * @param maxWrites Ceiling on concurrent writes (>= 1).
+     *
+     * Drives beyond the ceiling are queued and started as earlier ones finish, so a
+     * multi-drive run still writes every target -- it just does not contend for the
+     * same bus. A value below 1 is refused (logged, ceiling unchanged) rather than
+     * accepted as "write nothing".
+     */
+    void setMaxConcurrentWrites(int maxWrites);
+
+    /// @brief Current concurrent-write ceiling.
+    [[nodiscard]] int maxConcurrentWrites() const;
+
+    /**
+     * @brief Eject each successfully flashed drive when the run finishes.
+     * @param eject true to eject, false to leave the drives mounted.
+     *
+     * Only SUCCESSFUL drives are ejected. A failed target is left mounted so it can
+     * be inspected or re-flashed without being unplugged and re-inserted first. The
+     * per-drive outcome is reported in FlashResult::ejectedDrives /
+     * ejectFailedDrives, never assumed.
+     */
+    void setEjectOnCompletion(bool eject);
+
+    /// @brief Whether successfully flashed drives are ejected when the run finishes.
+    [[nodiscard]] bool ejectOnCompletion() const;
+
+    /// @brief How many queued workers may start right now, given the ceiling, the
+    ///        number already writing and the number still queued. Pure;
+    ///        unit-testable. See sak::startableWorkerCount.
+    [[nodiscard]] static int startableWorkerCount(int maxConcurrent, int running, int pending);
+
+    /// @brief Eject every drive in @p result.successfulDrives, appending each device
+    ///        path to result.ejectedDrives or result.ejectFailedDrives.
+    ///
+    /// Static and public because the Image Flasher has two writers: this coordinator
+    /// for raw images, and WindowsUSBCreator for Windows installation media. Both
+    /// honour the same eject-on-completion setting, and they share this so the two
+    /// paths cannot drift into reporting removal differently.
+    static void ejectCompletedDrives(sak::FlashResult& result);
 
 Q_SIGNALS:
     /**
@@ -304,6 +352,17 @@ private:
     /// called with m_mutex released (it opens the physical drive).
     void reonlineDrives(const QStringList& drivePaths);
     void cleanupWorkers();
+    /// Start as many queued workers as the concurrent-write ceiling currently
+    /// allows. Called once the workers are built and again each time one finishes.
+    /// Starts nothing once the run has been cancelled or has left Flashing, so a
+    /// cancel cannot be followed by a queued drive quietly starting to write.
+    /// MUST be called with m_mutex released (it takes the lock itself and then
+    /// starts threads outside it).
+    void startPendingWorkers();
+    /// Record every still-queued (never-started) worker as a failed drive so a
+    /// cancelled run can still reach its finalize predicate. MUST be called with
+    /// m_mutex released (it takes the lock itself).
+    void markQueuedWorkersCancelled();
     /// Wire one worker's progress/completion/error/abort signals to the coordinator.
     void connectWorkerSignals(FlashWorker* worker);
     /// Record a drive failure and finalize the run if all drives are done. Deduped by
@@ -325,6 +384,11 @@ private:
 
     bool m_verificationEnabled;
     qint64 m_bufferSize;
+    int m_maxConcurrentWrites;
+    bool m_ejectOnCompletion;
+    /// Index of the first worker in m_workers that has not been started yet.
+    /// Everything before it is running or finished. Protected by m_mutex.
+    size_t m_nextWorkerIndex;
     // Initialized in the constructor, not here: ValidationMode is only forward-declared in
     // this header, so its enumerators are not nameable at this point.
     sak::ValidationMode m_validationMode;

@@ -131,9 +131,6 @@ public:
     [[nodiscard]] bool getImageFlasherUnmountOnCompletion() const;
     void setImageFlasherUnmountOnCompletion(bool unmount);
 
-    [[nodiscard]] bool getImageFlasherShowSystemDriveWarning() const;
-    void setImageFlasherShowSystemDriveWarning(bool show);
-
     [[nodiscard]] bool getImageFlasherShowLargeDriveWarning() const;
     void setImageFlasherShowLargeDriveWarning(bool show);
 

@@ -24,6 +24,7 @@ namespace {
 constexpr int kBackoffInitialDelayMs = 100;
 constexpr int kBackoffMultiplier = 2;
 constexpr int kRestartManagerProcessCapacity = 10;
+constexpr int kEjectRetryAttempts = 3;
 
 /// @brief Query the physical drive number for a volume path
 // Sentinels distinguishing the two failure modes so the caller can fail closed on
@@ -110,7 +111,10 @@ void setEnumerationOk(bool* enumerationOk, bool value) {
 DriveUnmounter::DriveUnmounter(QObject* parent) : QObject(parent) {}
 
 DriveUnmounter::~DriveUnmounter() {
-    // Unlock all locked volumes
+    closeLockedVolumeHandles();
+}
+
+void DriveUnmounter::closeLockedVolumeHandles() {
     for (auto it = m_lockedVolumes.constBegin(); it != m_lockedVolumes.constEnd(); ++it) {
         if (it.value() != INVALID_HANDLE_VALUE) {
             CloseHandle(it.value());
@@ -476,6 +480,128 @@ bool DriveUnmounter::allowAutoMount(int driveNumber) {
 
     CloseHandle(hDrive);
     return success;
+}
+
+bool DriveUnmounter::ejectDrive(int driveNumber) {
+    if (driveNumber < 0) {
+        m_lastError = QString("Refusing to eject invalid drive number %1").arg(driveNumber);
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+
+    // Fail closed on a failed enumeration exactly as unmountDrive does: an empty
+    // list from a failed enumeration would mean "no volumes to dismount, eject
+    // away", which is how a mounted disk gets reported as safe to unplug.
+    bool enumerationOk = true;
+    const QStringList volumes = getVolumesOnDrive(driveNumber, &enumerationOk);
+    if (!enumerationOk) {
+        m_lastError =
+            QString("Failed to enumerate volumes on drive %1 before eject").arg(driveNumber);
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+
+    Q_EMIT statusMessage(QString("Ejecting drive %1...").arg(driveNumber));
+    for (const QString& volumePath : volumes) {
+        if (!lockAndDismountForEject(volumePath)) {
+            closeLockedVolumeHandles();
+            return false;
+        }
+    }
+
+    const bool ejected = issueEjectIoctls(driveNumber);
+    // Release the locks either way. Holding them after a failed eject would leave
+    // the drive unusable for the very retry the caller is about to report.
+    closeLockedVolumeHandles();
+    if (ejected) {
+        sak::logInfo(QString("Ejected drive %1").arg(driveNumber).toStdString());
+    }
+    return ejected;
+}
+
+bool DriveUnmounter::lockAndDismountForEject(const QString& volumePath) {
+    // Fewer attempts than the pre-write unmount deliberately. This runs after the
+    // write, on the UI thread, and its failure costs the user a manual "Safely
+    // Remove Hardware" -- not a corrupted disk. The full five-attempt backoff would
+    // block the UI for seconds per volume to save an outcome that is already safe.
+    HANDLE volumeHandle = INVALID_HANDLE_VALUE;
+    const bool locked = retryWithBackoff(
+        [&]() {
+            volumeHandle = lockVolume(volumePath);
+            return volumeHandle != INVALID_HANDLE_VALUE;
+        },
+        kEjectRetryAttempts);
+    if (!locked) {
+        m_lastError =
+            QString("Failed to lock volume %1 for eject: %2").arg(volumePath, m_lastError);
+        sak::logWarning(m_lastError.toStdString());
+        return false;
+    }
+
+    if (!retryWithBackoff([&]() { return dismountVolume(volumeHandle); }, kEjectRetryAttempts)) {
+        m_lastError =
+            QString("Failed to dismount volume %1 for eject: %2").arg(volumePath, m_lastError);
+        sak::logWarning(m_lastError.toStdString());
+        CloseHandle(volumeHandle);
+        return false;
+    }
+
+    // Hold the handle until the eject has been issued: releasing the lock here
+    // lets Windows remount the volume in the gap and the eject then fails.
+    m_lockedVolumes.insert(volumePath, volumeHandle);
+    return true;
+}
+
+bool DriveUnmounter::issueEjectIoctls(int driveNumber) {
+    const QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    const std::wstring wDrivePath = drivePath.toStdWString();
+
+    HANDLE hDrive = CreateFileW(wDrivePath.c_str(),
+                                GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
+    if (hDrive == INVALID_HANDLE_VALUE) {
+        m_lastError = QString("Failed to open drive %1 for eject: error %2")
+                          .arg(driveNumber)
+                          .arg(GetLastError());
+        return false;
+    }
+
+    // Clear any software removal lock first. Not every device has one, so this is
+    // informational rather than fatal -- the eject below is the operation whose
+    // result is reported.
+    DWORD bytesReturned = 0;
+    PREVENT_MEDIA_REMOVAL allowRemoval = {};
+    allowRemoval.PreventMediaRemoval = FALSE;
+    if (!DeviceIoControl(hDrive,
+                         IOCTL_STORAGE_MEDIA_REMOVAL,
+                         &allowRemoval,
+                         sizeof(allowRemoval),
+                         nullptr,
+                         0,
+                         &bytesReturned,
+                         nullptr)) {
+        sak::logInfo(QString("IOCTL_STORAGE_MEDIA_REMOVAL not honoured on drive %1: error %2")
+                         .arg(driveNumber)
+                         .arg(GetLastError())
+                         .toStdString());
+    }
+
+    const bool ejected =
+        DeviceIoControl(
+            hDrive, IOCTL_STORAGE_EJECT_MEDIA, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) !=
+        FALSE;
+    if (!ejected) {
+        m_lastError = QString("IOCTL_STORAGE_EJECT_MEDIA failed on drive %1: error %2")
+                          .arg(driveNumber)
+                          .arg(GetLastError());
+    }
+
+    CloseHandle(hDrive);
+    return ejected;
 }
 
 bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAttempts) {

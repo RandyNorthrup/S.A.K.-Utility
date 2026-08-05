@@ -102,6 +102,26 @@ public:
     bool allowAutoMount(int driveNumber);
 
     /**
+     * @brief Eject a drive's media so the user can unplug it immediately
+     * @param driveNumber Physical drive number
+     * @return true only if the device actually reported the media ejected
+     *
+     * This is the post-write counterpart to unmountDrive, and is deliberately NOT
+     * the same operation. unmountDrive PREPARES a drive for a raw write: it sets
+     * the persistent OFFLINE attribute and deletes mount points so Windows cannot
+     * touch the disk mid-flash. ejectDrive FINISHES with a drive: it locks and
+     * dismounts the volumes so the media can leave, then issues the eject, and it
+     * sets no persistent attribute -- a drive that stays plugged in must come back
+     * as an ordinary usable disk, not a stranded offline one.
+     *
+     * Fails closed. A device that cannot be ejected (a fixed USB disk, a card
+     * reader that keeps its slot, a volume still held open) returns false with
+     * lastError() set, because reporting a successful eject invites the user to
+     * pull a disk Windows still has mounted.
+     */
+    bool ejectDrive(int driveNumber);
+
+    /**
      * @brief Get last error message
      * @return Human-readable error description
      */
@@ -129,6 +149,20 @@ private:
      * @return true if successful
      */
     bool lockAndDismountVolume(const QString& volumePath);
+
+    /// @brief Lock and dismount one volume ahead of an eject, keeping the handle in
+    ///        m_lockedVolumes. Unlike lockAndDismountVolume this does NOT delete the
+    ///        volume's mount points: an ejected drive that is plugged back in should
+    ///        return with its drive letter, not be silently stripped of it.
+    /// @return true if the volume was locked and dismounted.
+    bool lockAndDismountForEject(const QString& volumePath);
+
+    /// @brief Issue the media-removal + eject IOCTLs on the physical drive.
+    /// @return true only when IOCTL_STORAGE_EJECT_MEDIA itself succeeded.
+    bool issueEjectIoctls(int driveNumber);
+
+    /// @brief Close and forget every handle held in m_lockedVolumes.
+    void closeLockedVolumeHandles();
 
     /**
      * @brief Close all handles to a drive

@@ -80,6 +80,29 @@ private Q_SLOTS:
         QVERIFY(!r.hasErrors());
         QCOMPARE(r.totalDrives(), 3);
     }
+
+    void resultEjectListsStartEmpty() {
+        // Empty means "eject was not attempted", which is what the completion page
+        // reads to decide whether to say anything about removal at all.
+        FlashResult r{};
+        QVERIFY(r.ejectedDrives.isEmpty());
+        QVERIFY(r.ejectFailedDrives.isEmpty());
+    }
+
+    void resultEjectFailureIsNotAFlashFailure() {
+        // A drive can be written and verified and still refuse to eject. That must
+        // not turn a successful flash into a failed one, and must not be counted as
+        // a target -- but it must still be visible, or the user unplugs a drive
+        // Windows still has mounted.
+        FlashResult r{};
+        r.success = true;
+        r.successfulDrives << "\\\\.\\PhysicalDrive2";
+        r.ejectFailedDrives << "\\\\.\\PhysicalDrive2";
+        QVERIFY(!r.hasErrors());
+        QCOMPARE(r.totalDrives(), 1);
+        QCOMPARE(r.ejectFailedDrives.size(), 1);
+        QVERIFY(r.ejectedDrives.isEmpty());
+    }
 };
 
 QTEST_MAIN(FlashTypesTests)
