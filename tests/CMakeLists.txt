@@ -4473,6 +4473,94 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     message(STATUS "Added unit test: test_flash_types")
 endif()
 
+# test_image_flasher_panel - the guards on entering a destructive write: the Flash
+# button must require BOTH an image and a target, and a rejected image must select
+# nothing. Runs offscreen.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_image_flasher_panel.cpp")
+    add_executable(test_image_flasher_panel
+        unit/test_image_flasher_panel.cpp
+        ../src/gui/image_flasher_panel.cpp
+        ../src/gui/image_flasher_settings_dialog.cpp
+        ../src/gui/windows_iso_download_dialog.cpp
+        ../src/gui/linux_iso_download_dialog.cpp
+        ../src/gui/detachable_log_window.cpp
+        ../src/gui/follow_scroll_controller.cpp
+        ../src/gui/info_button.cpp
+        ../src/core/flash_coordinator.cpp
+        ../src/threading/flash_worker.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/image_source.cpp
+        ../src/core/drive_unmounter.cpp
+        ../src/core/drive_scanner.cpp
+        ../src/core/streaming_decompressor.cpp
+        ../src/core/decompressor_factory.cpp
+        ../src/core/gzip_decompressor.cpp
+        ../src/core/bzip2_decompressor.cpp
+        ../src/core/xz_decompressor.cpp
+        ../src/core/keep_awake.cpp
+        ../src/core/iso_analyzer.cpp
+        ../src/core/config_manager.cpp
+        ../src/core/app_paths.cpp
+        ../src/core/windows_iso_downloader.cpp
+        ../src/core/linux_iso_downloader.cpp
+        ../src/core/linux_distro_catalog.cpp
+        ../src/core/uup_iso_builder.cpp
+        ../src/core/uup_dump_api.cpp
+        ../src/core/windows_usb_creator.cpp
+        ../src/core/windows_usb_creator_extract.cpp
+        ../src/core/bundled_tools_manager.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/input_validator.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        # Listed so AUTOMOC generates the meta-objects for these Q_OBJECT classes.
+        ../include/sak/image_flasher_panel.h
+        ../include/sak/image_flasher_settings_dialog.h
+        ../include/sak/windows_iso_download_dialog.h
+        ../include/sak/linux_iso_download_dialog.h
+        ../include/sak/detachable_log_window.h
+        ../include/sak/follow_scroll_controller.h
+        ../include/sak/info_button.h
+        ../include/sak/flash_coordinator.h
+        ../include/sak/flash_worker.h
+        ../include/sak/worker_base.h
+        ../include/sak/image_source.h
+        ../include/sak/drive_unmounter.h
+        ../include/sak/drive_scanner.h
+        ../include/sak/streaming_decompressor.h
+        ../include/sak/gzip_decompressor.h
+        ../include/sak/bzip2_decompressor.h
+        ../include/sak/xz_decompressor.h
+        ../include/sak/uup_dump_api.h
+        ../include/sak/linux_distro_catalog.h
+        ../include/sak/bundled_tools_manager.h
+        ../include/sak/iso_analyzer.h
+        ../include/sak/config_manager.h
+        ../include/sak/windows_iso_downloader.h
+        ../include/sak/linux_iso_downloader.h
+        ../include/sak/uup_iso_builder.h
+        ../include/sak/windows_usb_creator.h
+        ../include/sak/elevation_manager.h
+    )
+    set_target_properties(test_image_flasher_panel PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_image_flasher_panel PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+        ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_image_flasher_panel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_image_flasher_panel COMMAND test_image_flasher_panel
+             -o "${TEST_OUTPUT_DIR}/test_image_flasher_panel.txt,txt" -o -,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    set_tests_properties(test_image_flasher_panel PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    message(STATUS "Added unit test: test_image_flasher_panel")
+endif()
+
 # test_flasher_policy - pure decisions behind the Image Flasher settings:
 # the large-drive warning threshold and the concurrent-write ceiling.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flasher_policy.cpp")
