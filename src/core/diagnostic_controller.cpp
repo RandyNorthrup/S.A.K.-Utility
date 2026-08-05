@@ -416,10 +416,6 @@ void DiagnosticController::stopThermalMonitoring() {
     m_thermal_monitor->stop();
 }
 
-ThermalMonitor* DiagnosticController::thermalMonitor() const {
-    return m_thermal_monitor.get();
-}
-
 // ============================================================================
 // Report Generation
 // ============================================================================

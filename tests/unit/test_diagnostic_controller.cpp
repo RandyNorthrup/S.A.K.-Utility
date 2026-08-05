@@ -17,8 +17,8 @@ private Q_SLOTS:
     void initialState();
     void suiteStateEnum();
     void cancelCurrentResetsState();
-    void thermalMonitorAccess();
     void reportDataAccess();
+    void thermalReadingsAreForwardedToTheController();
     // B5-14: stale-completion guard and fail-open aggregate status.
     void suiteAdvanceAllowed_onlyForCurrentStep();
     void statusWithStepFailures_failClosed();
@@ -67,10 +67,25 @@ void DiagnosticControllerTests::cancelCurrentResetsState() {
     QCOMPARE(controller.currentState(), DiagnosticController::SuiteState::Idle);
 }
 
-void DiagnosticControllerTests::thermalMonitorAccess() {
+// The controller owns the ThermalMonitor and forwards its readings as its own
+// signal; that forwarding is the ONLY way a panel sees live temperatures. This
+// replaces an older test that merely asserted a thermalMonitor() getter returned
+// non-null -- which proved the object existed but not that anything reached the
+// caller, and which existed only for that test.
+//
+// processReadings emits unconditionally (an empty reading set from an
+// unprivileged sensor query is still a result), so this does not depend on the
+// box having readable sensors.
+void DiagnosticControllerTests::thermalReadingsAreForwardedToTheController() {
     DiagnosticController controller;
-    auto* monitor = controller.thermalMonitor();
-    QVERIFY(monitor != nullptr);
+    QSignalSpy spy(&controller, &DiagnosticController::thermalReadingsUpdated);
+    QVERIFY(spy.isValid());
+
+    controller.startThermalMonitoring(500);
+    // A poll spawns an interpreter, so allow the same generous bound
+    // test_thermal_monitor uses; it normally arrives in a couple of seconds.
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 30'000);
+    controller.stopThermalMonitoring();
 }
 
 void DiagnosticControllerTests::reportDataAccess() {

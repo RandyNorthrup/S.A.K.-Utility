@@ -146,8 +146,11 @@ public:
     /// @brief Get the aggregated report data
     [[nodiscard]] const DiagnosticReportData& reportData() const { return m_report_data; }
 
-    /// @brief Get the thermal monitor instance for direct connection
-    [[nodiscard]] ThermalMonitor* thermalMonitor() const;
+    // There is deliberately no thermalMonitor() accessor. The controller already
+    // forwards ThermalMonitor::readingsUpdated as its own thermalReadingsUpdated
+    // signal, so a caller has nothing to connect directly to; handing out the raw
+    // pointer to an owned unique_ptr only let a caller start and stop the monitor
+    // behind the controller's back.
 
     // -- Pure decision helpers (public + static for unit testing) -----
 
