@@ -1266,31 +1266,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_recycle_bin.cpp")
     message(STATUS "Added unit test: test_recycle_bin")
 endif()
 
-# test_imap_uploader -- B9-01..05 security seams: flag-token validation,
-# line-prefix response parsing, parallel-vector guard, plaintext refusal.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_imap_uploader.cpp")
-    add_executable(test_imap_uploader
-        unit/test_imap_uploader.cpp
-        ../src/core/imap_uploader.cpp
-        ../include/sak/imap_uploader.h  # Q_OBJECT -> AUTOMOC
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_imap_uploader PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_imap_uploader PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_imap_uploader PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_imap_uploader COMMAND test_imap_uploader
-             -o "${TEST_OUTPUT_DIR}/test_imap_uploader.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_imap_uploader")
-endif()
-
 # test_firewall_rule_auditor -- B9-11 pure conflict/port-overlap seams plus the
 # live-firewall enumeration integration checks.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_firewall_rule_auditor.cpp")
@@ -1887,7 +1862,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
         ${CMAKE_SOURCE_DIR}/src/core/ost_conversion_worker.cpp
         ${CMAKE_SOURCE_DIR}/include/sak/ost_conversion_worker.h
         ${CMAKE_SOURCE_DIR}/src/core/msg_writer.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/dbx_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/mbox_writer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/email_export_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/eml_writer.cpp
@@ -6990,12 +6964,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ../src/core/eml_writer.cpp
         ../src/core/msg_writer.cpp
         ../src/core/mbox_writer.cpp
-        ../src/core/dbx_writer.cpp
         ../src/core/html_email_writer.cpp
         ../src/core/email_attachment_saver.cpp
         ../src/core/pdf_email_writer.cpp
         ../src/core/deleted_item_scanner.cpp
-        ../src/core/imap_uploader.cpp
         ../src/core/conversion_report_generator.cpp
         ../src/core/pst_parser.cpp
         ../src/core/logger.cpp
@@ -7003,7 +6975,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
         ../include/sak/ost_conversion_worker.h
         ../include/sak/eml_writer.h
         ../include/sak/deleted_item_scanner.h
-        ../include/sak/imap_uploader.h
         ../include/sak/pst_parser.h
     )
     set_target_properties(test_ost_converter_controller PROPERTIES
@@ -7072,33 +7043,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
              -o "${TEST_OUTPUT_DIR}/test_mbox_writer.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_mbox_writer")
-endif()
-
-# test_dbx_writer - Outlook Express DBX, folder magic bytes
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
-    add_executable(test_dbx_writer
-        unit/test_dbx_writer.cpp
-        ../src/core/dbx_writer.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/dbx_writer.h
-        ../include/sak/eml_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_dbx_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_dbx_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_dbx_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_dbx_writer COMMAND test_dbx_writer
-             -o "${TEST_OUTPUT_DIR}/test_dbx_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_dbx_writer")
 endif()
 
 # test_html_email_writer - styled HTML output, data URIs

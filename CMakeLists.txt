@@ -709,11 +709,9 @@ set(CORE_SOURCES
     src/core/eml_writer.cpp
     src/core/msg_writer.cpp
     src/core/mbox_writer.cpp
-    src/core/dbx_writer.cpp
     src/core/html_email_writer.cpp
     src/core/pdf_email_writer.cpp
     src/core/deleted_item_scanner.cpp
-    src/core/imap_uploader.cpp
     src/core/conversion_report_generator.cpp
     include/sak/ost_converter_types.h
     include/sak/ost_converter_constants.h
@@ -722,11 +720,9 @@ set(CORE_SOURCES
     include/sak/eml_writer.h
     include/sak/msg_writer.h
     include/sak/mbox_writer.h
-    include/sak/dbx_writer.h
     include/sak/html_email_writer.h
     include/sak/pdf_email_writer.h
     include/sak/deleted_item_scanner.h
-    include/sak/imap_uploader.h
     include/sak/conversion_report_generator.h
     # Offline Deployment (Chocolatey internalization)
     src/core/nuget_version_range.cpp

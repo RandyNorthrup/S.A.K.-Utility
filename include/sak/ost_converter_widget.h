@@ -92,7 +92,6 @@ private:
     void addFilterDateRow(QVBoxLayout* layout);
     void addFilterTextRows(QVBoxLayout* layout);
     QWidget* createRecoverySection();
-    QWidget* createImapSection();
     QWidget* createButtonBar();
 
     // Helpers
@@ -135,15 +134,6 @@ private:
     QCheckBox* m_recover_deleted_check{nullptr};
     QCheckBox* m_deep_recovery_check{nullptr};
     QCheckBox* m_skip_corrupt_check{nullptr};
-
-    // -- IMAP Upload Section ----------------------------------------------
-    QGroupBox* m_imap_group{nullptr};
-    QLineEdit* m_imap_host_edit{nullptr};
-    QSpinBox* m_imap_port_spin{nullptr};
-    QCheckBox* m_imap_ssl_check{nullptr};
-    QComboBox* m_imap_auth_combo{nullptr};
-    QLineEdit* m_imap_user_edit{nullptr};
-    QLineEdit* m_imap_password_edit{nullptr};
 
     // -- Progress Tracking ------------------------------------------------
     int m_total_files{0};

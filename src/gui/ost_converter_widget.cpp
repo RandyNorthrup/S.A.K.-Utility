@@ -108,7 +108,6 @@ void OstConverterWidget::setupUi() {
     content_layout->addWidget(createOutputSettingsSection());
     content_layout->addWidget(createFilterSection());
     content_layout->addWidget(createRecoverySection());
-    content_layout->addWidget(createImapSection());
     content_layout->addWidget(createButtonBar());
     content_layout->addStretch(1);
 
@@ -223,17 +222,14 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
 
     m_format_combo = new QComboBox(group);
     m_format_combo->setAccessibleName(tr("Output format"));
-    m_format_combo->addItem(tr("PST (Microsoft Outlook)"), static_cast<int>(OstOutputFormat::Pst));
     m_format_combo->addItem(tr("EML (RFC 5322)"), static_cast<int>(OstOutputFormat::Eml));
     m_format_combo->addItem(tr("MSG (MAPI Properties)"), static_cast<int>(OstOutputFormat::Msg));
     m_format_combo->addItem(tr("MBOX (Unix Mailbox)"), static_cast<int>(OstOutputFormat::Mbox));
-    m_format_combo->addItem(tr("DBX (Outlook Express)"), static_cast<int>(OstOutputFormat::Dbx));
     m_format_combo->addItem(tr("HTML (Web Pages)"), static_cast<int>(OstOutputFormat::Html));
     m_format_combo->addItem(tr("PDF (Documents)"), static_cast<int>(OstOutputFormat::Pdf));
-    m_format_combo->addItem(tr("IMAP Upload"), static_cast<int>(OstOutputFormat::ImapUpload));
-    // PST / MSG / DBX writers are not spec-conformant (see isOutputFormatSupported):
-    // grey them out so a user cannot pick a format whose conversion is guaranteed to
-    // fail, and default to EML, which has a working writer.
+    // The MSG writer is not spec-conformant yet (see isOutputFormatSupported): grey it out
+    // so a user cannot pick a format whose conversion is guaranteed to fail, and default to
+    // EML, which has a working writer.
     markUnsupportedFormats();
     m_format_combo->setCurrentIndex(
         m_format_combo->findData(static_cast<int>(OstOutputFormat::Eml)));
@@ -434,66 +430,6 @@ QWidget* OstConverterWidget::createRecoverySection() {
     return m_recovery_group;
 }
 
-QWidget* OstConverterWidget::createImapSection() {
-    m_imap_group = new QGroupBox(tr("IMAP Server Settings"), this);
-    m_imap_group->setVisible(false);
-
-    auto* layout = new QVBoxLayout(m_imap_group);
-    applyOstGroupLayout(layout);
-
-    // Host / Port / SSL row
-    auto* server_row = new QHBoxLayout();
-    server_row->setSpacing(ui::kSpacingSmall);
-
-    server_row->addWidget(new QLabel(tr("Host:"), m_imap_group));
-    m_imap_host_edit = new QLineEdit(m_imap_group);
-    m_imap_host_edit->setAccessibleName(tr("IMAP server host"));
-    m_imap_host_edit->setPlaceholderText(tr("imap.example.com"));
-    server_row->addWidget(m_imap_host_edit, 1);
-
-    server_row->addWidget(new QLabel(tr("Port:"), m_imap_group));
-    m_imap_port_spin = new QSpinBox(m_imap_group);
-    m_imap_port_spin->setAccessibleName(tr("IMAP server port"));
-    m_imap_port_spin->setRange(1, kMaxTcpPort);
-    m_imap_port_spin->setValue(kDefaultImapSslPort);
-    server_row->addWidget(m_imap_port_spin);
-
-    m_imap_ssl_check = new QCheckBox(tr("SSL/TLS"), m_imap_group);
-    m_imap_ssl_check->setAccessibleName(tr("Use IMAP SSL TLS"));
-    m_imap_ssl_check->setChecked(true);
-    server_row->addWidget(m_imap_ssl_check);
-
-    layout->addLayout(server_row);
-
-    // Auth / User / Password row
-    auto* auth_row = new QHBoxLayout();
-    auth_row->setSpacing(ui::kSpacingSmall);
-
-    auth_row->addWidget(new QLabel(tr("Auth:"), m_imap_group));
-    m_imap_auth_combo = new QComboBox(m_imap_group);
-    m_imap_auth_combo->setAccessibleName(tr("IMAP authentication method"));
-    m_imap_auth_combo->addItem(tr("PLAIN"), static_cast<int>(ImapAuthMethod::Plain));
-    m_imap_auth_combo->addItem(tr("LOGIN"), static_cast<int>(ImapAuthMethod::Login));
-    m_imap_auth_combo->addItem(tr("XOAUTH2"), static_cast<int>(ImapAuthMethod::XOAuth2));
-    auth_row->addWidget(m_imap_auth_combo);
-
-    auth_row->addWidget(new QLabel(tr("User:"), m_imap_group));
-    m_imap_user_edit = new QLineEdit(m_imap_group);
-    m_imap_user_edit->setAccessibleName(tr("IMAP username"));
-    m_imap_user_edit->setPlaceholderText(tr("user@example.com"));
-    auth_row->addWidget(m_imap_user_edit, 1);
-
-    auth_row->addWidget(new QLabel(tr("Password:"), m_imap_group));
-    m_imap_password_edit = new QLineEdit(m_imap_group);
-    m_imap_password_edit->setAccessibleName(tr("IMAP password"));
-    m_imap_password_edit->setEchoMode(QLineEdit::Password);
-    auth_row->addWidget(m_imap_password_edit, 1);
-
-    layout->addLayout(auth_row);
-
-    return m_imap_group;
-}
-
 QWidget* OstConverterWidget::createButtonBar() {
     auto* bar = new QWidget(this);
     auto* layout = new QHBoxLayout(bar);
@@ -593,14 +529,10 @@ void OstConverterWidget::onFormatChanged(int /*index*/) {
     int format_val = m_format_combo->currentData().toInt();
     auto format = static_cast<OstOutputFormat>(format_val);
 
+    // Only the per-message formats name each output file, so the date-prefix option is
+    // meaningless for the ones that write a single file per folder.
     bool is_per_file = (format == OstOutputFormat::Eml || format == OstOutputFormat::Msg);
     m_prefix_date_check->setVisible(is_per_file);
-    m_preserve_folders_check->setVisible(format != OstOutputFormat::ImapUpload);
-
-    bool is_imap = (format == OstOutputFormat::ImapUpload);
-    m_imap_group->setVisible(is_imap);
-    m_output_dir_edit->setEnabled(!is_imap);
-    m_browse_button->setEnabled(!is_imap);
 }
 
 // ============================================================================
@@ -725,7 +657,6 @@ void OstConverterWidget::setConvertingState(bool converting) {
     m_threads_spin->setEnabled(!converting);
     m_filter_group->setEnabled(!converting);
     m_recovery_group->setEnabled(!converting);
-    m_imap_group->setEnabled(!converting);
     m_view_report_button->setEnabled(false);
     if (!converting) {
         updateFilterControlsEnabled();
@@ -786,17 +717,6 @@ OstConversionConfig OstConverterWidget::buildConfig() const {
         config.recipient_filter = m_recipient_filter_edit->text().trimmed();
     }
 
-    // IMAP config
-    if (config.format == OstOutputFormat::ImapUpload) {
-        config.imap_config.host = m_imap_host_edit->text().trimmed();
-        config.imap_config.port = static_cast<uint16_t>(m_imap_port_spin->value());
-        config.imap_config.use_ssl = m_imap_ssl_check->isChecked();
-        config.imap_config.auth_method =
-            static_cast<ImapAuthMethod>(m_imap_auth_combo->currentData().toInt());
-        config.imap_config.username = m_imap_user_edit->text().trimmed();
-        config.imap_config.password = m_imap_password_edit->text();
-    }
-
     return config;
 }
 
@@ -836,8 +756,6 @@ QString OstConverterWidget::statusLabel(OstConversionJob::Status status) {
         return tr("Parsing");
     case OstConversionJob::Status::Converting:
         return tr("Converting");
-    case OstConversionJob::Status::Uploading:
-        return tr("Uploading");
     case OstConversionJob::Status::Complete:
         return tr("Complete");
     case OstConversionJob::Status::Failed:
@@ -853,11 +771,26 @@ void OstConverterWidget::loadSettings() {
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     m_output_dir_edit->setText(settings.value(QStringLiteral("lastOutputDir")).toString());
-    // Restore by enum value, not row index, and never restore a gated-off format
-    // (a stale setting pointing at a now-disabled PST/MSG/DBX item falls back to
-    // EML) so the picker never comes up on an unusable selection.
+
+    // Removing PST, DBX and IMAP upload renumbered OstOutputFormat, so an int stored under
+    // the old "lastFormat" key now names a DIFFERENT format -- a saved DBX (4) would come
+    // back as PDF. Read a new key instead and delete the old one, so a stale value restores
+    // nothing rather than silently restoring the wrong format. Same for the IMAP fields,
+    // which described a feature that no longer exists.
+    for (const auto& stale : {QStringLiteral("lastFormat"),
+                              QStringLiteral("imapHost"),
+                              QStringLiteral("imapPort"),
+                              QStringLiteral("imapSsl"),
+                              QStringLiteral("imapAuth"),
+                              QStringLiteral("imapUser")}) {
+        settings.remove(stale);
+    }
+
+    // Restore by enum value, not row index, and never restore a gated-off format (a stale
+    // setting pointing at the disabled MSG item falls back to EML) so the picker never comes
+    // up on an unusable selection.
     const auto saved_format = static_cast<OstOutputFormat>(
-        settings.value(QStringLiteral("lastFormat"), static_cast<int>(OstOutputFormat::Eml))
+        settings.value(QStringLiteral("outputFormat"), static_cast<int>(OstOutputFormat::Eml))
             .toInt());
     int format_index = m_format_combo->findData(static_cast<int>(
         isOutputFormatSupported(saved_format) ? saved_format : OstOutputFormat::Eml));
@@ -878,14 +811,6 @@ void OstConverterWidget::loadSettings() {
         settings.value(QStringLiteral("deepRecovery"), false).toBool());
     m_skip_corrupt_check->setChecked(settings.value(QStringLiteral("skipCorrupt"), false).toBool());
 
-    // IMAP settings (password intentionally not persisted)
-    m_imap_host_edit->setText(settings.value(QStringLiteral("imapHost")).toString());
-    m_imap_port_spin->setValue(
-        settings.value(QStringLiteral("imapPort"), kDefaultImapSslPort).toInt());
-    m_imap_ssl_check->setChecked(settings.value(QStringLiteral("imapSsl"), true).toBool());
-    m_imap_auth_combo->setCurrentIndex(settings.value(QStringLiteral("imapAuth"), 0).toInt());
-    m_imap_user_edit->setText(settings.value(QStringLiteral("imapUser")).toString());
-
     settings.endGroup();
 
     // Trigger visibility updates
@@ -898,7 +823,9 @@ void OstConverterWidget::saveSettings() {
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     settings.setValue(QStringLiteral("lastOutputDir"), m_output_dir_edit->text());
-    settings.setValue(QStringLiteral("lastFormat"), m_format_combo->currentData().toInt());
+    // "outputFormat", not the old "lastFormat": see loadSettings -- the enum was renumbered,
+    // so the old key's stored ints no longer mean what they did.
+    settings.setValue(QStringLiteral("outputFormat"), m_format_combo->currentData().toInt());
     settings.setValue(QStringLiteral("threads"), m_threads_spin->value());
     settings.setValue(QStringLiteral("preserveFolders"), m_preserve_folders_check->isChecked());
     settings.setValue(QStringLiteral("prefixDate"), m_prefix_date_check->isChecked());
@@ -906,13 +833,6 @@ void OstConverterWidget::saveSettings() {
     settings.setValue(QStringLiteral("recoverDeleted"), m_recover_deleted_check->isChecked());
     settings.setValue(QStringLiteral("deepRecovery"), m_deep_recovery_check->isChecked());
     settings.setValue(QStringLiteral("skipCorrupt"), m_skip_corrupt_check->isChecked());
-
-    // IMAP settings (password intentionally not persisted)
-    settings.setValue(QStringLiteral("imapHost"), m_imap_host_edit->text());
-    settings.setValue(QStringLiteral("imapPort"), m_imap_port_spin->value());
-    settings.setValue(QStringLiteral("imapSsl"), m_imap_ssl_check->isChecked());
-    settings.setValue(QStringLiteral("imapAuth"), m_imap_auth_combo->currentIndex());
-    settings.setValue(QStringLiteral("imapUser"), m_imap_user_edit->text());
 
     settings.endGroup();
 }

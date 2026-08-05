@@ -21,7 +21,6 @@ class PstParser;
 
 namespace sak {
 
-class DbxWriter;
 class EmlWriter;
 class HtmlEmailWriter;
 class MboxWriter;
@@ -139,13 +138,6 @@ private:
                                      const OstConversionConfig& config,
                                      OstConversionResult& result);
 
-    /// Write an item as DBX (Outlook Express). Returns true on success.
-    [[nodiscard]] bool writeItemDbx(const PstItemDetail& item,
-                                    PstParser* parser,
-                                    const QString& folder_path,
-                                    const OstConversionConfig& config,
-                                    OstConversionResult& result);
-
     /// Write an item as HTML. Returns true on success.
     [[nodiscard]] bool writeItemHtml(const PstItemDetail& item,
                                      PstParser* parser,
@@ -208,7 +200,6 @@ private:
     // collision counters persist -- otherwise every duplicate subject overwrote
     // the previous export.
     std::unique_ptr<MboxWriter> m_mbox_writer;
-    std::unique_ptr<DbxWriter> m_dbx_writer;
     std::unique_ptr<EmlWriter> m_eml_writer;
     std::unique_ptr<MsgWriter> m_msg_writer;
     std::unique_ptr<HtmlEmailWriter> m_html_writer;

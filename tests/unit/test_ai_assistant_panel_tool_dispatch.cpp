@@ -2251,12 +2251,14 @@ private Q_SLOTS:
                               QStringLiteral("html"),
                               QStringLiteral("mbox"),
                               QStringLiteral("pdf")}));
-        // Named explicitly so a writer that becomes spec-conformant has to update this
+        // Named explicitly so the MSG writer becoming spec-conformant has to update this
         // test deliberately rather than have the list silently grow.
-        QVERIFY(!advertised.contains(QStringLiteral("pst")));
         QVERIFY(!advertised.contains(QStringLiteral("msg")));
+        // PST, DBX and IMAP upload are gone from OstOutputFormat entirely -- this tab reads
+        // OST/PST and writes readable files, so writing a store back out, an obsolete
+        // Outlook Express format and a network upload are all out of scope.
+        QVERIFY(!advertised.contains(QStringLiteral("pst")));
         QVERIFY(!advertised.contains(QStringLiteral("dbx")));
-        // IMAP upload is network egress, never a value this file-only tool accepts.
         QVERIFY(!advertised.contains(QStringLiteral("imap_upload")));
     }
 
@@ -2285,38 +2287,11 @@ private Q_SLOTS:
         QVERIFY(!QDir(dir.filePath(QStringLiteral("out"))).exists());
     }
 
-    // Direct IMAP upload (a network-egress "format") is refused -- the headless tool only writes
-    // files.
-    void convertOstRefusesImapFormat() {
-        QTemporaryDir dir;
-        QVERIFY(dir.isValid());
-        const QString path = dir.filePath(QStringLiteral("in.pst"));
-        writeTextFile(path, QByteArrayLiteral("not a pst"));
-        AiAssistantPanel panel;
-        panel.ensureAppActionService();
-        setUnattended(panel);
-        QStringList titles;
-        installApprovalHook(&titles);
-        const QString args = QString::fromUtf8(
-            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
-                                      {QStringLiteral("output_directory"),
-                                       dir.filePath(QStringLiteral("out"))},
-                                      {QStringLiteral("format"), QStringLiteral("imap_upload")}})
-                .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
-                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
-                        {QStringLiteral("arguments"), args}});
-        QVERIFY(!result.value(QStringLiteral("success")).toBool());
-        QVERIFY(
-            result.value(QStringLiteral("message")).toString().contains(QStringLiteral("IMAP")));
-        QVERIFY(
-            !QDir(dir.filePath(QStringLiteral("out"))).exists());  // never opened/wrote anything
-    }
-
-    // PST/MSG/DBX are refused up front with a precise reason (their writers are not
-    // spec-conformant), never attempted and left to fail mid-run (B7-12).
-    void convertOstRefusesUnsupportedFormat() {
+    // Formats that no longer exist -- PST and DBX output and IMAP upload were removed from
+    // OstOutputFormat, not left in switched off -- are refused as unrecognised values, and a
+    // caller that hard-codes one still gets a refusal naming what it CAN ask for. IMAP in
+    // particular has no code path left to reach, so no argument value can cause egress.
+    void convertOstRefusesRemovedFormats() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString path = dir.filePath(QStringLiteral("in.pst"));
@@ -2327,7 +2302,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         for (const QString& fmt :
-             {QStringLiteral("pst"), QStringLiteral("msg"), QStringLiteral("dbx")}) {
+             {QStringLiteral("pst"), QStringLiteral("dbx"), QStringLiteral("imap_upload")}) {
             const QString out_sub = QStringLiteral("out_") + fmt;
             const QString args = QString::fromUtf8(
                 QJsonDocument(
@@ -2340,12 +2315,43 @@ private Q_SLOTS:
                             {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                             {QStringLiteral("arguments"), args}});
             QVERIFY(!result.value(QStringLiteral("success")).toBool());
-            QVERIFY(result.value(QStringLiteral("message"))
-                        .toString()
-                        .contains(QStringLiteral("not supported")));
+            // The refusal names the formats that DO work rather than just rejecting.
+            const QString message = result.value(QStringLiteral("message")).toString();
+            QVERIFY(message.contains(QStringLiteral("format must be one of")));
+            QVERIFY(message.contains(QStringLiteral("eml")));
             // Refused before opening: nothing was ever created in the output path.
             QVERIFY(!QDir(dir.filePath(out_sub)).exists());
         }
+    }
+
+    // MSG is still in the enum but its writer is not spec-conformant, so it is refused up
+    // front with that precise reason rather than attempted and left to fail mid-run (B7-12).
+    void convertOstRefusesUnsupportedFormat() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("in.pst"));
+        writeTextFile(path, QByteArrayLiteral("not a pst"));
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        setUnattended(panel);
+        QStringList titles;
+        installApprovalHook(&titles);
+        const QString out_sub = QStringLiteral("out_msg");
+        const QString args = QString::fromUtf8(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), path},
+                                      {QStringLiteral("output_directory"), dir.filePath(out_sub)},
+                                      {QStringLiteral("format"), QStringLiteral("msg")}})
+                .toJson(QJsonDocument::Compact));
+        const QJsonObject result = panel.runAppActionTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
+                        {QStringLiteral("arguments"), args}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QVERIFY(result.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("not supported")));
+        // Refused before opening: nothing was ever created in the output path.
+        QVERIFY(!QDir(dir.filePath(out_sub)).exists());
     }
 
     // A UNC/network source is refused before opening.

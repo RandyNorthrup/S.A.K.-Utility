@@ -90,21 +90,13 @@ private Q_SLOTS:
     // ====================================================================
 
     void testUnsupportedFormatsGated() {
-        // Writers that cannot emit a reader-openable file must report unsupported
-        // so the worker rejects them up front and the GUI disables them.
-        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Pst));
+        // MSG is the last format whose writer cannot emit a reader-openable file, so it must
+        // report unsupported: the worker rejects it up front, the GUI disables it, and the
+        // headless action leaves it out of its advertised enum. PST, DBX and IMAP upload used
+        // to sit here too; they were removed from the enum entirely rather than left in the
+        // code switched off. When the MS-OXMSG writer is conformant this test and
+        // isOutputFormatSupported both go away.
         QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Msg));
-        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::Dbx));
-    }
-
-    void testImapUploadGatedUntilItIsWired() {
-        // This used to assert the opposite, which made the support table disagree with
-        // the worker: OstConversionWorker has always refused ImapUpload at run time
-        // because nothing connects ImapUploader to the conversion pipeline. Reporting it
-        // as supported left the format selectable in the GUI, so the user picked it,
-        // started a conversion, and only then learned that no message would be uploaded.
-        // Flip this back only together with the wiring that makes it true.
-        QVERIFY(!sak::isOutputFormatSupported(sak::OstOutputFormat::ImapUpload));
     }
 
     void testSupportedFormats() {
@@ -168,14 +160,11 @@ private Q_SLOTS:
     void testOutputFormatValues() {
         // Verify all output formats are distinct
         QVector<int> values;
-        values << static_cast<int>(sak::OstOutputFormat::Pst)
-               << static_cast<int>(sak::OstOutputFormat::Eml)
+        values << static_cast<int>(sak::OstOutputFormat::Eml)
                << static_cast<int>(sak::OstOutputFormat::Msg)
                << static_cast<int>(sak::OstOutputFormat::Mbox)
-               << static_cast<int>(sak::OstOutputFormat::Dbx)
                << static_cast<int>(sak::OstOutputFormat::Html)
-               << static_cast<int>(sak::OstOutputFormat::Pdf)
-               << static_cast<int>(sak::OstOutputFormat::ImapUpload);
+               << static_cast<int>(sak::OstOutputFormat::Pdf);
 
         // All values should be unique
         QSet<int> unique(values.begin(), values.end());

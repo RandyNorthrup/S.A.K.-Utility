@@ -3067,31 +3067,27 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
 // Convert an OST/PST mail store to a folder of files, driving the app's OWN OstConversionWorker
 // (the OST Converter feature). The source is read through the fan-out-hardened PstParser; the
 // worker sanitizes each folder segment (sanitizeFolderSegment) so a crafted folder name cannot
-// escape the output root, and writes only into the required-new/empty output_directory. ImapUpload
-// (a network egress "format") is NOT selectable -- only file formats are accepted. Mutating, not
-// destructive (adds files into a new/empty dir), no elevation.
+// escape the output root, and writes only into the required-new/empty output_directory. Every
+// output format is a local file format -- the converter has no network egress path at all.
+// Mutating, not destructive (adds files into a new/empty dir), no elevation.
 
 // Bound the OST/PST size a headless conversion will open (PstParser parses all node metadata up
 // front; larger stores use the GUI). Matches the export cap.
 constexpr qint64 kMaxConvertSourceBytes = 2LL * 1024 * 1024 * 1024;
 
-// Every FILE output format the converter knows, gated or not. imap_upload is deliberately absent:
-// it is network egress, not a file format, so no argument value can reach an upload path.
+// Every output format the converter knows, gated or not.
 struct ConvertFormatName {
     QLatin1String name;
     OstOutputFormat format;
 };
-constexpr std::array<ConvertFormatName, 7> kConvertFormats{
-    {{QLatin1String("pst"), OstOutputFormat::Pst},
-     {QLatin1String("eml"), OstOutputFormat::Eml},
+constexpr std::array<ConvertFormatName, 5> kConvertFormats{
+    {{QLatin1String("eml"), OstOutputFormat::Eml},
      {QLatin1String("msg"), OstOutputFormat::Msg},
      {QLatin1String("mbox"), OstOutputFormat::Mbox},
-     {QLatin1String("dbx"), OstOutputFormat::Dbx},
      {QLatin1String("html"), OstOutputFormat::Html},
      {QLatin1String("pdf"), OstOutputFormat::Pdf}}};
 
-// Map the model-facing format string to a FILE OstOutputFormat. Returns nullopt for imap_upload
-// (network) or any unknown value, so the op refuses it -- no network egress path is ever taken.
+// Map the model-facing format string to an OstOutputFormat, or nullopt for any unknown value.
 // Gated-off formats still MAP here so the refusal below can name the real reason instead of
 // blaming an unrecognized value.
 std::optional<OstOutputFormat> convertFormatFromArg(const QString& value) {
@@ -3170,12 +3166,11 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
 std::expected<OstOutputFormat, AppActionResult> resolveConvertFormat(const QString& requested) {
     const std::optional<OstOutputFormat> format = convertFormatFromArg(requested);
     if (!format) {
-        return std::unexpected(AppActionResult{
-            false,
-            QStringLiteral("format must be one of %1 (direct IMAP upload is not available in this "
-                           "headless tool)")
-                .arg(supportedConvertFormatNames().join(QLatin1Char('/'))),
-            {}});
+        return std::unexpected(
+            AppActionResult{false,
+                            QStringLiteral("format must be one of %1")
+                                .arg(supportedConvertFormatNames().join(QLatin1Char('/'))),
+                            {}});
     }
     // Refuse gated-off formats up front with a precise reason instead of letting the worker
     // attempt and fail: the PST/MSG/DBX writers are not spec-conformant, so their output
@@ -3330,14 +3325,13 @@ void registerEmailMutatingOps(const AddMutatingActionFn& add) {
 
     // email.convert_ost: converts an OST/PST store to a directory of files via the app's OWN
     // OstConversionWorker. Reads through the fan-out-hardened PstParser; the worker sanitizes
-    // folder segments and writes only into the required-new/empty output_directory. Direct IMAP
-    // upload is not selectable. Only ADDS files -> mutating, not destructive; no elevation.
+    // folder segments and writes only into the required-new/empty output_directory. Every format
+    // is a local file format. Only ADDS files -> mutating, not destructive; no elevation.
     AppActionDescriptor convert = mutatingDescriptor(
         QStringLiteral("email.convert_ost"),
         QStringLiteral("Convert an OST/PST store"),
-        QStringLiteral(
-            "Convert an OST/PST mail store to a directory of files (pst/eml/msg/mbox/dbx/"
-            "html/pdf)"),
+        QStringLiteral("Convert an OST/PST mail store to a directory of readable files "
+                       "(eml/mbox/html/pdf)"),
         QStringLiteral("email"));
     convert.params_schema = convertOstParamsSchema();
     add(convert, convertOst);

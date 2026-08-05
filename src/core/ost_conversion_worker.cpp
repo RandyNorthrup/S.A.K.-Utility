@@ -6,7 +6,6 @@
 
 #include "sak/ost_conversion_worker.h"
 
-#include "sak/dbx_writer.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/email_types.h"
 #include "sak/eml_writer.h"
@@ -56,15 +55,12 @@ QString sanitizeFolderSegment(const QString& raw) {
 }
 
 /// Human-readable label for a gated-off output format, used in the error surfaced
-/// to the user when they somehow request one.
+/// to the user when they somehow request one. MSG is the only one left; this helper
+/// goes away with the gate once its writer is spec-conformant.
 QString unsupportedFormatLabel(sak::OstOutputFormat format) {
     switch (format) {
-    case sak::OstOutputFormat::Pst:
-        return QStringLiteral("PST");
     case sak::OstOutputFormat::Msg:
         return QStringLiteral("MSG");
-    case sak::OstOutputFormat::Dbx:
-        return QStringLiteral("Outlook Express DBX");
     default:
         return QStringLiteral("Selected");
     }
@@ -267,13 +263,6 @@ void OstConversionWorker::createPerItemWriter(const OstConversionConfig& config,
             config.output_directory + QStringLiteral("/") + sub, config.one_mbox_per_folder);
         break;
     }
-    case OstOutputFormat::Dbx:
-        m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
-        break;
-    default:
-        // Pst and ImapUpload have no per-item writer; initializeFormatWriters refuses
-        // both before this is reached.
-        break;
     }
 }
 
@@ -281,31 +270,13 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
                                                   const QString& source_path,
                                                   OstConversionResult& result) {
     m_mbox_writer.reset();
-    m_dbx_writer.reset();
     m_eml_writer.reset();
     m_msg_writer.reset();
     m_html_writer.reset();
     m_pdf_writer.reset();
 
-    // IMAP upload is checked first so the message names the real reason: nothing wires
-    // ImapUploader to this pipeline, so the per-item path would count every message as
-    // converted while uploading none. It is now reported unsupported as well (which greys
-    // it out in the picker), but the generic message below blames a missing spec-conformant
-    // writer, which is not what is wrong here.
-    if (config.format == OstOutputFormat::ImapUpload) {
-        const QString msg =
-            QStringLiteral("IMAP upload is not implemented (no messages are uploaded)");
-        result.errors.append(msg);
-        Q_EMIT errorOccurred(msg);
-        return false;
-    }
-
-    // PST (no MS-PST writer at all), MSG (broken CFB directory tree) and DBX (no OE5/6
-    // B-tree index) can only produce files no reader can open, so reject once here rather
-    // than writing per-message garbage. PST used to be exempted from this gate and routed
-    // to a PstWriter whose create() refused unconditionally, which reported the generic
-    // "Failed to create PST output" -- a message that reads like a disk or permission
-    // problem instead of naming the real reason.
+    // MSG's writer emits a broken CFB directory tree, so it can only produce files no
+    // reader can open. Reject once here rather than writing per-message garbage.
     if (!isOutputFormatSupported(config.format)) {
         const QString msg = QStringLiteral("%1 output is not supported (no spec-conformant writer)")
                                 .arg(unsupportedFormatLabel(config.format));
@@ -321,9 +292,6 @@ bool OstConversionWorker::initializeFormatWriters(const OstConversionConfig& con
 void OstConversionWorker::finalizeWriters() {
     if (m_mbox_writer) {
         m_mbox_writer->finalize();
-    }
-    if (m_dbx_writer) {
-        m_dbx_writer->finalize();
     }
 }
 
@@ -359,19 +327,10 @@ bool OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
         return writeItemMsg(item, parser, folder_path, config, result);
     case OstOutputFormat::Mbox:
         return writeItemMbox(item, parser, folder_path, config, result);
-    case OstOutputFormat::Dbx:
-        return writeItemDbx(item, parser, folder_path, config, result);
     case OstOutputFormat::Html:
         return writeItemHtml(item, parser, folder_path, config, result);
     case OstOutputFormat::Pdf:
         return writeItemPdf(item, parser, folder_path, config, result);
-    case OstOutputFormat::Pst:
-    case OstOutputFormat::ImapUpload:
-        // Unreachable: initializeFormatWriters rejects both upfront -- PST has no
-        // spec-conformant writer and no IMAP upload is wired. Fail closed defensively
-        // so a message is never counted as converted when nothing was written or sent.
-        ++result.items_failed;
-        return false;
     }
     return true;
 }
@@ -661,37 +620,6 @@ bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
     // The writer persists across the run, so its byte count is cumulative: assign
     // it rather than add a per-message delta (which would triangular-overcount).
     result.bytes_written = m_mbox_writer->totalBytesWritten();
-    return true;
-}
-
-bool OstConversionWorker::writeItemDbx(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_dbx_writer) {
-        ++result.items_failed;
-        result.errors.append("DBX writer not initialized for: " + item.subject);
-        return false;
-    }
-    QVector<QPair<QString, QByteArray>> attachment_data;
-    if (!collectAttachments(item, parser, result, attachment_data)) {
-        // An attachment could not be read: fail the item closed rather than write
-        // and count a message that is missing declared content.
-        ++result.items_failed;
-        return false;
-    }
-
-    auto write_result = m_dbx_writer->writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write DBX for: " + item.subject);
-        return false;
-    }
-
-    // Cumulative writer total: assign, do not accumulate (avoids triangular overcount).
-    result.bytes_written = m_dbx_writer->totalBytesWritten();
     return true;
 }
 

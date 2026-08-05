@@ -19,44 +19,41 @@
 
 namespace sak {
 
-inline constexpr uint16_t kDefaultImapSslPort = 993;
-inline constexpr int kDefaultImapTimeoutSeconds = 30;
-inline constexpr int kDefaultImapMaxRetries = 3;
 inline constexpr int kDefaultOstConversionThreads = 2;
 
 // ============================================================================
 // Output Format
 // ============================================================================
 
-/// @brief Output format for OST/PST conversion
+/// @brief Output format for OST/PST conversion.
+///
+/// This tab READS an OST or PST store and converts it to portable, readable
+/// formats. Writing a PST or an OST back out is deliberately not in scope, so
+/// there is no Pst entry here -- reading a .pst source is PstParser's job and is
+/// unaffected. DBX (Outlook Express) and direct IMAP upload were removed for the
+/// same reason: the first is an obsolete format nobody converts TO, the second is
+/// server migration rather than file conversion.
 enum class OstOutputFormat {
-    Pst,        ///< Microsoft PST file (MS-PST format)
-    Eml,        ///< RFC 5322 MIME .eml files (one per message)
-    Msg,        ///< MS-OXMSG compound files (one per message)
-    Mbox,       ///< Unix mbox format (one file per folder)
-    Dbx,        ///< Outlook Express DBX format
-    Html,       ///< HTML pages with embedded images
-    Pdf,        ///< PDF via QTextDocument/QPdfWriter
-    ImapUpload  ///< Direct IMAP upload (not a file format)
+    Eml,   ///< RFC 5322 MIME .eml files (one per message)
+    Msg,   ///< MS-OXMSG compound files (one per message)
+    Mbox,  ///< Unix mbox format (one file per folder)
+    Html,  ///< HTML pages with embedded images
+    Pdf    ///< PDF via QTextDocument/QPdfWriter
 };
 
 /// @brief True when the format's writer emits files a real reader can open.
 ///
-/// PST (no ROOT/BREF pointers, no page/block trailers, no CRCs), MSG (broken
-/// CFB directory tree, no mini-stream allocation) and DBX (no OE5/6 B-tree
-/// index) writers cannot produce output Outlook / MAPI / Outlook Express can
-/// mount, so they are gated off until spec-conformant writers exist.
+/// MSG is the last entry that can return false: its writer emits a broken CFB
+/// directory tree with no mini-stream allocation, so Outlook cannot open the
+/// result. Once a spec-conformant MS-OXMSG writer lands, every format is
+/// supported and this function -- along with the "not supported" labelling it
+/// drives in the picker -- is deleted rather than left as a permanent home for
+/// half-finished formats.
 ///
-/// IMAP upload is gated off for a different reason: ImapUploader itself works,
-/// but nothing wires it to the conversion pipeline, so the run would report
-/// every message as converted while uploading none. OstConversionWorker has
-/// always refused it at run time - this entry used to say true, which meant the
-/// GUI left it selectable and the user only discovered it did nothing after
-/// starting a conversion.
-///
-/// EML, MBOX, HTML and PDF are fully supported. Single source of truth shared by
-/// the worker (which rejects unsupported formats before touching the source) and
-/// the GUI (which disables them in the format picker).
+/// Single source of truth shared by the worker (which rejects unsupported formats
+/// before touching the source), the GUI (which disables them in the format
+/// picker) and the headless email.convert_ost action (which derives its advertised
+/// format enum from it).
 inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
     switch (format) {
     case OstOutputFormat::Eml:
@@ -64,10 +61,7 @@ inline constexpr bool isOutputFormatSupported(OstOutputFormat format) {
     case OstOutputFormat::Html:
     case OstOutputFormat::Pdf:
         return true;
-    case OstOutputFormat::Pst:
     case OstOutputFormat::Msg:
-    case OstOutputFormat::Dbx:
-    case OstOutputFormat::ImapUpload:
         return false;
     }
     return false;
@@ -82,36 +76,6 @@ enum class RecoveryMode {
     Normal,       ///< Standard parsing - stop on critical errors
     SkipCorrupt,  ///< Skip corrupt blocks, log errors, continue
     DeepRecovery  ///< Scan all NBT nodes including orphaned ones
-};
-
-// ============================================================================
-// IMAP Authentication
-// ============================================================================
-
-/// @brief IMAP authentication method
-enum class ImapAuthMethod {
-    Plain,   ///< PLAIN SASL mechanism
-    Login,   ///< LOGIN command
-    XOAuth2  ///< XOAUTH2 for Gmail / Microsoft 365
-};
-
-/// @brief IMAP server connection settings
-struct ImapServerConfig {
-    QString host;
-    uint16_t port = kDefaultImapSslPort;
-    bool use_ssl = true;
-    ImapAuthMethod auth_method = ImapAuthMethod::Plain;
-    QString username;
-    QString password;
-    int timeout_seconds = kDefaultImapTimeoutSeconds;
-    int max_retries = kDefaultImapMaxRetries;
-};
-
-/// @brief Folder mapping for IMAP upload
-struct ImapFolderMapping {
-    QString source_folder;
-    QString target_folder;
-    bool skip = false;
 };
 
 // ============================================================================
@@ -132,7 +96,6 @@ struct OstConversionJob {
         Queued,
         Parsing,
         Converting,
-        Uploading,
         Complete,
         Failed,
         Cancelled
@@ -157,7 +120,7 @@ struct OstConversionJob {
 struct OstConversionConfig {
     // Output. Defaults to EML: it is the widest-compatibility format with a
     // spec-conformant writer, so a convert launched without changing the format
-    // produces readable output instead of failing on the gated PST writer.
+    // produces readable output.
     OstOutputFormat format = OstOutputFormat::Eml;
     QString output_directory;
 
@@ -182,10 +145,6 @@ struct OstConversionConfig {
 
     // MBOX options
     bool one_mbox_per_folder = true;
-
-    // IMAP upload options
-    ImapServerConfig imap_config;
-    QVector<ImapFolderMapping> folder_mappings;
 
     // Reporting
     bool generate_properties_manifest = false;
@@ -245,8 +204,6 @@ static_assert(std::is_default_constructible_v<OstConversionConfig>,
               "OstConversionConfig must be default-constructible.");
 static_assert(std::is_default_constructible_v<OstConversionResult>,
               "OstConversionResult must be default-constructible.");
-static_assert(std::is_default_constructible_v<ImapServerConfig>,
-              "ImapServerConfig must be default-constructible.");
 
 }  // namespace sak
 
