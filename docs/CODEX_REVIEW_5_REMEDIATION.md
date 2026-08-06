@@ -456,7 +456,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
     rather than substituting the generic line for the cause. Matches what the ext reader
     already did. Pinned by hfsFileSystemReader_surfacesTheReaderOwnLoadBlockers;
     mutation-tested.
-- [ ] **R5-P4-44** [LOW] [CONFIRMED_REAL] Three drifted export-path impls; HFS lacks containment
+- [x] **R5-P4-44** [LOW] [CONFIRMED_REAL] Three drifted export-path impls; HFS lacks containment
   - RE-MEASURED 2026-08-05: the HFS half is ALREADY CLOSED and this item is stale on that
     point. partition_hfs_file_system_reader.cpp now carries realizedPathWithinRoot (87),
     a canonicalRoot-taking writeExportFile (99-107), the exporter's targetPath re-check
@@ -475,6 +475,16 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: APFS (378-418) and ext (1081-1118) share the realizedPathWithinRoot+NewOnly export guard (R4 M-A4-27) but HFS+ writeExportFile (82-90) has neither the containment check nor a canonicalRoot param - the drift finding 22 exploits. Consolidating into one shared helper would remove the divergence and close the HFS gap.
   - Fix: Extract one shared containment-checked writeExportFile helper used by all three readers (fixes finding 22 and prevents future drift).
+  - FIXED 2026-08-05: one definition now, in include/sak/partition_export_containment.h
+    (pathWithinRoot + writeFile), header-only because the core sources are enumerated in
+    the top-level CMakeLists AND re-enumerated by about six test targets, so a new
+    translation unit buys churn that `inline` does not. All three readers deleted their
+    local copies and call it. ext gained the exportPathWithinRootForTesting seam it never
+    had, and the containment case now exercises APFS, HFS+ AND ext -- each reader keeps
+    its own seam precisely so the test proves that reader REACHES the shared guard; a
+    reader that quietly kept a local copy would still pass a test that only called the
+    helper directly. Mutation-tested: inverting the empty-root refusal in the single
+    shared definition fails the case, which is the evidence that all three route to it.
 
 ### p5_partops -- Partition / disk / flash / USB / ISO operations
 

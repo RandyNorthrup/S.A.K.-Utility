@@ -17740,6 +17740,20 @@ void PartitionManagerCoreTests::exporter_realizedPathWithinRootRejectsEscape() {
     QVERIFY(!H::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
     QVERIFY(!H::exportPathWithinRootForTesting(
         root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
+
+    // CODEX_REVIEW_5 R5-P4-44: ext carried the same guard as a THIRD verbatim copy, with no seam
+    // and no test -- so two of the three identical guards were proven and one was not. All three
+    // now route to the single definition in sak/partition_export_containment.h, and each keeps
+    // its own seam so this case proves every reader actually reaches it: a reader that quietly
+    // kept a local copy would still pass a test that only exercised the shared helper directly.
+    using E = PartitionExtFileSystemReader;
+    QVERIFY(E::exportPathWithinRootForTesting(root, inner));     // nested child -> allowed
+    QVERIFY(E::exportPathWithinRootForTesting(root, root));      // the root itself -> allowed
+    QVERIFY(!E::exportPathWithinRootForTesting(root, sibling));  // sibling prefix OutX -> rejected
+    QVERIFY(!E::exportPathWithinRootForTesting(root, QString()));   // empty child -> closed
+    QVERIFY(!E::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
+    QVERIFY(!E::exportPathWithinRootForTesting(
+        root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {

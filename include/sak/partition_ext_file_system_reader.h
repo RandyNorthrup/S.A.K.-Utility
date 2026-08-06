@@ -78,6 +78,17 @@ public:
         const QString& source_path,
         const QString& output_directory,
         const PartitionExtDirectoryExportOptions& options);
+
+    /// @brief True when @p child resolves (junctions/symlinks followed) to a real path at or
+    ///        under the canonical @p canonical_root. Pure seam for the export junction/symlink
+    ///        TOCTOU guard, matching the APFS and HFS+ readers.
+    ///
+    /// All three route to the one definition in sak/partition_export_containment.h. Each keeps
+    /// its own seam so the shared test can prove that every reader actually reaches it -- a
+    /// reader that quietly kept a local copy would still pass a test that only exercised the
+    /// shared helper directly. ext was the copy with no seam and no coverage (R5-P4-44).
+    [[nodiscard]] static bool exportPathWithinRootForTesting(const QString& canonical_root,
+                                                             const QString& child);
 };
 
 }  // namespace sak

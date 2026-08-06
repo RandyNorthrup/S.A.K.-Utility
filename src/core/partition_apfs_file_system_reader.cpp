@@ -12,6 +12,7 @@
 #include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/partition_export_containment.h"
 #include "sak/partition_raw_device_io.h"
 
 #include <QDir>
@@ -375,47 +376,12 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
     return {};
 }
 
-// True when @p child resolves (junctions/symlinks followed) to a real path at or under
-// @p canonicalRoot. Fail closed on an empty root or an unresolvable/vanished child: a reparse
-// point planted at an ancestor after the root check would otherwise redirect the write outside
-// the export directory. canonicalFilePath yields '/'-separated paths, so the boundary test uses
-// '/'; a sibling-prefix (Root vs RootX) is rejected by requiring the separator.
-[[nodiscard]] bool realizedPathWithinRoot(const QString& canonicalRoot, const QString& child) {
-    if (canonicalRoot.isEmpty()) {
-        return false;
-    }
-    const QString canonicalChild = QFileInfo(child).canonicalFilePath();
-    if (canonicalChild.isEmpty()) {
-        return false;
-    }
-    return canonicalChild == canonicalRoot ||
-           canonicalChild.startsWith(canonicalRoot + QLatin1Char('/'));
-}
+// The containment guard is defined once, in sak/partition_export_containment.h, and shared with
+// the ext and HFS+ exporters. It used to be copied into each of the three, which is exactly how
+// HFS+ came to ship without it (R5-P4-44).
+using sak::partition_export::pathWithinRoot;
 
-bool writeExportFile(const QString& path,
-                     const QByteArray& data,
-                     QStringList* blockers,
-                     const QString& sourcePath,
-                     const QString& canonicalRoot) {
-    // Re-check the leaf's PARENT directory on every write: mkpath created the ancestor chain, but
-    // a junction swapped in afterward would redirect this file outside the export root. The
-    // NewOnly guard below only protects the final component.
-    if (!realizedPathWithinRoot(canonicalRoot, QFileInfo(path).absolutePath())) {
-        blockers->append(QStringLiteral("Export target escapes the export root (reparse point): %1")
-                             .arg(sourcePath));
-        return false;
-    }
-    QFile file(path);
-    // NewOnly (O_EXCL/CREATE_NEW) fails closed if anything already exists at `path`: uniquePath
-    // returned a non-existent candidate, so a file/symlink appearing here is a TOCTOU race and
-    // Truncate would have followed it to overwrite an arbitrary target. Refuse instead.
-    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly) || file.write(data) != data.size()) {
-        blockers->append(
-            QStringLiteral("Unable to write exported APFS file for %1").arg(sourcePath));
-        return false;
-    }
-    return true;
-}
+using sak::partition_export::writeFile;
 
 struct ApfsObjectHeader {
     uint64_t oid{0};
@@ -2453,7 +2419,7 @@ private:
                 QStringLiteral("Unable to create exported directory: %1").arg(targetPath));
             return false;
         }
-        if (!realizedPathWithinRoot(canonical_root_, targetPath)) {
+        if (!pathWithinRoot(canonical_root_, targetPath)) {
             result_.blockers.append(
                 QStringLiteral("Exported directory escapes the export root (reparse point): %1")
                     .arg(targetPath));
@@ -2492,8 +2458,7 @@ private:
                     .arg(entry.path));
             return false;
         }
-        if (!writeExportFile(
-                targetPath, file.data, &result_.blockers, entry.path, canonical_root_)) {
+        if (!writeFile(targetPath, file.data, &result_.blockers, entry.path, canonical_root_)) {
             return false;
         }
         ++result_.files_exported;
@@ -2599,7 +2564,7 @@ PartitionApfsDirectoryExportResult PartitionApfsFileSystemReader::exportDirector
 
 bool PartitionApfsFileSystemReader::exportPathWithinRootForTesting(const QString& canonical_root,
                                                                    const QString& child) {
-    return realizedPathWithinRoot(canonical_root, child);
+    return pathWithinRoot(canonical_root, child);
 }
 
 }  // namespace sak
