@@ -372,21 +372,51 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: exportFile checks file.ok but not file.truncated (2467). Mostly mitigated: fitsByteCaps pre-blocks entry.size_bytes>max_file_bytes (2480-2489) before the read, and the truncation warning is merged into result warnings (2466). R4 H5 (doc:139) added the truncated flag and fixed the writer patch path; the exporter check was not added.
   - Fix: In exportFile treat file.truncated as a blocker (fail closed) as a defense-in-depth mirror of H5.
-- [ ] **R5-P4-27** [LOW] [PARTIAL] ext legacy direct/indirect pointers unchecked vs s_blocks_count
+- [x] **R5-P4-27** [LOW] [PARTIAL] ext legacy direct/indirect pointers unchecked vs s_blocks_count
   - Files: src/core/partition_ext_file_system_reader.cpp:534, src/core/partition_ext_file_system_reader.cpp:837
   - Boundary: untrusted-input (reachable)
   - Evidence: The ext4 EXTENT path DOES bound physical against blocks_count (960-961), but the legacy direct/indirect path (physicalBlockFromLegacyMap 837 -> readBlock 534) checks only checkedMul offset overflow, not blocks_count. A legacy inode can name a block past the declared FS (still device-bounded by readAt short-read). Read-only recovery; on a whole-disk device this reads adjacent-partition data as file content.
   - Fix: In readBlock reject blockNumber>=blocks_count (fail closed), matching the extent path's guard at 960.
-- [ ] **R5-P4-28** [LOW] [PARTIAL] ext never stores/checks s_inodes_count
+  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+    s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
+    stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
+    blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
+    first_data_block rule (1 at 1024-byte blocks, 0 above). Both counts must be non-zero
+    for the bounds to mean anything, which is why the geometry rules land with them.
+    Pinned by extFileSystemReader_boundsBlockAndInodeReferences; BOTH bounds were
+    mutation-tested (deleting either one fails the test). Verified against genuine
+    mke2fs 1.47.4 images -- ext2/ext3/ext4 at 1K/2K/4K blocks -- so the new rules reject
+    no real volume.
+- [x] **R5-P4-28** [LOW] [PARTIAL] ext never stores/checks s_inodes_count
   - Files: src/core/partition_ext_file_system_reader.cpp:543
   - Boundary: untrusted-input (reachable)
   - Evidence: ExtSuperblock has no inodes_count field (134-146) and readInode (543) computes group=inodeNumber/inodes_per_group with no upper bound. An out-of-range inode reads a group descriptor/inode table possibly past the FS but within device (readAt returns nullopt past device end 520-531), yielding garbage parsed as an inode. Read-only; device-bounded, no OOB.
   - Fix: Store s_inodes_count and reject inodeNumber>inodes_count in readInode.
-- [ ] **R5-P4-29** [LOW] [PARTIAL] ext geometry omits blocks_count/device/first_data_block/inode_size<=block_size
+  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+    s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
+    stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
+    blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
+    first_data_block rule (1 at 1024-byte blocks, 0 above). Both counts must be non-zero
+    for the bounds to mean anything, which is why the geometry rules land with them.
+    Pinned by extFileSystemReader_boundsBlockAndInodeReferences; BOTH bounds were
+    mutation-tested (deleting either one fails the test). Verified against genuine
+    mke2fs 1.47.4 images -- ext2/ext3/ext4 at 1K/2K/4K blocks -- so the new rules reject
+    no real volume.
+- [x] **R5-P4-29** [LOW] [PARTIAL] ext geometry omits blocks_count/device/first_data_block/inode_size<=block_size
   - Files: src/core/partition_ext_file_system_reader.cpp:468
   - Boundary: untrusted-input (reachable)
   - Evidence: appendSuperblockGeometryBlockers (468-479) checks block_size, inode_size min+pow2, and blocks_per_group/inodes_per_group nonzero, but omits blocks_count!=0, device-size reconciliation, first_data_block validity, group-count consistency, and inode_size<=block_size. Real omissions, but every read is device-bounded (readAt) and read-only. Same LOW cluster as R4 A4 #24/#25 (doc:325).
   - Fix: Add blocks_count!=0, inode_size<=block_size, first_data_block (0/1) and device-size reconciliation blockers.
+  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+    s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
+    stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
+    blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
+    first_data_block rule (1 at 1024-byte blocks, 0 above). Both counts must be non-zero
+    for the bounds to mean anything, which is why the geometry rules land with them.
+    Pinned by extFileSystemReader_boundsBlockAndInodeReferences; BOTH bounds were
+    mutation-tested (deleting either one fails the test). Verified against genuine
+    mke2fs 1.47.4 images -- ext2/ext3/ext4 at 1K/2K/4K blocks -- so the new rules reject
+    no real volume.
 - [ ] **R5-P4-34** [LOW] [PARTIAL] DER long-form length accumulates into signed qint64 (overflow UB)
   - Files: src/core/apfs_keybag.cpp:81
   - Boundary: untrusted-input (reachable)
@@ -1517,7 +1547,7 @@ Gaps this ledger exposed that four prior campaigns never scoped: include/sak hea
 HFS+ engine and was only ever read because Codex followed an include), the 219-file test
 suite, the 103 build and certification scripts, the browser extension, and src/main.cpp.
 
-### Fix wave 1 - browser control (IN THE WORKING TREE, NOT YET GATED OR COMMITTED)
+### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
 87 findings against browser/. The four HIGH were fixed by hand rather than delegated,
 because this is the surface that drives a real user's browser:
@@ -1672,11 +1702,29 @@ handleEmulate 27, selectOptionFn 26, handleStorage 25, handleWindow 23 against a
 10). The two LENGTH violations found in review are fixed (handleSelect 97 -> 37,
 handleEmulate 80 -> 30); dispatchCommand at 86 lines remains. See R5-G21-9.
 
-Baseline before this wave: full Release ctest 221/221 at 626df4c. The wave still needs the
-extension version bump (0.3.12 -> 0.3.13 in manifest.json AND
-include/sak/win32mcp/browser_extension_installer.h), a CRX re-sign via
-browser/pack-extension.ps1 -- source edits do NOT reach a customer until the committed,
-Chrome-signed CRX is repacked -- and the full gate before commit.
+Baseline before this wave: full Release ctest 221/221 at 626df4c. Landed at b2d3e96 with the
+extension bumped 0.3.12 -> 0.3.13 in manifest.json AND
+include/sak/win32mcp/browser_extension_installer.h, the CRX repacked and re-signed via
+browser/pack-extension.ps1 (id ofodhfbipljnhenjjjpbdaglkjdphoec), full Release ctest 223/223
+(221 + the two newly registered PowerShell suites), and every pre-commit hook green.
+
+Two gate failures had to be cleared to get there, both worth recording:
+
+- **The toolchain preflight refused to run: ripgrep was missing from the agent's shell.**
+  It reported "MISSING rg - needed by: blocking patterns, accessibility, logged message
+  boxes". ripgrep is installed (winget, BurntSushi.ripgrep.MSVC 15.2.0) and its package
+  directory IS on the persisted user PATH, so an ordinary developer shell resolves `rg`
+  fine and no machine change is needed; the automation shell this wave was driven from had
+  a PATH that did not include it. Cleared by prepending the package directory for that
+  invocation. Worth recording anyway because it is the first time R5-G11's fail-closed
+  preflight has fired for real, and it behaved exactly as designed: it refused to let a
+  commit through while a tool three hooks invoke by name was unreachable, rather than
+  letting those hooks quietly no-op. Any environment that runs this gate must be checked
+  for tool availability rather than assumed.
+- **infraCommandSpecs hit 71 lines against the 70-line limit** once expect_origin and
+  origin were declared. Split into renderingCommandSpecs (the specs that reshape or render
+  the page) and infraCommandSpecs (the ones that touch origin-scoped state), which is the
+  grouping the guards themselves follow.
 
 ## COMPLIANCE GATE PROGRAM
 

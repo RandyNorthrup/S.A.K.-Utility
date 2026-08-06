@@ -143,6 +143,7 @@ struct ExtSuperblock {
     uint32_t incompat{0};
     uint32_t ro_compat{0};
     uint64_t blocks_count{0};
+    uint32_t inodes_count{0};
 };
 
 struct ExtInode {
@@ -440,6 +441,7 @@ private:
         m_superblock.blocks_count = joinLowHigh32(le32(bytes, kExtBlocksCountLoOffset),
                                                   le32(bytes, kExtBlocksCountHiOffset),
                                                   (m_superblock.incompat & kExtIncompat64Bit) != 0);
+        m_superblock.inodes_count = le32(bytes, kExtInodesCountOffset);
 
         if (le16(bytes, kExtMagicOffset) != kExtMagic) {
             m_blockers.append(QStringLiteral("Ext superblock magic not found"));
@@ -448,6 +450,7 @@ private:
 
     void validateSuperblock() {
         appendSuperblockGeometryBlockers();
+        appendSuperblockExtentBlockers();
         appendGroupDescriptorSizeBlocker();
         appendUnsupportedIncompatBlockers();
         appendUnsupportedRoCompatBlockers();
@@ -475,6 +478,36 @@ private:
         }
         if (m_superblock.blocks_per_group == 0 || m_superblock.inodes_per_group == 0) {
             m_blockers.append(QStringLiteral("Ext group sizing is invalid"));
+        }
+        // An inode has to fit inside a block; a larger one would make the inode table's own
+        // arithmetic describe a layout the volume cannot have.
+        if (m_superblock.inode_size > m_superblock.block_size) {
+            m_blockers.append(QStringLiteral("Ext inode size exceeds the block size"));
+        }
+    }
+
+    // The volume's own declared extent, and where its blocks start. Without the counts there is
+    // no upper bound to check a block or inode reference against, and every such reference is
+    // then bounded only by the DEVICE -- which on a whole-disk image means a neighbouring
+    // partition's bytes come back as this filesystem's content. Refuse rather than treat zero as
+    // unbounded; readBlock and readInode rely on these being non-zero.
+    void appendSuperblockExtentBlockers() {
+        if (m_superblock.blocks_count == 0) {
+            m_blockers.append(QStringLiteral("Ext volume declares no blocks"));
+        }
+        if (m_superblock.inodes_count == 0) {
+            m_blockers.append(QStringLiteral("Ext volume declares no inodes"));
+        }
+        // first_data_block is 1 on a 1 KiB-block volume (the superblock occupies block 0) and 0
+        // on every larger block size, because there the superblock shares block 0. Any other
+        // value shifts every group descriptor and inode table this reader computes. Confirmed
+        // against mke2fs 1.47.4 output for ext2/ext3/ext4 at 1K, 2K and 4K blocks.
+        const uint32_t expectedFirstDataBlock = m_superblock.block_size == kMinimumBlockSize ? 1
+                                                                                             : 0;
+        if (m_superblock.first_data_block != expectedFirstDataBlock) {
+            m_blockers.append(QStringLiteral("Ext first data block is %1, expected %2")
+                                  .arg(m_superblock.first_data_block)
+                                  .arg(expectedFirstDataBlock));
         }
     }
 
@@ -532,6 +565,18 @@ private:
     }
 
     [[nodiscard]] std::optional<QByteArray> readBlock(uint64_t blockNumber) {
+        // Bound against the volume's declared size, not just against arithmetic overflow. The
+        // ext4 EXTENT path already does this; the legacy direct/indirect map did not, so a
+        // crafted inode could name a block past the end of the filesystem. readAt would still
+        // service it whenever the DEVICE is larger than the volume -- which is the normal case
+        // for a whole-disk image -- and the adjacent partition's bytes would be returned as this
+        // file's content. blocks_count is guaranteed non-zero by the geometry blockers.
+        if (blockNumber >= m_superblock.blocks_count) {
+            m_blockers.append(QStringLiteral("Ext block %1 is past the declared volume size (%2)")
+                                  .arg(blockNumber)
+                                  .arg(m_superblock.blocks_count));
+            return std::nullopt;
+        }
         uint64_t offset = 0;
         if (!checkedMul(blockNumber, m_superblock.block_size, &offset)) {
             m_blockers.append(QStringLiteral("Ext block offset overflow"));
@@ -543,6 +588,15 @@ private:
     [[nodiscard]] std::optional<ExtInode> readInode(uint32_t inodeNumber) {
         if (inodeNumber == 0 || m_superblock.inodes_per_group == 0) {
             m_blockers.append(QStringLiteral("Invalid ext inode reference"));
+            return std::nullopt;
+        }
+        // Inodes are numbered from 1 up to s_inodes_count. Without this the group index derived
+        // below is unbounded, and a directory entry naming a nonexistent inode reads whatever
+        // lies past the inode table -- returned as a parsed inode rather than as a rejection.
+        if (inodeNumber > m_superblock.inodes_count) {
+            m_blockers.append(QStringLiteral("Ext inode %1 is past the declared inode count (%2)")
+                                  .arg(inodeNumber)
+                                  .arg(m_superblock.inodes_count));
             return std::nullopt;
         }
 

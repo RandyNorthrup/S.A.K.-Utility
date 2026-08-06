@@ -1859,6 +1859,7 @@ private Q_SLOTS:
     void extFileSystemReader_exportsDirectoriesRecursively();
     void extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths();
     void extFileSystemReader_rejectsMalformedSuperblockGeometry();
+    void extFileSystemReader_boundsBlockAndInodeReferences();
     void extFileSystemReader_rejectsUnknownIncompatFeature();
     void extFileSystemReader_rejectsMalformedExtentTree();
     void hfsFileSystemReader_listsDirectoriesAndReadsFiles();
@@ -3732,6 +3733,70 @@ void PartitionManagerCoreTests::extFileSystemReader_rejectsMalformedSuperblockGe
         PartitionExtFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
     QVERIFY(!listing.ok);
     QVERIFY(listing.blockers.join(' ').contains(QStringLiteral("inode size")));
+}
+
+void PartitionManagerCoreTests::extFileSystemReader_boundsBlockAndInodeReferences() {
+    // R5-P4-27/28/29. Every block and inode reference the legacy (non-extent) path follows was
+    // bounded only by the DEVICE, never by the volume's own declared size -- so on a whole-disk
+    // image, where the device extends well past the filesystem, a crafted reference read the
+    // NEIGHBOURING PARTITION's bytes back as this file's content. Closing that needs the two
+    // declared counts to exist, hence the geometry rules here as well.
+    //
+    // The valid fixture must still open, or these rules would be rejecting real volumes. That is
+    // checked by every other ext case in this file, which all use the same fixture; verified
+    // additionally against genuine mke2fs 1.47.4 images (ext2/ext3/ext4 at 1K/2K/4K blocks):
+    // first_data_block is 1 at 1024-byte blocks and 0 above, and both counts are always non-zero.
+    const auto blockersFor = [](const QByteArray& bytes) {
+        QByteArray image = bytes;
+        QBuffer buffer(&image);
+        [&] {
+            QVERIFY(buffer.open(QIODevice::ReadOnly));
+        }();
+        const auto listing =
+            PartitionExtFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
+        [&] {
+            QVERIFY(!listing.ok);
+        }();
+        return listing.blockers.join(' ');
+    };
+
+    // A volume declaring no blocks leaves nothing to bound a block reference against, and
+    // treating that zero as "unbounded" is what made the device the only limit.
+    QByteArray noBlocks = extReaderFixture();
+    writeLe32(&noBlocks, kTestExtSuperblockOffset + kTestExtBlocksCountLoOffset, 0);
+    QVERIFY(blockersFor(noBlocks).contains(QStringLiteral("declares no blocks")));
+
+    // Likewise for inodes: without the count, the group index derived from an inode number is
+    // unbounded and a bogus directory entry reads past the inode table.
+    QByteArray noInodes = extReaderFixture();
+    writeLe32(&noInodes, kTestExtSuperblockOffset + kTestExtInodesCountOffset, 0);
+    QVERIFY(blockersFor(noInodes).contains(QStringLiteral("declares no inodes")));
+
+    // first_data_block is fixed by the format: 1 when blocks are 1024 bytes (the superblock owns
+    // block 0), 0 for every larger block size. Any other value shifts every group descriptor and
+    // inode table this reader computes, so it is refused rather than followed.
+    QByteArray wrongFirstBlock = extReaderFixture();
+    writeLe32(&wrongFirstBlock, kTestExtSuperblockOffset + kTestExtFirstDataBlockOffset, 0);
+    QVERIFY(blockersFor(wrongFirstBlock).contains(QStringLiteral("first data block")));
+
+    // An inode cannot be larger than the block that holds it.
+    QByteArray hugeInode = extReaderFixture();
+    writeLe16(&hugeInode, kTestExtSuperblockOffset + kTestExtInodeSizeOffset, 2048);
+    QVERIFY(blockersFor(hugeInode).contains(QStringLiteral("inode size exceeds")));
+
+    // And the bound itself: an inode number past the declared count is refused by name, rather
+    // than being turned into a group offset and parsed out of whatever lies there.
+    QByteArray shortInodeTable = extReaderFixture();
+    writeLe32(&shortInodeTable, kTestExtSuperblockOffset + kTestExtInodesCountOffset, 1);
+    QVERIFY(blockersFor(shortInodeTable).contains(QStringLiteral("past the declared inode count")));
+
+    // The block bound, which is the finding proper. The root directory's legacy block pointer is
+    // aimed past the 64 blocks the volume declares. The image itself is exactly 64 blocks here,
+    // but a real target is a whole disk that continues well past the filesystem -- there this
+    // read succeeds and hands back the next partition's bytes as directory entries.
+    QByteArray blockPastVolume = extReaderFixture();
+    writeLe32(&blockPastVolume, testExtInodeOffset(2) + kTestExtInodeBlocksOffset, 4096);
+    QVERIFY(blockersFor(blockPastVolume).contains(QStringLiteral("past the declared volume size")));
 }
 
 void PartitionManagerCoreTests::extFileSystemReader_rejectsUnknownIncompatFeature() {
