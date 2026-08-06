@@ -132,9 +132,14 @@ QString FileImageSource::calculateChecksum() {
         }
     }
 
-    // Save current position
-    qint64 oldPos = position();
-    m_device->seek(0);
+    const qint64 oldPos = position();
+    // A seek that failed leaves the cursor wherever it was, so the hash would cover a SUFFIX of
+    // the image and be returned as the checksum of the whole thing -- a wrong digest is worse
+    // than no digest, because the caller compares it and believes the answer.
+    if (!m_device->seek(0)) {
+        sak::logError("Could not rewind the image to checksum it");
+        return QString();
+    }
 
     // Calculate SHA-512
     QCryptographicHash hash(QCryptographicHash::Sha512);
@@ -142,23 +147,33 @@ QString FileImageSource::calculateChecksum() {
     const qint64 bufferSize = 64 * 1024 * 1024;  // 64MB
     QByteArray buffer(bufferSize, 0);
     qint64 totalRead = 0;
+    // size() is metadata; the device is the thing being read. A stale or zero size would divide
+    // by zero below, and progress is a report about the read, so it is derived from what the
+    // device says it holds and simply omitted when that is not known.
+    const qint64 totalBytes = m_device->size();
 
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
             sak::logError("Error reading file for checksum");
+            // Restore before returning: this function is a read-only observation, and leaving
+            // the cursor parked mid-image silently changes what every later read of this source
+            // returns. The failure is reported by the empty checksum, not by moving the file.
+            static_cast<void>(m_device->seek(oldPos));
             return QString();
         }
 
         hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(bytesRead)));
         totalRead += bytesRead;
 
-        int percentage = static_cast<int>((totalRead * sak::kPercentMax) / size());
-        Q_EMIT checksumProgress(percentage);
+        if (totalBytes > 0) {
+            const int percentage = static_cast<int>((totalRead * sak::kPercentMax) / totalBytes);
+            Q_EMIT checksumProgress(percentage);
+        }
     }
 
     // Restore position
-    m_device->seek(oldPos);
+    static_cast<void>(m_device->seek(oldPos));
 
     QString checksum = hash.result().toHex();
     m_metadata.checksum = checksum;

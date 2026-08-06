@@ -5008,6 +5008,17 @@ QByteArray newestCheckpointSuperblock(QIODevice* image,
         if (le32(block, kApfsObjectMagicOffset) != kApfsMagicNxsb) {
             continue;
         }
+        // Magic and xid alone do not establish that a descriptor slot is intact. The ring is a
+        // circular log: it legitimately holds stale slots and slots torn by a crash mid-write,
+        // and such a slot can carry NXSB magic and a HIGH xid while its contents are garbage --
+        // which is precisely the record this loop would then select as the newest checkpoint and
+        // COW from. Verifying the object's own fletcher64 before trusting it is what the mount
+        // algorithm does, and a slot that fails is skipped, not fatal: skipping is how the ring
+        // is meant to be read, and the highest xid that actually verifies is the right answer.
+        const auto computed = PartitionApfsWriter::computeObjectChecksum(block);
+        if (!computed.has_value() || *computed != le64(block, 0)) {
+            continue;
+        }
         const uint64_t xid = le64(block, kApfsObjectXidOffset);
         if (xid >= bestXid) {
             best = block;
@@ -7116,6 +7127,18 @@ std::optional<QByteArray> readChunkAllocationBitmap(QIODevice* image,
     QByteArray bitmap(geometry.blockSize, '\0');
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
                             static_cast<qsizetype>(chunkIndex) * kApfsChunkInfoEntryStride;
+    // An entry past the end of this cib must be an error, never a read. le64 bounds-checks and
+    // returns 0 for an out-of-range offset, and 0 is the ENCODING for "this chunk is entirely
+    // free" -- so an index the cib does not contain would come back as a fully-free chunk and
+    // the allocator would hand out blocks that are in use. The one value that means "take
+    // anything here" is the one an unreadable entry produces, which is why this is a bound and
+    // not a clamp.
+    if (entry < 0 || entry + kApfsChunkInfoEntryStride > cib.size()) {
+        blockers->append(QStringLiteral("APFS chunk %1 is outside the chunk-info block (%2 bytes)")
+                             .arg(chunkIndex)
+                             .arg(cib.size()));
+        return std::nullopt;
+    }
     const uint64_t bitmapAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
     if (bitmapAddr != 0 && !readApfsRepairBlock(image, geometry, bitmapAddr, &bitmap, blockers)) {
         return std::nullopt;

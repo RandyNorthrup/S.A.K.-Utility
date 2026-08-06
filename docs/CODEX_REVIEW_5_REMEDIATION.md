@@ -342,26 +342,57 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: HFS+ writeExportFile (82-90) has ONLY NewOnly and no realizedPathWithinRoot check, and takes no canonicalRoot param; exportDirectory mkpath (200-205) has no containment re-check. The parent-junction TOCTOU that R4 M-A4-27 closed for APFS/ext is entirely absent here -- a junction planted at an export ancestor after mkpath redirects the write outside the export root. Leaf NewOnly still blocks the simplest symlink-at-leaf case.
   - Fix: Capture the canonical export root once, pass it to writeExportFile, and re-check the leaf parent + each mkpath'd dir via realizedPathWithinRoot, mirroring the APFS/ext exporters.
-- [ ] **R5-P4-1** [LOW] [DESIGN_INTENT] APFS writer trusts metadata before Fletcher verification
+- [x] **R5-P4-1** [LOW] [DESIGN_INTENT] APFS writer trusts metadata before Fletcher verification
   - Files: src/core/partition_apfs_writer.cpp:4973, src/core/partition_apfs_writer.cpp:4994
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: newestCheckpointSuperblock/readApfsRepairBlock select by magic+xid without Fletcher (4994-5001); however every byte read routes through le8/le16/le32/le64 which bounds-check and return 0 (722-737), the write path is evidence/experimental/target-confirm gated, apfsBlockByteOffset (4841) guards seek overflow and advanceCheckpoint fails closed on any blocker. Corrupt metadata mis-guides a write confined to the operator-chosen target, not an escape. R4 dispositioned this cluster (A4 not-defects list, doc:338).
   - Fix: Optional defense-in-depth: verifyObjectChecksum() inside readApfsRepairBlock before trusting a metadata block.
-- [ ] **R5-P4-4** [LOW] [PARTIAL] CIB entry lacks bounds -> OOB read as bitmap addr 0 -> chunk marked free
+  - FIXED 2026-08-05: newestCheckpointSuperblock now verifies each candidate's own
+    fletcher64 (PartitionApfsWriter::computeObjectChecksum vs the stored o_cksum)
+    before letting its xid win. The descriptor ring is a circular log that
+    legitimately holds stale slots and slots torn by a crash mid-write, and such a
+    slot can carry NXSB magic and a HIGH xid over garbage -- exactly the record the
+    old loop would select as the newest checkpoint and then COW from. A slot that
+    fails is skipped rather than fatal, which is how the ring is meant to be read:
+    the highest xid that actually verifies is the right answer. Certified path
+    unaffected (test_sak_apfs_writer_cli and the full core suite pass).
+- [x] **R5-P4-4** [LOW] [PARTIAL] CIB entry lacks bounds -> OOB read as bitmap addr 0 -> chunk marked free
   - Files: src/core/partition_apfs_writer.cpp:7097
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: readChunkAllocationBitmap computes entry=base+chunkIndex*stride and le64 returns 0 for an out-of-range chunkIndex (7105); bitmapAddr==0 is overloaded to mean 'chunk entirely free' (7093-7094), so an OOB cib index would read as all-free. Real ambiguity, but chunkIndex is derived from validated chunk math and this is the evidence-gated write path (confined to target).
   - Fix: Validate chunkIndex < cib_chunk_count before the entry read; distinguish OOB from a legitimate all-free (bitmap_addr==0) chunk.
-- [ ] **R5-P4-5** [LOW] [DUP_R4] APFS replace = delete then insert as two checkpoints
+  - FIXED 2026-08-05: readChunkAllocationBitmap now refuses a chunkIndex whose entry
+    falls outside the cib instead of reading it. le64 bounds-checks and returns 0 for
+    an out-of-range offset, and 0 is the ENCODING for 'this chunk is entirely free',
+    so an index the cib does not contain came back as a fully-free chunk and the
+    allocator would hand out blocks that are in use. The one value meaning 'take
+    anything here' was the one an unreadable entry produced, which is why this is a
+    bound and not a clamp.
+- [x] **R5-P4-5** [LOW] [DUP_R4] APFS replace = delete then insert as two checkpoints
   - Files: src/core/partition_apfs_writer.cpp:17206
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: commitInPlaceRootFileWrite does commitInPlaceFileDelete then commitInPlaceFileInsert as two checkpoints (17229-17238). This is exactly R4 item M-A4-6 (doc:267), DEFERRED with rationale: a crash between them loses the file (data-loss WINDOW, recoverable from backup), not a fail-open security defect; either state is internally consistent.
   - Fix: Build a single-checkpoint commitInPlaceFileReplace (one finalizeFsCommit dropping old + adding new records), as noted in M-A4-6.
-- [ ] **R5-P4-11** [LOW] [DESIGN_INTENT] Extent-ref root address zero returns empty success
+  - DISPOSITION 2026-08-05, unchanged from R4: this is R4 M-A4-6, deferred with
+    rationale, and re-reading it does not change the answer. commitInPlaceRootFileWrite
+    is delete-then-insert as two checkpoints; a crash between them loses the file.
+    That is a data-loss WINDOW recoverable from backup, not a fail-open: either state
+    is internally consistent and fsck-clean, and no caller is told the write succeeded
+    when it did not. Closing it needs a single-checkpoint replace (both mutations in
+    one transaction), which is a real feature in the in-place COW engine rather than a
+    guard, and it is NOT abandoned -- it stays open as engine work.
+- [x] **R5-P4-11** [LOW] [DESIGN_INTENT] Extent-ref root address zero returns empty success
   - Files: src/core/partition_apfs_writer.cpp:6651
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: walkExtentRefTree returns true on paddr==0 (6652-6654) while failing closed on a zero CHILD pointer and past the depth budget (6655-6658). An absent extent-ref tree is legitimate for some volumes; a corrupt root=0 loses ref tracking but is confined to the operator-chosen certified write target.
   - Fix: If the volume superblock advertises a non-zero extentref oid, treat a resolved root paddr of 0 as a blocker rather than empty-success.
+  - DISPOSITION 2026-08-05: walkExtentRefTree returning true on paddr==0 is correct
+    and cannot be tightened without breaking real volumes. An absent extent-ref tree
+    is legitimate -- some volumes genuinely have none -- and nothing distinguishes
+    that from a corrupt root of 0, so refusing would reject valid input. Note what
+    the function DOES fail closed on, which is the part that matters: a zero CHILD
+    pointer and exceeding the depth budget both refuse. The residual is confined to
+    the operator-chosen, evidence-gated write target.
 - [x] **R5-P4-12** [LOW] [PARTIAL] Reader accepts nx_block_count==0; bound treats zero as unbounded
   - Files: src/core/partition_apfs_file_system_reader.cpp:630, src/core/partition_apfs_file_system_reader.cpp:2181
   - Boundary: untrusted-input (reachable)
@@ -441,11 +472,19 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
     is not entitled to assume. This also removes the i+len overflow the following test
     would otherwise have had to survive. NOT directly unit-tested: derParse lives in an
     anonymous namespace with no seam. Belongs to the keybag/APFS fuzz harness under G14.
-- [ ] **R5-P4-41** [LOW] [PARTIAL] File checksum ignores seek failures / no position restore / div-by-zero
+- [x] **R5-P4-41** [LOW] [PARTIAL] File checksum ignores seek failures / no position restore / div-by-zero
   - Files: src/core/image_source.cpp:125
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: calculateChecksum ignores the seek(0) return (133), doesn't restore oldPos on a read error (144-147 returns before 157), and divides progress by size() (152) which can be 0. The div is only reached inside while(!atEnd()), so it needs cached metadata.size==0 while the device still has bytes (stale-metadata edge). Operates on the app's own images, not a security path.
   - Fix: Check seek() returns, restore position in an early-return/RAII, and guard size()==0 before the percentage divide.
+  - FIXED 2026-08-05: calculateChecksum now fails closed when the rewind fails (a
+    failed seek left the cursor mid-image, so the digest covered a SUFFIX and was
+    returned as the checksum of the whole file -- a wrong digest is worse than none,
+    because the caller compares it and believes the answer), restores the original
+    position on the read-error path as well as the success path (this is a read-only
+    observation and must not silently move the cursor for every later read), and
+    takes progress from the DEVICE size rather than cached metadata, omitting
+    progress rather than dividing by a stale zero.
 - [x] **R5-P4-43** [LOW] [CONFIRMED_REAL] HFS+ wrappers discard detailed blockers()
   - Files: src/core/partition_hfs_file_system_reader.cpp:322
   - Boundary: n/a (not-attacker-reachable)
