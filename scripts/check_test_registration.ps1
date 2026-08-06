@@ -148,9 +148,26 @@ foreach ($m in [regex]::Matches($testsCMakeText, $loopPattern)) {
     }
 }
 
-$psSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.ps1')
+# scripts/ holds test_*.ps1 too, and this gate used to scan only tests/. Two suites were
+# sitting there unregistered as a result: the certification-tool self-test (now a ctest
+# entry) and the VHD preflight. Both were reachable only from check_release_readiness.ps1,
+# which runs in the release workflow -- and CI has not run for 776 commits, so "it is
+# wired somewhere" was not the same as "it runs".
+$ScriptsDir = Join-Path $ProjectRoot 'scripts'
+
+# Not a test despite the name: it emits a host-readiness preflight report for the
+# destructive disposable-VHD matrix, so its result describes the machine it runs on
+# rather than the code. Registering it would make the suite pass or fail on whether this
+# particular host happens to be ready for elevated VHD work.
+$NonTestScripts = @(
+    'test_partition_manager_vhd_preflight'
+)
+
+$psSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.ps1') +
+             @(Get-ChildItem -Path $ScriptsDir -File -Filter 'test_*.ps1')
 $psUnregistered = @()
 foreach ($ps in $psSources) {
+    if ($NonTestScripts -contains $ps.BaseName) { continue }
     if ($registeredTests -contains $ps.BaseName) { continue }
     if ($psLoopRegistered -contains $ps.BaseName) { continue }
     $psUnregistered += $ps.FullName.Substring($ProjectRoot.Length + 1)
@@ -194,6 +211,8 @@ if ($failed) {
     exit 1
 }
 
-Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered." -f
-            $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count, $psSources.Count)
+$psExempt = @($psSources | Where-Object { $NonTestScripts -contains $_.BaseName }).Count
+Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests)." -f
+            $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count,
+            ($psSources.Count - $psExempt), $psExempt)
 exit 0

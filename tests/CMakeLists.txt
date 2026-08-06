@@ -188,296 +188,278 @@ endforeach()
 # ============================================================================
 
 # test_worker_base - WorkerBase lifecycle, exception safety, cancellation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
-    add_executable(test_worker_base
-        unit/test_worker_base.cpp
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_worker_base PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_worker_base PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_worker_base PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_worker_base COMMAND test_worker_base
-             -o "${TEST_OUTPUT_DIR}/test_worker_base.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_worker_base")
-endif()
+add_executable(test_worker_base
+    unit/test_worker_base.cpp
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_worker_base PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_worker_base PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_worker_base PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_worker_base COMMAND test_worker_base
+         -o "${TEST_OUTPUT_DIR}/test_worker_base.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_worker_base")
 
 # test_error_codes - to_string completeness
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
-    add_executable(test_error_codes
-        unit/test_error_codes.cpp
-    )
-    set_target_properties(test_error_codes PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_error_codes PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_error_codes PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_error_codes COMMAND test_error_codes
-             -o "${TEST_OUTPUT_DIR}/test_error_codes.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_error_codes")
-endif()
+add_executable(test_error_codes
+    unit/test_error_codes.cpp
+)
+set_target_properties(test_error_codes PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_error_codes PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_error_codes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_error_codes COMMAND test_error_codes
+         -o "${TEST_OUTPUT_DIR}/test_error_codes.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_error_codes")
 
 # test_ai_model_catalog - restricted OpenAI model catalog (GPT-5.6 only)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_catalog.cpp")
-    add_executable(test_ai_model_catalog
-        unit/test_ai_model_catalog.cpp
-    )
-    set_target_properties(test_ai_model_catalog PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_model_catalog PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_model_catalog PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_model_catalog COMMAND test_ai_model_catalog
-             -o "${TEST_OUTPUT_DIR}/test_ai_model_catalog.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_model_catalog")
-endif()
+add_executable(test_ai_model_catalog
+    unit/test_ai_model_catalog.cpp
+)
+set_target_properties(test_ai_model_catalog PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_model_catalog PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_model_catalog PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_model_catalog COMMAND test_ai_model_catalog
+         -o "${TEST_OUTPUT_DIR}/test_ai_model_catalog.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_model_catalog")
 
 # test_restore_point_manager - System Restore enablement (B5-10 fail-closed)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_restore_point_manager.cpp")
-    add_executable(test_restore_point_manager
-        unit/test_restore_point_manager.cpp
-        ../src/core/restore_point_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/process_runner.cpp
-        ../src/core/logger.cpp
-        ../include/sak/restore_point_manager.h
-    )
-    set_target_properties(test_restore_point_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_restore_point_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_restore_point_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_restore_point_manager COMMAND test_restore_point_manager
-             -o "${TEST_OUTPUT_DIR}/test_restore_point_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_restore_point_manager")
-endif()
+add_executable(test_restore_point_manager
+    unit/test_restore_point_manager.cpp
+    ../src/core/restore_point_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/process_runner.cpp
+    ../src/core/logger.cpp
+    ../include/sak/restore_point_manager.h
+)
+set_target_properties(test_restore_point_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_restore_point_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_restore_point_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_restore_point_manager COMMAND test_restore_point_manager
+         -o "${TEST_OUTPUT_DIR}/test_restore_point_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_restore_point_manager")
 
 # test_diagnostic_types - struct defaults and value semantics
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
-    add_executable(test_diagnostic_types
-        unit/test_diagnostic_types.cpp
-    )
-    set_target_properties(test_diagnostic_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_diagnostic_types PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_diagnostic_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_diagnostic_types COMMAND test_diagnostic_types
-             -o "${TEST_OUTPUT_DIR}/test_diagnostic_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_diagnostic_types")
-endif()
+add_executable(test_diagnostic_types
+    unit/test_diagnostic_types.cpp
+)
+set_target_properties(test_diagnostic_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_diagnostic_types PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_diagnostic_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_diagnostic_types COMMAND test_diagnostic_types
+         -o "${TEST_OUTPUT_DIR}/test_diagnostic_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_diagnostic_types")
 
 # test_partition_manager_core - inventory parsing, safety, scripts, queue
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
-    add_executable(test_partition_manager_core
-        unit/test_partition_manager_core.cpp
-        ../src/core/file_recovery_engine.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_manager_types.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/partition_file_system_tool_manifest.cpp
-        ../src/core/partition_file_system_tool_runner.cpp
-        ../src/core/storage_inventory_worker.cpp
-        ../src/core/elevation_broker.cpp
-        ../src/core/partition_safety_validator.cpp
-        ../src/core/partition_script_builder.cpp
-        ../src/core/partition_executor.cpp
-        ../src/core/partition_operation_planner.cpp
-        ../src/core/partition_operation_queue.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/partition_executor.h
-        ../include/sak/partition_manager_types.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../include/sak/partition_file_system_tool_manifest.h
-        ../include/sak/partition_file_system_tool_runner.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/elevation_broker.h
-        ../include/sak/file_recovery_engine.h
-        ../include/sak/storage_inventory_worker.h
-        ../include/sak/partition_safety_validator.h
-        ../include/sak/partition_script_builder.h
-        ../include/sak/partition_operation_planner.h
-        ../include/sak/partition_operation_queue.h
-    )
-    set_target_properties(test_partition_manager_core PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_partition_manager_core PRIVATE
-        Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_partition_manager_core PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
-             -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_partition_manager_core")
-endif()
+add_executable(test_partition_manager_core
+    unit/test_partition_manager_core.cpp
+    ../src/core/file_recovery_engine.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_manager_types.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/partition_file_system_tool_manifest.cpp
+    ../src/core/partition_file_system_tool_runner.cpp
+    ../src/core/storage_inventory_worker.cpp
+    ../src/core/elevation_broker.cpp
+    ../src/core/partition_safety_validator.cpp
+    ../src/core/partition_script_builder.cpp
+    ../src/core/partition_executor.cpp
+    ../src/core/partition_operation_planner.cpp
+    ../src/core/partition_operation_queue.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/partition_executor.h
+    ../include/sak/partition_manager_types.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/partition_file_system_tool_manifest.h
+    ../include/sak/partition_file_system_tool_runner.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/elevation_broker.h
+    ../include/sak/file_recovery_engine.h
+    ../include/sak/storage_inventory_worker.h
+    ../include/sak/partition_safety_validator.h
+    ../include/sak/partition_script_builder.h
+    ../include/sak/partition_operation_planner.h
+    ../include/sak/partition_operation_queue.h
+)
+set_target_properties(test_partition_manager_core PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_manager_core PRIVATE
+    Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_partition_manager_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
+         -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_partition_manager_core")
 
 # partition_file_recovery_certifier - external lab helper for live-volume Data Recovery proof
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_file_recovery_certifier.cpp")
-    add_executable(partition_file_recovery_certifier
-        certification/partition_file_recovery_certifier.cpp
-        ../src/core/file_recovery_engine.cpp
-        ../include/sak/file_recovery_engine.h
-    )
-    set_target_properties(partition_file_recovery_certifier PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(partition_file_recovery_certifier PRIVATE
-        Qt6::Core
-    )
-    target_include_directories(partition_file_recovery_certifier PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    message(STATUS "Added certification helper: partition_file_recovery_certifier")
-endif()
+add_executable(partition_file_recovery_certifier
+    certification/partition_file_recovery_certifier.cpp
+    ../src/core/file_recovery_engine.cpp
+    ../include/sak/file_recovery_engine.h
+)
+set_target_properties(partition_file_recovery_certifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(partition_file_recovery_certifier PRIVATE
+    Qt6::Core
+)
+target_include_directories(partition_file_recovery_certifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+message(STATUS "Added certification helper: partition_file_recovery_certifier")
 
 # partition_filesystem_probe_certifier - external lab helper for raw filesystem metadata proof
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_filesystem_probe_certifier.cpp")
-    add_executable(partition_filesystem_probe_certifier
-        certification/partition_filesystem_probe_certifier.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-    )
-    set_target_properties(partition_filesystem_probe_certifier PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(partition_filesystem_probe_certifier PRIVATE
-        Qt6::Core sak_lzfse
-    )
-    target_include_directories(partition_filesystem_probe_certifier PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1")
-        find_program(SAK_TEST_POWERSHELL_PATH
-            NAMES pwsh.exe pwsh powershell.exe powershell
-            HINTS
-                "$ENV{ProgramFiles}/PowerShell/7"
-                "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
-        if(SAK_TEST_POWERSHELL_PATH)
-            add_test(NAME test_partition_filesystem_probe_certifier
-                     COMMAND "${SAK_TEST_POWERSHELL_PATH}"
-                             -NoProfile
-                             -ExecutionPolicy Bypass
-                             -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
-                             -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
-                             -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
-                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
-            message(STATUS "Added certification helper test: test_partition_filesystem_probe_certifier")
-        else()
-            message(WARNING "PowerShell not found; skipping partition_filesystem_probe_certifier CTest hook")
-        endif()
+add_executable(partition_filesystem_probe_certifier
+    certification/partition_filesystem_probe_certifier.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+)
+set_target_properties(partition_filesystem_probe_certifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(partition_filesystem_probe_certifier PRIVATE
+    Qt6::Core sak_lzfse
+)
+target_include_directories(partition_filesystem_probe_certifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+if(WIN32)
+    find_program(SAK_TEST_POWERSHELL_PATH
+        NAMES pwsh.exe pwsh powershell.exe powershell
+        HINTS
+            "$ENV{ProgramFiles}/PowerShell/7"
+            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+    if(SAK_TEST_POWERSHELL_PATH)
+        add_test(NAME test_partition_filesystem_probe_certifier
+                 COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                         -NoProfile
+                         -ExecutionPolicy Bypass
+                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
+                         -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
+                         -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
+                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+        message(STATUS "Added certification helper test: test_partition_filesystem_probe_certifier")
+    else()
+        message(WARNING "PowerShell not found; skipping partition_filesystem_probe_certifier CTest hook")
     endif()
-    message(STATUS "Added certification helper: partition_filesystem_probe_certifier")
 endif()
+message(STATUS "Added certification helper: partition_filesystem_probe_certifier")
 
 # file_management_live_certifier - live APFS/HFS File Management bridge proof
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certifier.cpp")
-    add_executable(file_management_live_certifier
-        certification/file_management_live_certifier.cpp
-        ../src/core/advanced_search_worker.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/logger.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/threading/duplicate_finder_worker.cpp
-        ../src/threading/worker_base.cpp
-        ../include/sak/advanced_search_worker.h
-        ../include/sak/duplicate_finder_worker.h
-        ../include/sak/file_hash.h
-        ../include/sak/file_management_file_system.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(file_management_live_certifier PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(file_management_live_certifier PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
-    )
-    target_include_directories(file_management_live_certifier PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    message(STATUS "Added certification helper: file_management_live_certifier")
-endif()
+add_executable(file_management_live_certifier
+    certification/file_management_live_certifier.cpp
+    ../src/core/advanced_search_worker.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/logger.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/threading/duplicate_finder_worker.cpp
+    ../src/threading/worker_base.cpp
+    ../include/sak/advanced_search_worker.h
+    ../include/sak/duplicate_finder_worker.h
+    ../include/sak/file_hash.h
+    ../include/sak/file_management_file_system.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(file_management_live_certifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(file_management_live_certifier PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(file_management_live_certifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+message(STATUS "Added certification helper: file_management_live_certifier")
 
 # flash_live_certifier - LIVE, DESTRUCTIVE raw-disk cert of the Batch 4 FlashWorker
 # memory-safety fixes. Built only on Windows; run manually + elevated against a
@@ -518,7 +500,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certif
     message(STATUS "Added certification helper: flash_live_certifier")
 endif()
 
-if(TARGET file_management_live_certifier AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1")
+if(TARGET file_management_live_certifier AND WIN32)
     find_program(SAK_LIVE_CERT_TEST_POWERSHELL_PATH
         NAMES pwsh.exe pwsh powershell.exe powershell
         HINTS
@@ -539,7 +521,7 @@ if(TARGET file_management_live_certifier AND WIN32 AND EXISTS "${CMAKE_CURRENT_S
     endif()
 endif()
 
-if(TARGET sak_apfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1")
+if(TARGET sak_apfs_writer_cli AND WIN32)
     find_program(SAK_APFS_CLI_TEST_POWERSHELL_PATH
         NAMES pwsh.exe pwsh powershell.exe powershell
         HINTS
@@ -560,7 +542,7 @@ if(TARGET sak_apfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/
     endif()
 endif()
 
-if(TARGET sak_hfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1")
+if(TARGET sak_hfs_writer_cli AND WIN32)
     find_program(SAK_HFS_CLI_TEST_POWERSHELL_PATH
         NAMES pwsh.exe pwsh powershell.exe powershell
         HINTS
@@ -583,435 +565,407 @@ if(TARGET sak_hfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.
 endif()
 
 # test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
-    add_executable(test_partition_manager_panel
-        unit/test_partition_manager_panel.cpp
-        ../src/gui/partition_manager_panel.cpp
-        ../src/gui/detachable_log_window.cpp
-        ../src/gui/follow_scroll_controller.cpp
-        ../src/gui/ribbon_tool_button.cpp
-        ../src/core/file_recovery_engine.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_manager_controller.cpp
-        ../src/core/partition_manager_types.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/partition_file_system_tool_manifest.cpp
-        ../src/core/partition_file_system_tool_runner.cpp
-        ../src/core/storage_inventory_worker.cpp
-        ../src/core/partition_safety_validator.cpp
-        ../src/core/partition_script_builder.cpp
-        ../src/core/partition_operation_planner.cpp
-        ../src/core/partition_operation_queue.cpp
-        ../src/core/partition_executor.cpp
-        ../src/core/partition_report_generator.cpp
-        ../src/core/config_manager.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/elevation_broker.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../resources/icons.qrc
-        ../include/sak/partition_manager_panel.h
-        ../include/sak/file_recovery_engine.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../include/sak/partition_file_system_tool_manifest.h
-        ../include/sak/partition_file_system_tool_runner.h
-        ../include/sak/partition_manager_controller.h
-        ../include/sak/partition_executor.h
-        ../include/sak/storage_inventory_worker.h
-        ../include/sak/elevation_broker.h
-        ../include/sak/detachable_log_window.h
-        ../include/sak/config_manager.h
-    )
-    set_target_properties(test_partition_manager_panel PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_partition_manager_panel PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test sak_lzfse ${PLATFORM_LIBS}
-    )
-    target_compile_definitions(test_partition_manager_panel PRIVATE
-        SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
-    )
-    target_include_directories(test_partition_manager_panel PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_partition_manager_panel COMMAND test_partition_manager_panel
-             -o "${TEST_OUTPUT_DIR}/test_partition_manager_panel.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_partition_manager_panel")
-endif()
+add_executable(test_partition_manager_panel
+    unit/test_partition_manager_panel.cpp
+    ../src/gui/partition_manager_panel.cpp
+    ../src/gui/detachable_log_window.cpp
+    ../src/gui/follow_scroll_controller.cpp
+    ../src/gui/ribbon_tool_button.cpp
+    ../src/core/file_recovery_engine.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_manager_controller.cpp
+    ../src/core/partition_manager_types.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/partition_file_system_tool_manifest.cpp
+    ../src/core/partition_file_system_tool_runner.cpp
+    ../src/core/storage_inventory_worker.cpp
+    ../src/core/partition_safety_validator.cpp
+    ../src/core/partition_script_builder.cpp
+    ../src/core/partition_operation_planner.cpp
+    ../src/core/partition_operation_queue.cpp
+    ../src/core/partition_executor.cpp
+    ../src/core/partition_report_generator.cpp
+    ../src/core/config_manager.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/elevation_broker.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../resources/icons.qrc
+    ../include/sak/partition_manager_panel.h
+    ../include/sak/file_recovery_engine.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/partition_file_system_tool_manifest.h
+    ../include/sak/partition_file_system_tool_runner.h
+    ../include/sak/partition_manager_controller.h
+    ../include/sak/partition_executor.h
+    ../include/sak/storage_inventory_worker.h
+    ../include/sak/elevation_broker.h
+    ../include/sak/detachable_log_window.h
+    ../include/sak/config_manager.h
+)
+set_target_properties(test_partition_manager_panel PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_manager_panel PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test sak_lzfse ${PLATFORM_LIBS}
+)
+target_compile_definitions(test_partition_manager_panel PRIVATE
+    SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+)
+target_include_directories(test_partition_manager_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_partition_manager_panel COMMAND test_partition_manager_panel
+         -o "${TEST_OUTPUT_DIR}/test_partition_manager_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_partition_manager_panel")
 
 # test_wifi_manager_panel --- SSID injection safety in buildWindowsScript
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_manager_panel.cpp")
-    add_executable(test_wifi_manager_panel
-        unit/test_wifi_manager_panel.cpp
-        ../src/gui/wifi_manager_panel.cpp
-        ../src/gui/detachable_log_window.cpp
-        ../src/gui/follow_scroll_controller.cpp
-        ../src/third_party/qrcodegen/qrcodegen.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../src/core/wifi_setup_script.cpp
-        ../include/sak/wifi_manager_panel.h
-        ../include/sak/detachable_log_window.h
-    )
-    set_target_properties(test_wifi_manager_panel PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_wifi_manager_panel PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_wifi_manager_panel PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src/third_party/qrcodegen
-    )
-    add_test(NAME test_wifi_manager_panel COMMAND test_wifi_manager_panel
-             -o "${TEST_OUTPUT_DIR}/test_wifi_manager_panel.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_wifi_manager_panel")
-endif()
+add_executable(test_wifi_manager_panel
+    unit/test_wifi_manager_panel.cpp
+    ../src/gui/wifi_manager_panel.cpp
+    ../src/gui/detachable_log_window.cpp
+    ../src/gui/follow_scroll_controller.cpp
+    ../src/third_party/qrcodegen/qrcodegen.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../src/core/wifi_setup_script.cpp
+    ../include/sak/wifi_manager_panel.h
+    ../include/sak/detachable_log_window.h
+)
+set_target_properties(test_wifi_manager_panel PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_wifi_manager_panel PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_wifi_manager_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/third_party/qrcodegen
+)
+add_test(NAME test_wifi_manager_panel COMMAND test_wifi_manager_panel
+         -o "${TEST_OUTPUT_DIR}/test_wifi_manager_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_wifi_manager_panel")
 
 # test_file_explorer_breadcrumb --- path segmentation incl. UNC targets
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_breadcrumb.cpp")
-    add_executable(test_file_explorer_breadcrumb
-        unit/test_file_explorer_breadcrumb.cpp
-        ../src/gui/file_explorer_breadcrumb.cpp
-        ../src/gui/file_explorer_icon_registry.cpp
-        ../include/sak/file_explorer_breadcrumb.h
-    )
-    set_target_properties(test_file_explorer_breadcrumb PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_breadcrumb PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_breadcrumb PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_breadcrumb COMMAND test_file_explorer_breadcrumb
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_breadcrumb.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_breadcrumb")
-endif()
+add_executable(test_file_explorer_breadcrumb
+    unit/test_file_explorer_breadcrumb.cpp
+    ../src/gui/file_explorer_breadcrumb.cpp
+    ../src/gui/file_explorer_icon_registry.cpp
+    ../include/sak/file_explorer_breadcrumb.h
+)
+set_target_properties(test_file_explorer_breadcrumb PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_breadcrumb PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_breadcrumb PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_breadcrumb COMMAND test_file_explorer_breadcrumb
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_breadcrumb.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_breadcrumb")
 
 # test_file_explorer_properties_calc --- size-walk completeness + hash labeling
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_properties_calc.cpp")
-    add_executable(test_file_explorer_properties_calc
-        unit/test_file_explorer_properties_calc.cpp
-        ../src/core/file_explorer_properties_calc.cpp
-        ../include/sak/file_explorer_properties_calc.h
-    )
-    set_target_properties(test_file_explorer_properties_calc PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_properties_calc PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_properties_calc PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_properties_calc COMMAND test_file_explorer_properties_calc
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_properties_calc.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_properties_calc")
-endif()
+add_executable(test_file_explorer_properties_calc
+    unit/test_file_explorer_properties_calc.cpp
+    ../src/core/file_explorer_properties_calc.cpp
+    ../include/sak/file_explorer_properties_calc.h
+)
+set_target_properties(test_file_explorer_properties_calc PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_properties_calc PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_properties_calc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_properties_calc COMMAND test_file_explorer_properties_calc
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_properties_calc.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_properties_calc")
 
 # test_iso_analyzer --- Windows-vs-Linux install-media classification (P12-09)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_iso_analyzer.cpp")
-    add_executable(test_iso_analyzer
-        unit/test_iso_analyzer.cpp
-        ../src/core/iso_analyzer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/iso_analyzer.h
-    )
-    set_target_properties(test_iso_analyzer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_iso_analyzer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_iso_analyzer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_iso_analyzer COMMAND test_iso_analyzer
-             -o "${TEST_OUTPUT_DIR}/test_iso_analyzer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_iso_analyzer")
-endif()
+add_executable(test_iso_analyzer
+    unit/test_iso_analyzer.cpp
+    ../src/core/iso_analyzer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/iso_analyzer.h
+)
+set_target_properties(test_iso_analyzer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_iso_analyzer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_iso_analyzer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_iso_analyzer COMMAND test_iso_analyzer
+         -o "${TEST_OUTPUT_DIR}/test_iso_analyzer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_iso_analyzer")
 
 # test_user_profile_restore_selection --- folder selection -> manifest (P12-25)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_selection.cpp")
-    add_executable(test_user_profile_restore_selection
-        unit/test_user_profile_restore_selection.cpp
-        ../src/core/user_profile_restore_selection.cpp
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_restore_selection.h
-    )
-    set_target_properties(test_user_profile_restore_selection PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_user_profile_restore_selection PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_user_profile_restore_selection PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_user_profile_restore_selection COMMAND test_user_profile_restore_selection
-             -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_selection.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_user_profile_restore_selection")
-endif()
+add_executable(test_user_profile_restore_selection
+    unit/test_user_profile_restore_selection.cpp
+    ../src/core/user_profile_restore_selection.cpp
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_restore_selection.h
+)
+set_target_properties(test_user_profile_restore_selection PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_restore_selection PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_restore_selection PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_restore_selection COMMAND test_user_profile_restore_selection
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_selection.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_profile_restore_selection")
 
 # test_diagnostic_controller - suite state machine, cancellation, error handling
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
-    add_executable(test_diagnostic_controller
-        unit/test_diagnostic_controller.cpp
-        ../src/core/diagnostic_controller.cpp
-        ../src/core/hardware_inventory_scanner.cpp
-        ../src/core/smart_disk_analyzer.cpp
-        ../src/core/cpu_benchmark_worker.cpp
-        ../src/core/disk_benchmark_worker.cpp
-        ../src/core/memory_benchmark_worker.cpp
-        ../src/core/stress_test_worker.cpp
-        ../src/core/thermal_monitor.cpp
-        ../src/core/diagnostic_report_generator.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/threading/worker_base.cpp
-        ../src/core/keep_awake.cpp
-        ../src/core/logger.cpp
-        ../include/sak/diagnostic_controller.h
-        ../include/sak/hardware_inventory_scanner.h
-        ../include/sak/smart_disk_analyzer.h
-        ../include/sak/cpu_benchmark_worker.h
-        ../include/sak/disk_benchmark_worker.h
-        ../include/sak/memory_benchmark_worker.h
-        ../include/sak/stress_test_worker.h
-        ../include/sak/thermal_monitor.h
-        ../include/sak/diagnostic_report_generator.h
-        ../include/sak/bundled_tools_manager.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_diagnostic_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_diagnostic_controller PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_diagnostic_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_diagnostic_controller COMMAND test_diagnostic_controller
-             -o "${TEST_OUTPUT_DIR}/test_diagnostic_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_diagnostic_controller")
-endif()
+add_executable(test_diagnostic_controller
+    unit/test_diagnostic_controller.cpp
+    ../src/core/diagnostic_controller.cpp
+    ../src/core/hardware_inventory_scanner.cpp
+    ../src/core/smart_disk_analyzer.cpp
+    ../src/core/cpu_benchmark_worker.cpp
+    ../src/core/disk_benchmark_worker.cpp
+    ../src/core/memory_benchmark_worker.cpp
+    ../src/core/stress_test_worker.cpp
+    ../src/core/thermal_monitor.cpp
+    ../src/core/diagnostic_report_generator.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/threading/worker_base.cpp
+    ../src/core/keep_awake.cpp
+    ../src/core/logger.cpp
+    ../include/sak/diagnostic_controller.h
+    ../include/sak/hardware_inventory_scanner.h
+    ../include/sak/smart_disk_analyzer.h
+    ../include/sak/cpu_benchmark_worker.h
+    ../include/sak/disk_benchmark_worker.h
+    ../include/sak/memory_benchmark_worker.h
+    ../include/sak/stress_test_worker.h
+    ../include/sak/thermal_monitor.h
+    ../include/sak/diagnostic_report_generator.h
+    ../include/sak/bundled_tools_manager.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_diagnostic_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_diagnostic_controller PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_diagnostic_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_diagnostic_controller COMMAND test_diagnostic_controller
+         -o "${TEST_OUTPUT_DIR}/test_diagnostic_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_diagnostic_controller")
 
 # test_hardware_inventory_scanner --- WMI parsing + volume-to-disk mapping
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_hardware_inventory_scanner.cpp")
-    add_executable(test_hardware_inventory_scanner
-        unit/test_hardware_inventory_scanner.cpp
-        ../src/core/hardware_inventory_scanner.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/hardware_inventory_scanner.h
-    )
-    set_target_properties(test_hardware_inventory_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_hardware_inventory_scanner PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_hardware_inventory_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_hardware_inventory_scanner COMMAND test_hardware_inventory_scanner
-             -o "${TEST_OUTPUT_DIR}/test_hardware_inventory_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_hardware_inventory_scanner")
-endif()
+add_executable(test_hardware_inventory_scanner
+    unit/test_hardware_inventory_scanner.cpp
+    ../src/core/hardware_inventory_scanner.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/hardware_inventory_scanner.h
+)
+set_target_properties(test_hardware_inventory_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_hardware_inventory_scanner PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_hardware_inventory_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_hardware_inventory_scanner COMMAND test_hardware_inventory_scanner
+         -o "${TEST_OUTPUT_DIR}/test_hardware_inventory_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_hardware_inventory_scanner")
 
 # test_thermal_monitor - timer behavior and polling
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
-    add_executable(test_thermal_monitor
-        unit/test_thermal_monitor.cpp
-        ../src/core/thermal_monitor.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../include/sak/thermal_monitor.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_thermal_monitor PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_thermal_monitor PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_thermal_monitor PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_thermal_monitor COMMAND test_thermal_monitor
-             -o "${TEST_OUTPUT_DIR}/test_thermal_monitor.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_thermal_monitor")
-endif()
+add_executable(test_thermal_monitor
+    unit/test_thermal_monitor.cpp
+    ../src/core/thermal_monitor.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../include/sak/thermal_monitor.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_thermal_monitor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_thermal_monitor PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_thermal_monitor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_thermal_monitor COMMAND test_thermal_monitor
+         -o "${TEST_OUTPUT_DIR}/test_thermal_monitor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_thermal_monitor")
 
 # test_diagnostic_report_generator - HTML, JSON, CSV report output
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp")
-    add_executable(test_diagnostic_report_generator
-        unit/test_diagnostic_report_generator.cpp
-        ../src/core/diagnostic_report_generator.cpp
-        ../include/sak/diagnostic_report_generator.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_diagnostic_report_generator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_diagnostic_report_generator PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_diagnostic_report_generator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_diagnostic_report_generator COMMAND test_diagnostic_report_generator
-             -o "${TEST_OUTPUT_DIR}/test_diagnostic_report_generator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_diagnostic_report_generator")
-endif()
+add_executable(test_diagnostic_report_generator
+    unit/test_diagnostic_report_generator.cpp
+    ../src/core/diagnostic_report_generator.cpp
+    ../include/sak/diagnostic_report_generator.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_diagnostic_report_generator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_diagnostic_report_generator PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_diagnostic_report_generator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_diagnostic_report_generator COMMAND test_diagnostic_report_generator
+         -o "${TEST_OUTPUT_DIR}/test_diagnostic_report_generator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_diagnostic_report_generator")
 
 # test_cpu_benchmark_worker - construction, result defaults, signal types
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
-    add_executable(test_cpu_benchmark_worker
-        unit/test_cpu_benchmark_worker.cpp
-        ../src/core/cpu_benchmark_worker.cpp
-        ../include/sak/cpu_benchmark_worker.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_cpu_benchmark_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_cpu_benchmark_worker PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_cpu_benchmark_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_cpu_benchmark_worker COMMAND test_cpu_benchmark_worker
-             -o "${TEST_OUTPUT_DIR}/test_cpu_benchmark_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_cpu_benchmark_worker")
-endif()
+add_executable(test_cpu_benchmark_worker
+    unit/test_cpu_benchmark_worker.cpp
+    ../src/core/cpu_benchmark_worker.cpp
+    ../include/sak/cpu_benchmark_worker.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_cpu_benchmark_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_cpu_benchmark_worker PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_cpu_benchmark_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_cpu_benchmark_worker COMMAND test_cpu_benchmark_worker
+         -o "${TEST_OUTPUT_DIR}/test_cpu_benchmark_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_cpu_benchmark_worker")
 
 # test_disk_benchmark_worker - construction, config, result defaults
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
-    add_executable(test_disk_benchmark_worker
-        unit/test_disk_benchmark_worker.cpp
-        ../src/core/disk_benchmark_worker.cpp
-        ../include/sak/disk_benchmark_worker.h
-        ../src/core/keep_awake.cpp
-        ../include/sak/keep_awake.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_disk_benchmark_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_disk_benchmark_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_disk_benchmark_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_disk_benchmark_worker COMMAND test_disk_benchmark_worker
-             -o "${TEST_OUTPUT_DIR}/test_disk_benchmark_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_disk_benchmark_worker")
-endif()
+add_executable(test_disk_benchmark_worker
+    unit/test_disk_benchmark_worker.cpp
+    ../src/core/disk_benchmark_worker.cpp
+    ../include/sak/disk_benchmark_worker.h
+    ../src/core/keep_awake.cpp
+    ../include/sak/keep_awake.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_disk_benchmark_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_disk_benchmark_worker PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_disk_benchmark_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_disk_benchmark_worker COMMAND test_disk_benchmark_worker
+         -o "${TEST_OUTPUT_DIR}/test_disk_benchmark_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_disk_benchmark_worker")
 
 # test_memory_benchmark_worker - construction, result defaults
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
-    add_executable(test_memory_benchmark_worker
-        unit/test_memory_benchmark_worker.cpp
-        ../src/core/memory_benchmark_worker.cpp
-        ../include/sak/memory_benchmark_worker.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_memory_benchmark_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_memory_benchmark_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_memory_benchmark_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_memory_benchmark_worker COMMAND test_memory_benchmark_worker
-             -o "${TEST_OUTPUT_DIR}/test_memory_benchmark_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_memory_benchmark_worker")
-endif()
+add_executable(test_memory_benchmark_worker
+    unit/test_memory_benchmark_worker.cpp
+    ../src/core/memory_benchmark_worker.cpp
+    ../include/sak/memory_benchmark_worker.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_memory_benchmark_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_memory_benchmark_worker PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_memory_benchmark_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_memory_benchmark_worker COMMAND test_memory_benchmark_worker
+         -o "${TEST_OUTPUT_DIR}/test_memory_benchmark_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_memory_benchmark_worker")
 
 # test_stress_test_worker - construction, config, result defaults
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
-    add_executable(test_stress_test_worker
-        unit/test_stress_test_worker.cpp
-        ../src/core/stress_test_worker.cpp
-        ../include/sak/stress_test_worker.h
-        ../src/core/thermal_monitor.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../include/sak/thermal_monitor.h
-        ../src/core/keep_awake.cpp
-        ../include/sak/keep_awake.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_stress_test_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_stress_test_worker PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_stress_test_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_stress_test_worker COMMAND test_stress_test_worker
-             -o "${TEST_OUTPUT_DIR}/test_stress_test_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_stress_test_worker")
-endif()
+add_executable(test_stress_test_worker
+    unit/test_stress_test_worker.cpp
+    ../src/core/stress_test_worker.cpp
+    ../include/sak/stress_test_worker.h
+    ../src/core/thermal_monitor.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../include/sak/thermal_monitor.h
+    ../src/core/keep_awake.cpp
+    ../include/sak/keep_awake.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_stress_test_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_stress_test_worker PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_stress_test_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_stress_test_worker COMMAND test_stress_test_worker
+         -o "${TEST_OUTPUT_DIR}/test_stress_test_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_stress_test_worker")
 
 # ============================================================================
 # Unit Tests - Phase 4: Comprehensive Coverage
@@ -1020,712 +974,663 @@ endif()
 # --- Tier 1: Security & Data Integrity ---
 
 # test_encryption - AES-256-CBC round-trip, wrong password, corrupted ciphertext
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
-    add_executable(test_encryption
-        unit/test_encryption.cpp
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_encryption PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_encryption PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_encryption PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_encryption COMMAND test_encryption
-             -o "${TEST_OUTPUT_DIR}/test_encryption.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_encryption")
-endif()
+add_executable(test_encryption
+    unit/test_encryption.cpp
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_encryption PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_encryption PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_encryption PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_encryption COMMAND test_encryption
+         -o "${TEST_OUTPUT_DIR}/test_encryption.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_encryption")
 
 # test_backup_file_codec - streaming per-file compression/encryption container
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_file_codec.cpp")
-    add_executable(test_backup_file_codec
-        unit/test_backup_file_codec.cpp
-        ../src/core/backup_file_codec.cpp
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_backup_file_codec PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_backup_file_codec PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_backup_file_codec PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_backup_file_codec COMMAND test_backup_file_codec
-             -o "${TEST_OUTPUT_DIR}/test_backup_file_codec.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_backup_file_codec")
-endif()
+add_executable(test_backup_file_codec
+    unit/test_backup_file_codec.cpp
+    ../src/core/backup_file_codec.cpp
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_backup_file_codec PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_backup_file_codec PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_backup_file_codec PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_backup_file_codec COMMAND test_backup_file_codec
+         -o "${TEST_OUTPUT_DIR}/test_backup_file_codec.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_backup_file_codec")
 
 # test_file_hash - MD5/SHA256, verify correct/incorrect, progress, cancellation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
-    add_executable(test_file_hash
-        unit/test_file_hash.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_file_hash PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_hash PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_hash PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_hash COMMAND test_file_hash
-             -o "${TEST_OUTPUT_DIR}/test_file_hash.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_hash")
-endif()
+add_executable(test_file_hash
+    unit/test_file_hash.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_file_hash PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_hash PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_hash PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_hash COMMAND test_file_hash
+         -o "${TEST_OUTPUT_DIR}/test_file_hash.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_hash")
 
 # test_path_utils - safe path, traversal, pattern matching, directory size
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
-    add_executable(test_path_utils
-        unit/test_path_utils.cpp
-        ../src/core/path_utils.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_path_utils PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_path_utils PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_path_utils PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_path_utils COMMAND test_path_utils
-             -o "${TEST_OUTPUT_DIR}/test_path_utils.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_path_utils")
-endif()
+add_executable(test_path_utils
+    unit/test_path_utils.cpp
+    ../src/core/path_utils.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_path_utils PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_path_utils PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_path_utils PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_path_utils COMMAND test_path_utils
+         -o "${TEST_OUTPUT_DIR}/test_path_utils.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_path_utils")
 
 # test_secure_memory - wipe, secure_buffer, secure_allocator, secure random
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
-    add_executable(test_secure_memory
-        unit/test_secure_memory.cpp
-        ../src/core/secure_memory.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_secure_memory PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_secure_memory PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_secure_memory PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_secure_memory COMMAND test_secure_memory
-             -o "${TEST_OUTPUT_DIR}/test_secure_memory.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_secure_memory")
-endif()
+add_executable(test_secure_memory
+    unit/test_secure_memory.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_secure_memory PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_secure_memory PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_secure_memory PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_secure_memory COMMAND test_secure_memory
+         -o "${TEST_OUTPUT_DIR}/test_secure_memory.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_secure_memory")
 
 # test_input_validator - path/string/numeric validation, safe arithmetic, buffer validation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_input_validator.cpp")
-    add_executable(test_input_validator
-        unit/test_input_validator.cpp
-        ../src/core/input_validator.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_input_validator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_input_validator PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_input_validator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_input_validator COMMAND test_input_validator
-             -o "${TEST_OUTPUT_DIR}/test_input_validator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_input_validator")
-endif()
+add_executable(test_input_validator
+    unit/test_input_validator.cpp
+    ../src/core/input_validator.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_input_validator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_input_validator PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_input_validator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_input_validator COMMAND test_input_validator
+         -o "${TEST_OUTPUT_DIR}/test_input_validator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_input_validator")
 
 # --- Tier 2: Core Business Logic ---
 
 # test_decompressor_factory - format detection, isCompressed, factory create
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
-    add_executable(test_decompressor_factory
-        unit/test_decompressor_factory.cpp
-        ../src/core/decompressor_factory.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../src/core/bzip2_decompressor.cpp
-        ../src/core/xz_decompressor.cpp
-        ../src/core/logger.cpp
-        ../include/sak/streaming_decompressor.h
-        ../include/sak/gzip_decompressor.h
-        ../include/sak/bzip2_decompressor.h
-        ../include/sak/xz_decompressor.h
-    )
-    set_target_properties(test_decompressor_factory PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_decompressor_factory PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_decompressor_factory PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_decompressor_factory COMMAND test_decompressor_factory
-             -o "${TEST_OUTPUT_DIR}/test_decompressor_factory.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_decompressor_factory")
-endif()
+add_executable(test_decompressor_factory
+    unit/test_decompressor_factory.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/logger.cpp
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+)
+set_target_properties(test_decompressor_factory PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_decompressor_factory PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_decompressor_factory PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_decompressor_factory COMMAND test_decompressor_factory
+         -o "${TEST_OUTPUT_DIR}/test_decompressor_factory.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_decompressor_factory")
 
 # test_config_manager - singleton, get/set, defaults, signals, typed accessors
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
-    add_executable(test_config_manager
-        unit/test_config_manager.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/config_manager.cpp
-        ../src/core/logger.cpp
-        ../include/sak/app_paths.h
-        ../include/sak/config_manager.h
-    )
-    set_target_properties(test_config_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_config_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_config_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_config_manager COMMAND test_config_manager
-             -o "${TEST_OUTPUT_DIR}/test_config_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_config_manager")
-endif()
+add_executable(test_config_manager
+    unit/test_config_manager.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/config_manager.cpp
+    ../src/core/logger.cpp
+    ../include/sak/app_paths.h
+    ../include/sak/config_manager.h
+)
+set_target_properties(test_config_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_config_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_config_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_config_manager COMMAND test_config_manager
+         -o "${TEST_OUTPUT_DIR}/test_config_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_config_manager")
 
 # test_smart_file_filter - dangerous files, size limits, pattern/folder exclusion
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
-    add_executable(test_smart_file_filter
-        unit/test_smart_file_filter.cpp
-        ../src/core/smart_file_filter.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_smart_file_filter PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_smart_file_filter PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_smart_file_filter PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_smart_file_filter COMMAND test_smart_file_filter
-             -o "${TEST_OUTPUT_DIR}/test_smart_file_filter.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_smart_file_filter")
-endif()
+add_executable(test_smart_file_filter
+    unit/test_smart_file_filter.cpp
+    ../src/core/smart_file_filter.cpp
+    ../src/core/user_profile_types.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_smart_file_filter PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_smart_file_filter PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_smart_file_filter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_smart_file_filter COMMAND test_smart_file_filter
+         -o "${TEST_OUTPUT_DIR}/test_smart_file_filter.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_smart_file_filter")
 
 # test_recycle_bin -- B8-23 guard: empty/wildcard/NUL paths refused before the
 # SHFileOperationW shell call (wildcards would expand into a mass recycle).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_recycle_bin.cpp")
-    add_executable(test_recycle_bin
-        unit/test_recycle_bin.cpp
-        ../src/core/recycle_bin.cpp
-    )
-    set_target_properties(test_recycle_bin PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_recycle_bin PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_recycle_bin PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_recycle_bin COMMAND test_recycle_bin
-             -o "${TEST_OUTPUT_DIR}/test_recycle_bin.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_recycle_bin")
-endif()
+add_executable(test_recycle_bin
+    unit/test_recycle_bin.cpp
+    ../src/core/recycle_bin.cpp
+)
+set_target_properties(test_recycle_bin PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_recycle_bin PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_recycle_bin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_recycle_bin COMMAND test_recycle_bin
+         -o "${TEST_OUTPUT_DIR}/test_recycle_bin.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_recycle_bin")
 
 # test_firewall_rule_auditor -- B9-11 pure conflict/port-overlap seams plus the
 # live-firewall enumeration integration checks.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_firewall_rule_auditor.cpp")
-    add_executable(test_firewall_rule_auditor
-        unit/test_firewall_rule_auditor.cpp
-        ../src/core/firewall_rule_auditor.cpp
-        ../include/sak/firewall_rule_auditor.h  # Q_OBJECT -> AUTOMOC
-    )
-    set_target_properties(test_firewall_rule_auditor PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_firewall_rule_auditor PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_firewall_rule_auditor PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_firewall_rule_auditor COMMAND test_firewall_rule_auditor
-             -o "${TEST_OUTPUT_DIR}/test_firewall_rule_auditor.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_firewall_rule_auditor")
-endif()
+add_executable(test_firewall_rule_auditor
+    unit/test_firewall_rule_auditor.cpp
+    ../src/core/firewall_rule_auditor.cpp
+    ../include/sak/firewall_rule_auditor.h  # Q_OBJECT -> AUTOMOC
+)
+set_target_properties(test_firewall_rule_auditor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_firewall_rule_auditor PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_firewall_rule_auditor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_firewall_rule_auditor COMMAND test_firewall_rule_auditor
+         -o "${TEST_OUTPUT_DIR}/test_firewall_rule_auditor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_firewall_rule_auditor")
 
 # test_ethernet_config_manager -- snapshot serialization + B9-12 atomic saveToFile
 # round-trip. (The netsh-driven restore/DHCP path is not unit-tested.)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ethernet_config_manager.cpp")
-    add_executable(test_ethernet_config_manager
-        unit/test_ethernet_config_manager.cpp
-        ../src/core/ethernet_config_manager.cpp
-        ../include/sak/ethernet_config_manager.h  # Q_OBJECT -> AUTOMOC
-        ../src/core/process_runner.cpp
-    )
-    set_target_properties(test_ethernet_config_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ethernet_config_manager PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ethernet_config_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ethernet_config_manager COMMAND test_ethernet_config_manager
-             -o "${TEST_OUTPUT_DIR}/test_ethernet_config_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ethernet_config_manager")
-endif()
+add_executable(test_ethernet_config_manager
+    unit/test_ethernet_config_manager.cpp
+    ../src/core/ethernet_config_manager.cpp
+    ../include/sak/ethernet_config_manager.h  # Q_OBJECT -> AUTOMOC
+    ../src/core/process_runner.cpp
+)
+set_target_properties(test_ethernet_config_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ethernet_config_manager PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ethernet_config_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ethernet_config_manager COMMAND test_ethernet_config_manager
+         -o "${TEST_OUTPUT_DIR}/test_ethernet_config_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ethernet_config_manager")
 
 # test_file_scanner - scan, filters, cancellation, static convenience methods
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
-    add_executable(test_file_scanner
-        unit/test_file_scanner.cpp
-        ../src/core/file_scanner.cpp
-        ../src/core/path_utils.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_file_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_scanner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_scanner COMMAND test_file_scanner
-             -o "${TEST_OUTPUT_DIR}/test_file_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_scanner")
-endif()
+add_executable(test_file_scanner
+    unit/test_file_scanner.cpp
+    ../src/core/file_scanner.cpp
+    ../src/core/path_utils.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_file_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_scanner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_scanner COMMAND test_file_scanner
+         -o "${TEST_OUTPUT_DIR}/test_file_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_scanner")
 
 # test_file_explorer_types - File Explorer state and command registry
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
-    add_executable(test_file_explorer_types
-        unit/test_file_explorer_types.cpp
-        ../src/core/file_explorer_types.cpp
-        ../src/core/file_explorer_layout_metrics.cpp
-        ../src/core/file_explorer_storage_history.cpp
-        ../src/core/file_explorer_status_center.cpp
-        ../src/core/file_explorer_command_registry.cpp
-        ../include/sak/file_explorer_types.h
-        ../include/sak/file_explorer_layout_metrics.h
-        ../include/sak/file_explorer_storage_history.h
-        ../include/sak/file_explorer_status_center.h
-        ../include/sak/file_explorer_command_registry.h
-        ../include/sak/file_management_file_system.h
-    )
-    set_target_properties(test_file_explorer_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_types PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_types COMMAND test_file_explorer_types
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_types")
-endif()
+add_executable(test_file_explorer_types
+    unit/test_file_explorer_types.cpp
+    ../src/core/file_explorer_types.cpp
+    ../src/core/file_explorer_layout_metrics.cpp
+    ../src/core/file_explorer_storage_history.cpp
+    ../src/core/file_explorer_status_center.cpp
+    ../src/core/file_explorer_command_registry.cpp
+    ../include/sak/file_explorer_types.h
+    ../include/sak/file_explorer_layout_metrics.h
+    ../include/sak/file_explorer_storage_history.h
+    ../include/sak/file_explorer_status_center.h
+    ../include/sak/file_explorer_command_registry.h
+    ../include/sak/file_management_file_system.h
+)
+set_target_properties(test_file_explorer_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_types PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_types COMMAND test_file_explorer_types
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_types")
 
 # test_file_explorer_session_store - tab session serialization round trip
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_session_store.cpp")
-    add_executable(test_file_explorer_session_store
-        unit/test_file_explorer_session_store.cpp
-        ../src/core/file_explorer_types.cpp
-        ../src/core/file_explorer_layout_metrics.cpp
-        ../src/core/file_explorer_session_store.cpp
-        ../include/sak/file_explorer_types.h
-        ../include/sak/file_explorer_layout_metrics.h
-        ../include/sak/file_explorer_session_store.h
-        ../include/sak/file_management_file_system.h
-    )
-    set_target_properties(test_file_explorer_session_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_session_store PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_session_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_session_store COMMAND test_file_explorer_session_store
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_session_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_session_store")
-endif()
+add_executable(test_file_explorer_session_store
+    unit/test_file_explorer_session_store.cpp
+    ../src/core/file_explorer_types.cpp
+    ../src/core/file_explorer_layout_metrics.cpp
+    ../src/core/file_explorer_session_store.cpp
+    ../include/sak/file_explorer_types.h
+    ../include/sak/file_explorer_layout_metrics.h
+    ../include/sak/file_explorer_session_store.h
+    ../include/sak/file_management_file_system.h
+)
+set_target_properties(test_file_explorer_session_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_session_store PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_session_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_session_store COMMAND test_file_explorer_session_store
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_session_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_session_store")
 
 # test_file_explorer_tag_store - app-level item tag persistence
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_tag_store.cpp")
-    add_executable(test_file_explorer_tag_store
-        unit/test_file_explorer_tag_store.cpp
-        ../src/core/file_explorer_tag_store.cpp
-        ../include/sak/file_explorer_tag_store.h
-    )
-    set_target_properties(test_file_explorer_tag_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_tag_store PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_tag_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_tag_store COMMAND test_file_explorer_tag_store
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_tag_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_tag_store")
-endif()
+add_executable(test_file_explorer_tag_store
+    unit/test_file_explorer_tag_store.cpp
+    ../src/core/file_explorer_tag_store.cpp
+    ../include/sak/file_explorer_tag_store.h
+)
+set_target_properties(test_file_explorer_tag_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_tag_store PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_tag_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_tag_store COMMAND test_file_explorer_tag_store
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_tag_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_tag_store")
 
 # test_file_explorer_item_model - File Explorer model/view rows, roles, and sorting
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
-    add_executable(test_file_explorer_item_model
-        unit/test_file_explorer_item_model.cpp
-        ../src/core/file_explorer_item_model.cpp
-        ../src/core/file_explorer_sort_filter_model.cpp
-        ../src/core/file_explorer_grouping.cpp
-        ../src/core/file_explorer_group_proxy_model.cpp
-        ../include/sak/file_explorer_item_model.h
-        ../include/sak/file_explorer_sort_filter_model.h
-        ../include/sak/file_explorer_grouping.h
-        ../include/sak/file_explorer_group_proxy_model.h
-        ../include/sak/file_management_file_system.h
-    )
-    set_target_properties(test_file_explorer_item_model PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_explorer_item_model PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_explorer_item_model PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_explorer_item_model COMMAND test_file_explorer_item_model
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_item_model.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_explorer_item_model")
-endif()
+add_executable(test_file_explorer_item_model
+    unit/test_file_explorer_item_model.cpp
+    ../src/core/file_explorer_item_model.cpp
+    ../src/core/file_explorer_sort_filter_model.cpp
+    ../src/core/file_explorer_grouping.cpp
+    ../src/core/file_explorer_group_proxy_model.cpp
+    ../include/sak/file_explorer_item_model.h
+    ../include/sak/file_explorer_sort_filter_model.h
+    ../include/sak/file_explorer_grouping.h
+    ../include/sak/file_explorer_group_proxy_model.h
+    ../include/sak/file_management_file_system.h
+)
+set_target_properties(test_file_explorer_item_model PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_explorer_item_model PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_explorer_item_model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_explorer_item_model COMMAND test_file_explorer_item_model
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_item_model.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_explorer_item_model")
 
 # test_file_management_explorer_panel - File Explorer shell and command-menu UI
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.cpp")
-    add_executable(test_file_management_explorer_panel
-        unit/test_file_management_explorer_panel.cpp
-        ../src/gui/file_explorer_sidebar.cpp
-        ../src/gui/file_explorer_breadcrumb.cpp
-        ../src/gui/file_explorer_icon_registry.cpp
-        ../src/gui/file_explorer_command_bar.cpp
-        ../src/gui/file_explorer_omnibar.cpp
-        ../src/gui/file_explorer_status_center_widget.cpp
-        ../src/gui/file_explorer_details_view.cpp
-        ../src/gui/file_explorer_name_delegate.cpp
-        ../include/sak/file_explorer_name_delegate.h
-        ../src/gui/file_explorer_pane.cpp
-        ../src/gui/file_explorer_details_pane.cpp
-        ../src/gui/file_explorer_style.cpp
-        ../src/gui/file_management_explorer_panel.cpp
-        ../src/core/file_explorer_types.cpp
-        ../src/core/file_explorer_layout_metrics.cpp
-        ../src/core/file_explorer_grouping.cpp
-        ../src/core/file_explorer_group_proxy_model.cpp
-        ../src/core/file_explorer_storage_history.cpp
-        ../src/core/file_explorer_status_center.cpp
-        ../src/core/file_explorer_transfer_worker.cpp
-        ../src/core/file_explorer_archive_worker.cpp
-        ../src/core/file_explorer_item_model.cpp
-        ../src/core/file_explorer_sort_filter_model.cpp
-        ../src/core/file_explorer_command_registry.cpp
-        ../src/core/file_explorer_session_store.cpp
-        ../src/core/file_explorer_tag_store.cpp
-        ../src/core/file_explorer_archive_service.cpp
-        ../src/gui/file_explorer_properties_dialog.cpp
-        ../include/sak/file_explorer_properties_dialog.h
-        ../src/core/file_explorer_properties_calc.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/recycle_bin.cpp
-        ../src/core/drive_unmounter.cpp
-        ../include/sak/drive_unmounter.h
-        ../src/core/advanced_search_worker.cpp
-        ../src/threading/worker_base.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/partition_manager_types.cpp
-        ../src/core/storage_inventory_worker.cpp
-        ../src/core/elevation_broker.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../resources/icons.qrc
-        ../include/sak/file_explorer_sidebar.h
-        ../include/sak/file_explorer_breadcrumb.h
-        ../include/sak/file_explorer_icon_registry.h
-        ../include/sak/file_explorer_command_bar.h
-        ../include/sak/file_explorer_omnibar.h
-        ../include/sak/file_explorer_status_center.h
-        ../include/sak/file_explorer_status_center_widget.h
-        ../include/sak/file_explorer_transfer_worker.h
-        ../include/sak/file_explorer_archive_worker.h
-        ../include/sak/file_explorer_details_view.h
-        ../include/sak/file_explorer_pane.h
-        ../include/sak/file_explorer_details_pane.h
-        ../include/sak/file_management_explorer_panel.h
-        ../include/sak/file_explorer_types.h
-        ../include/sak/file_explorer_layout_metrics.h
-        ../include/sak/file_explorer_grouping.h
-        ../include/sak/file_explorer_group_proxy_model.h
-        ../include/sak/file_explorer_item_model.h
-        ../include/sak/file_explorer_sort_filter_model.h
-        ../include/sak/file_explorer_command_registry.h
-        ../include/sak/file_management_file_system.h
-        ../include/sak/advanced_search_worker.h
-        ../include/sak/worker_base.h
-        ../include/sak/storage_inventory_worker.h
-        ../include/sak/elevation_broker.h
-    )
-    set_target_properties(test_file_management_explorer_panel PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_management_explorer_panel PRIVATE
-        Qt6::Core Qt6::CorePrivate Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse
-        ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_management_explorer_panel PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_management_explorer_panel COMMAND test_file_management_explorer_panel
-             -o "${TEST_OUTPUT_DIR}/test_file_management_explorer_panel.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    # GUI suite runs on the offscreen platform: no windows appear on the
-    # developer desktop and stray focus changes cannot disturb the tests.
-    set_tests_properties(test_file_management_explorer_panel PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    message(STATUS "Added unit test: test_file_management_explorer_panel")
-endif()
+add_executable(test_file_management_explorer_panel
+    unit/test_file_management_explorer_panel.cpp
+    ../src/gui/file_explorer_sidebar.cpp
+    ../src/gui/file_explorer_breadcrumb.cpp
+    ../src/gui/file_explorer_icon_registry.cpp
+    ../src/gui/file_explorer_command_bar.cpp
+    ../src/gui/file_explorer_omnibar.cpp
+    ../src/gui/file_explorer_status_center_widget.cpp
+    ../src/gui/file_explorer_details_view.cpp
+    ../src/gui/file_explorer_name_delegate.cpp
+    ../include/sak/file_explorer_name_delegate.h
+    ../src/gui/file_explorer_pane.cpp
+    ../src/gui/file_explorer_details_pane.cpp
+    ../src/gui/file_explorer_style.cpp
+    ../src/gui/file_management_explorer_panel.cpp
+    ../src/core/file_explorer_types.cpp
+    ../src/core/file_explorer_layout_metrics.cpp
+    ../src/core/file_explorer_grouping.cpp
+    ../src/core/file_explorer_group_proxy_model.cpp
+    ../src/core/file_explorer_storage_history.cpp
+    ../src/core/file_explorer_status_center.cpp
+    ../src/core/file_explorer_transfer_worker.cpp
+    ../src/core/file_explorer_archive_worker.cpp
+    ../src/core/file_explorer_item_model.cpp
+    ../src/core/file_explorer_sort_filter_model.cpp
+    ../src/core/file_explorer_command_registry.cpp
+    ../src/core/file_explorer_session_store.cpp
+    ../src/core/file_explorer_tag_store.cpp
+    ../src/core/file_explorer_archive_service.cpp
+    ../src/gui/file_explorer_properties_dialog.cpp
+    ../include/sak/file_explorer_properties_dialog.h
+    ../src/core/file_explorer_properties_calc.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/recycle_bin.cpp
+    ../src/core/drive_unmounter.cpp
+    ../include/sak/drive_unmounter.h
+    ../src/core/advanced_search_worker.cpp
+    ../src/threading/worker_base.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/partition_manager_types.cpp
+    ../src/core/storage_inventory_worker.cpp
+    ../src/core/elevation_broker.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../resources/icons.qrc
+    ../include/sak/file_explorer_sidebar.h
+    ../include/sak/file_explorer_breadcrumb.h
+    ../include/sak/file_explorer_icon_registry.h
+    ../include/sak/file_explorer_command_bar.h
+    ../include/sak/file_explorer_omnibar.h
+    ../include/sak/file_explorer_status_center.h
+    ../include/sak/file_explorer_status_center_widget.h
+    ../include/sak/file_explorer_transfer_worker.h
+    ../include/sak/file_explorer_archive_worker.h
+    ../include/sak/file_explorer_details_view.h
+    ../include/sak/file_explorer_pane.h
+    ../include/sak/file_explorer_details_pane.h
+    ../include/sak/file_management_explorer_panel.h
+    ../include/sak/file_explorer_types.h
+    ../include/sak/file_explorer_layout_metrics.h
+    ../include/sak/file_explorer_grouping.h
+    ../include/sak/file_explorer_group_proxy_model.h
+    ../include/sak/file_explorer_item_model.h
+    ../include/sak/file_explorer_sort_filter_model.h
+    ../include/sak/file_explorer_command_registry.h
+    ../include/sak/file_management_file_system.h
+    ../include/sak/advanced_search_worker.h
+    ../include/sak/worker_base.h
+    ../include/sak/storage_inventory_worker.h
+    ../include/sak/elevation_broker.h
+)
+set_target_properties(test_file_management_explorer_panel PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_management_explorer_panel PRIVATE
+    Qt6::Core Qt6::CorePrivate Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_management_explorer_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_management_explorer_panel COMMAND test_file_management_explorer_panel
+         -o "${TEST_OUTPUT_DIR}/test_file_management_explorer_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite runs on the offscreen platform: no windows appear on the
+# developer desktop and stray focus changes cannot disturb the tests.
+set_tests_properties(test_file_management_explorer_panel PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_file_management_explorer_panel")
 
 # test_file_management_file_system - File Management target bridge
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp")
-    add_executable(test_file_management_file_system
-        unit/test_file_management_file_system.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/logger.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../include/sak/file_management_file_system.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-    )
-    set_target_properties(test_file_management_file_system PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_file_management_file_system PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_file_management_file_system PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_file_management_file_system COMMAND test_file_management_file_system
-             -o "${TEST_OUTPUT_DIR}/test_file_management_file_system.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_file_management_file_system")
-endif()
+add_executable(test_file_management_file_system
+    unit/test_file_management_file_system.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/logger.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../include/sak/file_management_file_system.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+)
+set_target_properties(test_file_management_file_system PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_file_management_file_system PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_file_management_file_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_file_management_file_system COMMAND test_file_management_file_system
+         -o "${TEST_OUTPUT_DIR}/test_file_management_file_system.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_file_management_file_system")
 
 # test_process_runner - echo, exit code, stderr, timeout, cancellation, PowerShell
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
-    add_executable(test_process_runner
-        unit/test_process_runner.cpp
-        ../src/core/process_runner.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_process_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_process_runner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_process_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_process_runner COMMAND test_process_runner
-             -o "${TEST_OUTPUT_DIR}/test_process_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_process_runner")
-endif()
+add_executable(test_process_runner
+    unit/test_process_runner.cpp
+    ../src/core/process_runner.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_process_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_process_runner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_process_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_process_runner COMMAND test_process_runner
+         -o "${TEST_OUTPUT_DIR}/test_process_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_process_runner")
 
 # test_smart_disk_analyzer - SmartReport parsing, health assessment
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_token_usage_tracker.cpp")
-    add_executable(test_ai_token_usage_tracker
-        unit/test_ai_token_usage_tracker.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../include/sak/ai/ai_token_usage_tracker.h
-    )
-    set_target_properties(test_ai_token_usage_tracker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_token_usage_tracker PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_token_usage_tracker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_token_usage_tracker COMMAND test_ai_token_usage_tracker
-             -o "${TEST_OUTPUT_DIR}/test_ai_token_usage_tracker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_token_usage_tracker")
-endif()
+add_executable(test_ai_token_usage_tracker
+    unit/test_ai_token_usage_tracker.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../include/sak/ai/ai_token_usage_tracker.h
+)
+set_target_properties(test_ai_token_usage_tracker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_token_usage_tracker PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_token_usage_tracker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_token_usage_tracker COMMAND test_ai_token_usage_tracker
+         -o "${TEST_OUTPUT_DIR}/test_ai_token_usage_tracker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_token_usage_tracker")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
-    add_executable(test_openai_responses_client
-        unit/test_openai_responses_client.cpp
-        ../src/ai/openai_responses_client.cpp
-        ../src/core/app_paths.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/secure_memory.cpp
-        ../src/core/logger.cpp
-        ../include/sak/ai/openai_responses_client.h
-        ../include/sak/app_paths.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_openai_responses_client PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_openai_responses_client PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_openai_responses_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
-             -o "${TEST_OUTPUT_DIR}/test_openai_responses_client.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_openai_responses_client")
-endif()
+add_executable(test_openai_responses_client
+    unit/test_openai_responses_client.cpp
+    ../src/ai/openai_responses_client.cpp
+    ../src/core/app_paths.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+    ../include/sak/ai/openai_responses_client.h
+    ../include/sak/app_paths.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_openai_responses_client PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_openai_responses_client PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_openai_responses_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
+         -o "${TEST_OUTPUT_DIR}/test_openai_responses_client.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_openai_responses_client")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_registry.cpp")
-    add_executable(test_ai_provider_registry
-        unit/test_ai_provider_registry.cpp
-        ../src/ai/ai_provider_registry.cpp
-        ../include/sak/ai/ai_provider_registry.h
-        ../resources/ai.qrc
-    )
-    set_target_properties(test_ai_provider_registry PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_provider_registry PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_provider_registry PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_provider_registry COMMAND test_ai_provider_registry
-             -o "${TEST_OUTPUT_DIR}/test_ai_provider_registry.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_provider_registry")
-endif()
+add_executable(test_ai_provider_registry
+    unit/test_ai_provider_registry.cpp
+    ../src/ai/ai_provider_registry.cpp
+    ../include/sak/ai/ai_provider_registry.h
+    ../resources/ai.qrc
+)
+set_target_properties(test_ai_provider_registry PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_provider_registry PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_provider_registry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_provider_registry COMMAND test_ai_provider_registry
+         -o "${TEST_OUTPUT_DIR}/test_ai_provider_registry.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_provider_registry")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_prompt_assembler.cpp")
-    add_executable(test_ai_prompt_assembler
-        unit/test_ai_prompt_assembler.cpp
-        ../src/ai/ai_prompt_assembler.cpp
-        ../include/sak/ai/ai_prompt_assembler.h
-    )
-    set_target_properties(test_ai_prompt_assembler PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_prompt_assembler PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_prompt_assembler PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_prompt_assembler COMMAND test_ai_prompt_assembler
-             -o "${TEST_OUTPUT_DIR}/test_ai_prompt_assembler.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_prompt_assembler")
-endif()
+add_executable(test_ai_prompt_assembler
+    unit/test_ai_prompt_assembler.cpp
+    ../src/ai/ai_prompt_assembler.cpp
+    ../include/sak/ai/ai_prompt_assembler.h
+)
+set_target_properties(test_ai_prompt_assembler PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_prompt_assembler PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_prompt_assembler PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_prompt_assembler COMMAND test_ai_prompt_assembler
+         -o "${TEST_OUTPUT_DIR}/test_ai_prompt_assembler.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_prompt_assembler")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatch.cpp"
-   AND SAK_ENABLE_AI_ASSISTANT)
+if(SAK_ENABLE_AI_ASSISTANT)
     # The panel's off-GUI-thread tool dispatch is certified against the real
     # AiAssistantPanel, which pulls in the whole AI subsystem plus a few core/gui
     # utilities. Reuse the app's AI source group (absolutized -- the group paths
@@ -2036,267 +1941,247 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_assistant_panel_tool_dispatc
     message(STATUS "Added unit test: test_ai_assistant_panel_tool_dispatch")
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_async_tool_runner.cpp")
-    add_executable(test_ai_async_tool_runner
-        unit/test_ai_async_tool_runner.cpp
-        ../src/ai/ai_async_tool_runner.cpp
-        ../include/sak/ai/ai_async_tool_runner.h
-        # The runner logs the exception it swallows so a thrown-away tool failure is not
-        # silent; that pulls in the logger.
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_ai_async_tool_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_async_tool_runner PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test
-    )
-    target_include_directories(test_ai_async_tool_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_async_tool_runner COMMAND test_ai_async_tool_runner
-             -o "${TEST_OUTPUT_DIR}/test_ai_async_tool_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_async_tool_runner")
-endif()
+add_executable(test_ai_async_tool_runner
+    unit/test_ai_async_tool_runner.cpp
+    ../src/ai/ai_async_tool_runner.cpp
+    ../include/sak/ai/ai_async_tool_runner.h
+    # The runner logs the exception it swallows so a thrown-away tool failure is not
+    # silent; that pulls in the logger.
+    ../src/core/logger.cpp
+)
+set_target_properties(test_ai_async_tool_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_async_tool_runner PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test
+)
+target_include_directories(test_ai_async_tool_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_async_tool_runner COMMAND test_ai_async_tool_runner
+         -o "${TEST_OUTPUT_DIR}/test_ai_async_tool_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_async_tool_runner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_health_ledger.cpp")
-    add_executable(test_ai_tool_health_ledger
-        unit/test_ai_tool_health_ledger.cpp
-        ../src/ai/ai_tool_health_ledger.cpp
-        ../include/sak/ai/ai_tool_health_ledger.h
-    )
-    set_target_properties(test_ai_tool_health_ledger PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_health_ledger PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test
-    )
-    target_include_directories(test_ai_tool_health_ledger PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_health_ledger COMMAND test_ai_tool_health_ledger
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_health_ledger.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_health_ledger")
-endif()
+add_executable(test_ai_tool_health_ledger
+    unit/test_ai_tool_health_ledger.cpp
+    ../src/ai/ai_tool_health_ledger.cpp
+    ../include/sak/ai/ai_tool_health_ledger.h
+)
+set_target_properties(test_ai_tool_health_ledger PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_health_ledger PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test
+)
+target_include_directories(test_ai_tool_health_ledger PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_health_ledger COMMAND test_ai_tool_health_ledger
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_health_ledger.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_health_ledger")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_follow_scroll_controller.cpp")
-    add_executable(test_follow_scroll_controller
-        unit/test_follow_scroll_controller.cpp
-        ../src/gui/follow_scroll_controller.cpp
-        ../include/sak/follow_scroll_controller.h
-    )
-    set_target_properties(test_follow_scroll_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_follow_scroll_controller PRIVATE
-        Qt6::Core Qt6::Widgets Qt6::Test
-    )
-    target_include_directories(test_follow_scroll_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_follow_scroll_controller COMMAND test_follow_scroll_controller
-             -o "${TEST_OUTPUT_DIR}/test_follow_scroll_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_follow_scroll_controller")
-endif()
+add_executable(test_follow_scroll_controller
+    unit/test_follow_scroll_controller.cpp
+    ../src/gui/follow_scroll_controller.cpp
+    ../include/sak/follow_scroll_controller.h
+)
+set_target_properties(test_follow_scroll_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_follow_scroll_controller PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test
+)
+target_include_directories(test_follow_scroll_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_follow_scroll_controller COMMAND test_follow_scroll_controller
+         -o "${TEST_OUTPUT_DIR}/test_follow_scroll_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_follow_scroll_controller")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_splash_screen.cpp")
-    add_executable(test_splash_screen
-        unit/test_splash_screen.cpp
-        ../src/gui/splash_screen.cpp
-        ../include/sak/splash_screen.h
-    )
-    set_target_properties(test_splash_screen PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_splash_screen PRIVATE
-        Qt6::Core Qt6::Widgets Qt6::Test
-    )
-    target_include_directories(test_splash_screen PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_splash_screen COMMAND test_splash_screen
-             -o "${TEST_OUTPUT_DIR}/test_splash_screen.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_splash_screen")
-endif()
+add_executable(test_splash_screen
+    unit/test_splash_screen.cpp
+    ../src/gui/splash_screen.cpp
+    ../include/sak/splash_screen.h
+)
+set_target_properties(test_splash_screen PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_splash_screen PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test
+)
+target_include_directories(test_splash_screen PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_splash_screen COMMAND test_splash_screen
+         -o "${TEST_OUTPUT_DIR}/test_splash_screen.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_splash_screen")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_transcript_view.cpp")
-    add_executable(test_ai_transcript_view
-        unit/test_ai_transcript_view.cpp
-        ../src/gui/ai_transcript_view.cpp
-        ../src/gui/follow_scroll_controller.cpp
-        ../include/sak/ai_transcript_view.h
-        ../include/sak/follow_scroll_controller.h
-        ../resources/icons.qrc
-    )
-    set_target_properties(test_ai_transcript_view PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_transcript_view PRIVATE
-        Qt6::Core Qt6::Widgets Qt6::Test
-    )
-    target_include_directories(test_ai_transcript_view PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_transcript_view COMMAND test_ai_transcript_view
-             -o "${TEST_OUTPUT_DIR}/test_ai_transcript_view.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_transcript_view")
-endif()
+add_executable(test_ai_transcript_view
+    unit/test_ai_transcript_view.cpp
+    ../src/gui/ai_transcript_view.cpp
+    ../src/gui/follow_scroll_controller.cpp
+    ../include/sak/ai_transcript_view.h
+    ../include/sak/follow_scroll_controller.h
+    ../resources/icons.qrc
+)
+set_target_properties(test_ai_transcript_view PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_transcript_view PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test
+)
+target_include_directories(test_ai_transcript_view PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_transcript_view COMMAND test_ai_transcript_view
+         -o "${TEST_OUTPUT_DIR}/test_ai_transcript_view.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_transcript_view")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_gateway.cpp")
-    add_executable(test_ai_provider_gateway
-        unit/test_ai_provider_gateway.cpp
-        ../src/ai/ai_provider_gateway.cpp
-        ../src/ai/ai_provider_registry.cpp
-        ../src/ai/ai_mcp_http_client.cpp
-        ../src/ai/ai_mcp_session_pool.cpp
-        ../src/ai/ai_mcp_stdio_client.cpp
-        ../src/ai/ai_mcp_stdio_session.cpp
-        ../include/sak/ai/ai_provider_gateway.h
-        ../include/sak/ai/ai_provider_registry.h
-        ../include/sak/ai/ai_mcp_http_client.h
-        ../include/sak/ai/ai_mcp_session_pool.h
-        ../include/sak/ai/ai_mcp_stdio_client.h
-        ../include/sak/ai/ai_mcp_stdio_session.h
-    )
-    set_target_properties(test_ai_provider_gateway PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_provider_gateway PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test
-    )
-    target_include_directories(test_ai_provider_gateway PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
-             -o "${TEST_OUTPUT_DIR}/test_ai_provider_gateway.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_provider_gateway")
-endif()
+add_executable(test_ai_provider_gateway
+    unit/test_ai_provider_gateway.cpp
+    ../src/ai/ai_provider_gateway.cpp
+    ../src/ai/ai_provider_registry.cpp
+    ../src/ai/ai_mcp_http_client.cpp
+    ../src/ai/ai_mcp_session_pool.cpp
+    ../src/ai/ai_mcp_stdio_client.cpp
+    ../src/ai/ai_mcp_stdio_session.cpp
+    ../include/sak/ai/ai_provider_gateway.h
+    ../include/sak/ai/ai_provider_registry.h
+    ../include/sak/ai/ai_mcp_http_client.h
+    ../include/sak/ai/ai_mcp_session_pool.h
+    ../include/sak/ai/ai_mcp_stdio_client.h
+    ../include/sak/ai/ai_mcp_stdio_session.h
+)
+set_target_properties(test_ai_provider_gateway PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_provider_gateway PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test
+)
+target_include_directories(test_ai_provider_gateway PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
+         -o "${TEST_OUTPUT_DIR}/test_ai_provider_gateway.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_provider_gateway")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_app_action_planner.cpp")
-    add_executable(test_ai_app_action_planner
-        unit/test_ai_app_action_planner.cpp
-        ../src/ai/ai_app_action_planner.cpp
-        ../src/ai/ai_command_guard.cpp
-        ../src/ai/ai_command_tool_planner.cpp
-        ../src/ai/ai_execution_broker.cpp
-        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/ai/ai_tool_policy.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/secure_memory.cpp
-        ../include/sak/ai/ai_app_action_planner.h
-        ../include/sak/ai/ai_command_guard.h
-        ../include/sak/ai/ai_command_tool_planner.h
-        ../include/sak/ai/ai_execution_broker.h
-        ../include/sak/ai/ai_tool_policy.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/app_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_ai_app_action_planner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_app_action_planner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_app_action_planner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_app_action_planner COMMAND test_ai_app_action_planner
-             -o "${TEST_OUTPUT_DIR}/test_ai_app_action_planner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_app_action_planner")
-endif()
+add_executable(test_ai_app_action_planner
+    unit/test_ai_app_action_planner.cpp
+    ../src/ai/ai_app_action_planner.cpp
+    ../src/ai/ai_command_guard.cpp
+    ../src/ai/ai_command_tool_planner.cpp
+    ../src/ai/ai_execution_broker.cpp
+    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/ai/ai_tool_policy.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../include/sak/ai/ai_app_action_planner.h
+    ../include/sak/ai/ai_command_guard.h
+    ../include/sak/ai/ai_command_tool_planner.h
+    ../include/sak/ai/ai_execution_broker.h
+    ../include/sak/ai/ai_tool_policy.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/app_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_ai_app_action_planner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_app_action_planner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_app_action_planner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_app_action_planner COMMAND test_ai_app_action_planner
+         -o "${TEST_OUTPUT_DIR}/test_ai_app_action_planner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_app_action_planner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_win32_gui_runner.cpp")
-    add_executable(test_ai_win32_gui_runner
-        unit/test_ai_win32_gui_runner.cpp
-        ../src/ai/ai_win32_gui_runner.cpp
-        ../include/sak/ai/ai_win32_gui_runner.h
-    )
-    set_target_properties(test_ai_win32_gui_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_win32_gui_runner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_win32_gui_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_win32_gui_runner COMMAND test_ai_win32_gui_runner
-             -o "${TEST_OUTPUT_DIR}/test_ai_win32_gui_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_win32_gui_runner")
-endif()
+add_executable(test_ai_win32_gui_runner
+    unit/test_ai_win32_gui_runner.cpp
+    ../src/ai/ai_win32_gui_runner.cpp
+    ../include/sak/ai/ai_win32_gui_runner.h
+)
+set_target_properties(test_ai_win32_gui_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_win32_gui_runner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_win32_gui_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_win32_gui_runner COMMAND test_ai_win32_gui_runner
+         -o "${TEST_OUTPUT_DIR}/test_ai_win32_gui_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_win32_gui_runner")
 
 # test_win32_mcp_dialog_choice --- pure, deterministic coverage of the dismiss_dialog button
 # selection: affirmative ranking, never-Cancel safety, lone-nameless fallback, explicit override.
 # No Win32/UIA -- the logic is a pure function seam, so it runs on any platform.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_dialog_choice.cpp")
-    add_executable(test_win32_mcp_dialog_choice
-        unit/test_win32_mcp_dialog_choice.cpp
-        ../src/win32mcp/win32_mcp_dialog_choice.cpp
-        ../include/sak/win32mcp/win32_mcp_dialog_choice.h
-    )
-    set_target_properties(test_win32_mcp_dialog_choice PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_dialog_choice PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_dialog_choice PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_dialog_choice COMMAND test_win32_mcp_dialog_choice
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_dialog_choice.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_dialog_choice")
-endif()
+add_executable(test_win32_mcp_dialog_choice
+    unit/test_win32_mcp_dialog_choice.cpp
+    ../src/win32mcp/win32_mcp_dialog_choice.cpp
+    ../include/sak/win32mcp/win32_mcp_dialog_choice.h
+)
+set_target_properties(test_win32_mcp_dialog_choice PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_dialog_choice PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_dialog_choice PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_dialog_choice COMMAND test_win32_mcp_dialog_choice
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_dialog_choice.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_dialog_choice")
 
 # test_win32_mcp_text_match --- pure, deterministic coverage of the OCR whole-word matcher that
 # click_text/find_text/wait_for_text rely on: whole-word (so "OK" != "cookies", "Scan" !=
 # "Scanning"), consecutive same-line phrase runs, exact-over-substring + standalone-over-sentence
 # ranking, and the opt-in contains fallback. No WinRT OCR -- the matcher is a pure function seam.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_text_match.cpp")
-    add_executable(test_win32_mcp_text_match
-        unit/test_win32_mcp_text_match.cpp
-        ../src/win32mcp/win32_mcp_text_match.cpp
-        ../include/sak/win32mcp/win32_mcp_text_match.h
-    )
-    set_target_properties(test_win32_mcp_text_match PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_text_match PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_text_match PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_text_match COMMAND test_win32_mcp_text_match
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_text_match.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_text_match")
-endif()
+add_executable(test_win32_mcp_text_match
+    unit/test_win32_mcp_text_match.cpp
+    ../src/win32mcp/win32_mcp_text_match.cpp
+    ../include/sak/win32mcp/win32_mcp_text_match.h
+)
+set_target_properties(test_win32_mcp_text_match PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_text_match PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_text_match PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_text_match COMMAND test_win32_mcp_text_match
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_text_match.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_text_match")
 
 # test_win32_mcp_key_chord --- deterministic coverage of the send_keys chord parser: correct VK
 # mapping, multiple modifiers, named/single keys, and refusal of an unknown modifier or main key so
@@ -2352,3032 +2237,2842 @@ endif()
 # test_win32_mcp_uia_ref --- deterministic coverage of the UIA ref-drift guard that protects
 # uia_click_control / uia_get_control_value / dismiss_dialog from acting on a stale ref: identity is
 # role + name + bounding-rect origin, and out-of-range against either walk fails closed. Pure logic.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_uia_ref.cpp")
-    add_executable(test_win32_mcp_uia_ref
-        unit/test_win32_mcp_uia_ref.cpp
-        ../src/win32mcp/win32_mcp_uia_ref.cpp
-        ../include/sak/win32mcp/win32_mcp_uia_ref.h
-    )
-    set_target_properties(test_win32_mcp_uia_ref PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_uia_ref PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_uia_ref PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_uia_ref COMMAND test_win32_mcp_uia_ref
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_uia_ref.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_uia_ref")
-endif()
+add_executable(test_win32_mcp_uia_ref
+    unit/test_win32_mcp_uia_ref.cpp
+    ../src/win32mcp/win32_mcp_uia_ref.cpp
+    ../include/sak/win32mcp/win32_mcp_uia_ref.h
+)
+set_target_properties(test_win32_mcp_uia_ref PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_uia_ref PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_uia_ref PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_uia_ref COMMAND test_win32_mcp_uia_ref
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_uia_ref.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_uia_ref")
 
 # test_win32_mcp_fingerprint --- deterministic coverage of the visual-fingerprint oracle behind
 # compare_screenshots + wait_for_idle: grid sampling with a degenerate-buffer guard, the per-cell
 # tolerance boundary, the changed-ratio boundary, and the signed->unsigned gray round-trip. Pure.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_fingerprint.cpp")
-    add_executable(test_win32_mcp_fingerprint
-        unit/test_win32_mcp_fingerprint.cpp
-        ../src/win32mcp/win32_mcp_fingerprint.cpp
-        ../include/sak/win32mcp/win32_mcp_fingerprint.h
-    )
-    set_target_properties(test_win32_mcp_fingerprint PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_fingerprint PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_fingerprint PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_fingerprint COMMAND test_win32_mcp_fingerprint
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_fingerprint.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_fingerprint")
-endif()
+add_executable(test_win32_mcp_fingerprint
+    unit/test_win32_mcp_fingerprint.cpp
+    ../src/win32mcp/win32_mcp_fingerprint.cpp
+    ../include/sak/win32mcp/win32_mcp_fingerprint.h
+)
+set_target_properties(test_win32_mcp_fingerprint PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_fingerprint PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_fingerprint PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_fingerprint COMMAND test_win32_mcp_fingerprint
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_fingerprint.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_fingerprint")
 
 # test_win32_mcp_json_clamp --- deterministic coverage of the wait-loop ms clamp: default fallback,
 # floor/cap clamping, fractional truncation, and the regression where a huge JSON number must pin to
 # the cap instead of overflowing the narrowing cast to the floor. Pure.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_json_clamp.cpp")
-    add_executable(test_win32_mcp_json_clamp
-        unit/test_win32_mcp_json_clamp.cpp
-        ../src/win32mcp/win32_mcp_json_clamp.cpp
-        ../include/sak/win32mcp/win32_mcp_json_clamp.h
-    )
-    set_target_properties(test_win32_mcp_json_clamp PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_json_clamp PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_json_clamp PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_json_clamp COMMAND test_win32_mcp_json_clamp
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_json_clamp.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_json_clamp")
-endif()
+add_executable(test_win32_mcp_json_clamp
+    unit/test_win32_mcp_json_clamp.cpp
+    ../src/win32mcp/win32_mcp_json_clamp.cpp
+    ../include/sak/win32mcp/win32_mcp_json_clamp.h
+)
+set_target_properties(test_win32_mcp_json_clamp PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_json_clamp PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_json_clamp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_json_clamp COMMAND test_win32_mcp_json_clamp
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_json_clamp.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_json_clamp")
 
 # test_win32_mcp_geometry --- deterministic coverage of the capture/OCR geometry math: downscale
 # sizing (aspect + edge floor), capture-rect validation (empty / oversize guard), inverse-scale,
 # and word-box mapping back to absolute screen pixels (a rounding/scale slip mislocates click_text).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_geometry.cpp")
-    add_executable(test_win32_mcp_geometry
-        unit/test_win32_mcp_geometry.cpp
-        ../src/win32mcp/win32_mcp_geometry.cpp
-        ../include/sak/win32mcp/win32_mcp_geometry.h
-    )
-    set_target_properties(test_win32_mcp_geometry PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_win32_mcp_geometry PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_win32_mcp_geometry PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_win32_mcp_geometry COMMAND test_win32_mcp_geometry
-             -o "${TEST_OUTPUT_DIR}/test_win32_mcp_geometry.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_win32_mcp_geometry")
-endif()
+add_executable(test_win32_mcp_geometry
+    unit/test_win32_mcp_geometry.cpp
+    ../src/win32mcp/win32_mcp_geometry.cpp
+    ../include/sak/win32mcp/win32_mcp_geometry.h
+)
+set_target_properties(test_win32_mcp_geometry PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_win32_mcp_geometry PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_win32_mcp_geometry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_win32_mcp_geometry COMMAND test_win32_mcp_geometry
+         -o "${TEST_OUTPUT_DIR}/test_win32_mcp_geometry.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_win32_mcp_geometry")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_guard.cpp")
-    add_executable(test_ai_command_guard
-        unit/test_ai_command_guard.cpp
-        ../src/ai/ai_command_guard.cpp
-        ../include/sak/ai/ai_command_guard.h
-    )
-    set_target_properties(test_ai_command_guard PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_command_guard PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_command_guard PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_command_guard COMMAND test_ai_command_guard
-             -o "${TEST_OUTPUT_DIR}/test_ai_command_guard.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_command_guard")
-endif()
+add_executable(test_ai_command_guard
+    unit/test_ai_command_guard.cpp
+    ../src/ai/ai_command_guard.cpp
+    ../include/sak/ai/ai_command_guard.h
+)
+set_target_properties(test_ai_command_guard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_command_guard PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_command_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_command_guard COMMAND test_ai_command_guard
+         -o "${TEST_OUTPUT_DIR}/test_ai_command_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_command_guard")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_tool_planner.cpp")
-    add_executable(test_ai_command_tool_planner
-        unit/test_ai_command_tool_planner.cpp
-        ../src/ai/ai_command_tool_planner.cpp
-        ../src/ai/ai_command_guard.cpp
-        ../src/ai/ai_execution_broker.cpp
-        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/ai/ai_tool_policy.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/secure_memory.cpp
-        ../include/sak/ai/ai_command_tool_planner.h
-        ../include/sak/ai/ai_command_guard.h
-        ../include/sak/ai/ai_execution_broker.h
-        ../include/sak/ai/ai_tool_policy.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/app_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_ai_command_tool_planner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_command_tool_planner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_command_tool_planner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_command_tool_planner COMMAND test_ai_command_tool_planner
-             -o "${TEST_OUTPUT_DIR}/test_ai_command_tool_planner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_command_tool_planner")
-endif()
+add_executable(test_ai_command_tool_planner
+    unit/test_ai_command_tool_planner.cpp
+    ../src/ai/ai_command_tool_planner.cpp
+    ../src/ai/ai_command_guard.cpp
+    ../src/ai/ai_execution_broker.cpp
+    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/ai/ai_tool_policy.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../include/sak/ai/ai_command_tool_planner.h
+    ../include/sak/ai/ai_command_guard.h
+    ../include/sak/ai/ai_execution_broker.h
+    ../include/sak/ai/ai_tool_policy.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/app_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_ai_command_tool_planner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_command_tool_planner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_command_tool_planner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_command_tool_planner COMMAND test_ai_command_tool_planner
+         -o "${TEST_OUTPUT_DIR}/test_ai_command_tool_planner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_command_tool_planner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_call_router.cpp")
-    add_executable(test_ai_tool_call_router
-        unit/test_ai_tool_call_router.cpp
-        ../src/ai/ai_tool_call_router.cpp
-        ../include/sak/ai/ai_tool_call_router.h
-        ../include/sak/ai/openai_response_types.h
-    )
-    set_target_properties(test_ai_tool_call_router PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_call_router PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_tool_call_router PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_call_router COMMAND test_ai_tool_call_router
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_call_router.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_call_router")
-endif()
+add_executable(test_ai_tool_call_router
+    unit/test_ai_tool_call_router.cpp
+    ../src/ai/ai_tool_call_router.cpp
+    ../include/sak/ai/ai_tool_call_router.h
+    ../include/sak/ai/openai_response_types.h
+)
+set_target_properties(test_ai_tool_call_router PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_call_router PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_tool_call_router PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_call_router COMMAND test_ai_tool_call_router
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_call_router.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_call_router")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_http_client.cpp")
-    add_executable(test_ai_mcp_http_client
-        unit/test_ai_mcp_http_client.cpp
-        ../src/ai/ai_mcp_http_client.cpp
-        ../include/sak/ai/ai_mcp_http_client.h
-    )
-    set_target_properties(test_ai_mcp_http_client PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_mcp_http_client PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test
-    )
-    target_include_directories(test_ai_mcp_http_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_mcp_http_client COMMAND test_ai_mcp_http_client
-             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_http_client.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_mcp_http_client")
-endif()
+add_executable(test_ai_mcp_http_client
+    unit/test_ai_mcp_http_client.cpp
+    ../src/ai/ai_mcp_http_client.cpp
+    ../include/sak/ai/ai_mcp_http_client.h
+)
+set_target_properties(test_ai_mcp_http_client PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_mcp_http_client PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test
+)
+target_include_directories(test_ai_mcp_http_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_mcp_http_client COMMAND test_ai_mcp_http_client
+         -o "${TEST_OUTPUT_DIR}/test_ai_mcp_http_client.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_mcp_http_client")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_stdio_client.cpp")
-    add_executable(test_ai_mcp_stdio_client
-        unit/test_ai_mcp_stdio_client.cpp
-        ../src/ai/ai_mcp_stdio_client.cpp
-        ../include/sak/ai/ai_mcp_stdio_client.h
-    )
-    set_target_properties(test_ai_mcp_stdio_client PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_mcp_stdio_client PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_mcp_stdio_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_mcp_stdio_client COMMAND test_ai_mcp_stdio_client
-             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_client.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_mcp_stdio_client")
-endif()
+add_executable(test_ai_mcp_stdio_client
+    unit/test_ai_mcp_stdio_client.cpp
+    ../src/ai/ai_mcp_stdio_client.cpp
+    ../include/sak/ai/ai_mcp_stdio_client.h
+)
+set_target_properties(test_ai_mcp_stdio_client PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_mcp_stdio_client PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_mcp_stdio_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_mcp_stdio_client COMMAND test_ai_mcp_stdio_client
+         -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_client.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_mcp_stdio_client")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_stdio_session.cpp")
-    add_executable(test_ai_mcp_stdio_session
-        unit/test_ai_mcp_stdio_session.cpp
-        ../src/ai/ai_mcp_stdio_session.cpp
-        ../include/sak/ai/ai_mcp_stdio_session.h
-    )
-    set_target_properties(test_ai_mcp_stdio_session PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_mcp_stdio_session PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_mcp_stdio_session PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_mcp_stdio_session COMMAND test_ai_mcp_stdio_session
-             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_session.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_mcp_stdio_session")
-endif()
+add_executable(test_ai_mcp_stdio_session
+    unit/test_ai_mcp_stdio_session.cpp
+    ../src/ai/ai_mcp_stdio_session.cpp
+    ../include/sak/ai/ai_mcp_stdio_session.h
+)
+set_target_properties(test_ai_mcp_stdio_session PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_mcp_stdio_session PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_mcp_stdio_session PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_mcp_stdio_session COMMAND test_ai_mcp_stdio_session
+         -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_session.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_mcp_session_pool.cpp")
-    add_executable(test_ai_mcp_session_pool
-        unit/test_ai_mcp_session_pool.cpp
-        ../src/ai/ai_mcp_session_pool.cpp
-        ../src/ai/ai_mcp_stdio_session.cpp
-        ../include/sak/ai/ai_mcp_session_pool.h
-        ../include/sak/ai/ai_mcp_stdio_session.h
-    )
-    set_target_properties(test_ai_mcp_session_pool PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_mcp_session_pool PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_mcp_session_pool PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
-             -o "${TEST_OUTPUT_DIR}/test_ai_mcp_session_pool.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_mcp_session_pool")
-endif()
+add_executable(test_ai_mcp_session_pool
+    unit/test_ai_mcp_session_pool.cpp
+    ../src/ai/ai_mcp_session_pool.cpp
+    ../src/ai/ai_mcp_stdio_session.cpp
+    ../include/sak/ai/ai_mcp_session_pool.h
+    ../include/sak/ai/ai_mcp_stdio_session.h
+)
+set_target_properties(test_ai_mcp_session_pool PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_mcp_session_pool PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_mcp_session_pool PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
+         -o "${TEST_OUTPUT_DIR}/test_ai_mcp_session_pool.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_mcp_session_pool")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_registry.cpp")
-    add_executable(test_app_action_registry
-        unit/test_app_action_registry.cpp
-        ../src/core/app_action_registry.cpp
-        ../include/sak/app_action_registry.h
-    )
-    set_target_properties(test_app_action_registry PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_app_action_registry PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_app_action_registry PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_app_action_registry COMMAND test_app_action_registry
-             -o "${TEST_OUTPUT_DIR}/test_app_action_registry.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_app_action_registry")
-endif()
+add_executable(test_app_action_registry
+    unit/test_app_action_registry.cpp
+    ../src/core/app_action_registry.cpp
+    ../include/sak/app_action_registry.h
+)
+set_target_properties(test_app_action_registry PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_action_registry PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_app_action_registry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_action_registry COMMAND test_app_action_registry
+         -o "${TEST_OUTPUT_DIR}/test_app_action_registry.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_action_registry")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_action_service.cpp")
-    add_executable(test_app_action_service
-        unit/test_app_action_service.cpp
-        ../src/core/app_action_bridge.cpp
-        ../src/core/app_action_registry.cpp
-        ../src/core/quick_action.cpp
-        ../src/core/quick_action_controller.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/elevation_broker.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/logger.cpp
-        ../src/core/quick_action_result_io.cpp
-        ../include/sak/app_action_service.h
-        ../include/sak/app_action_registry.h
-        ../include/sak/quick_action.h
-        ../include/sak/quick_action_controller.h
-        ../include/sak/elevation_broker.h
-        ../include/sak/elevation_manager.h
-    )
-    set_target_properties(test_app_action_service PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_app_action_service PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test advapi32 shell32
-    )
-    target_include_directories(test_app_action_service PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_app_action_service COMMAND test_app_action_service
-             -o "${TEST_OUTPUT_DIR}/test_app_action_service.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_app_action_service")
-endif()
+add_executable(test_app_action_service
+    unit/test_app_action_service.cpp
+    ../src/core/app_action_bridge.cpp
+    ../src/core/app_action_registry.cpp
+    ../src/core/quick_action.cpp
+    ../src/core/quick_action_controller.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/elevation_broker.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/logger.cpp
+    ../src/core/quick_action_result_io.cpp
+    ../include/sak/app_action_service.h
+    ../include/sak/app_action_registry.h
+    ../include/sak/quick_action.h
+    ../include/sak/quick_action_controller.h
+    ../include/sak/elevation_broker.h
+    ../include/sak/elevation_manager.h
+)
+set_target_properties(test_app_action_service PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_action_service PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test advapi32 shell32
+)
+target_include_directories(test_app_action_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_action_service COMMAND test_app_action_service
+         -o "${TEST_OUTPUT_DIR}/test_app_action_service.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_action_service")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
-    add_executable(test_ai_conversation_store
-        unit/test_ai_conversation_store.cpp
-        ../src/core/app_paths.cpp
-        ../src/ai/ai_conversation_store.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../include/sak/ai/ai_conversation_store.h
-        ../include/sak/app_paths.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-    )
-    set_target_properties(test_ai_conversation_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_conversation_store PRIVATE
-        Qt6::Core Qt6::Test Crypt32
-    )
-    target_include_directories(test_ai_conversation_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_conversation_store COMMAND test_ai_conversation_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_conversation_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_conversation_store")
-endif()
+add_executable(test_ai_conversation_store
+    unit/test_ai_conversation_store.cpp
+    ../src/core/app_paths.cpp
+    ../src/ai/ai_conversation_store.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../include/sak/ai/ai_conversation_store.h
+    ../include/sak/app_paths.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+)
+set_target_properties(test_ai_conversation_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_conversation_store PRIVATE
+    Qt6::Core Qt6::Test Crypt32
+)
+target_include_directories(test_ai_conversation_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_conversation_store COMMAND test_ai_conversation_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_conversation_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_conversation_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_chat_title.cpp")
-    add_executable(test_ai_chat_title
-        unit/test_ai_chat_title.cpp
-        ../src/ai/ai_chat_title.cpp
-        ../include/sak/ai/ai_chat_title.h
-    )
-    set_target_properties(test_ai_chat_title PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_chat_title PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_chat_title PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
-             -o "${TEST_OUTPUT_DIR}/test_ai_chat_title.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_chat_title")
-endif()
+add_executable(test_ai_chat_title
+    unit/test_ai_chat_title.cpp
+    ../src/ai/ai_chat_title.cpp
+    ../include/sak/ai/ai_chat_title.h
+)
+set_target_properties(test_ai_chat_title PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_chat_title PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_chat_title PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
+         -o "${TEST_OUTPUT_DIR}/test_ai_chat_title.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_chat_title")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
-    add_executable(test_ai_execution_broker
-        unit/test_ai_execution_broker.cpp
-        ../src/core/app_paths.cpp
-        ../src/ai/ai_execution_broker.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/secure_memory.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../include/sak/ai/ai_execution_broker.h
-        ../include/sak/app_paths.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_ai_execution_broker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_execution_broker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_execution_broker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_execution_broker COMMAND test_ai_execution_broker
-             -o "${TEST_OUTPUT_DIR}/test_ai_execution_broker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_execution_broker")
-endif()
+add_executable(test_ai_execution_broker
+    unit/test_ai_execution_broker.cpp
+    ../src/core/app_paths.cpp
+    ../src/ai/ai_execution_broker.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/secure_memory.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../include/sak/ai/ai_execution_broker.h
+    ../include/sak/app_paths.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_ai_execution_broker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_execution_broker PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_execution_broker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_execution_broker COMMAND test_ai_execution_broker
+         -o "${TEST_OUTPUT_DIR}/test_ai_execution_broker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_execution_broker")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_cancellation_token.cpp")
-    add_executable(test_ai_cancellation_token
-        unit/test_ai_cancellation_token.cpp
-        ../src/ai/ai_cancellation_token.cpp
-        ../include/sak/ai/ai_cancellation_token.h
-    )
-    set_target_properties(test_ai_cancellation_token PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_cancellation_token PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test
-    )
-    target_include_directories(test_ai_cancellation_token PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_cancellation_token COMMAND test_ai_cancellation_token
-             -o "${TEST_OUTPUT_DIR}/test_ai_cancellation_token.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_cancellation_token")
-endif()
+add_executable(test_ai_cancellation_token
+    unit/test_ai_cancellation_token.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../include/sak/ai/ai_cancellation_token.h
+)
+set_target_properties(test_ai_cancellation_token PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_cancellation_token PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test
+)
+target_include_directories(test_ai_cancellation_token PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_cancellation_token COMMAND test_ai_cancellation_token
+         -o "${TEST_OUTPUT_DIR}/test_ai_cancellation_token.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_cancellation_token")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state.cpp")
-    add_executable(test_ai_run_state
-        unit/test_ai_run_state.cpp
-        ../src/ai/ai_human_gate.cpp
-        ../src/ai/ai_run_state.cpp
-        ../include/sak/ai/ai_human_gate.h
-        ../include/sak/ai/ai_run_state.h
-    )
-    set_target_properties(test_ai_run_state PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_run_state PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_run_state PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_run_state COMMAND test_ai_run_state
-             -o "${TEST_OUTPUT_DIR}/test_ai_run_state.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_run_state")
-endif()
+add_executable(test_ai_run_state
+    unit/test_ai_run_state.cpp
+    ../src/ai/ai_human_gate.cpp
+    ../src/ai/ai_run_state.cpp
+    ../include/sak/ai/ai_human_gate.h
+    ../include/sak/ai/ai_run_state.h
+)
+set_target_properties(test_ai_run_state PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_run_state PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_run_state PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_run_state COMMAND test_ai_run_state
+         -o "${TEST_OUTPUT_DIR}/test_ai_run_state.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_run_state")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_human_gate_store.cpp")
-    add_executable(test_ai_human_gate_store
-        unit/test_ai_human_gate_store.cpp
-        ../src/ai/ai_human_gate.cpp
-        ../src/ai/ai_human_gate_store.cpp
-        ../include/sak/ai/ai_human_gate.h
-        ../include/sak/ai/ai_human_gate_store.h
-    )
-    set_target_properties(test_ai_human_gate_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_human_gate_store PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_human_gate_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_human_gate_store COMMAND test_ai_human_gate_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_human_gate_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_human_gate_store")
-endif()
+add_executable(test_ai_human_gate_store
+    unit/test_ai_human_gate_store.cpp
+    ../src/ai/ai_human_gate.cpp
+    ../src/ai/ai_human_gate_store.cpp
+    ../include/sak/ai/ai_human_gate.h
+    ../include/sak/ai/ai_human_gate_store.h
+)
+set_target_properties(test_ai_human_gate_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_human_gate_store PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_human_gate_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_human_gate_store COMMAND test_ai_human_gate_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_human_gate_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_human_gate_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_recovery_policy.cpp")
-    add_executable(test_ai_recovery_policy
-        unit/test_ai_recovery_policy.cpp
-        ../src/ai/ai_recovery_policy.cpp
-        ../include/sak/ai/ai_recovery_policy.h
-    )
-    set_target_properties(test_ai_recovery_policy PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_recovery_policy PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_recovery_policy PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_recovery_policy COMMAND test_ai_recovery_policy
-             -o "${TEST_OUTPUT_DIR}/test_ai_recovery_policy.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_recovery_policy")
-endif()
+add_executable(test_ai_recovery_policy
+    unit/test_ai_recovery_policy.cpp
+    ../src/ai/ai_recovery_policy.cpp
+    ../include/sak/ai/ai_recovery_policy.h
+)
+set_target_properties(test_ai_recovery_policy PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_recovery_policy PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_recovery_policy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_recovery_policy COMMAND test_ai_recovery_policy
+         -o "${TEST_OUTPUT_DIR}/test_ai_recovery_policy.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_recovery_policy")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_selection.cpp")
-    add_executable(test_ai_package_selection
-        unit/test_ai_package_selection.cpp
-        ../src/ai/ai_package_selection.cpp
-        ../include/sak/ai/ai_package_selection.h
-    )
-    set_target_properties(test_ai_package_selection PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_package_selection PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_package_selection PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_package_selection COMMAND test_ai_package_selection
-             -o "${TEST_OUTPUT_DIR}/test_ai_package_selection.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_package_selection")
-endif()
+add_executable(test_ai_package_selection
+    unit/test_ai_package_selection.cpp
+    ../src/ai/ai_package_selection.cpp
+    ../include/sak/ai/ai_package_selection.h
+)
+set_target_properties(test_ai_package_selection PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_package_selection PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_package_selection PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_package_selection COMMAND test_ai_package_selection
+         -o "${TEST_OUTPUT_DIR}/test_ai_package_selection.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_package_selection")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_clarifier.cpp")
-    add_executable(test_ai_workflow_clarifier
-        unit/test_ai_workflow_clarifier.cpp
-        ../src/ai/ai_workflow_clarifier.cpp
-        ../src/ai/ai_workflow_template.cpp
-        ../src/ai/ai_workflow_placeholders.cpp
-    )
-    set_target_properties(test_ai_workflow_clarifier PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_workflow_clarifier PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_workflow_clarifier PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_workflow_clarifier COMMAND test_ai_workflow_clarifier
-             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_clarifier.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_workflow_clarifier")
-endif()
+add_executable(test_ai_workflow_clarifier
+    unit/test_ai_workflow_clarifier.cpp
+    ../src/ai/ai_workflow_clarifier.cpp
+    ../src/ai/ai_workflow_template.cpp
+    ../src/ai/ai_workflow_placeholders.cpp
+)
+set_target_properties(test_ai_workflow_clarifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_workflow_clarifier PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_workflow_clarifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_workflow_clarifier COMMAND test_ai_workflow_clarifier
+         -o "${TEST_OUTPUT_DIR}/test_ai_workflow_clarifier.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_workflow_clarifier")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_trace_store.cpp")
-    add_executable(test_ai_trace_store
-        unit/test_ai_trace_store.cpp
-        ../src/ai/ai_trace_store.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/logger.cpp
-        ../src/core/secure_memory.cpp
-        ../include/sak/ai/ai_trace_store.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-        ../include/sak/app_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_ai_trace_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_trace_store PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_trace_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_trace_store COMMAND test_ai_trace_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_trace_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_trace_store")
-endif()
+add_executable(test_ai_trace_store
+    unit/test_ai_trace_store.cpp
+    ../src/ai/ai_trace_store.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/logger.cpp
+    ../src/core/secure_memory.cpp
+    ../include/sak/ai/ai_trace_store.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+    ../include/sak/app_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_ai_trace_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_trace_store PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_trace_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_trace_store COMMAND test_ai_trace_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_trace_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_trace_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_policy.cpp")
-    add_executable(test_ai_tool_policy
-        unit/test_ai_tool_policy.cpp
-        ../src/ai/ai_tool_policy.cpp
-        ../include/sak/ai/ai_tool_policy.h
-    )
-    set_target_properties(test_ai_tool_policy PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_policy PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_tool_policy PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_policy COMMAND test_ai_tool_policy
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_policy.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_policy")
-endif()
+add_executable(test_ai_tool_policy
+    unit/test_ai_tool_policy.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../include/sak/ai/ai_tool_policy.h
+)
+set_target_properties(test_ai_tool_policy PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_policy PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_tool_policy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_policy COMMAND test_ai_tool_policy
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_policy.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_policy")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_skill_store.cpp")
-    add_executable(test_ai_skill_store
-        unit/test_ai_skill_store.cpp
-        ../src/ai/ai_skill.cpp
-        ../src/ai/ai_skill_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/app_paths.cpp
-        ../include/sak/ai/ai_skill.h
-        ../include/sak/ai/ai_skill_store.h
-        ${CMAKE_SOURCE_DIR}/resources/ai.qrc
-    )
-    set_target_properties(test_ai_skill_store PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_skill_store PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_skill_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_skill_store COMMAND test_ai_skill_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_skill_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_skill_store")
-endif()
+add_executable(test_ai_skill_store
+    unit/test_ai_skill_store.cpp
+    ../src/ai/ai_skill.cpp
+    ../src/ai/ai_skill_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/app_paths.cpp
+    ../include/sak/ai/ai_skill.h
+    ../include/sak/ai/ai_skill_store.h
+    ${CMAKE_SOURCE_DIR}/resources/ai.qrc
+)
+set_target_properties(test_ai_skill_store PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_skill_store PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_skill_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_skill_store COMMAND test_ai_skill_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_skill_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_skill_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_lease_manager.cpp")
-    add_executable(test_ai_lease_manager
-        unit/test_ai_lease_manager.cpp
-        ../src/ai/ai_lease_manager.cpp
-        ../include/sak/ai/ai_lease_manager.h
-    )
-    set_target_properties(test_ai_lease_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_lease_manager PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_lease_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
-             -o "${TEST_OUTPUT_DIR}/test_ai_lease_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_lease_manager")
-endif()
+add_executable(test_ai_lease_manager
+    unit/test_ai_lease_manager.cpp
+    ../src/ai/ai_lease_manager.cpp
+    ../include/sak/ai/ai_lease_manager.h
+)
+set_target_properties(test_ai_lease_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_lease_manager PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_lease_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
+         -o "${TEST_OUTPUT_DIR}/test_ai_lease_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_lease_manager")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_tool_executor.cpp")
-    add_executable(test_ai_subagent_tool_executor
-        unit/test_ai_subagent_tool_executor.cpp
-        ../src/ai/ai_subagent_tool_executor.cpp
-        ../src/ai/ai_cancellation_token.cpp
-        ../include/sak/ai/ai_subagent_tool_executor.h
-        ../include/sak/ai/ai_subagent_runner.h
-    )
-    set_target_properties(test_ai_subagent_tool_executor PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_subagent_tool_executor PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_subagent_tool_executor PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_subagent_tool_executor COMMAND test_ai_subagent_tool_executor
-             -o "${TEST_OUTPUT_DIR}/test_ai_subagent_tool_executor.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_subagent_tool_executor")
-endif()
+add_executable(test_ai_subagent_tool_executor
+    unit/test_ai_subagent_tool_executor.cpp
+    ../src/ai/ai_subagent_tool_executor.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../include/sak/ai/ai_subagent_tool_executor.h
+    ../include/sak/ai/ai_subagent_runner.h
+)
+set_target_properties(test_ai_subagent_tool_executor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_subagent_tool_executor PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_subagent_tool_executor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_subagent_tool_executor COMMAND test_ai_subagent_tool_executor
+         -o "${TEST_OUTPUT_DIR}/test_ai_subagent_tool_executor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_subagent_tool_executor")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_loop_detector.cpp")
-    add_executable(test_ai_tool_loop_detector
-        unit/test_ai_tool_loop_detector.cpp
-        ../src/ai/ai_tool_loop_detector.cpp
-        ../include/sak/ai/ai_tool_loop_detector.h
-    )
-    set_target_properties(test_ai_tool_loop_detector PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_loop_detector PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_tool_loop_detector PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_loop_detector COMMAND test_ai_tool_loop_detector
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_loop_detector.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_loop_detector")
-endif()
+add_executable(test_ai_tool_loop_detector
+    unit/test_ai_tool_loop_detector.cpp
+    ../src/ai/ai_tool_loop_detector.cpp
+    ../include/sak/ai/ai_tool_loop_detector.h
+)
+set_target_properties(test_ai_tool_loop_detector PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_loop_detector PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_tool_loop_detector PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_loop_detector COMMAND test_ai_tool_loop_detector
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_loop_detector.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_loop_detector")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_tool_planner.cpp")
-    add_executable(test_ai_package_tool_planner
-        unit/test_ai_package_tool_planner.cpp
-        ../src/ai/ai_package_tool_planner.cpp
-        ../include/sak/ai/ai_package_tool_planner.h
-    )
-    set_target_properties(test_ai_package_tool_planner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_package_tool_planner PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_package_tool_planner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_package_tool_planner COMMAND test_ai_package_tool_planner
-             -o "${TEST_OUTPUT_DIR}/test_ai_package_tool_planner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_package_tool_planner")
-endif()
+add_executable(test_ai_package_tool_planner
+    unit/test_ai_package_tool_planner.cpp
+    ../src/ai/ai_package_tool_planner.cpp
+    ../include/sak/ai/ai_package_tool_planner.h
+)
+set_target_properties(test_ai_package_tool_planner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_package_tool_planner PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_package_tool_planner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_package_tool_planner COMMAND test_ai_package_tool_planner
+         -o "${TEST_OUTPUT_DIR}/test_ai_package_tool_planner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_package_tool_planner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_offline_downloader_tool_runner.cpp")
-    add_executable(test_ai_offline_downloader_tool_runner
-        unit/test_ai_offline_downloader_tool_runner.cpp
-        ../src/ai/ai_offline_downloader_tool_runner.cpp
-        ../include/sak/ai/ai_offline_downloader_tool_runner.h
-    )
-    set_target_properties(test_ai_offline_downloader_tool_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_offline_downloader_tool_runner PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_offline_downloader_tool_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_offline_downloader_tool_runner
-             COMMAND test_ai_offline_downloader_tool_runner
-             -o "${TEST_OUTPUT_DIR}/test_ai_offline_downloader_tool_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_offline_downloader_tool_runner")
-endif()
+add_executable(test_ai_offline_downloader_tool_runner
+    unit/test_ai_offline_downloader_tool_runner.cpp
+    ../src/ai/ai_offline_downloader_tool_runner.cpp
+    ../include/sak/ai/ai_offline_downloader_tool_runner.h
+)
+set_target_properties(test_ai_offline_downloader_tool_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_offline_downloader_tool_runner PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_offline_downloader_tool_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_offline_downloader_tool_runner
+         COMMAND test_ai_offline_downloader_tool_runner
+         -o "${TEST_OUTPUT_DIR}/test_ai_offline_downloader_tool_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_offline_downloader_tool_runner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_runner.cpp")
-    add_executable(test_ai_workflow_powershell_tool_runner
-        unit/test_ai_workflow_powershell_tool_runner.cpp
-        ../src/ai/ai_workflow_powershell_tool_runner.cpp
-        ../src/ai/ai_workflow_placeholders.cpp
-        ../src/ai/ai_command_guard.cpp
-        ../src/ai/ai_execution_broker.cpp
-        # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/secure_memory.cpp
-        ../include/sak/ai/ai_workflow_powershell_tool_runner.h
-        ../include/sak/ai/ai_workflow_placeholders.h
-        ../include/sak/ai/ai_command_guard.h
-        ../include/sak/ai/ai_execution_broker.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/app_paths.h
-        ../include/sak/secure_memory.h
-    )
-    set_target_properties(test_ai_workflow_powershell_tool_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_workflow_powershell_tool_runner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ai_workflow_powershell_tool_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_workflow_powershell_tool_runner
-             COMMAND test_ai_workflow_powershell_tool_runner
-             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_powershell_tool_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_workflow_powershell_tool_runner")
-endif()
+add_executable(test_ai_workflow_powershell_tool_runner
+    unit/test_ai_workflow_powershell_tool_runner.cpp
+    ../src/ai/ai_workflow_powershell_tool_runner.cpp
+    ../src/ai/ai_workflow_placeholders.cpp
+    ../src/ai/ai_command_guard.cpp
+    ../src/ai/ai_execution_broker.cpp
+    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../include/sak/ai/ai_workflow_powershell_tool_runner.h
+    ../include/sak/ai/ai_workflow_placeholders.h
+    ../include/sak/ai/ai_command_guard.h
+    ../include/sak/ai/ai_execution_broker.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/app_paths.h
+    ../include/sak/secure_memory.h
+)
+set_target_properties(test_ai_workflow_powershell_tool_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_workflow_powershell_tool_runner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_workflow_powershell_tool_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_workflow_powershell_tool_runner
+         COMMAND test_ai_workflow_powershell_tool_runner
+         -o "${TEST_OUTPUT_DIR}/test_ai_workflow_powershell_tool_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_workflow_powershell_tool_runner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_dispatcher.cpp")
-    add_executable(test_ai_tool_dispatcher
-        unit/test_ai_tool_dispatcher.cpp
-        ../src/ai/ai_lease_manager.cpp
-        ../src/ai/ai_tool_dispatcher.cpp
-        ../src/ai/ai_tool_health_ledger.cpp
-        ../src/ai/ai_tool_policy.cpp
-        ../include/sak/ai/ai_lease_manager.h
-        ../include/sak/ai/ai_tool_dispatcher.h
-        ../include/sak/ai/ai_tool_health_ledger.h
-        ../include/sak/ai/ai_tool_policy.h
-    )
-    set_target_properties(test_ai_tool_dispatcher PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_dispatcher PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_tool_dispatcher PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_dispatcher COMMAND test_ai_tool_dispatcher
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_dispatcher.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_dispatcher")
-endif()
+add_executable(test_ai_tool_dispatcher
+    unit/test_ai_tool_dispatcher.cpp
+    ../src/ai/ai_lease_manager.cpp
+    ../src/ai/ai_tool_dispatcher.cpp
+    ../src/ai/ai_tool_health_ledger.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../include/sak/ai/ai_lease_manager.h
+    ../include/sak/ai/ai_tool_dispatcher.h
+    ../include/sak/ai/ai_tool_health_ledger.h
+    ../include/sak/ai/ai_tool_policy.h
+)
+set_target_properties(test_ai_tool_dispatcher PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_dispatcher PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_tool_dispatcher PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_dispatcher COMMAND test_ai_tool_dispatcher
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_dispatcher.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_dispatcher")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_turn.cpp")
-    add_executable(test_ai_tool_turn
-        unit/test_ai_tool_turn.cpp
-        ../src/ai/ai_tool_turn.cpp
-        ../include/sak/ai/ai_tool_turn.h
-        ../include/sak/ai/openai_response_types.h
-    )
-    set_target_properties(test_ai_tool_turn PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_turn PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_tool_turn PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_turn COMMAND test_ai_tool_turn
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_turn.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_turn")
-endif()
+add_executable(test_ai_tool_turn
+    unit/test_ai_tool_turn.cpp
+    ../src/ai/ai_tool_turn.cpp
+    ../include/sak/ai/ai_tool_turn.h
+    ../include/sak/ai/openai_response_types.h
+)
+set_target_properties(test_ai_tool_turn PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_turn PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_tool_turn PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_turn COMMAND test_ai_tool_turn
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_turn.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_turn")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_result_recorder.cpp")
-    add_executable(test_ai_tool_result_recorder
-        unit/test_ai_tool_result_recorder.cpp
-        ../src/ai/ai_conversation_store.cpp
-        ../src/ai/ai_credential_store.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/ai/ai_tool_result_recorder.cpp
-        ../src/core/app_paths.cpp
-        ../include/sak/ai/ai_conversation_store.h
-        ../include/sak/ai/ai_credential_store.h
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/ai/ai_tool_result_recorder.h
-        ../include/sak/app_paths.h
-    )
-    set_target_properties(test_ai_tool_result_recorder PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_tool_result_recorder PRIVATE
-        Qt6::Core Qt6::Test crypt32
-    )
-    target_include_directories(test_ai_tool_result_recorder PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_tool_result_recorder COMMAND test_ai_tool_result_recorder
-             -o "${TEST_OUTPUT_DIR}/test_ai_tool_result_recorder.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_tool_result_recorder")
-endif()
+add_executable(test_ai_tool_result_recorder
+    unit/test_ai_tool_result_recorder.cpp
+    ../src/ai/ai_conversation_store.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/ai/ai_tool_result_recorder.cpp
+    ../src/core/app_paths.cpp
+    ../include/sak/ai/ai_conversation_store.h
+    ../include/sak/ai/ai_credential_store.h
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/ai/ai_tool_result_recorder.h
+    ../include/sak/app_paths.h
+)
+set_target_properties(test_ai_tool_result_recorder PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_tool_result_recorder PRIVATE
+    Qt6::Core Qt6::Test crypt32
+)
+target_include_directories(test_ai_tool_result_recorder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_tool_result_recorder COMMAND test_ai_tool_result_recorder
+         -o "${TEST_OUTPUT_DIR}/test_ai_tool_result_recorder.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_tool_result_recorder")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state_store.cpp")
-    add_executable(test_ai_run_state_store
-        unit/test_ai_run_state_store.cpp
-        ../src/ai/ai_human_gate.cpp
-        ../src/ai/ai_run_state.cpp
-        ../src/ai/ai_run_state_store.cpp
-        ../include/sak/ai/ai_human_gate.h
-        ../include/sak/ai/ai_run_state.h
-        ../include/sak/ai/ai_run_state_store.h
-    )
-    set_target_properties(test_ai_run_state_store PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_run_state_store PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_run_state_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_run_state_store COMMAND test_ai_run_state_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_run_state_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_run_state_store")
-endif()
+add_executable(test_ai_run_state_store
+    unit/test_ai_run_state_store.cpp
+    ../src/ai/ai_human_gate.cpp
+    ../src/ai/ai_run_state.cpp
+    ../src/ai/ai_run_state_store.cpp
+    ../include/sak/ai/ai_human_gate.h
+    ../include/sak/ai/ai_run_state.h
+    ../include/sak/ai/ai_run_state_store.h
+)
+set_target_properties(test_ai_run_state_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_run_state_store PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_run_state_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_run_state_store COMMAND test_ai_run_state_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_run_state_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_run_state_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_runner.cpp")
-    add_executable(test_ai_subagent_runner
-        unit/test_ai_subagent_runner.cpp
-        ../src/ai/ai_cancellation_token.cpp
-        ../src/ai/ai_subagent_runner.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../src/ai/ai_tool_policy.cpp
-        ../include/sak/ai/ai_cancellation_token.h
-        ../include/sak/ai/ai_subagent_runner.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-        ../include/sak/ai/ai_tool_policy.h
-    )
-    set_target_properties(test_ai_subagent_runner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_subagent_runner PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_subagent_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_subagent_runner COMMAND test_ai_subagent_runner
-             -o "${TEST_OUTPUT_DIR}/test_ai_subagent_runner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_subagent_runner")
-endif()
+add_executable(test_ai_subagent_runner
+    unit/test_ai_subagent_runner.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../src/ai/ai_subagent_runner.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../include/sak/ai/ai_cancellation_token.h
+    ../include/sak/ai/ai_subagent_runner.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+    ../include/sak/ai/ai_tool_policy.h
+)
+set_target_properties(test_ai_subagent_runner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_subagent_runner PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_subagent_runner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_subagent_runner COMMAND test_ai_subagent_runner
+         -o "${TEST_OUTPUT_DIR}/test_ai_subagent_runner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_subagent_runner")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
-    add_executable(test_ai_orchestrator
-        unit/test_ai_orchestrator.cpp
-        ../src/ai/ai_cancellation_token.cpp
-        ../src/ai/ai_human_gate.cpp
-        ../src/ai/ai_orchestrator.cpp
-        ../src/ai/ai_recovery_policy.cpp
-        ../src/ai/ai_run_state.cpp
-        ../src/ai/ai_subagent_runner.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../src/ai/ai_tool_policy.cpp
-        ../src/ai/ai_workflow_placeholders.cpp
-        ../src/ai/ai_workflow_template.cpp
-        ../include/sak/ai/ai_cancellation_token.h
-        ../include/sak/ai/ai_human_gate.h
-        ../include/sak/ai/ai_orchestrator.h
-        ../include/sak/ai/ai_recovery_policy.h
-        ../include/sak/ai/ai_run_state.h
-        ../include/sak/ai/ai_subagent_runner.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-        ../include/sak/ai/ai_tool_policy.h
-        ../include/sak/ai/ai_workflow_placeholders.h
-        ../include/sak/ai/ai_workflow_template.h
-    )
+add_executable(test_ai_orchestrator
+    unit/test_ai_orchestrator.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../src/ai/ai_human_gate.cpp
+    ../src/ai/ai_orchestrator.cpp
+    ../src/ai/ai_recovery_policy.cpp
+    ../src/ai/ai_run_state.cpp
+    ../src/ai/ai_subagent_runner.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../src/ai/ai_workflow_placeholders.cpp
+    ../src/ai/ai_workflow_template.cpp
+    ../include/sak/ai/ai_cancellation_token.h
+    ../include/sak/ai/ai_human_gate.h
+    ../include/sak/ai/ai_orchestrator.h
+    ../include/sak/ai/ai_recovery_policy.h
+    ../include/sak/ai/ai_run_state.h
+    ../include/sak/ai/ai_subagent_runner.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+    ../include/sak/ai/ai_tool_policy.h
+    ../include/sak/ai/ai_workflow_placeholders.h
+    ../include/sak/ai/ai_workflow_template.h
+)
 
-    add_executable(test_ai_workflow_evals
-        unit/test_ai_workflow_evals.cpp
-        ../src/ai/ai_cancellation_token.cpp
-        ../src/ai/ai_human_gate.cpp
-        ../src/ai/ai_orchestrator.cpp
-        ../src/ai/ai_recovery_policy.cpp
-        ../src/ai/ai_run_state.cpp
-        ../src/ai/ai_subagent_runner.cpp
-        ../src/ai/ai_token_usage_tracker.cpp
-        ../src/ai/ai_tool_policy.cpp
-        ../src/ai/ai_workflow_placeholders.cpp
-        ../src/ai/ai_workflow_template.cpp
-        ../include/sak/ai/ai_cancellation_token.h
-        ../include/sak/ai/ai_human_gate.h
-        ../include/sak/ai/ai_orchestrator.h
-        ../include/sak/ai/ai_recovery_policy.h
-        ../include/sak/ai/ai_run_state.h
-        ../include/sak/ai/ai_subagent_runner.h
-        ../include/sak/ai/ai_token_usage_tracker.h
-        ../include/sak/ai/ai_tool_policy.h
-        ../include/sak/ai/ai_workflow_placeholders.h
-        ../include/sak/ai/ai_workflow_template.h
-    )
-    set_target_properties(test_ai_workflow_evals PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_workflow_evals PRIVATE Qt6::Core Qt6::Test)
-    target_include_directories(test_ai_workflow_evals PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_workflow_evals COMMAND test_ai_workflow_evals
-             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_evals.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_workflow_evals")
-    set_target_properties(test_ai_orchestrator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_orchestrator PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_orchestrator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_orchestrator COMMAND test_ai_orchestrator
-             -o "${TEST_OUTPUT_DIR}/test_ai_orchestrator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_orchestrator")
-endif()
+add_executable(test_ai_workflow_evals
+    unit/test_ai_workflow_evals.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../src/ai/ai_human_gate.cpp
+    ../src/ai/ai_orchestrator.cpp
+    ../src/ai/ai_recovery_policy.cpp
+    ../src/ai/ai_run_state.cpp
+    ../src/ai/ai_subagent_runner.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../src/ai/ai_workflow_placeholders.cpp
+    ../src/ai/ai_workflow_template.cpp
+    ../include/sak/ai/ai_cancellation_token.h
+    ../include/sak/ai/ai_human_gate.h
+    ../include/sak/ai/ai_orchestrator.h
+    ../include/sak/ai/ai_recovery_policy.h
+    ../include/sak/ai/ai_run_state.h
+    ../include/sak/ai/ai_subagent_runner.h
+    ../include/sak/ai/ai_token_usage_tracker.h
+    ../include/sak/ai/ai_tool_policy.h
+    ../include/sak/ai/ai_workflow_placeholders.h
+    ../include/sak/ai/ai_workflow_template.h
+)
+set_target_properties(test_ai_workflow_evals PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_workflow_evals PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(test_ai_workflow_evals PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_workflow_evals COMMAND test_ai_workflow_evals
+         -o "${TEST_OUTPUT_DIR}/test_ai_workflow_evals.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_workflow_evals")
+set_target_properties(test_ai_orchestrator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_orchestrator PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_orchestrator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_orchestrator COMMAND test_ai_orchestrator
+         -o "${TEST_OUTPUT_DIR}/test_ai_orchestrator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_orchestrator")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_store.cpp")
-    add_executable(test_ai_workflow_store
-        unit/test_ai_workflow_store.cpp
-        ../src/core/app_paths.cpp
-        ../src/ai/ai_paths.cpp
-        ../src/ai/ai_workflow_store.cpp
-        ../src/ai/ai_workflow_template.cpp
-        ../src/ai/ai_workflow_placeholders.cpp
-        ../include/sak/ai/ai_paths.h
-        ../include/sak/app_paths.h
-        ../include/sak/ai/ai_workflow_store.h
-        ../include/sak/ai/ai_workflow_template.h
-        ../resources/ai.qrc
-    )
-    set_target_properties(test_ai_workflow_store PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ai_workflow_store PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_ai_workflow_store PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ai_workflow_store COMMAND test_ai_workflow_store
-             -o "${TEST_OUTPUT_DIR}/test_ai_workflow_store.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ai_workflow_store")
-endif()
+add_executable(test_ai_workflow_store
+    unit/test_ai_workflow_store.cpp
+    ../src/core/app_paths.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/ai/ai_workflow_store.cpp
+    ../src/ai/ai_workflow_template.cpp
+    ../src/ai/ai_workflow_placeholders.cpp
+    ../include/sak/ai/ai_paths.h
+    ../include/sak/app_paths.h
+    ../include/sak/ai/ai_workflow_store.h
+    ../include/sak/ai/ai_workflow_template.h
+    ../resources/ai.qrc
+)
+set_target_properties(test_ai_workflow_store PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_workflow_store PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_ai_workflow_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_workflow_store COMMAND test_ai_workflow_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_workflow_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_workflow_store")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
-    add_executable(test_smart_disk_analyzer
-        unit/test_smart_disk_analyzer.cpp
-        ../src/core/smart_disk_analyzer.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/smart_disk_analyzer.h
-        ../include/sak/bundled_tools_manager.h
-    )
-    set_target_properties(test_smart_disk_analyzer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_smart_disk_analyzer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_smart_disk_analyzer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_smart_disk_analyzer COMMAND test_smart_disk_analyzer
-             -o "${TEST_OUTPUT_DIR}/test_smart_disk_analyzer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_smart_disk_analyzer")
-endif()
+add_executable(test_smart_disk_analyzer
+    unit/test_smart_disk_analyzer.cpp
+    ../src/core/smart_disk_analyzer.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/smart_disk_analyzer.h
+    ../include/sak/bundled_tools_manager.h
+)
+set_target_properties(test_smart_disk_analyzer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_smart_disk_analyzer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_smart_disk_analyzer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_smart_disk_analyzer COMMAND test_smart_disk_analyzer
+         -o "${TEST_OUTPUT_DIR}/test_smart_disk_analyzer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_smart_disk_analyzer")
 
 # test_package_matcher - mapping CRUD, export/import, findMatch
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
-    add_executable(test_package_matcher
-        unit/test_package_matcher.cpp
-        ../src/core/package_matcher.cpp
-        ../src/core/app_scanner.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ../src/core/chocolatey_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/package_matcher.h
-        ../include/sak/chocolatey_manager.h
-    )
-    set_target_properties(test_package_matcher PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_package_matcher PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_package_matcher PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_package_matcher COMMAND test_package_matcher
-             -o "${TEST_OUTPUT_DIR}/test_package_matcher.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_package_matcher")
-endif()
+add_executable(test_package_matcher
+    unit/test_package_matcher.cpp
+    ../src/core/package_matcher.cpp
+    ../src/core/app_scanner.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ../src/core/chocolatey_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/package_matcher.h
+    ../include/sak/chocolatey_manager.h
+)
+set_target_properties(test_package_matcher PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_package_matcher PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+)
+target_include_directories(test_package_matcher PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_package_matcher COMMAND test_package_matcher
+         -o "${TEST_OUTPUT_DIR}/test_package_matcher.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_package_matcher")
 
 # --- Tier 3: Hardware & System ---
 
 # test_drive_scanner - DriveInfo struct, getDrives, lifecycle
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
-    add_executable(test_drive_scanner
-        unit/test_drive_scanner.cpp
-        ../src/core/drive_scanner.cpp
-        ../src/core/logger.cpp
-        ../include/sak/drive_scanner.h
-    )
-    set_target_properties(test_drive_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_drive_scanner PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_drive_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_drive_scanner COMMAND test_drive_scanner
-             -o "${TEST_OUTPUT_DIR}/test_drive_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_drive_scanner")
-endif()
+add_executable(test_drive_scanner
+    unit/test_drive_scanner.cpp
+    ../src/core/drive_scanner.cpp
+    ../src/core/logger.cpp
+    ../include/sak/drive_scanner.h
+)
+set_target_properties(test_drive_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_drive_scanner PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_drive_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_drive_scanner COMMAND test_drive_scanner
+         -o "${TEST_OUTPUT_DIR}/test_drive_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_drive_scanner")
 
 # test_permission_manager - getOwner, SDDL, stripPermissions, elevation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
-    add_executable(test_permission_manager
-        unit/test_permission_manager.cpp
-        ../src/core/permission_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_permission_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_permission_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_permission_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_permission_manager COMMAND test_permission_manager
-             -o "${TEST_OUTPUT_DIR}/test_permission_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_permission_manager")
-endif()
+add_executable(test_permission_manager
+    unit/test_permission_manager.cpp
+    ../src/core/permission_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_permission_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_permission_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_permission_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_permission_manager COMMAND test_permission_manager
+         -o "${TEST_OUTPUT_DIR}/test_permission_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_permission_manager")
 
 # test_elevation_manager - isElevated, canElevate, error messages
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
-    add_executable(test_elevation_manager
-        unit/test_elevation_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_elevation_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevation_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_elevation_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevation_manager COMMAND test_elevation_manager
-             -o "${TEST_OUTPUT_DIR}/test_elevation_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevation_manager")
-endif()
+add_executable(test_elevation_manager
+    unit/test_elevation_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_elevation_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevation_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_elevation_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevation_manager COMMAND test_elevation_manager
+         -o "${TEST_OUTPUT_DIR}/test_elevation_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevation_manager")
 
 # test_elevation_tier - tier classification, feature lookup, table integrity
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
-    add_executable(test_elevation_tier
-        unit/test_elevation_tier.cpp
-    )
-    set_target_properties(test_elevation_tier PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevation_tier PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_elevation_tier PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevation_tier COMMAND test_elevation_tier
-             -o "${TEST_OUTPUT_DIR}/test_elevation_tier.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevation_tier")
-endif()
+add_executable(test_elevation_tier
+    unit/test_elevation_tier.cpp
+)
+set_target_properties(test_elevation_tier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevation_tier PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_elevation_tier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevation_tier COMMAND test_elevation_tier
+         -o "${TEST_OUTPUT_DIR}/test_elevation_tier.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevation_tier")
 
 # test_elevated_pipe_protocol - wire protocol framing, parsing, pipe name generation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
-    add_executable(test_elevated_pipe_protocol
-        unit/test_elevated_pipe_protocol.cpp
-    )
-    set_target_properties(test_elevated_pipe_protocol PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevated_pipe_protocol PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_elevated_pipe_protocol PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevated_pipe_protocol COMMAND test_elevated_pipe_protocol
-             -o "${TEST_OUTPUT_DIR}/test_elevated_pipe_protocol.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevated_pipe_protocol")
-endif()
+add_executable(test_elevated_pipe_protocol
+    unit/test_elevated_pipe_protocol.cpp
+)
+set_target_properties(test_elevated_pipe_protocol PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevated_pipe_protocol PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_elevated_pipe_protocol PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevated_pipe_protocol COMMAND test_elevated_pipe_protocol
+         -o "${TEST_OUTPUT_DIR}/test_elevated_pipe_protocol.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevated_pipe_protocol")
 
 # test_elevated_task_dispatcher - allowlist, dispatch, exception safety, callbacks
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
-    add_executable(test_elevated_task_dispatcher
-        unit/test_elevated_task_dispatcher.cpp
-        ../src/core/elevated_task_dispatcher.cpp
-        ../include/sak/elevated_task_dispatcher.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-    )
-    set_target_properties(test_elevated_task_dispatcher PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevated_task_dispatcher PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_elevated_task_dispatcher PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevated_task_dispatcher COMMAND test_elevated_task_dispatcher
-             -o "${TEST_OUTPUT_DIR}/test_elevated_task_dispatcher.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevated_task_dispatcher")
-endif()
+add_executable(test_elevated_task_dispatcher
+    unit/test_elevated_task_dispatcher.cpp
+    ../src/core/elevated_task_dispatcher.cpp
+    ../include/sak/elevated_task_dispatcher.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+)
+set_target_properties(test_elevated_task_dispatcher PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevated_task_dispatcher PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_elevated_task_dispatcher PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevated_task_dispatcher COMMAND test_elevated_task_dispatcher
+         -o "${TEST_OUTPUT_DIR}/test_elevated_task_dispatcher.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevated_task_dispatcher")
 
 # test_mixed_tier_operations - Phase 3 mixed-tier elevation: PermissionManager
 # expected overloads, canReadPath, backup worker signal, task handlers
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
-    add_executable(test_mixed_tier_operations
-        unit/test_mixed_tier_operations.cpp
-        ../src/core/elevated_task_dispatcher.cpp
-        ../src/core/permission_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/user_profile_backup_worker.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/smart_file_filter.cpp
-        ../src/core/path_utils.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../src/core/backup_file_codec.cpp
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-        ../include/sak/elevated_task_dispatcher.h
-        ../include/sak/permission_manager.h
-        ../include/sak/user_profile_backup_worker.h
-        ../include/sak/user_profile_types.h
-    )
-    set_target_properties(test_mixed_tier_operations PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_mixed_tier_operations PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_mixed_tier_operations PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_mixed_tier_operations COMMAND test_mixed_tier_operations
-             -o "${TEST_OUTPUT_DIR}/test_mixed_tier_operations.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_mixed_tier_operations")
-endif()
+add_executable(test_mixed_tier_operations
+    unit/test_mixed_tier_operations.cpp
+    ../src/core/elevated_task_dispatcher.cpp
+    ../src/core/permission_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/user_profile_backup_worker.cpp
+    ../src/core/user_profile_types.cpp
+    ../src/core/smart_file_filter.cpp
+    ../src/core/path_utils.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../src/core/backup_file_codec.cpp
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+    ../include/sak/elevated_task_dispatcher.h
+    ../include/sak/permission_manager.h
+    ../include/sak/user_profile_backup_worker.h
+    ../include/sak/user_profile_types.h
+)
+set_target_properties(test_mixed_tier_operations PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_mixed_tier_operations PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_mixed_tier_operations PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_mixed_tier_operations COMMAND test_mixed_tier_operations
+         -o "${TEST_OUTPUT_DIR}/test_mixed_tier_operations.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_mixed_tier_operations")
 
 # test_elevation_ux - Phase 4 shield icon extraction, elevation banner, style tokens
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
-    add_executable(test_elevation_ux
-        unit/test_elevation_ux.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/logger.cpp
-        ../include/sak/elevation_manager.h
-        ../include/sak/shield_icon.h
-        ../include/sak/elevation_banner.h
-        ../resources/icons.qrc
-    )
-    set_target_properties(test_elevation_ux PROPERTIES
-        AUTOMOC ON
-        AUTORCC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevation_ux PRIVATE
-        Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_elevation_ux PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevation_ux COMMAND test_elevation_ux
-             -o "${TEST_OUTPUT_DIR}/test_elevation_ux.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevation_ux")
-endif()
+add_executable(test_elevation_ux
+    unit/test_elevation_ux.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/logger.cpp
+    ../include/sak/elevation_manager.h
+    ../include/sak/shield_icon.h
+    ../include/sak/elevation_banner.h
+    ../resources/icons.qrc
+)
+set_target_properties(test_elevation_ux PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevation_ux PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_elevation_ux PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevation_ux COMMAND test_elevation_ux
+         -o "${TEST_OUTPUT_DIR}/test_elevation_ux.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevation_ux")
 
 # test_elevation_hardening - Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_hardening.cpp")
-    add_executable(test_elevation_hardening
-        unit/test_elevation_hardening.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/elevated_task_dispatcher.cpp
-        ../src/core/logger.cpp
-        ../include/sak/elevation_tier.h
-        ../include/sak/elevation_gate.h
-        ../include/sak/elevated_pipe_protocol.h
-        ../include/sak/elevated_task_dispatcher.h
-    )
-    set_target_properties(test_elevation_hardening PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_elevation_hardening PRIVATE
-        Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_elevation_hardening PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_elevation_hardening COMMAND test_elevation_hardening
-             -o "${TEST_OUTPUT_DIR}/test_elevation_hardening.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_elevation_hardening")
-endif()
+add_executable(test_elevation_hardening
+    unit/test_elevation_hardening.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/elevated_task_dispatcher.cpp
+    ../src/core/logger.cpp
+    ../include/sak/elevation_tier.h
+    ../include/sak/elevation_gate.h
+    ../include/sak/elevated_pipe_protocol.h
+    ../include/sak/elevated_task_dispatcher.h
+)
+set_target_properties(test_elevation_hardening PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_elevation_hardening PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_elevation_hardening PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_elevation_hardening COMMAND test_elevation_hardening
+         -o "${TEST_OUTPUT_DIR}/test_elevation_hardening.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_elevation_hardening")
 
 # --- Tier 4: Streaming/IO ---
 
 # test_streaming_decompressor - gzip/bzip2/xz lifecycle, byte tracking
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
-    add_executable(test_streaming_decompressor
-        unit/test_streaming_decompressor.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../src/core/decompressor_factory.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../src/core/bzip2_decompressor.cpp
-        ../src/core/xz_decompressor.cpp
-        ../src/core/logger.cpp
-        ../include/sak/streaming_decompressor.h
-        ../include/sak/gzip_decompressor.h
-        ../include/sak/bzip2_decompressor.h
-        ../include/sak/xz_decompressor.h
-    )
-    set_target_properties(test_streaming_decompressor PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_streaming_decompressor PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_streaming_decompressor PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_streaming_decompressor COMMAND test_streaming_decompressor
-             -o "${TEST_OUTPUT_DIR}/test_streaming_decompressor.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_streaming_decompressor")
-endif()
+add_executable(test_streaming_decompressor
+    unit/test_streaming_decompressor.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/logger.cpp
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+)
+set_target_properties(test_streaming_decompressor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_streaming_decompressor PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_streaming_decompressor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_streaming_decompressor COMMAND test_streaming_decompressor
+         -o "${TEST_OUTPUT_DIR}/test_streaming_decompressor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_streaming_decompressor")
 
 # test_logger - initialization, level filtering, file output, thread safety
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
-    add_executable(test_logger
-        unit/test_logger.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_logger PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_logger PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_logger PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_logger COMMAND test_logger
-             -o "${TEST_OUTPUT_DIR}/test_logger.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_logger")
-endif()
+add_executable(test_logger
+    unit/test_logger.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_logger PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_logger PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_logger PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_logger COMMAND test_logger
+         -o "${TEST_OUTPUT_DIR}/test_logger.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_logger")
 
 # ============================================================================
 # Unit Tests - Offline Deployment
 # ============================================================================
 
 # test_install_script_parser - PowerShell install script parsing
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
-    add_executable(test_install_script_parser
-        unit/test_install_script_parser.cpp
-        ../src/core/install_script_parser.cpp
-        ../include/sak/install_script_parser.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_install_script_parser PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_install_script_parser PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_install_script_parser PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_install_script_parser COMMAND test_install_script_parser
-             -o "${TEST_OUTPUT_DIR}/test_install_script_parser.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_install_script_parser")
-endif()
+add_executable(test_install_script_parser
+    unit/test_install_script_parser.cpp
+    ../src/core/install_script_parser.cpp
+    ../include/sak/install_script_parser.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_install_script_parser PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_install_script_parser PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_install_script_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_install_script_parser COMMAND test_install_script_parser
+         -o "${TEST_OUTPUT_DIR}/test_install_script_parser.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_install_script_parser")
 
 # test_script_rewriter - URL replacement for offline deployment
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
-    add_executable(test_script_rewriter
-        unit/test_script_rewriter.cpp
-        ../src/core/script_rewriter.cpp
-        ../src/core/install_script_parser.cpp
-        ../include/sak/script_rewriter.h
-        ../include/sak/install_script_parser.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_script_rewriter PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_script_rewriter PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_script_rewriter PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_script_rewriter COMMAND test_script_rewriter
-             -o "${TEST_OUTPUT_DIR}/test_script_rewriter.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_script_rewriter")
-endif()
+add_executable(test_script_rewriter
+    unit/test_script_rewriter.cpp
+    ../src/core/script_rewriter.cpp
+    ../src/core/install_script_parser.cpp
+    ../include/sak/script_rewriter.h
+    ../include/sak/install_script_parser.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_script_rewriter PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_script_rewriter PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_script_rewriter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_script_rewriter COMMAND test_script_rewriter
+         -o "${TEST_OUTPUT_DIR}/test_script_rewriter.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_script_rewriter")
 
 # test_package_list_manager - curated package lists and presets
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
-    add_executable(test_package_list_manager
-        unit/test_package_list_manager.cpp
-        ../src/core/package_list_manager.cpp
-        ../include/sak/package_list_manager.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_package_list_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_package_list_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_package_list_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_package_list_manager COMMAND test_package_list_manager
-             -o "${TEST_OUTPUT_DIR}/test_package_list_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_package_list_manager")
-endif()
+add_executable(test_package_list_manager
+    unit/test_package_list_manager.cpp
+    ../src/core/package_list_manager.cpp
+    ../include/sak/package_list_manager.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_package_list_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_package_list_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_package_list_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_package_list_manager COMMAND test_package_list_manager
+         -o "${TEST_OUTPUT_DIR}/test_package_list_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_package_list_manager")
 
 # test_vulnerability_scanner - vulnerability source parsing and product matching
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_vulnerability_scanner.cpp")
-    add_executable(test_vulnerability_scanner
-        unit/test_vulnerability_scanner.cpp
-        ../src/core/vulnerability_scanner.cpp
-        ../src/core/app_paths.cpp
-        ../include/sak/vulnerability_scanner.h
-        ../include/sak/app_paths.h
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    )
-    set_target_properties(test_vulnerability_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_vulnerability_scanner PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_vulnerability_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_vulnerability_scanner COMMAND test_vulnerability_scanner
-             -o "${TEST_OUTPUT_DIR}/test_vulnerability_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_vulnerability_scanner")
-endif()
+add_executable(test_vulnerability_scanner
+    unit/test_vulnerability_scanner.cpp
+    ../src/core/vulnerability_scanner.cpp
+    ../src/core/app_paths.cpp
+    ../include/sak/vulnerability_scanner.h
+    ../include/sak/app_paths.h
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+)
+set_target_properties(test_vulnerability_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_vulnerability_scanner PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_vulnerability_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_vulnerability_scanner COMMAND test_vulnerability_scanner
+         -o "${TEST_OUTPUT_DIR}/test_vulnerability_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_vulnerability_scanner")
 
 # test_nuget_version_range --- pure NuGet version + version-range primitives (B10-25)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_version_range.cpp")
-    add_executable(test_nuget_version_range
-        unit/test_nuget_version_range.cpp
-        ../src/core/nuget_version_range.cpp
-        ../include/sak/nuget_version_range.h
-    )
-    set_target_properties(test_nuget_version_range PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_nuget_version_range PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_nuget_version_range PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_nuget_version_range COMMAND test_nuget_version_range
-             -o "${TEST_OUTPUT_DIR}/test_nuget_version_range.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_nuget_version_range")
-endif()
+add_executable(test_nuget_version_range
+    unit/test_nuget_version_range.cpp
+    ../src/core/nuget_version_range.cpp
+    ../include/sak/nuget_version_range.h
+)
+set_target_properties(test_nuget_version_range PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_nuget_version_range PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_nuget_version_range PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_nuget_version_range COMMAND test_nuget_version_range
+         -o "${TEST_OUTPUT_DIR}/test_nuget_version_range.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_nuget_version_range")
 
 # test_nuget_dependency_resolver --- transitive resolution e2e (B10-25/B10-28)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_dependency_resolver.cpp")
-    add_executable(test_nuget_dependency_resolver
-        unit/test_nuget_dependency_resolver.cpp
-        ../src/core/nuget_dependency_resolver.cpp
-        ../src/core/nuget_version_range.cpp
-        ../include/sak/nuget_dependency_resolver.h
-        ../include/sak/nuget_version_range.h
-    )
-    set_target_properties(test_nuget_dependency_resolver PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_nuget_dependency_resolver PRIVATE
-        Qt6::Core Qt6::Test Qt6::Xml ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_nuget_dependency_resolver PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_nuget_dependency_resolver COMMAND test_nuget_dependency_resolver
-             -o "${TEST_OUTPUT_DIR}/test_nuget_dependency_resolver.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_nuget_dependency_resolver")
-endif()
+add_executable(test_nuget_dependency_resolver
+    unit/test_nuget_dependency_resolver.cpp
+    ../src/core/nuget_dependency_resolver.cpp
+    ../src/core/nuget_version_range.cpp
+    ../include/sak/nuget_dependency_resolver.h
+    ../include/sak/nuget_version_range.h
+)
+set_target_properties(test_nuget_dependency_resolver PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_nuget_dependency_resolver PRIVATE
+    Qt6::Core Qt6::Test Qt6::Xml ${PLATFORM_LIBS}
+)
+target_include_directories(test_nuget_dependency_resolver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_nuget_dependency_resolver COMMAND test_nuget_dependency_resolver
+         -o "${TEST_OUTPUT_DIR}/test_nuget_dependency_resolver.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_nuget_dependency_resolver")
 
 # test_offline_package_search - offline deploy search workflow, dedup, data flow
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
-    add_executable(test_offline_package_search
-        unit/test_offline_package_search.cpp
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
-        ../src/core/package_list_manager.cpp
-        ../include/sak/package_list_manager.h
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_offline_package_search PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_offline_package_search PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Widgets ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_offline_package_search PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_offline_package_search COMMAND test_offline_package_search
-             -o "${TEST_OUTPUT_DIR}/test_offline_package_search.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_offline_package_search")
-endif()
+add_executable(test_offline_package_search
+    unit/test_offline_package_search.cpp
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
+    ../src/core/package_list_manager.cpp
+    ../include/sak/package_list_manager.h
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_offline_package_search PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_offline_package_search PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Widgets ${PLATFORM_LIBS}
+)
+target_include_directories(test_offline_package_search PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_offline_package_search COMMAND test_offline_package_search
+         -o "${TEST_OUTPUT_DIR}/test_offline_package_search.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_offline_package_search")
 
 # ============================================================================
 # Integration Tests
 # ============================================================================
 
 # Integration test: UUP Conversion Pipeline
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.cpp")
-    add_executable(test_uup_conversion_pipeline
-        integration/test_uup_conversion_pipeline.cpp
-    )
+add_executable(test_uup_conversion_pipeline
+    integration/test_uup_conversion_pipeline.cpp
+)
 
-    set_target_properties(test_uup_conversion_pipeline PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_uup_conversion_pipeline PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_uup_conversion_pipeline PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_uup_conversion_pipeline PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_uup_conversion_pipeline PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_uup_conversion_pipeline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_uup_conversion_pipeline
-             COMMAND test_uup_conversion_pipeline
-             -o "${TEST_OUTPUT_DIR}/test_uup_conversion_pipeline.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_uup_conversion_pipeline
+         COMMAND test_uup_conversion_pipeline
+         -o "${TEST_OUTPUT_DIR}/test_uup_conversion_pipeline.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added integration test: test_uup_conversion_pipeline")
-endif()
+message(STATUS "Added integration test: test_uup_conversion_pipeline")
 
 # ============================================================================
 # Unit Tests - Quick Actions
 # ============================================================================
 
 # test_action_factory - Action metadata, category distribution, initial state
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
-    add_executable(test_action_factory
-        unit/actions/test_action_factory.cpp
+add_executable(test_action_factory
+    unit/actions/test_action_factory.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by actions
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by actions
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # System Optimization actions
-        ../src/actions/optimize_power_settings_action.cpp
-        ../include/sak/actions/optimize_power_settings_action.h
+    # System Optimization actions
+    ../src/actions/optimize_power_settings_action.cpp
+    ../include/sak/actions/optimize_power_settings_action.h
 
-        # Maintenance actions
-        ../src/actions/verify_system_files_action.cpp
-        ../include/sak/actions/verify_system_files_action.h
-        ../src/actions/check_disk_errors_action.cpp
-        ../include/sak/actions/check_disk_errors_action.h
-        ../src/actions/reset_network_action.cpp
-        ../include/sak/actions/reset_network_action.h
+    # Maintenance actions
+    ../src/actions/verify_system_files_action.cpp
+    ../include/sak/actions/verify_system_files_action.h
+    ../src/actions/check_disk_errors_action.cpp
+    ../include/sak/actions/check_disk_errors_action.h
+    ../src/actions/reset_network_action.cpp
+    ../include/sak/actions/reset_network_action.h
 
-        # Troubleshooting actions
-        ../src/actions/generate_system_report_action.cpp
-        ../include/sak/actions/generate_system_report_action.h
+    # Troubleshooting actions
+    ../src/actions/generate_system_report_action.cpp
+    ../include/sak/actions/generate_system_report_action.h
 
-        # Emergency Recovery actions
-        ../src/actions/screenshot_settings_action.cpp
-        ../include/sak/actions/screenshot_settings_action.h
-        ../src/actions/backup_bitlocker_keys_action.cpp
-        ../include/sak/actions/backup_bitlocker_keys_action.h
-    )
+    # Emergency Recovery actions
+    ../src/actions/screenshot_settings_action.cpp
+    ../include/sak/actions/screenshot_settings_action.h
+    ../src/actions/backup_bitlocker_keys_action.cpp
+    ../include/sak/actions/backup_bitlocker_keys_action.h
+)
 
-    set_target_properties(test_action_factory PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_action_factory PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_action_factory PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_action_factory PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_action_factory PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_action_factory PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_action_factory
-             COMMAND test_action_factory
-             -o "${TEST_OUTPUT_DIR}/test_action_factory.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_action_factory
+         COMMAND test_action_factory
+         -o "${TEST_OUTPUT_DIR}/test_action_factory.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_action_factory")
-endif()
+message(STATUS "Added unit test: test_action_factory")
 
 # test_backup_bitlocker_keys_action -- B6 fail-closed seams (recovery-key gate,
 # unique backup dir, key-protector parse-failure signal, password accounting)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_backup_bitlocker_keys_action.cpp")
-    add_executable(test_backup_bitlocker_keys_action
-        unit/actions/test_backup_bitlocker_keys_action.cpp
+add_executable(test_backup_bitlocker_keys_action
+    unit/actions/test_backup_bitlocker_keys_action.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by the action
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by the action
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # Action under test
-        ../src/actions/backup_bitlocker_keys_action.cpp
-        ../include/sak/actions/backup_bitlocker_keys_action.h
-    )
+    # Action under test
+    ../src/actions/backup_bitlocker_keys_action.cpp
+    ../include/sak/actions/backup_bitlocker_keys_action.h
+)
 
-    set_target_properties(test_backup_bitlocker_keys_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_backup_bitlocker_keys_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_backup_bitlocker_keys_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_backup_bitlocker_keys_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_backup_bitlocker_keys_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_backup_bitlocker_keys_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_backup_bitlocker_keys_action
-             COMMAND test_backup_bitlocker_keys_action
-             -o "${TEST_OUTPUT_DIR}/test_backup_bitlocker_keys_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_backup_bitlocker_keys_action
+         COMMAND test_backup_bitlocker_keys_action
+         -o "${TEST_OUTPUT_DIR}/test_backup_bitlocker_keys_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_backup_bitlocker_keys_action")
-endif()
+message(STATUS "Added unit test: test_backup_bitlocker_keys_action")
 
 # test_verify_system_files_action -- B6-07/08 pure seams (DISM corruption
 # detection must not fire on a clean machine; SFC temp filename is unique)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_verify_system_files_action.cpp")
-    add_executable(test_verify_system_files_action
-        unit/actions/test_verify_system_files_action.cpp
+add_executable(test_verify_system_files_action
+    unit/actions/test_verify_system_files_action.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by the action
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by the action
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # Action under test
-        ../src/actions/verify_system_files_action.cpp
-        ../include/sak/actions/verify_system_files_action.h
-    )
+    # Action under test
+    ../src/actions/verify_system_files_action.cpp
+    ../include/sak/actions/verify_system_files_action.h
+)
 
-    set_target_properties(test_verify_system_files_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_verify_system_files_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_verify_system_files_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_verify_system_files_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_verify_system_files_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_verify_system_files_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_verify_system_files_action
-             COMMAND test_verify_system_files_action
-             -o "${TEST_OUTPUT_DIR}/test_verify_system_files_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_verify_system_files_action
+         COMMAND test_verify_system_files_action
+         -o "${TEST_OUTPUT_DIR}/test_verify_system_files_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_verify_system_files_action")
-endif()
+message(STATUS "Added unit test: test_verify_system_files_action")
 
 # test_check_disk_errors_action -- B6-09/10 pure seams (check is read-only; the
 # outcome aggregates every drive, not just one that succeeded)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_check_disk_errors_action.cpp")
-    add_executable(test_check_disk_errors_action
-        unit/actions/test_check_disk_errors_action.cpp
+add_executable(test_check_disk_errors_action
+    unit/actions/test_check_disk_errors_action.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by the action
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by the action
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # Action under test
-        ../src/actions/check_disk_errors_action.cpp
-        ../include/sak/actions/check_disk_errors_action.h
-    )
+    # Action under test
+    ../src/actions/check_disk_errors_action.cpp
+    ../include/sak/actions/check_disk_errors_action.h
+)
 
-    set_target_properties(test_check_disk_errors_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_check_disk_errors_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_check_disk_errors_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_check_disk_errors_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_check_disk_errors_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_check_disk_errors_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_check_disk_errors_action
-             COMMAND test_check_disk_errors_action
-             -o "${TEST_OUTPUT_DIR}/test_check_disk_errors_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_check_disk_errors_action
+         COMMAND test_check_disk_errors_action
+         -o "${TEST_OUTPUT_DIR}/test_check_disk_errors_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_check_disk_errors_action")
-endif()
+message(STATUS "Added unit test: test_check_disk_errors_action")
 
 # test_reset_network_action -- B6-12/13 pure seams (adapter reset fails closed;
 # a timed-out / non-zero step counts as a failure for the final verdict)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_reset_network_action.cpp")
-    add_executable(test_reset_network_action
-        unit/actions/test_reset_network_action.cpp
+add_executable(test_reset_network_action
+    unit/actions/test_reset_network_action.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by the action
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by the action
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # Action under test
-        ../src/actions/reset_network_action.cpp
-        ../include/sak/actions/reset_network_action.h
-    )
+    # Action under test
+    ../src/actions/reset_network_action.cpp
+    ../include/sak/actions/reset_network_action.h
+)
 
-    set_target_properties(test_reset_network_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_reset_network_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_reset_network_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_reset_network_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_reset_network_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_reset_network_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_reset_network_action
-             COMMAND test_reset_network_action
-             -o "${TEST_OUTPUT_DIR}/test_reset_network_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_reset_network_action
+         COMMAND test_reset_network_action
+         -o "${TEST_OUTPUT_DIR}/test_reset_network_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_reset_network_action")
-endif()
+message(STATUS "Added unit test: test_reset_network_action")
 
 # test_generate_system_report_action -- B6-15 pure seams (a failed collector is
 # surfaced; a saved-but-empty report is not reported as success)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_generate_system_report_action.cpp")
-    add_executable(test_generate_system_report_action
-        unit/actions/test_generate_system_report_action.cpp
+add_executable(test_generate_system_report_action
+    unit/actions/test_generate_system_report_action.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by the action
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by the action
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # Action under test
-        ../src/actions/generate_system_report_action.cpp
-        ../include/sak/actions/generate_system_report_action.h
-    )
+    # Action under test
+    ../src/actions/generate_system_report_action.cpp
+    ../include/sak/actions/generate_system_report_action.h
+)
 
-    set_target_properties(test_generate_system_report_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_generate_system_report_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_generate_system_report_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_generate_system_report_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_generate_system_report_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_generate_system_report_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_generate_system_report_action
-             COMMAND test_generate_system_report_action
-             -o "${TEST_OUTPUT_DIR}/test_generate_system_report_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_generate_system_report_action
+         COMMAND test_generate_system_report_action
+         -o "${TEST_OUTPUT_DIR}/test_generate_system_report_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_generate_system_report_action")
-endif()
+message(STATUS "Added unit test: test_generate_system_report_action")
 
 # test_screenshot_settings_action -- B6-17 report seams (write failure surfaced;
 # report path advertised only when the file was actually written)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_screenshot_settings_action.cpp")
-    add_executable(test_screenshot_settings_action
-        unit/actions/test_screenshot_settings_action.cpp
+add_executable(test_screenshot_settings_action
+    unit/actions/test_screenshot_settings_action.cpp
 
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        ../src/actions/screenshot_settings_action.cpp
-        ../include/sak/actions/screenshot_settings_action.h
-    )
+    ../src/actions/screenshot_settings_action.cpp
+    ../include/sak/actions/screenshot_settings_action.h
+)
 
-    set_target_properties(test_screenshot_settings_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_screenshot_settings_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_screenshot_settings_action PRIVATE
-        Qt6::Core
-        Qt6::Gui
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_screenshot_settings_action PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_screenshot_settings_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_screenshot_settings_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_screenshot_settings_action
-             COMMAND test_screenshot_settings_action
-             -o "${TEST_OUTPUT_DIR}/test_screenshot_settings_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_screenshot_settings_action
+         COMMAND test_screenshot_settings_action
+         -o "${TEST_OUTPUT_DIR}/test_screenshot_settings_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_screenshot_settings_action")
-endif()
+message(STATUS "Added unit test: test_screenshot_settings_action")
 
 # test_optimize_power_settings_action -- B6-18 pure seam (already-optimized is
 # decided by GUID, not a name substring)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_optimize_power_settings_action.cpp")
-    add_executable(test_optimize_power_settings_action
-        unit/actions/test_optimize_power_settings_action.cpp
+add_executable(test_optimize_power_settings_action
+    unit/actions/test_optimize_power_settings_action.cpp
 
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        ../src/actions/optimize_power_settings_action.cpp
-        ../include/sak/actions/optimize_power_settings_action.h
-    )
+    ../src/actions/optimize_power_settings_action.cpp
+    ../include/sak/actions/optimize_power_settings_action.h
+)
 
-    set_target_properties(test_optimize_power_settings_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_optimize_power_settings_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_optimize_power_settings_action PRIVATE
-        Qt6::Core
-        Qt6::Test
-        Qt6::Widgets
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_optimize_power_settings_action PRIVATE
+    Qt6::Core
+    Qt6::Test
+    Qt6::Widgets
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_optimize_power_settings_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_optimize_power_settings_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_optimize_power_settings_action
-             COMMAND test_optimize_power_settings_action
-             -o "${TEST_OUTPUT_DIR}/test_optimize_power_settings_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_optimize_power_settings_action
+         COMMAND test_optimize_power_settings_action
+         -o "${TEST_OUTPUT_DIR}/test_optimize_power_settings_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_optimize_power_settings_action")
-endif()
+message(STATUS "Added unit test: test_optimize_power_settings_action")
 
 # test_file_explorer_archive_service -- B6-19 exclusive-create (compress does not
 # clobber an existing output; compress/extract round trip still works)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_archive_service.cpp")
-    add_executable(test_file_explorer_archive_service
-        unit/test_file_explorer_archive_service.cpp
-        ../src/core/file_explorer_archive_service.cpp
-        ../include/sak/file_explorer_archive_service.h
-    )
+add_executable(test_file_explorer_archive_service
+    unit/test_file_explorer_archive_service.cpp
+    ../src/core/file_explorer_archive_service.cpp
+    ../include/sak/file_explorer_archive_service.h
+)
 
-    set_target_properties(test_file_explorer_archive_service PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
+set_target_properties(test_file_explorer_archive_service PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
 
-    target_link_libraries(test_file_explorer_archive_service PRIVATE
-        Qt6::Core
-        Qt6::CorePrivate
-        Qt6::Test
-        ${PLATFORM_LIBS}
-    )
+target_link_libraries(test_file_explorer_archive_service PRIVATE
+    Qt6::Core
+    Qt6::CorePrivate
+    Qt6::Test
+    ${PLATFORM_LIBS}
+)
 
-    target_include_directories(test_file_explorer_archive_service PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
+target_include_directories(test_file_explorer_archive_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
-    add_test(NAME test_file_explorer_archive_service
-             COMMAND test_file_explorer_archive_service
-             -o "${TEST_OUTPUT_DIR}/test_file_explorer_archive_service.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_file_explorer_archive_service
+         COMMAND test_file_explorer_archive_service
+         -o "${TEST_OUTPUT_DIR}/test_file_explorer_archive_service.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
-    message(STATUS "Added unit test: test_file_explorer_archive_service")
-endif()
+message(STATUS "Added unit test: test_file_explorer_archive_service")
 
 # ============================================================================
 # Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
 # ============================================================================
 
 # test_flash_types - FlashProgress arithmetic, FlashResult checks (TST-02)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
-    add_executable(test_flash_types
-        unit/test_flash_types.cpp
-    )
-    set_target_properties(test_flash_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_flash_types PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_flash_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_flash_types COMMAND test_flash_types
-             -o "${TEST_OUTPUT_DIR}/test_flash_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_flash_types")
-endif()
+add_executable(test_flash_types
+    unit/test_flash_types.cpp
+)
+set_target_properties(test_flash_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_flash_types PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_flash_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_flash_types COMMAND test_flash_types
+         -o "${TEST_OUTPUT_DIR}/test_flash_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_flash_types")
 
 # test_image_flasher_panel - the guards on entering a destructive write: the Flash
 # button must require BOTH an image and a target, and a rejected image must select
 # nothing. Runs offscreen.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_image_flasher_panel.cpp")
-    add_executable(test_image_flasher_panel
-        unit/test_image_flasher_panel.cpp
-        ../src/gui/image_flasher_panel.cpp
-        ../src/gui/image_flasher_settings_dialog.cpp
-        ../src/gui/windows_iso_download_dialog.cpp
-        ../src/gui/linux_iso_download_dialog.cpp
-        ../src/gui/detachable_log_window.cpp
-        ../src/gui/follow_scroll_controller.cpp
-        ../src/gui/info_button.cpp
-        ../src/core/flash_coordinator.cpp
-        ../src/threading/flash_worker.cpp
-        ../src/threading/worker_base.cpp
-        ../src/core/image_source.cpp
-        ../src/core/drive_unmounter.cpp
-        ../src/core/drive_scanner.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../src/core/decompressor_factory.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../src/core/bzip2_decompressor.cpp
-        ../src/core/xz_decompressor.cpp
-        ../src/core/keep_awake.cpp
-        ../src/core/iso_analyzer.cpp
-        ../src/core/config_manager.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/windows_iso_downloader.cpp
-        ../src/core/linux_iso_downloader.cpp
-        ../src/core/linux_distro_catalog.cpp
-        ../src/core/uup_iso_builder.cpp
-        ../src/core/uup_dump_api.cpp
-        ../src/core/windows_usb_creator.cpp
-        ../src/core/windows_usb_creator_extract.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/input_validator.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        # Listed so AUTOMOC generates the meta-objects for these Q_OBJECT classes.
-        ../include/sak/image_flasher_panel.h
-        ../include/sak/image_flasher_settings_dialog.h
-        ../include/sak/windows_iso_download_dialog.h
-        ../include/sak/linux_iso_download_dialog.h
-        ../include/sak/detachable_log_window.h
-        ../include/sak/follow_scroll_controller.h
-        ../include/sak/info_button.h
-        ../include/sak/flash_coordinator.h
-        ../include/sak/flash_worker.h
-        ../include/sak/worker_base.h
-        ../include/sak/image_source.h
-        ../include/sak/drive_unmounter.h
-        ../include/sak/drive_scanner.h
-        ../include/sak/streaming_decompressor.h
-        ../include/sak/gzip_decompressor.h
-        ../include/sak/bzip2_decompressor.h
-        ../include/sak/xz_decompressor.h
-        ../include/sak/uup_dump_api.h
-        ../include/sak/linux_distro_catalog.h
-        ../include/sak/bundled_tools_manager.h
-        ../include/sak/iso_analyzer.h
-        ../include/sak/config_manager.h
-        ../include/sak/windows_iso_downloader.h
-        ../include/sak/linux_iso_downloader.h
-        ../include/sak/uup_iso_builder.h
-        ../include/sak/windows_usb_creator.h
-        ../include/sak/elevation_manager.h
-    )
-    set_target_properties(test_image_flasher_panel PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_image_flasher_panel PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
-        ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_image_flasher_panel PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_image_flasher_panel COMMAND test_image_flasher_panel
-             -o "${TEST_OUTPUT_DIR}/test_image_flasher_panel.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    set_tests_properties(test_image_flasher_panel PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    message(STATUS "Added unit test: test_image_flasher_panel")
-endif()
+add_executable(test_image_flasher_panel
+    unit/test_image_flasher_panel.cpp
+    ../src/gui/image_flasher_panel.cpp
+    ../src/gui/image_flasher_settings_dialog.cpp
+    ../src/gui/windows_iso_download_dialog.cpp
+    ../src/gui/linux_iso_download_dialog.cpp
+    ../src/gui/detachable_log_window.cpp
+    ../src/gui/follow_scroll_controller.cpp
+    ../src/gui/info_button.cpp
+    ../src/core/flash_coordinator.cpp
+    ../src/threading/flash_worker.cpp
+    ../src/threading/worker_base.cpp
+    ../src/core/image_source.cpp
+    ../src/core/drive_unmounter.cpp
+    ../src/core/drive_scanner.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/keep_awake.cpp
+    ../src/core/iso_analyzer.cpp
+    ../src/core/config_manager.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/windows_iso_downloader.cpp
+    ../src/core/linux_iso_downloader.cpp
+    ../src/core/linux_distro_catalog.cpp
+    ../src/core/uup_iso_builder.cpp
+    ../src/core/uup_dump_api.cpp
+    ../src/core/windows_usb_creator.cpp
+    ../src/core/windows_usb_creator_extract.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/input_validator.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    # Listed so AUTOMOC generates the meta-objects for these Q_OBJECT classes.
+    ../include/sak/image_flasher_panel.h
+    ../include/sak/image_flasher_settings_dialog.h
+    ../include/sak/windows_iso_download_dialog.h
+    ../include/sak/linux_iso_download_dialog.h
+    ../include/sak/detachable_log_window.h
+    ../include/sak/follow_scroll_controller.h
+    ../include/sak/info_button.h
+    ../include/sak/flash_coordinator.h
+    ../include/sak/flash_worker.h
+    ../include/sak/worker_base.h
+    ../include/sak/image_source.h
+    ../include/sak/drive_unmounter.h
+    ../include/sak/drive_scanner.h
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+    ../include/sak/uup_dump_api.h
+    ../include/sak/linux_distro_catalog.h
+    ../include/sak/bundled_tools_manager.h
+    ../include/sak/iso_analyzer.h
+    ../include/sak/config_manager.h
+    ../include/sak/windows_iso_downloader.h
+    ../include/sak/linux_iso_downloader.h
+    ../include/sak/uup_iso_builder.h
+    ../include/sak/windows_usb_creator.h
+    ../include/sak/elevation_manager.h
+)
+set_target_properties(test_image_flasher_panel PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_image_flasher_panel PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_image_flasher_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_image_flasher_panel COMMAND test_image_flasher_panel
+         -o "${TEST_OUTPUT_DIR}/test_image_flasher_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_image_flasher_panel PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_image_flasher_panel")
 
 # test_flasher_policy - pure decisions behind the Image Flasher settings:
 # the large-drive warning threshold and the concurrent-write ceiling.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flasher_policy.cpp")
-    add_executable(test_flasher_policy
-        unit/test_flasher_policy.cpp
-        ../include/sak/flasher_policy.h
-    )
-    set_target_properties(test_flasher_policy PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_flasher_policy PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_flasher_policy PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_flasher_policy COMMAND test_flasher_policy
-             -o "${TEST_OUTPUT_DIR}/test_flasher_policy.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_flasher_policy")
-endif()
+add_executable(test_flasher_policy
+    unit/test_flasher_policy.cpp
+    ../include/sak/flasher_policy.h
+)
+set_target_properties(test_flasher_policy PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_flasher_policy PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_flasher_policy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_flasher_policy COMMAND test_flasher_policy
+         -o "${TEST_OUTPUT_DIR}/test_flasher_policy.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_flasher_policy")
 
 # test_quick_action - QuickAction static helpers and base class (TST-10)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
-    add_executable(test_quick_action
-        unit/test_quick_action.cpp
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_quick_action PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_quick_action PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_quick_action PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_quick_action COMMAND test_quick_action
-             -o "${TEST_OUTPUT_DIR}/test_quick_action.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_quick_action")
-endif()
+add_executable(test_quick_action
+    unit/test_quick_action.cpp
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_quick_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_quick_action PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_quick_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_quick_action COMMAND test_quick_action
+         -o "${TEST_OUTPUT_DIR}/test_quick_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_quick_action")
 
 # test_user_profile_types - Serialization round-trips (TST-05)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
-    add_executable(test_user_profile_types
-        unit/test_user_profile_types.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_user_profile_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_user_profile_types PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_user_profile_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_user_profile_types COMMAND test_user_profile_types
-             -o "${TEST_OUTPUT_DIR}/test_user_profile_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_user_profile_types")
-endif()
+add_executable(test_user_profile_types
+    unit/test_user_profile_types.cpp
+    ../src/core/user_profile_types.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_user_profile_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_types PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_types COMMAND test_user_profile_types
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_profile_types")
 
 # test_user_data_manager - Checksums, data locations, size calc (TST-04)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
-    add_executable(test_user_data_manager
-        unit/test_user_data_manager.cpp
-        ../src/core/user_data_manager.cpp
-        ../include/sak/user_data_manager.h
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_user_data_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_user_data_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_user_data_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_user_data_manager COMMAND test_user_data_manager
-             -o "${TEST_OUTPUT_DIR}/test_user_data_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_user_data_manager")
-endif()
+add_executable(test_user_data_manager
+    unit/test_user_data_manager.cpp
+    ../src/core/user_data_manager.cpp
+    ../include/sak/user_data_manager.h
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_user_data_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_data_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_data_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_data_manager COMMAND test_user_data_manager
+         -o "${TEST_OUTPUT_DIR}/test_user_data_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_data_manager")
 
 # test_duplicate_finder_worker - Duplicate detection with temp files (TST-11)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
-    add_executable(test_duplicate_finder_worker
-        unit/test_duplicate_finder_worker.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/threading/duplicate_finder_worker.cpp
-        ../include/sak/file_management_file_system.h
-        ../include/sak/duplicate_finder_worker.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/file_hash.cpp
-        ../include/sak/file_hash.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_duplicate_finder_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_duplicate_finder_worker PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_duplicate_finder_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_duplicate_finder_worker COMMAND test_duplicate_finder_worker
-             -o "${TEST_OUTPUT_DIR}/test_duplicate_finder_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_duplicate_finder_worker")
-endif()
+add_executable(test_duplicate_finder_worker
+    unit/test_duplicate_finder_worker.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/threading/duplicate_finder_worker.cpp
+    ../include/sak/file_management_file_system.h
+    ../include/sak/duplicate_finder_worker.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/file_hash.cpp
+    ../include/sak/file_hash.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_duplicate_finder_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_duplicate_finder_worker PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_duplicate_finder_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_duplicate_finder_worker COMMAND test_duplicate_finder_worker
+         -o "${TEST_OUTPUT_DIR}/test_duplicate_finder_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_duplicate_finder_worker")
 
 # test_organizer_worker - File categorization and undo (TST-11)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
-    add_executable(test_organizer_worker
-        unit/test_organizer_worker.cpp
-        ../src/threading/organizer_worker.cpp
-        ../include/sak/organizer_worker.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/logger.cpp
-        ../src/core/input_validator.cpp
-    )
-    set_target_properties(test_organizer_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_organizer_worker PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_organizer_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_organizer_worker COMMAND test_organizer_worker
-             -o "${TEST_OUTPUT_DIR}/test_organizer_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_organizer_worker")
-endif()
+add_executable(test_organizer_worker
+    unit/test_organizer_worker.cpp
+    ../src/threading/organizer_worker.cpp
+    ../include/sak/organizer_worker.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/logger.cpp
+    ../src/core/input_validator.cpp
+)
+set_target_properties(test_organizer_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_organizer_worker PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+)
+target_include_directories(test_organizer_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_organizer_worker COMMAND test_organizer_worker
+         -o "${TEST_OUTPUT_DIR}/test_organizer_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_organizer_worker")
 
 # test_app_installation_worker - Job filtering, stats, state management (TST-03)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
-    add_executable(test_app_installation_worker
-        unit/test_app_installation_worker.cpp
-        ../src/core/app_installation_worker.cpp
-        ../include/sak/app_installation_worker.h
-        ../src/core/nuget_version_range.cpp
-        ../include/sak/nuget_version_range.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
-        ../src/core/migration_report.cpp
-        ../include/sak/migration_report.h
-        ../src/core/app_scanner.cpp
-        ../include/sak/app_scanner.h
-        ../src/core/bundled_tools_manager.cpp
-        ../src/core/package_matcher.cpp
-        ../include/sak/package_matcher.h
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_app_installation_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_app_installation_worker PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_app_installation_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_app_installation_worker COMMAND test_app_installation_worker
-             -o "${TEST_OUTPUT_DIR}/test_app_installation_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_app_installation_worker")
-endif()
+add_executable(test_app_installation_worker
+    unit/test_app_installation_worker.cpp
+    ../src/core/app_installation_worker.cpp
+    ../include/sak/app_installation_worker.h
+    ../src/core/nuget_version_range.cpp
+    ../include/sak/nuget_version_range.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
+    ../src/core/migration_report.cpp
+    ../include/sak/migration_report.h
+    ../src/core/app_scanner.cpp
+    ../include/sak/app_scanner.h
+    ../src/core/bundled_tools_manager.cpp
+    ../src/core/package_matcher.cpp
+    ../include/sak/package_matcher.h
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_app_installation_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_installation_worker PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_app_installation_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_installation_worker COMMAND test_app_installation_worker
+         -o "${TEST_OUTPUT_DIR}/test_app_installation_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_installation_worker")
 
 # test_app_installation_busy - pure predicate seam for the App Installation panel's single
 # in-flight authority: the online Chocolatey install path and the offline deployment path are
 # mutually exclusive, so one predicate answers for both entry points and both control groups.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_busy.cpp")
-    add_executable(test_app_installation_busy
-        unit/test_app_installation_busy.cpp
-        ../src/core/app_installation_busy.cpp
-        ../include/sak/app_installation_busy.h
-    )
-    set_target_properties(test_app_installation_busy PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_app_installation_busy PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_app_installation_busy PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_app_installation_busy COMMAND test_app_installation_busy
-             -o "${TEST_OUTPUT_DIR}/test_app_installation_busy.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_app_installation_busy")
-endif()
+add_executable(test_app_installation_busy
+    unit/test_app_installation_busy.cpp
+    ../src/core/app_installation_busy.cpp
+    ../include/sak/app_installation_busy.h
+)
+set_target_properties(test_app_installation_busy PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_installation_busy PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_app_installation_busy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_installation_busy COMMAND test_app_installation_busy
+         -o "${TEST_OUTPUT_DIR}/test_app_installation_busy.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_installation_busy")
 
 # test_user_profile_restore_worker - Restore flow, conflict resolution, signals (TST-06)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp")
-    add_executable(test_user_profile_restore_worker
-        unit/test_user_profile_restore_worker.cpp
-        ../src/core/user_profile_restore_worker.cpp
-        ../include/sak/user_profile_restore_worker.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/smart_file_filter.cpp
-        ../include/sak/smart_file_filter.h
-        ../src/core/permission_manager.cpp
-        ../include/sak/permission_manager.h
-        ../src/core/elevation_manager.cpp
-        ../include/sak/elevation_manager.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../src/core/backup_file_codec.cpp
-        ../include/sak/backup_file_codec.h
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-    )
-    set_target_properties(test_user_profile_restore_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_user_profile_restore_worker PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_user_profile_restore_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_user_profile_restore_worker COMMAND test_user_profile_restore_worker
-             -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_user_profile_restore_worker")
-endif()
+add_executable(test_user_profile_restore_worker
+    unit/test_user_profile_restore_worker.cpp
+    ../src/core/user_profile_restore_worker.cpp
+    ../include/sak/user_profile_restore_worker.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/smart_file_filter.cpp
+    ../include/sak/smart_file_filter.h
+    ../src/core/permission_manager.cpp
+    ../include/sak/permission_manager.h
+    ../src/core/elevation_manager.cpp
+    ../include/sak/elevation_manager.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../src/core/backup_file_codec.cpp
+    ../include/sak/backup_file_codec.h
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+)
+set_target_properties(test_user_profile_restore_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_restore_worker PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_restore_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_restore_worker COMMAND test_user_profile_restore_worker
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_restore_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_profile_restore_worker")
 
 # test_windows_usb_creator - Input validation, BUG-09 disk number injection (TST-07)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
-    add_executable(test_windows_usb_creator
-        unit/test_windows_usb_creator.cpp
-        ../src/core/windows_usb_creator.cpp
-        ../src/core/windows_usb_creator_extract.cpp
-        ../include/sak/windows_usb_creator.h
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_windows_usb_creator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_windows_usb_creator PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_windows_usb_creator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_windows_usb_creator COMMAND test_windows_usb_creator
-             -o "${TEST_OUTPUT_DIR}/test_windows_usb_creator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_windows_usb_creator")
-endif()
+add_executable(test_windows_usb_creator
+    unit/test_windows_usb_creator.cpp
+    ../src/core/windows_usb_creator.cpp
+    ../src/core/windows_usb_creator_extract.cpp
+    ../include/sak/windows_usb_creator.h
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_windows_usb_creator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_windows_usb_creator PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_windows_usb_creator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_windows_usb_creator COMMAND test_windows_usb_creator
+         -o "${TEST_OUTPUT_DIR}/test_windows_usb_creator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_windows_usb_creator")
 
 # test_flash_worker - Structs, validation, early-exit paths, cancellation (TST-09)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
-    add_executable(test_flash_worker
-        unit/test_flash_worker.cpp
-        ../src/threading/flash_worker.cpp
-        ../src/threading/worker_base.cpp
-        ../src/core/image_source.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../src/core/decompressor_factory.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../src/core/bzip2_decompressor.cpp
-        ../src/core/xz_decompressor.cpp
-        ../src/core/keep_awake.cpp
-        ../src/core/logger.cpp
-        ../include/sak/flash_worker.h
-        ../include/sak/worker_base.h
-        ../include/sak/image_source.h
-        ../include/sak/streaming_decompressor.h
-        ../include/sak/decompressor_factory.h
-        ../include/sak/gzip_decompressor.h
-        ../include/sak/bzip2_decompressor.h
-        ../include/sak/xz_decompressor.h
-        ../include/sak/keep_awake.h
-    )
-    set_target_properties(test_flash_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_flash_worker PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_compile_definitions(test_flash_worker PRIVATE
-        QT_DISABLE_DEPRECATED_BEFORE=0x060000
-    )
-    target_include_directories(test_flash_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_flash_worker COMMAND test_flash_worker
-             -o "${TEST_OUTPUT_DIR}/test_flash_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_flash_worker")
-endif()
+add_executable(test_flash_worker
+    unit/test_flash_worker.cpp
+    ../src/threading/flash_worker.cpp
+    ../src/threading/worker_base.cpp
+    ../src/core/image_source.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/keep_awake.cpp
+    ../src/core/logger.cpp
+    ../include/sak/flash_worker.h
+    ../include/sak/worker_base.h
+    ../include/sak/image_source.h
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/decompressor_factory.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+    ../include/sak/keep_awake.h
+)
+set_target_properties(test_flash_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_flash_worker PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_compile_definitions(test_flash_worker PRIVATE
+    QT_DISABLE_DEPRECATED_BEFORE=0x060000
+)
+target_include_directories(test_flash_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_flash_worker COMMAND test_flash_worker
+         -o "${TEST_OUTPUT_DIR}/test_flash_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_flash_worker")
 
 # ============================================================================
 # Unit Tests - Phase 8: Expanded Test Coverage
 # ============================================================================
 
 # test_quick_action_result_io - enum to string round-trips, file write/read
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
-    add_executable(test_quick_action_result_io
-        unit/test_quick_action_result_io.cpp
-        ../src/core/quick_action_result_io.cpp
-        ../include/sak/quick_action_result_io.h
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_quick_action_result_io PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_quick_action_result_io PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_quick_action_result_io PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_quick_action_result_io COMMAND test_quick_action_result_io
-             -o "${TEST_OUTPUT_DIR}/test_quick_action_result_io.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_quick_action_result_io")
-endif()
+add_executable(test_quick_action_result_io
+    unit/test_quick_action_result_io.cpp
+    ../src/core/quick_action_result_io.cpp
+    ../include/sak/quick_action_result_io.h
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_quick_action_result_io PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_quick_action_result_io PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_quick_action_result_io PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_quick_action_result_io COMMAND test_quick_action_result_io
+         -o "${TEST_OUTPUT_DIR}/test_quick_action_result_io.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_quick_action_result_io")
 
 # test_keep_awake -- KeepAwake refcount / guard lifetime (P06-08 overlap)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_keep_awake.cpp")
-    add_executable(test_keep_awake
-        unit/test_keep_awake.cpp
-        ../src/core/keep_awake.cpp
-        ../include/sak/keep_awake.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_keep_awake PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_keep_awake PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_keep_awake PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_keep_awake COMMAND test_keep_awake
-             -o "${TEST_OUTPUT_DIR}/test_keep_awake.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_keep_awake")
-endif()
+add_executable(test_keep_awake
+    unit/test_keep_awake.cpp
+    ../src/core/keep_awake.cpp
+    ../include/sak/keep_awake.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_keep_awake PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_keep_awake PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_keep_awake PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_keep_awake COMMAND test_keep_awake
+         -o "${TEST_OUTPUT_DIR}/test_keep_awake.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_keep_awake")
 
 # test_quick_action_controller - registration, lookup, category filtering
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
-    add_executable(test_quick_action_controller
-        unit/test_quick_action_controller.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/quick_action_controller.cpp
-        ../include/sak/app_paths.h
-        ../include/sak/quick_action_controller.h
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
-        ../src/core/quick_action_result_io.cpp
-        ../include/sak/quick_action_result_io.h
-        ../src/core/elevation_manager.cpp
-        ../include/sak/elevation_manager.h
-        ../src/core/elevation_broker.cpp
-        ../include/sak/elevation_broker.h
-        ../src/core/elevated_pipe_server.cpp
-        ../include/sak/elevated_pipe_server.h
-        ../src/core/elevated_task_dispatcher.cpp
-        ../include/sak/elevated_task_dispatcher.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-    )
-    set_target_properties(test_quick_action_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_quick_action_controller PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_quick_action_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_quick_action_controller COMMAND test_quick_action_controller
-             -o "${TEST_OUTPUT_DIR}/test_quick_action_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_quick_action_controller")
-endif()
+add_executable(test_quick_action_controller
+    unit/test_quick_action_controller.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/quick_action_controller.cpp
+    ../include/sak/app_paths.h
+    ../include/sak/quick_action_controller.h
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
+    ../src/core/quick_action_result_io.cpp
+    ../include/sak/quick_action_result_io.h
+    ../src/core/elevation_manager.cpp
+    ../include/sak/elevation_manager.h
+    ../src/core/elevation_broker.cpp
+    ../include/sak/elevation_broker.h
+    ../src/core/elevated_pipe_server.cpp
+    ../include/sak/elevated_pipe_server.h
+    ../src/core/elevated_task_dispatcher.cpp
+    ../include/sak/elevated_task_dispatcher.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+)
+set_target_properties(test_quick_action_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_quick_action_controller PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_quick_action_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_quick_action_controller COMMAND test_quick_action_controller
+         -o "${TEST_OUTPUT_DIR}/test_quick_action_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_quick_action_controller")
 
 # test_migration_report - entry CRUD, selection, counts, distribution
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
-    add_executable(test_migration_report
-        unit/test_migration_report.cpp
-        ../src/core/migration_report.cpp
-        ../include/sak/migration_report.h
-        ../src/core/app_scanner.cpp
-        ../include/sak/app_scanner.h
-        ../src/core/bundled_tools_manager.cpp
-        ../src/core/package_matcher.cpp
-        ../include/sak/package_matcher.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_migration_report PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_migration_report PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_migration_report PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_migration_report COMMAND test_migration_report
-             -o "${TEST_OUTPUT_DIR}/test_migration_report.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_migration_report")
-endif()
+add_executable(test_migration_report
+    unit/test_migration_report.cpp
+    ../src/core/migration_report.cpp
+    ../include/sak/migration_report.h
+    ../src/core/app_scanner.cpp
+    ../include/sak/app_scanner.h
+    ../src/core/bundled_tools_manager.cpp
+    ../src/core/package_matcher.cpp
+    ../include/sak/package_matcher.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_migration_report PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_migration_report PRIVATE
+    Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_migration_report PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_migration_report COMMAND test_migration_report
+         -o "${TEST_OUTPUT_DIR}/test_migration_report.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_migration_report")
 
 # test_linux_distro_catalog - catalog integrity, category filtering, resolution
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
-    add_executable(test_linux_distro_catalog
-        unit/test_linux_distro_catalog.cpp
-        ../src/core/linux_distro_catalog.cpp
-        ../include/sak/linux_distro_catalog.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_linux_distro_catalog PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_linux_distro_catalog PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_linux_distro_catalog PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_linux_distro_catalog COMMAND test_linux_distro_catalog
-             -o "${TEST_OUTPUT_DIR}/test_linux_distro_catalog.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_linux_distro_catalog")
-endif()
+add_executable(test_linux_distro_catalog
+    unit/test_linux_distro_catalog.cpp
+    ../src/core/linux_distro_catalog.cpp
+    ../include/sak/linux_distro_catalog.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_linux_distro_catalog PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_linux_distro_catalog PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_linux_distro_catalog PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_linux_distro_catalog COMMAND test_linux_distro_catalog
+         -o "${TEST_OUTPUT_DIR}/test_linux_distro_catalog.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_linux_distro_catalog")
 
 # test_flash_coordinator - defaults, config, guards, cancel safety
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
-    add_executable(test_flash_coordinator
-        unit/test_flash_coordinator.cpp
-        ../src/core/flash_coordinator.cpp
-        ../include/sak/flash_coordinator.h
-        ../src/threading/flash_worker.cpp
-        ../include/sak/flash_worker.h
-        ../src/threading/worker_base.cpp
-        ../include/sak/worker_base.h
-        ../src/core/image_source.cpp
-        ../include/sak/image_source.h
-        ../src/core/drive_unmounter.cpp
-        ../include/sak/drive_unmounter.h
-        ../src/core/drive_scanner.cpp
-        ../include/sak/drive_scanner.h
-        ../src/core/input_validator.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../include/sak/streaming_decompressor.h
-        ../src/core/decompressor_factory.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../include/sak/gzip_decompressor.h
-        ../src/core/bzip2_decompressor.cpp
-        ../include/sak/bzip2_decompressor.h
-        ../src/core/xz_decompressor.cpp
-        ../include/sak/xz_decompressor.h
-        ../src/core/keep_awake.cpp
-        ../include/sak/keep_awake.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_flash_coordinator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_flash_coordinator PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_compile_definitions(test_flash_coordinator PRIVATE
-        QT_DISABLE_DEPRECATED_BEFORE=0x060000
-    )
-    target_include_directories(test_flash_coordinator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_flash_coordinator COMMAND test_flash_coordinator
-             -o "${TEST_OUTPUT_DIR}/test_flash_coordinator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_flash_coordinator")
-endif()
+add_executable(test_flash_coordinator
+    unit/test_flash_coordinator.cpp
+    ../src/core/flash_coordinator.cpp
+    ../include/sak/flash_coordinator.h
+    ../src/threading/flash_worker.cpp
+    ../include/sak/flash_worker.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/image_source.cpp
+    ../include/sak/image_source.h
+    ../src/core/drive_unmounter.cpp
+    ../include/sak/drive_unmounter.h
+    ../src/core/drive_scanner.cpp
+    ../include/sak/drive_scanner.h
+    ../src/core/input_validator.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../include/sak/streaming_decompressor.h
+    ../src/core/decompressor_factory.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../include/sak/gzip_decompressor.h
+    ../src/core/bzip2_decompressor.cpp
+    ../include/sak/bzip2_decompressor.h
+    ../src/core/xz_decompressor.cpp
+    ../include/sak/xz_decompressor.h
+    ../src/core/keep_awake.cpp
+    ../include/sak/keep_awake.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_flash_coordinator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_flash_coordinator PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_compile_definitions(test_flash_coordinator PRIVATE
+    QT_DISABLE_DEPRECATED_BEFORE=0x060000
+)
+target_include_directories(test_flash_coordinator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_flash_coordinator COMMAND test_flash_coordinator
+         -o "${TEST_OUTPUT_DIR}/test_flash_coordinator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_flash_coordinator")
 
 # test_user_profile_backup_worker - construction, initial state, cancel
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp")
-    add_executable(test_user_profile_backup_worker
-        unit/test_user_profile_backup_worker.cpp
-        ../src/core/user_profile_backup_worker.cpp
-        ../include/sak/user_profile_backup_worker.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/smart_file_filter.cpp
-        ../include/sak/smart_file_filter.h
-        ../src/core/permission_manager.cpp
-        ../include/sak/permission_manager.h
-        ../src/core/elevation_manager.cpp
-        ../include/sak/elevation_manager.h
-        ../src/core/path_utils.cpp
-        ../src/core/logger.cpp
-        ../src/core/backup_file_codec.cpp
-        ../src/core/encryption.cpp
-        ../src/core/secure_memory.cpp
-    )
-    set_target_properties(test_user_profile_backup_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_user_profile_backup_worker PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_user_profile_backup_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_user_profile_backup_worker COMMAND test_user_profile_backup_worker
-             -o "${TEST_OUTPUT_DIR}/test_user_profile_backup_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_user_profile_backup_worker")
-endif()
+add_executable(test_user_profile_backup_worker
+    unit/test_user_profile_backup_worker.cpp
+    ../src/core/user_profile_backup_worker.cpp
+    ../include/sak/user_profile_backup_worker.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/smart_file_filter.cpp
+    ../include/sak/smart_file_filter.h
+    ../src/core/permission_manager.cpp
+    ../include/sak/permission_manager.h
+    ../src/core/elevation_manager.cpp
+    ../include/sak/elevation_manager.h
+    ../src/core/path_utils.cpp
+    ../src/core/logger.cpp
+    ../src/core/backup_file_codec.cpp
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+)
+set_target_properties(test_user_profile_backup_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_backup_worker PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_backup_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_user_profile_backup_worker COMMAND test_user_profile_backup_worker
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_backup_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_user_profile_backup_worker")
 
 # test_uup_dump_api --- channel/ring maps, entry safety, SHA-1 validation (B10-20)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_dump_api.cpp")
-    add_executable(test_uup_dump_api
-        unit/test_uup_dump_api.cpp
-        ../src/core/uup_dump_api.cpp
-        ../include/sak/uup_dump_api.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_uup_dump_api PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_uup_dump_api PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_uup_dump_api PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_uup_dump_api COMMAND test_uup_dump_api
-             -o "${TEST_OUTPUT_DIR}/test_uup_dump_api.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_uup_dump_api")
-endif()
+add_executable(test_uup_dump_api
+    unit/test_uup_dump_api.cpp
+    ../src/core/uup_dump_api.cpp
+    ../include/sak/uup_dump_api.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_uup_dump_api PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_uup_dump_api PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_uup_dump_api PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_uup_dump_api COMMAND test_uup_dump_api
+         -o "${TEST_OUTPUT_DIR}/test_uup_dump_api.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_uup_dump_api")
 
 # test_uup_iso_builder - phase defaults, cancel, weight constants
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
-    add_executable(test_uup_iso_builder
-        unit/test_uup_iso_builder.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/uup_iso_builder.cpp
-        ../include/sak/app_paths.h
-        ../include/sak/uup_iso_builder.h
-        ../src/core/uup_dump_api.cpp
-        ../include/sak/uup_dump_api.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/elevation_manager.cpp
-        ../include/sak/elevation_manager.h
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_uup_iso_builder PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_uup_iso_builder PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_uup_iso_builder PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_uup_iso_builder COMMAND test_uup_iso_builder
-             -o "${TEST_OUTPUT_DIR}/test_uup_iso_builder.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_uup_iso_builder")
-endif()
+add_executable(test_uup_iso_builder
+    unit/test_uup_iso_builder.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/uup_iso_builder.cpp
+    ../include/sak/app_paths.h
+    ../include/sak/uup_iso_builder.h
+    ../src/core/uup_dump_api.cpp
+    ../include/sak/uup_dump_api.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/elevation_manager.cpp
+    ../include/sak/elevation_manager.h
+    ../src/core/logger.cpp
+)
+set_target_properties(test_uup_iso_builder PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_uup_iso_builder PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_uup_iso_builder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_uup_iso_builder COMMAND test_uup_iso_builder
+         -o "${TEST_OUTPUT_DIR}/test_uup_iso_builder.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_uup_iso_builder")
 
 # test_all_actions_metadata - per-action expected values, cancel behavior
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cpp")
-    add_executable(test_all_actions_metadata
-        unit/actions/test_all_actions_metadata.cpp
+add_executable(test_all_actions_metadata
+    unit/actions/test_all_actions_metadata.cpp
 
-        # Base class
-        ../src/core/quick_action.cpp
-        ../include/sak/quick_action.h
+    # Base class
+    ../src/core/quick_action.cpp
+    ../include/sak/quick_action.h
 
-        # Dependencies used by actions
-        ../src/core/process_runner.cpp
-        ../include/sak/process_runner.h
-        ../src/core/logger.cpp
-        ../include/sak/logger.h
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-        ../src/core/path_utils.cpp
-        ../include/sak/path_utils.h
-        ../src/core/windows_user_scanner.cpp
-        ../include/sak/windows_user_scanner.h
-        ../src/core/user_profile_types.cpp
-        ../include/sak/user_profile_types.h
-        ../src/core/chocolatey_manager.cpp
-        ../include/sak/chocolatey_manager.h
+    # Dependencies used by actions
+    ../src/core/process_runner.cpp
+    ../include/sak/process_runner.h
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+    ../src/core/path_utils.cpp
+    ../include/sak/path_utils.h
+    ../src/core/windows_user_scanner.cpp
+    ../include/sak/windows_user_scanner.h
+    ../src/core/user_profile_types.cpp
+    ../include/sak/user_profile_types.h
+    ../src/core/chocolatey_manager.cpp
+    ../include/sak/chocolatey_manager.h
 
-        # System Optimization actions
-        ../src/actions/optimize_power_settings_action.cpp
-        ../include/sak/actions/optimize_power_settings_action.h
+    # System Optimization actions
+    ../src/actions/optimize_power_settings_action.cpp
+    ../include/sak/actions/optimize_power_settings_action.h
 
-        # Maintenance actions
-        ../src/actions/verify_system_files_action.cpp
-        ../include/sak/actions/verify_system_files_action.h
-        ../src/actions/check_disk_errors_action.cpp
-        ../include/sak/actions/check_disk_errors_action.h
-        ../src/actions/reset_network_action.cpp
-        ../include/sak/actions/reset_network_action.h
+    # Maintenance actions
+    ../src/actions/verify_system_files_action.cpp
+    ../include/sak/actions/verify_system_files_action.h
+    ../src/actions/check_disk_errors_action.cpp
+    ../include/sak/actions/check_disk_errors_action.h
+    ../src/actions/reset_network_action.cpp
+    ../include/sak/actions/reset_network_action.h
 
-        # Troubleshooting actions
-        ../src/actions/generate_system_report_action.cpp
-        ../include/sak/actions/generate_system_report_action.h
+    # Troubleshooting actions
+    ../src/actions/generate_system_report_action.cpp
+    ../include/sak/actions/generate_system_report_action.h
 
-        # Emergency Recovery actions
-        ../src/actions/screenshot_settings_action.cpp
-        ../include/sak/actions/screenshot_settings_action.h
-        ../src/actions/backup_bitlocker_keys_action.cpp
-        ../include/sak/actions/backup_bitlocker_keys_action.h
-    )
+    # Emergency Recovery actions
+    ../src/actions/screenshot_settings_action.cpp
+    ../include/sak/actions/screenshot_settings_action.h
+    ../src/actions/backup_bitlocker_keys_action.cpp
+    ../include/sak/actions/backup_bitlocker_keys_action.h
+)
 
-    set_target_properties(test_all_actions_metadata PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_all_actions_metadata PRIVATE
-        Qt6::Core Qt6::Test Qt6::Widgets ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_all_actions_metadata PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_all_actions_metadata COMMAND test_all_actions_metadata
-             -o "${TEST_OUTPUT_DIR}/test_all_actions_metadata.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_all_actions_metadata")
-endif()
+set_target_properties(test_all_actions_metadata PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_all_actions_metadata PRIVATE
+    Qt6::Core Qt6::Test Qt6::Widgets ${PLATFORM_LIBS}
+)
+target_include_directories(test_all_actions_metadata PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_all_actions_metadata COMMAND test_all_actions_metadata
+         -o "${TEST_OUTPUT_DIR}/test_all_actions_metadata.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_all_actions_metadata")
 
 # ============================================================================
 # Unit Tests - Advanced Search Panel
 # ============================================================================
 
 # test_advanced_search_types - struct defaults, extension sets, value semantics
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
-    add_executable(test_advanced_search_types
-        unit/test_advanced_search_types.cpp
-    )
-    set_target_properties(test_advanced_search_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_advanced_search_types PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_advanced_search_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_advanced_search_types COMMAND test_advanced_search_types
-             -o "${TEST_OUTPUT_DIR}/test_advanced_search_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_advanced_search_types")
-endif()
+add_executable(test_advanced_search_types
+    unit/test_advanced_search_types.cpp
+)
+set_target_properties(test_advanced_search_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_advanced_search_types PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_advanced_search_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_advanced_search_types COMMAND test_advanced_search_types
+         -o "${TEST_OUTPUT_DIR}/test_advanced_search_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_advanced_search_types")
 
 # test_regex_pattern_library - built-in/custom patterns, enable/disable, CRUD, combined
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
-    add_executable(test_regex_pattern_library
-        unit/test_regex_pattern_library.cpp
-        ../src/core/regex_pattern_library.cpp
-        ../src/core/app_paths.cpp
-        ../src/core/logger.cpp
-        ../include/sak/app_paths.h
-        ../include/sak/regex_pattern_library.h
-    )
-    set_target_properties(test_regex_pattern_library PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_regex_pattern_library PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_regex_pattern_library PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_regex_pattern_library COMMAND test_regex_pattern_library
-             -o "${TEST_OUTPUT_DIR}/test_regex_pattern_library.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_regex_pattern_library")
-endif()
+add_executable(test_regex_pattern_library
+    unit/test_regex_pattern_library.cpp
+    ../src/core/regex_pattern_library.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/logger.cpp
+    ../include/sak/app_paths.h
+    ../include/sak/regex_pattern_library.h
+)
+set_target_properties(test_regex_pattern_library PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_regex_pattern_library PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_regex_pattern_library PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_regex_pattern_library COMMAND test_regex_pattern_library
+         -o "${TEST_OUTPUT_DIR}/test_regex_pattern_library.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_regex_pattern_library")
 
 # test_advanced_search_worker - regex compilation, text/metadata/archive/binary search
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
-    add_executable(test_advanced_search_worker
-        unit/test_advanced_search_worker.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/advanced_search_worker.cpp
-        ../src/core/file_hash.cpp
-        ../src/threading/worker_base.cpp
-        ../src/core/logger.cpp
-        ../include/sak/file_management_file_system.h
-        ../include/sak/advanced_search_worker.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_advanced_search_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_advanced_search_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
-    )
-    target_include_directories(test_advanced_search_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_advanced_search_worker COMMAND test_advanced_search_worker
-             -o "${TEST_OUTPUT_DIR}/test_advanced_search_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_advanced_search_worker")
-endif()
+add_executable(test_advanced_search_worker
+    unit/test_advanced_search_worker.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/advanced_search_worker.cpp
+    ../src/core/file_hash.cpp
+    ../src/threading/worker_base.cpp
+    ../src/core/logger.cpp
+    ../include/sak/file_management_file_system.h
+    ../include/sak/advanced_search_worker.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_advanced_search_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_advanced_search_worker PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
+)
+target_include_directories(test_advanced_search_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_advanced_search_worker COMMAND test_advanced_search_worker
+         -o "${TEST_OUTPUT_DIR}/test_advanced_search_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_advanced_search_worker")
 
 # test_advanced_search_controller - state machine, history, preferences, lifecycle
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp")
-    add_executable(test_advanced_search_controller
-        unit/test_advanced_search_controller.cpp
-        ../src/core/file_management_file_system.cpp
-        ../src/core/apfs_crypto.cpp
-        ../src/core/apfs_keybag.cpp
-        ../src/core/partition_apfs_file_system_reader.cpp
-        ../src/core/partition_apfs_writer.cpp
-        ../src/core/partition_ext_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_reader.cpp
-        ../src/core/partition_hfs_file_system_writer.cpp
-        ../src/core/partition_raw_device_io.cpp
-        ../src/core/partition_file_system_detector.cpp
-        ../src/core/partition_file_system_registry.cpp
-        ../src/core/advanced_search_controller.cpp
-        ../src/core/advanced_search_worker.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/regex_pattern_library.cpp
-        ../src/core/config_manager.cpp
-        ${SAK_APP_PATHS_SOURCES}
-        ../src/threading/worker_base.cpp
-        ../src/core/logger.cpp
-        ../include/sak/file_management_file_system.h
-        ../include/sak/advanced_search_controller.h
-        ../include/sak/advanced_search_worker.h
-        ../include/sak/partition_apfs_file_system_reader.h
-        ../include/sak/partition_apfs_writer.h
-        ../include/sak/partition_ext_file_system_reader.h
-        ../include/sak/partition_hfs_file_system_reader.h
-        ../include/sak/partition_raw_device_io.h
-        ../include/sak/partition_file_system_detector.h
-        ../include/sak/partition_file_system_registry.h
-        ../include/sak/regex_pattern_library.h
-        ../include/sak/config_manager.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_advanced_search_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_advanced_search_controller PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
-    )
-    target_include_directories(test_advanced_search_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_advanced_search_controller COMMAND test_advanced_search_controller
-             -o "${TEST_OUTPUT_DIR}/test_advanced_search_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_advanced_search_controller")
-endif()
+add_executable(test_advanced_search_controller
+    unit/test_advanced_search_controller.cpp
+    ../src/core/file_management_file_system.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/partition_ext_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_hfs_file_system_writer.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/advanced_search_controller.cpp
+    ../src/core/advanced_search_worker.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/regex_pattern_library.cpp
+    ../src/core/config_manager.cpp
+    ${SAK_APP_PATHS_SOURCES}
+    ../src/threading/worker_base.cpp
+    ../src/core/logger.cpp
+    ../include/sak/file_management_file_system.h
+    ../include/sak/advanced_search_controller.h
+    ../include/sak/advanced_search_worker.h
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_ext_file_system_reader.h
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/regex_pattern_library.h
+    ../include/sak/config_manager.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_advanced_search_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_advanced_search_controller PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
+)
+target_include_directories(test_advanced_search_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_advanced_search_controller COMMAND test_advanced_search_controller
+         -o "${TEST_OUTPUT_DIR}/test_advanced_search_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_advanced_search_controller")
 
 # ============================================================================
 # Unit Tests - Advanced Uninstall Panel
@@ -5388,49 +5083,45 @@ endif()
 # the data:-only resource whitelist the message viewers enforce via loadResource(). Asserted
 # against a realistic hostile newsletter, including a control that ordinary formatting (bold,
 # lists, tables, inline colors) survives. Pure string/QUrl logic, no display.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_html_sanitizer.cpp")
-    add_executable(test_email_html_sanitizer
-        unit/test_email_html_sanitizer.cpp
-    )
-    set_target_properties(test_email_html_sanitizer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_html_sanitizer PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_email_html_sanitizer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_html_sanitizer COMMAND test_email_html_sanitizer
-             -o "${TEST_OUTPUT_DIR}/test_email_html_sanitizer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_html_sanitizer")
-endif()
+add_executable(test_email_html_sanitizer
+    unit/test_email_html_sanitizer.cpp
+)
+set_target_properties(test_email_html_sanitizer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_html_sanitizer PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_email_html_sanitizer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_html_sanitizer COMMAND test_email_html_sanitizer
+         -o "${TEST_OUTPUT_DIR}/test_email_html_sanitizer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_html_sanitizer")
 
 # test_rich_text_safety --- the shared seam that neutralizes untrusted text before it reaches a Qt
 # rich-text sink (tooltips and QTextEdit::append have no plain-text mode). Pure string logic:
 # markup in a registry program name, a file name off a raw image, or AI output must come out as
 # literal characters, and the wrapper -- not the value -- must be what selects rich text.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_rich_text_safety.cpp")
-    add_executable(test_rich_text_safety
-        unit/test_rich_text_safety.cpp
-    )
-    set_target_properties(test_rich_text_safety PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_rich_text_safety PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_rich_text_safety PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_rich_text_safety COMMAND test_rich_text_safety
-             -o "${TEST_OUTPUT_DIR}/test_rich_text_safety.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_rich_text_safety")
-endif()
+add_executable(test_rich_text_safety
+    unit/test_rich_text_safety.cpp
+)
+set_target_properties(test_rich_text_safety PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_rich_text_safety PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_rich_text_safety PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_rich_text_safety COMMAND test_rich_text_safety
+         -o "${TEST_OUTPUT_DIR}/test_rich_text_safety.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_rich_text_safety")
 
 # test_backup_destination_guard --- fail-closed screen for the user-profile backup destination:
 # whitespace-only text, relative paths, and folders that overlap a selected source profile are
@@ -5458,25 +5149,23 @@ endif()
 
 # test_leftover_cleanup_guard --- fail-closed target screens behind software.clean_leftovers
 # (header-only guard; pure, no filesystem/registry mutation).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_cleanup_guard.cpp")
-    add_executable(test_leftover_cleanup_guard
-        unit/test_leftover_cleanup_guard.cpp
-    )
-    set_target_properties(test_leftover_cleanup_guard PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_leftover_cleanup_guard PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_leftover_cleanup_guard PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_leftover_cleanup_guard COMMAND test_leftover_cleanup_guard
-             -o "${TEST_OUTPUT_DIR}/test_leftover_cleanup_guard.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_leftover_cleanup_guard")
-endif()
+add_executable(test_leftover_cleanup_guard
+    unit/test_leftover_cleanup_guard.cpp
+)
+set_target_properties(test_leftover_cleanup_guard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_leftover_cleanup_guard PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_leftover_cleanup_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_leftover_cleanup_guard COMMAND test_leftover_cleanup_guard
+         -o "${TEST_OUTPUT_DIR}/test_leftover_cleanup_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_leftover_cleanup_guard")
 
 # test_win32_mcp_server --- native win32 MCP server: JSON-RPC dispatch + tool catalog/invocation
 # (Windows only; shcore for GetDpiForMonitor in list_monitors).
@@ -5530,114 +5219,106 @@ endif()
 
 # test_browser_contract --- pure DOM-snapshot renderer + browser tool catalog + tool->extension
 # command translation. OS-agnostic (Qt Core only, no windows.h), so it builds and runs on any host.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_contract.cpp")
-    add_executable(test_browser_contract
-        unit/test_browser_contract.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_contract.h
-    )
-    set_target_properties(test_browser_contract PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_browser_contract PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_browser_contract PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_browser_contract COMMAND test_browser_contract
-             -o "${TEST_OUTPUT_DIR}/test_browser_contract.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_browser_contract")
-endif()
+add_executable(test_browser_contract
+    unit/test_browser_contract.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_contract.h
+)
+set_target_properties(test_browser_contract PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_browser_contract PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_browser_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_browser_contract COMMAND test_browser_contract
+         -o "${TEST_OUTPUT_DIR}/test_browser_contract.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_browser_contract")
 
 # test_native_messaging --- Chrome native-messaging frame codec + host message handler
 # (ping->pong handshake). OS-agnostic (Qt Core only), so it builds and runs on any host.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_native_messaging.cpp")
-    add_executable(test_native_messaging
-        unit/test_native_messaging.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/native_messaging.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_native_host.cpp
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/native_messaging.h
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_native_host.h
-    )
-    set_target_properties(test_native_messaging PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_native_messaging PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_native_messaging PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_native_messaging COMMAND test_native_messaging
-             -o "${TEST_OUTPUT_DIR}/test_native_messaging.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_native_messaging")
-endif()
+add_executable(test_native_messaging
+    unit/test_native_messaging.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/native_messaging.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/win32_mcp_native_host.cpp
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/native_messaging.h
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/win32_mcp_native_host.h
+)
+set_target_properties(test_native_messaging PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_native_messaging PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_native_messaging PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_native_messaging COMMAND test_native_messaging
+         -o "${TEST_OUTPUT_DIR}/test_native_messaging.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_native_messaging")
 
 # test_browser_bridge --- the MCP-side browser session state machine (id minting,
 # single-winner reply matching, snapshot->ref_index, session/stale lifecycle).
 # OS-agnostic (Qt Core only); links browser_bridge + browser_contract.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge.cpp")
-    add_executable(test_browser_bridge
-        unit/test_browser_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_bridge.h
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_contract.h
-    )
-    set_target_properties(test_browser_bridge PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_browser_bridge PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_browser_bridge PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_browser_bridge COMMAND test_browser_bridge
-             -o "${TEST_OUTPUT_DIR}/test_browser_bridge.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_browser_bridge")
-endif()
+add_executable(test_browser_bridge
+    unit/test_browser_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_contract.cpp
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_bridge.h
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_contract.h
+)
+set_target_properties(test_browser_bridge PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_browser_bridge PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_browser_bridge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_browser_bridge COMMAND test_browser_bridge
+         -o "${TEST_OUTPUT_DIR}/test_browser_bridge.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_browser_bridge")
 
 # test_browser_extension_installer --- headless Chrome force-install policy + native-host
 # registration. Registry tests run only on Windows (guarded in the .cpp) against a throwaway
 # HKCU\Software\SAK_Test subkey; the identity guard (manifest key -> pinned id/version) runs
 # everywhere. SAK_REPO_ROOT lets the identity test read the committed manifest.json.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_extension_installer.cpp")
-    add_executable(test_browser_extension_installer
-        unit/test_browser_extension_installer.cpp
-        ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
-        ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_extension_installer.h
-    )
-    set_target_properties(test_browser_extension_installer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_browser_extension_installer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_browser_extension_installer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    target_compile_definitions(test_browser_extension_installer PRIVATE
-        SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}"
-    )
-    # AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32),
-    # so the Windows-only registry test slots register with QtTest on Windows.
-    if(WIN32)
-        target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
-    endif()
-    add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
-             -o "${TEST_OUTPUT_DIR}/test_browser_extension_installer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_browser_extension_installer")
+add_executable(test_browser_extension_installer
+    unit/test_browser_extension_installer.cpp
+    ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
+    ${CMAKE_SOURCE_DIR}/include/sak/win32mcp/browser_extension_installer.h
+)
+set_target_properties(test_browser_extension_installer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_browser_extension_installer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_browser_extension_installer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_browser_extension_installer PRIVATE
+    SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}"
+)
+# AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32),
+# so the Windows-only registry test slots register with QtTest on Windows.
+if(WIN32)
+    target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
 endif()
+add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
+         -o "${TEST_OUTPUT_DIR}/test_browser_extension_installer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_browser_extension_installer")
 
 # test_browser_bridge_security --- the load-bearing pipe security + discovery primitives
 # (current-user-SID DACL + Medium NO_WRITE_UP label, per-user/session nonce pipe name,
@@ -5726,328 +5407,304 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.
 endif()
 
 # test_advanced_uninstall_types - struct defaults, enums, value semantics
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
-    add_executable(test_advanced_uninstall_types
-        unit/test_advanced_uninstall_types.cpp
-    )
-    set_target_properties(test_advanced_uninstall_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_advanced_uninstall_types PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test
-    )
-    target_include_directories(test_advanced_uninstall_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_advanced_uninstall_types COMMAND test_advanced_uninstall_types
-             -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_advanced_uninstall_types")
-endif()
+add_executable(test_advanced_uninstall_types
+    unit/test_advanced_uninstall_types.cpp
+)
+set_target_properties(test_advanced_uninstall_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_advanced_uninstall_types PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test
+)
+target_include_directories(test_advanced_uninstall_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_advanced_uninstall_types COMMAND test_advanced_uninstall_types
+         -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_advanced_uninstall_types")
 
 # test_windows_user_scanner --- profile/folder scanning + per-folder sizing (B10-31)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_user_scanner.cpp")
-    add_executable(test_windows_user_scanner
-        unit/test_windows_user_scanner.cpp
-        ../src/core/windows_user_scanner.cpp
-        ../src/core/logger.cpp
-        ../include/sak/windows_user_scanner.h
-    )
-    set_target_properties(test_windows_user_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_windows_user_scanner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_windows_user_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_windows_user_scanner COMMAND test_windows_user_scanner
-             -o "${TEST_OUTPUT_DIR}/test_windows_user_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_windows_user_scanner")
-endif()
+add_executable(test_windows_user_scanner
+    unit/test_windows_user_scanner.cpp
+    ../src/core/windows_user_scanner.cpp
+    ../src/core/logger.cpp
+    ../include/sak/windows_user_scanner.h
+)
+set_target_properties(test_windows_user_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_windows_user_scanner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_windows_user_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_windows_user_scanner COMMAND test_windows_user_scanner
+         -o "${TEST_OUTPUT_DIR}/test_windows_user_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_windows_user_scanner")
 
 # test_app_scanner --- registry hive enumeration robustness (B10-31)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_scanner.cpp")
-    add_executable(test_app_scanner
-        unit/test_app_scanner.cpp
-        ../src/core/app_scanner.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ../src/core/chocolatey_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/app_scanner.h
-        ../include/sak/chocolatey_manager.h
-    )
-    set_target_properties(test_app_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_app_scanner PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_app_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_app_scanner COMMAND test_app_scanner
-             -o "${TEST_OUTPUT_DIR}/test_app_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_app_scanner")
-endif()
+add_executable(test_app_scanner
+    unit/test_app_scanner.cpp
+    ../src/core/app_scanner.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ../src/core/chocolatey_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/app_scanner.h
+    ../include/sak/chocolatey_manager.h
+)
+set_target_properties(test_app_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_scanner PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_app_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_scanner COMMAND test_app_scanner
+         -o "${TEST_OUTPUT_DIR}/test_app_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_scanner")
 
 # test_chocolatey_manager --- struct defaults, parse, input validation (B10-31)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_chocolatey_manager.cpp")
-    add_executable(test_chocolatey_manager
-        unit/test_chocolatey_manager.cpp
-        ../src/core/chocolatey_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/chocolatey_manager.h
-    )
-    set_target_properties(test_chocolatey_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_chocolatey_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_chocolatey_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_chocolatey_manager COMMAND test_chocolatey_manager
-             -o "${TEST_OUTPUT_DIR}/test_chocolatey_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_chocolatey_manager")
-endif()
+add_executable(test_chocolatey_manager
+    unit/test_chocolatey_manager.cpp
+    ../src/core/chocolatey_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/chocolatey_manager.h
+)
+set_target_properties(test_chocolatey_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_chocolatey_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_chocolatey_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_chocolatey_manager COMMAND test_chocolatey_manager
+         -o "${TEST_OUTPUT_DIR}/test_chocolatey_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_chocolatey_manager")
 
 # test_cleanup_worker --- construction, enum coverage, recycle-fallback surfacing (B10-23)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cleanup_worker.cpp")
-    add_executable(test_cleanup_worker
-        unit/test_cleanup_worker.cpp
-        ../src/core/cleanup_worker.cpp
-        ../src/core/recycle_bin.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/threading/worker_base.cpp
-        ../src/core/logger.cpp
-        ../include/sak/cleanup_worker.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_cleanup_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_cleanup_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_cleanup_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_cleanup_worker COMMAND test_cleanup_worker
-             -o "${TEST_OUTPUT_DIR}/test_cleanup_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_cleanup_worker")
-endif()
+add_executable(test_cleanup_worker
+    unit/test_cleanup_worker.cpp
+    ../src/core/cleanup_worker.cpp
+    ../src/core/recycle_bin.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/threading/worker_base.cpp
+    ../src/core/logger.cpp
+    ../include/sak/cleanup_worker.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_cleanup_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_cleanup_worker PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_cleanup_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_cleanup_worker COMMAND test_cleanup_worker
+         -o "${TEST_OUTPUT_DIR}/test_cleanup_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_cleanup_worker")
 
 # test_advanced_uninstall_controller - state machine, queue, settings, input validation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.cpp")
-    add_executable(test_advanced_uninstall_controller
-        unit/test_advanced_uninstall_controller.cpp
-        ../src/core/advanced_uninstall_controller.cpp
-        ../src/core/program_enumerator.cpp
-        ../src/core/uninstall_worker.cpp
-        ../src/core/leftover_scanner.cpp
-        ../src/core/cleanup_worker.cpp
-        ../src/core/recycle_bin.cpp
-        ../src/core/registry_snapshot_engine.cpp
-        ../src/core/restore_point_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ../src/core/config_manager.cpp
-        ${SAK_APP_PATHS_SOURCES}
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/threading/worker_base.cpp
-        ../src/core/logger.cpp
-        ../include/sak/advanced_uninstall_controller.h
-        ../include/sak/program_enumerator.h
-        ../include/sak/uninstall_worker.h
-        ../include/sak/leftover_scanner.h
-        ../include/sak/cleanup_worker.h
-        ../include/sak/registry_snapshot_engine.h
-        ../include/sak/restore_point_manager.h
-        ../include/sak/config_manager.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_advanced_uninstall_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_advanced_uninstall_controller PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_advanced_uninstall_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_advanced_uninstall_controller COMMAND test_advanced_uninstall_controller
-             -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_advanced_uninstall_controller")
-endif()
+add_executable(test_advanced_uninstall_controller
+    unit/test_advanced_uninstall_controller.cpp
+    ../src/core/advanced_uninstall_controller.cpp
+    ../src/core/program_enumerator.cpp
+    ../src/core/uninstall_worker.cpp
+    ../src/core/leftover_scanner.cpp
+    ../src/core/cleanup_worker.cpp
+    ../src/core/recycle_bin.cpp
+    ../src/core/registry_snapshot_engine.cpp
+    ../src/core/restore_point_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ../src/core/config_manager.cpp
+    ${SAK_APP_PATHS_SOURCES}
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/threading/worker_base.cpp
+    ../src/core/logger.cpp
+    ../include/sak/advanced_uninstall_controller.h
+    ../include/sak/program_enumerator.h
+    ../include/sak/uninstall_worker.h
+    ../include/sak/leftover_scanner.h
+    ../include/sak/cleanup_worker.h
+    ../include/sak/registry_snapshot_engine.h
+    ../include/sak/restore_point_manager.h
+    ../include/sak/config_manager.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_advanced_uninstall_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_advanced_uninstall_controller PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_advanced_uninstall_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_advanced_uninstall_controller COMMAND test_advanced_uninstall_controller
+         -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_advanced_uninstall_controller")
 
 # test_leftover_scanner - pattern building, risk classification, scan levels, cancellation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
-    add_executable(test_leftover_scanner
-        unit/test_leftover_scanner.cpp
-        ../src/core/leftover_scanner.cpp
-        ../src/core/registry_snapshot_engine.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/leftover_scanner.h
-        ../include/sak/registry_snapshot_engine.h
-    )
-    set_target_properties(test_leftover_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_leftover_scanner PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_leftover_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_leftover_scanner COMMAND test_leftover_scanner
-             -o "${TEST_OUTPUT_DIR}/test_leftover_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_leftover_scanner")
-endif()
+add_executable(test_leftover_scanner
+    unit/test_leftover_scanner.cpp
+    ../src/core/leftover_scanner.cpp
+    ../src/core/registry_snapshot_engine.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/leftover_scanner.h
+    ../include/sak/registry_snapshot_engine.h
+)
+set_target_properties(test_leftover_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_leftover_scanner PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_leftover_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_leftover_scanner COMMAND test_leftover_scanner
+         -o "${TEST_OUTPUT_DIR}/test_leftover_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_leftover_scanner")
 
 # test_program_enumerator --- enumeration signals (generation token), bloatware/orphan detection
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_program_enumerator.cpp")
-    add_executable(test_program_enumerator
-        unit/test_program_enumerator.cpp
-        ../src/core/program_enumerator.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/program_enumerator.h
-    )
-    set_target_properties(test_program_enumerator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_program_enumerator PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_program_enumerator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_program_enumerator COMMAND test_program_enumerator
-             -o "${TEST_OUTPUT_DIR}/test_program_enumerator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_program_enumerator")
-endif()
+add_executable(test_program_enumerator
+    unit/test_program_enumerator.cpp
+    ../src/core/program_enumerator.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/program_enumerator.h
+)
+set_target_properties(test_program_enumerator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_program_enumerator PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_program_enumerator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_program_enumerator COMMAND test_program_enumerator
+         -o "${TEST_OUTPUT_DIR}/test_program_enumerator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_program_enumerator")
 
 # test_registry_snapshot_engine - diff logic, pattern matching, capture smoke test
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
-    add_executable(test_registry_snapshot_engine
-        unit/test_registry_snapshot_engine.cpp
-        ../src/core/registry_snapshot_engine.cpp
-        ../src/core/logger.cpp
-        ../include/sak/registry_snapshot_engine.h
-    )
-    set_target_properties(test_registry_snapshot_engine PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_registry_snapshot_engine PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_registry_snapshot_engine PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_registry_snapshot_engine COMMAND test_registry_snapshot_engine
-             -o "${TEST_OUTPUT_DIR}/test_registry_snapshot_engine.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_registry_snapshot_engine")
-endif()
+add_executable(test_registry_snapshot_engine
+    unit/test_registry_snapshot_engine.cpp
+    ../src/core/registry_snapshot_engine.cpp
+    ../src/core/logger.cpp
+    ../include/sak/registry_snapshot_engine.h
+)
+set_target_properties(test_registry_snapshot_engine PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_registry_snapshot_engine PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_registry_snapshot_engine PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_registry_snapshot_engine COMMAND test_registry_snapshot_engine
+         -o "${TEST_OUTPUT_DIR}/test_registry_snapshot_engine.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_registry_snapshot_engine")
 
 # ============================================================================
 # Network Diagnostic Panel Tests
 # ============================================================================
 
 # test_network_diagnostic_types - value/move semantics, enums, compile-time invariants
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
-    add_executable(test_network_diagnostic_types
-        unit/test_network_diagnostic_types.cpp
-    )
-    set_target_properties(test_network_diagnostic_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_diagnostic_types PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_network_diagnostic_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_diagnostic_types COMMAND test_network_diagnostic_types
-             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_diagnostic_types")
-endif()
+add_executable(test_network_diagnostic_types
+    unit/test_network_diagnostic_types.cpp
+)
+set_target_properties(test_network_diagnostic_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_diagnostic_types PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_network_diagnostic_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_diagnostic_types COMMAND test_network_diagnostic_types
+         -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_diagnostic_types")
 
 # test_network_diagnostic_utils - WiFi freq conversion, vendor lookup, port presets, DNS lists
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
-    add_executable(test_network_diagnostic_utils
-        unit/test_network_diagnostic_utils.cpp
-        ../src/core/wifi_analyzer.cpp
-        ../src/core/port_scanner.cpp
-        ../src/core/dns_diagnostic_tool.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/wifi_analyzer.h
-        ../include/sak/port_scanner.h
-        ../include/sak/dns_diagnostic_tool.h
-    )
-    set_target_properties(test_network_diagnostic_utils PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_diagnostic_utils PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_diagnostic_utils PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_diagnostic_utils COMMAND test_network_diagnostic_utils
-             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_utils.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_diagnostic_utils")
-endif()
+add_executable(test_network_diagnostic_utils
+    unit/test_network_diagnostic_utils.cpp
+    ../src/core/wifi_analyzer.cpp
+    ../src/core/port_scanner.cpp
+    ../src/core/dns_diagnostic_tool.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/wifi_analyzer.h
+    ../include/sak/port_scanner.h
+    ../include/sak/dns_diagnostic_tool.h
+)
+set_target_properties(test_network_diagnostic_utils PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_diagnostic_utils PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_diagnostic_utils PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_diagnostic_utils COMMAND test_network_diagnostic_utils
+         -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_utils.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_diagnostic_utils")
 
 # test_network_share_browser -- SMB share discovery: value shape plus the fail-closed split
 # between an authoritative discoveryComplete and a partial/failed discoveryFailed.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_share_browser.cpp")
-    add_executable(test_network_share_browser
-        unit/test_network_share_browser.cpp
-        ../src/core/network_share_browser.cpp
-        ../include/sak/network_share_browser.h
-    )
-    set_target_properties(test_network_share_browser PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_share_browser PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_share_browser PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_share_browser COMMAND test_network_share_browser
-             -o "${TEST_OUTPUT_DIR}/test_network_share_browser.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_share_browser")
-endif()
+add_executable(test_network_share_browser
+    unit/test_network_share_browser.cpp
+    ../src/core/network_share_browser.cpp
+    ../include/sak/network_share_browser.h
+)
+set_target_properties(test_network_share_browser PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_share_browser PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_share_browser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_share_browser COMMAND test_network_share_browser
+         -o "${TEST_OUTPUT_DIR}/test_network_share_browser.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_share_browser")
 
 # ============================================================================
 # Previously unwired unit tests
@@ -6061,1063 +5718,987 @@ endif()
 
 # test_active_connections_monitor -- MonitorConfig/ConnectionInfo defaults, start/stop
 # lifecycle, and the live TCP/UDP table snapshot (iphlpapi, no network traffic).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_connections_monitor.cpp")
-    add_executable(test_active_connections_monitor
-        unit/test_active_connections_monitor.cpp
-        ../src/core/active_connections_monitor.cpp
-        ../include/sak/active_connections_monitor.h
-    )
-    set_target_properties(test_active_connections_monitor PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_active_connections_monitor PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_active_connections_monitor PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_active_connections_monitor COMMAND test_active_connections_monitor
-             -o "${TEST_OUTPUT_DIR}/test_active_connections_monitor.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_active_connections_monitor")
-endif()
+add_executable(test_active_connections_monitor
+    unit/test_active_connections_monitor.cpp
+    ../src/core/active_connections_monitor.cpp
+    ../include/sak/active_connections_monitor.h
+)
+set_target_properties(test_active_connections_monitor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_active_connections_monitor PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_active_connections_monitor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_active_connections_monitor COMMAND test_active_connections_monitor
+         -o "${TEST_OUTPUT_DIR}/test_active_connections_monitor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_active_connections_monitor")
 
 # test_bundled_tools_manager -- singleton identity, bundled tool/script/module path
 # composition, and existence probes for absent entries.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bundled_tools_manager.cpp")
-    add_executable(test_bundled_tools_manager
-        unit/test_bundled_tools_manager.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ../include/sak/bundled_tools_manager.h
-    )
-    set_target_properties(test_bundled_tools_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_bundled_tools_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_bundled_tools_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_bundled_tools_manager COMMAND test_bundled_tools_manager
-             -o "${TEST_OUTPUT_DIR}/test_bundled_tools_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_bundled_tools_manager")
-endif()
+add_executable(test_bundled_tools_manager
+    unit/test_bundled_tools_manager.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ../include/sak/bundled_tools_manager.h
+)
+set_target_properties(test_bundled_tools_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_bundled_tools_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_bundled_tools_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_bundled_tools_manager COMMAND test_bundled_tools_manager
+         -o "${TEST_OUTPUT_DIR}/test_bundled_tools_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_bundled_tools_manager")
 
 # test_drive_unmounter -- construction, error channel, and the read-only volume query
 # for a physical drive number that cannot exist (no unmount is ever attempted).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_unmounter.cpp")
-    add_executable(test_drive_unmounter
-        unit/test_drive_unmounter.cpp
-        ../src/core/drive_unmounter.cpp
-        ../src/core/logger.cpp
-        ../include/sak/drive_unmounter.h
-    )
-    set_target_properties(test_drive_unmounter PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_drive_unmounter PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_drive_unmounter PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_drive_unmounter COMMAND test_drive_unmounter
-             -o "${TEST_OUTPUT_DIR}/test_drive_unmounter.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_drive_unmounter")
-endif()
+add_executable(test_drive_unmounter
+    unit/test_drive_unmounter.cpp
+    ../src/core/drive_unmounter.cpp
+    ../src/core/logger.cpp
+    ../include/sak/drive_unmounter.h
+)
+set_target_properties(test_drive_unmounter PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_drive_unmounter PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_drive_unmounter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_drive_unmounter COMMAND test_drive_unmounter
+         -o "${TEST_OUTPUT_DIR}/test_drive_unmounter.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_drive_unmounter")
 
 # test_image_source -- ImageMetadata validity, extension format detection, and the
 # DecompressorFactory-backed isCompressed classification (streamable vs not).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_image_source.cpp")
-    add_executable(test_image_source
-        unit/test_image_source.cpp
-        ../src/core/image_source.cpp
-        ../src/core/decompressor_factory.cpp
-        ../src/core/streaming_decompressor.cpp
-        ../src/core/gzip_decompressor.cpp
-        ../src/core/bzip2_decompressor.cpp
-        ../src/core/xz_decompressor.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/logger.cpp
-        ../include/sak/image_source.h
-        ../include/sak/streaming_decompressor.h
-        ../include/sak/gzip_decompressor.h
-        ../include/sak/bzip2_decompressor.h
-        ../include/sak/xz_decompressor.h
-    )
-    set_target_properties(test_image_source PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_image_source PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_image_source PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_image_source COMMAND test_image_source
-             -o "${TEST_OUTPUT_DIR}/test_image_source.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_image_source")
-endif()
+add_executable(test_image_source
+    unit/test_image_source.cpp
+    ../src/core/image_source.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/logger.cpp
+    ../include/sak/image_source.h
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+)
+set_target_properties(test_image_source PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_image_source PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_image_source PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_image_source COMMAND test_image_source
+         -o "${TEST_OUTPUT_DIR}/test_image_source.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_image_source")
 
 # test_network_adapter_inspector -- the pure formatting seams (link speed, MAC bytes),
 # which are the parts that need no adapter present.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_adapter_inspector.cpp")
-    add_executable(test_network_adapter_inspector
-        unit/test_network_adapter_inspector.cpp
-        ../src/core/network_adapter_inspector.cpp
-        ../include/sak/network_adapter_inspector.h
-    )
-    set_target_properties(test_network_adapter_inspector PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_adapter_inspector PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_adapter_inspector PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_adapter_inspector COMMAND test_network_adapter_inspector
-             -o "${TEST_OUTPUT_DIR}/test_network_adapter_inspector.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_adapter_inspector")
-endif()
+add_executable(test_network_adapter_inspector
+    unit/test_network_adapter_inspector.cpp
+    ../src/core/network_adapter_inspector.cpp
+    ../include/sak/network_adapter_inspector.h
+)
+set_target_properties(test_network_adapter_inspector PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_adapter_inspector PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_adapter_inspector PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_adapter_inspector COMMAND test_network_adapter_inspector
+         -o "${TEST_OUTPUT_DIR}/test_network_adapter_inspector.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_adapter_inspector")
 
 # test_network_diagnostic_controller -- idle state, operation bookkeeping, and the
 # fail-closed input guards (unknown report format, out-of-range LAN transfer bounds).
 # Links the whole tool set the controller owns; none of the tests start a tool.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_controller.cpp")
-    add_executable(test_network_diagnostic_controller
-        unit/test_network_diagnostic_controller.cpp
-        ../src/core/network_diagnostic_controller.cpp
-        ../src/core/active_connections_monitor.cpp
-        ../src/core/bandwidth_tester.cpp
-        ../src/core/connectivity_tester.cpp
-        ../src/core/dns_diagnostic_tool.cpp
-        ../src/core/ethernet_config_manager.cpp
-        ../src/core/firewall_rule_auditor.cpp
-        ../src/core/network_adapter_inspector.cpp
-        ../src/core/network_diagnostic_report_generator.cpp
-        ../src/core/network_share_browser.cpp
-        ../src/core/port_scanner.cpp
-        ../src/core/wifi_analyzer.cpp
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/network_diagnostic_controller.h
-        ../include/sak/active_connections_monitor.h
-        ../include/sak/bandwidth_tester.h
-        ../include/sak/connectivity_tester.h
-        ../include/sak/dns_diagnostic_tool.h
-        ../include/sak/ethernet_config_manager.h
-        ../include/sak/firewall_rule_auditor.h
-        ../include/sak/network_adapter_inspector.h
-        ../include/sak/network_diagnostic_report_generator.h
-        ../include/sak/network_share_browser.h
-        ../include/sak/port_scanner.h
-        ../include/sak/wifi_analyzer.h
-    )
-    set_target_properties(test_network_diagnostic_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_diagnostic_controller PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_diagnostic_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_diagnostic_controller COMMAND test_network_diagnostic_controller
-             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_diagnostic_controller")
-endif()
+add_executable(test_network_diagnostic_controller
+    unit/test_network_diagnostic_controller.cpp
+    ../src/core/network_diagnostic_controller.cpp
+    ../src/core/active_connections_monitor.cpp
+    ../src/core/bandwidth_tester.cpp
+    ../src/core/connectivity_tester.cpp
+    ../src/core/dns_diagnostic_tool.cpp
+    ../src/core/ethernet_config_manager.cpp
+    ../src/core/firewall_rule_auditor.cpp
+    ../src/core/network_adapter_inspector.cpp
+    ../src/core/network_diagnostic_report_generator.cpp
+    ../src/core/network_share_browser.cpp
+    ../src/core/port_scanner.cpp
+    ../src/core/wifi_analyzer.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/network_diagnostic_controller.h
+    ../include/sak/active_connections_monitor.h
+    ../include/sak/bandwidth_tester.h
+    ../include/sak/connectivity_tester.h
+    ../include/sak/dns_diagnostic_tool.h
+    ../include/sak/ethernet_config_manager.h
+    ../include/sak/firewall_rule_auditor.h
+    ../include/sak/network_adapter_inspector.h
+    ../include/sak/network_diagnostic_report_generator.h
+    ../include/sak/network_share_browser.h
+    ../include/sak/port_scanner.h
+    ../include/sak/wifi_analyzer.h
+)
+set_target_properties(test_network_diagnostic_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_diagnostic_controller PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_diagnostic_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_diagnostic_controller COMMAND test_network_diagnostic_controller
+         -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_diagnostic_controller")
 
 # test_port_scanner -- well-known service naming, the scan presets, and ScanConfig
 # defaults. No socket is opened by any of these.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_port_scanner.cpp")
-    add_executable(test_port_scanner
-        unit/test_port_scanner.cpp
-        ../src/core/port_scanner.cpp
-        ../include/sak/port_scanner.h
-    )
-    set_target_properties(test_port_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_port_scanner PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_port_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_port_scanner COMMAND test_port_scanner
-             -o "${TEST_OUTPUT_DIR}/test_port_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_port_scanner")
-endif()
+add_executable(test_port_scanner
+    unit/test_port_scanner.cpp
+    ../src/core/port_scanner.cpp
+    ../include/sak/port_scanner.h
+)
+set_target_properties(test_port_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_port_scanner PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_port_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_port_scanner COMMAND test_port_scanner
+         -o "${TEST_OUTPUT_DIR}/test_port_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_port_scanner")
 
 # test_uninstall_worker -- construction, report/value defaults, enum ordering, and the
 # native-uninstall exit-code classifier (3010 reboot-required is a success).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uninstall_worker.cpp")
-    add_executable(test_uninstall_worker
-        unit/test_uninstall_worker.cpp
-        ../src/core/uninstall_worker.cpp
-        ../src/core/leftover_scanner.cpp
-        ../src/core/registry_snapshot_engine.cpp
-        ../src/core/restore_point_manager.cpp
-        ../src/core/elevation_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/threading/worker_base.cpp
-        ../src/core/logger.cpp
-        ../include/sak/uninstall_worker.h
-        ../include/sak/leftover_scanner.h
-        ../include/sak/registry_snapshot_engine.h
-        ../include/sak/restore_point_manager.h
-        ../include/sak/worker_base.h
-    )
-    set_target_properties(test_uninstall_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    # Qt6::Gui is REQUIRED, not incidental: advanced_uninstall_types.h includes <QImage> for the
-    # program icon, so ProgramInfo cannot compile without it. Mirrors test_advanced_uninstall_-
-    # controller, which links the same sources. QGuiApplication opens no window here.
-    target_link_libraries(test_uninstall_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_uninstall_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_uninstall_worker COMMAND test_uninstall_worker
-             -o "${TEST_OUTPUT_DIR}/test_uninstall_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_uninstall_worker")
-endif()
+add_executable(test_uninstall_worker
+    unit/test_uninstall_worker.cpp
+    ../src/core/uninstall_worker.cpp
+    ../src/core/leftover_scanner.cpp
+    ../src/core/registry_snapshot_engine.cpp
+    ../src/core/restore_point_manager.cpp
+    ../src/core/elevation_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/threading/worker_base.cpp
+    ../src/core/logger.cpp
+    ../include/sak/uninstall_worker.h
+    ../include/sak/leftover_scanner.h
+    ../include/sak/registry_snapshot_engine.h
+    ../include/sak/restore_point_manager.h
+    ../include/sak/worker_base.h
+)
+set_target_properties(test_uninstall_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+# Qt6::Gui is REQUIRED, not incidental: advanced_uninstall_types.h includes <QImage> for the
+# program icon, so ProgramInfo cannot compile without it. Mirrors test_advanced_uninstall_-
+# controller, which links the same sources. QGuiApplication opens no window here.
+target_link_libraries(test_uninstall_worker PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_uninstall_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_uninstall_worker COMMAND test_uninstall_worker
+         -o "${TEST_OUTPUT_DIR}/test_uninstall_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_uninstall_worker")
 
 # test_wifi_analyzer -- freq/channel/band helpers, channel utilization, and the
 # B9-13 per-BSSID security seam (deriveBssSecurity: RSN/WPA IE + Privacy bit).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_analyzer.cpp")
-    add_executable(test_wifi_analyzer
-        unit/test_wifi_analyzer.cpp
-        ../src/core/wifi_analyzer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/wifi_analyzer.h
-    )
-    set_target_properties(test_wifi_analyzer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_wifi_analyzer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_wifi_analyzer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_wifi_analyzer COMMAND test_wifi_analyzer
-             -o "${TEST_OUTPUT_DIR}/test_wifi_analyzer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_wifi_analyzer")
-endif()
+add_executable(test_wifi_analyzer
+    unit/test_wifi_analyzer.cpp
+    ../src/core/wifi_analyzer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/wifi_analyzer.h
+)
+set_target_properties(test_wifi_analyzer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_wifi_analyzer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_wifi_analyzer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_wifi_analyzer COMMAND test_wifi_analyzer
+         -o "${TEST_OUTPUT_DIR}/test_wifi_analyzer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_wifi_analyzer")
 
 # test_bandwidth_tester -- iPerf config, server lifecycle guards, and the B9-16
 # per-instance firewall-rule-name seam (composeFirewallRuleName uniqueness).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_bandwidth_tester.cpp")
-    add_executable(test_bandwidth_tester
-        unit/test_bandwidth_tester.cpp
-        ../src/core/bandwidth_tester.cpp
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/bandwidth_tester.h
-    )
-    set_target_properties(test_bandwidth_tester PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_bandwidth_tester PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_bandwidth_tester PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_bandwidth_tester COMMAND test_bandwidth_tester
-             -o "${TEST_OUTPUT_DIR}/test_bandwidth_tester.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_bandwidth_tester")
-endif()
+add_executable(test_bandwidth_tester
+    unit/test_bandwidth_tester.cpp
+    ../src/core/bandwidth_tester.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/bandwidth_tester.h
+)
+set_target_properties(test_bandwidth_tester PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_bandwidth_tester PRIVATE
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_bandwidth_tester PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_bandwidth_tester COMMAND test_bandwidth_tester
+         -o "${TEST_OUTPUT_DIR}/test_bandwidth_tester.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_bandwidth_tester")
 
 # test_connectivity_tester -- ping/traceroute/MTR config structs, a live localhost
 # ping, and the B9-17 sanitizeConfig bounds seams (clamp count/ttl/packet/etc.).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_connectivity_tester.cpp")
-    add_executable(test_connectivity_tester
-        unit/test_connectivity_tester.cpp
-        ../src/core/connectivity_tester.cpp
-        ../include/sak/connectivity_tester.h
-    )
-    set_target_properties(test_connectivity_tester PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_connectivity_tester PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_connectivity_tester PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_connectivity_tester COMMAND test_connectivity_tester
-             -o "${TEST_OUTPUT_DIR}/test_connectivity_tester.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_connectivity_tester")
-endif()
+add_executable(test_connectivity_tester
+    unit/test_connectivity_tester.cpp
+    ../src/core/connectivity_tester.cpp
+    ../include/sak/connectivity_tester.h
+)
+set_target_properties(test_connectivity_tester PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_connectivity_tester PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_connectivity_tester PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_connectivity_tester COMMAND test_connectivity_tester
+         -o "${TEST_OUTPUT_DIR}/test_connectivity_tester.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_connectivity_tester")
 
 # test_dns_diagnostic_tool -- well-known servers, supported record types, and the
 # B9-18 seams (record-type validation, numeric-IPv4 guard, order-insensitive compare).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dns_diagnostic_tool.cpp")
-    add_executable(test_dns_diagnostic_tool
-        unit/test_dns_diagnostic_tool.cpp
-        ../src/core/dns_diagnostic_tool.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../include/sak/dns_diagnostic_tool.h
-    )
-    set_target_properties(test_dns_diagnostic_tool PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_dns_diagnostic_tool PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_dns_diagnostic_tool PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_dns_diagnostic_tool COMMAND test_dns_diagnostic_tool
-             -o "${TEST_OUTPUT_DIR}/test_dns_diagnostic_tool.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_dns_diagnostic_tool")
-endif()
+add_executable(test_dns_diagnostic_tool
+    unit/test_dns_diagnostic_tool.cpp
+    ../src/core/dns_diagnostic_tool.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../include/sak/dns_diagnostic_tool.h
+)
+set_target_properties(test_dns_diagnostic_tool PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_dns_diagnostic_tool PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_dns_diagnostic_tool PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_dns_diagnostic_tool COMMAND test_dns_diagnostic_tool
+         -o "${TEST_OUTPUT_DIR}/test_dns_diagnostic_tool.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_dns_diagnostic_tool")
 
 # test_network_diagnostic_report - HTML/JSON report generation, sections, metadata
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
-    add_executable(test_network_diagnostic_report
-        unit/test_network_diagnostic_report.cpp
-        ../src/core/network_diagnostic_report_generator.cpp
-        ../include/sak/network_diagnostic_report_generator.h
-    )
-    set_target_properties(test_network_diagnostic_report PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_network_diagnostic_report PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_network_diagnostic_report PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_diagnostic_report COMMAND test_network_diagnostic_report
-             -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_report.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_diagnostic_report")
-endif()
+add_executable(test_network_diagnostic_report
+    unit/test_network_diagnostic_report.cpp
+    ../src/core/network_diagnostic_report_generator.cpp
+    ../include/sak/network_diagnostic_report_generator.h
+)
+set_target_properties(test_network_diagnostic_report PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_diagnostic_report PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_network_diagnostic_report PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_diagnostic_report COMMAND test_network_diagnostic_report
+         -o "${TEST_OUTPUT_DIR}/test_network_diagnostic_report.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_diagnostic_report")
 
 # ============================================================================
 # Unit Tests - Utility & Deduplication
 # ============================================================================
 
 # test_format_utils - sak::formatBytes() display formatting
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
-    add_executable(test_format_utils
-        unit/test_format_utils.cpp
-    )
-    set_target_properties(test_format_utils PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_format_utils PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_format_utils PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_format_utils COMMAND test_format_utils
-             -o "${TEST_OUTPUT_DIR}/test_format_utils.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_format_utils")
-endif()
+add_executable(test_format_utils
+    unit/test_format_utils.cpp
+)
+set_target_properties(test_format_utils PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_format_utils PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_format_utils PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_format_utils COMMAND test_format_utils
+         -o "${TEST_OUTPUT_DIR}/test_format_utils.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_format_utils")
 
 # test_wifi_profile_scanner - WiFi profile name/security parsing
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
-    add_executable(test_wifi_profile_scanner
-        unit/test_wifi_profile_scanner.cpp
-        ../src/core/wifi_profile_scanner.cpp
-        ../src/core/user_profile_types.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_wifi_profile_scanner PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_wifi_profile_scanner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_wifi_profile_scanner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_wifi_profile_scanner COMMAND test_wifi_profile_scanner
-             -o "${TEST_OUTPUT_DIR}/test_wifi_profile_scanner.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_wifi_profile_scanner")
-endif()
+add_executable(test_wifi_profile_scanner
+    unit/test_wifi_profile_scanner.cpp
+    ../src/core/wifi_profile_scanner.cpp
+    ../src/core/user_profile_types.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+)
+set_target_properties(test_wifi_profile_scanner PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_wifi_profile_scanner PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_wifi_profile_scanner PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_wifi_profile_scanner COMMAND test_wifi_profile_scanner
+         -o "${TEST_OUTPUT_DIR}/test_wifi_profile_scanner.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_wifi_profile_scanner")
 
 # ============================================================================
 # Unit Tests - Email & PST/OST Inspector Panel
 # ============================================================================
 
 # test_email_types - struct defaults, enum values, constants validation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
-    add_executable(test_email_types
-        unit/test_email_types.cpp
-    )
-    set_target_properties(test_email_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_types PRIVATE
-        Qt6::Core Qt6::Test
-    )
-    target_include_directories(test_email_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_types COMMAND test_email_types
-             -o "${TEST_OUTPUT_DIR}/test_email_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_types")
-endif()
+add_executable(test_email_types
+    unit/test_email_types.cpp
+)
+set_target_properties(test_email_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_types PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_email_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_types COMMAND test_email_types
+         -o "${TEST_OUTPUT_DIR}/test_email_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_types")
 
 # test_pst_parser - header validation, magic, encryption, lifecycle
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
-    add_executable(test_pst_parser
-        unit/test_pst_parser.cpp
-        ../src/core/pst_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/pst_parser.h
-    )
-    set_target_properties(test_pst_parser PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_pst_parser PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_pst_parser PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_pst_parser COMMAND test_pst_parser
-             -o "${TEST_OUTPUT_DIR}/test_pst_parser.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_pst_parser")
-endif()
+add_executable(test_pst_parser
+    unit/test_pst_parser.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/pst_parser.h
+)
+set_target_properties(test_pst_parser PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_pst_parser PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_pst_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_pst_parser COMMAND test_pst_parser
+         -o "${TEST_OUTPUT_DIR}/test_pst_parser.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_pst_parser")
 
 # test_ost_integration - opens real OST/PST files and exercises full parse pipeline
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
-    add_executable(test_ost_integration
-        integration/test_ost_integration.cpp
-        ../src/core/email_export_worker.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/html_email_writer.cpp
-        ../src/core/pdf_email_writer.cpp
-        ../src/core/email_attachment_saver.cpp
-        ../src/core/mbox_parser.cpp
-        ../src/core/pst_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/email_export_worker.h
-        ../include/sak/eml_writer.h
-        ../include/sak/html_email_writer.h
-        ../include/sak/pdf_email_writer.h
-        ../include/sak/mbox_parser.h
-        ../include/sak/pst_parser.h
-    )
-    set_target_properties(test_ost_integration PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ost_integration PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ost_integration PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ost_integration COMMAND test_ost_integration
-             -o "${TEST_OUTPUT_DIR}/test_ost_integration.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added integration test: test_ost_integration")
-endif()
+add_executable(test_ost_integration
+    integration/test_ost_integration.cpp
+    ../src/core/email_export_worker.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/html_email_writer.cpp
+    ../src/core/pdf_email_writer.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/email_export_worker.h
+    ../include/sak/eml_writer.h
+    ../include/sak/html_email_writer.h
+    ../include/sak/pdf_email_writer.h
+    ../include/sak/mbox_parser.h
+    ../include/sak/pst_parser.h
+)
+set_target_properties(test_ost_integration PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ost_integration PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ost_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ost_integration COMMAND test_ost_integration
+         -o "${TEST_OUTPUT_DIR}/test_ost_integration.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added integration test: test_ost_integration")
 
 # test_mbox_parser - indexing, message loading, From line detection
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
-    add_executable(test_mbox_parser
-        unit/test_mbox_parser.cpp
-        ../src/core/mbox_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/mbox_parser.h
-    )
-    set_target_properties(test_mbox_parser PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_mbox_parser PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_mbox_parser PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_mbox_parser COMMAND test_mbox_parser
-             -o "${TEST_OUTPUT_DIR}/test_mbox_parser.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_mbox_parser")
-endif()
+add_executable(test_mbox_parser
+    unit/test_mbox_parser.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/mbox_parser.h
+)
+set_target_properties(test_mbox_parser PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_mbox_parser PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_mbox_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_mbox_parser COMMAND test_mbox_parser
+         -o "${TEST_OUTPUT_DIR}/test_mbox_parser.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_mbox_parser")
 
 # test_email_search_worker - criteria, cancel, search hit structure
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
-    add_executable(test_email_search_worker
-        unit/test_email_search_worker.cpp
-        ../src/core/email_search_worker.cpp
-        ../src/core/pst_parser.cpp
-        ../src/core/mbox_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/email_search_worker.h
-        ../include/sak/pst_parser.h
-        ../include/sak/mbox_parser.h
-    )
-    set_target_properties(test_email_search_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_search_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_search_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_search_worker COMMAND test_email_search_worker
-             -o "${TEST_OUTPUT_DIR}/test_email_search_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_search_worker")
-endif()
+add_executable(test_email_search_worker
+    unit/test_email_search_worker.cpp
+    ../src/core/email_search_worker.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/email_search_worker.h
+    ../include/sak/pst_parser.h
+    ../include/sak/mbox_parser.h
+)
+set_target_properties(test_email_search_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_search_worker PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_search_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_search_worker COMMAND test_email_search_worker
+         -o "${TEST_OUTPUT_DIR}/test_email_search_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_search_worker")
 
 # test_email_export_worker - config, result, format coverage
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
-    add_executable(test_email_export_worker
-        unit/test_email_export_worker.cpp
-        ../src/core/email_export_worker.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/html_email_writer.cpp
-        ../src/core/email_attachment_saver.cpp
-        ../src/core/pdf_email_writer.cpp
-        ../src/core/pst_parser.cpp
-        ../src/core/mbox_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/email_export_worker.h
-        ../include/sak/eml_writer.h
-        ../include/sak/html_email_writer.h
-        ../include/sak/pdf_email_writer.h
-        ../include/sak/pst_parser.h
-        ../include/sak/mbox_parser.h
-    )
-    set_target_properties(test_email_export_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_export_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_export_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_export_worker COMMAND test_email_export_worker
-             -o "${TEST_OUTPUT_DIR}/test_email_export_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_export_worker")
-endif()
+add_executable(test_email_export_worker
+    unit/test_email_export_worker.cpp
+    ../src/core/email_export_worker.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/html_email_writer.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/pdf_email_writer.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/email_export_worker.h
+    ../include/sak/eml_writer.h
+    ../include/sak/html_email_writer.h
+    ../include/sak/pdf_email_writer.h
+    ../include/sak/pst_parser.h
+    ../include/sak/mbox_parser.h
+)
+set_target_properties(test_email_export_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_export_worker PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_export_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_export_worker COMMAND test_email_export_worker
+         -o "${TEST_OUTPUT_DIR}/test_email_export_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_export_worker")
 
 # test_email_profile_manager - discovery, backup/restore, linked files
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
-    add_executable(test_email_profile_manager
-        unit/test_email_profile_manager.cpp
-        ../src/core/email_profile_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/email_profile_manager.h
-    )
-    set_target_properties(test_email_profile_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_profile_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_profile_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_profile_manager COMMAND test_email_profile_manager
-             -o "${TEST_OUTPUT_DIR}/test_email_profile_manager.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_profile_manager")
-endif()
+add_executable(test_email_profile_manager
+    unit/test_email_profile_manager.cpp
+    ../src/core/email_profile_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/email_profile_manager.h
+)
+set_target_properties(test_email_profile_manager PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_profile_manager PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_profile_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_profile_manager COMMAND test_email_profile_manager
+         -o "${TEST_OUTPUT_DIR}/test_email_profile_manager.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_profile_manager")
 
 # test_wifi_setup_script --- injection-safe WLAN .cmd builder
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_setup_script.cpp")
-    add_executable(test_wifi_setup_script
-        unit/test_wifi_setup_script.cpp
-        ../src/core/wifi_setup_script.cpp
-        ../src/core/process_runner.cpp
-        ../src/core/logger.cpp
-        ../include/sak/wifi_setup_script.h
-    )
-    set_target_properties(test_wifi_setup_script PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_wifi_setup_script PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_wifi_setup_script PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_wifi_setup_script COMMAND test_wifi_setup_script
-             -o "${TEST_OUTPUT_DIR}/test_wifi_setup_script.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_wifi_setup_script")
-endif()
+add_executable(test_wifi_setup_script
+    unit/test_wifi_setup_script.cpp
+    ../src/core/wifi_setup_script.cpp
+    ../src/core/process_runner.cpp
+    ../src/core/logger.cpp
+    ../include/sak/wifi_setup_script.h
+)
+set_target_properties(test_wifi_setup_script PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_wifi_setup_script PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_wifi_setup_script PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_wifi_setup_script COMMAND test_wifi_setup_script
+         -o "${TEST_OUTPUT_DIR}/test_wifi_setup_script.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_wifi_setup_script")
 
 # test_deadline_canceller --- header-only deadline/cancel monitor (single-winner finish/timeout race)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_deadline_canceller.cpp")
-    add_executable(test_deadline_canceller
-        unit/test_deadline_canceller.cpp
-        ../include/sak/deadline_canceller.h
-    )
-    set_target_properties(test_deadline_canceller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_deadline_canceller PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_deadline_canceller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_deadline_canceller COMMAND test_deadline_canceller
-             -o "${TEST_OUTPUT_DIR}/test_deadline_canceller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_deadline_canceller")
-endif()
+add_executable(test_deadline_canceller
+    unit/test_deadline_canceller.cpp
+    ../include/sak/deadline_canceller.h
+)
+set_target_properties(test_deadline_canceller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_deadline_canceller PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_deadline_canceller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_deadline_canceller COMMAND test_deadline_canceller
+         -o "${TEST_OUTPUT_DIR}/test_deadline_canceller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_deadline_canceller")
 
 # test_email_attachment_saver --- short-write + dedupe integrity
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_attachment_saver.cpp")
-    add_executable(test_email_attachment_saver
-        unit/test_email_attachment_saver.cpp
-        ../src/core/email_attachment_saver.cpp
-        ../src/core/logger.cpp
-        ../include/sak/email_attachment_saver.h
-    )
-    set_target_properties(test_email_attachment_saver PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_attachment_saver PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_attachment_saver PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
-             -o "${TEST_OUTPUT_DIR}/test_email_attachment_saver.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_attachment_saver")
-endif()
+add_executable(test_email_attachment_saver
+    unit/test_email_attachment_saver.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/logger.cpp
+    ../include/sak/email_attachment_saver.h
+)
+set_target_properties(test_email_attachment_saver PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_attachment_saver PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_attachment_saver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
+         -o "${TEST_OUTPUT_DIR}/test_email_attachment_saver.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_attachment_saver")
 
 # test_email_view_ids --- fail-closed decoding of view-item folder/message ids
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_view_ids.cpp")
-    add_executable(test_email_view_ids
-        unit/test_email_view_ids.cpp
-        ../include/sak/email_view_ids.h
-    )
-    set_target_properties(test_email_view_ids PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_view_ids PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_view_ids PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_view_ids COMMAND test_email_view_ids
-             -o "${TEST_OUTPUT_DIR}/test_email_view_ids.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_view_ids")
-endif()
+add_executable(test_email_view_ids
+    unit/test_email_view_ids.cpp
+    ../include/sak/email_view_ids.h
+)
+set_target_properties(test_email_view_ids PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_view_ids PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_view_ids PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_view_ids COMMAND test_email_view_ids
+         -o "${TEST_OUTPUT_DIR}/test_email_view_ids.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_view_ids")
 
 # test_email_report_generator - HTML, JSON, CSV output validation
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
-    add_executable(test_email_report_generator
-        unit/test_email_report_generator.cpp
-        ../src/core/email_report_generator.cpp
-        ../src/core/logger.cpp
-        ../include/sak/email_report_generator.h
-    )
-    set_target_properties(test_email_report_generator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_report_generator PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_report_generator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_report_generator COMMAND test_email_report_generator
-             -o "${TEST_OUTPUT_DIR}/test_email_report_generator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_report_generator")
-endif()
+add_executable(test_email_report_generator
+    unit/test_email_report_generator.cpp
+    ../src/core/email_report_generator.cpp
+    ../src/core/logger.cpp
+    ../include/sak/email_report_generator.h
+)
+set_target_properties(test_email_report_generator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_report_generator PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_report_generator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_report_generator COMMAND test_email_report_generator
+         -o "${TEST_OUTPUT_DIR}/test_email_report_generator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_report_generator")
 
 # test_package_internalization_engine -- B10-11 pure isSafePackageComponent seam
 # (package id / version cannot escape the work dir). No network at runtime.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_internalization_engine.cpp")
-    add_executable(test_package_internalization_engine
-        unit/test_package_internalization_engine.cpp
-        ../src/core/package_internalization_engine.cpp
-        ../src/core/install_script_parser.cpp
-        ../src/core/script_rewriter.cpp
-        ../src/core/nuget_dependency_resolver.cpp
-        ../src/core/nuget_version_range.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/package_internalization_engine.h
-        ../include/sak/install_script_parser.h
-        ../include/sak/script_rewriter.h
-        ../include/sak/nuget_dependency_resolver.h
-        ../include/sak/nuget_version_range.h
-    )
-    set_target_properties(test_package_internalization_engine PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_package_internalization_engine PRIVATE
-        Qt6::Core Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_package_internalization_engine PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_package_internalization_engine
-             COMMAND test_package_internalization_engine
-             -o "${TEST_OUTPUT_DIR}/test_package_internalization_engine.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_package_internalization_engine")
-endif()
+add_executable(test_package_internalization_engine
+    unit/test_package_internalization_engine.cpp
+    ../src/core/package_internalization_engine.cpp
+    ../src/core/install_script_parser.cpp
+    ../src/core/script_rewriter.cpp
+    ../src/core/nuget_dependency_resolver.cpp
+    ../src/core/nuget_version_range.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/package_internalization_engine.h
+    ../include/sak/install_script_parser.h
+    ../include/sak/script_rewriter.h
+    ../include/sak/nuget_dependency_resolver.h
+    ../include/sak/nuget_version_range.h
+)
+set_target_properties(test_package_internalization_engine PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_package_internalization_engine PRIVATE
+    Qt6::Core Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_package_internalization_engine PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_package_internalization_engine
+         COMMAND test_package_internalization_engine
+         -o "${TEST_OUTPUT_DIR}/test_package_internalization_engine.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_package_internalization_engine")
 
 # test_offline_deployment_worker --- pure path-safety seams (B10-12/13/14)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_deployment_worker.cpp")
-    add_executable(test_offline_deployment_worker
-        unit/test_offline_deployment_worker.cpp
-        ../src/core/offline_deployment_worker.cpp
-        ../src/core/package_internalization_engine.cpp
-        ../src/core/install_script_parser.cpp
-        ../src/core/script_rewriter.cpp
-        ../src/core/nuget_dependency_resolver.cpp
-        ../src/core/nuget_version_range.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/offline_deployment_worker.h
-        ../include/sak/package_internalization_engine.h
-        ../include/sak/install_script_parser.h
-        ../include/sak/script_rewriter.h
-        ../include/sak/nuget_dependency_resolver.h
-        ../include/sak/nuget_version_range.h
-    )
-    set_target_properties(test_offline_deployment_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_offline_deployment_worker PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_offline_deployment_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_offline_deployment_worker
-             COMMAND test_offline_deployment_worker
-             -o "${TEST_OUTPUT_DIR}/test_offline_deployment_worker.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_offline_deployment_worker")
-endif()
+add_executable(test_offline_deployment_worker
+    unit/test_offline_deployment_worker.cpp
+    ../src/core/offline_deployment_worker.cpp
+    ../src/core/package_internalization_engine.cpp
+    ../src/core/install_script_parser.cpp
+    ../src/core/script_rewriter.cpp
+    ../src/core/nuget_dependency_resolver.cpp
+    ../src/core/nuget_version_range.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/offline_deployment_worker.h
+    ../include/sak/package_internalization_engine.h
+    ../include/sak/install_script_parser.h
+    ../include/sak/script_rewriter.h
+    ../include/sak/nuget_dependency_resolver.h
+    ../include/sak/nuget_version_range.h
+)
+set_target_properties(test_offline_deployment_worker PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_offline_deployment_worker PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
+)
+target_include_directories(test_offline_deployment_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_offline_deployment_worker
+         COMMAND test_offline_deployment_worker
+         -o "${TEST_OUTPUT_DIR}/test_offline_deployment_worker.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_offline_deployment_worker")
 
 # test_offline_package_builder - builds the Office PC offline deployment bundle
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
-    add_executable(test_offline_package_builder
-        integration/test_offline_package_builder.cpp
-        ../src/core/offline_deployment_worker.cpp
-        ../src/core/package_internalization_engine.cpp
-        ../src/core/install_script_parser.cpp
-        ../src/core/script_rewriter.cpp
-        ../src/core/nuget_dependency_resolver.cpp
-        ../src/core/nuget_version_range.cpp
-        ../src/core/bundled_tools_manager.cpp
-        ${SAK_PROCESS_RUNNER_SOURCES}
-        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-        ../src/core/logger.cpp
-        ../include/sak/offline_deployment_worker.h
-        ../include/sak/package_internalization_engine.h
-        ../include/sak/install_script_parser.h
-        ../include/sak/script_rewriter.h
-        ../include/sak/nuget_dependency_resolver.h
-        ../include/sak/nuget_version_range.h
-    )
-    set_target_properties(test_offline_package_builder PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_offline_package_builder PRIVATE
-        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_offline_package_builder PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_offline_package_builder
-             COMMAND test_offline_package_builder
-             -o "${TEST_OUTPUT_DIR}/test_offline_package_builder.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    # This integration test intentionally downloads and repacks real package
-    # assets, so the default 300s CTest timeout creates false failures when
-    # upstream package/CDN latency spikes.
-    set_tests_properties(test_offline_package_builder PROPERTIES TIMEOUT 900)
-    message(STATUS "Added integration test: test_offline_package_builder")
-endif()
+add_executable(test_offline_package_builder
+    integration/test_offline_package_builder.cpp
+    ../src/core/offline_deployment_worker.cpp
+    ../src/core/package_internalization_engine.cpp
+    ../src/core/install_script_parser.cpp
+    ../src/core/script_rewriter.cpp
+    ../src/core/nuget_dependency_resolver.cpp
+    ../src/core/nuget_version_range.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/offline_deployment_worker.h
+    ../include/sak/package_internalization_engine.h
+    ../include/sak/install_script_parser.h
+    ../include/sak/script_rewriter.h
+    ../include/sak/nuget_dependency_resolver.h
+    ../include/sak/nuget_version_range.h
+)
+set_target_properties(test_offline_package_builder PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_offline_package_builder PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
+)
+target_include_directories(test_offline_package_builder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_offline_package_builder
+         COMMAND test_offline_package_builder
+         -o "${TEST_OUTPUT_DIR}/test_offline_package_builder.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# This integration test intentionally downloads and repacks real package
+# assets, so the default 300s CTest timeout creates false failures when
+# upstream package/CDN latency spikes.
+set_tests_properties(test_offline_package_builder PROPERTIES TIMEOUT 900)
+message(STATUS "Added integration test: test_offline_package_builder")
 
 # test_ost_converter_types - type defaults, constants, enum coverage
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
-    add_executable(test_ost_converter_types
-        unit/test_ost_converter_types.cpp
-        ../include/sak/ost_converter_types.h
-        ../include/sak/ost_converter_constants.h
-    )
-    set_target_properties(test_ost_converter_types PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ost_converter_types PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ost_converter_types PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ost_converter_types COMMAND test_ost_converter_types
-             -o "${TEST_OUTPUT_DIR}/test_ost_converter_types.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ost_converter_types")
-endif()
+add_executable(test_ost_converter_types
+    unit/test_ost_converter_types.cpp
+    ../include/sak/ost_converter_types.h
+    ../include/sak/ost_converter_constants.h
+)
+set_target_properties(test_ost_converter_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ost_converter_types PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ost_converter_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ost_converter_types COMMAND test_ost_converter_types
+         -o "${TEST_OUTPUT_DIR}/test_ost_converter_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ost_converter_types")
 
 # test_email_folder_selection - which folders are MAIL folders, shared by the Email
 # Inspector tree and its "Export ALL Mail Folders" whole-store export.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_folder_selection.cpp")
-    add_executable(test_email_folder_selection
-        unit/test_email_folder_selection.cpp
-        ../src/core/email_folder_selection.cpp
-        ../include/sak/email_folder_selection.h
-    )
-    set_target_properties(test_email_folder_selection PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_email_folder_selection PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_email_folder_selection PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_email_folder_selection COMMAND test_email_folder_selection
-             -o "${TEST_OUTPUT_DIR}/test_email_folder_selection.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_email_folder_selection")
-endif()
+add_executable(test_email_folder_selection
+    unit/test_email_folder_selection.cpp
+    ../src/core/email_folder_selection.cpp
+    ../include/sak/email_folder_selection.h
+)
+set_target_properties(test_email_folder_selection PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_folder_selection PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_folder_selection PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_folder_selection COMMAND test_email_folder_selection
+         -o "${TEST_OUTPUT_DIR}/test_email_folder_selection.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_folder_selection")
 
 # test_eml_writer - RFC 5322 output, filename sanitization, collision handling
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
-    add_executable(test_eml_writer
-        unit/test_eml_writer.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/eml_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_eml_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_eml_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_eml_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_eml_writer COMMAND test_eml_writer
-             -o "${TEST_OUTPUT_DIR}/test_eml_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_eml_writer")
-endif()
+add_executable(test_eml_writer
+    unit/test_eml_writer.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/eml_writer.h
+    ../include/sak/email_types.h
+)
+set_target_properties(test_eml_writer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_eml_writer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_eml_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_eml_writer COMMAND test_eml_writer
+         -o "${TEST_OUTPUT_DIR}/test_eml_writer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_eml_writer")
 
 # test_ost_converter_controller - queue management, duplicate detection
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
-    add_executable(test_ost_converter_controller
-        unit/test_ost_converter_controller.cpp
-        ../src/core/ost_converter_controller.cpp
-        ../src/core/ost_conversion_worker.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/mbox_writer.cpp
-        ../src/core/html_email_writer.cpp
-        ../src/core/email_attachment_saver.cpp
-        ../src/core/pdf_email_writer.cpp
-        ../src/core/deleted_item_scanner.cpp
-        ../src/core/conversion_report_generator.cpp
-        ../src/core/pst_parser.cpp
-        ../src/core/logger.cpp
-        ../include/sak/ost_converter_controller.h
-        ../include/sak/ost_conversion_worker.h
-        ../include/sak/eml_writer.h
-        ../include/sak/deleted_item_scanner.h
-        ../include/sak/pst_parser.h
-    )
-    set_target_properties(test_ost_converter_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_ost_converter_controller PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_ost_converter_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_ost_converter_controller COMMAND test_ost_converter_controller
-             -o "${TEST_OUTPUT_DIR}/test_ost_converter_controller.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_ost_converter_controller")
-endif()
+add_executable(test_ost_converter_controller
+    unit/test_ost_converter_controller.cpp
+    ../src/core/ost_converter_controller.cpp
+    ../src/core/ost_conversion_worker.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/mbox_writer.cpp
+    ../src/core/html_email_writer.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/pdf_email_writer.cpp
+    ../src/core/deleted_item_scanner.cpp
+    ../src/core/conversion_report_generator.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/ost_converter_controller.h
+    ../include/sak/ost_conversion_worker.h
+    ../include/sak/eml_writer.h
+    ../include/sak/deleted_item_scanner.h
+    ../include/sak/pst_parser.h
+)
+set_target_properties(test_ost_converter_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ost_converter_controller PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ost_converter_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ost_converter_controller COMMAND test_ost_converter_controller
+         -o "${TEST_OUTPUT_DIR}/test_ost_converter_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ost_converter_controller")
 
 # test_mbox_writer - Unix mbox format, From_ escaping, per-folder
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
-    add_executable(test_mbox_writer
-        unit/test_mbox_writer.cpp
-        ../src/core/mbox_writer.cpp
-        ../src/core/eml_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/mbox_writer.h
-        ../include/sak/eml_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_mbox_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_mbox_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_mbox_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_mbox_writer COMMAND test_mbox_writer
-             -o "${TEST_OUTPUT_DIR}/test_mbox_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_mbox_writer")
-endif()
+add_executable(test_mbox_writer
+    unit/test_mbox_writer.cpp
+    ../src/core/mbox_writer.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/mbox_writer.h
+    ../include/sak/eml_writer.h
+    ../include/sak/email_types.h
+)
+set_target_properties(test_mbox_writer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_mbox_writer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_mbox_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_mbox_writer COMMAND test_mbox_writer
+         -o "${TEST_OUTPUT_DIR}/test_mbox_writer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_mbox_writer")
 
 # test_html_email_writer - styled HTML output, data URIs
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
-    add_executable(test_html_email_writer
-        unit/test_html_email_writer.cpp
-        ../src/core/html_email_writer.cpp
-        ../src/core/email_attachment_saver.cpp
-        ../src/core/logger.cpp
-        ../include/sak/html_email_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_html_email_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_html_email_writer PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_html_email_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_html_email_writer COMMAND test_html_email_writer
-             -o "${TEST_OUTPUT_DIR}/test_html_email_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_html_email_writer")
-endif()
+add_executable(test_html_email_writer
+    unit/test_html_email_writer.cpp
+    ../src/core/html_email_writer.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/logger.cpp
+    ../include/sak/html_email_writer.h
+    ../include/sak/email_types.h
+)
+set_target_properties(test_html_email_writer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_html_email_writer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_html_email_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_html_email_writer COMMAND test_html_email_writer
+         -o "${TEST_OUTPUT_DIR}/test_html_email_writer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_html_email_writer")
 
 # test_pdf_email_writer - QPdfWriter output, PDF header
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
-    add_executable(test_pdf_email_writer
-        unit/test_pdf_email_writer.cpp
-        ../src/core/pdf_email_writer.cpp
-        ../src/core/logger.cpp
-        ../include/sak/pdf_email_writer.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_pdf_email_writer PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_pdf_email_writer PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_pdf_email_writer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_pdf_email_writer COMMAND test_pdf_email_writer
-             -o "${TEST_OUTPUT_DIR}/test_pdf_email_writer.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_pdf_email_writer")
-endif()
+add_executable(test_pdf_email_writer
+    unit/test_pdf_email_writer.cpp
+    ../src/core/pdf_email_writer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/pdf_email_writer.h
+    ../include/sak/email_types.h
+)
+set_target_properties(test_pdf_email_writer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_pdf_email_writer PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_pdf_email_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_pdf_email_writer COMMAND test_pdf_email_writer
+         -o "${TEST_OUTPUT_DIR}/test_pdf_email_writer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_pdf_email_writer")
 
 # test_conversion_report_generator - HTML report, CSV manifest
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_conversion_report_generator.cpp")
-    add_executable(test_conversion_report_generator
-        unit/test_conversion_report_generator.cpp
-        ../src/core/conversion_report_generator.cpp
-        ../src/core/logger.cpp
-        ../include/sak/conversion_report_generator.h
-        ../include/sak/ost_converter_types.h
-        ../include/sak/email_types.h
-    )
-    set_target_properties(test_conversion_report_generator PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-    )
-    target_link_libraries(test_conversion_report_generator PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_conversion_report_generator PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_conversion_report_generator COMMAND test_conversion_report_generator
-             -o "${TEST_OUTPUT_DIR}/test_conversion_report_generator.txt,txt" -o -,txt
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_conversion_report_generator")
-endif()
+add_executable(test_conversion_report_generator
+    unit/test_conversion_report_generator.cpp
+    ../src/core/conversion_report_generator.cpp
+    ../src/core/logger.cpp
+    ../include/sak/conversion_report_generator.h
+    ../include/sak/ost_converter_types.h
+    ../include/sak/email_types.h
+)
+set_target_properties(test_conversion_report_generator PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_conversion_report_generator PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_conversion_report_generator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_conversion_report_generator COMMAND test_conversion_report_generator
+         -o "${TEST_OUTPUT_DIR}/test_conversion_report_generator.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_conversion_report_generator")
 
 # ============================================================================
 # Test Targets
@@ -7208,6 +6789,21 @@ if(PLATFORM_WINDOWS)
                          -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/${_sak_ps_test}.ps1")
         set_tests_properties(${_sak_ps_test} PROPERTIES TIMEOUT 300)
     endforeach()
+
+    # scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
+    # verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
+    # was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
+    # release workflow, and CI has not run for 776 commits (R5-G21-7). An 800-line self
+    # test that executes once per release is not a gate, so it runs in the suite now.
+    #
+    # -OutputRoot is redirected into the build tree. Its default writes synthetic reports
+    # under artifacts/ in the working copy, which would dirty the repo on every ctest run
+    # and mix generated fixtures in with the real captured certification evidence.
+    add_test(NAME test_partition_manager_certification_tools
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
+                     -OutputRoot "${TEST_OUTPUT_DIR}/partition-manager-certification-tools")
+    set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
 endif()
 
 # ============================================================================

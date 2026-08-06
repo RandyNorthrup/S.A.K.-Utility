@@ -1584,6 +1584,13 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       units (246 tests, 75 src, 9 include, 4 scripts) cannot be run before then. This is
       an account cap, not a tooling failure; the drivers are idempotent and claim-based,
       so the run resumes from exactly where it stopped.
+
+      The drivers were NOT quietly waiting it out. Checked 2026-08-05: each was retrying
+      the same unit against the hard cap every 15 minutes and had been doing so for
+      hours, which reads like progress in the log (the unit index is printed each time)
+      while the count never moves. Driver 1 was stopped rather than left to retry into
+      August 11. RELAUNCH IS A MANUAL STEP after the cap resets -- nothing is waiting to
+      pick this up on its own, and 764/1098 is where it stands until someone starts it.
 - [ ] R5-LEDGER-2 Verify every per-file finding against the local tree
       IN PROGRESS: 35 of 723 briefs verified (4.8%); 688 briefs holding 8156 unverified
       allegations remain.
@@ -3121,8 +3128,8 @@ Running tally of gates that reported healthy while analyzing nothing:
       coverage that did not exist
 - [ ] R5-G16-5 Audit for the inverse defect: targets that build but are never registered
       with add_test, and add_test entries excluded by a label or filter
-- [ ] R5-G16-6 EVERY TEST TARGET IS WRAPPED IN A GUARD THAT MAKES ITS OWN DISAPPEARANCE
-      SILENT. Measured 2026-08-05. tests/CMakeLists.txt declares 209 test targets, and
+- [x] R5-G16-6 EVERY TEST TARGET WAS WRAPPED IN A GUARD THAT MADE ITS OWN DISAPPEARANCE
+      SILENT. Measured 2026-08-05. tests/CMakeLists.txt declared 209 test targets, and
       every one of them sits inside `if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/<file>")`.
       All 209 guarded paths exist, so not one guard is load-bearing today -- their only
       effect is on the day a source file is renamed, moved, or deleted, at which point
@@ -3137,9 +3144,51 @@ Running tally of gates that reported healthy while analyzing nothing:
       direction (every test_*.cpp has a target) and cannot see this one, because once the
       .cpp is gone there is nothing left to be unregistered.
 
-      Fix: drop the guards so a vanished test source breaks configure, and assert the
-      resulting ctest count against a recorded baseline so a silent shrink is a failure
-      rather than a smaller green number.
+      FIXED 2026-08-05. All 209 guards removed; a vanished test source is now a hard
+      configure error naming the file. One of the 209 was not purely an existence check --
+      the AI panel dispatch test reads
+      `if(EXISTS <src> AND SAK_ENABLE_AI_ASSISTANT)`. The feature flag is real
+      conditionality and was kept; only the EXISTS half was dropped, so the target is
+      still optional on the option but no longer optional on its own source file. Two
+      if(EXISTS) uses remain in the file and are correct: they probe for a Qt platform
+      plugin directory and a vcpkg bin directory, which are environment facts rather than
+      repository contents. Configure clean, ctest count unchanged at 223.
+
+      What this does NOT close, stated plainly: deleting a test source AND its target
+      block together still shrinks the suite without failing anything. No gate can tell
+      that apart from an intentional removal without a recorded baseline, and a baseline
+      file that every new test must bump is friction that gets routed around. The guard
+      removal closes the case that actually bit this repo nine times -- a source that
+      stops being compiled while everything still reports green -- and the remaining case
+      is at least visible in a diff.
+
+- [x] R5-G16-7 THE REGISTRATION GATE ONLY EVER LOOKED IN tests/. Found 2026-08-05 while
+      removing the guards above: four MORE if(EXISTS) guards wrapped PowerShell suites
+      living in scripts/ rather than tests/, and check_test_registration.ps1 scans only
+      tests/ for test_*.ps1 -- so those files were unprotected in both directions at once.
+      Fixed the same way: the real conditions on those four (WIN32, TARGET <cli>) are kept
+      and only the EXISTS clause is dropped, and the gate now scans scripts/ as well.
+
+      Scanning scripts/ immediately surfaced two suites the gate had never been able to
+      see:
+
+        - scripts/test_partition_manager_certification_tools.ps1, an 800-line self-test of
+          the certification verifiers that builds synthetic reports and touches no disk.
+          It was reachable only from check_release_readiness.ps1, which runs in the release
+          workflow -- and CI has not run for 776 commits (R5-G21-7), so in practice it had
+          not executed in a very long time. Now a ctest entry. Its -OutputRoot is
+          redirected into the build tree, because the default writes generated fixtures
+          under artifacts/ in the working copy, which would both dirty the repo on every
+          run and interleave synthetic reports with real captured certification evidence.
+          Verified passing before wiring.
+        - scripts/test_partition_manager_vhd_preflight.ps1 is NOT a test despite the name.
+          It emits a host-readiness preflight report for the destructive disposable-VHD
+          matrix, so its result describes the machine it runs on, not the code. It is
+          exempt in the gate with that reason recorded next to it, rather than registered
+          and left to pass or fail on whatever host happens to run the suite.
+
+      "It is wired somewhere" turned out not to mean "it runs" -- the same distinction
+      that produced this whole section.
 
 ### G10 - definition of done for this campaign
 
